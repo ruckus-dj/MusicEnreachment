@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"time"
 
 	"go.senan.xyz/taglib"
@@ -32,10 +33,20 @@ type AudioProperties struct {
 // Capture is detached from the prepared path. Tags are normalized text values;
 // this is not a promise that every raw or format-specific tag is represented.
 type Capture struct {
-	Format     string              `json:"format"`
-	Provenance Provenance          `json:"provenance"`
-	Tags       map[string][]string `json:"tags"`
-	Properties *AudioProperties    `json:"properties,omitempty"`
+	Format          string              `json:"format"`
+	Provenance      Provenance          `json:"provenance"`
+	Tags            map[string][]string `json:"tags"`
+	Properties      *AudioProperties    `json:"properties,omitempty"`
+	CoverInspection *CoverInspection    `json:"coverInspection,omitempty"`
+}
+
+// CoverInspection reports the first normalized picture returned by TagLib.
+// It is not an exhaustive inventory: an observed nil cover can mean the first
+// normalized picture was empty, and does not prove that no raw image exists or
+// that the picture is a front cover or unique.
+type CoverInspection struct {
+	Observed bool   `json:"observed"`
+	Cover    *Cover `json:"cover,omitempty"`
 }
 
 // Reader reads metadata from the already-prepared path supplied by its caller.
@@ -43,13 +54,15 @@ type Capture struct {
 type Reader struct {
 	readTags       func(string) (map[string][]string, error)
 	readProperties func(string) (taglib.Properties, error)
+	readImage      func(string) ([]byte, error)
 }
 
 // ReadRequest explicitly controls optional metadata work. Properties are not
 // read unless the caller requests them; a requested property-read failure is
 // optional and does not invalidate successfully read tags.
 type ReadRequest struct {
-	Properties bool
+	Properties      bool
+	CoverInspection bool
 }
 
 var tagLibProvenance = Provenance{
@@ -89,7 +102,38 @@ func (reader Reader) Read(ctx context.Context, preparedPath string, request Read
 	if err := reader.readOptionalProperties(ctx, preparedPath, request.Properties, &result); err != nil {
 		return Capture{}, err
 	}
+	if err := reader.readCoverInspection(ctx, preparedPath, request.CoverInspection, &result); err != nil {
+		return Capture{}, err
+	}
 	return result, nil
+}
+
+func (reader Reader) readCoverInspection(ctx context.Context, path string, requested bool, result *Capture) error {
+	if !requested {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Read is reached only after ReadTags has validated the prepared path. The
+	// separately opened image read is still subject to a same-path external race.
+	readImage := reader.readImage
+	if readImage == nil {
+		readImage = taglib.ReadImage
+	}
+	data, readErr := safeReadImage(readImage, path)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if readErr != nil {
+		return fmt.Errorf("inspect metadata cover: %w", readErr)
+	}
+	inspection := &CoverInspection{Observed: true}
+	if len(data) != 0 {
+		inspection.Cover = &Cover{Data: append([]byte(nil), data...), MIME: http.DetectContentType(data)}
+	}
+	result.CoverInspection = inspection
+	return nil
 }
 
 func (reader Reader) readOptionalProperties(ctx context.Context, path string, requested bool, result *Capture) error {

@@ -1,8 +1,11 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,6 +148,97 @@ func TestReadPropertiesAreExplicitAndOptional(t *testing.T) {
 	if capture.Properties == nil || capture.Properties.BitRateBitsPerSecond != 192000 ||
 		capture.Properties.BitDepth == nil || *capture.Properties.BitDepth != 24 || capture.Properties.InnerCodec != "FLAC" {
 		t.Fatalf("converted properties = %#v", capture.Properties)
+	}
+}
+
+func TestReadCoverInspectionIsExplicitDetachedAndObserved(t *testing.T) {
+	path := writeMetadataFixture(t, ".flac", tagLibTrialFLACFixture())
+	image := generatedPNG(t)
+	tags := map[string][]string{"TITLE": {"before"}}
+	imageCalls := 0
+	reader := Reader{
+		readTags:  func(string) (map[string][]string, error) { return tags, nil },
+		readImage: func(string) ([]byte, error) { imageCalls++; return image, nil },
+	}
+	capture, err := reader.Read(context.Background(), path, ReadRequest{})
+	if err != nil || imageCalls != 0 || capture.CoverInspection != nil {
+		t.Fatalf("unrequested image inspection: calls=%d capture=%#v err=%v", imageCalls, capture, err)
+	}
+	capture, err = reader.Read(context.Background(), path, ReadRequest{CoverInspection: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imageCalls != 1 || capture.CoverInspection == nil || !capture.CoverInspection.Observed || capture.CoverInspection.Cover == nil {
+		t.Fatalf("inspection = %#v, calls=%d", capture.CoverInspection, imageCalls)
+	}
+	cover := capture.CoverInspection.Cover
+	if cover.MIME != "image/png" || !bytes.Equal(cover.Data, image) {
+		t.Fatalf("cover = %#v", cover)
+	}
+	image[0] ^= 0xff
+	if bytes.Equal(cover.Data, image) {
+		t.Fatal("captured image aliases reader-owned bytes")
+	}
+	capture.Tags["TITLE"][0] = "changed"
+	if capture.Tags["TITLE"][0] == "before" {
+		t.Fatal("test failed to mutate captured tags")
+	}
+	if tags["TITLE"][0] != "before" {
+		t.Fatal("captured tags mutation changed the source map")
+	}
+}
+
+func TestReadCoverInspectionAbsenceFailuresAndCancellation(t *testing.T) {
+	path := writeMetadataFixture(t, ".flac", tagLibTrialFLACFixture())
+	reader := Reader{readTags: func(string) (map[string][]string, error) { return map[string][]string{}, nil }, readImage: func(string) ([]byte, error) { return []byte{}, nil }}
+	capture, err := reader.Read(context.Background(), path, ReadRequest{CoverInspection: true})
+	if err != nil || capture.CoverInspection == nil || !capture.CoverInspection.Observed || capture.CoverInspection.Cover != nil {
+		t.Fatalf("empty image inspection = %#v, err=%v", capture.CoverInspection, err)
+	}
+	for name, readImage := range map[string]func(string) ([]byte, error){
+		"error": func(string) ([]byte, error) { return nil, errors.New("private read failure") },
+		"panic": func(string) ([]byte, error) { panic("private image payload") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			reader.readImage = readImage
+			if _, err := reader.Read(context.Background(), path, ReadRequest{CoverInspection: true}); err == nil || strings.Contains(err.Error(), "private image payload") {
+				t.Fatalf("inspection error = %v", err)
+			}
+		})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	reader.readImage = func(string) ([]byte, error) { cancel(); return []byte{1}, nil }
+	if _, err := reader.Read(ctx, path, ReadRequest{CoverInspection: true}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("post-read cancellation error = %v", err)
+	}
+	cancelled, stop := context.WithCancel(context.Background())
+	stop()
+	if _, err := reader.Read(cancelled, path, ReadRequest{CoverInspection: true}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pre-read cancellation error = %v", err)
+	}
+}
+
+func TestReadCoverInspectionRoundTripsAcrossFormats(t *testing.T) {
+	for _, extension := range []string{".flac", ".mp3", ".m4a", ".mka"} {
+		t.Run(extension, func(t *testing.T) {
+			contents, err := os.ReadFile("testdata/eg" + extension)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := writeMetadataFixture(t, extension, contents)
+			want := generatedPNG(t)
+			mime := http.DetectContentType(want)
+			if _, err := (Writer{}).Write(context.Background(), path, nil, &Cover{Data: want, MIME: mime}); err != nil {
+				t.Fatal(err)
+			}
+			capture, err := (Reader{}).Read(context.Background(), path, ReadRequest{CoverInspection: true})
+			if err != nil || capture.CoverInspection == nil || !capture.CoverInspection.Observed || capture.CoverInspection.Cover == nil {
+				t.Fatalf("inspection = %#v, err=%v", capture.CoverInspection, err)
+			}
+			if capture.CoverInspection.Cover.MIME != mime || !bytes.Equal(capture.CoverInspection.Cover.Data, want) {
+				t.Fatalf("cover did not round-trip: %#v", capture.CoverInspection.Cover)
+			}
+		})
 	}
 }
 
