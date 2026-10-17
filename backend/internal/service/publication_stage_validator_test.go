@@ -86,7 +86,7 @@ func TestValidatedPublicationAudioFactsCanPlanSourceCopy(t *testing.T) {
 	lossless := false
 	channels := int64(2)
 	bitrate := int64(192000)
-	facts, err := persistedPublicationStageAudioFacts(0, "mp3", lossless, &channels, &bitrate, nil, publication.AudioContainerMP3)
+	facts, err := persistedPublicationStageAudioFacts(0, "mp3", lossless, &channels, &bitrate, nil, nil, publication.AudioContainerMP3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +99,36 @@ func TestValidatedPublicationAudioFactsCanPlanSourceCopy(t *testing.T) {
 	}
 	if plan.Action != publication.AudioCodecCopy || plan.OutputContainer != publication.AudioContainerMP3 {
 		t.Fatalf("source plan = %#v, want MP3 codec-copy", plan)
+	}
+}
+
+func TestPublicationStageSampleRateEvidence(t *testing.T) {
+	want := 44100
+	equal := int64(44100)
+	wrong := int64(48000)
+	for _, test := range []struct {
+		name     string
+		expected *int
+		actual   *int64
+		valid    bool
+	}{
+		{name: "copy equal", expected: &want, actual: &equal, valid: true},
+		{name: "rewrite AAC mismatch", expected: &want, actual: &wrong},
+		{name: "rewrite ALAC missing", expected: &want},
+		{name: "unknown optional", actual: &wrong, valid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := publicationStageSampleRateMatches(test.expected, test.actual); got != test.valid {
+				t.Fatalf("sample-rate match = %v, want %v", got, test.valid)
+			}
+		})
+	}
+	observed, err := persistedPublicationStageAudioFacts(0, "aac", false, nil, nil, nil, &equal, publication.AudioContainerM4A)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.SampleRate == nil || *observed.SampleRate != 44100 {
+		t.Fatalf("persisted observed sample rate = %v, want 44100", observed.SampleRate)
 	}
 }
 

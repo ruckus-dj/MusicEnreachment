@@ -86,6 +86,41 @@ func TestPublicationProbeFactsRequireExactAACFormatName(t *testing.T) {
 	}
 }
 
+func TestPublicationProbeFactsSampleRateIsSelectedStreamOptionalExactInteger(t *testing.T) {
+	for _, test := range []struct {
+		name, sampleRate string
+		want             *int
+	}{
+		{name: "integer", sampleRate: `44100`, want: publicationIntPointer(44100)},
+		{name: "integer string", sampleRate: `"48000"`, want: publicationIntPointer(48000)},
+		{name: "fractional", sampleRate: `44100.5`},
+		{name: "zero", sampleRate: `0`},
+		{name: "negative", sampleRate: `-1`},
+		{name: "overflow", sampleRate: `9223372036854775808`},
+		{name: "N/A", sampleRate: `"N/A"`},
+		{name: "null", sampleRate: `null`},
+		{name: "missing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","sample_rate":%s},{"index":1,"codec_type":"video","codec_name":"flac","sample_rate":96000}]}`, test.sampleRate)
+			if test.sampleRate == "" {
+				raw = `{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac"},{"index":1,"codec_type":"video","codec_name":"flac","sample_rate":96000}]}`
+			}
+			probe := publicationProbeFixture("flac", "flac", "0", "0")
+			probe.FFProbeJSON = json.RawMessage(raw)
+			facts, err := publicationAudioFactsFromProbe(probe, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (facts.SampleRate == nil) != (test.want == nil) || facts.SampleRate != nil && *facts.SampleRate != *test.want {
+				t.Fatalf("sample rate = %v, want %v", facts.SampleRate, test.want)
+			}
+		})
+	}
+}
+
+func publicationIntPointer(value int) *int { return &value }
+
 func publicationProbeFixture(codec, format, rawBits, bits string) SourceMediaVariant {
 	policyVersion := 1
 	ffprobeVersion := "ffprobe version test"

@@ -142,6 +142,9 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	if facts.Channels != nil && (actual.Channels == nil || *actual.Channels != int64(*facts.Channels)) {
 		return PublicationStageObservation{}, errors.New("publication stage channel count does not match the frozen plan")
 	}
+	if !publicationStageSampleRateMatches(facts.SampleRate, actual.SampleRateHz) {
+		return PublicationStageObservation{}, errors.New("publication stage sample rate does not match the frozen plan")
+	}
 	if facts.Lossless != nil && *facts.Lossless && facts.BitDepth != nil && (actual.BitsPerSample == nil || *actual.BitsPerSample != int64(*facts.BitDepth)) {
 		return PublicationStageObservation{}, errors.New("publication stage bit depth does not preserve the frozen lossless plan")
 	}
@@ -195,7 +198,7 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	if actual.Index == nil || *actual.Index < 0 || int64(int(*actual.Index)) != *actual.Index {
 		return PublicationStageObservation{}, errors.New("publication stage audio stream index is missing or out of range")
 	}
-	actualAudioFacts, err := persistedPublicationStageAudioFacts(int(*actual.Index), actualCodec, lossless, actual.Channels, actual.BitRate, actual.BitsPerSample, plan.OutputContainer)
+	actualAudioFacts, err := persistedPublicationStageAudioFacts(int(*actual.Index), actualCodec, lossless, actual.Channels, actual.BitRate, actual.BitsPerSample, actual.SampleRateHz, plan.OutputContainer)
 	if err != nil {
 		return PublicationStageObservation{}, err
 	}
@@ -209,6 +212,10 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	actualMetadata, _ := json.Marshal(map[string]any{"version": 1, "tags": capture.Tags})
 	size, mtime := after.Size(), after.ModTime().UnixMicro()
 	return PublicationStageObservation{Ownership: persistence.ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime}, Audio: actualAudio, Metadata: actualMetadata, SHA256: hex.EncodeToString(hash.Sum(nil))}, nil
+}
+
+func publicationStageSampleRateMatches(expected *int, actual *int64) bool {
+	return expected == nil || actual != nil && *actual == int64(*expected)
 }
 
 func publicationStageAudioPlan(input persistence.PublicationInputs, facts persistence.PersistedAudioFacts) (publication.AudioTransformPlan, error) {
@@ -276,7 +283,7 @@ func inputAudioFacts(input persistence.PublicationInputs) persistence.PersistedA
 	return input.Rewrite.AudioFacts
 }
 
-func persistedPublicationStageAudioFacts(index int, codec string, lossless bool, channels, bitrate, bitDepth *int64, container publication.AudioContainer) (persistence.PersistedAudioFacts, error) {
+func persistedPublicationStageAudioFacts(index int, codec string, lossless bool, channels, bitrate, bitDepth, sampleRate *int64, container publication.AudioContainer) (persistence.PersistedAudioFacts, error) {
 	toInt := func(value *int64) (*int, error) {
 		if value == nil {
 			return nil, nil
@@ -299,10 +306,14 @@ func persistedPublicationStageAudioFacts(index int, codec string, lossless bool,
 	if err != nil {
 		return persistence.PersistedAudioFacts{}, err
 	}
+	sampleRateValue, err := toInt(sampleRate)
+	if err != nil {
+		return persistence.PersistedAudioFacts{}, err
+	}
 	losslessValue := lossless
 	return persistence.PersistedAudioFacts{
 		StreamIndex: index, Codec: codec, Lossless: &losslessValue,
-		Channels: channelsValue, Bitrate: bitrateValue, BitDepth: bitDepthValue,
+		Channels: channelsValue, Bitrate: bitrateValue, BitDepth: bitDepthValue, SampleRate: sampleRateValue,
 		Container: container, SupportedSourceContainer: publicationSourceFactsSupported(container, codec),
 	}, nil
 }

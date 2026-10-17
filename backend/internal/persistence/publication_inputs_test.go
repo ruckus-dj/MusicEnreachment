@@ -81,7 +81,13 @@ func TestPublicationInputsRoundTripAudioAndRewrite(t *testing.T) {
 
 func TestPublicationInputsCloneDetachesTagMapAndPreservesEmptyList(t *testing.T) {
 	input := publicationInputsFixture(t, "audio")
+	rate := 44100
+	input.Audio.AudioFacts.SampleRate = &rate
 	clone := input.Clone()
+	*clone.Audio.AudioFacts.SampleRate = 48000
+	if *input.Audio.AudioFacts.SampleRate != 44100 {
+		t.Fatal("clone shares sample rate storage")
+	}
 	clone.DesiredTags["title"][0] = "Changed"
 	clone.DesiredTags["new"] = []string{}
 	if input.DesiredTags["title"][0] != "Track" {
@@ -97,6 +103,21 @@ func TestPublicationInputsCloneDetachesTagMapAndPreservesEmptyList(t *testing.T)
 	invalidClone := input.Clone()
 	if invalidClone.DesiredTags["invalid"] != nil || invalidClone.Validate() == nil {
 		t.Fatal("clone changed invalid nil tags into valid explicit-empty tags")
+	}
+}
+
+func TestPersistedAudioFactsSampleRateMustBePositiveWhenKnown(t *testing.T) {
+	for _, rate := range []int{0, -1} {
+		facts := publicationInputsFixture(t, "audio").Audio.AudioFacts
+		facts.SampleRate = &rate
+		if err := facts.Validate(); err == nil {
+			t.Errorf("accepted sample rate %d", rate)
+		}
+	}
+	facts := publicationInputsFixture(t, "audio").Audio.AudioFacts
+	facts.SampleRate = nil
+	if err := facts.Validate(); err != nil {
+		t.Fatalf("unknown optional sample rate rejected: %v", err)
 	}
 }
 

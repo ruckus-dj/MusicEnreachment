@@ -84,14 +84,15 @@ type publicationFFProbeDocument struct {
 		FormatName string `json:"format_name"`
 	} `json:"format"`
 	Streams []struct {
-		Index         json.Number `json:"index"`
-		CodecType     string      `json:"codec_type"`
-		CodecName     string      `json:"codec_name"`
-		Channels      json.Number `json:"channels"`
-		Bitrate       json.Number `json:"bit_rate"`
-		RawSampleBits json.Number `json:"bits_per_raw_sample"`
-		SampleBits    json.Number `json:"bits_per_sample"`
-		SampleFormat  string      `json:"sample_fmt"`
+		Index         json.Number     `json:"index"`
+		CodecType     string          `json:"codec_type"`
+		CodecName     string          `json:"codec_name"`
+		Channels      json.Number     `json:"channels"`
+		Bitrate       json.Number     `json:"bit_rate"`
+		RawSampleBits json.Number     `json:"bits_per_raw_sample"`
+		SampleBits    json.Number     `json:"bits_per_sample"`
+		SampleFormat  string          `json:"sample_fmt"`
+		SampleRate    json.RawMessage `json:"sample_rate"`
 	} `json:"streams"`
 }
 
@@ -114,6 +115,7 @@ func publicationAudioFactsFromProbe(probe SourceMediaVariant, selectedIndex int)
 		CodecType, CodecName                         string
 		Channels, Bitrate, RawSampleBits, SampleBits json.Number
 		SampleFormat                                 string
+		SampleRate                                   json.RawMessage
 	}
 	seen := make(map[int]bool)
 	audioCount := 0
@@ -139,7 +141,8 @@ func publicationAudioFactsFromProbe(probe SourceMediaVariant, selectedIndex int)
 				CodecType, CodecName                         string
 				Channels, Bitrate, RawSampleBits, SampleBits json.Number
 				SampleFormat                                 string
-			}{stream.Index, stream.CodecType, stream.CodecName, stream.Channels, stream.Bitrate, stream.RawSampleBits, stream.SampleBits, stream.SampleFormat}
+				SampleRate                                   json.RawMessage
+			}{stream.Index, stream.CodecType, stream.CodecName, stream.Channels, stream.Bitrate, stream.RawSampleBits, stream.SampleBits, stream.SampleFormat, stream.SampleRate}
 		}
 	}
 	if audioCount != *probe.AudioStreamCount {
@@ -155,6 +158,7 @@ func publicationAudioFactsFromProbe(probe SourceMediaVariant, selectedIndex int)
 		return PersistedAudioFacts{}, fmt.Errorf("ffprobe codec losslessness is ambiguous")
 	}
 	facts := PersistedAudioFacts{StreamIndex: int(index), Codec: codec, Lossless: &lossless}
+	facts.SampleRate = publicationProbeSampleRate(selected.SampleRate)
 	if n, ok := strictProbeNumber(selected.Channels); ok && n > 0 && n <= int64(^uint(0)>>1) {
 		v := int(n)
 		facts.Channels = &v
@@ -181,6 +185,26 @@ func publicationAudioFactsFromProbe(probe SourceMediaVariant, selectedIndex int)
 	facts.Container = container
 	facts.SupportedSourceContainer = publicationSourceCopySupported(container, codec)
 	return facts, facts.Validate()
+}
+
+func publicationProbeSampleRate(raw json.RawMessage) *int {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	value := strings.TrimSpace(string(raw))
+	if len(value) > 0 && value[0] == '"' {
+		var decoded string
+		if json.Unmarshal(raw, &decoded) != nil {
+			return nil
+		}
+		value = strings.TrimSpace(decoded)
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n <= 0 || n > int64(^uint(0)>>1) {
+		return nil
+	}
+	converted := int(n)
+	return &converted
 }
 
 func publicationProbeBitDepth(rawSampleBits, sampleBits json.Number) (*int, error) {

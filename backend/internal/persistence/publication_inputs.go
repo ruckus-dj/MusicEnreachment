@@ -84,6 +84,7 @@ type PersistedAudioFacts struct {
 	Channels                 *int                       `json:"channels,omitempty"`
 	Bitrate                  *int                       `json:"bitrate,omitempty"`
 	BitDepth                 *int                       `json:"bit_depth,omitempty"`
+	SampleRate               *int                       `json:"sample_rate,omitempty"`
 	Container                publication.AudioContainer `json:"container"`
 	SupportedSourceContainer bool                       `json:"supported_source_container"`
 	ALACCapabilitiesVerified bool                       `json:"alac_capabilities_verified"`
@@ -191,7 +192,7 @@ func (facts PersistedAudioFacts) Validate() error {
 	if facts.StreamIndex < 0 || strings.TrimSpace(facts.Codec) == "" || facts.Lossless == nil {
 		return fmt.Errorf("verified selected audio stream facts are required")
 	}
-	if facts.Channels != nil && *facts.Channels <= 0 || facts.Bitrate != nil && *facts.Bitrate < 0 || facts.BitDepth != nil && *facts.BitDepth <= 0 {
+	if facts.Channels != nil && *facts.Channels <= 0 || facts.Bitrate != nil && *facts.Bitrate < 0 || facts.BitDepth != nil && *facts.BitDepth <= 0 || facts.SampleRate != nil && *facts.SampleRate <= 0 {
 		return fmt.Errorf("audio stream measurements are invalid")
 	}
 	if facts.ALACCapabilitiesVerified {
@@ -286,6 +287,10 @@ func clonePersistedAudioFacts(facts PersistedAudioFacts) PersistedAudioFacts {
 	if facts.BitDepth != nil {
 		value := *facts.BitDepth
 		facts.BitDepth = &value
+	}
+	if facts.SampleRate != nil {
+		value := *facts.SampleRate
+		facts.SampleRate = &value
 	}
 	return facts
 }
