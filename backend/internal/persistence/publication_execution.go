@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -213,7 +214,21 @@ func (repository *SetupManagerRepository) MarkPublicationQuiescent(ctx context.C
 		if err := tx.NewRaw(`SELECT expected_generation FROM track_publication_attempt WHERE operation_id=?`, guard.OperationID).Scan(ctx, &expected); err != nil {
 			return fmt.Errorf("quiesce publication delivery: read expected generation: %w", err)
 		}
-		if !sameOptionalUUID(currentGeneration, expected) {
+		var phase string
+		var frozen, journal json.RawMessage
+		if err := tx.NewRaw(`SELECT phase, frozen_inputs, mutation_journal FROM track_publication_attempt WHERE operation_id=?`, guard.OperationID).Scan(ctx, &phase, &frozen, &journal); err != nil {
+			return fmt.Errorf("quiesce publication delivery: read attempt witness: %w", err)
+		}
+		committedCandidate := false
+		if phase == "committed" && len(frozen) == 0 && currentGeneration != nil {
+			var current TrackPublication
+			if err := tx.NewSelect().Model(&current).Where("position_id=?", guard.ExpectedPositionID).Scan(ctx); err != nil {
+				return fmt.Errorf("quiesce publication delivery: read committed publication: %w", err)
+			}
+			attempt := &TrackPublicationAttempt{OperationID: guard.OperationID, PositionID: attemptPosition, Epoch: attemptEpoch, CandidateGeneration: candidate, MutationJournal: journal}
+			committedCandidate = current.Generation == candidate && committedWitnessMatches(journal, guard, attempt, current)
+		}
+		if !sameOptionalUUID(currentGeneration, expected) && !committedCandidate {
 			return nil
 		}
 		claim := new(PublicationExecutionClaim)

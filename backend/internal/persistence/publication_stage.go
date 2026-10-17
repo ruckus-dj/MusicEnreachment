@@ -162,6 +162,25 @@ func (repository *SetupManagerRepository) ProgressPublicationDelivery(ctx contex
 // River job, claim. This helper deliberately requires the actual River row to
 // remain running at the frozen attempt and never treats quiescence as ownership.
 func lockAndValidatePublicationDelivery(ctx context.Context, tx bun.Tx, guard PublicationDeliveryGuard, action string) (*TrackPublicationAttempt, *Operation, *PublicationExecutionClaim, bool, error) {
+	attempt, op, claim, live, err := lockPublicationDeliveryIdentity(ctx, tx, guard, action)
+	if err != nil || !live {
+		return attempt, op, claim, live, err
+	}
+	if claim.State != "executing" {
+		return nil, nil, nil, false, nil
+	}
+	var currentGeneration *uuid.UUID
+	err = tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, guard.ExpectedPositionID).Scan(ctx, &currentGeneration)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil, false, fmt.Errorf("%s: read current publication: %w", action, err)
+	}
+	if !sameOptionalUUID(currentGeneration, attempt.ExpectedGeneration) {
+		return nil, nil, nil, false, nil
+	}
+	return attempt, op, claim, true, nil
+}
+
+func lockPublicationDeliveryIdentity(ctx context.Context, tx bun.Tx, guard PublicationDeliveryGuard, action string) (*TrackPublicationAttempt, *Operation, *PublicationExecutionClaim, bool, error) {
 	fail := func(err error) (*TrackPublicationAttempt, *Operation, *PublicationExecutionClaim, bool, error) {
 		return nil, nil, nil, false, err
 	}
@@ -216,15 +235,7 @@ func lockAndValidatePublicationDelivery(ctx context.Context, tx bun.Tx, guard Pu
 	}
 	if op.Kind != "publish_track_v1" || op.State != "running" || op.Attempt != guard.ApplicationAttempt || op.RiverJobID == nil || *op.RiverJobID != guard.RiverJobID ||
 		riverState != "running" || riverAttempt != guard.RiverAttempt || attempt.PositionID != guard.ExpectedPositionID || attempt.Epoch != guard.Epoch ||
-		attempt.CandidateGeneration != guard.CandidateGeneration || !publicationClaimMatches(*claim, guard) || claim.State != "executing" {
-		return nil, nil, nil, false, nil
-	}
-	var currentGeneration *uuid.UUID
-	err := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, guard.ExpectedPositionID).Scan(ctx, &currentGeneration)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fail(fmt.Errorf("%s: read current publication: %w", action, err))
-	}
-	if !sameOptionalUUID(currentGeneration, attempt.ExpectedGeneration) {
+		attempt.CandidateGeneration != guard.CandidateGeneration || !publicationClaimMatches(*claim, guard) {
 		return nil, nil, nil, false, nil
 	}
 	return attempt, op, claim, true, nil

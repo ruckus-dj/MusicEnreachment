@@ -33,6 +33,8 @@ type FirstPublicationCommitProjection struct {
 	CurrentAudio           PublicationCurrentAudio     `json:"current_audio"`
 	Ownership              PublicationCurrentOwnership `json:"ownership"`
 	Metadata               PublicationCommitMetadata   `json:"metadata"`
+	ActualAssets           PublicationAssetOutcomes    `json:"actual_assets"`
+	QualityPolicyVersion   int                         `json:"quality_policy_version"`
 	NamespaceManifest      []PublicationNamespaceNode  `json:"namespace_manifest"`
 	EvidenceClassification string                      `json:"evidence_classification"`
 	MissingRequirements    []string                    `json:"missing_requirements"`
@@ -190,7 +192,7 @@ func AssessFirstPublicationCommit(attempt TrackPublicationAttempt, operation Pub
 			missing = removeCommitRequirement(missing, "quality_policy_provenance")
 		}
 	}
-	return FirstPublicationCommitProjection{Version: 1, PositionID: attempt.PositionID, Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, TargetRelativePath: targetRelativePath, CurrentAudio: audio, Ownership: PublicationCurrentOwnership{Version: 1, Identity: installed.Identity}, Metadata: metadata, NamespaceManifest: append([]PublicationNamespaceNode(nil), manifest...), EvidenceClassification: "evidence_consistency_only_namespace_not_revalidated", MissingRequirements: missing}, nil
+	return FirstPublicationCommitProjection{Version: 1, PositionID: attempt.PositionID, Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, TargetRelativePath: targetRelativePath, CurrentAudio: audio, Ownership: PublicationCurrentOwnership{Version: 1, Identity: installed.Identity}, Metadata: metadata, ActualAssets: assetOutcomes.Clone(), QualityPolicyVersion: input.QualityPolicyVersion, NamespaceManifest: append([]PublicationNamespaceNode(nil), manifest...), EvidenceClassification: "evidence_consistency_only_namespace_not_revalidated", MissingRequirements: missing}, nil
 }
 
 func removeCommitRequirement(requirements []string, target string) []string {
