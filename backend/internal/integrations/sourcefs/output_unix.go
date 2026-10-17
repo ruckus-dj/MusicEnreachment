@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -148,7 +149,7 @@ func (d *unixOutputDir) Identity(ctx context.Context) (DirectoryIdentity, error)
 	if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
 		return DirectoryIdentity{}, ErrNotDirectory
 	}
-	return DirectoryIdentity{Platform: "unix", Volume: fmt.Sprintf("%d", stat.Dev), FileID: fmt.Sprintf("%d", stat.Ino)}, nil
+	return DirectoryIdentity{Platform: runtime.GOOS, Volume: fmt.Sprintf("%d", stat.Dev), FileID: fmt.Sprintf("%d", stat.Ino)}, nil
 }
 
 func (d *unixOutputDir) CreateExclusive(ctx context.Context, name string) (OutputFile, error) {
@@ -216,6 +217,41 @@ func (d *unixOutputDir) Verify(ctx context.Context) error {
 		return err
 	}
 	if !os.SameFile(pinnedInfo, currentInfo) {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	return nil
+}
+
+func (d *unixOutputDir) VerifyChild(ctx context.Context, name string, expected DirectoryIdentity) error {
+	if err := validateOutputComponent(name); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return os.ErrClosed
+	}
+	fd, err := d.open(int(d.file.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW)
+	d.mu.Unlock()
+	if err != nil {
+		return classifyUnixError(err, true)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return ErrNotDirectory
+	}
+	actual := DirectoryIdentity{Platform: runtime.GOOS, Volume: fmt.Sprintf("%d", stat.Dev), FileID: fmt.Sprintf("%d", stat.Ino)}
+	if actual != expected {
 		return errors.New("sourcefs: output namespace changed")
 	}
 	return nil

@@ -226,6 +226,42 @@ func (d *windowsOutputDir) Identity(ctx context.Context) (DirectoryIdentity, err
 	return DirectoryIdentity{Platform: "windows", Volume: fmt.Sprintf("%08x", info.VolumeSerialNumber), FileID: fmt.Sprintf("%016x", fileID)}, nil
 }
 
+func (d *windowsOutputDir) VerifyChild(ctx context.Context, name string, expected DirectoryIdentity) error {
+	if invalidWindowsName(name) {
+		return ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return os.ErrClosed
+	}
+	h, err := outputWindowsOpen(d.handle, name, windowsDirAccess, windows.FILE_OPEN, true)
+	d.mu.Unlock()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if h != windows.InvalidHandle {
+			_ = windows.CloseHandle(h)
+		}
+		return ctxErr
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return err
+	}
+	fileID := uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow)
+	actual := DirectoryIdentity{Platform: "windows", Volume: fmt.Sprintf("%08x", info.VolumeSerialNumber), FileID: fmt.Sprintf("%016x", fileID)}
+	if actual != expected {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	return nil
+}
+
 func (d *windowsOutputDir) CreateExclusive(ctx context.Context, name string) (OutputFile, error) {
 	if invalidWindowsName(name) {
 		return nil, ErrInvalidPath

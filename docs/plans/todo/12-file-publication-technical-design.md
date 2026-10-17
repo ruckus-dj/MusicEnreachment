@@ -323,6 +323,14 @@ ownership-checked rollback. Для другого output path новую вер�
 publication generation, ownership evidence (identity/digest если он реально
 выбран как technical witness), operation/fence и шаг; fsync/atomicity обещать
 только после платформенной проверки. Recovery сверяет actual FS state и journal.
+Шаги preparation journal `directory_created` и `input_ready` — это наблюдения
+identity/readiness во время данной delivery, а не доказательство, что имена
+директорий или input пережили power loss. Future recovery должна заново установить
+actual parent/directory identity и input validity; один record никогда не
+разрешает reuse, adoption, publication или deletion. Отсутствующее имя остаётся
+unresolved и не даёт права автоматически recreate/adopt/cleanup. Это уточнение не
+вводит новую recovery policy и не ослабляет durability requirements для будущих
+exposure, backup или source unlinks.
 При неизвестном содержимом,
 несовпадении ownership или stale fence — конфликт для оператора; не удалять и не
 «усыновлять» файл молча. Не объявлять универсальную atomic replace для разных

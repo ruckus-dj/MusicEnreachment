@@ -20,6 +20,7 @@ type OutputDirectory interface {
 	Identity(context.Context) (DirectoryIdentity, error)
 	Stat(context.Context) (fs.FileInfo, error)
 	Verify(context.Context) error
+	VerifyChild(context.Context, string, DirectoryIdentity) error
 	Close() error
 }
 

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -88,7 +89,7 @@ func TestOutputDirectoryCreateDirExclusiveAndIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != second || first.Platform == "" || first.Volume == "" || first.FileID == "" {
+	if first != second || first.Platform != runtime.GOOS || first.Volume == "" || first.FileID == "" {
 		t.Fatalf("identity is not stable and complete: first=%+v second=%+v", first, second)
 	}
 
@@ -115,6 +116,41 @@ func TestOutputDirectoryCreateDirExclusiveAndIdentity(t *testing.T) {
 	}
 	if first != afterRename {
 		t.Fatalf("identity changed after rename: before=%+v after=%+v", first, afterRename)
+	}
+}
+
+func TestOutputDirectoryVerifyChildDetectsReplacement(t *testing.T) {
+	ctx := context.Background()
+	rootPath, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := NewOutputOpener().OpenRoot(ctx, rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+
+	child, err := root.CreateDirExclusive(ctx, "child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Close() }()
+	identity, err := child.Identity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.VerifyChild(ctx, "child", identity); err != nil {
+		t.Fatalf("VerifyChild accepted identity of the named child: %v", err)
+	}
+	if err := os.Rename(filepath.Join(rootPath, "child"), filepath.Join(rootPath, "moved-child")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(rootPath, "child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.VerifyChild(ctx, "child", identity); err == nil {
+		t.Fatal("VerifyChild accepted a replacement at the child name")
 	}
 }
 

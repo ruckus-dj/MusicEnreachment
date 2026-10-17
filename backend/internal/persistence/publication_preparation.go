@@ -21,6 +21,12 @@ type PublicationDirectoryIdentity struct {
 }
 
 // PublicationPreparationRecord is journal data, not filesystem authority.
+// directory_created and input_ready record identity/readiness observed during
+// this delivery; their persistence does not prove that the directory names or
+// input survived a power loss. Future recovery must re-establish the actual
+// parent and directory identity and input validity. The record alone never
+// authorizes reuse, adoption, publication, or deletion; a missing name is
+// unresolved, not authority to recreate, adopt, or clean up automatically.
 // Replaying an identical record only reports its durable presence; callers
 // must independently establish ownership before performing filesystem work.
 type PublicationPreparationRecord struct {
