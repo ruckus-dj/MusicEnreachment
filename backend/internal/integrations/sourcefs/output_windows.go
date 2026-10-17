@@ -4,6 +4,7 @@ package sourcefs
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -295,6 +296,119 @@ func (d *windowsOutputDir) CreateExclusive(ctx context.Context, name string) (Ou
 	}
 	return &windowsOutputFile{file: f}, nil
 }
+
+func (d *windowsOutputDir) OpenExistingRegular(ctx context.Context, name string) (RegularFile, error) {
+	if invalidWindowsName(name) {
+		return nil, ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, os.ErrClosed
+	}
+	h, err := outputWindowsOpen(d.handle, name, windows.GENERIC_READ|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, false)
+	d.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = windows.CloseHandle(h)
+		return nil, err
+	}
+	f := os.NewFile(uintptr(h), name)
+	if f == nil {
+		_ = windows.CloseHandle(h)
+		return nil, ErrNotRegular
+	}
+	return newRegularFile(f), nil
+}
+
+func (d *windowsOutputDir) RenameNoReplace(ctx context.Context, sourceParent OutputDirectory, sourceName string, targetParent OutputDirectory, targetName string) error {
+	if invalidWindowsName(sourceName) || invalidWindowsName(targetName) {
+		return ErrInvalidPath
+	}
+	source, ok := sourceParent.(*windowsOutputDir)
+	if !ok {
+		return ErrUnsupported
+	}
+	target, ok := targetParent.(*windowsOutputDir)
+	if !ok {
+		return ErrUnsupported
+	}
+	if source == target && strings.EqualFold(sourceName, targetName) {
+		return ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sourceHandle, err := duplicateOutputDirectoryHandle(source)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = windows.CloseHandle(sourceHandle) }()
+	targetHandle, err := duplicateOutputDirectoryHandle(target)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = windows.CloseHandle(targetHandle) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	fileHandle, err := outputWindowsOpen(sourceHandle, sourceName, windows.DELETE|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, false)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = windows.CloseHandle(fileHandle) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	name, err := windows.UTF16FromString(targetName)
+	if err != nil {
+		return ErrInvalidPath
+	}
+	name = name[:len(name)-1]
+	nameBytes := len(name) * 2
+	rootOffset := (1 + int(unsafe.Sizeof(uintptr(0))) - 1) &^ (int(unsafe.Sizeof(uintptr(0))) - 1)
+	fileNameOffset := rootOffset + int(unsafe.Sizeof(uintptr(0))) + 4
+	buffer := make([]byte, fileNameOffset+nameBytes)
+	buffer[0] = 0 // ReplaceIfExists = FALSE.
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		binary.LittleEndian.PutUint64(buffer[rootOffset:], uint64(targetHandle))
+	} else {
+		binary.LittleEndian.PutUint32(buffer[rootOffset:], uint32(targetHandle))
+	}
+	binary.LittleEndian.PutUint32(buffer[rootOffset+int(unsafe.Sizeof(uintptr(0))):], uint32(nameBytes))
+	for i, unit := range name {
+		binary.LittleEndian.PutUint16(buffer[fileNameOffset+i*2:], unit)
+	}
+	var iosb windows.IO_STATUS_BLOCK
+	if err := windows.NtSetInformationFile(fileHandle, &iosb, &buffer[0], uint32(len(buffer)), 10); err != nil {
+		return err
+	}
+	runtime.KeepAlive(buffer)
+	return nil
+}
+
+func duplicateOutputDirectoryHandle(d *windowsOutputDir) (windows.Handle, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return windows.InvalidHandle, os.ErrClosed
+	}
+	process, err := windows.GetCurrentProcess()
+	if err != nil {
+		return windows.InvalidHandle, err
+	}
+	var duplicate windows.Handle
+	if err := windows.DuplicateHandle(process, d.handle, process, &duplicate, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		return windows.InvalidHandle, err
+	}
+	return duplicate, nil
+}
+
 func (d *windowsOutputDir) Stat(ctx context.Context) (fs.FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

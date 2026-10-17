@@ -187,6 +187,125 @@ func (d *unixOutputDir) CreateExclusive(ctx context.Context, name string) (Outpu
 	return &unixOutputFile{file: os.NewFile(uintptr(fd), "sourcefs-output-file")}, nil
 }
 
+func (d *unixOutputDir) OpenExistingRegular(ctx context.Context, name string) (RegularFile, error) {
+	if err := validateUnixMutationComponent(name); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, os.ErrClosed
+	}
+	fd, err := d.open(int(d.file.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK)
+	d.mu.Unlock()
+	if err != nil {
+		return nil, classifyUnixError(err, false)
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		_ = unix.Close(fd)
+		return nil, ErrNotRegular
+	}
+	if err := ctx.Err(); err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
+	return newRegularFile(os.NewFile(uintptr(fd), "sourcefs-existing-output")), nil
+}
+
+func (d *unixOutputDir) RenameNoReplace(ctx context.Context, sourceParent OutputDirectory, sourceName string, targetParent OutputDirectory, targetName string) error {
+	if err := validateUnixMutationComponent(sourceName); err != nil {
+		return err
+	}
+	if err := validateUnixMutationComponent(targetName); err != nil {
+		return err
+	}
+	source, ok := sourceParent.(*unixOutputDir)
+	if !ok {
+		return ErrUnsupported
+	}
+	target, ok := targetParent.(*unixOutputDir)
+	if !ok {
+		return ErrUnsupported
+	}
+	if source == target && sourceName == targetName {
+		return ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sourceFD, err := duplicateOutputDirFD(source)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(sourceFD) }()
+	targetFD, err := duplicateOutputDirFD(target)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(targetFD) }()
+	// Pin and inspect the source before renaming. O_NONBLOCK prevents a FIFO
+	// source from hanging this check; O_NOFOLLOW rejects symlinks, including
+	// dangling ones. The pathname can still be swapped after this check, so it
+	// does not eliminate races with hostile concurrent directory writers.
+	sourceFileFD, err := unix.Openat(sourceFD, sourceName, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return classifyUnixError(err, false)
+	}
+	var sourceStat unix.Stat_t
+	statErr := unix.Fstat(sourceFileFD, &sourceStat)
+	if statErr != nil {
+		_ = unix.Close(sourceFileFD)
+		return statErr
+	}
+	if sourceStat.Mode&unix.S_IFMT != unix.S_IFREG {
+		_ = unix.Close(sourceFileFD)
+		return ErrNotRegular
+	}
+	if err := ctx.Err(); err != nil {
+		_ = unix.Close(sourceFileFD)
+		return err
+	}
+	if err := unix.Close(sourceFileFD); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return renameNoReplaceNative(sourceFD, sourceName, targetFD, targetName)
+}
+
+func validateUnixMutationComponent(name string) error {
+	if err := validateOutputComponent(name); err != nil {
+		return err
+	}
+	if strings.ContainsRune(name, ':') {
+		return ErrInvalidPath
+	}
+	return nil
+}
+
+func duplicateOutputDirFD(d *unixOutputDir) (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return -1, os.ErrClosed
+	}
+	fd, err := unix.Dup(int(d.file.Fd()))
+	if err != nil {
+		return -1, err
+	}
+	unix.CloseOnExec(fd)
+	return fd, nil
+}
+
 func (d *unixOutputDir) Stat(ctx context.Context) (fs.FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

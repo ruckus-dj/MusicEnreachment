@@ -24,6 +24,15 @@ type OutputDirectory interface {
 	Close() error
 }
 
+// OutputMutation is an optional capability implemented only by native output
+// directories that support handle-relative, no-replace publication operations.
+// Keeping it separate avoids requiring test doubles and wrapped capabilities to
+// expose mutation primitives they cannot safely implement.
+type OutputMutation interface {
+	RenameNoReplace(context.Context, OutputDirectory, string, OutputDirectory, string) error
+	OpenExistingRegular(context.Context, string) (RegularFile, error)
+}
+
 // DirectoryIdentity identifies the directory referenced by an open output
 // handle. It is suitable for persistence preparation, not proof against
 // hostile concurrent actors or filesystem identifier reuse.
