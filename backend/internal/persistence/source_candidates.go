@@ -123,6 +123,9 @@ func loadSourceScanCandidates(ctx context.Context, database bun.IDB, operationID
 // only has its file facts confirmed; a location the batch does not contain is
 // removed, so the pruning is scoped to the root and never to another root's rows.
 func applySourceScanCandidates(ctx context.Context, tx bun.Tx, root SourceRoot, generation int64, candidates []SourceScanCandidateInput) error {
+	if err := validateHeldSourceLocations(ctx, tx, root, candidates); err != nil {
+		return err
+	}
 	// A root whose configured path changed describes an inventory of another
 	// directory: every link of the previous path is invalidated before the new
 	// generation is written, even when a file keeps its relative path, size and
@@ -161,6 +164,37 @@ func applySourceScanCandidates(ctx context.Context, tx bun.Tx, root SourceRoot, 
 	}
 	// Result cleanup follows prepared-result publication in the same transaction,
 	// so replacing the inventory cannot discard identities still needed to publish.
+	return nil
+}
+
+// validateHeldSourceLocations runs before any source-location upsert, unlink, or
+// prune. Unchanged observations may refresh inventory bookkeeping; file identity
+// changes and disappearance must wait until every publication hold is released.
+func validateHeldSourceLocations(ctx context.Context, tx bun.IDB, root SourceRoot, candidates []SourceScanCandidateInput) error {
+	locations := make([]SourceLocation, 0)
+	if err := tx.NewSelect().Model(&locations).Where("source_root_id = ?", root.ID).Order("relative_path").For("UPDATE").Scan(ctx); err != nil {
+		return fmt.Errorf("lock locations for publication hold check: %w", err)
+	}
+	candidateByPath := make(map[string]SourceScanCandidateInput, len(candidates))
+	for _, candidate := range candidates {
+		candidateByPath[candidate.RelativePath] = candidate
+	}
+	for _, location := range locations {
+		var held bool
+		var err error
+		held, err = sourceHoldExists(ctx, tx, root.ID, location.ID, uuid.Nil)
+		if err != nil {
+			return fmt.Errorf("check publication hold for location %s: %w", location.ID, err)
+		}
+		if !held {
+			continue
+		}
+		candidate, seen := candidateByPath[location.RelativePath]
+		unchanged := seen && !root.Stale() && location.SizeBytes == candidate.SizeBytes && sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(candidate.Mtime))
+		if !unchanged {
+			return fmt.Errorf("source location %q is pinned by a publication hold", location.RelativePath)
+		}
+	}
 	return nil
 }
 

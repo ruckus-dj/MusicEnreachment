@@ -217,6 +217,15 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 				return fmt.Errorf("update source root: %w", ErrSourceRootActiveScan)
 			}
 		}
+		if cas.ConfiguredPath != current.ConfiguredPath {
+			held, err := sourceHoldExists(ctx, tx, current.ID, uuid.Nil, uuid.Nil)
+			if err != nil {
+				return fmt.Errorf("update source root: check publication holds: %w", err)
+			}
+			if held {
+				return fmt.Errorf("update source root: %w", ErrSourceRootActiveScan)
+			}
+		}
 		update := tx.NewUpdate().Model((*SourceRoot)(nil)).
 			Set("display_name = ?", cas.DisplayName).
 			Set("configured_path = ?", cas.ConfiguredPath).
@@ -264,6 +273,13 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 			return fmt.Errorf("check active source scan: %w", err)
 		}
 		if active {
+			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
+		}
+		held, err := sourceHoldExists(ctx, tx, id, uuid.Nil, uuid.Nil)
+		if err != nil {
+			return fmt.Errorf("delete source root: check publication holds: %w", err)
+		}
+		if held {
 			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
 		}
 		var workIDs []uuid.UUID

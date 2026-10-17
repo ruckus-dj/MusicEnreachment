@@ -84,6 +84,9 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 			}
 		}
 		candidates = filteredCandidates
+		if err := validateHeldSourceLocations(ctx, tx, *root, candidates); err != nil {
+			return fmt.Errorf("apply source enumeration: %w", err)
+		}
 
 		oldLocations := make([]SourceLocation, 0)
 		if err := tx.NewSelect().Model(&oldLocations).Where("source_root_id=?", root.ID).Order("relative_path").For("UPDATE").Scan(ctx); err != nil {
@@ -107,13 +110,6 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 				old.SourceRootID == root.ID && old.ConfiguredPath == root.ConfiguredPath && old.InventoryPath == root.ConfiguredPath && old.RelativePath == candidate.RelativePath && old.SizeBytes == candidate.SizeBytes && sourceAnalysisMtime(old.Mtime).Equal(sourceAnalysisMtime(candidate.Mtime))
 			if unchanged {
 				continue
-			}
-			var active int
-			if err := tx.NewRaw(`SELECT count(*) FROM operation_source_work_hold h JOIN operation o ON o.id=h.operation_id WHERE h.work_id=? AND o.state IN ('queued','running')`, old.ID).Scan(ctx, &active); err != nil {
-				return fmt.Errorf("apply source enumeration: check old work holds: %w", err)
-			}
-			if active > 0 {
-				return fmt.Errorf("apply source enumeration: old analysis work has an active hold")
 			}
 			if err := retireSourceAnalysisWork(ctx, tx, old.ID); err != nil {
 				return fmt.Errorf("apply source enumeration: safely retire old analysis work: %w", err)
@@ -245,8 +241,15 @@ func pruneEnumeratedLocations(ctx context.Context, tx bun.Tx, rootID, operationI
 		if exists {
 			continue
 		}
+		held, err := sourceHoldExists(ctx, tx, rootID, location.ID, uuid.Nil)
+		if err != nil {
+			return err
+		}
+		if held {
+			return fmt.Errorf("source location %q is pinned by a publication hold", location.RelativePath)
+		}
 		var workID uuid.UUID
-		err := tx.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=? FOR UPDATE`, location.ID).Scan(ctx, &workID)
+		err = tx.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=? FOR UPDATE`, location.ID).Scan(ctx, &workID)
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}

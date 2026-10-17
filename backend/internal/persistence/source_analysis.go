@@ -89,7 +89,8 @@ func deleteOrphanedMediaVariants(ctx context.Context, tx bun.IDB) error {
 			   AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold AS hold
 			       JOIN source_analysis_step AS step ON step.work_id = hold.work_id
 			       WHERE hold.operation_id IN (SELECT id FROM operation WHERE state IN ('queued', 'running'))
-			         AND (step.success_sha_variant_id = variant.id OR step.success_probe_variant_id = variant.id))`,
+			         AND (step.success_sha_variant_id = variant.id OR step.success_probe_variant_id = variant.id))
+			   AND NOT EXISTS (SELECT 1 FROM publication_source_hold AS hold WHERE hold.media_variant_id = variant.id)`,
 	).Exec(ctx); err != nil {
 		return fmt.Errorf("delete orphaned media variants: %w", err)
 	}

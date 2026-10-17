@@ -791,9 +791,10 @@ func (repository *SourceInventoryRepository) CleanupSourceMediaVariants(ctx cont
 		AND NOT EXISTS (SELECT 1 FROM source_work_variant_identity i WHERE i.media_variant_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM media_probe_cache c WHERE c.result_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM track_source t WHERE t.media_variant_id=v.id)
-		AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold h JOIN source_analysis_step s ON s.work_id=h.work_id
-			WHERE h.operation_id IN (SELECT id FROM operation WHERE state IN ('queued','running'))
-			AND (s.success_sha_variant_id=v.id OR s.success_probe_variant_id=v.id))`, bun.List(ids)).Exec(ctx); err != nil {
+			AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold h JOIN source_analysis_step s ON s.work_id=h.work_id
+				WHERE h.operation_id IN (SELECT id FROM operation WHERE state IN ('queued','running'))
+				AND (s.success_sha_variant_id=v.id OR s.success_probe_variant_id=v.id))
+			AND NOT EXISTS (SELECT 1 FROM publication_source_hold h WHERE h.media_variant_id=v.id)`, bun.List(ids)).Exec(ctx); err != nil {
 			return fmt.Errorf("cleanup source media variants: %w", err)
 		}
 		return nil

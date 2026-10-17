@@ -20,16 +20,12 @@ func retireSourceAnalysisWork(ctx context.Context, tx bun.IDB, workID uuid.UUID)
 	if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? FOR UPDATE`, workID).Scan(ctx, &work); err != nil {
 		return fmt.Errorf("retire source analysis work: read work: %w", err)
 	}
-	var active bool
-	if err := tx.NewRaw(`SELECT EXISTS (
-		SELECT 1 FROM operation_source_work_hold hold
-		JOIN operation operation ON operation.id=hold.operation_id
-		WHERE hold.work_id=? AND operation.state IN ('queued','running')
-	)`, workID).Scan(ctx, &active); err != nil {
-		return fmt.Errorf("retire source analysis work: check active holds: %w", err)
+	held, err := sourceHoldExists(ctx, tx, work.SourceRootID, work.LocationID, workID)
+	if err != nil {
+		return fmt.Errorf("retire source analysis work: check publication holds: %w", err)
 	}
-	if active {
-		return fmt.Errorf("retire source analysis work: work has an active hold")
+	if held {
+		return fmt.Errorf("retire source analysis work: work has a publication hold")
 	}
 	if _, err := tx.NewRaw(`DELETE FROM source_work_variant_identity WHERE work_id=?`, workID).Exec(ctx); err != nil {
 		return fmt.Errorf("retire source analysis work: delete variant identity: %w", err)
