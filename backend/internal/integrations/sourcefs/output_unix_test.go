@@ -43,3 +43,24 @@ func TestOutputCapabilityRejectsSymlinkDirectoryAndFinal(t *testing.T) {
 		t.Fatalf("foreign file after rejected operations = %q, %v", got, err)
 	}
 }
+
+func TestOutputCreateDirExclusiveDoesNotAdoptSymlink(t *testing.T) {
+	ctx := context.Background()
+	rootPath := unixTempDir(t)
+	outside := unixTempDir(t)
+	if err := os.Symlink(outside, filepath.Join(rootPath, "directory-link")); err != nil {
+		t.Fatal(err)
+	}
+	root, err := NewOutputOpener().OpenRoot(ctx, rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	if child, err := root.CreateDirExclusive(ctx, "directory-link"); err == nil {
+		_ = child.Close()
+		t.Fatal("CreateDirExclusive adopted a symlink")
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Fatalf("outside directory changed: entries=%v error=%v", entries, err)
+	}
+}

@@ -15,10 +15,21 @@ type OutputOpener interface {
 // it grants creation and mutation rights and is only for managed output trees.
 type OutputDirectory interface {
 	OpenOrCreateDir(context.Context, string) (OutputDirectory, error)
+	CreateDirExclusive(context.Context, string) (OutputDirectory, error)
 	CreateExclusive(context.Context, string) (OutputFile, error)
+	Identity(context.Context) (DirectoryIdentity, error)
 	Stat(context.Context) (fs.FileInfo, error)
 	Verify(context.Context) error
 	Close() error
+}
+
+// DirectoryIdentity identifies the directory referenced by an open output
+// handle. It is suitable for persistence preparation, not proof against
+// hostile concurrent actors or filesystem identifier reuse.
+type DirectoryIdentity struct {
+	Platform string `json:"platform"`
+	Volume   string `json:"volume"`
+	FileID   string `json:"file_id"`
 }
 
 // OutputFile is a newly created regular output file. BorrowRead loans the

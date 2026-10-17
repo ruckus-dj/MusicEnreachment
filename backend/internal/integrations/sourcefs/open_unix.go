@@ -90,6 +90,18 @@ func validateComponent(name string) error {
 	return nil
 }
 
+// validateOutputComponent is stricter than the read-only Unix component
+// validator: output capabilities treat backslash as a separator on every OS.
+func validateOutputComponent(name string) error {
+	if err := validateComponent(name); err != nil {
+		return err
+	}
+	if strings.ContainsRune(name, '\\') {
+		return ErrInvalidPath
+	}
+	return nil
+}
+
 type unixDirectory struct {
 	mu     sync.Mutex
 	file   *os.File

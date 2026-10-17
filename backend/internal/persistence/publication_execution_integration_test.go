@@ -318,6 +318,284 @@ func TestPublicationStageRequiresRunningRiverAttemptAndValidArtifactPostgreSQL(t
 	}
 }
 
+func publicationPreparationFixtureRecord(guard PublicationDeliveryGuard) PublicationPreparationRecord {
+	return PublicationPreparationRecord{
+		Version: PublicationPreparationVersion, Kind: "publication_preparation", Step: "intent",
+		OperationID: guard.OperationID, ClaimUUID: guard.ClaimUUID, OwnerToken: uuid.New(),
+		PrivateDirRel: "private/op", InputRel: "private/op/input.flac", OutputRel: "private/op/output.flac",
+		ParentIdentity: PublicationDirectoryIdentity{Platform: "darwin", Volume: "disk1", FileID: "parent-42"},
+	}
+}
+
+func TestPublicationPreparationJournalStagesAndIdempotencyPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	intent := publicationPreparationFixtureRecord(f.guard)
+	record := func(value PublicationPreparationRecord, want PublicationPreparationOutcome) {
+		t.Helper()
+		got, err := repo.RecordPublicationPreparation(context.Background(), f.guard, value)
+		if err != nil || got != want {
+			t.Fatalf("record %s = %q, %v; want %q", value.Step, got, err, want)
+		}
+	}
+	record(intent, PublicationPreparationRecorded)
+	record(intent, PublicationPreparationAlreadyRecorded)
+	directory := intent
+	directory.Step = "directory_created"
+	directory.DirectoryIdentity = &PublicationDirectoryIdentity{Platform: "darwin", Volume: "disk1", FileID: "private-99"}
+	record(directory, PublicationPreparationRecorded)
+	ready := directory
+	ready.Step = "input_ready"
+	ready.InputSize = new(int64)
+	ready.InputMTime = new(int64)
+	*ready.InputSize = 0
+	*ready.InputMTime = 123
+	record(ready, PublicationPreparationRecorded)
+	record(directory, PublicationPreparationAlreadyRecorded)
+	attempt, err := repo.ReadPublicationAttempt(context.Background(), f.guard.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil || len(entries) != 3 {
+		t.Fatalf("journal has %d entries (%s): %v", len(entries), attempt.MutationJournal, err)
+	}
+}
+
+func TestPublicationPreparationRejectsInvalidOrderPathsConflictsAndStaleGuardPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	intent := publicationPreparationFixtureRecord(f.guard)
+	invalid := intent
+	invalid.Step = "directory_created"
+	invalid.DirectoryIdentity = &PublicationDirectoryIdentity{Platform: "darwin", Volume: "disk", FileID: "private"}
+	if _, err := repo.RecordPublicationPreparation(context.Background(), f.guard, invalid); err == nil {
+		t.Fatal("accepted directory_created before intent")
+	}
+	for _, mutate := range []func(*PublicationPreparationRecord){
+		func(r *PublicationPreparationRecord) { r.InputRel = "../../outside" },
+		func(r *PublicationPreparationRecord) { r.OutputRel = r.InputRel },
+		func(r *PublicationPreparationRecord) { r.OutputRel = r.InputRel + "/nested.flac" },
+		func(r *PublicationPreparationRecord) { r.InputRel = r.OutputRel + "/nested.flac" },
+		func(r *PublicationPreparationRecord) { r.ParentIdentity.Platform = "plan9" },
+		func(r *PublicationPreparationRecord) { r.OwnerToken = uuid.Nil },
+	} {
+		bad := intent
+		mutate(&bad)
+		if _, err := repo.RecordPublicationPreparation(context.Background(), f.guard, bad); err == nil {
+			t.Fatalf("accepted invalid plan %+v", bad)
+		}
+	}
+	if got, err := repo.RecordPublicationPreparation(context.Background(), f.guard, intent); err != nil || got != PublicationPreparationRecorded {
+		t.Fatalf("intent = %q, %v", got, err)
+	}
+	conflict := intent
+	conflict.OwnerToken = uuid.New()
+	if _, err := repo.RecordPublicationPreparation(context.Background(), f.guard, conflict); err == nil {
+		t.Fatal("accepted conflicting immutable plan")
+	}
+	staleGuards := []func(*PublicationDeliveryGuard){
+		func(g *PublicationDeliveryGuard) { g.OperationID = uuid.New() },
+		func(g *PublicationDeliveryGuard) { g.ApplicationAttempt++ },
+		func(g *PublicationDeliveryGuard) { g.RiverJobID++ },
+		func(g *PublicationDeliveryGuard) { g.RiverAttempt++ },
+		func(g *PublicationDeliveryGuard) { g.ClaimUUID = uuid.New() },
+		func(g *PublicationDeliveryGuard) { g.BootUUID = uuid.New() },
+		func(g *PublicationDeliveryGuard) { g.DeliveryToken += "x" },
+		func(g *PublicationDeliveryGuard) { g.Epoch = uuid.New() },
+		func(g *PublicationDeliveryGuard) { g.ExpectedPositionID = uuid.New() },
+		func(g *PublicationDeliveryGuard) { g.CandidateGeneration = uuid.New() },
+	}
+	for _, mutate := range staleGuards {
+		stale := f.guard
+		mutate(&stale)
+		if got, err := repo.RecordPublicationPreparation(context.Background(), stale, intent); err != nil || got != PublicationPreparationStale {
+			t.Fatalf("stale guard outcome = %q, %v", got, err)
+		}
+	}
+	var entries []json.RawMessage
+	attempt, err := repo.ReadPublicationAttempt(context.Background(), f.guard.OperationID)
+	if err != nil || json.Unmarshal(attempt.MutationJournal, &entries) != nil || len(entries) != 1 {
+		t.Fatalf("invalid/stale writes changed journal: %s, %v", attempt.MutationJournal, err)
+	}
+}
+
+func TestPublicationPreparationConcurrentIdenticalAppendPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	intent := publicationPreparationFixtureRecord(f.guard)
+	const workers = 8
+	var wait sync.WaitGroup
+	outcomes := make(chan PublicationPreparationOutcome, workers)
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			outcome, err := repo.RecordPublicationPreparation(context.Background(), f.guard, intent)
+			outcomes <- outcome
+			errs <- err
+		}()
+	}
+	wait.Wait()
+	close(outcomes)
+	close(errs)
+	recorded, already := 0, 0
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for outcome := range outcomes {
+		switch outcome {
+		case PublicationPreparationRecorded:
+			recorded++
+		case PublicationPreparationAlreadyRecorded:
+			already++
+		default:
+			t.Fatalf("unexpected concurrent outcome %q", outcome)
+		}
+	}
+	var entries []json.RawMessage
+	attempt, err := repo.ReadPublicationAttempt(context.Background(), f.guard.OperationID)
+	if err != nil || json.Unmarshal(attempt.MutationJournal, &entries) != nil || recorded != 1 || already != workers-1 || len(entries) != 1 {
+		t.Fatalf("concurrent append outcome recorded=%d already=%d entries=%d, journal=%s err=%v", recorded, already, len(entries), attempt.MutationJournal, err)
+	}
+}
+
+func TestPublicationPreparationRequiresPreparingPhasePostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	if changed, err := repo.AdvancePublicationStage(context.Background(), f.guard, "preparing", newValidPublicationStageObservation()); err != nil || !changed {
+		t.Fatalf("advance stage = %t, %v", changed, err)
+	}
+	if outcome, err := repo.RecordPublicationPreparation(context.Background(), f.guard, publicationPreparationFixtureRecord(f.guard)); err != nil || outcome != PublicationPreparationStale {
+		t.Fatalf("post-preparing preparation = %q, %v", outcome, err)
+	}
+	attempt, err := repo.ReadPublicationAttempt(context.Background(), f.guard.OperationID)
+	if err != nil || string(attempt.MutationJournal) == "[]" {
+		t.Fatalf("stage journal unexpectedly empty or unreadable: %+v, %v", attempt, err)
+	}
+}
+
+func TestPublicationPreparationRejectsMalformedPriorJournalPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	malformed := `[{"version":1,"kind":"publication_preparation","step":"directory_created"}]`
+	if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, malformed, f.guard.OperationID).Exec(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RecordPublicationPreparation(context.Background(), f.guard, publicationPreparationFixtureRecord(f.guard)); err == nil {
+		t.Fatal("accepted malformed prior preparation journal")
+	}
+	var journal string
+	if err := f.db.NewRaw(`SELECT mutation_journal::text FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(context.Background(), &journal); err != nil {
+		t.Fatal(err)
+	}
+	var entries []json.RawMessage
+	if json.Unmarshal([]byte(journal), &entries) != nil || len(entries) != 1 {
+		t.Fatalf("malformed journal changed: %s", journal)
+	}
+}
+
+func TestPublicationPreparationRejectsMismatchedPriorDirectoryIdentityWithoutMutationPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	intent := publicationPreparationFixtureRecord(f.guard)
+	directory := intent
+	directory.Step = "directory_created"
+	directory.DirectoryIdentity = &PublicationDirectoryIdentity{Platform: "darwin", Volume: "disk1", FileID: "private-99"}
+	ready := directory
+	ready.Step = "input_ready"
+	ready.DirectoryIdentity = &PublicationDirectoryIdentity{Platform: "darwin", Volume: "disk1", FileID: "different-private-dir"}
+	ready.InputSize = new(int64)
+	ready.InputMTime = new(int64)
+	entries := []PublicationPreparationRecord{intent, directory, ready}
+	journal, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, string(journal), f.guard.OperationID).Exec(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var original string
+	if err := f.db.NewRaw(`SELECT mutation_journal::text FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(context.Background(), &original); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RecordPublicationPreparation(context.Background(), f.guard, intent); err == nil {
+		t.Fatal("accepted a replay against mismatched prior directory identities")
+	}
+	var stored string
+	if err := f.db.NewRaw(`SELECT mutation_journal::text FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(context.Background(), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != original {
+		t.Fatalf("mismatched journal changed: %s", stored)
+	}
+}
+
+func TestPublicationPreparationRejectsOverlappingPriorPlanPathsPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	valid := publicationPreparationFixtureRecord(f.guard)
+	for _, paths := range [][2]string{
+		{"private/op/input.flac", "private/op/input.flac/nested.flac"},
+		{"private/op/output.flac/nested.flac", "private/op/output.flac"},
+	} {
+		corrupt := valid
+		corrupt.InputRel, corrupt.OutputRel = paths[0], paths[1]
+		journal, err := json.Marshal([]PublicationPreparationRecord{corrupt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, string(journal), f.guard.OperationID).Exec(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		var original string
+		if err := f.db.NewRaw(`SELECT mutation_journal::text FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(context.Background(), &original); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.RecordPublicationPreparation(context.Background(), f.guard, valid); err == nil {
+			t.Fatalf("accepted prior plan with overlapping paths %q and %q", paths[0], paths[1])
+		}
+		var stored string
+		if err := f.db.NewRaw(`SELECT mutation_journal::text FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(context.Background(), &stored); err != nil {
+			t.Fatal(err)
+		}
+		if stored != original {
+			t.Fatalf("overlapping prior journal changed: %s", stored)
+		}
+	}
+}
+
 func TestPublicationProgressIsMonotonicAndGuardedPostgreSQL(t *testing.T) {
 	t.Parallel()
 	f := newPublicationExecutionFixture(t)

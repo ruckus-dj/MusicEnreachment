@@ -5,6 +5,7 @@ package sourcefs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -93,6 +94,61 @@ func (d *unixOutputDir) OpenOrCreateDir(ctx context.Context, name string) (Outpu
 		return nil, classifyUnixError(err, true)
 	}
 	return &unixOutputDir{file: os.NewFile(uintptr(fd), "sourcefs-output-child"), open: d.open}, nil
+}
+
+func (d *unixOutputDir) CreateDirExclusive(ctx context.Context, name string) (OutputDirectory, error) {
+	if err := validateOutputComponent(name); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, os.ErrClosed
+	}
+	parent := int(d.file.Fd())
+	if err := unix.Mkdirat(parent, name, 0o700); err != nil {
+		d.mu.Unlock()
+		if errors.Is(err, unix.EEXIST) {
+			return nil, errors.Join(fs.ErrExist, err)
+		}
+		return nil, err
+	}
+	fd, err := d.open(parent, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW)
+	d.mu.Unlock()
+	// Once mkdirat succeeds, cancellation or a later open failure must not
+	// remove the created entry: ownership is not established by pathname.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if fd >= 0 {
+			_ = unix.Close(fd)
+		}
+		return nil, ctxErr
+	}
+	if err != nil {
+		return nil, classifyUnixError(err, true)
+	}
+	return &unixOutputDir{file: os.NewFile(uintptr(fd), "sourcefs-output-child"), open: d.open}, nil
+}
+
+func (d *unixOutputDir) Identity(ctx context.Context) (DirectoryIdentity, error) {
+	if err := ctx.Err(); err != nil {
+		return DirectoryIdentity{}, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return DirectoryIdentity{}, os.ErrClosed
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(d.file.Fd()), &stat); err != nil {
+		return DirectoryIdentity{}, err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return DirectoryIdentity{}, ErrNotDirectory
+	}
+	return DirectoryIdentity{Platform: "unix", Volume: fmt.Sprintf("%d", stat.Dev), FileID: fmt.Sprintf("%d", stat.Ino)}, nil
 }
 
 func (d *unixOutputDir) CreateExclusive(ctx context.Context, name string) (OutputFile, error) {

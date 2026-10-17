@@ -5,6 +5,7 @@ package sourcefs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -175,6 +176,56 @@ func (d *windowsOutputDir) OpenOrCreateDir(ctx context.Context, name string) (Ou
 	}
 	return &windowsOutputDir{handle: h}, nil
 }
+
+func (d *windowsOutputDir) CreateDirExclusive(ctx context.Context, name string) (OutputDirectory, error) {
+	if invalidWindowsName(name) {
+		return nil, ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, os.ErrClosed
+	}
+	h, err := outputWindowsOpen(d.handle, name, windowsDirAccess, windows.FILE_CREATE, true)
+	d.mu.Unlock()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if h != windows.InvalidHandle {
+			_ = windows.CloseHandle(h)
+		}
+		return nil, ctxErr
+	}
+	if err != nil {
+		if nt, ok := err.(windows.NTStatus); ok && nt == windows.STATUS_OBJECT_NAME_COLLISION {
+			return nil, errors.Join(fs.ErrExist, err)
+		}
+		return nil, err
+	}
+	return &windowsOutputDir{handle: h}, nil
+}
+
+func (d *windowsOutputDir) Identity(ctx context.Context) (DirectoryIdentity, error) {
+	if err := ctx.Err(); err != nil {
+		return DirectoryIdentity{}, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return DirectoryIdentity{}, os.ErrClosed
+	}
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(d.handle, &info); err != nil {
+		return DirectoryIdentity{}, err
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return DirectoryIdentity{}, ErrNotDirectory
+	}
+	fileID := uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow)
+	return DirectoryIdentity{Platform: "windows", Volume: fmt.Sprintf("%08x", info.VolumeSerialNumber), FileID: fmt.Sprintf("%016x", fileID)}, nil
+}
+
 func (d *windowsOutputDir) CreateExclusive(ctx context.Context, name string) (OutputFile, error) {
 	if invalidWindowsName(name) {
 		return nil, ErrInvalidPath
