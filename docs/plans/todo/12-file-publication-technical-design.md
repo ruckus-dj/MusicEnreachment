@@ -245,22 +245,43 @@ Delivery обязана перепроверить все claim/fence components
 `operation ID + operation attempt + River job ID + output epoch + claim/borrower
 identity`.
 
-Stale delivery не может продолжить после смены attempt/epoch/claim. Недостаточно
-проверить fence перед FS шагом и затем отпустить coordination: exclusion должна
-удерживаться непрерывно от проверки до завершения каждого mutating FS step и на
-всём recovery interval. Предлагается pinned PostgreSQL session advisory lock на
-одном выделенном соединении вокруг check → FS operation → durable journal/DB
-settlement; после каждого acquire повторно проверить operation/attempt/job/output
-epoch/publication generation. Не полагаться на TTL/lease expiration как право
-старой delivery продолжить. Session-lock owner — ровно удерживающее соединение;
-если соединение потеряно, остановить/убить и дождаться завершения дочернего
-процесса, затем сверить и восстановить journal под новой delivery. До этого
-никакая новая delivery не мутирует тот же target. Claims/output epoch должны
-ограждать также все конкурирующие app flows: reset, cleanup, tools/source flows
-и новые publication deliveries. Сверить их порядок с текущими lock flows;
-не утверждать app DB advisory lock как fence от внешнего процесса, который пишет
-в ту же FS напрямую. Риски внешнего writer выявлять по ownership/readback и
-останавливать на conflict.
+Stale delivery не может продолжить после смены attempt/epoch/claim. Exclusion
+состоит из единого process-local resource coordinator и durable execution claims.
+PostgreSQL session advisory locks дают дополнительную координацию, но теряются
+при разрыве соединения и сами не ограждают filesystem mutation.
+
+Coordinator разделяется workers, recovery, source cleanup и reset; блокировки
+позиции, FS-equivalent namespace и общих source resources удерживаются от
+claim/revalidation до завершения tool/FS callbacks, всех mutating goroutines,
+остановки дочерних процессов и settlement либо durable recovery handoff.
+Разные operation IDs не обходят блокировку общего ресурса. Локальные locks
+берутся до DB row locks; порядок ресурсов детерминирован и сверяется с текущими
+flows. Recovery использует те же locks.
+
+Claim хранит boot UUID, delivery token, attempt/job/output epoch/generation и
+состояние executing/recovery_required/quiescent. Lease timeout, River rescue,
+terminal operation state и исчезновение advisory lock не разрешают takeover.
+При DB uncertainty прекратить новые шаги, отменить/убить и дождаться tools и
+mutating callbacks; не освобождать local resources раньше их завершения.
+Неподтверждённый settlement оставляет durable claim, блокирующий competitors
+и reset. Tools пишут только в attempt-private staging; shared-target exposure
+и unlink делает приложение после остановки writer и validation.
+
+Startup recovery предшествует consumers и mutating endpoints. Для существующей
+single-process архитектуры замена процесса должна установить завершение прежнего
+server и mutating children; отсутствие DB lock или проверка PID этого не
+доказывают. Если quiescence не установлена, takeover запрещён. Перекрывающиеся
+запуски требуют отдельно проверенных interprocess exclusion и child containment;
+обычный parent-only OS lock проблему orphan child не решает. Это технический
+gate перед exposure, а не заявленная готовность текущего launcher. Неизвестное
+private staging остаётся quarantined, не переиспользуется и не выставляется.
+
+Обязательный regression interleaving: старая delivery теряет DB connection,
+новая уже получила advisory lock, но отмена старого mutator ещё не завершилась.
+Новая мутация, claim takeover, reset и shared-source unlink должны оставаться
+запрещёнными. Проверять барьерами, не sleeps, включая recovery/uncertain commit.
+Внешние filesystem writers не участвуют в coordinator; ownership/readback
+обнаруживает конфликт, но не обещает fence от враждебного процесса.
 
 ### Предложенный lifecycle
 
@@ -312,7 +333,9 @@ publication generation, ownership evidence (identity/digest если он реа
 Publication claims/in-flight attempts и source cleanup должны быть включены в
 существующие `AcquireOutputAdmissionGate`/`WithOutputAdmissionSession` и
 `checkResetAllowed`/`resetDomainState`. Claimed/running публикация или cleanup
-блокируют reset. Reset обязан в одной DB-транзакции с обновлением output
+блокируют reset. Reset проверяет все unresolved execution claims независимо от terminal operation
+или River state и не удаляет их ownership/recovery refs для обхода блокировки.
+Reset обязан в одной DB-транзакции с обновлением output
 epoch/snapshot отменить queued publication/cleanup jobs, удалить их queued refs
 и пометить cleanup items cancelled/stale. Любая
 подготовленная journal operation должна либо быть запрещена reset gate, либо
