@@ -79,6 +79,28 @@ func TestPublicationInputsRoundTripAudioAndRewrite(t *testing.T) {
 	}
 }
 
+func TestPublicationInputsQualityPolicyVersioning(t *testing.T) {
+	legacy := publicationInputsFixture(t, "audio")
+	if err := legacy.Validate(); err != nil {
+		t.Fatalf("version 1 inputs without policy provenance rejected: %v", err)
+	}
+	legacy.QualityPolicyVersion = 1
+	if err := legacy.Validate(); err == nil {
+		t.Fatal("version 1 inputs claimed quality policy provenance")
+	}
+
+	current := publicationInputsFixture(t, "audio")
+	current.Version = PublicationInputsVersion2
+	current.QualityPolicyVersion = publication.QualityPolicyVersion
+	if err := current.Validate(); err != nil {
+		t.Fatalf("version 2 inputs rejected: %v", err)
+	}
+	current.QualityPolicyVersion++
+	if err := current.Validate(); err == nil {
+		t.Fatal("unsupported quality policy version accepted")
+	}
+}
+
 func TestPublicationInputsCloneDetachesTagMapAndPreservesEmptyList(t *testing.T) {
 	input := publicationInputsFixture(t, "audio")
 	rate := 44100

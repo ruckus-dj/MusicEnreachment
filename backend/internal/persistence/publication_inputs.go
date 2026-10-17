@@ -17,17 +17,19 @@ import (
 )
 
 const PublicationInputsVersion = 1
+const PublicationInputsVersion2 = 2
 
 // PublicationInputs is the versioned, immutable execution contract retained by
 // a publication attempt. Intent-specific data is deliberately disjoint.
 type PublicationInputs struct {
-	Version     int                                `json:"version"`
-	IntentKind  string                             `json:"intent_kind"`
-	Audio       *PublicationAudioInput             `json:"audio,omitempty"`
-	Rewrite     *PublicationRewriteInput           `json:"rewrite,omitempty"`
-	Format      publication.AudioPublicationFormat `json:"format"`
-	DesiredTags map[string][]string                `json:"desired_tags"`
-	Tools       []SourceAnalysisToolSelection      `json:"tools"`
+	Version              int                                `json:"version"`
+	QualityPolicyVersion int                                `json:"quality_policy_version,omitempty"`
+	IntentKind           string                             `json:"intent_kind"`
+	Audio                *PublicationAudioInput             `json:"audio,omitempty"`
+	Rewrite              *PublicationRewriteInput           `json:"rewrite,omitempty"`
+	Format               publication.AudioPublicationFormat `json:"format"`
+	DesiredTags          map[string][]string                `json:"desired_tags"`
+	Tools                []SourceAnalysisToolSelection      `json:"tools"`
 }
 
 // PublicationAudioInput identifies the source file and verified audio result
@@ -116,8 +118,14 @@ func DecodePublicationInputs(raw json.RawMessage) (PublicationInputs, error) {
 
 // Validate enforces version, discriminated intent, selectors and portable paths.
 func (input PublicationInputs) Validate() error {
-	if input.Version != PublicationInputsVersion {
+	if input.Version != PublicationInputsVersion && input.Version != PublicationInputsVersion2 {
 		return fmt.Errorf("unsupported publication inputs version %d", input.Version)
+	}
+	if input.Version == PublicationInputsVersion && input.QualityPolicyVersion != 0 {
+		return errors.New("version 1 publication inputs cannot claim a quality policy version")
+	}
+	if input.Version == PublicationInputsVersion2 && input.QualityPolicyVersion != publication.QualityPolicyVersion {
+		return fmt.Errorf("unsupported publication quality policy version %d", input.QualityPolicyVersion)
 	}
 	if input.IntentKind != "audio" && input.IntentKind != "rewrite" {
 		return fmt.Errorf("unsupported publication intent %q", input.IntentKind)

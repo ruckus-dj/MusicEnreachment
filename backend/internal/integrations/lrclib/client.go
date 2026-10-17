@@ -224,6 +224,12 @@ func usableSyncedLyrics(lyrics string) (string, error) {
 	return lyrics, nil
 }
 
+// ValidateSyncedLyrics validates synced LRC text without performing a lookup.
+// The returned text is byte-for-byte identical to the input.
+func ValidateSyncedLyrics(lyrics string) (string, error) {
+	return usableSyncedLyrics(lyrics)
+}
+
 // validLyricLine reports whether line is one or more leading LRC tags (timestamps
 // or metadata) optionally followed by arbitrary lyric text, and whether any of
 // those tags is an actual timestamp. Once a timestamp has been parsed, an

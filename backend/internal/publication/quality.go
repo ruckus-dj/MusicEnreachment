@@ -2,6 +2,10 @@ package publication
 
 import "sort"
 
+// QualityPolicyVersion identifies the approved quality comparator frozen by
+// publication inputs. It is a provenance marker, not a new quality policy.
+const QualityPolicyVersion = 1
+
 // QualityCandidate contains only technical facts used to compare audio streams.
 // Nil dimensions mean that the corresponding fact is unknown, not that it has
 // a default value. Identity fields are used only to make equal selections
