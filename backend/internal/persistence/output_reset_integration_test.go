@@ -60,6 +60,13 @@ func TestRunOutputResetRequestJournalsAndCommitsAtomically(t *testing.T) {
 	if !created || token == uuid.Nil {
 		t.Fatalf("reset callback/token = %v/%v", created, token)
 	}
+	var outputEpoch uuid.UUID
+	if err := database.QueryRowContext(ctx, `SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(&outputEpoch); err != nil {
+		t.Fatalf("read publication output epoch: %v", err)
+	}
+	if outputEpoch != token {
+		t.Fatalf("publication output epoch = %s, want reset token %s", outputEpoch, token)
+	}
 	value, found, err := settings.Get(ctx, "output_directory")
 	if err != nil || !found || value != nativeTestPath(t, "/music/output-new") {
 		t.Fatalf("output directory = %q, %v, %v", value, found, err)

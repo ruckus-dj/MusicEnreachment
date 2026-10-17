@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -275,12 +276,20 @@ func checkResetAllowed(ctx context.Context, queryer interface {
 	err = queryer.QueryRowContext(ctx, `SELECT
 		EXISTS (SELECT 1 FROM operation WHERE state='running') OR
 		EXISTS (SELECT 1 FROM tools_execution_claim) OR
+		EXISTS (SELECT 1 FROM publication_execution_claim) OR
+		EXISTS (
+			SELECT 1 FROM track_publication_attempt attempt
+			LEFT JOIN operation operation ON operation.id=attempt.operation_id
+			WHERE attempt.phase <> 'queued' OR attempt.mutation_journal <> '[]'::jsonb
+				OR operation.id IS NULL OR operation.state <> 'queued'
+		) OR
 		EXISTS (
 			SELECT 1 FROM source_analysis_artifact_cleanup_item item
 			JOIN source_analysis_artifact artifact ON artifact.id=item.artifact_id
 			JOIN source_analysis_work work ON work.id=artifact.work_id
 			WHERE item.state='claimed'
 		) OR
+		EXISTS (SELECT 1 FROM source_cleanup_item WHERE state IN ('claimed','recovery_required')) OR
 		EXISTS (
 			SELECT 1 FROM source_analysis_work_artifact_binding binding
 			JOIN source_analysis_work work ON work.id=binding.work_id
@@ -433,7 +442,7 @@ func (session *OutputResetSession) commitReset(ctx context.Context, token uuid.U
 	if journal.State != "preparing" {
 		return rollback(fmt.Errorf("output reset journal is not preparing"))
 	}
-	if err := resetDomainState(ctx, tx, journal.OldRoot, journal.NewRoot, expectedToolsRoot, runtimeValues, &outcomes); err != nil {
+	if err := resetDomainState(ctx, tx, token, journal.OldRoot, journal.NewRoot, expectedToolsRoot, runtimeValues, &outcomes); err != nil {
 		return rollback(err)
 	}
 	encoded, err := json.Marshal(outcomes)
@@ -452,13 +461,35 @@ func (session *OutputResetSession) commitReset(ctx context.Context, token uuid.U
 	return journal, outcomes, nil
 }
 
-func resetDomainState(ctx context.Context, tx *sql.Tx, oldRoot, newRoot, expectedToolsRoot string, runtimeValues map[string]string, outcomes *outputResetOutcomes) error {
+func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot, newRoot, expectedToolsRoot string, runtimeValues map[string]string, outcomes *outputResetOutcomes) error {
 	// Recheck blockers under the exclusive session gate, before taking domain locks.
 	if err := checkResetAllowed(ctx, tx, oldRoot, newRoot, expectedToolsRoot); err != nil {
 		return fmt.Errorf("recheck output reset admission: %w", err)
 	}
 	if err := validateRuntimeUpdateSQL(ctx, tx, expectedToolsRoot, oldRoot, newRoot, runtimeValues); err != nil {
 		return fmt.Errorf("validate output reset runtime settings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM track_publication`); err != nil {
+		return fmt.Errorf("clear current track publications: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM publication_namespace_reservation`); err != nil {
+		return fmt.Errorf("clear publication namespace reservations: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM publication_namespace_claim`); err != nil {
+		return fmt.Errorf("clear publication namespace claims: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE source_cleanup_item SET state='cancelled',source_snapshot=NULL,borrower_revision=NULL,safe_error=NULL WHERE state IN ('queued','retry_pending')`); err != nil {
+		return fmt.Errorf("cancel pending source cleanup: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE river_job job SET state='cancelled',finalized_at=now()
+		FROM track_publication_attempt attempt JOIN operation operation ON operation.id=attempt.operation_id
+		WHERE operation.river_job_id=job.id AND operation.state='queued'
+			AND attempt.phase='queued' AND attempt.mutation_journal='[]'::jsonb
+			AND job.state IN ('available','pending','retryable','scheduled')`); err != nil {
+		return fmt.Errorf("cancel untouched publication deliveries: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM track_publication_attempt WHERE phase='queued' AND mutation_journal='[]'::jsonb`); err != nil {
+		return fmt.Errorf("remove untouched publication attempts: %w", err)
 	}
 	var ids []uuid.UUID
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_analysis_artifact ORDER BY id`)
@@ -535,6 +566,17 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, oldRoot, newRoot, expecte
 	}
 	if err := setRuntimeValuesSQL(ctx, tx, runtimeValues); err != nil {
 		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE publication_namespace_state SET output_epoch=$1 WHERE singleton=true`, token)
+	if err != nil {
+		return fmt.Errorf("rotate publication output epoch: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read publication epoch rotation outcome: %w", err)
+	}
+	if updated != 1 {
+		return errors.New("publication namespace state is missing")
 	}
 	return nil
 }
