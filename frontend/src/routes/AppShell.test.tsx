@@ -277,7 +277,7 @@ describe("AppShell sources routing", () => {
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
     ).toBeVisible();
     expect(
-      screen.getByText("Ни один каталог не зарегистрирован."),
+      await screen.findByText("Ни один каталог не зарегистрирован."),
     ).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
