@@ -33,6 +33,87 @@ type PublicationRecoveryAssessment struct {
 	RequiredObservations []string `json:"required_observations"`
 }
 
+// PublicationRecoveryObservationPlan contains detached, already-recorded
+// observations. It is descriptive evidence only and does not authorize work.
+type PublicationRecoveryObservationPlan struct {
+	Assessment     PublicationRecoveryAssessment `json:"assessment"`
+	Preparation    *PublicationPreparationRecord `json:"preparation,omitempty"`
+	ValidatedStage *PublicationStageObservation  `json:"validated_stage,omitempty"`
+	Exposure       *PublicationExposureIntent    `json:"exposure,omitempty"`
+}
+
+// PublicationRecoveryObservationPlanFor extracts only the evidence present in
+// the immutable journal, after the complete recovery assessment succeeds.
+// Preparation.InputMTime remains the original-source timestamp recorded by the
+// journal; it is not an expected mtime for the copied input file.
+func PublicationRecoveryObservationPlanFor(snapshot PublicationRecoverySnapshot) (PublicationRecoveryObservationPlan, error) {
+	assessment, err := AssessPublicationRecoveryEvidence(snapshot)
+	if err != nil {
+		return PublicationRecoveryObservationPlan{}, err
+	}
+	plan := PublicationRecoveryObservationPlan{Assessment: assessment}
+	entries, err := decodeJournal(snapshot.Attempt.MutationJournal)
+	if err != nil {
+		return PublicationRecoveryObservationPlan{}, err
+	}
+	for _, raw := range entries {
+		var header struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(raw, &header); err != nil {
+			return PublicationRecoveryObservationPlan{}, errors.New("malformed publication journal")
+		}
+		switch header.Kind {
+		case "publication_preparation":
+			var record PublicationPreparationRecord
+			if err := decodeStrictJSON(raw, &record); err != nil {
+				return PublicationRecoveryObservationPlan{}, err
+			}
+			copy := clonePublicationPreparationRecord(record)
+			plan.Preparation = &copy
+		case "stage_observation":
+			var record struct {
+				Version     int                         `json:"version"`
+				Kind        string                      `json:"kind"`
+				From        string                      `json:"from"`
+				To          string                      `json:"to"`
+				Observation PublicationStageObservation `json:"observation"`
+			}
+			if err := decodeStrictJSON(raw, &record); err != nil {
+				return PublicationRecoveryObservationPlan{}, err
+			}
+			if record.From == "staged" && record.To == "validated" {
+				copy := record.Observation.Clone()
+				plan.ValidatedStage = &copy
+			}
+		case "publication_exposure":
+			var record publicationExposureJournalRecord
+			if err := decodeStrictJSON(raw, &record); err != nil {
+				return PublicationRecoveryObservationPlan{}, err
+			}
+			copy := record.Intent
+			plan.Exposure = &copy
+		}
+	}
+	return plan, nil
+}
+
+func clonePublicationPreparationRecord(record PublicationPreparationRecord) PublicationPreparationRecord {
+	if record.DirectoryIdentity != nil {
+		identity := *record.DirectoryIdentity
+		record.DirectoryIdentity = &identity
+	}
+	if record.InputSize != nil {
+		size := *record.InputSize
+		record.InputSize = &size
+	}
+	if record.InputMTime != nil {
+		mtime := *record.InputMTime
+		record.InputMTime = &mtime
+	}
+	return record
+}
+
 // AssessPublicationRecoveryEvidence performs bounded, pure classification.
 // Quiescence is always an observation requirement, including terminal claims.
 func AssessPublicationRecoveryEvidence(snapshot PublicationRecoverySnapshot) (PublicationRecoveryAssessment, error) {

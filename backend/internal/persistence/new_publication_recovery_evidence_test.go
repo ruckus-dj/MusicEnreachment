@@ -54,6 +54,74 @@ func TestAssessPublicationRecoveryEvidenceAcceptsRealJournalFrontiers(t *testing
 	}
 }
 
+func TestPublicationRecoveryObservationPlanTracksRecordedPrefixes(t *testing.T) {
+	for _, test := range []struct {
+		count    int
+		prep     bool
+		stage    bool
+		exposure bool
+	}{
+		{0, false, false, false}, {1, true, false, false}, {2, true, false, false},
+		{3, true, false, false}, {4, true, false, false}, {5, true, true, false},
+		{6, true, true, true}, {7, true, true, true},
+	} {
+		attempt, operation, guard := commitEvidenceFixture(t)
+		entries, err := decodeJournal(attempt.MutationJournal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempt.MutationJournal, _ = json.Marshal(entries[:test.count])
+		phase := "preparing"
+		if test.count == 4 {
+			phase = "staged"
+		}
+		if test.count >= 5 && test.count < 6 {
+			phase = "validated"
+		}
+		if test.count >= 6 {
+			phase = "exposing"
+		}
+		attempt.Phase, operation.Stage = phase, phase
+		plan, err := PublicationRecoveryObservationPlanFor(recoveryEvidenceFromFixture(attempt, operation, guard))
+		if err != nil {
+			t.Fatalf("count %d: %v", test.count, err)
+		}
+		if (plan.Preparation != nil) != test.prep || (plan.ValidatedStage != nil) != test.stage || (plan.Exposure != nil) != test.exposure {
+			t.Fatalf("count %d produced unexpected plan: %#v", test.count, plan)
+		}
+	}
+}
+
+func TestPublicationRecoveryObservationPlanDetachesJournalEvidence(t *testing.T) {
+	attempt, operation, guard := commitEvidenceFixture(t)
+	plan, err := PublicationRecoveryObservationPlanFor(recoveryEvidenceFromFixture(attempt, operation, guard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Preparation == nil || plan.ValidatedStage == nil || plan.Exposure == nil {
+		t.Fatalf("incomplete plan: %#v", plan)
+	}
+	*plan.Preparation.InputSize++
+	plan.Preparation.DirectoryIdentity.FileID = "changed"
+	plan.ValidatedStage.ActualAudio[0] = ' '
+	plan.Exposure.StagedPath = "changed"
+	again, err := PublicationRecoveryObservationPlanFor(recoveryEvidenceFromFixture(attempt, operation, guard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *again.Preparation.InputSize == *plan.Preparation.InputSize || again.Preparation.DirectoryIdentity.FileID == "changed" || again.ValidatedStage.ActualAudio[0] == ' ' || again.Exposure.StagedPath == "changed" {
+		t.Fatal("returned evidence aliases a subsequent plan")
+	}
+}
+
+func TestPublicationRecoveryObservationPlanRejectsMalformedAssessment(t *testing.T) {
+	snapshot := recoveryEvidenceFixture()
+	snapshot.Attempt.MutationJournal = json.RawMessage(`[{"kind":"publication_preparation","unknown":true}]`)
+	if _, err := PublicationRecoveryObservationPlanFor(snapshot); err == nil {
+		t.Fatal("malformed journal was extracted without a successful assessment")
+	}
+}
+
 func TestAssessPublicationRecoveryEvidenceRequiresOriginalBootClaim(t *testing.T) {
 	attempt, operation, guard := commitEvidenceFixture(t)
 	snapshot := recoveryEvidenceFromFixture(attempt, operation, guard)

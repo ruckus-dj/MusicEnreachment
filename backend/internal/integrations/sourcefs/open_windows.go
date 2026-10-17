@@ -285,6 +285,32 @@ func (d *windowsDirectory) Stat(ctx context.Context) (fs.FileInfo, error) {
 	return info, err
 }
 
+func (d *windowsDirectory) Identity(ctx context.Context) (DirectoryIdentity, error) {
+	if err := ctx.Err(); err != nil {
+		return DirectoryIdentity{}, err
+	}
+	var identity DirectoryIdentity
+	err := d.with(ctx, func(handle windows.Handle) error {
+		var info windows.ByHandleFileInformation
+		if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			return ErrNotDirectory
+		}
+		fileID := uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow)
+		identity = DirectoryIdentity{Platform: "windows", Volume: fmt.Sprintf("%08x", info.VolumeSerialNumber), FileID: fmt.Sprintf("%016x", fileID)}
+		return nil
+	})
+	if err != nil {
+		return DirectoryIdentity{}, err
+	}
+	return identity, nil
+}
+
 // Directory record layout for FILE_ID_BOTH_DIR_INFO; names start at byte 104.
 func (d *windowsDirectory) ReadDir(ctx context.Context, n int) ([]Entry, error) {
 	if n < 0 {

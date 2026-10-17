@@ -145,6 +145,13 @@ type Directory interface {
 	Close() error
 }
 
+// DirectoryIdentifier is an optional read-only directory capability for
+// retrieving the identity of the object referenced by its pinned handle.
+// Implementations must not resolve the directory again by pathname.
+type DirectoryIdentifier interface {
+	Identity(context.Context) (DirectoryIdentity, error)
+}
+
 // RegularFile is an opened regular file. Borrow is a synchronous exclusive loan:
 // the callback owns use of the underlying descriptor until it returns. Each loan
 // starts rewound to offset zero; callers must not retain or use the pointer after

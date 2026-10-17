@@ -293,3 +293,100 @@ func TestUnsupportedOpenerFailsClosedWithoutPathnameAccess(t *testing.T) {
 		t.Fatalf("relative root error = %v, want ErrInvalidPath", err)
 	}
 }
+
+func TestReadOnlyDirectoryIdentityTracksPinnedRoot(t *testing.T) {
+	ctx := context.Background()
+	rootPath := filepath.Join(t.TempDir(), "root")
+	if err := os.Mkdir(rootPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rootPath, err := filepath.EvalSymlinks(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readRoot, err := NewOpener().OpenRoot(ctx, rootPath)
+	if err != nil {
+		if errors.Is(err, ErrUnsupported) {
+			t.Skip("platform does not support pinned read-only directories")
+		}
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := readRoot.Close(); err != nil {
+			t.Errorf("close read-only root: %v", err)
+		}
+	})
+	identifier, ok := readRoot.(DirectoryIdentifier)
+	if !ok {
+		t.Fatal("read-only directory does not expose DirectoryIdentifier")
+	}
+	initial, err := identifier.Identity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outputRoot, err := NewOutputOpener().OpenRoot(ctx, rootPath)
+	if err != nil {
+		if errors.Is(err, ErrUnsupported) {
+			t.Skip("platform does not support output directories")
+		}
+		t.Fatal(err)
+	}
+	outputIdentity, err := outputRoot.Identity(ctx)
+	if err != nil {
+		_ = outputRoot.Close()
+		t.Fatal(err)
+	}
+	if err := outputRoot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if initial != outputIdentity {
+		t.Fatalf("read-only identity = %#v, output identity = %#v", initial, outputIdentity)
+	}
+
+	renamedPath := rootPath + "-renamed"
+	if err := os.Rename(rootPath, renamedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(rootPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := identifier.Identity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stable != initial {
+		t.Fatalf("pinned identity after rename = %#v, want %#v", stable, initial)
+	}
+	replacement, err := NewOpener().OpenRoot(ctx, rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementIdentity, err := replacement.(DirectoryIdentifier).Identity(ctx)
+	_ = replacement.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacementIdentity == initial {
+		t.Fatalf("replacement identity = %#v, want different from pinned root %#v", replacementIdentity, initial)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := identifier.Identity(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled Identity error = %v, want context.Canceled", err)
+	}
+	if err := readRoot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identifier.Identity(ctx); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("closed Identity error = %v, want os.ErrClosed", err)
+	}
+	entries, err := os.ReadDir(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("identity operation created entries: %v", entries)
+	}
+}

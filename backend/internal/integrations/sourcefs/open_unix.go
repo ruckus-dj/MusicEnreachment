@@ -5,6 +5,7 @@ package sourcefs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -216,6 +217,31 @@ func (directory *unixDirectory) Stat(ctx context.Context) (fs.FileInfo, error) {
 		return nil, ctxErr
 	}
 	return info, err
+}
+
+func (directory *unixDirectory) Identity(ctx context.Context) (DirectoryIdentity, error) {
+	if err := ctx.Err(); err != nil {
+		return DirectoryIdentity{}, err
+	}
+	directory.mu.Lock()
+	defer directory.mu.Unlock()
+	if directory.closed {
+		return DirectoryIdentity{}, os.ErrClosed
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(directory.file.Fd()), &stat); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return DirectoryIdentity{}, ctxErr
+		}
+		return DirectoryIdentity{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return DirectoryIdentity{}, err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return DirectoryIdentity{}, ErrNotDirectory
+	}
+	return DirectoryIdentity{Platform: runtime.GOOS, Volume: fmt.Sprintf("%d", stat.Dev), FileID: fmt.Sprintf("%d", stat.Ino)}, nil
 }
 
 func (directory *unixDirectory) Close() error {
