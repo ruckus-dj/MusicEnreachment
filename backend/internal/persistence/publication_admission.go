@@ -6,11 +6,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/uptrace/bun"
 )
 
@@ -31,6 +34,7 @@ type PublicationAdmission struct {
 	CandidateGeneration uuid.UUID
 	IntentKind          string
 	ToolsReadRequired   bool
+	Tools               []SourceAnalysisToolSelection
 	FrozenInputs        json.RawMessage
 	NamespaceManifest   []PublicationNamespaceNode
 }
@@ -61,6 +65,38 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("admit publication: lock output gate: %w", err)
 		}
+		var pinnedInstallation *ToolInstallation
+		if request.ToolsReadRequired {
+			if err := lockToolsMoveReaders(ctx, tx); err != nil {
+				return fmt.Errorf("admit publication: lock tools-root readers: %w", err)
+			}
+			moving, err := activeToolsMoveExists(ctx, tx)
+			if err != nil {
+				return fmt.Errorf("admit publication: check active tools-root move: %w", err)
+			}
+			if moving {
+				return ErrToolsRootMoveActive
+			}
+			if err := validatePublicationToolSelections(request.Tools); err != nil {
+				return err
+			}
+			if err := lockPackageSelections(ctx, tx, []string{"ffmpeg"}); err != nil {
+				return fmt.Errorf("admit publication: lock ffmpeg selection: %w", err)
+			}
+			installationID := request.Tools[0].InstallationID
+			if err := lockCompatibleInstallations(ctx, tx, []uuid.UUID{installationID}); err != nil {
+				return fmt.Errorf("admit publication: lock pinned ffmpeg installation: %w", err)
+			}
+			pinnedInstallation = new(ToolInstallation)
+			if err := tx.NewSelect().Model(pinnedInstallation).Where("id = ?", installationID).Scan(ctx); err != nil {
+				return fmt.Errorf("admit publication: read pinned ffmpeg installation: %w", err)
+			}
+			if err := validatePublicationInstallation(pinnedInstallation, request.Tools); err != nil {
+				return err
+			}
+		} else if len(request.Tools) != 0 {
+			return fmt.Errorf("admit publication: tool selections require tools-read admission")
+		}
 		var epoch uuid.UUID
 		if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &epoch); err != nil {
 			return fmt.Errorf("admit publication: lock output epoch: %w", err)
@@ -90,6 +126,10 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 			return err
 		}
 		snapshot, _ := json.Marshal(map[string]any{"version": 1, "position_id": request.PositionID.String(), "output_epoch": epoch.String(), "intent_kind": request.IntentKind})
+		frozenInputs, err := publicationFrozenInputs(request.FrozenInputs, request.Tools)
+		if err != nil {
+			return err
+		}
 		result, err := client.InsertTx(ctx, tx.Tx, publicationTrackArgs{OperationID: operationID}, nil)
 		if err != nil {
 			return fmt.Errorf("admit publication: insert River job: %w", err)
@@ -105,9 +145,14 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 			Version int                        `json:"version"`
 			Nodes   []PublicationNamespaceNode `json:"nodes"`
 		}{Version: 1, Nodes: request.NamespaceManifest})
-		attempt := &TrackPublicationAttempt{OperationID: operationID, PositionID: request.PositionID, Epoch: epoch, ExpectedGeneration: request.ExpectedGeneration, CandidateGeneration: request.CandidateGeneration, IntentKind: request.IntentKind, Phase: "queued", FrozenInputs: request.FrozenInputs, NamespaceManifest: manifest, MutationJournal: json.RawMessage("[]")}
+		attempt := &TrackPublicationAttempt{OperationID: operationID, PositionID: request.PositionID, Epoch: epoch, ExpectedGeneration: request.ExpectedGeneration, CandidateGeneration: request.CandidateGeneration, IntentKind: request.IntentKind, Phase: "queued", FrozenInputs: frozenInputs, NamespaceManifest: manifest, MutationJournal: json.RawMessage("[]")}
 		if _, err := tx.NewInsert().Model(attempt).Exec(ctx); err != nil {
 			return fmt.Errorf("admit publication: create attempt: %w", err)
+		}
+		if pinnedInstallation != nil {
+			if _, err := tx.NewRaw(`INSERT INTO operation_tool_read_hold(operation_id, installation_id) VALUES (?, ?)`, operationID, pinnedInstallation.ID).Exec(ctx); err != nil {
+				return fmt.Errorf("admit publication: hold pinned ffmpeg installation: %w", err)
+			}
 		}
 		return nil
 	})
@@ -115,6 +160,91 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		return uuid.Nil, err
 	}
 	return operationID, nil
+}
+
+func validatePublicationToolSelections(selections []SourceAnalysisToolSelection) error {
+	if len(selections) != 2 {
+		return fmt.Errorf("admit publication: ffmpeg and ffprobe selections are required")
+	}
+	seen := map[string]bool{}
+	var installationID uuid.UUID
+	for _, selection := range selections {
+		if selection.PackageKind != "ffmpeg" || selection.InstallationID == uuid.Nil || selection.RelativePath == "" || selection.Version == "" || selection.VersionBanner == "" {
+			return fmt.Errorf("admit publication: invalid pinned ffmpeg executable selection")
+		}
+		if selection.Executable != "ffmpeg" && selection.Executable != "ffprobe" || seen[selection.Executable] {
+			return fmt.Errorf("admit publication: ffmpeg and ffprobe selections must be unique")
+		}
+		if installationID != uuid.Nil && installationID != selection.InstallationID {
+			return fmt.Errorf("admit publication: ffmpeg executables must use the same installation")
+		}
+		installationID = selection.InstallationID
+		seen[selection.Executable] = true
+	}
+	if !seen["ffmpeg"] || !seen["ffprobe"] {
+		return fmt.Errorf("admit publication: ffmpeg and ffprobe selections are required")
+	}
+	return nil
+}
+
+func validatePublicationInstallation(installation *ToolInstallation, selections []SourceAnalysisToolSelection) error {
+	if installation == nil || installation.PackageKind != "ffmpeg" || installation.State != "ready" || installation.VerifiedAt == nil ||
+		installation.PlatformGOOS != runtime.GOOS || installation.PlatformGOARCH != runtime.GOARCH ||
+		!(tools.Platform{GOOS: installation.PlatformGOOS, GOARCH: installation.PlatformGOARCH}).Supported() || !validInstallationRelativePath(installation) {
+		return fmt.Errorf("admit publication: pinned ffmpeg installation is not ready and verified for this platform")
+	}
+	var versions map[string]string
+	if json.Unmarshal(installation.ExecutableVersions, &versions) != nil {
+		return fmt.Errorf("admit publication: invalid verified executable versions")
+	}
+	for _, selection := range selections {
+		banner, ok := tools.VerifiedExecutableVersion(versions, tools.PackageFFmpeg, selection.Executable, installation.PlatformGOOS)
+		if !ok || filepath.ToSlash(selection.RelativePath) != filepath.ToSlash(installation.RelativePath) ||
+			banner != strings.TrimSpace(selection.VersionBanner) || !publicationBannerMatchesVersion(banner, selection.Executable, selection.Version) {
+			return fmt.Errorf("admit publication: pinned executable version does not match verified installation metadata")
+		}
+	}
+	return nil
+}
+
+func publicationBannerMatchesVersion(banner, executable, version string) bool {
+	if strings.TrimSpace(version) == "" {
+		return false
+	}
+	firstLine, _, _ := strings.Cut(banner, "\n")
+	fields := strings.Fields(firstLine)
+	return len(fields) >= 3 && fields[0] == executable && fields[1] == "version" && fields[2] == version
+}
+
+func publicationFrozenInputs(raw json.RawMessage, selections []SourceAnalysisToolSelection) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return nil, fmt.Errorf("admit publication: frozen inputs must be a JSON object")
+	}
+	if existing, ok := fields["tools"]; ok {
+		var previous []SourceAnalysisToolSelection
+		if err := json.Unmarshal(existing, &previous); err != nil || !samePublicationTools(previous, selections) || len(selections) == 0 && len(previous) != 0 {
+			return nil, fmt.Errorf("admit publication: frozen tool selections conflict with pinned tools")
+		}
+	}
+	if len(selections) > 0 {
+		encoded, err := json.Marshal(selections)
+		if err != nil {
+			return nil, fmt.Errorf("admit publication: encode pinned tools: %w", err)
+		}
+		fields["tools"] = encoded
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return nil, fmt.Errorf("admit publication: encode frozen inputs: %w", err)
+	}
+	return encoded, nil
+}
+
+func samePublicationTools(left, right []SourceAnalysisToolSelection) bool {
+	a, _ := json.Marshal(left)
+	b, _ := json.Marshal(right)
+	return string(a) == string(b)
 }
 
 func reservePublicationNamespace(ctx context.Context, tx bun.Tx, request PublicationAdmission) error {

@@ -598,7 +598,9 @@ describe("incoming manual group review", () => {
     expect(await screen.findByText(/Черновик сохранён/)).toBeInTheDocument();
     expect(screen.getAllByLabelText("Назначение")[0]).toHaveValue(ids.trackOne);
     expect(
-      screen.getByRole("button", { name: "Обновить сохранённую оценку" }),
+      await screen.findByRole("button", {
+        name: "Обновить сохранённую оценку",
+      }),
     ).toBeInTheDocument();
 
     const unevaluated = review({
