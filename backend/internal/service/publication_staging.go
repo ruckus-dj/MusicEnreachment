@@ -75,6 +75,13 @@ type PublicationStagingRunner struct {
 
 // Run executes only under a newly acquired scope bound to the same delivery.
 func (runner PublicationStagingRunner) Run(ctx context.Context, scope *PublicationExecutionScope, input persistence.PublicationInputs, stage PreparedPublicationStage) (result PublicationStageObservation, resultErr error) {
+	return runner.runWithValidatedStage(ctx, scope, input, stage, nil)
+}
+
+// runWithValidatedStage continues only after the durable validated transition
+// has been acknowledged. The callback receives detached evidence and runs
+// before deferred scope finalization.
+func (runner PublicationStagingRunner) runWithValidatedStage(ctx context.Context, scope *PublicationExecutionScope, input persistence.PublicationInputs, stage PreparedPublicationStage, continuation func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage) error) (result PublicationStageObservation, resultErr error) {
 	if runner.Repository == nil || stage == nil {
 		return result, errors.New("publication staging dependencies are unavailable")
 	}
@@ -232,6 +239,11 @@ func (runner PublicationStagingRunner) Run(ctx context.Context, scope *Publicati
 			return result, fmt.Errorf("record validated publication stage: %w", err)
 		}
 		return result, errors.New("publication validation transition was not accepted")
+	}
+	if continuation != nil {
+		if err := continuation(ctx, validated.Clone(), stage); err != nil {
+			return result, err
+		}
 	}
 	return result, nil
 }

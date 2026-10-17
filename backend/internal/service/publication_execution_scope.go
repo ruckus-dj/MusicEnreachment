@@ -37,6 +37,18 @@ type PublicationExecutionScope struct {
 	finalized  bool
 }
 
+// quarantineUncertain permanently fences this local scope after an operation
+// whose outcome cannot safely be retried or finalized.
+func (scope *PublicationExecutionScope) quarantineUncertain() {
+	if scope == nil {
+		return
+	}
+	scope.mu.Lock()
+	scope.unknown = true
+	scope.quarantineLocked()
+	scope.mu.Unlock()
+}
+
 func NewPublicationExecutionScope(
 	ctx context.Context,
 	coordinator *publication.Coordinator,

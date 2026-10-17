@@ -16,10 +16,11 @@ import (
 )
 
 type pubStageRepo struct {
-	events  *[]string
-	checks  int
-	staleAt int
-	phases  []string
+	events       *[]string
+	checks       int
+	staleAt      int
+	phases       []string
+	observations []persistence.PublicationStageObservation
 }
 
 func (f *pubStageRepo) CheckPublicationDelivery(context.Context, persistence.PublicationDeliveryGuard) (bool, error) {
@@ -30,9 +31,13 @@ func (f *pubStageRepo) CheckPublicationDelivery(context.Context, persistence.Pub
 func (f *pubStageRepo) PublicationToolsForDelivery(context.Context, persistence.PublicationDeliveryGuard) ([]persistence.SourceAnalysisToolSelection, *persistence.ToolInstallation, string, bool, error) {
 	return nil, nil, "", false, nil
 }
-func (f *pubStageRepo) AdvancePublicationStage(_ context.Context, _ persistence.PublicationDeliveryGuard, phase string, _ persistence.PublicationStageObservation) (bool, error) {
+func (f *pubStageRepo) AdvancePublicationStage(_ context.Context, _ persistence.PublicationDeliveryGuard, phase string, observation persistence.PublicationStageObservation) (bool, error) {
 	f.phases = append(f.phases, phase)
+	f.observations = append(f.observations, observation.Clone())
 	*f.events = append(*f.events, phase)
+	if phase == "staged" {
+		*f.events = append(*f.events, "validated")
+	}
 	return true, nil
 }
 func (f *pubStageRepo) MarkPublicationQuiescent(context.Context, persistence.PublicationDeliveryGuard) (bool, error) {
@@ -396,3 +401,99 @@ func containsPubStagePair(args []string, first, second string) bool {
 }
 
 var _ tools.CommandRunner = pubStageCommand{}
+
+type pubStageObservationValidator struct {
+	events      *[]string
+	observation PublicationStageObservation
+	err         error
+}
+
+func (validator *pubStageObservationValidator) Validate(context.Context, string, persistence.PublicationInputs) (PublicationStageObservation, error) {
+	*validator.events = append(*validator.events, "probe")
+	return validator.observation, validator.err
+}
+
+func TestRunWithValidatedStageContinuationOrder(t *testing.T) {
+	repo := &pubStageRepo{}
+	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+	size, mtime := int64(7), int64(1234)
+	original := persistence.PublicationStageObservation{
+		Version: 1, RelativePath: stage.paths.RelativePath,
+		Ownership:   persistence.ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime},
+		ActualAudio: []byte(`{"codec":"aac"}`), ActualMetadata: []byte(`{"title":"ok"}`),
+		ActualAssets:  []byte(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`),
+		PayloadSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	validatorObservation := PublicationStageObservation{
+		Ownership: original.Ownership, Audio: original.ActualAudio, Metadata: original.ActualMetadata,
+		Assets: original.ActualAssets, SHA256: original.PayloadSHA256,
+	}
+	validator := &pubStageObservationValidator{events: events, observation: validatorObservation}
+	runner.Validator = validator
+	callbackCalled := false
+	result, err := runner.runWithValidatedStage(context.Background(), scope, input, stage, func(_ context.Context, observation persistence.PublicationStageObservation, prepared PreparedPublicationStage) error {
+		callbackCalled = true
+		if prepared != stage {
+			t.Fatal("continuation received a different prepared stage")
+		}
+		*events = append(*events, "continuation")
+		continuationIndex := indexPubStage(*events, "continuation")
+		if indexPubStage(*events, "preparing") >= continuationIndex || indexPubStage(*events, "staged") >= continuationIndex || indexPubStage(*events, "validated") >= continuationIndex {
+			t.Fatalf("continuation ran before stage acknowledgements: %v", *events)
+		}
+		observation.ActualAudio[0] = 'x'
+		observation.ActualMetadata[0] = 'x'
+		observation.ActualAssets[0] = 'x'
+		*observation.Ownership.ExpectedSize = 99
+		*observation.Ownership.ExpectedMTime = 99
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !callbackCalled || indexPubStage(*events, "close") <= indexPubStage(*events, "continuation") || indexPubStage(*events, "quiescent") <= indexPubStage(*events, "close") {
+		t.Fatalf("continuation/finalization order is wrong: %v", *events)
+	}
+	if len(repo.observations) != 2 || repo.observations[1].RelativePath != stage.paths.RelativePath || string(repo.observations[1].ActualAudio) != string(original.ActualAudio) || string(repo.observations[1].ActualMetadata) != string(original.ActualMetadata) || string(repo.observations[1].ActualAssets) != string(original.ActualAssets) || repo.observations[1].QualityPolicyVersion != 0 || repo.observations[1].Ownership.ExpectedSize == nil || *repo.observations[1].Ownership.ExpectedSize != size || repo.observations[1].PayloadSHA256 != original.PayloadSHA256 {
+		t.Fatalf("persisted validated observation changed: %+v", repo.observations)
+	}
+	if string(validator.observation.Audio) != string(validatorObservation.Audio) || string(validator.observation.Metadata) != string(validatorObservation.Metadata) || string(validator.observation.Assets) != string(validatorObservation.Assets) || *validator.observation.Ownership.ExpectedSize != size || *validator.observation.Ownership.ExpectedMTime != mtime {
+		t.Fatalf("continuation mutated validator observation: %+v", validator.observation)
+	}
+	if string(result.Audio) != string(validatorObservation.Audio) || string(result.Metadata) != string(validatorObservation.Metadata) || string(result.Assets) != string(validatorObservation.Assets) || *result.Ownership.ExpectedSize != size || *result.Ownership.ExpectedMTime != mtime || result.SHA256 != validatorObservation.SHA256 {
+		t.Fatalf("continuation mutated returned observation: %+v", result)
+	}
+}
+
+func TestRunWithValidatedStageCallbackErrorFinalizes(t *testing.T) {
+	repo := &pubStageRepo{}
+	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+	wantErr := errors.New("continuation failed")
+	_, err := runner.runWithValidatedStage(context.Background(), scope, input, stage, func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage) error {
+		*events = append(*events, "continuation")
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error %v, want callback error", err)
+	}
+	if indexPubStage(*events, "staged") >= indexPubStage(*events, "continuation") || indexPubStage(*events, "close") <= indexPubStage(*events, "continuation") || indexPubStage(*events, "quiescent") <= indexPubStage(*events, "close") {
+		t.Fatalf("callback error did not finalize after continuation: %v", *events)
+	}
+}
+
+func TestRunWithValidatedStageValidatorFailureSuppressesContinuation(t *testing.T) {
+	repo := &pubStageRepo{}
+	validatorErr := errors.New("validator failed")
+	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, validatorErr, nil)
+	callbackCalled := false
+	_, err := runner.runWithValidatedStage(context.Background(), scope, input, stage, func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage) error {
+		callbackCalled = true
+		return nil
+	})
+	if !errors.Is(err, validatorErr) || callbackCalled {
+		t.Fatalf("validator failure err=%v callbackCalled=%v", err, callbackCalled)
+	}
+	if containsPubStage(*events, "continuation") || !containsPubStage(*events, "close") || !containsPubStage(*events, "quiescent") {
+		t.Fatalf("validator failure continuation/finalization events: %v", *events)
+	}
+}

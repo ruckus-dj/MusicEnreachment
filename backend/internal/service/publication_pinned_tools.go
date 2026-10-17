@@ -46,6 +46,9 @@ func NewPublicationPinnedToolsResolver(repository publicationPinnedToolsReposito
 }
 
 func NewGuardedPublicationPinnedTools(resolver *PublicationPinnedToolsResolver, guard persistence.PublicationDeliveryGuard) *GuardedPublicationPinnedTools {
+	if resolver == nil {
+		return nil
+	}
 	return &GuardedPublicationPinnedTools{resolver: resolver, guard: guard}
 }
 
