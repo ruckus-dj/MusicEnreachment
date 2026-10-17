@@ -118,7 +118,7 @@ func (resolver *PublicationPinnedToolsResolver) Resolve(ctx context.Context, gua
 	// package fence while fetching the selection snapshot.
 	for _, selection := range frozen {
 		banner, ok := tools.VerifiedExecutableVersion(versions, tools.PackageFFmpeg, selection.Executable, resolver.platform.GOOS)
-		if selection.InstallationID != installation.ID || selection.PackageKind != "ffmpeg" || selection.RelativePath != installation.RelativePath || selection.Executable != "ffmpeg" && selection.Executable != "ffprobe" || !ok || banner != strings.TrimSpace(selection.VersionBanner) {
+		if selection.InstallationID != installation.ID || selection.PackageKind != "ffmpeg" || selection.RelativePath != filepath.ToSlash(installation.RelativePath) || selection.Executable != "ffmpeg" && selection.Executable != "ffprobe" || !ok || banner != strings.TrimSpace(selection.VersionBanner) {
 			return PublicationToolExecutables{}, false, fmt.Errorf("invalid frozen publication executable")
 		}
 	}

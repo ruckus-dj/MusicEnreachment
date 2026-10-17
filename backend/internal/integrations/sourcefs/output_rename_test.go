@@ -48,9 +48,17 @@ func TestOutputRenameNoReplaceMovesExistingRegularFile(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(rootPath, "source")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("source still exists or could not be inspected: %v", err)
 	}
-	afterInfo, err := os.Stat(filepath.Join(rootPath, "target", "moved"))
+	after, err := target.(OutputMutation).OpenExistingRegular(ctx, "moved")
 	if err != nil {
 		t.Fatal(err)
+	}
+	afterInfo, statErr := after.Stat(ctx)
+	closeErr := after.Close()
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
 	}
 	if !os.SameFile(beforeInfo, afterInfo) {
 		t.Fatal("rename changed file identity")
@@ -245,11 +253,11 @@ func TestOutputRenameNoReplaceConcurrentWritersHaveOneWinner(t *testing.T) {
 		if _, err := file.Write(ctx, content); err != nil {
 			t.Fatal(err)
 		}
-		if err := file.Close(); err != nil {
+		info, err := file.Stat(ctx)
+		if err != nil {
 			t.Fatal(err)
 		}
-		info, err := os.Stat(filepath.Join(rootPath, name))
-		if err != nil {
+		if err := file.Close(); err != nil {
 			t.Fatal(err)
 		}
 		candidates[i] = candidate{name: name, content: content, info: info}

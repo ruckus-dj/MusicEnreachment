@@ -5,6 +5,7 @@ package persistence
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -64,12 +65,13 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 		separatorPath = `ffmpeg\release-1`
 	}
 	installation.RelativePath = separatorPath
+	frozenRelativePath := filepath.ToSlash(installation.RelativePath)
 	if err := NewSetupManagerRepository(db).CreateInstallation(ctx, installation); err != nil {
 		t.Fatal(err)
 	}
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
 	}
 	manifest := []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/file", RelativePath: "root/file", NodeKind: "file"}}
 	input := publicationInputsFixture(t, "rewrite")

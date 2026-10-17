@@ -52,12 +52,13 @@ func TestPublicationToolsForDeliveryReturnsFrozenVerifiedPairPostgreSQL(t *testi
 		SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: filepath.Join("ffmpeg", "release-1"),
 		State: "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified,
 	}
+	frozenRelativePath := filepath.ToSlash(installation.RelativePath)
 	if err := repo.CreateInstallation(ctx, installation); err != nil {
 		t.Fatal(err)
 	}
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
 	}
 	input := publicationInputsFixture(t, "rewrite")
 	input.Tools = selections

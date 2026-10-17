@@ -102,13 +102,13 @@ func TestScopeRunFileUnknownQuiescenceRetainsDuplicate(t *testing.T) {
 	command := &probeUnknownFileCommand{}
 	repository := &probeQuiescenceRepository{}
 	scope := &PublicationExecutionScope{commands: command, repository: repository}
-	t.Cleanup(func() { closeTestScopeOwnedFiles(t, scope) })
 	file := newPublicationProbeTestFile(t)
 	t.Cleanup(func() {
 		if err := file.file.Close(); err != nil {
 			t.Errorf("close input: %v", err)
 		}
 	})
+	t.Cleanup(func() { closeTestScopeOwnedFiles(t, scope) })
 
 	_, err := scope.RunFile(context.Background(), "/probe", nil, file)
 	if err == nil || !errors.Is(err, errProbeUnknown) {
