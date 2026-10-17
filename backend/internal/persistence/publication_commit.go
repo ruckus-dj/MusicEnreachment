@@ -147,7 +147,7 @@ func committedWitnessMatches(raw json.RawMessage, guard PublicationDeliveryGuard
 		return false
 	}
 	count := 0
-	for _, entry := range entries {
+	for index, entry := range entries {
 		var header struct {
 			Kind string `json:"kind"`
 		}
@@ -159,7 +159,7 @@ func committedWitnessMatches(raw json.RawMessage, guard PublicationDeliveryGuard
 		}
 		count++
 		var witness firstPublicationCommitWitness
-		if decodeStrictJSON(entry, &witness) != nil || witness.Version != firstPublicationCommitVersion || witness.Kind != "publication_commit" || witness.Guard != guard || witness.PositionID != attempt.PositionID || witness.Epoch != attempt.Epoch || witness.CandidateGeneration != attempt.CandidateGeneration || current.Generation != witness.CandidateGeneration || current.Epoch != witness.Epoch || current.RelativePath != witness.RelativePath || !current.ValidatedAt.Equal(witness.ValidatedAt) || !currentPublicationMatchesWitness(current, witness) {
+		if index != len(entries)-1 || decodeStrictJSON(entry, &witness) != nil || witness.Version != firstPublicationCommitVersion || witness.Kind != "publication_commit" || witness.Guard != guard || witness.PositionID != attempt.PositionID || witness.PositionID != current.PositionID || witness.Epoch != attempt.Epoch || witness.CandidateGeneration != attempt.CandidateGeneration || current.Generation != witness.CandidateGeneration || current.Epoch != witness.Epoch || current.RelativePath != witness.RelativePath || !current.ValidatedAt.Equal(witness.ValidatedAt) || !currentPublicationMatchesWitness(current, witness) {
 			return false
 		}
 	}
@@ -167,7 +167,8 @@ func committedWitnessMatches(raw json.RawMessage, guard PublicationDeliveryGuard
 }
 
 func currentPublicationMatchesWitness(current TrackPublication, witness firstPublicationCommitWitness) bool {
-	return sameJSONValue(current.Ownership, encodePublicationCommitJSON(witness.Ownership)) &&
+	return current.PositionID == witness.PositionID && current.Epoch == witness.Epoch && current.Generation == witness.CandidateGeneration && current.RelativePath == witness.RelativePath && current.ValidatedAt.Equal(witness.ValidatedAt) &&
+		sameJSONValue(current.Ownership, encodePublicationCommitJSON(witness.Ownership)) &&
 		sameJSONValue(current.ActualAudio, encodePublicationCommitJSON(witness.Audio)) &&
 		sameJSONValue(current.ActualMetadata, encodePublicationCommitJSON(witness.Metadata)) &&
 		sameJSONValue(current.ActualAssets, encodePublicationCommitJSON(witness.Assets)) &&

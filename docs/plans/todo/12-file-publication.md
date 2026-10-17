@@ -1,6 +1,6 @@
 # План 12 — файловая публикация
 
-**Текущее состояние на 2026-10-17: подготовительная реализация.** Продуктовый
+**Текущее состояние на 2026-10-18: подготовительная реализация.** Продуктовый
 контракт согласован в A.1–A.16. Независимое review
 [технического дизайна](12-file-publication-technical-design.md) разрешило
 срезы identity/read model, metadata/primary artist и unified reader/native
@@ -9,7 +9,32 @@ removal. Первоначальное описание DRAFT ниже сохра
 после соответствующих технических гейтов и проверок; завершение плана и
 runtime acceptance ещё не достигнуты.
 
-### Текущий прогресс реализации — 2026-10-17 (после `1c3bb62`)
+### Текущий прогресс реализации — 2026-10-18
+
+После исторической отметки ниже добавлен узкий filesystem publication slice:
+
+- При первом отсутствии target проверенный staged file публикуется через
+  no-replace; ownership journal устанавливается после публикации. Первый
+  publication commit выполняется атомарно и сохраняет `NULL` source provenance
+  по frozen snapshot.
+- Execution scope закрывается с quiescence barrier; удерживаемые input
+  descriptors освобождаются только после установленного завершения использующих
+  их команд. Неизвестная quiescence не трактуется как успех.
+- Эти изменения вошли в `c32e10b`, `cd5eec1` и `0ea97ea`. Для каждого из этих
+  коммитов `task verify` и локальные hooks действительно прошли.
+- V2 typed evidence подтверждает нормализацию первого cover и ограничения
+  evidence: topology covers пока отвергаются как non-audio; сохранённый optional
+  sample rate не является доказательством bit-perfect результата.
+
+Это не завершает реализацию публикации. Recovery execution, private-artifact
+cleanup и settlement, replacement/upgrade/rewrite exposure, runtime interprocess
+startup exclusion, Linux/macOS containment и Windows native CI остаются
+непроверенными (Windows CI для этой серии ещё не запушен). Acquisition assets,
+UI и automatic triggers также не образуют завершённый end-to-end путь; план 12
+остаётся незавершённым. Это progress evidence, а не изменение продуктовых
+решений и не отметка завершения P05/T07 или иных checklist items.
+
+### Историческая отметка прогресса — 2026-10-17 (после `1c3bb62`)
 
 Реализованы подготовительные foundation-срезы: атомарный admission публикации в
 namespace с durable claims и River jobs, содержащими только operation ID;

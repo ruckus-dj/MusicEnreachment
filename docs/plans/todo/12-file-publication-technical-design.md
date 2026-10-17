@@ -26,7 +26,10 @@ retroactive удаления. CUE/manual segments и ReplayGain/R128 отлож�
 техническая проверка, не разрешение заявлять поддержку форматов либо лицензий.
 
 На момент подготовки плана в `backend/internal/publication/` нет рабочей публикации;
-таблиц/API/jobs publication нет. Есть локальные сущности и matching,
+таблиц/API/jobs publication нет. Это историческая исходная точка, не текущее
+утверждение: подготовительный foundation теперь содержит publication tables и
+River job kinds, но worker ещё не зарегистрирован; утверждать отсутствие всех
+publication jobs уже неверно. Есть локальные сущности и matching,
 `publication_format` (`source`/`mka`), source analysis, а output reset уже имеет
 durable coordinator. Эти факты требуют перепроверки перед реализацией.
 В `backend/internal/jobs/move_publication.go` и
