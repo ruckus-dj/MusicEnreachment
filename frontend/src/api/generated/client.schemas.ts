@@ -278,6 +278,64 @@ export interface InstallationsBody {
   installations: InstallationResponse[] | null;
 }
 
+export interface LibraryArtistCreditResponse {
+  artist_id: string;
+  artist_name?: string;
+  credit_name: string;
+  join_phrase: string;
+}
+
+export interface LibrarySourceLocationResponse {
+  location_id: string;
+  mtime?: string;
+  probe_status: string;
+  relative_path: string;
+  root_enabled: boolean;
+  root_id: string;
+  root_status: string;
+  size_bytes: number;
+}
+
+export interface LibraryTrackSourceResponse {
+  compatible: boolean;
+  decision_method: string;
+  /** @nullable */
+  locations: LibrarySourceLocationResponse[] | null;
+  media_variant_id: string;
+  metadata: unknown;
+  policy_version?: string;
+  selected: boolean;
+}
+
+export interface LibraryReleaseTrackResponse {
+  /** @nullable */
+  artists: LibraryArtistCreditResponse[] | null;
+  displayed_number: string;
+  id: string;
+  local_track_id: string;
+  medium: number;
+  metadata: unknown;
+  metadata_version: number;
+  position: number;
+  recording_id: string;
+  /** @nullable */
+  sources: LibraryTrackSourceResponse[] | null;
+  title: string;
+}
+
+export interface LibraryReleaseDetailResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  artists: LibraryArtistCreditResponse[] | null;
+  id: string;
+  metadata: unknown;
+  metadata_version: number;
+  title: string;
+  /** @nullable */
+  tracks: LibraryReleaseTrackResponse[] | null;
+}
+
 export type ManualPickerSearchBodyEntity = typeof ManualPickerSearchBodyEntity[keyof typeof ManualPickerSearchBodyEntity];
 
 

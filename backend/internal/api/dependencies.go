@@ -34,6 +34,7 @@ type Dependencies struct {
 	MatchingAuthority      *service.MatchingAuthorityService
 	ManualReleaseSelection *service.ManualReleaseSelectionService
 	ManualPickerSearch     *service.ManualPickerSearchService
+	LibraryReleaseDetails  *service.LibraryReleaseDetails
 }
 
 type preflightEntry struct {

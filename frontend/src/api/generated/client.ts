@@ -38,6 +38,7 @@ import type {
   InstallPreflightInputBody,
   InstallationActionInputBody,
   InstallationsBody,
+  LibraryReleaseDetailResponse,
   ListInstallationsParams,
   ListOperationsParams,
   ListSourceLocationsParams,
@@ -1555,6 +1556,133 @@ export const useReturnIncomingGroupMatchingToAutomatic = <TError = ErrorModel,
       > => {
       return useMutation(getReturnIncomingGroupMatchingToAutomaticMutationOptions(options), queryClient);
     }
+
+export type getLibraryReleaseResponse200 = {
+  data: LibraryReleaseDetailResponse
+  status: 200
+}
+
+export type getLibraryReleaseResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryReleaseResponseSuccess = (getLibraryReleaseResponse200) & {
+  headers: Headers;
+};
+export type getLibraryReleaseResponseError = (getLibraryReleaseResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryReleaseResponse = (getLibraryReleaseResponseSuccess | getLibraryReleaseResponseError)
+
+export const getGetLibraryReleaseUrl = (releaseId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}`
+}
+
+/**
+ * @summary Read local release detail
+ */
+export const getLibraryRelease = async (releaseId: string, options?: RequestInit): Promise<getLibraryReleaseResponse> => {
+
+  const res = await fetch(getGetLibraryReleaseUrl(releaseId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getLibraryReleaseResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getLibraryReleaseResponse
+}
+
+
+
+
+
+export const getGetLibraryReleaseQueryKey = (releaseId: string,) => {
+    return [
+    `/api/library/releases/${releaseId}`
+    ] as const;
+    }
+
+
+export const getGetLibraryReleaseQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryRelease>>, TError = ErrorModel>(releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryRelease>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryReleaseQueryKey(releaseId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryRelease>>> = ({ signal }) => getLibraryRelease(releaseId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseId !== null && releaseId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryRelease>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryReleaseQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryRelease>>>
+export type GetLibraryReleaseQueryError = ErrorModel
+
+
+export function useGetLibraryRelease<TData = Awaited<ReturnType<typeof getLibraryRelease>>, TError = ErrorModel>(
+ releaseId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryRelease>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryRelease>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryRelease>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryRelease<TData = Awaited<ReturnType<typeof getLibraryRelease>>, TError = ErrorModel>(
+ releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryRelease>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryRelease>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryRelease>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryRelease<TData = Awaited<ReturnType<typeof getLibraryRelease>>, TError = ErrorModel>(
+ releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryRelease>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read local release detail
+ */
+
+export function useGetLibraryRelease<TData = Awaited<ReturnType<typeof getLibraryRelease>>, TError = ErrorModel>(
+ releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryRelease>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryReleaseQueryOptions(releaseId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type listLocalReleasesResponse200 = {
   data: MatchingLocalCatalog
