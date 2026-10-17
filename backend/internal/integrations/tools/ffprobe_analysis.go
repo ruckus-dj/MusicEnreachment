@@ -30,6 +30,28 @@ func (p *FFProbe) ProbeTechnicalFileAnyStreams(ctx context.Context, file sourcef
 	return p.probeTechnicalFile(ctx, file, false)
 }
 
+// ProbePublicationTechnicalFile probes a publication artifact with only its
+// verified container demuxer, over the borrowed descriptor transport.
+func (p *FFProbe) ProbePublicationTechnicalFile(ctx context.Context, file sourcefs.RegularFile, demuxer string) ([]byte, error) {
+	if file == nil {
+		return nil, errors.New("ffprobe source file is required")
+	}
+	request, err := BuildPublicationFileCommandRequest(p.executable, demuxer, nil)
+	if err != nil {
+		return nil, err
+	}
+	var output []byte
+	err = file.Borrow(ctx, func(handle *os.File) error {
+		var probeErr error
+		output, probeErr = p.runFileTechnical(ctx, handle, request.Args)
+		if probeErr == nil {
+			probeErr = validateTechnicalResponse(output, false)
+		}
+		return probeErr
+	})
+	return output, err
+}
+
 // ProbeMediaFile is the full technical media probe; it preserves ffprobe's raw
 // JSON so callers can retain tags and provenance without a second invocation.
 func (p *FFProbe) ProbeMediaFile(ctx context.Context, file sourcefs.RegularFile) ([]byte, error) {

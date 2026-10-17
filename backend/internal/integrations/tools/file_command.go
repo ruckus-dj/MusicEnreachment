@@ -28,6 +28,22 @@ func BuildTechnicalFileCommandRequest(executable string, input *os.File) FileCom
 	}
 }
 
+// BuildPublicationFileCommandRequest probes only the explicitly selected
+// publication container. Demuxer names are a closed allowlist.
+func BuildPublicationFileCommandRequest(executable, demuxer string, input *os.File) (FileCommandRequest, error) {
+	switch demuxer {
+	case "mp3", "flac", "wav", "ogg", "aac", "mov", "matroska":
+	default:
+		return FileCommandRequest{}, errors.New("publication probe demuxer is unsupported")
+	}
+	args := []string{"-v", "error", "-protocol_whitelist", "fd", "-fd", fileTransportDescriptor()}
+	if demuxer == "mov" {
+		args = append(args, "-enable_drefs", "0", "-use_absolute_path", "0")
+	}
+	args = append(args, "-f", demuxer, "-show_format", "-show_streams", "-show_chapters", "-of", "json", "fd:")
+	return FileCommandRequest{Executable: executable, Args: args, Input: input}, nil
+}
+
 // ConfigureFileCommand applies a file command request to cmd without starting
 // it. The request's Input remains owned by its caller.
 func ConfigureFileCommand(ctx context.Context, cmd *exec.Cmd, request FileCommandRequest) error {

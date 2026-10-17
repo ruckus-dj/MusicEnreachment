@@ -109,7 +109,7 @@ func TestFFmpegArgsSelectsOnlyAudioAndDropsInheritedMetadata(t *testing.T) {
 	plan := AudioTransformPlan{Action: AudioCodecAAC, OutputContainer: AudioContainerM4A, Extension: "m4a", Bitrate: 224000}
 	input := filepath.Join(t.TempDir(), "input file", "source.mp3")
 	output := filepath.Join(t.TempDir(), "output file", "target.m4a")
-	args, err := plan.FFmpegArgs(input, output, 3)
+	args, err := plan.FFmpegArgs(input, output, 3, AudioContainerMP3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,12 +161,41 @@ func TestFFmpegArgsRejectsRelativePathsAndUsesADTSForAAC(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, paths := range [][2]string{{input, "-option"}, {"relative.aac", output}, {input, "relative.aac"}} {
-		if _, err := plan.FFmpegArgs(paths[0], paths[1], 0); err == nil {
+		if _, err := plan.FFmpegArgs(paths[0], paths[1], 0, AudioContainerMP3); err == nil {
 			t.Fatalf("relative paths accepted: %v", paths)
 		}
 	}
-	args, err := plan.FFmpegArgs(input, output, 0)
+	args, err := plan.FFmpegArgs(input, output, 0, AudioContainerAAC)
 	if err != nil || !containsSequence(args, []string{"-f", "adts"}) {
 		t.Fatalf("AAC args = %v, %v", args, err)
+	}
+}
+
+func TestFFmpegArgsUsesVerifiedInputDemuxerBeforeInput(t *testing.T) {
+	input, output := filepath.Join(t.TempDir(), "input"), filepath.Join(t.TempDir(), "output")
+	plan := AudioTransformPlan{Action: AudioCodecCopy, OutputContainer: AudioContainerM4A, Extension: "m4a"}
+	tests := []struct {
+		container AudioContainer
+		demuxer   string
+	}{
+		{AudioContainerMP3, "mp3"}, {AudioContainerFLAC, "flac"}, {AudioContainerWAV, "wav"},
+		{AudioContainerOGG, "ogg"}, {AudioContainerOpus, "ogg"}, {AudioContainerAAC, "aac"},
+		{AudioContainerM4A, "mov"}, {AudioContainerMKA, "matroska"},
+	}
+	for _, test := range tests {
+		args, err := plan.FFmpegArgs(input, output, 0, test.container)
+		if err != nil {
+			t.Fatalf("container %q: %v", test.container, err)
+		}
+		index := slices.Index(args, "-i")
+		if index < 2 || !slices.Contains(args[:index], test.demuxer) {
+			t.Errorf("container %q did not select %q before -i: %v", test.container, test.demuxer, args)
+		}
+		if test.container == AudioContainerM4A && !containsSequence(args[:index], []string{"-protocol_whitelist", "file", "-f", "mov", "-enable_drefs", "0", "-use_absolute_path", "0"}) {
+			t.Errorf("MOV safety options missing or after input: %v", args)
+		}
+	}
+	if _, err := plan.FFmpegArgs(input, output, 0, "unknown"); err == nil {
+		t.Fatal("unknown input container accepted")
 	}
 }

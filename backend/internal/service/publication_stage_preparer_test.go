@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 type stagePreparationRepository struct {
@@ -208,6 +209,63 @@ func TestPublicationStageExtensionUsesVerifiedContainer(t *testing.T) {
 	t.Cleanup(func() { _ = stage.Close() })
 	if inputExt, outputExt := filepath.Ext(stage.Paths().InputPath), filepath.Ext(stage.Paths().OutputPath); inputExt != ".mp3" || outputExt != ".mp3" {
 		t.Fatalf("stage extensions = input %q output %q, want canonical .mp3", inputExt, outputExt)
+	}
+}
+
+func TestPublicationStagePreparerUsesVerifiedInputContainerForIneligibleSource(t *testing.T) {
+	fixture := newPublicationStageFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	lossless := false
+	channels := 2
+	fixture.repo.input.Format = publication.AudioFormatMKA
+	fixture.repo.input.Audio.AudioFacts = persistence.PersistedAudioFacts{
+		StreamIndex: 0, Codec: "ac3", Lossless: &lossless, Channels: &channels,
+		Container: publication.AudioContainerMKA, SupportedSourceContainer: false,
+	}
+	stage, err := fixture.prepare(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stage.Close() })
+	if inputExt, outputExt := filepath.Ext(stage.Paths().InputPath), filepath.Ext(stage.Paths().OutputPath); inputExt != ".mka" || outputExt != ".mka" {
+		t.Fatalf("stage extensions = input %q output %q, want .mka/.mka", inputExt, outputExt)
+	}
+}
+
+func TestPublicationStagePreparerKeepsMKAInputForM4APlan(t *testing.T) {
+	fixture := newPublicationStageFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	lossless := false
+	channels := 2
+	fixture.repo.input.Format = publication.AudioFormatM4A
+	fixture.repo.input.Audio.AudioFacts = persistence.PersistedAudioFacts{
+		StreamIndex: 0, Codec: "ac3", Lossless: &lossless, Channels: &channels,
+		Container: publication.AudioContainerMKA, SupportedSourceContainer: false,
+	}
+	stage, err := fixture.prepare(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stage.Close() })
+	if inputExt, outputExt := filepath.Ext(stage.Paths().InputPath), filepath.Ext(stage.Paths().OutputPath); inputExt != ".mka" || outputExt != ".m4a" {
+		t.Fatalf("stage extensions = input %q output %q, want .mka/.m4a", inputExt, outputExt)
+	}
+}
+
+func TestPublicationStagePreparerRejectsUnknownInputContainerBeforeMutation(t *testing.T) {
+	fixture := newPublicationStageFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	fixture.repo.input.Format = publication.AudioFormatMKA
+	fixture.repo.input.Audio.AudioFacts.Container = "unknown"
+	if _, err := fixture.prepare(t); err == nil {
+		t.Fatal("Prepare accepted an unknown input container")
+	}
+	if len(fixture.repo.records) != 0 {
+		t.Fatalf("preparation records = %d, want no mutations before container validation", len(fixture.repo.records))
+	}
+	entries, err := os.ReadDir(fixture.output)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("output after invalid container = %v, %v; want empty", entries, err)
 	}
 }
 

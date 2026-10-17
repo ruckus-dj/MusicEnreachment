@@ -377,7 +377,7 @@ func TestPublicationStageAudioPlanRewritesMP3WithoutTranscoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args, err := plan.FFmpegArgs(filepath.Join(t.TempDir(), "input.mp3"), filepath.Join(t.TempDir(), "output.mp3"), 0)
+	args, err := plan.FFmpegArgs(filepath.Join(t.TempDir(), "input.mp3"), filepath.Join(t.TempDir(), "output.mp3"), 0, publication.AudioContainerMP3)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -37,7 +37,7 @@ func TestScopeBoundPublicationStageProbeRejectsForeignAuthority(t *testing.T) {
 
 func TestPublicationStageProbeRejectsInjectedFunctionInSupervisedValidator(t *testing.T) {
 	_, scope, _, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
-	validator := RealPublicationStageValidator{Probe: func(context.Context, string, sourcefs.RegularFile) ([]byte, error) {
+	validator := RealPublicationStageValidator{Probe: func(context.Context, string, sourcefs.RegularFile, publication.AudioContainer) ([]byte, error) {
 		return []byte(`{}`), nil
 	}}
 	if err := validator.validateSupervised(scope); err == nil {
@@ -76,7 +76,7 @@ func TestScopeRunFileWithoutBackendDoesNotLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := probe.Probe(context.Background(), path, file); err == nil {
+	if _, err := probe.Probe(context.Background(), path, file, publication.AudioContainerMP3); err == nil {
 		t.Fatal("expected unavailable file-command backend")
 	}
 	if command.runs == 0 || scope.unknown {
@@ -162,7 +162,7 @@ func TestScopeBoundPublicationStageProbeUsesAllStreamFileRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := probe.Probe(context.Background(), path, input)
+	got, err := probe.Probe(context.Background(), path, input, publication.AudioContainerMKA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestScopeBoundPublicationStageProbeUsesAllStreamFileRequest(t *testing.T) {
 		t.Fatalf("probe output %q, want %q", got, command.output)
 	}
 	args := strings.Join(command.request.Args, " ")
-	for _, expected := range []string{"-show_format", "-show_streams", "-show_chapters", "-of json", "fd:"} {
+	for _, expected := range []string{"-f matroska", "-show_format", "-show_streams", "-show_chapters", "-of json", "fd:"} {
 		if !strings.Contains(args, expected) {
 			t.Errorf("file probe arguments %q omit %q", args, expected)
 		}

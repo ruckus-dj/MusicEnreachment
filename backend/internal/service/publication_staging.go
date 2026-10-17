@@ -168,7 +168,7 @@ func (runner PublicationStagingRunner) Run(ctx context.Context, scope *Publicati
 	if err != nil {
 		return result, fmt.Errorf("plan publication audio transform: %w", err)
 	}
-	args, err := plan.FFmpegArgs(paths.InputPath, paths.OutputPath, sourceFacts.StreamIndex)
+	args, err := plan.FFmpegArgs(paths.InputPath, paths.OutputPath, sourceFacts.StreamIndex, sourceFacts.Container)
 	if err != nil {
 		return result, err
 	}

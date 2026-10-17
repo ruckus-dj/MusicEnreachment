@@ -64,6 +64,28 @@ func TestPublicationProbeFactsRejectsInvalidSampleDepth(t *testing.T) {
 	}
 }
 
+func TestPublicationProbeFactsRequireExactAACFormatName(t *testing.T) {
+	for _, test := range []struct {
+		format string
+		valid  bool
+	}{
+		{format: "aac", valid: true},
+		{format: "aac_latm"},
+		{format: "mov,mp4,m4a,3gp,3g2,mj2", valid: true},
+		{format: "matroska,webm", valid: true},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			facts, err := publicationAudioFactsFromProbe(publicationProbeFixture("aac", test.format, "0", "0"), 0)
+			if (err == nil) != test.valid {
+				t.Fatalf("format %q: facts=%#v err=%v, valid=%v", test.format, facts, err, test.valid)
+			}
+			if test.valid && facts.BitDepth != nil {
+				t.Fatalf("lossy AAC bit depth = %v, want unknown", facts.BitDepth)
+			}
+		})
+	}
+}
+
 func publicationProbeFixture(codec, format, rawBits, bits string) SourceMediaVariant {
 	policyVersion := 1
 	ffprobeVersion := "ffprobe version test"

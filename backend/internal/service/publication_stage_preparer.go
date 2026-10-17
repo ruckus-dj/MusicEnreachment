@@ -134,7 +134,11 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	owner := uuid.New()
 	privateName := guard.OperationID.String() + "-" + guard.ClaimUUID.String()
 	ext := publicationStageExtension(input)
-	inputName, outputName := "input"+ext, "output"+ext
+	outputExt := publicationOutputStageExtension(input)
+	if ext == "" || outputExt == "" {
+		return nil, errors.New("publication stage container is unsupported")
+	}
+	inputName, outputName := "input"+ext, "output"+outputExt
 	privateRel := privateName
 	record := persistence.PublicationPreparationRecord{Version: persistence.PublicationPreparationVersion, Kind: "publication_preparation", Step: "intent", OperationID: guard.OperationID, ClaimUUID: guard.ClaimUUID, OwnerToken: owner, PrivateDirRel: privateRel, InputRel: privateRel + "/" + inputName, OutputRel: privateRel + "/" + outputName, ParentIdentity: persistence.PublicationDirectoryIdentity{Platform: parentIdentity.Platform, Volume: parentIdentity.Volume, FileID: parentIdentity.FileID}}
 	outcome, err := preparer.Repository.RecordPublicationPreparation(ctx, guard, record)
@@ -365,7 +369,21 @@ func publicationStageExtension(input persistence.PublicationInputs) string {
 	} else if input.Audio != nil {
 		facts = input.Audio.AudioFacts
 	}
-	plan, err := publication.PlanAudioTransform(publication.AudioFormatSource, facts.AudioSourceFacts())
+	// The staged input is the verified container itself. Its canonical suffix
+	// depends on whether we know how to demux that container, not whether the
+	// container is eligible to be published unchanged.
+	if demuxer, _ := publication.InputDemuxer(facts.Container); demuxer == "" {
+		return ""
+	}
+	return "." + string(facts.Container)
+}
+
+func publicationOutputStageExtension(input persistence.PublicationInputs) string {
+	format := input.Format
+	if input.Rewrite != nil {
+		format = publication.AudioFormatSource
+	}
+	plan, err := publication.PlanAudioTransform(format, inputAudioFacts(input).AudioSourceFacts())
 	if err != nil {
 		return ""
 	}

@@ -236,11 +236,11 @@ func publicationContainerFromProbe(names string) (publication.AudioContainer, er
 			return publication.AudioContainerOGG, nil
 		case "opus":
 			return publication.AudioContainerOpus, nil
-		case "aac", "aac_latm":
+		case "aac":
 			return publication.AudioContainerAAC, nil
-		case "mov", "mp4", "m4a", "3gp", "3g2", "mj2":
+		case "mov":
 			return publication.AudioContainerM4A, nil
-		case "matroska", "webm":
+		case "matroska":
 			return publication.AudioContainerMKA, nil
 		}
 	}

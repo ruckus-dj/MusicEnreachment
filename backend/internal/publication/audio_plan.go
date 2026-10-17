@@ -113,13 +113,20 @@ func PlanAudioTransform(format AudioPublicationFormat, source AudioSourceFacts) 
 
 // FFmpegArgs builds explicit argv, never a shell command. Metadata, chapters,
 // attachments and non-audio streams are deliberately excluded.
-func (p AudioTransformPlan) FFmpegArgs(inputPath, outputPath string, streamIndex int) ([]string, error) {
-	if !filepath.IsAbs(inputPath) || !filepath.IsAbs(outputPath) || streamIndex < 0 || p.Extension == "" {
+func (p AudioTransformPlan) FFmpegArgs(inputPath, outputPath string, streamIndex int, inputContainer AudioContainer) ([]string, error) {
+	demuxer, mov := InputDemuxer(inputContainer)
+	if !filepath.IsAbs(inputPath) || !filepath.IsAbs(outputPath) || streamIndex < 0 || p.Extension == "" || demuxer == "" {
 		return nil, fmt.Errorf("%w: ffmpeg input and output paths must be absolute and the selected stream valid", errUnsupportedAudioPlan)
 	}
-	args := []string{"-nostdin", "-hide_banner", "-loglevel", "warning", "-n", "-i", inputPath,
-		"-map", "0:" + strconv.Itoa(streamIndex), "-map_metadata", "-1", "-map_chapters", "-1",
-		"-vn", "-sn", "-dn", "-map_metadata:s:a", "-1", "-map_chapters", "-1"}
+	args := []string{"-nostdin", "-hide_banner", "-loglevel", "warning", "-n"}
+	if mov {
+		args = append(args, "-protocol_whitelist", "file", "-f", demuxer, "-enable_drefs", "0", "-use_absolute_path", "0")
+	} else {
+		args = append(args, "-f", demuxer)
+	}
+	args = append(args, "-i", inputPath,
+		"-map", "0:"+strconv.Itoa(streamIndex), "-map_metadata", "-1", "-map_chapters", "-1",
+		"-vn", "-sn", "-dn", "-map_metadata:s:a", "-1", "-map_chapters", "-1")
 	switch p.Action {
 	case AudioCodecCopy:
 		args = append(args, "-c:a", "copy")
@@ -145,6 +152,27 @@ func (p AudioTransformPlan) FFmpegArgs(inputPath, outputPath string, streamIndex
 		args = append(args, "-f", ffmpegFormat(p.OutputContainer))
 	}
 	return append(args, outputPath), nil
+}
+
+func InputDemuxer(container AudioContainer) (string, bool) {
+	switch container {
+	case AudioContainerMP3:
+		return "mp3", false
+	case AudioContainerFLAC:
+		return "flac", false
+	case AudioContainerWAV:
+		return "wav", false
+	case AudioContainerOGG, AudioContainerOpus:
+		return "ogg", false
+	case AudioContainerAAC:
+		return "aac", false
+	case AudioContainerM4A:
+		return "mov", true
+	case AudioContainerMKA:
+		return "matroska", false
+	default:
+		return "", false
+	}
 }
 
 func aacBitrate(source AudioSourceFacts) int {

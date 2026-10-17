@@ -8,6 +8,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 // ScopeBoundPublicationStageProbe routes stage-file probing through the
@@ -30,11 +31,11 @@ func NewScopeBoundPublicationStageProbe(scope *PublicationExecutionScope, pinned
 
 // Probe resolves ffprobe from the frozen selections itself; executable is only
 // checked against that fresh resolution and is never used to launch a command.
-func (probe *ScopeBoundPublicationStageProbe) Probe(ctx context.Context, executable string, input sourcefs.RegularFile) ([]byte, error) {
-	return probe.probe(ctx, probe.selections, executable, input)
+func (probe *ScopeBoundPublicationStageProbe) Probe(ctx context.Context, executable string, input sourcefs.RegularFile, container publication.AudioContainer) ([]byte, error) {
+	return probe.probe(ctx, probe.selections, executable, input, container)
 }
 
-func (probe *ScopeBoundPublicationStageProbe) probe(ctx context.Context, selections []persistence.SourceAnalysisToolSelection, executable string, input sourcefs.RegularFile) ([]byte, error) {
+func (probe *ScopeBoundPublicationStageProbe) probe(ctx context.Context, selections []persistence.SourceAnalysisToolSelection, executable string, input sourcefs.RegularFile, container publication.AudioContainer) ([]byte, error) {
 	if probe == nil || probe.scope == nil || probe.pinnedTools == nil || input == nil {
 		return nil, errors.New("scope-bound publication stage probe is unavailable")
 	}
@@ -45,7 +46,11 @@ func (probe *ScopeBoundPublicationStageProbe) probe(ctx context.Context, selecti
 	if executable != expected {
 		return nil, errors.New("publication stage probe executable does not match pinned ffprobe")
 	}
-	request := tools.BuildTechnicalFileCommandRequest(expected, nil)
+	demuxer, _ := publication.InputDemuxer(container)
+	request, err := tools.BuildPublicationFileCommandRequest(expected, demuxer, nil)
+	if err != nil {
+		return nil, err
+	}
 	result, err := probe.scope.RunFile(ctx, request.Executable, request.Args, input)
 	if err != nil {
 		return nil, err

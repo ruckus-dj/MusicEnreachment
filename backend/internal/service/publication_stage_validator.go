@@ -21,7 +21,7 @@ import (
 
 // PublicationStageProbe is injectable to make validation independent of a
 // particular ffprobe installation in tests.
-type PublicationStageProbe func(context.Context, string, sourcefs.RegularFile) ([]byte, error)
+type PublicationStageProbe func(context.Context, string, sourcefs.RegularFile, publication.AudioContainer) ([]byte, error)
 
 // RealPublicationStageValidator validates only a completed, private stage file.
 // Tool paths are resolved from the frozen publication contract.
@@ -80,20 +80,25 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("resolve pinned ffprobe: %w", err)
 	}
+	plan, err := publicationStageAudioPlan(input, inputAudioFacts(input))
+	if err != nil {
+		return PublicationStageObservation{}, fmt.Errorf("plan publication stage probe container: %w", err)
+	}
 	if probe == nil && validator.supervisedProbe == nil {
-		ffprobe, err := tools.NewFFProbe(executable)
-		if err != nil {
-			return PublicationStageObservation{}, err
-		}
-		probe = func(ctx context.Context, _ string, file sourcefs.RegularFile) ([]byte, error) {
-			return ffprobe.ProbeTechnicalFileAnyStreams(ctx, file)
+		probe = func(ctx context.Context, executable string, file sourcefs.RegularFile, container publication.AudioContainer) ([]byte, error) {
+			ffprobe, err := tools.NewFFProbe(executable)
+			if err != nil {
+				return nil, err
+			}
+			demuxer, _ := publication.InputDemuxer(container)
+			return ffprobe.ProbePublicationTechnicalFile(ctx, file, demuxer)
 		}
 	}
 	var raw []byte
 	if validator.supervisedProbe != nil {
-		raw, err = validator.supervisedProbe.probe(ctx, input.Tools, executable, anchored)
+		raw, err = validator.supervisedProbe.probe(ctx, input.Tools, executable, anchored, plan.OutputContainer)
 	} else {
-		raw, err = probe(ctx, executable, anchored)
+		raw, err = probe(ctx, executable, anchored, plan.OutputContainer)
 	}
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("probe publication stage: %w", err)
@@ -121,10 +126,6 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 		return PublicationStageObservation{}, errors.New("publication stage container is missing")
 	}
 	actualContainer := *audio.Container.Name
-	plan, err := publicationStageAudioPlan(input, facts)
-	if err != nil {
-		return PublicationStageObservation{}, fmt.Errorf("derive frozen publication plan: %w", err)
-	}
 	expectedCodec := facts.Codec
 	if plan.Action == publication.AudioCodecALAC {
 		expectedCodec = "alac"
