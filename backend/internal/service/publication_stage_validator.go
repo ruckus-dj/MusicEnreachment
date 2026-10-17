@@ -30,11 +30,12 @@ type RealPublicationStageValidator struct {
 	MetadataReader interface {
 		Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
 	}
-	Probe PublicationStageProbe
+	Probe           PublicationStageProbe
+	supervisedProbe *ScopeBoundPublicationStageProbe
 }
 
-func (validator RealPublicationStageValidator) validateSupervised() error {
-	if validator.Probe == nil {
+func (validator RealPublicationStageValidator) validateSupervised(scope *PublicationExecutionScope) error {
+	if validator.Probe != nil || validator.supervisedProbe == nil || validator.supervisedProbe.scope != scope || validator.Tools != validator.supervisedProbe.pinnedTools {
 		return errors.New("supervised publication validator requires a scope-bound probe")
 	}
 	return nil
@@ -79,7 +80,7 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("resolve pinned ffprobe: %w", err)
 	}
-	if probe == nil {
+	if probe == nil && validator.supervisedProbe == nil {
 		ffprobe, err := tools.NewFFProbe(executable)
 		if err != nil {
 			return PublicationStageObservation{}, err
@@ -88,7 +89,12 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 			return ffprobe.ProbeTechnicalFileAnyStreams(ctx, file)
 		}
 	}
-	raw, err := probe(ctx, executable, anchored)
+	var raw []byte
+	if validator.supervisedProbe != nil {
+		raw, err = validator.supervisedProbe.probe(ctx, input.Tools, executable, anchored)
+	} else {
+		raw, err = probe(ctx, executable, anchored)
+	}
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("probe publication stage: %w", err)
 	}

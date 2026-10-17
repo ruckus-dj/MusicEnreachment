@@ -22,6 +22,12 @@ type PublicationCommandRunner interface {
 	Run(context.Context, string, ...string) (PublicationCommandResult, error)
 }
 
+// PublicationFileCommandRunner executes a command with an already-open input.
+// A true quiescence result promises the runner no longer uses request.Input.
+type PublicationFileCommandRunner interface {
+	RunFile(context.Context, tools.FileCommandRequest) (PublicationCommandResult, error)
+}
+
 // BoundedOutputCollector retains at most its configured number of bytes while
 // continuing to accept and count all writes. It is only an output collector;
 // it provides no process-lifecycle guarantee.

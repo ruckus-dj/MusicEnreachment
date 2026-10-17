@@ -3,12 +3,56 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"reflect"
 	"testing"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
+
+type scopeFile struct {
+	file   *os.File
+	borrow func(func(*os.File) error) error
+}
+
+func (input scopeFile) Stat(context.Context) (fs.FileInfo, error) { return input.file.Stat() }
+func (input scopeFile) Borrow(_ context.Context, callback func(*os.File) error) error {
+	if input.borrow != nil {
+		return input.borrow(callback)
+	}
+	return callback(input.file)
+}
+func (input scopeFile) Close() error { return input.file.Close() }
+
+type scopeFileCommandFake struct {
+	result  PublicationCommandResult
+	request tools.FileCommandRequest
+	calls   int
+	panic   bool
+	run     func()
+}
+
+func (*scopeFileCommandFake) Run(context.Context, string, ...string) (PublicationCommandResult, error) {
+	return PublicationCommandResult{QuiescenceEstablished: true}, nil
+}
+func (fake *scopeFileCommandFake) RunFile(_ context.Context, request tools.FileCommandRequest) (PublicationCommandResult, error) {
+	fake.calls++
+	fake.request = request
+	if fake.panic {
+		panic("runner panic")
+	}
+	if fake.run != nil {
+		fake.run()
+	}
+	return fake.result, nil
+}
+
+var _ sourcefs.RegularFile = scopeFile{}
 
 type scopeCommandFake struct {
 	result PublicationCommandResult
@@ -79,6 +123,219 @@ func TestPublicationScopeUnknownExecutionRetainsResourcesAndRejectsLaunch(t *tes
 	if closed || command.calls != 1 || repository.checks != 0 || repository.marks != 0 {
 		t.Fatalf("unsafe cleanup occurred: closed=%v calls=%d repo=%+v", closed, command.calls, repository)
 	}
+}
+
+func TestPublicationScopeFileRunQuarantinesOwnedDuplicate(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("descriptor remains usable"); err != nil {
+		t.Fatal(err)
+	}
+	command := &scopeFileCommandFake{}
+	scope := newScopeForTest(t, command, &scopeRepositoryFake{marked: true})
+	if _, err := scope.RunFile(context.Background(), "tool", []string{"arg"}, scopeFile{file: file}); err == nil {
+		t.Fatal("unknown file command quiescence accepted")
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := command.request.Input.Stat(); err != nil {
+		t.Fatalf("quarantined command descriptor was closed: %v", err)
+	}
+	if command.calls != 1 || command.request.Executable != "tool" || len(command.request.Args) != 1 {
+		t.Fatalf("unexpected file command request: %+v", command.request)
+	}
+	if _, err := scope.RunFile(context.Background(), "tool", nil, scopeFile{file: file}); err == nil {
+		t.Fatal("launch accepted after unknown file command")
+	}
+}
+
+func TestPublicationScopeFileRunClosesDuplicateAfterQuiescence(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Errorf("close input: %v", err)
+		}
+	})
+	command := &scopeFileCommandFake{result: PublicationCommandResult{QuiescenceEstablished: true}}
+	scope := newScopeForTest(t, command, &scopeRepositoryFake{marked: true})
+	if _, err := scope.RunFile(context.Background(), "tool", nil, scopeFile{file: file}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := command.request.Input.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("command duplicate stat error = %v, want closed", err)
+	}
+	if !scope.CanExecute() {
+		t.Fatal("quiescent scope was fenced")
+	}
+}
+
+func TestPublicationScopeFileBorrowPanicsQuarantineReservation(t *testing.T) {
+	for _, afterCallback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("after_callback_%v", afterCallback), func(t *testing.T) {
+			file, err := os.CreateTemp(t.TempDir(), "input")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := file.Close(); err != nil {
+					t.Errorf("close input: %v", err)
+				}
+			})
+			command := &scopeFileCommandFake{result: PublicationCommandResult{QuiescenceEstablished: true}}
+			repository := &scopeRepositoryFake{marked: true}
+			scope := newScopeForTest(t, command, repository)
+			input := scopeFile{file: file, borrow: func(callback func(*os.File) error) error {
+				if afterCallback {
+					if err := callback(file); err != nil {
+						return err
+					}
+				}
+				panic("borrow panic")
+			}}
+			func() {
+				defer func() {
+					if recover() == nil {
+						t.Fatal("borrow panic was swallowed")
+					}
+				}()
+				_, _ = scope.RunFile(context.Background(), "tool", nil, input)
+			}()
+			if command.calls != 0 || scope.CanExecute() || scope.unresolved != 0 || len(scope.ownedFiles) != boolInt(afterCallback) {
+				t.Fatalf("panic state: calls=%d executable=%v unresolved=%d owned=%d", command.calls, scope.CanExecute(), scope.unresolved, len(scope.ownedFiles))
+			}
+			closed := false
+			if err := scope.Finalize(context.Background(), func() error { closed = true; return nil }); err == nil || closed || repository.marks != 0 {
+				t.Fatalf("unsafe finalization: err=%v closed=%v marks=%d", err, closed, repository.marks)
+			}
+		})
+	}
+}
+
+func TestPublicationScopeFileRunnerPanicQuarantinesDuplicate(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Errorf("close input: %v", err)
+		}
+	})
+	command := &scopeFileCommandFake{panic: true}
+	scope := newScopeForTest(t, command, &scopeRepositoryFake{marked: true})
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("runner panic was swallowed")
+			}
+		}()
+		_, _ = scope.RunFile(context.Background(), "tool", nil, scopeFile{file: file})
+	}()
+	if command.calls != 1 || scope.CanExecute() || scope.unresolved != 0 {
+		t.Fatalf("panic state: calls=%d executable=%v unresolved=%d", command.calls, scope.CanExecute(), scope.unresolved)
+	}
+	if _, err := command.request.Input.Stat(); err != nil {
+		t.Fatalf("runner panic duplicate was not retained: %v", err)
+	}
+}
+
+func TestPublicationScopeFileBorrowErrorIsPrelaunchAndFinalizable(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Errorf("close input: %v", err)
+		}
+	})
+	borrowErr := errors.New("borrow failed")
+	command := &scopeFileCommandFake{result: PublicationCommandResult{QuiescenceEstablished: true}}
+	repository := &scopeRepositoryFake{marked: true}
+	scope := newScopeForTest(t, command, repository)
+	_, err = scope.RunFile(context.Background(), "tool", nil, scopeFile{file: file, borrow: func(func(*os.File) error) error { return borrowErr }})
+	if !errors.Is(err, borrowErr) || command.calls != 0 || !scope.CanExecute() {
+		t.Fatalf("borrow result: err=%v calls=%d executable=%v", err, command.calls, scope.CanExecute())
+	}
+	if err := scope.Finalize(context.Background(), func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublicationScopeFileMissingBackendDoesNotBorrow(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Errorf("close input: %v", err)
+		}
+	})
+	repository := &scopeRepositoryFake{marked: true}
+	scope := newScopeForTest(t, nil, repository)
+	borrowed := false
+	input := scopeFile{file: file, borrow: func(func(*os.File) error) error { borrowed = true; return nil }}
+	result, err := scope.RunFile(context.Background(), "tool", nil, input)
+	if err == nil || !result.QuiescenceEstablished || borrowed {
+		t.Fatalf("missing backend result=%+v err=%v borrowed=%v", result, err, borrowed)
+	}
+	if err := scope.Finalize(context.Background(), func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublicationScopeFinalizeWaitsForFileRunReservation(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Errorf("close input: %v", err)
+		}
+	})
+	entered, resume := make(chan struct{}), make(chan struct{})
+	repository := &scopeRepositoryFake{marked: true}
+	command := &scopeFileCommandFake{result: PublicationCommandResult{QuiescenceEstablished: true}, run: func() {
+		close(entered)
+		<-resume
+	}}
+	scope := newScopeForTest(t, command, repository)
+	runDone := make(chan error, 1)
+	go func() {
+		_, runErr := scope.RunFile(context.Background(), "tool", nil, scopeFile{file: file})
+		runDone <- runErr
+	}()
+	<-entered
+	closed := false
+	closeStage := func() error { closed = true; return nil }
+	if err := scope.Finalize(context.Background(), closeStage); err == nil || closed || repository.marks != 0 {
+		t.Fatalf("finalized during run: err=%v closed=%v marks=%d", err, closed, repository.marks)
+	}
+	close(resume)
+	if err := <-runDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := scope.Finalize(context.Background(), closeStage); err != nil {
+		t.Fatal(err)
+	}
+	if !closed || repository.marks != 1 {
+		t.Fatalf("retry finalization: closed=%v marks=%d", closed, repository.marks)
+	}
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func TestPublicationScopeFailedButQuiescentCanFinalize(t *testing.T) {

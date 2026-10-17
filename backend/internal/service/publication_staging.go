@@ -36,7 +36,7 @@ type PublicationStageValidator interface {
 }
 
 type supervisedPublicationStageValidator interface {
-	validateSupervised() error
+	validateSupervised(*PublicationExecutionScope) error
 }
 
 type PublicationMetadataWriter interface {
@@ -96,9 +96,37 @@ func (runner PublicationStagingRunner) Run(ctx context.Context, scope *Publicati
 		if validator == nil {
 			return result, errors.New("supervised publication validator is unavailable")
 		}
+		if validator.Probe != nil {
+			return result, errors.New("supervised publication validator does not accept injected probes")
+		}
+		pinned, ok := runner.PinnedTools.(*GuardedPublicationPinnedTools)
+		if !ok {
+			return result, errors.New("supervised publication validator requires scope-bound pinned tools")
+		}
+		probe, err := NewScopeBoundPublicationStageProbe(scope, pinned, input.Tools)
+		if err != nil {
+			return result, err
+		}
+		validator.Tools = pinned
+		validator.supervisedProbe = probe
+	case RealPublicationStageValidator:
+		if validator.Probe != nil {
+			return result, errors.New("supervised publication validator does not accept injected probes")
+		}
+		pinned, ok := runner.PinnedTools.(*GuardedPublicationPinnedTools)
+		if !ok {
+			return result, errors.New("supervised publication validator requires scope-bound pinned tools")
+		}
+		probe, err := NewScopeBoundPublicationStageProbe(scope, pinned, input.Tools)
+		if err != nil {
+			return result, err
+		}
+		validator.Tools = pinned
+		validator.supervisedProbe = probe
+		runner.Validator = validator
 	}
 	if validator, ok := runner.Validator.(supervisedPublicationStageValidator); ok {
-		if err := validator.validateSupervised(); err != nil {
+		if err := validator.validateSupervised(scope); err != nil {
 			return result, err
 		}
 	}
