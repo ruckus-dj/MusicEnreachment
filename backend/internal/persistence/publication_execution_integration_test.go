@@ -4,6 +4,7 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -15,6 +16,13 @@ import (
 type publicationExecutionFixture struct {
 	db    *bun.DB
 	guard PublicationDeliveryGuard
+}
+
+func newValidPublicationStageObservation() PublicationStageObservation {
+	return PublicationStageObservation{
+		Version: 1, RelativePath: "album/track.flac", PayloadSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		ActualAudio: json.RawMessage(`{"codec":"flac"}`), ActualMetadata: json.RawMessage(`{"title":"track"}`),
+	}
 }
 
 func newPublicationExecutionFixture(t *testing.T) publicationExecutionFixture {
@@ -209,5 +217,130 @@ func TestPublicationDeliveryConcurrentClaimsHaveOneWinnerPostgreSQL(t *testing.T
 	}
 	if winners != 1 || blocked != 1 {
 		t.Fatalf("concurrent results = %q/%q, want one acquired and one blocked", results[0], results[1])
+	}
+}
+
+func TestPublicationStageAdvancesWithTypedAppendOnlyJournalPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	observation := newValidPublicationStageObservation()
+	if ok, err := repo.AdvancePublicationStage(context.Background(), f.guard, "staged", observation); err != nil || ok {
+		t.Fatalf("wrong-order stage = %t, %v", ok, err)
+	}
+	if ok, err := repo.AdvancePublicationStage(context.Background(), f.guard, "preparing", observation); err != nil || !ok {
+		t.Fatalf("stage = %t, %v", ok, err)
+	}
+	if ok, err := repo.AdvancePublicationStage(context.Background(), f.guard, "staged", observation); err != nil || !ok {
+		t.Fatalf("validate = %t, %v", ok, err)
+	}
+	attempt, err := repo.ReadPublicationAttempt(context.Background(), f.guard.OperationID)
+	if err != nil || attempt.Phase != "validated" {
+		t.Fatalf("attempt = %+v, %v", attempt, err)
+	}
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil || len(entries) != 2 {
+		t.Fatalf("journal = %s, %v", attempt.MutationJournal, err)
+	}
+	var frozen map[string]json.RawMessage
+	if err := json.Unmarshal(attempt.FrozenInputs, &frozen); err != nil || string(attempt.FrozenInputs) != "{}" {
+		t.Fatalf("frozen inputs overwritten: %s, %v", attempt.FrozenInputs, err)
+	}
+}
+
+func TestPublicationStageRequiresLiveFullGuardAndExecutingClaimPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	variants := []struct {
+		name   string
+		change func(*PublicationDeliveryGuard)
+	}{
+		{"operation", func(g *PublicationDeliveryGuard) { g.OperationID = uuid.New() }},
+		{"application attempt", func(g *PublicationDeliveryGuard) { g.ApplicationAttempt++ }},
+		{"job id", func(g *PublicationDeliveryGuard) { g.RiverJobID++ }},
+		{"river attempt", func(g *PublicationDeliveryGuard) { g.RiverAttempt++ }},
+		{"claim uuid", func(g *PublicationDeliveryGuard) { g.ClaimUUID = uuid.New() }},
+		{"boot uuid", func(g *PublicationDeliveryGuard) { g.BootUUID = uuid.New() }},
+		{"delivery token", func(g *PublicationDeliveryGuard) { g.DeliveryToken += "x" }},
+		{"epoch", func(g *PublicationDeliveryGuard) { g.Epoch = uuid.New() }},
+		{"position", func(g *PublicationDeliveryGuard) { g.ExpectedPositionID = uuid.New() }},
+		{"candidate", func(g *PublicationDeliveryGuard) { g.CandidateGeneration = uuid.New() }},
+	}
+	for _, variant := range variants {
+		t.Run(variant.name, func(t *testing.T) {
+			guard := f.guard
+			variant.change(&guard)
+			if ok, err := repo.AdvancePublicationStage(context.Background(), guard, "preparing", newValidPublicationStageObservation()); err != nil || ok {
+				t.Fatalf("advance = %t, %v", ok, err)
+			}
+		})
+	}
+	if ok, err := repo.MarkPublicationQuiescent(context.Background(), f.guard); err != nil || !ok {
+		t.Fatalf("quiesce = %t, %v", ok, err)
+	}
+	if ok, err := repo.AdvancePublicationStage(context.Background(), f.guard, "preparing", newValidPublicationStageObservation()); err != nil || ok {
+		t.Fatalf("quiescent advance = %t, %v", ok, err)
+	}
+	var phase string
+	if err := f.db.NewRaw(`SELECT phase FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(context.Background(), &phase); err != nil || phase != "preparing" {
+		t.Fatalf("phase = %s, %v", phase, err)
+	}
+}
+
+func TestPublicationStageRequiresRunningRiverAttemptAndValidArtifactPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	invalid := newValidPublicationStageObservation()
+	invalid.RelativePath = "../escape"
+	if ok, err := repo.AdvancePublicationStage(context.Background(), f.guard, "preparing", invalid); err == nil || ok {
+		t.Fatalf("invalid observation = %t, %v", ok, err)
+	}
+	var journal string
+	if err := f.db.NewRaw(`SELECT mutation_journal::text FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(context.Background(), &journal); err != nil || journal != "[]" {
+		t.Fatalf("invalid artifact mutated journal: %s, %v", journal, err)
+	}
+	if _, err := f.db.NewRaw(`UPDATE river_job SET attempt=attempt+1 WHERE id=?`, f.guard.RiverJobID).Exec(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := repo.AdvancePublicationStage(context.Background(), f.guard, "preparing", newValidPublicationStageObservation()); err != nil || ok {
+		t.Fatalf("mutated River attempt advance = %t, %v", ok, err)
+	}
+}
+
+func TestPublicationProgressIsMonotonicAndGuardedPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	total := int64(20)
+	if ok, err := repo.ProgressPublicationDelivery(context.Background(), f.guard, 10, &total); err != nil || !ok {
+		t.Fatalf("progress = %t, %v", ok, err)
+	}
+	tooSmall := int64(15)
+	if ok, err := repo.ProgressPublicationDelivery(context.Background(), f.guard, 11, &tooSmall); err != nil || ok {
+		t.Fatalf("decreasing total = %t, %v", ok, err)
+	}
+	if ok, err := repo.ProgressPublicationDelivery(context.Background(), f.guard, 9, &total); err != nil || ok {
+		t.Fatalf("decreasing completed = %t, %v", ok, err)
+	}
+	if ok, err := repo.ProgressPublicationDelivery(context.Background(), f.guard, 21, &total); err == nil || ok {
+		t.Fatalf("completed beyond total = %t, %v", ok, err)
+	}
+	var completed, storedTotal int64
+	if err := f.db.NewRaw(`SELECT bytes_completed,bytes_total FROM operation WHERE id=?`, f.guard.OperationID).Scan(context.Background(), &completed, &storedTotal); err != nil || completed != 10 || storedTotal != 20 {
+		t.Fatalf("stored progress = %d/%d, %v", completed, storedTotal, err)
 	}
 }

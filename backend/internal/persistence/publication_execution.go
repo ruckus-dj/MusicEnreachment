@@ -134,7 +134,7 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 		if _, err := tx.NewInsert().Model(&claim).Exec(ctx); err != nil {
 			return fmt.Errorf("claim publication delivery: insert claim: %w", err)
 		}
-		if _, err := tx.NewRaw(`UPDATE operation SET state='running', started_at=COALESCE(started_at, now()), updated_at=now() WHERE id=? AND state='queued'`, guard.OperationID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`UPDATE operation SET state='running', stage='preparing', started_at=COALESCE(started_at, now()), updated_at=now() WHERE id=? AND state='queued'`, guard.OperationID).Exec(ctx); err != nil {
 			return fmt.Errorf("claim publication delivery: start operation: %w", err)
 		}
 		if _, err := tx.NewRaw(`UPDATE track_publication_attempt SET phase='preparing' WHERE operation_id=? AND phase='queued'`, guard.OperationID).Exec(ctx); err != nil {
