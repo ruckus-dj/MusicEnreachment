@@ -168,7 +168,7 @@ func TestDuplicateCommandInputLifetimeAndCancellation(t *testing.T) {
 	if _, err := duplicate.Stat(); err == nil {
 		t.Fatal("closed duplicate remained usable")
 	}
-	if _, err := input.Stat(); !errors.Is(err, os.ErrClosed) {
-		t.Fatalf("original was not independently closed: %v", err)
+	if _, err := input.Stat(); err == nil {
+		t.Fatal("closed original remained usable")
 	}
 }

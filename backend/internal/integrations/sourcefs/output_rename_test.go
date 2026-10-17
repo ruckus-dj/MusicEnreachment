@@ -3,10 +3,10 @@ package sourcefs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 )
 
@@ -207,6 +207,7 @@ func TestOutputRenameNoReplaceValidationAndCancellation(t *testing.T) {
 	}
 }
 
+// Concurrent candidates for one target must preserve the no-overwrite invariant.
 func TestOutputRenameNoReplaceConcurrentWritersHaveOneWinner(t *testing.T) {
 	ctx := context.Background()
 	rootPath := outputRenameRoot(t)
@@ -220,36 +221,95 @@ func TestOutputRenameNoReplaceConcurrentWritersHaveOneWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = target.Close() }()
-	file, err := root.CreateExclusive(ctx, "source")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.Write(ctx, []byte("winner")); err != nil {
-		t.Fatal(err)
-	}
-	_ = file.Close()
 
 	const writers = 12
-	var wait sync.WaitGroup
-	var mu sync.Mutex
-	wins := 0
-	wait.Add(writers)
-	for i := 0; i < writers; i++ {
-		go func() {
-			defer wait.Done()
-			if err := root.(OutputMutation).RenameNoReplace(ctx, root, "source", target, "target"); err == nil {
-				mu.Lock()
-				wins++
-				mu.Unlock()
-			}
-		}()
+	type candidate struct {
+		name    string
+		content []byte
+		info    os.FileInfo
 	}
-	wait.Wait()
+	candidates := make([]candidate, writers)
+	type result struct {
+		index int
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan result, writers)
+	for i := 0; i < writers; i++ {
+		name := fmt.Sprintf("source-%d", i)
+		content := []byte(fmt.Sprintf("content-%d", i))
+		file, err := root.CreateExclusive(ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Write(ctx, content); err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(filepath.Join(rootPath, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidates[i] = candidate{name: name, content: content, info: info}
+	}
+
+	for i, source := range candidates {
+		go func(index int, candidate candidate) {
+			<-start
+			results <- result{index: index, err: root.(OutputMutation).RenameNoReplace(ctx, root, candidate.name, target, "target")}
+		}(i, source)
+	}
+	close(start)
+
+	winner := -1
+	wins := 0
+	for range writers {
+		result := <-results
+		if result.err == nil {
+			winner = result.index
+			wins++
+		}
+	}
 	if wins != 1 {
 		t.Fatalf("successful concurrent renames = %d, want 1", wins)
 	}
-	if got, err := os.ReadFile(filepath.Join(rootPath, "target", "target")); err != nil || string(got) != "winner" {
-		t.Fatalf("target content = %q, %v", got, err)
+	targetPath := filepath.Join(rootPath, "target", "target")
+	targetInfo, err := os.Stat(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	winningSource := candidates[winner]
+	if string(got) != string(winningSource.content) {
+		t.Fatalf("target content = %q, want %q", got, winningSource.content)
+	}
+	if !os.SameFile(winningSource.info, targetInfo) {
+		t.Fatal("target is not the winning source file")
+	}
+	for i, source := range candidates {
+		path := filepath.Join(rootPath, source.name)
+		info, err := os.Stat(path)
+		if i == winner {
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("winning source stat error = %v, want not-exist", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("losing source %q stat: %v", source.name, err)
+		}
+		if !os.SameFile(source.info, info) {
+			t.Errorf("losing source %q identity changed", source.name)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != string(source.content) {
+			t.Errorf("losing source %q content = %q, %v", source.name, got, err)
+		}
 	}
 }
 

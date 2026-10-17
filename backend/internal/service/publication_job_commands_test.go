@@ -95,6 +95,11 @@ func TestPublicationJobCommandsRunFileBorrowsInputAndClonesArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := input.Close(); err != nil {
+			t.Errorf("close input: %v", err)
+		}
+	})
 	args := []string{"one", "two"}
 	commands, _ := newPublicationJobCommands(8, 8, func(_ context.Context, request tools.JobCommandRequest) (tools.JobCommandResult, error) {
 		request.Args[0] = "changed"

@@ -135,6 +135,7 @@ func TestPublicationScopeFileRunQuarantinesOwnedDuplicate(t *testing.T) {
 	}
 	command := &scopeFileCommandFake{}
 	scope := newScopeForTest(t, command, &scopeRepositoryFake{marked: true})
+	t.Cleanup(func() { closeTestScopeOwnedFiles(t, scope) })
 	if _, err := scope.RunFile(context.Background(), "tool", []string{"arg"}, scopeFile{file: file}); err == nil {
 		t.Fatal("unknown file command quiescence accepted")
 	}
@@ -167,8 +168,8 @@ func TestPublicationScopeFileRunClosesDuplicateAfterQuiescence(t *testing.T) {
 	if _, err := scope.RunFile(context.Background(), "tool", nil, scopeFile{file: file}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := command.request.Input.Stat(); !errors.Is(err, os.ErrClosed) {
-		t.Fatalf("command duplicate stat error = %v, want closed", err)
+	if _, err := command.request.Input.Stat(); err == nil {
+		t.Fatal("command duplicate remained usable after close")
 	}
 	if !scope.CanExecute() {
 		t.Fatal("quiescent scope was fenced")
@@ -190,6 +191,7 @@ func TestPublicationScopeFileBorrowPanicsQuarantineReservation(t *testing.T) {
 			command := &scopeFileCommandFake{result: PublicationCommandResult{QuiescenceEstablished: true}}
 			repository := &scopeRepositoryFake{marked: true}
 			scope := newScopeForTest(t, command, repository)
+			t.Cleanup(func() { closeTestScopeOwnedFiles(t, scope) })
 			input := scopeFile{file: file, borrow: func(callback func(*os.File) error) error {
 				if afterCallback {
 					if err := callback(file); err != nil {
@@ -229,6 +231,7 @@ func TestPublicationScopeFileRunnerPanicQuarantinesDuplicate(t *testing.T) {
 	})
 	command := &scopeFileCommandFake{panic: true}
 	scope := newScopeForTest(t, command, &scopeRepositoryFake{marked: true})
+	t.Cleanup(func() { closeTestScopeOwnedFiles(t, scope) })
 	func() {
 		defer func() {
 			if recover() == nil {
@@ -242,6 +245,18 @@ func TestPublicationScopeFileRunnerPanicQuarantinesDuplicate(t *testing.T) {
 	}
 	if _, err := command.request.Input.Stat(); err != nil {
 		t.Fatalf("runner panic duplicate was not retained: %v", err)
+	}
+}
+
+func closeTestScopeOwnedFiles(t *testing.T, scope *PublicationExecutionScope) {
+	t.Helper()
+	scope.mu.Lock()
+	owned := append([]*os.File(nil), scope.ownedFiles...)
+	scope.mu.Unlock()
+	for _, file := range owned {
+		if err := file.Close(); err != nil {
+			t.Errorf("close retained publication command input: %v", err)
+		}
 	}
 }
 

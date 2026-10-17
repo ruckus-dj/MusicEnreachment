@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 )
 
 func TestPublicationToolsForDeliveryRejectsInvalidAndUnheldAttemptsPostgreSQL(t *testing.T) {
@@ -47,11 +46,7 @@ func TestPublicationToolsForDeliveryReturnsFrozenVerifiedPairPostgreSQL(t *testi
 	}
 	installationID := uuid.New()
 	verified := time.Now().UTC()
-	executableNames := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)
-	versions, err := json.Marshal(map[string]string{executableNames[0]: "ffmpeg version 7.0", executableNames[1]: "ffprobe version 7.0"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
 	installation := &ToolInstallation{
 		ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH,
 		SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: filepath.Join("ffmpeg", "release-1"),
@@ -61,8 +56,8 @@ func TestPublicationToolsForDeliveryReturnsFrozenVerifiedPairPostgreSQL(t *testi
 		t.Fatal(err)
 	}
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath, Executable: executableNames[0], Version: "7.0", VersionBanner: "ffmpeg version 7.0"},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath, Executable: executableNames[1], Version: "7.0", VersionBanner: "ffprobe version 7.0"},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
 	}
 	input := publicationInputsFixture(t, "rewrite")
 	input.Tools = selections

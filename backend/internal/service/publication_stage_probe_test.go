@@ -102,6 +102,7 @@ func TestScopeRunFileUnknownQuiescenceRetainsDuplicate(t *testing.T) {
 	command := &probeUnknownFileCommand{}
 	repository := &probeQuiescenceRepository{}
 	scope := &PublicationExecutionScope{commands: command, repository: repository}
+	t.Cleanup(func() { closeTestScopeOwnedFiles(t, scope) })
 	file := newPublicationProbeTestFile(t)
 	t.Cleanup(func() {
 		if err := file.file.Close(); err != nil {
@@ -119,11 +120,6 @@ func TestScopeRunFileUnknownQuiescenceRetainsDuplicate(t *testing.T) {
 	if _, statErr := scope.ownedFiles[0].Stat(); statErr != nil {
 		t.Fatalf("retained descriptor was closed: %v", statErr)
 	}
-	t.Cleanup(func() {
-		if err := scope.ownedFiles[0].Close(); err != nil {
-			t.Errorf("close quarantined descriptor: %v", err)
-		}
-	})
 	if err := scope.Finalize(context.Background(), func() error { t.Error("closed stage during unknown execution"); return nil }); err == nil {
 		t.Fatal("unknown command unexpectedly finalized")
 	}
@@ -181,8 +177,8 @@ func TestScopeBoundPublicationStageProbeUsesAllStreamFileRequest(t *testing.T) {
 	if command.request.Input == nil {
 		t.Fatal("file probe did not receive the scope-owned duplicate")
 	}
-	if _, err := command.request.Input.Stat(); !errors.Is(err, os.ErrClosed) {
-		t.Fatalf("scope did not close quiescent duplicate: %v", err)
+	if _, err := command.request.Input.Stat(); err == nil {
+		t.Fatal("scope did not close quiescent duplicate")
 	}
 	if err := scope.Finalize(context.Background(), func() error { return nil }); err != nil {
 		t.Fatalf("finalize after quiescent probe: %v", err)

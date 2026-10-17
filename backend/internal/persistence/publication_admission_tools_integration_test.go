@@ -16,6 +16,15 @@ import (
 	"github.com/uptrace/bun"
 )
 
+func publicationFFmpegVersionFixture() (json.RawMessage, string, string) {
+	executableNames := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)
+	metadata := map[string]string{executableNames[0]: "ffmpeg version 7.0", executableNames[1]: "ffprobe version 7.0"}
+	versions, _ := json.Marshal(metadata)
+	ffmpegBanner, _ := tools.VerifiedExecutableVersion(metadata, tools.PackageFFmpeg, "ffmpeg", runtime.GOOS)
+	ffprobeBanner, _ := tools.VerifiedExecutableVersion(metadata, tools.PackageFFmpeg, "ffprobe", runtime.GOOS)
+	return versions, ffmpegBanner, ffprobeBanner
+}
+
 func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -48,8 +57,7 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 	}
 	installationID := uuid.New()
 	verified := time.Now().UTC()
-	executableNames := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)
-	versions, _ := json.Marshal(map[string]string{executableNames[0]: "ffmpeg version 7.0", executableNames[1]: "ffprobe version 7.0"})
+	versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
 	installation := &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", State: "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}
 	separatorPath := "ffmpeg/release-1"
 	if runtime.GOOS == "windows" {
@@ -60,8 +68,8 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 		t.Fatal(err)
 	}
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffmpeg", Version: "7.0", VersionBanner: "ffmpeg version 7.0"},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffprobe", Version: "7.0", VersionBanner: "ffprobe version 7.0"},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
 	}
 	manifest := []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/file", RelativePath: "root/file", NodeKind: "file"}}
 	input := publicationInputsFixture(t, "rewrite")

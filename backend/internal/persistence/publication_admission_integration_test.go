@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
@@ -66,8 +65,7 @@ func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 	}
 	installationID := uuid.New()
 	verified := time.Now().UTC()
-	executableNames := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)
-	versions, _ := json.Marshal(map[string]string{executableNames[0]: "ffmpeg version 7.0", executableNames[1]: "ffprobe version 7.0"})
+	versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
 	separatorPath := "ffmpeg/release-1"
 	if runtime.GOOS == "windows" {
 		separatorPath = `ffmpeg\release-1`
@@ -76,8 +74,8 @@ func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffmpeg", Version: "7.0", VersionBanner: "ffmpeg version 7.0"},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffprobe", Version: "7.0", VersionBanner: "ffprobe version 7.0"},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
 	}
 	newRewriteRequest := func(position uuid.UUID, path string) PublicationAdmission {
 		input := publicationInputsFixture(t, "rewrite")

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,11 +60,15 @@ func (f *pubStagePrepared) Validate(context.Context) error {
 }
 func (f *pubStagePrepared) Close() error { *f.events = append(*f.events, "close"); return f.closeErr }
 
-type pubStageTools struct{ events *[]string }
+type pubStageTools struct {
+	events *[]string
+	root   string
+}
 
 func (f pubStageTools) Executable(context.Context, []persistence.SourceAnalysisToolSelection, string) (string, error) {
 	*f.events = append(*f.events, "resolve")
-	return "/managed/ffmpeg", nil
+	name := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)[0]
+	return filepath.Join(f.root, name), nil
 }
 
 type pubStageCommand struct {
@@ -80,7 +86,7 @@ func (f pubStageScopedCommand) Run(ctx context.Context, name string, args ...str
 
 func (f pubStageCommand) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	*f.events = append(*f.events, "ffmpeg")
-	if name != "/managed/ffmpeg" || len(args) == 0 {
+	if strings.TrimSuffix(filepath.Base(name), ".exe") != "ffmpeg" || len(args) == 0 {
 		return nil, errors.New("unexpected command")
 	}
 	if f.run != nil {
@@ -119,6 +125,7 @@ func pubStageSetup(t *testing.T, repo *pubStageRepo, command pubStageCommand, va
 	repo.events = &events
 	command.events = &events
 	dir := t.TempDir()
+	managedToolsRoot := filepath.Join(dir, "managed-tools")
 	inputPath := filepath.Join(dir, "input.flac")
 	outputPath := filepath.Join(dir, "output.mka")
 	installation := uuid.New()
@@ -134,7 +141,7 @@ func pubStageSetup(t *testing.T, repo *pubStageRepo, command pubStageCommand, va
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := PublicationStagingRunner{Repository: repo, PinnedTools: pubStageTools{&events}, Metadata: pubStageWriter{events: &events}, Validator: pubStageValidator{&events, validateErr}}
+	runner := PublicationStagingRunner{Repository: repo, PinnedTools: pubStageTools{events: &events, root: managedToolsRoot}, Metadata: pubStageWriter{events: &events}, Validator: pubStageValidator{&events, validateErr}}
 	return runner, scope, persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, IntentKind: "audio", Format: publication.AudioFormatMKA, DesiredTags: map[string][]string{"title": {"track"}}, Tools: []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7", VersionBanner: "ffmpeg version 7"}, {PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7", VersionBanner: "ffmpeg version 7"}}, Audio: &persistence.PublicationAudioInput{WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(), ConfiguredRootPath: dir, InventoryRootPath: dir, RelativePath: "input.flac", MTime: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), AnalysisPolicyVersion: 1, FFProbeVersion: "7", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: pubStageBool(true), Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}}}, stage, &events
 }
 func pubStageBool(v bool) *bool { return &v }
