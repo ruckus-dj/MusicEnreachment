@@ -136,14 +136,14 @@ func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE track_publication SET relative_path='forged.mka' WHERE position_id=?`, positions[1]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.AdmitPublication(ctx, badCurrent, new(publicationAdmissionInserter)); err == nil || !strings.Contains(err.Error(), "current publication identity changed") {
+	if _, err := repo.AdmitPublication(ctx, badCurrent, new(publicationAdmissionInserter)); err == nil || !strings.Contains(err.Error(), "frozen rewrite facts do not match current publication") {
 		t.Fatalf("rewritten path was not checked against the locked publication: %v", err)
 	}
 	badCurrent = newRewriteRequest(positions[1], "root/bad-ownership.flac")
 	if _, err := db.ExecContext(ctx, `UPDATE track_publication SET ownership='{}'::jsonb WHERE position_id=?`, positions[1]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.AdmitPublication(ctx, badCurrent, new(publicationAdmissionInserter)); err == nil || !strings.Contains(err.Error(), "rewrite ownership") {
+	if _, err := repo.AdmitPublication(ctx, badCurrent, new(publicationAdmissionInserter)); err == nil || !strings.Contains(err.Error(), "frozen rewrite facts do not match current publication") {
 		t.Fatalf("forged current ownership was admitted: %v", err)
 	}
 	req.CandidateGeneration = uuid.New()

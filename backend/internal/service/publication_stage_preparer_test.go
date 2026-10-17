@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,12 +19,18 @@ import (
 )
 
 type stagePreparationRepository struct {
-	input      persistence.PublicationInputs
-	hold       persistence.PublicationSourceHold
-	records    []persistence.PublicationPreparationRecord
-	checks     int
-	journalErr error
-	onCheck    func(int)
+	input          persistence.PublicationInputs
+	rewriteValid   bool
+	hold           persistence.PublicationSourceHold
+	records        []persistence.PublicationPreparationRecord
+	checks         int
+	journalErr     error
+	pendingJournal bool
+	onCheck        func(int)
+}
+
+func (repository *stagePreparationRepository) CheckPublicationRewriteForDelivery(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationRewritePreparationFacts, bool, error) {
+	return persistence.PublicationRewritePreparationFacts{Input: repository.input}, repository.rewriteValid, nil
 }
 
 func (repository *stagePreparationRepository) PublicationPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error) {
@@ -38,6 +46,9 @@ func (repository *stagePreparationRepository) CheckPublicationSourceHoldForDeliv
 }
 
 func (repository *stagePreparationRepository) RecordPublicationPreparation(_ context.Context, _ persistence.PublicationDeliveryGuard, record persistence.PublicationPreparationRecord) (persistence.PublicationPreparationOutcome, error) {
+	if repository.pendingJournal {
+		return persistence.PublicationPreparationStale, nil
+	}
 	if repository.journalErr != nil {
 		return persistence.PublicationPreparationStale, repository.journalErr
 	}
@@ -100,10 +111,12 @@ func newPublicationStageFixture(t *testing.T) publicationStageFixture {
 		t.Fatal(err)
 	}
 	mtime := info.ModTime().UTC().Truncate(time.Microsecond)
+	lossless := true
 	holdID := uuid.New()
 	input := persistence.PublicationInputs{
 		IntentKind: "audio", Format: "source", Audio: &persistence.PublicationAudioInput{
 			InventoryRootPath: sourceRoot, RelativePath: filepath.ToSlash(filepath.Join("album", "track.flac")), SizeBytes: info.Size(), MTime: mtime,
+			AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true},
 		},
 	}
 	repo := &stagePreparationRepository{input: input, hold: persistence.PublicationSourceHold{
@@ -117,6 +130,84 @@ func newPublicationStageFixture(t *testing.T) publicationStageFixture {
 	return publicationStageFixture{
 		preparer: PublicationStagePreparer{Repository: repo, SourceOpener: sourcefs.NewOpener(), OutputParent: parent, ParentPath: output, HoldUUID: holdID},
 		repo:     repo, guard: guard, holdID: holdID, source: source, output: output,
+	}
+}
+
+func makeRewriteFixture(t *testing.T) publicationStageFixture {
+	t.Helper()
+	fixture := newPublicationStageFixture(t)
+	if err := os.Remove(fixture.source); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(fixture.output, "current.mp3")
+	contents := []byte("current published MP3 bytes")
+	if err := os.WriteFile(current, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size, mtime := info.Size(), info.ModTime().UnixMicro()
+	digest := sha256.Sum256(contents)
+	lossless := false
+	fixture.repo.input = persistence.PublicationInputs{
+		IntentKind: "rewrite", Format: "source", Rewrite: &persistence.PublicationRewriteInput{
+			CurrentGeneration: uuid.New(), RelativePath: "current.mp3",
+			Ownership:  persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])},
+			AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "mp3", Lossless: &lossless, Container: "mp3", SupportedSourceContainer: true},
+		},
+	}
+	fixture.repo.rewriteValid = true
+	fixture.repo.hold = persistence.PublicationSourceHold{}
+	fixture.preparer.HoldUUID = uuid.Nil
+	return fixture
+}
+
+func TestPreparedRewriteStageRejectsSameSizeRestoredMtimeTampering(t *testing.T) {
+	fixture := makeRewriteFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	stage, err := fixture.prepare(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stage.Close() })
+	path := stage.Paths().InputPath
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents[0] ^= 0xff
+	if err := os.WriteFile(path, contents, info.Mode().Perm()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := stage.Validate(context.Background()); err == nil {
+		t.Fatal("Validate accepted same-size staged input tampering with restored mtime")
+	}
+}
+
+func TestPublicationStageExtensionUsesVerifiedContainer(t *testing.T) {
+	fixture := makeRewriteFixture(t)
+	if err := os.Rename(filepath.Join(fixture.output, "current.mp3"), filepath.Join(fixture.output, "current")); err != nil {
+		t.Fatal(err)
+	}
+	fixture.repo.input.Rewrite.RelativePath = "current"
+	fixture.repo.input.Rewrite.AudioFacts.Container = "mp3"
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	stage, err := fixture.prepare(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stage.Close() })
+	if inputExt, outputExt := filepath.Ext(stage.Paths().InputPath), filepath.Ext(stage.Paths().OutputPath); inputExt != ".mp3" || outputExt != ".mp3" {
+		t.Fatalf("stage extensions = input %q output %q, want canonical .mp3", inputExt, outputExt)
 	}
 }
 
@@ -297,6 +388,96 @@ func TestPublicationStagePreparerRejectsSourceReplacementDuringCopy(t *testing.T
 	}
 	if len(fixture.repo.records) != 2 || fixture.repo.records[1].Step != "directory_created" {
 		t.Fatalf("journal records = %#v, want no input_ready adoption", fixture.repo.records)
+	}
+}
+
+func TestPublicationStagePreparerStagesCurrentRewriteArtifact(t *testing.T) {
+	fixture := makeRewriteFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	stage, err := fixture.prepare(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stage.Close() })
+	if filepath.Ext(stage.Paths().InputPath) != ".mp3" || stage.Paths().RelativePath != "current.mp3" {
+		t.Fatalf("rewrite stage paths = %#v", stage.Paths())
+	}
+	if err := stage.Validate(context.Background()); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestPreparedRewriteStageRejectsRenamedCurrentArtifact(t *testing.T) {
+	fixture := makeRewriteFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	stage, err := fixture.prepare(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stage.Close() })
+	if err := os.Rename(filepath.Join(fixture.output, "current.mp3"), filepath.Join(fixture.output, "renamed.mp3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stage.Validate(context.Background()); err == nil {
+		t.Fatal("Validate accepted renamed current publication")
+	}
+}
+
+func TestPublicationStagePreparerRejectsRewriteEvidenceBeforeJournal(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		alter func(*persistence.PublicationRewriteInput)
+	}{
+		{name: "wrong size", alter: func(input *persistence.PublicationRewriteInput) { n := int64(1); input.Ownership.SizeBytes = &n }},
+		{name: "wrong digest", alter: func(input *persistence.PublicationRewriteInput) { input.Ownership.SHA256 = strings.Repeat("0", 64) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := makeRewriteFixture(t)
+			t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+			test.alter(fixture.repo.input.Rewrite)
+			if _, err := fixture.prepare(t); err == nil {
+				t.Fatal("Prepare accepted mismatched current artifact facts")
+			}
+			entries, err := os.ReadDir(fixture.output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 || len(fixture.repo.records) != 0 {
+				t.Fatalf("entries=%v journal=%v, want only pre-existing current artifact", entries, fixture.repo.records)
+			}
+		})
+	}
+}
+
+func TestPublicationStagePreparerRejectsStaleRewriteBeforeFilesystemWrite(t *testing.T) {
+	fixture := makeRewriteFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	fixture.repo.rewriteValid = false
+	if _, err := fixture.prepare(t); err == nil {
+		t.Fatal("Prepare accepted stale rewrite guard")
+	}
+	entries, err := os.ReadDir(fixture.output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || len(fixture.repo.records) != 0 {
+		t.Fatalf("entries=%v journal=%v, want no filesystem/journal mutation", entries, fixture.repo.records)
+	}
+}
+
+func TestPublicationStagePreparerDoesNotAdoptRewriteJournal(t *testing.T) {
+	fixture := makeRewriteFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	fixture.repo.pendingJournal = true
+	if _, err := fixture.prepare(t); err == nil || !strings.Contains(err.Error(), "recovery required") {
+		t.Fatalf("Prepare error=%v, want pending-journal refusal", err)
+	}
+	entries, err := os.ReadDir(fixture.output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || len(fixture.repo.records) != 0 {
+		t.Fatalf("entries=%v, want only original current artifact", entries)
 	}
 }
 

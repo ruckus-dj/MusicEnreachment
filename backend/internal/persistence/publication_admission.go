@@ -168,16 +168,8 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 			if err := tx.NewSelect().Model(&current).Where("position_id=?", request.PositionID).For("UPDATE").Scan(ctx); err != nil {
 				return fmt.Errorf("admit publication: lock current publication: %w", err)
 			}
-			if current.Epoch != epoch || current.Generation != input.Rewrite.CurrentGeneration || current.RelativePath != input.Rewrite.RelativePath {
-				return fmt.Errorf("admit publication: current publication identity changed")
-			}
-			var ownership PublicationCurrentOwnership
-			if err := decodePublicationCurrentContract(current.Ownership, &ownership); err != nil || ownership.Version != 1 || !reflect.DeepEqual(ownership.Identity, input.Rewrite.Ownership) {
-				return fmt.Errorf("admit publication: frozen rewrite ownership does not match current publication")
-			}
-			var audio PublicationCurrentAudio
-			if err := decodePublicationCurrentContract(current.ActualAudio, &audio); err != nil || audio.Version != 1 || audio.Facts.Validate() != nil || !reflect.DeepEqual(audio.Facts, input.Rewrite.AudioFacts) {
-				return fmt.Errorf("admit publication: frozen rewrite audio facts do not match current publication")
+			if !publicationRewriteMatchesCurrent(current, epoch, *input.Rewrite) {
+				return fmt.Errorf("admit publication: frozen rewrite facts do not match current publication")
 			}
 		}
 		var active uuid.UUID
@@ -230,6 +222,18 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		return uuid.Nil, err
 	}
 	return operationID, nil
+}
+
+func publicationRewriteMatchesCurrent(current TrackPublication, epoch uuid.UUID, rewrite PublicationRewriteInput) bool {
+	if current.Epoch != epoch || current.Generation != rewrite.CurrentGeneration || current.RelativePath != rewrite.RelativePath {
+		return false
+	}
+	var ownership PublicationCurrentOwnership
+	if decodePublicationCurrentContract(current.Ownership, &ownership) != nil || ownership.Version != 1 || !reflect.DeepEqual(ownership.Identity, rewrite.Ownership) {
+		return false
+	}
+	var audio PublicationCurrentAudio
+	return decodePublicationCurrentContract(current.ActualAudio, &audio) == nil && audio.Version == 1 && audio.Facts.Validate() == nil && reflect.DeepEqual(audio.Facts, rewrite.AudioFacts)
 }
 
 func decodePublicationCurrentContract(raw json.RawMessage, destination any) error {

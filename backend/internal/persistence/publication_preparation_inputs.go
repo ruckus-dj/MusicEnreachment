@@ -37,3 +37,45 @@ func (repository *SetupManagerRepository) PublicationPreparationInputs(ctx conte
 	}
 	return input.Clone(), true, nil
 }
+
+// PublicationRewritePreparationFacts are the persisted facts which authorize
+// copying the current published artifact for a rewrite.
+type PublicationRewritePreparationFacts struct {
+	Input PublicationInputs
+}
+
+// CheckPublicationRewriteForDelivery validates the frozen rewrite contract and
+// current publication while holding the normal publication lock order.
+func (repository *SetupManagerRepository) CheckPublicationRewriteForDelivery(ctx context.Context, guard PublicationDeliveryGuard) (PublicationRewritePreparationFacts, bool, error) {
+	var facts PublicationRewritePreparationFacts
+	valid := false
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		attempt, operation, _, ok, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "check publication rewrite")
+		if err != nil || !ok || (attempt.Phase != "preparing" && attempt.Phase != "staged") || operation.Stage != attempt.Phase {
+			return err
+		}
+		input, err := DecodePublicationInputs(attempt.FrozenInputs)
+		if err != nil {
+			return fmt.Errorf("check publication rewrite: decode frozen inputs: %w", err)
+		}
+		if input.IntentKind != "rewrite" || input.Rewrite == nil || attempt.IntentKind != "rewrite" || attempt.Epoch != guard.Epoch || attempt.CandidateGeneration != guard.CandidateGeneration || attempt.PositionID != guard.ExpectedPositionID {
+			return nil
+		}
+		var current TrackPublication
+		if err := tx.NewSelect().Model(&current).Where("position_id=?", guard.ExpectedPositionID).For("UPDATE").Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("check publication rewrite: read current publication: %w", err)
+		}
+		if !publicationRewriteMatchesCurrent(current, guard.Epoch, *input.Rewrite) {
+			return nil
+		}
+		facts, valid = PublicationRewritePreparationFacts{Input: input.Clone()}, true
+		return nil
+	})
+	if err != nil {
+		return PublicationRewritePreparationFacts{}, false, err
+	}
+	return facts, valid, nil
+}

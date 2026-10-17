@@ -2,22 +2,28 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 // PublicationStagePreparationRepository exposes only the guarded operations
 // required to stage one publication attempt.
 type PublicationStagePreparationRepository interface {
 	PublicationPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error)
+	CheckPublicationRewriteForDelivery(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationRewritePreparationFacts, bool, error)
 	CheckPublicationSourceHoldForDelivery(context.Context, persistence.PublicationDeliveryGuard, uuid.UUID) (persistence.PublicationSourceHold, bool, error)
 	RecordPublicationPreparation(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationPreparationRecord) (persistence.PublicationPreparationOutcome, error)
 }
@@ -35,7 +41,7 @@ type PublicationStagePreparer struct {
 // Prepare requires the caller to hold coordinator resources and to present a
 // newly acquired delivery claim. It deliberately does not resume journal steps.
 func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard persistence.PublicationDeliveryGuard, claim persistence.PublicationDeliveryClaimOutcome, resourcesHeld bool) (prepared PreparedPublicationStage, resultErr error) {
-	if preparer.Repository == nil || preparer.SourceOpener == nil || preparer.OutputParent == nil || preparer.HoldUUID == uuid.Nil {
+	if preparer.Repository == nil || preparer.SourceOpener == nil || preparer.OutputParent == nil {
 		return nil, errors.New("publication stage preparation dependencies are unavailable")
 	}
 	if claim != persistence.PublicationDeliveryAcquired || !resourcesHeld {
@@ -51,15 +57,69 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	if !valid {
 		return nil, errors.New("publication delivery is stale")
 	}
-	if input.IntentKind != "audio" || input.Audio == nil {
-		return nil, errors.New("rewrite stage preparation is unsupported")
-	}
-	hold, valid, err := preparer.Repository.CheckPublicationSourceHoldForDelivery(ctx, guard, preparer.HoldUUID)
-	if err != nil {
-		return nil, err
-	}
-	if !valid || hold.RelativePath != input.Audio.RelativePath || hold.SizeBytes != input.Audio.SizeBytes || !hold.Mtime.Equal(input.Audio.MTime) {
-		return nil, errors.New("publication source hold is stale")
+	var sourceRootPath, sourceRelativePath string
+	var sourceSize int64
+	var sourceMTime time.Time
+	var hold uuid.UUID
+	isRewrite := input.IntentKind == "rewrite"
+	if isRewrite {
+		facts, current, err := preparer.Repository.CheckPublicationRewriteForDelivery(ctx, guard)
+		if err != nil {
+			return nil, err
+		}
+		if !current || facts.Input.IntentKind != "rewrite" || facts.Input.Rewrite == nil || !reflect.DeepEqual(input, facts.Input) {
+			return nil, errors.New("publication rewrite is stale")
+		}
+		rewrite := input.Rewrite
+		sourceRootPath, sourceRelativePath = preparer.ParentPath, rewrite.RelativePath
+		if !filepath.IsAbs(sourceRootPath) {
+			return nil, errors.New("publication output parent path must be absolute")
+		}
+		root, err := preparer.SourceOpener.OpenRoot(ctx, sourceRootPath)
+		if err != nil {
+			return nil, fmt.Errorf("open current published artifact root: %w", err)
+		}
+		source, err := sourcefs.OpenRegularAt(ctx, root, sourceRelativePath)
+		if err != nil {
+			_ = root.Close()
+			return nil, fmt.Errorf("open current published artifact: %w", err)
+		}
+		info, statErr := source.Stat(ctx)
+		if statErr == nil && (info == nil || !info.Mode().IsRegular() || (rewrite.Ownership.SizeBytes != nil && info.Size() != *rewrite.Ownership.SizeBytes) || (rewrite.Ownership.MTime != nil && *rewrite.Ownership.MTime != info.ModTime().UnixMicro())) {
+			statErr = errors.New("current published artifact ownership facts changed")
+		}
+		if statErr == nil && rewrite.Ownership.SHA256 != "" {
+			var digest [sha256.Size]byte
+			statErr = source.Borrow(ctx, func(file *os.File) error {
+				var err error
+				digest, err = hashBorrowedFile(ctx, file)
+				return err
+			})
+			if statErr == nil && hex.EncodeToString(digest[:]) != rewrite.Ownership.SHA256 {
+				statErr = errors.New("current published artifact digest changed")
+			}
+		}
+		if statErr == nil {
+			statErr = verifySourceFileNamespace(ctx, root, sourceRelativePath, info)
+		}
+		statErr = errors.Join(statErr, source.Close(), root.Close())
+		if statErr != nil {
+			return nil, statErr
+		}
+		sourceSize = info.Size()
+		sourceMTime = info.ModTime()
+	} else {
+		if input.IntentKind != "audio" || input.Audio == nil || preparer.HoldUUID == uuid.Nil {
+			return nil, errors.New("publication audio input is invalid")
+		}
+		holdFacts, current, err := preparer.Repository.CheckPublicationSourceHoldForDelivery(ctx, guard, preparer.HoldUUID)
+		if err != nil {
+			return nil, err
+		}
+		if !current || holdFacts.RelativePath != input.Audio.RelativePath || holdFacts.SizeBytes != input.Audio.SizeBytes || !holdFacts.Mtime.Equal(input.Audio.MTime) {
+			return nil, errors.New("publication source hold is stale")
+		}
+		sourceRootPath, sourceRelativePath, sourceSize, sourceMTime, hold = input.Audio.InventoryRootPath, input.Audio.RelativePath, input.Audio.SizeBytes, input.Audio.MTime, preparer.HoldUUID
 	}
 	if !filepath.IsAbs(preparer.ParentPath) {
 		return nil, errors.New("publication output parent path must be absolute")
@@ -111,7 +171,7 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	if outcome != persistence.PublicationPreparationRecorded {
 		return nil, errors.New("publication directory journal replay; recovery required")
 	}
-	root, err := preparer.SourceOpener.OpenRoot(ctx, input.Audio.InventoryRootPath)
+	root, err := preparer.SourceOpener.OpenRoot(ctx, sourceRootPath)
 	if err != nil {
 		return nil, fmt.Errorf("open held publication source root: %w", err)
 	}
@@ -121,7 +181,7 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 			resultErr = errors.Join(resultErr, root.Close())
 		}
 	}()
-	source, err := sourcefs.OpenRegularAt(ctx, root, input.Audio.RelativePath)
+	source, err := sourcefs.OpenRegularAt(ctx, root, sourceRelativePath)
 	if err != nil {
 		return nil, fmt.Errorf("open held publication source: %w", err)
 	}
@@ -132,22 +192,50 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 		}
 	}()
 	sourceInfo, err := source.Stat(ctx)
-	if err != nil || !matchesSourceIdentity(sourceInfo, input.Audio.SizeBytes, input.Audio.MTime) {
+	if err != nil || !matchesSourceIdentity(sourceInfo, sourceSize, sourceMTime) {
 		if err != nil {
 			return nil, fmt.Errorf("stat held publication source: %w", err)
 		}
 		return nil, errors.New("held publication source facts changed")
 	}
-	if err := verifySourceNamespace(ctx, preparer.SourceOpener, root, input.Audio.InventoryRootPath); err != nil {
+	rewriteUsed := input.Rewrite != nil
+	if rewriteUsed {
+		if rewrite := input.Rewrite; rewrite.Ownership.SizeBytes != nil && sourceInfo.Size() != *rewrite.Ownership.SizeBytes {
+			return nil, errors.New("current published artifact size changed before copy")
+		}
+		if input.Rewrite.Ownership.MTime != nil && *input.Rewrite.Ownership.MTime != sourceInfo.ModTime().UnixMicro() {
+			return nil, errors.New("current published artifact modification time changed before copy")
+		}
+		if input.Rewrite.Ownership.SHA256 != "" {
+			var actual string
+			if err := source.Borrow(ctx, func(file *os.File) error {
+				digest, err := hashBorrowedFile(ctx, file)
+				actual = hex.EncodeToString(digest[:])
+				return err
+			}); err != nil {
+				return nil, err
+			}
+			if actual != input.Rewrite.Ownership.SHA256 {
+				return nil, errors.New("current published artifact digest changed before copy")
+			}
+		}
+	}
+	if err := verifySourceNamespace(ctx, preparer.SourceOpener, root, sourceRootPath); err != nil {
 		return nil, fmt.Errorf("verify held publication source root namespace: %w", err)
 	}
-	if err := verifySourceFileNamespace(ctx, root, input.Audio.RelativePath, sourceInfo); err != nil {
+	if err := verifySourceFileNamespace(ctx, root, sourceRelativePath, sourceInfo); err != nil {
 		return nil, fmt.Errorf("verify held publication source namespace: %w", err)
 	}
-	if _, valid, err := preparer.Repository.CheckPublicationSourceHoldForDelivery(ctx, guard, preparer.HoldUUID); err != nil {
+	if !isRewrite {
+		if _, valid, err := preparer.Repository.CheckPublicationSourceHoldForDelivery(ctx, guard, hold); err != nil {
+			return nil, err
+		} else if !valid {
+			return nil, errors.New("publication source hold is stale before copy")
+		}
+	} else if _, valid, err := preparer.Repository.CheckPublicationRewriteForDelivery(ctx, guard); err != nil {
 		return nil, err
 	} else if !valid {
-		return nil, errors.New("publication source hold is stale before copy")
+		return nil, errors.New("publication rewrite is stale before copy")
 	}
 	destination, err := dir.CreateExclusive(ctx, inputName)
 	if err != nil {
@@ -159,21 +247,28 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 			resultErr = errors.Join(resultErr, destination.Close())
 		}
 	}()
-	_, copyErr := copySourceOnce(ctx, source, destination, input.Audio.SizeBytes)
+	_, copyErr := copySourceOnce(ctx, source, destination, sourceSize)
 	copyErr = errors.Join(copyErr, destination.Sync(ctx))
 	after, statErr := source.Stat(ctx)
-	if copyErr == nil && (statErr != nil || !matchesSourceIdentity(after, input.Audio.SizeBytes, input.Audio.MTime)) {
+	if copyErr == nil && (statErr != nil || !matchesSourceIdentity(after, sourceSize, sourceMTime)) {
 		copyErr = errors.New("publication source changed while copying")
 	}
 	if copyErr == nil {
-		if namespaceErr := verifySourceNamespace(ctx, preparer.SourceOpener, root, input.Audio.InventoryRootPath); namespaceErr != nil {
+		if namespaceErr := verifySourceNamespace(ctx, preparer.SourceOpener, root, sourceRootPath); namespaceErr != nil {
 			copyErr = fmt.Errorf("verify held publication source root after copy: %w", namespaceErr)
-		} else if namespaceErr = verifySourceFileNamespace(ctx, root, input.Audio.RelativePath, sourceInfo); namespaceErr != nil {
+		} else if namespaceErr = verifySourceFileNamespace(ctx, root, sourceRelativePath, sourceInfo); namespaceErr != nil {
 			copyErr = fmt.Errorf("verify held publication source after copy: %w", namespaceErr)
 		}
 	}
 	if copyErr == nil {
-		if _, valid, holdErr := preparer.Repository.CheckPublicationSourceHoldForDelivery(ctx, guard, preparer.HoldUUID); holdErr != nil {
+		if isRewrite {
+			_, valid, guardErr := preparer.Repository.CheckPublicationRewriteForDelivery(ctx, guard)
+			if guardErr != nil {
+				copyErr = guardErr
+			} else if !valid {
+				copyErr = errors.New("publication rewrite is stale after copy")
+			}
+		} else if _, valid, holdErr := preparer.Repository.CheckPublicationSourceHoldForDelivery(ctx, guard, hold); holdErr != nil {
 			copyErr = holdErr
 		} else if !valid {
 			copyErr = errors.New("publication source hold is stale after copy")
@@ -190,7 +285,7 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	if copyErr != nil {
 		return nil, fmt.Errorf("copy publication source: %w", copyErr)
 	}
-	if inputInfo == nil || !inputInfo.Mode().IsRegular() || inputInfo.Size() != input.Audio.SizeBytes {
+	if inputInfo == nil || !inputInfo.Mode().IsRegular() || inputInfo.Size() != sourceSize {
 		return nil, errors.New("copied publication input facts changed")
 	}
 	if err := verifyPublicationDirectoryNamespace(ctx, preparer.OutputParent, privateName, dir, dirIdentity, preparer.SourceOpener, filepath.Join(preparer.ParentPath, privateName)); err != nil {
@@ -199,7 +294,7 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	if err := verifyOutputNamespace(ctx, sourcefs.NewOutputOpener(), preparer.OutputParent, preparer.ParentPath); err != nil {
 		return nil, err
 	}
-	size, mtime := input.Audio.SizeBytes, input.Audio.MTime.UnixMicro()
+	size, mtime := sourceSize, sourceMTime.UnixMicro()
 	ready := created
 	ready.Step = "input_ready"
 	ready.InputSize = &size
@@ -211,21 +306,70 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	if outcome != persistence.PublicationPreparationRecorded {
 		return nil, errors.New("publication input journal replay; recovery required")
 	}
-	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(preparer.ParentPath, privateName, inputName), OutputPath: filepath.Join(preparer.ParentPath, privateName, outputName), RelativePath: input.Audio.RelativePath}, parent: preparer.OutputParent, directory: dir, directoryName: privateName, identity: dirID, repository: preparer.Repository, opener: preparer.SourceOpener, sourceRootPath: input.Audio.InventoryRootPath, sourceRelativePath: input.Audio.RelativePath, sourceSize: input.Audio.SizeBytes, sourceMTime: input.Audio.MTime, sourceFileInfo: inputInfo, inputPath: filepath.Join(preparer.ParentPath, privateName), inputName: inputName, guard: guard, hold: preparer.HoldUUID}
+	var rewriteIdentity persistence.PublicationFileIdentity
+	if input.Rewrite != nil {
+		rewriteIdentity = clonePublicationIdentity(input.Rewrite.Ownership)
+	}
+	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(preparer.ParentPath, privateName, inputName), OutputPath: filepath.Join(preparer.ParentPath, privateName, outputName), RelativePath: sourceRelativePath}, parent: preparer.OutputParent, directory: dir, directoryName: privateName, identity: dirID, repository: preparer.Repository, opener: preparer.SourceOpener, sourceRootPath: sourceRootPath, sourceRelativePath: sourceRelativePath, sourceSize: sourceSize, sourceMTime: sourceMTime, sourceFileInfo: inputInfo, inputPath: filepath.Join(preparer.ParentPath, privateName), inputName: inputName, guard: guard, hold: hold, rewrite: isRewrite, rewriteIdentity: rewriteIdentity}
 	// Transfer directory ownership only after all preparation observations have been journaled.
 	transferred = true
 	return stage, nil
 }
 
-func publicationStageExtension(input persistence.PublicationInputs) string {
-	switch input.Format {
-	case "mka":
-		return ".mka"
-	case "m4a":
-		return ".m4a"
-	default:
-		return filepath.Ext(input.Audio.RelativePath)
+func clonePublicationIdentity(identity persistence.PublicationFileIdentity) persistence.PublicationFileIdentity {
+	if identity.SizeBytes != nil {
+		value := *identity.SizeBytes
+		identity.SizeBytes = &value
 	}
+	if identity.MTime != nil {
+		value := *identity.MTime
+		identity.MTime = &value
+	}
+	return identity
+}
+
+func hashBorrowedFile(ctx context.Context, file *os.File) ([sha256.Size]byte, error) {
+	var digest [sha256.Size]byte
+	if _, err := file.Seek(0, 0); err != nil {
+		return digest, err
+	}
+	hash := sha256.New()
+	buffer := make([]byte, sourceAnalysisCopyBufferSize)
+	var readErr error
+	for {
+		if err := ctx.Err(); err != nil {
+			readErr = err
+			break
+		}
+		count, err := file.Read(buffer)
+		if count > 0 {
+			_, _ = hash.Write(buffer[:count])
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			readErr = err
+			break
+		}
+	}
+	_, seekErr := file.Seek(0, 0)
+	copy(digest[:], hash.Sum(nil))
+	return digest, errors.Join(readErr, seekErr)
+}
+
+func publicationStageExtension(input persistence.PublicationInputs) string {
+	var facts persistence.PersistedAudioFacts
+	if input.Rewrite != nil {
+		facts = input.Rewrite.AudioFacts
+	} else if input.Audio != nil {
+		facts = input.Audio.AudioFacts
+	}
+	plan, err := publication.PlanAudioTransform(publication.AudioFormatSource, facts.AudioSourceFacts())
+	if err != nil {
+		return ""
+	}
+	return "." + plan.Extension
 }
 
 type preparedPublicationStage struct {
@@ -240,10 +384,12 @@ type preparedPublicationStage struct {
 	sourceSize         int64
 	sourceMTime        time.Time
 	sourceFileInfo     os.FileInfo
+	rewriteIdentity    persistence.PublicationFileIdentity
 	inputPath          string
 	inputName          string
 	guard              persistence.PublicationDeliveryGuard
 	hold               uuid.UUID
+	rewrite            bool
 	mu                 sync.Mutex
 	closed             bool
 }
@@ -288,16 +434,50 @@ func (stage *preparedPublicationStage) Validate(ctx context.Context) error {
 	if statErr == nil && (inputInfo.Size() != stage.sourceSize || !os.SameFile(stage.sourceFileInfo, inputInfo) || !sameSourceMtime(stage.sourceFileInfo.ModTime(), inputInfo.ModTime())) {
 		statErr = errors.New("prepared publication input namespace or facts changed")
 	}
+	if statErr == nil {
+		statErr = verifySourceFileNamespace(ctx, inputRoot, stage.inputName, inputInfo)
+	}
+	if statErr == nil && stage.rewriteIdentity.SHA256 != "" {
+		var digest [sha256.Size]byte
+		statErr = input.Borrow(ctx, func(file *os.File) error {
+			var err error
+			digest, err = hashBorrowedFile(ctx, file)
+			return err
+		})
+		if statErr == nil && hex.EncodeToString(digest[:]) != stage.rewriteIdentity.SHA256 {
+			statErr = errors.New("prepared publication input digest changed")
+		}
+	}
+	if statErr == nil {
+		after, err := input.Stat(ctx)
+		if err != nil {
+			statErr = err
+		} else if after.Size() != inputInfo.Size() || !sameSourceMtime(after.ModTime(), inputInfo.ModTime()) {
+			statErr = errors.New("prepared publication input facts changed while hashing")
+		} else {
+			statErr = verifySourceFileNamespace(ctx, inputRoot, stage.inputName, after)
+		}
+	}
 	statErr = errors.Join(statErr, input.Close(), inputRoot.Close())
 	if statErr != nil {
 		return statErr
 	}
-	_, valid, err := stage.repository.CheckPublicationSourceHoldForDelivery(ctx, stage.guard, stage.hold)
-	if err != nil {
-		return err
-	}
-	if !valid {
-		return errors.New("publication source hold is stale")
+	if stage.rewrite {
+		_, valid, err := stage.repository.CheckPublicationRewriteForDelivery(ctx, stage.guard)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return errors.New("publication rewrite is stale")
+		}
+	} else {
+		_, valid, err := stage.repository.CheckPublicationSourceHoldForDelivery(ctx, stage.guard, stage.hold)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return errors.New("publication source hold is stale")
+		}
 	}
 	root, err := stage.opener.OpenRoot(ctx, stage.sourceRootPath)
 	if err != nil {
@@ -319,6 +499,14 @@ func (stage *preparedPublicationStage) Validate(ctx context.Context) error {
 	}
 	if statErr == nil {
 		statErr = stage.parent.VerifyChild(ctx, stage.directoryName, sourcefs.DirectoryIdentity{Platform: stage.identity.Platform, Volume: stage.identity.Volume, FileID: stage.identity.FileID})
+	}
+	if statErr == nil && stage.rewrite {
+		_, valid, guardErr := stage.repository.CheckPublicationRewriteForDelivery(ctx, stage.guard)
+		if guardErr != nil {
+			statErr = guardErr
+		} else if !valid {
+			statErr = errors.New("publication rewrite is stale during validation")
+		}
 	}
 	return errors.Join(statErr, file.Close(), root.Close())
 }
