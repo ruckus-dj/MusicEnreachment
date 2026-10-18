@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
@@ -22,11 +23,13 @@ type firstAbsentFlowRepo struct {
 	pubStageRepo
 	absentInstallerRepositoryFake
 	pinnedToolRepo
-	events    *[]string
-	commit    bool
-	commitErr error
-	release   bool
-	cleanup   persistence.PublicationFirstAbsentCleanupWitness
+	events             *[]string
+	commit             bool
+	commitErr          error
+	panicCommit        bool
+	panicCleanupIntent bool
+	release            bool
+	cleanup            persistence.PublicationFirstAbsentCleanupWitness
 }
 
 func (r *firstAbsentFlowRepo) CheckPublicationSourceHoldForDelivery(context.Context, persistence.PublicationDeliveryGuard, uuid.UUID) (persistence.PublicationSourceHold, bool, error) {
@@ -47,6 +50,9 @@ func (*firstAbsentFlowRepo) RecordPublicationPreparation(context.Context, persis
 
 func (r *firstAbsentFlowRepo) BeginPublicationFirstAbsentCleanup(_ context.Context, _ persistence.PublicationDeliveryGuard, witness persistence.PublicationFirstAbsentCleanupWitness) (persistence.PublicationFirstAbsentCleanupOutcome, error) {
 	*r.events = append(*r.events, "input-intent")
+	if r.panicCleanupIntent {
+		panic("cleanup intent panic")
+	}
 	r.cleanup = witness
 	return persistence.PublicationFirstAbsentCleanupRecorded, nil
 }
@@ -78,6 +84,9 @@ func (r *firstAbsentFlowRepo) PublicationToolsForDelivery(ctx context.Context, g
 
 func (r *firstAbsentFlowRepo) CommitFirstPublication(context.Context, persistence.PublicationDeliveryGuard) (bool, error) {
 	*r.events = append(*r.events, "commit")
+	if r.panicCommit {
+		panic("commit panic")
+	}
 	return r.commit, r.commitErr
 }
 
@@ -133,114 +142,170 @@ func (firstAbsentFlowValidator) Validate(_ context.Context, path string, _ persi
 
 func TestRunFirstAbsentPublicationCompletesExposureCommitAndInputReleaseInOrder(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		commit    bool
-		commitErr error
-		wantErr   bool
+		name               string
+		commit             bool
+		commitErr          error
+		panicCommit        bool
+		panicCleanupIntent bool
+		wantErr            bool
 	}{
 		{name: "acknowledged commit", commit: true},
 		{name: "commit not acknowledged", wantErr: true},
 		{name: "commit error", commitErr: errors.New("commit failed"), wantErr: true},
+		{name: "commit panic", panicCommit: true},
+		{name: "cleanup intent panic", commit: true, panicCleanupIntent: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newAbsentInstallerFixture(t, persistence.PublicationExposureRecorded, nil)
-			_, selections, pinnedRepo := pinnedToolFixture(t, true)
-			platform := tools.Platform{GOOS: pinnedRepo.installation.PlatformGOOS, GOARCH: pinnedRepo.installation.PlatformGOARCH}
-			events := []string{}
-			guard := persistence.PublicationDeliveryGuard{DeliveryToken: "first-absent-flow"}
-			repo := &firstAbsentFlowRepo{
-				absentInstallerRepositoryFake: *fixture.repo,
-				pinnedToolRepo:                *pinnedRepo,
-				events:                        &events,
-				commit:                        test.commit,
-				commitErr:                     test.commitErr,
-				release:                       true,
-			}
-			repo.pubStageRepo.events = &events
-			repo.begin = persistence.PublicationExposureRecorded
-			repo.record = persistence.PublicationCandidateInstalledRecorded
-			repo.selections = selections
-			repo.valid = true
-			commands := firstAbsentFlowCommand{events: &events}
-			scope, err := NewPublicationExecutionScope(context.Background(), publication.NewCoordinator(), []publication.ResourceLock{{Key: "first-absent-flow", Mode: publication.Exclusive}}, guard, func(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationDeliveryClaimOutcome, error) {
-				return persistence.PublicationDeliveryAcquired, nil
-			}, commands, repo)
-			if err != nil {
-				t.Fatal(err)
-			}
-			fixture.scope = scope
-			_, _, input, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
-			input.Tools = selections
-			for _, selection := range selections {
-				if selection.Executable == tools.ExpectedExecutables(tools.PackageFFmpeg, platform.GOOS)[1] {
-					if input.Audio != nil {
-						input.Audio.FFProbeVersion = selection.Version
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newAbsentInstallerFixture(t, persistence.PublicationExposureRecorded, nil)
+				_, selections, pinnedRepo := pinnedToolFixture(t, true)
+				platform := tools.Platform{GOOS: pinnedRepo.installation.PlatformGOOS, GOARCH: pinnedRepo.installation.PlatformGOARCH}
+				events := []string{}
+				guard := persistence.PublicationDeliveryGuard{DeliveryToken: "first-absent-flow"}
+				repo := &firstAbsentFlowRepo{
+					absentInstallerRepositoryFake: *fixture.repo,
+					pinnedToolRepo:                *pinnedRepo,
+					events:                        &events,
+					commit:                        test.commit,
+					commitErr:                     test.commitErr,
+					panicCommit:                   test.panicCommit,
+					panicCleanupIntent:            test.panicCleanupIntent,
+					release:                       true,
+				}
+				repo.pubStageRepo.events = &events
+				repo.begin = persistence.PublicationExposureRecorded
+				repo.record = persistence.PublicationCandidateInstalledRecorded
+				repo.selections = selections
+				repo.valid = true
+				commands := firstAbsentFlowCommand{events: &events}
+				coordinator := publication.NewCoordinator()
+				scope, err := NewPublicationExecutionScope(context.Background(), coordinator, []publication.ResourceLock{{Key: "first-absent-flow", Mode: publication.Exclusive}}, guard, func(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationDeliveryClaimOutcome, error) {
+					return persistence.PublicationDeliveryAcquired, nil
+				}, commands, repo)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fixture.scope = scope
+				_, _, input, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
+				input.Tools = selections
+				for _, selection := range selections {
+					if selection.Executable == tools.ExpectedExecutables(tools.PackageFFmpeg, platform.GOOS)[1] {
+						if input.Audio != nil {
+							input.Audio.FFProbeVersion = selection.Version
+						}
 					}
 				}
-			}
-			inputPath := filepath.Join(fixture.stagePath, "input")
-			if err := os.WriteFile(inputPath, []byte("source"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			stageIdentity, err := fixture.stageDir.Identity(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			parentIdentity, err := fixture.root.Identity(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			sourceFileInfo, err := os.Stat(inputPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			stage := &preparedPublicationStage{
-				paths:              PublicationStagePaths{InputPath: inputPath, OutputPath: filepath.Join(fixture.stagePath, "candidate"), RelativePath: "stage/candidate"},
-				parent:             fixture.root,
-				directory:          fixture.stageDir,
-				directoryName:      filepath.Base(fixture.stagePath),
-				identity:           persistence.PublicationDirectoryIdentity{Platform: stageIdentity.Platform, Volume: stageIdentity.Volume, FileID: stageIdentity.FileID},
-				parentIdentity:     parentIdentity,
-				repository:         repo,
-				opener:             sourcefs.NewOpener(),
-				sourceRootPath:     fixture.rootPath,
-				sourceRelativePath: filepath.Join(filepath.Base(fixture.stagePath), "input"),
-				sourceSize:         sourceFileInfo.Size(),
-				sourceMTime:        sourceFileInfo.ModTime(),
-				sourceFileInfo:     sourceFileInfo,
-				inputPath:          fixture.stagePath,
-				inputName:          "input",
-				guard:              guard,
-			}
-			stageRunner := PublicationStagingRunner{
-				Repository: repo,
-				Metadata:   firstAbsentFlowWriter{events: &events},
-				Validator:  firstAbsentFlowValidator{},
-			}
-			pinnedTools, err := NewScopeBoundPublicationPinnedTools(repo, scope, guard, platform)
-			if err != nil {
-				t.Fatal(err)
-			}
-			stageRunner.PinnedTools = pinnedTools
-			_, err = stageRunner.RunFirstAbsentPublication(context.Background(), scope, input, stage, repo, fixture.intent, fixture.root, fixture.stageDir, fixture.root, "candidate", "installed.bin")
-			if (err != nil) != test.wantErr {
-				t.Fatalf("RunFirstAbsentPublication() error = %v, wantErr %v", err, test.wantErr)
-			}
-			if test.wantErr {
-				if !containsPubStage(events, "commit") {
-					t.Fatalf("commit was not attempted: events=%v", events)
+				inputPath := filepath.Join(fixture.stagePath, "input")
+				if err := os.WriteFile(inputPath, []byte("source"), 0o600); err != nil {
+					t.Fatal(err)
 				}
-				if !scope.unknown || containsPubStage(events, "release") {
-					t.Fatalf("uncertain commit did not quarantine without releasing holds: events=%v scope=%+v", events, scope)
+				stageIdentity, err := fixture.stageDir.Identity(context.Background())
+				if err != nil {
+					t.Fatal(err)
 				}
-				return
-			}
-			if !containsPubStage(events, "commit") || !containsPubStage(events, "settle") || indexPubStage(events, "record-installed") > indexPubStage(events, "commit") || indexPubStage(events, "commit") > indexPubStage(events, "input-intent") || indexPubStage(events, "input-intent") > indexPubStage(events, "directory-intent") || indexPubStage(events, "directory-intent") > indexPubStage(events, "settle") {
-				t.Fatalf("exposure/commit/release order is wrong: %v", events)
-			}
-			if _, err := os.Stat(filepath.Join(fixture.rootPath, "installed.bin")); err != nil {
-				t.Fatalf("installed target missing: %v", err)
-			}
+				parentIdentity, err := fixture.root.Identity(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				sourceFileInfo, err := os.Stat(inputPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stage := &preparedPublicationStage{
+					paths:              PublicationStagePaths{InputPath: inputPath, OutputPath: filepath.Join(fixture.stagePath, "candidate"), RelativePath: "stage/candidate"},
+					parent:             fixture.root,
+					directory:          fixture.stageDir,
+					directoryName:      filepath.Base(fixture.stagePath),
+					identity:           persistence.PublicationDirectoryIdentity{Platform: stageIdentity.Platform, Volume: stageIdentity.Volume, FileID: stageIdentity.FileID},
+					parentIdentity:     parentIdentity,
+					repository:         repo,
+					opener:             sourcefs.NewOpener(),
+					sourceRootPath:     fixture.rootPath,
+					sourceRelativePath: filepath.Join(filepath.Base(fixture.stagePath), "input"),
+					sourceSize:         sourceFileInfo.Size(),
+					sourceMTime:        sourceFileInfo.ModTime(),
+					sourceFileInfo:     sourceFileInfo,
+					inputPath:          fixture.stagePath,
+					inputName:          "input",
+					guard:              guard,
+				}
+				stageRunner := PublicationStagingRunner{
+					Repository: repo,
+					Metadata:   firstAbsentFlowWriter{events: &events},
+					Validator:  firstAbsentFlowValidator{},
+				}
+				pinnedTools, err := NewScopeBoundPublicationPinnedTools(repo, scope, guard, platform)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stageRunner.PinnedTools = pinnedTools
+				var recovered any
+				func() {
+					defer func() {
+						recovered = recover()
+					}()
+					_, err = stageRunner.RunFirstAbsentPublication(context.Background(), scope, input, stage, repo, fixture.intent, fixture.root, fixture.stageDir, fixture.root, "candidate", "installed.bin")
+				}()
+				if test.panicCommit || test.panicCleanupIntent {
+					wantPanic := "commit panic"
+					if test.panicCleanupIntent {
+						wantPanic = "cleanup intent panic"
+						if !containsPubStage(events, "input-intent") {
+							t.Fatalf("cleanup intent panic was not reached before acceptance: events=%v", events)
+						}
+					}
+					if recovered != wantPanic {
+						t.Fatalf("RunFirstAbsentPublication() panic = %#v, want %#v", recovered, wantPanic)
+					}
+					if !scope.unknown || scope.finalized || containsPubStage(events, "settle") || containsPubStage(events, "release") {
+						t.Fatalf("panic did not preserve the uncertain, held scope: events=%v scope=%+v", events, scope)
+					}
+					if test.panicCleanupIntent {
+						if _, statErr := os.Stat(filepath.Join(fixture.rootPath, "installed.bin")); statErr != nil {
+							t.Fatalf("installed target missing after cleanup-intent panic: %v", statErr)
+						}
+					}
+					ctx, cancel := context.WithCancel(context.Background())
+					acquireResult := make(chan error, 1)
+					go func() {
+						_, acquireErr := coordinator.Acquire(ctx, []publication.ResourceLock{{Key: "first-absent-flow", Mode: publication.Exclusive}})
+						acquireResult <- acquireErr
+					}()
+					synctest.Wait()
+					select {
+					case acquireErr := <-acquireResult:
+						cancel()
+						t.Fatalf("contending acquisition acquired a lock held by the quarantined scope: %v", acquireErr)
+					default:
+					}
+					cancel()
+					if acquireErr := <-acquireResult; !errors.Is(acquireErr, context.Canceled) {
+						t.Fatalf("contending Acquire() error = %v, want context.Canceled", acquireErr)
+					}
+					return
+				}
+				if recovered != nil {
+					t.Fatal("RunFirstAbsentPublication() panicked unexpectedly")
+				}
+				if (err != nil) != test.wantErr {
+					t.Fatalf("RunFirstAbsentPublication() error = %v, wantErr %v", err, test.wantErr)
+				}
+				if test.wantErr {
+					if !containsPubStage(events, "commit") {
+						t.Fatalf("commit was not attempted: events=%v", events)
+					}
+					if !scope.unknown || containsPubStage(events, "release") {
+						t.Fatalf("uncertain commit did not quarantine without releasing holds: events=%v scope=%+v", events, scope)
+					}
+					return
+				}
+				if !containsPubStage(events, "commit") || !containsPubStage(events, "settle") || indexPubStage(events, "record-installed") > indexPubStage(events, "commit") || indexPubStage(events, "commit") > indexPubStage(events, "input-intent") || indexPubStage(events, "input-intent") > indexPubStage(events, "directory-intent") || indexPubStage(events, "directory-intent") > indexPubStage(events, "settle") {
+					t.Fatalf("exposure/commit/release order is wrong: %v", events)
+				}
+				if _, err := os.Stat(filepath.Join(fixture.rootPath, "installed.bin")); err != nil {
+					t.Fatalf("installed target missing: %v", err)
+				}
+			})
 		})
 	}
 }
