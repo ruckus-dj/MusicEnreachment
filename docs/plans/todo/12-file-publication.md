@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем service-срезе отдельный private validated owner
+сохраняет точный work capability через outcome/staged/validated ACK. Между ACK
+проверяются native output identity/hash и namespace без замены acknowledged
+evidence; mutable repo evidence отделено deep clones. Outcome-only entry
+сохраняет preparing-семантику. Добавлены continuous PG cases и fake ACK
+error/stale/unknown/alias regressions; полный локальный `task verify` прошёл,
+review блокеров не нашло. Native CI этого среза ещё не проверен.
+Exposure, publication commit и production V3 execution не включены.
+
 В текущем persistence-срезе добавлены guarded manual FLAC stage
 transitions с typed ACK и exact stored-outcome observation. Intermediate grammar
 сохраняет canonical preparation/rebuild/outcome prefix и не более двух ordered

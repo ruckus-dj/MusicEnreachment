@@ -1,13 +1,16 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
@@ -120,15 +123,48 @@ func applyAndRecordPublicationManualLyrics(
 	return applyPublicationOptionalLyrics(ctx, scope, reservation, stage, input, writer, reader, requirements)
 }
 
-// applyAndRecordPreparedManualLyricsFLAC is the concrete owner for the private
-// prepared-FLAC path. It keeps the reservation borrowed through native readback
-// and the guarded outcome acknowledgement.
+type preparedManualLyricsFLACMode uint8
+
+const (
+	preparedManualLyricsOutcomeOnly preparedManualLyricsFLACMode = iota
+	preparedManualLyricsThroughValidated
+)
+
+type preparedManualLyricsStageRepository interface {
+	GuardedAdvanceManualLyricsStage(context.Context, persistence.PublicationDeliveryGuard, string, persistence.PublicationStageObservation) (persistence.ManualLyricsStageOutcome, error)
+}
+
+// applyAndRecordPreparedManualLyricsFLAC preserves the private outcome-only
+// entry point used while a delivery is preparing.
 func applyAndRecordPreparedManualLyricsFLAC(
 	ctx context.Context,
 	scope *PublicationExecutionScope,
 	reservation *publicationSyncReservation,
 	initialCopy *publicationInitialOutputCopy,
 	input persistence.PublicationInputs,
+) (result publicationOptionalLyricsResult, resultErr error) {
+	return applyPreparedManualLyricsFLAC(ctx, scope, reservation, initialCopy, input, preparedManualLyricsOutcomeOnly)
+}
+
+// validatePreparedManualLyricsFLAC owns the uninterrupted private handoff from
+// the outcome acknowledgement through staged and validated acknowledgements.
+func validatePreparedManualLyricsFLAC(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	reservation *publicationSyncReservation,
+	initialCopy *publicationInitialOutputCopy,
+	input persistence.PublicationInputs,
+) (publicationOptionalLyricsResult, error) {
+	return applyPreparedManualLyricsFLAC(ctx, scope, reservation, initialCopy, input, preparedManualLyricsThroughValidated)
+}
+
+func applyPreparedManualLyricsFLAC(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	reservation *publicationSyncReservation,
+	initialCopy *publicationInitialOutputCopy,
+	input persistence.PublicationInputs,
+	mode preparedManualLyricsFLACMode,
 ) (result publicationOptionalLyricsResult, resultErr error) {
 	if initialCopy == nil || initialCopy.stage == nil {
 		return result, errors.New("manual lyrics application requires its initial output copy")
@@ -190,6 +226,16 @@ func applyAndRecordPreparedManualLyricsFLAC(
 	if !ok {
 		return result, errors.New("V3 optional lyrics outcome repository is unavailable")
 	}
+	var stageRepo preparedManualLyricsStageRepository
+	if mode == preparedManualLyricsThroughValidated {
+		var capable bool
+		stageRepo, capable = stage.repository.(preparedManualLyricsStageRepository)
+		if !capable {
+			return result, errors.New("manual lyrics stage acknowledgement repository is unavailable")
+		}
+	}
+	var acknowledged persistence.PublicationStageObservation
+	var acknowledgedOutputInfo os.FileInfo
 	requirements.recordOutcome = func(ctx context.Context, outcome publicationOptionalLyricsOutcomeEvidence) error {
 		observation, err := authority.observeBorrowed(ctx, work)
 		if err != nil {
@@ -199,7 +245,11 @@ func applyAndRecordPreparedManualLyricsFLAC(
 		if err != nil {
 			return err
 		}
-		ready := stage.preparationRecord
+		acknowledgedOutputInfo, err = stage.nativeOutputFileInfo(ctx)
+		if err != nil {
+			return err
+		}
+		ready := cloneManualLyricsPreparationRecord(stage.preparationRecord)
 		if ready.Step != "input_ready" || ready.CopiedInput == nil || ready.InputSize == nil || ready.InputMTime == nil {
 			return errors.New("prepared publication input readiness evidence is unavailable")
 		}
@@ -210,7 +260,8 @@ func applyAndRecordPreparedManualLyricsFLAC(
 		if outcome.Kind == "rebuilt_without_lyrics" {
 			kind, diagnostic = persistence.PublicationOptionalLyricsRebuiltWithoutLyrics, "optional lyrics did not round-trip; rebuilt output without lyrics"
 		}
-		evidence := persistence.PublicationOptionalLyricsOutcomeEvidence{Kind: kind, ManualLyrics: *input.ManualLyrics, Preparation: ready, InputIdentity: inputIdentity, OutputIdentity: outputIdentity, FinalObservation: observation, Diagnostic: diagnostic}
+		acknowledged = observation.Clone()
+		evidence := persistence.PublicationOptionalLyricsOutcomeEvidence{Kind: kind, ManualLyrics: *input.ManualLyrics, Preparation: ready, InputIdentity: clonePublicationIdentity(inputIdentity), OutputIdentity: clonePublicationIdentity(outputIdentity), FinalObservation: observation.Clone(), Diagnostic: diagnostic}
 		ack, err := repo.GuardedRecordPublicationOptionalLyricsOutcome(ctx, scope.guard, evidence)
 		if err != nil {
 			return err
@@ -224,11 +275,144 @@ func applyAndRecordPreparedManualLyricsFLAC(
 	if err != nil {
 		return result, err
 	}
+	if mode == preparedManualLyricsThroughValidated {
+		if !scope.validPrivateManualLyricsWork(work, stage) {
+			return result, errors.New("manual lyrics publication work capability was lost before staged acknowledgement")
+		}
+		live, err := scope.repository.CheckPublicationDelivery(ctx, scope.guard)
+		if err != nil {
+			return result, fmt.Errorf("check publication delivery before staged acknowledgement: %w", err)
+		}
+		if !live {
+			return result, errors.New("publication delivery is stale before staged acknowledgement")
+		}
+		if err := stage.Validate(ctx); err != nil {
+			return result, err
+		}
+		if err := stage.checkPrivateManualLyricsCheckpoint(ctx, scope, work, acknowledged, acknowledgedOutputInfo); err != nil {
+			return result, err
+		}
+		fresh, err := authority.observeBorrowed(ctx, work)
+		if err != nil {
+			return result, err
+		}
+		ackedJSON, ackedErr := json.Marshal(acknowledged)
+		freshJSON, freshErr := json.Marshal(fresh)
+		if ackedErr != nil || freshErr != nil || !reflect.DeepEqual(acknowledged, fresh) || !bytes.Equal(ackedJSON, freshJSON) {
+			return result, errors.New("prepared manual lyrics observation changed after outcome acknowledgement")
+		}
+		staged, err := stageRepo.GuardedAdvanceManualLyricsStage(ctx, scope.guard, "preparing", acknowledged.Clone())
+		if err != nil || (staged != persistence.ManualLyricsStageAdvanced && staged != persistence.ManualLyricsStageAlreadyRecorded) {
+			if err != nil {
+				return result, err
+			}
+			return result, errors.New("publication delivery is stale while acknowledging staged manual lyrics")
+		}
+		if err := stage.checkPrivateManualLyricsCheckpoint(ctx, scope, work, acknowledged, acknowledgedOutputInfo); err != nil {
+			return result, err
+		}
+		validated, err := stageRepo.GuardedAdvanceManualLyricsStage(ctx, scope.guard, "staged", acknowledged.Clone())
+		if err != nil || (validated != persistence.ManualLyricsStageAdvanced && validated != persistence.ManualLyricsStageAlreadyRecorded) {
+			if err != nil {
+				return result, err
+			}
+			return result, errors.New("publication delivery is stale while acknowledging validated manual lyrics")
+		}
+	}
 	if !scope.finishPrivateManualLyricsWork(work, true) {
 		return result, errors.New("manual lyrics publication work capability was lost before acknowledgement")
 	}
 	completed = true
 	return result, nil
+}
+
+func cloneManualLyricsPreparationRecord(record persistence.PublicationPreparationRecord) persistence.PublicationPreparationRecord {
+	if record.DirectoryIdentity != nil {
+		value := *record.DirectoryIdentity
+		record.DirectoryIdentity = &value
+	}
+	if record.InputSize != nil {
+		value := *record.InputSize
+		record.InputSize = &value
+	}
+	if record.InputMTime != nil {
+		value := *record.InputMTime
+		record.InputMTime = &value
+	}
+	if record.CopiedInput != nil {
+		value := clonePublicationIdentity(*record.CopiedInput)
+		record.CopiedInput = &value
+	}
+	return record
+}
+
+// checkPrivateManualLyricsCheckpoint revalidates the exact private output after
+// the staged acknowledgement without deriving new observation evidence.
+func (stage *preparedPublicationStage) checkPrivateManualLyricsCheckpoint(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	work *privateManualLyricsWork,
+	acknowledged persistence.PublicationStageObservation,
+	expectedNative os.FileInfo,
+) error {
+	if !scope.validPrivateManualLyricsWork(work, stage) {
+		return errors.New("manual lyrics publication work capability was lost at staged checkpoint")
+	}
+	live, err := scope.repository.CheckPublicationDelivery(ctx, scope.guard)
+	if err != nil {
+		return fmt.Errorf("check publication delivery at staged checkpoint: %w", err)
+	}
+	if !live {
+		return errors.New("publication delivery is stale at staged checkpoint")
+	}
+	if err := stage.Validate(ctx); err != nil {
+		return err
+	}
+	if err := stage.verifyInitialCopyInputs(ctx); err != nil {
+		return err
+	}
+	if err := stage.verifyOutputDirectory(ctx); err != nil {
+		return err
+	}
+	if expectedNative == nil || acknowledged.PayloadSHA256 == "" || acknowledged.Ownership.ExpectedSize == nil || acknowledged.Ownership.ExpectedMTime == nil {
+		return errors.New("manual lyrics staged checkpoint lacks native output ownership")
+	}
+	mutation, ok := stage.directory.(sourcefs.OutputMutation)
+	if !ok {
+		return errors.New("native publication output identity capability is unavailable")
+	}
+	file, err := mutation.OpenExistingRegular(ctx, stage.outputName)
+	if err != nil {
+		return err
+	}
+	info, statErr := file.Stat(ctx)
+	if statErr == nil && (info == nil || !info.Mode().IsRegular() || !os.SameFile(expectedNative, info) || info.Size() != *acknowledged.Ownership.ExpectedSize || info.ModTime().UnixMicro() != *acknowledged.Ownership.ExpectedMTime) {
+		statErr = errors.New("manual lyrics output identity changed after acknowledgement")
+	}
+	var digest [sha256.Size]byte
+	if statErr == nil {
+		statErr = file.Borrow(ctx, func(handle *os.File) error {
+			var hashErr error
+			digest, hashErr = hashBorrowedFile(ctx, handle)
+			return hashErr
+		})
+	}
+	if statErr == nil && hex.EncodeToString(digest[:]) != acknowledged.PayloadSHA256 {
+		statErr = errors.New("manual lyrics output digest changed after acknowledgement")
+	}
+	if statErr == nil {
+		after, err := file.Stat(ctx)
+		if err != nil {
+			statErr = err
+		} else if !os.SameFile(info, after) || after.Size() != info.Size() || after.ModTime().UnixMicro() != info.ModTime().UnixMicro() {
+			statErr = errors.New("manual lyrics output changed while hashing checkpoint")
+		}
+	}
+	statErr = errors.Join(statErr, file.Close())
+	if statErr != nil {
+		return statErr
+	}
+	return stage.verifyInitialOutputEntry(ctx, expectedNative)
 }
 
 type preparedManualLyricsFLACWriter struct {
@@ -285,6 +469,22 @@ func (stage *preparedPublicationStage) optionalLyricsFileIdentities(ctx context.
 	outputIdentity, err := optionalLyricsIdentity(ctx, output)
 	err = errors.Join(err, output.Close())
 	return inputIdentity, outputIdentity, err
+}
+
+func (stage *preparedPublicationStage) nativeOutputFileInfo(ctx context.Context) (os.FileInfo, error) {
+	mutation, ok := stage.directory.(sourcefs.OutputMutation)
+	if !ok {
+		return nil, errors.New("native publication output identity capability is unavailable")
+	}
+	file, err := mutation.OpenExistingRegular(ctx, stage.outputName)
+	if err != nil {
+		return nil, err
+	}
+	info, statErr := file.Stat(ctx)
+	if statErr == nil && (info == nil || !info.Mode().IsRegular()) {
+		statErr = errors.New("publication identity handle is not a regular file")
+	}
+	return info, errors.Join(statErr, file.Close())
 }
 
 func optionalLyricsIdentity(ctx context.Context, file sourcefs.RegularFile) (persistence.PublicationFileIdentity, error) {

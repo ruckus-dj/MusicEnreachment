@@ -14,6 +14,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -36,11 +37,11 @@ func TestPreparedManualLyricsFLACOwnerPostgreSQL(t *testing.T) {
 		{name: "cover_value", cover: true},
 		{name: "cover_explicit_empty", cover: true, removal: true},
 	} {
-		t.Run(test.name, func(t *testing.T) { testPreparedManualLyricsFLACOwner(t, test.cover, test.removal) })
+		t.Run(test.name, func(t *testing.T) { testPreparedManualLyricsFLACOwner(t, test.cover, test.removal, false) })
 	}
 }
 
-func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal bool) {
+func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continuous bool) {
 	ctx := context.Background()
 	fixture, fakeStage, _ := preparedManualLyricsFLACStage(t)
 	t.Cleanup(func() { _ = fakeStage.Close() })
@@ -191,8 +192,14 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyAndRecordPreparedManualLyricsFLAC(ctx, scope, reservation, proof, input); err != nil {
-		t.Fatal(err)
+	if continuous {
+		if _, err := validatePreparedManualLyricsFLAC(ctx, scope, reservation, proof, input); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if _, err := applyAndRecordPreparedManualLyricsFLAC(ctx, scope, reservation, proof, input); err != nil {
+			t.Fatal(err)
+		}
 	}
 	attempt, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
 	if err != nil {
@@ -249,7 +256,11 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal bool) {
 	if err := baselineArtwork.VerifyEquivalent(ctx, stage.paths.OutputPath); err != nil {
 		t.Fatalf("private final output changed native FLAC picture/audio: %v", err)
 	}
-	if attempt.Phase != "preparing" || len(records) != 4 || records[0].Step != "intent" || records[1].Step != "directory_created" || records[2].Step != "input_ready" || records[3].Kind != "publication_optional_lyrics_outcome" {
+	wantPhase, wantRecords := "preparing", 4
+	if continuous {
+		wantPhase, wantRecords = "validated", 6
+	}
+	if attempt.Phase != wantPhase || len(records) != wantRecords || records[0].Step != "intent" || records[1].Step != "directory_created" || records[2].Step != "input_ready" || records[3].Kind != "publication_optional_lyrics_outcome" {
 		t.Fatalf("unexpected native preparation/outcome journal: %s", attempt.MutationJournal)
 	}
 	var generation uuid.UUID
@@ -262,6 +273,23 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal bool) {
 	}
 	// These calls test DB transition authority only: the owner above has already
 	// released its private work capability. They are not a continuous runtime handoff.
+	if continuous {
+		frozen, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
+		if err != nil || !reflect.DeepEqual(frozen, input) {
+			t.Fatalf("validated owner changed frozen publication inputs: %v", err)
+		}
+		var transitions []struct {
+			Kind        string                                  `json:"kind"`
+			From        string                                  `json:"from"`
+			To          string                                  `json:"to"`
+			Observation persistence.PublicationStageObservation `json:"observation"`
+		}
+		if err := json.Unmarshal(attempt.MutationJournal, &transitions); err != nil || len(transitions) != 6 || transitions[4].Kind != "stage_observation" || transitions[4].From != "preparing" || transitions[4].To != "staged" || transitions[5].Kind != "stage_observation" || transitions[5].From != "staged" || transitions[5].To != "validated" || !reflect.DeepEqual(transitions[4].Observation, outcome.FinalObservation) || !reflect.DeepEqual(transitions[5].Observation, outcome.FinalObservation) {
+			t.Fatalf("validated owner did not persist both stage acknowledgements: %s, %v", attempt.MutationJournal, err)
+		}
+		scope.releaseSynchronousWork(reservation)
+		return
+	}
 	observation := outcome.FinalObservation.Clone()
 	wrong := observation.Clone()
 	wrong.PayloadSHA256 = fmt.Sprintf("%064x", 1)
