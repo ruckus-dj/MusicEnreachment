@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем срезе required assets восстанавливаются после каждой
+успешной clearing metadata write, включая initial lyrics attempt; callback
+получает expected tags, чтобы не стереть выбранный LRC. Rebuild использует
+исходный preparation owner. Раздельные real-TagLib tests покрывают successful
+lyrics+cover и mismatch fallback с сохранением cover/encoded audio. Review не
+нашло блокеров; полный локальный `task verify` прошёл. Native CI ещё не проверен.
+Это не доказательство
+exhaustive artwork preservation; V3 execution не включён.
+
 В текущем срезе V3 receipt-bearing journals поддержаны в
 replacement cleanup/settlement: canonical boundary определяется отдельно для
 V2/V3, stored receipt сверяется в каждой транзакции до idempotent ACK.

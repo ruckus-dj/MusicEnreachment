@@ -51,6 +51,10 @@ func (stage *preparedPublicationStage) rebuildOutputCopy(ctx context.Context, sc
 	if dirID.Platform != stage.identity.Platform || dirID.Volume != stage.identity.Volume || dirID.FileID != stage.identity.FileID {
 		return errors.New("publication candidate rebuild directory ownership changed")
 	}
+	owner := stage.preparationRecord.OwnerToken
+	if owner == uuid.Nil {
+		return errors.New("prepared publication owner token is unavailable")
+	}
 	inName, outName := stage.inputName, filepath.Base(stage.paths.OutputPath)
 	input, err := mutator.OpenExistingRegular(ctx, inName)
 	if err != nil {
@@ -86,7 +90,6 @@ func (stage *preparedPublicationStage) rebuildOutputCopy(ctx context.Context, sc
 		return errors.Join(err, oldCandidate.Close())
 	}
 	oldCandidateFact := publicationRebuildFileIdentity(oldCandidateInfo, oldCandidateDigest)
-	owner := uuid.New()
 	base := persistence.PublicationCandidateRebuildRecord{Version: persistence.PublicationCandidateRebuildVersion, Kind: "publication_candidate_rebuild", Guard: stage.guard, OwnerToken: owner, PrivateDirRel: stage.directoryName, InputRel: stage.directoryName + "/" + inName, OutputRel: stage.directoryName + "/" + outName, DirectoryIdentity: persistence.PublicationDirectoryIdentity{Platform: dirID.Platform, Volume: dirID.Volume, FileID: dirID.FileID}}
 	intent := base
 	intent.Step, intent.Input, intent.Candidate = "intent", &inputFact, &oldCandidateFact

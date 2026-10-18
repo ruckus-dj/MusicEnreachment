@@ -187,7 +187,8 @@ func TestRebuildPublicationOutputCopiesPreparedInputNatively(t *testing.T) {
 		t.Fatal("could not borrow synchronous reservation")
 	}
 	defer scope.releaseOptionalLyricsWork(borrow)
-	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(rootPath, privateName, "input.audio"), OutputPath: filepath.Join(rootPath, privateName, "output.audio"), RelativePath: privateName + "/output.audio"}, parent: parent, directory: directory, directoryName: privateName, identity: persistence.PublicationDirectoryIdentity{Platform: identity.Platform, Volume: identity.Volume, FileID: identity.FileID}, parentIdentity: identity, repository: repo, opener: opener, sourceRootPath: rootPath, sourceRelativePath: "source.audio", sourceSize: sourceInfo.Size(), sourceMTime: sourceInfo.ModTime(), sourceFileInfo: inputInfo, inputPath: filepath.Join(rootPath, privateName), inputName: "input.audio", guard: guard, hold: uuid.New()}
+	owner := uuid.New()
+	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(rootPath, privateName, "input.audio"), OutputPath: filepath.Join(rootPath, privateName, "output.audio"), RelativePath: privateName + "/output.audio"}, parent: parent, directory: directory, directoryName: privateName, identity: persistence.PublicationDirectoryIdentity{Platform: identity.Platform, Volume: identity.Volume, FileID: identity.FileID}, parentIdentity: identity, repository: repo, opener: opener, sourceRootPath: rootPath, sourceRelativePath: "source.audio", sourceSize: sourceInfo.Size(), sourceMTime: sourceInfo.ModTime(), sourceFileInfo: inputInfo, inputPath: filepath.Join(rootPath, privateName), inputName: "input.audio", guard: guard, hold: uuid.New(), preparationRecord: persistence.PublicationPreparationRecord{OwnerToken: owner}}
 	if err := stage.rebuildOutputCopy(ctx, scope, borrow); err != nil {
 		t.Fatal(err)
 	}
@@ -229,6 +230,9 @@ func TestRebuildPublicationOutputCopiesPreparedInputNatively(t *testing.T) {
 	}
 	if len(repo.records) != 2 || repo.records[0].Step != "intent" || repo.records[1].Step != "complete" {
 		t.Fatalf("journal records = %#v", repo.records)
+	}
+	if repo.records[0].OwnerToken != owner || repo.records[1].OwnerToken != owner {
+		t.Fatalf("rebuild owner tokens = %s/%s, want input_ready owner %s", repo.records[0].OwnerToken, repo.records[1].OwnerToken, owner)
 	}
 	partialDigest := sha256.Sum256([]byte(partialCandidate))
 	bodyDigest := sha256.Sum256([]byte(body))

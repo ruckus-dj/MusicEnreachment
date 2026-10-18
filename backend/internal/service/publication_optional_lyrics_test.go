@@ -66,7 +66,7 @@ func runOptionalLyricsTest(t *testing.T, writer PublicationMetadataWriter, reade
 	validations := 0
 	requirements := publicationOptionalLyricsRequirements{
 		validateAudioAndAssets: func(context.Context, string) error { validations++; return nil },
-		restoreRequiredAssets:  func(context.Context, string) error { return nil },
+		restoreRequiredAssets:  func(context.Context, string, map[string][]string) error { return nil },
 	}
 	if len(recorders) > 0 {
 		requirements.recordOutcome = recorders[0]
@@ -146,7 +146,7 @@ func TestApplyOptionalLyricsPanicQuarantinesAndRetainsBorrowedReservation(t *tes
 		Version: persistence.PublicationInputsVersion3, ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: "[00:01.00]line\n"},
 	}, optionalLyricsTestWriter{write: func(context.Context, string, map[string][]string) error { panic("writer panic") }}, optionalLyricsTestReader{}, publicationOptionalLyricsRequirements{
 		validateAudioAndAssets: func(context.Context, string) error { return nil },
-		restoreRequiredAssets:  func(context.Context, string) error { return nil },
+		restoreRequiredAssets:  func(context.Context, string, map[string][]string) error { return nil },
 	})
 }
 
@@ -160,7 +160,7 @@ func TestApplyOptionalLyricsRejectsConcurrentBorrowWhileWriterBlocked(t *testing
 	reader := optionalLyricsTestReader{read: func(context.Context, string, metadata.ReadRequest) (metadata.Capture, error) {
 		return metadata.Capture{Tags: map[string][]string{"LYRICS": {"[00:01.00]line\n"}}}, nil
 	}}
-	requirements := publicationOptionalLyricsRequirements{validateAudioAndAssets: func(context.Context, string) error { return nil }, restoreRequiredAssets: func(context.Context, string) error { return nil }}
+	requirements := publicationOptionalLyricsRequirements{validateAudioAndAssets: func(context.Context, string) error { return nil }, restoreRequiredAssets: func(context.Context, string, map[string][]string) error { return nil }}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -263,7 +263,7 @@ func TestApplyOptionalLyricsRealTagLibFLACRoundTrip(t *testing.T) {
 		DesiredTags:  map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}},
 	}, writer, reader, publicationOptionalLyricsRequirements{
 		validateAudioAndAssets: func(context.Context, string) error { validations++; return nil },
-		restoreRequiredAssets:  func(context.Context, string) error { return nil },
+		restoreRequiredAssets:  func(context.Context, string, map[string][]string) error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -506,9 +506,11 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 		t.Fatal("fixture unexpectedly contains an initial cover")
 	}
 	writer := optionalLyricsTestWriter{write: func(ctx context.Context, path string, tags map[string][]string) error {
-		wrong := cloneTagMap(tags)
-		wrong["LYRICS"] = []string{wrongLyrics}
-		_, err := (metadata.Writer{}).Write(ctx, path, wrong, nil)
+		written := cloneTagMap(tags)
+		if _, requested := tags["LYRICS"]; requested {
+			written["LYRICS"] = []string{wrongLyrics}
+		}
+		_, err := (metadata.Writer{}).Write(ctx, path, written, nil)
 		return err
 	}}
 	reader := optionalLyricsTestReader{read: func(ctx context.Context, path string, request metadata.ReadRequest) (metadata.Capture, error) {
@@ -531,12 +533,14 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 		return nil
 	}
 	restoreCalled := false
+	validations := 0
 	result, err := applyPublicationOptionalLyrics(ctx, scope, reservation, stage, persistence.PublicationInputs{
 		Version:      persistence.PublicationInputsVersion3,
 		ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics},
 		DesiredTags:  map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}},
 	}, writer, reader, publicationOptionalLyricsRequirements{
 		validateAudioAndAssets: func(ctx context.Context, path string) error {
+			validations++
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
@@ -555,9 +559,24 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 			if !bytes.Equal(streamInfo, inputStreamInfo) {
 				return errors.New("required FLAC audio facts changed")
 			}
+			if validations >= 2 {
+				capture, err := (metadata.Reader{}).Read(ctx, path, metadata.ReadRequest{CoverInspection: true})
+				if err != nil {
+					return err
+				}
+				if !equalTags(withoutLyrics(capture.Tags), map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}) {
+					return errors.New("required metadata missing at final asset validation")
+				}
+				if validations == 2 && len(capture.Tags["LYRICS"]) == 0 {
+					return errors.New("observed lyrics missing at required-asset validation")
+				}
+				if capture.CoverInspection == nil || capture.CoverInspection.Cover == nil || !bytes.Equal(capture.CoverInspection.Cover.Data, cover) {
+					return errors.New("required cover missing at final asset validation")
+				}
+			}
 			return nil
 		},
-		restoreRequiredAssets: func(ctx context.Context, path string) error {
+		restoreRequiredAssets: func(ctx context.Context, path string, expectedTags map[string][]string) error {
 			beforeRestore, err := (metadata.Reader{}).Read(ctx, path, metadata.ReadRequest{})
 			if err != nil {
 				return err
@@ -567,9 +586,21 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 				return errors.New("mandatory tags were not restored before required asset restoration")
 			}
 			restoreCalled = true
-			_, err = (metadata.Writer{}).Write(ctx, path, map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}, &metadata.Cover{Data: cover, MIME: "image/jpeg"})
+			tagsToRestore := expectedTags
+			traceEvent := "fallback-assets-restored"
+			if len(trace) == 0 {
+				// Preserve the actual mismatch readback while restoring the cover;
+				// repairing lyrics here would prevent the fallback classifier from
+				// ever observing the intentional TagLib mismatch.
+				tagsToRestore = cloneTagMap(mandatory)
+				if actualLyrics, ok := beforeRestore.Tags["LYRICS"]; ok {
+					tagsToRestore["LYRICS"] = append([]string(nil), actualLyrics...)
+				}
+				traceEvent = "initial-assets-restored"
+			}
+			_, err = (metadata.Writer{}).Write(ctx, path, tagsToRestore, &metadata.Cover{Data: cover, MIME: "image/jpeg"})
 			if err == nil {
-				trace = append(trace, "assets-restored")
+				trace = append(trace, traceEvent)
 			}
 			return err
 		},
@@ -580,19 +611,19 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 	if !restoreCalled || len(rebuildRepo.records) != 2 || rebuildRepo.records[0].Step != "intent" || rebuildRepo.records[1].Step != "complete" {
 		t.Fatalf("fallback/rebuild journal = restored %v, records %#v", restoreCalled, rebuildRepo.records)
 	}
-	wantTrace := []string{"db-intent-ack", "native-remove-success", "native-exclusive-create-success", "db-complete-ack", "assets-restored"}
+	wantTrace := []string{"initial-assets-restored", "db-intent-ack", "native-remove-success", "native-exclusive-create-success", "db-complete-ack", "fallback-assets-restored"}
 	if !reflect.DeepEqual(trace, wantTrace) {
 		t.Fatalf("native rebuild trace = %#v, want %#v", trace, wantTrace)
 	}
 	if result.OptionalDiagnostic == "" || result.Lyrics.State != persistence.PublicationAssetAbsent {
-		t.Fatalf("optional mismatch result = %#v", result)
+		t.Fatalf("lyrics round-trip result = %#v", result)
 	}
 	final, err := (metadata.Reader{}).Read(ctx, paths.OutputPath, metadata.ReadRequest{CoverInspection: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := final.Tags["LYRICS"]; exists {
-		t.Fatalf("optional lyrics survived native fallback: %#v", final.Tags["LYRICS"])
+	if _, present := final.Tags["LYRICS"]; present {
+		t.Fatalf("lyrics metadata remained after native fallback: %#v", final.Tags["LYRICS"])
 	}
 	if final.CoverInspection == nil || final.CoverInspection.Cover == nil || !bytes.Equal(final.CoverInspection.Cover.Data, cover) {
 		t.Fatal("required cover was not restored after native fallback")

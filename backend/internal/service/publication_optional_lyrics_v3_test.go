@@ -102,7 +102,7 @@ func TestApplyAndRecordPublicationManualLyricsUsesNativeEvidence(t *testing.T) {
 			reservation := scope.reserveSynchronousWork()
 			reader := metadata.Reader{}
 			result, callErr := applyAndRecordPublicationManualLyrics(ctx, scope, reservation, stage, fixture.repo.input, test.writer, reader,
-				func(context.Context, string) error { return nil }, func(context.Context, string) error { return nil },
+				func(context.Context, string) error { return nil }, func(context.Context, string, map[string][]string) error { return nil },
 				func(ctx context.Context, path string, _ persistence.PublicationInputs) (persistence.PublicationStageObservation, error) {
 					data, err := os.ReadFile(path)
 					if err != nil {

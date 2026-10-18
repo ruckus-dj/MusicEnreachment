@@ -34,7 +34,7 @@ type publicationOptionalLyricsRestorer interface {
 // rebuilding the native output invalidates any earlier asset observations.
 type publicationOptionalLyricsRequirements struct {
 	validateAudioAndAssets func(context.Context, string) error
-	restoreRequiredAssets  func(context.Context, string) error
+	restoreRequiredAssets  func(context.Context, string, map[string][]string) error
 	// recordOutcome is installed only by the V3 publication application entry.
 	// The legacy V2 helper path deliberately has no durable-outcome authority.
 	recordOutcome func(context.Context, publicationOptionalLyricsOutcomeEvidence) error
@@ -65,7 +65,7 @@ func applyAndRecordPublicationManualLyrics(
 		Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
 	},
 	validateAudioAndAssets func(context.Context, string) error,
-	restoreRequiredAssets func(context.Context, string) error,
+	restoreRequiredAssets func(context.Context, string, map[string][]string) error,
 	finalObservationAuthority func(context.Context, string, persistence.PublicationInputs) (persistence.PublicationStageObservation, error),
 ) (publicationOptionalLyricsResult, error) {
 	prepared, ok := stage.(*preparedPublicationStage)
@@ -229,6 +229,10 @@ func applyPublicationOptionalLyrics(
 		scope.quarantineUncertain()
 		return result, fmt.Errorf("write publication metadata and optional lyrics: %w", err)
 	}
+	if err := requirements.restoreRequiredAssets(ctx, paths.OutputPath, requested); err != nil {
+		scope.quarantineUncertain()
+		return result, fmt.Errorf("restore required publication assets after optional lyrics write: %w", err)
+	}
 	observed, err := reader.Read(ctx, paths.OutputPath, metadata.ReadRequest{})
 	if err != nil {
 		return result, fmt.Errorf("inspect publication metadata after optional lyrics: %w", err)
@@ -265,7 +269,7 @@ func applyPublicationOptionalLyrics(
 		}
 		// TagLib's mandatory metadata write clears images as well as tags, so
 		// restore required assets only after that write and validate the final file.
-		if err := requirements.restoreRequiredAssets(ctx, paths.OutputPath); err != nil {
+		if err := requirements.restoreRequiredAssets(ctx, paths.OutputPath, mandatory); err != nil {
 			scope.quarantineUncertain()
 			return result, fmt.Errorf("restore required publication assets after optional lyrics mismatch: %w", err)
 		}
