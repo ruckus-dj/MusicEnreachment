@@ -137,3 +137,44 @@ func TestManagedTargetReplacerNativeReplacement(t *testing.T) {
 		t.Fatalf("scope state unknown=%v finalized=%v; installed phase-one result must retain locks", scope.unknown, scope.finalized)
 	}
 }
+
+func TestVerifyManagedTargetParentUsesReadOnlyTraversal(t *testing.T) {
+	ctx := context.Background()
+	rootPath := t.TempDir()
+	rootPath, err := filepath.EvalSymlinks(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(rootPath, "existing"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := sourcefs.NewOutputOpener().OpenRoot(ctx, rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+
+	traversal, ok := root.(sourcefs.OutputDirectoryTraversal)
+	if !ok {
+		t.Fatal("native output directory lacks read-only traversal capability")
+	}
+	nested, err := traversal.OpenExistingDir(ctx, "existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := nested.Identity(ctx)
+	_ = nested.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyManagedTargetParent(ctx, root, "existing", expected); err != nil {
+		t.Fatalf("verify existing target parent: %v", err)
+	}
+
+	if err := verifyManagedTargetParent(ctx, root, "missing/intermediate", expected); err == nil {
+		t.Fatal("expected missing target parent to fail verification")
+	}
+	if _, err := os.Lstat(filepath.Join(rootPath, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("verification created missing parent: lstat error = %v", err)
+	}
+}

@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем срезе связаны staging → sealed replacement → commit →
+owned backup cleanup → terminal settlement в исходном live execution scope.
+Rewrite settlement не требует original source hold; отсутствие источников не
+снимает проверки backup/current/namespace. Native Unix runner и PostgreSQL
+settlement проверены focused-тестами; полный локальный `task verify` прошёл,
+native CI ещё не проверен. Windows
+replacement по-прежнему fail-closed до подтверждения directory durability;
+production worker не зарегистрирован, cross-boot recovery не реализован.
+
 Реализован атомарный replacement commit: проверяется полный canonical prefix,
 actual namespace, expected current projection, staged observation и отдельная
 identity приватного backup. Commit сохраняет source-free current, потребляет

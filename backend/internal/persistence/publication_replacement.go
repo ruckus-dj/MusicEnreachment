@@ -74,6 +74,9 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 		if err != nil {
 			return err
 		}
+		if !replacementJournalFrontier(entries) {
+			return nil
+		}
 		var exposure publicationExposureJournalRecord
 		for _, raw := range entries {
 			var h struct {
@@ -106,6 +109,9 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 			var existing PublicationReplacementEvidence
 			if decodeStrictJSON(raw, &existing) != nil || !validPublicationReplacementEvidence(existing) {
 				return errors.New("publication replacement journal is malformed")
+			}
+			if !validReplacementSuccessor(prior, &existing) {
+				return errors.New("publication replacement journal is out of order")
 			}
 			copy := existing
 			prior = &copy
@@ -154,10 +160,10 @@ func validPublicationReplacementEvidence(e PublicationReplacementEvidence) bool 
 }
 
 func sameCopiedBackupIdentity(actual, copied, frozen PublicationFileIdentity) bool {
-	if actual.SizeBytes == nil || copied.SizeBytes == nil || *actual.SizeBytes != *copied.SizeBytes || actual.MTime == nil || copied.MTime == nil || *actual.MTime != *copied.MTime || actual.SHA256 == "" || copied.SHA256 != "" && actual.SHA256 != copied.SHA256 {
+	if actual.SizeBytes == nil || copied.SizeBytes == nil || *actual.SizeBytes != *copied.SizeBytes || actual.MTime == nil || copied.MTime == nil || *actual.MTime != *copied.MTime || !validSHA256(actual.SHA256) || (copied.SHA256 != "" && (!validSHA256(copied.SHA256) || actual.SHA256 != copied.SHA256)) {
 		return false
 	}
-	return frozen.SHA256 == "" || actual.SHA256 == frozen.SHA256
+	return frozen.SizeBytes != nil && *actual.SizeBytes == *frozen.SizeBytes && validSHA256(frozen.SHA256) && actual.SHA256 == frozen.SHA256
 }
 
 func decodeReplacementPreparation(entries []json.RawMessage, guard PublicationDeliveryGuard, exposure publicationExposureJournalRecord) ([3]PublicationPreparationRecord, error) {
@@ -179,6 +185,30 @@ func decodeReplacementPreparation(entries []json.RawMessage, guard PublicationDe
 		return records, errors.New("publication preparation does not authorize replacement backup")
 	}
 	return records, nil
+}
+
+// replacementJournalFrontier prevents replay from treating arbitrary prior
+// journal entries as harmless while locating the replacement evidence.
+func replacementJournalFrontier(entries []json.RawMessage) bool {
+	if len(entries) < 6 || len(entries) > 10 {
+		return false
+	}
+	want := []string{"publication_preparation", "publication_preparation", "publication_preparation", "stage_observation", "stage_observation", "publication_exposure"}
+	for i, raw := range entries[:6] {
+		var h struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &h) != nil || h.Kind != want[i] {
+			return false
+		}
+	}
+	for _, raw := range entries[6:] {
+		var evidence PublicationReplacementEvidence
+		if decodeStrictJSON(raw, &evidence) != nil || !validPublicationReplacementEvidence(evidence) {
+			return false
+		}
+	}
+	return true
 }
 
 func validReplacementSuccessor(prior, next *PublicationReplacementEvidence) bool {

@@ -98,6 +98,32 @@ func (d *unixOutputDir) OpenOrCreateDir(ctx context.Context, name string) (Outpu
 	return &unixOutputDir{file: os.NewFile(uintptr(fd), "sourcefs-output-child"), open: d.open}, nil
 }
 
+func (d *unixOutputDir) OpenExistingDir(ctx context.Context, name string) (OutputDirectory, error) {
+	if err := validateComponent(name); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, os.ErrClosed
+	}
+	fd, err := d.open(int(d.file.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW)
+	d.mu.Unlock()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if fd >= 0 {
+			_ = unix.Close(fd)
+		}
+		return nil, ctxErr
+	}
+	if err != nil {
+		return nil, classifyUnixError(err, true)
+	}
+	return &unixOutputDir{file: os.NewFile(uintptr(fd), "sourcefs-output-child"), open: d.open}, nil
+}
+
 func (d *unixOutputDir) CreateDirExclusive(ctx context.Context, name string) (OutputDirectory, error) {
 	if err := validateOutputComponent(name); err != nil {
 		return nil, err

@@ -43,6 +43,15 @@ type PublicationExecutionScope struct {
 	finalizing  bool
 	finalized   bool
 	firstAbsent bool
+	replacement *replacementCompletionToken
+}
+
+// replacementCompletionToken is an unforgeable, scope-bound capability for
+// the post-install rewrite transaction. It is created only when the sole
+// synchronous reservation is transferred into the completion fence.
+type replacementCompletionToken struct {
+	scope  *PublicationExecutionScope
+	active bool
 }
 
 // quarantineUncertain permanently fences this local scope after an operation
@@ -311,6 +320,48 @@ func (scope *PublicationExecutionScope) beginFirstAbsentFinalization(reservation
 	return nil
 }
 
+// sealReplacementCompletion transfers the only live synchronous reservation
+// to replacement completion and fences both commands and legacy Finalize.
+func (scope *PublicationExecutionScope) sealReplacementCompletion(reservation *publicationSyncReservation) (*replacementCompletionToken, error) {
+	if scope == nil {
+		return nil, errors.New("publication execution scope is unavailable")
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if scope.unknown || scope.finalized || scope.finalizing || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || reservation.owner != scope || !reservation.active {
+		return nil, errors.New("publication execution scope is not exclusively quiescent")
+	}
+	reservation.borrowed = false
+	reservation.active = false
+	scope.syncWork--
+	token := &replacementCompletionToken{scope: scope, active: true}
+	scope.replacement = token
+	scope.finalizing = true
+	return token, nil
+}
+
+// acknowledgeReplacementCompletion releases local ownership only after the
+// replacement settlement transaction is acknowledged.
+func (scope *PublicationExecutionScope) acknowledgeReplacementCompletion(token *replacementCompletionToken) error {
+	if scope == nil || token == nil {
+		return errors.New("replacement completion token is unavailable")
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if token.scope != scope || scope.replacement != token || !token.active || !scope.finalizing || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 || scope.finalized {
+		return errors.New("replacement completion token is not active")
+	}
+	token.active = false
+	scope.finalized = true
+	scope.finalizing = false
+	scope.replacement = nil
+	if scope.release != nil {
+		scope.release()
+		scope.release = nil
+	}
+	return nil
+}
+
 // acknowledgeFirstAbsentFinalization releases local ownership only after the
 // guarded terminal transaction has acknowledged cleanup and settlement.
 func (scope *PublicationExecutionScope) acknowledgeFirstAbsentFinalization() {
@@ -343,7 +394,7 @@ func (scope *PublicationExecutionScope) Finalize(ctx context.Context, closeStage
 		scope.mu.Unlock()
 		return nil
 	}
-	if scope.firstAbsent || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 {
+	if scope.replacement != nil || scope.firstAbsent || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 {
 		if scope.unknown {
 			scope.quarantineLocked()
 		}

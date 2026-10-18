@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
@@ -39,9 +40,24 @@ type newPublicationManagedTargetReplacer struct {
 	stageName          string
 	targetName         string
 	reservation        *publicationSyncReservation
+	completionToken    *replacementCompletionToken
 }
 
 func (replacer *newPublicationManagedTargetReplacer) Replace(ctx context.Context) (resultErr error) {
+	return replacer.replace(ctx, false)
+}
+
+// replaceAndComplete is reserved for the same-live replacement publication
+// path. The token must already be bound to this scope's exclusive completion
+// fence; standalone Replace deliberately retains its legacy behavior.
+func (replacer *newPublicationManagedTargetReplacer) replaceAndComplete(ctx context.Context) error {
+	if replacer == nil || replacer.scope == nil {
+		return errors.New("managed publication replacement completion scope is unavailable")
+	}
+	return replacer.replace(ctx, true)
+}
+
+func (replacer *newPublicationManagedTargetReplacer) replace(ctx context.Context, completing bool) (resultErr error) {
 	if replacer == nil || replacer.scope == nil || replacer.repository == nil || replacer.stage == nil || replacer.root == nil || replacer.stageDir == nil || replacer.targetDir == nil || replacer.guard != replacer.scope.guard || replacer.stage.guard != replacer.guard || replacer.intent.PrepOwner != replacer.stage.hold || replacer.intent.Expectation != "expected_current" || replacer.expectedGeneration == nil || *replacer.expectedGeneration == uuid.Nil || replacer.validated.Ownership.ExpectedSize == nil || replacer.validated.Ownership.ExpectedMTime == nil || *replacer.validated.Ownership.ExpectedSize < 0 || !validReplacementDigest(replacer.validated.PayloadSHA256) {
 		return errors.New("managed publication replacement dependencies are unavailable")
 	}
@@ -63,7 +79,7 @@ func (replacer *newPublicationManagedTargetReplacer) Replace(ctx context.Context
 		path.Dir(replacer.intent.StagedPath) != replacer.stage.directoryName ||
 		(targetParentPath == "." && replacer.intent.TargetParent != replacer.intent.OutputRootParent) ||
 		replacer.stageName != replacer.stage.directoryName ||
-		path.Base(replacer.intent.StagedPath) != path.Base(replacer.stage.paths.OutputPath) ||
+		path.Base(replacer.intent.StagedPath) != filepath.Base(replacer.stage.paths.OutputPath) ||
 		replacer.stage.paths.RelativePath != replacer.intent.StagedPath ||
 		replacer.validated.RelativePath != replacer.intent.StagedPath ||
 		replacer.validated.Ownership.ExpectedSize == nil || replacer.validated.Ownership.ExpectedMTime == nil ||
@@ -76,12 +92,8 @@ func (replacer *newPublicationManagedTargetReplacer) Replace(ctx context.Context
 	if err := replacer.root.Verify(ctx); err != nil {
 		return fmt.Errorf("verify managed publication output root: %w", err)
 	}
-	if targetParentPath != "." {
-		if err := replacer.root.VerifyChild(ctx, targetParentPath, sourcefs.DirectoryIdentity{Platform: replacer.intent.TargetParent.Platform, Volume: replacer.intent.TargetParent.Volume, FileID: replacer.intent.TargetParent.FileID}); err != nil {
-			return fmt.Errorf("verify managed publication nested target parent: %w", err)
-		}
-	} else if rootIdentity, err := replacer.root.Identity(ctx); err != nil || rootIdentity != (sourcefs.DirectoryIdentity{Platform: replacer.intent.TargetParent.Platform, Volume: replacer.intent.TargetParent.Volume, FileID: replacer.intent.TargetParent.FileID}) {
-		return errors.Join(fmt.Errorf("verify managed publication root target parent: %w", err), errors.New("managed publication target parent identity changed"))
+	if err := verifyManagedTargetParent(ctx, replacer.root, targetParentPath, sourcefs.DirectoryIdentity{Platform: replacer.intent.TargetParent.Platform, Volume: replacer.intent.TargetParent.Volume, FileID: replacer.intent.TargetParent.FileID}); err != nil {
+		return fmt.Errorf("verify managed publication target parent: %w", err)
 	}
 	rootIdentity, err := replacer.root.Identity(ctx)
 	if err != nil || rootIdentity != (sourcefs.DirectoryIdentity{Platform: replacer.intent.OutputRootParent.Platform, Volume: replacer.intent.OutputRootParent.Volume, FileID: replacer.intent.OutputRootParent.FileID}) {
@@ -192,16 +204,32 @@ func (replacer *newPublicationManagedTargetReplacer) Replace(ctx context.Context
 			replacer.scope.quarantineUncertain()
 		}
 	}()
+	if completing {
+		sealed, sealErr := replacer.scope.sealReplacementCompletion(reservation)
+		if sealErr != nil {
+			return sealErr
+		}
+		replacer.completionToken = sealed
+	}
 	if err := replacer.record(ctx, evidence); err != nil {
+		if completing {
+			replacer.scope.quarantineUncertain()
+		}
 		return err
 	}
 
 	evidence.From, evidence.To = "backup_intent", "backup_ready"
 	if err := replacer.record(ctx, evidence); err != nil {
+		if completing {
+			replacer.scope.quarantineUncertain()
+		}
 		return err
 	}
 	evidence.From, evidence.To = "backup_ready", "replacement_intent"
 	if err := replacer.record(ctx, evidence); err != nil {
+		if completing {
+			replacer.scope.quarantineUncertain()
+		}
 		return err
 	}
 	candidate, err := stageMutation.OpenExistingRegular(ctx, filepath.Base(replacer.stage.paths.OutputPath))
@@ -238,10 +266,8 @@ func (replacer *newPublicationManagedTargetReplacer) Replace(ctx context.Context
 	if err := replacer.root.VerifyChild(ctx, replacer.stage.directoryName, sourcefs.DirectoryIdentity{Platform: replacer.stage.identity.Platform, Volume: replacer.stage.identity.Volume, FileID: replacer.stage.identity.FileID}); err != nil {
 		return fmt.Errorf("revalidate managed publication stage directory before replacement: %w", err)
 	}
-	if targetParentPath != "." {
-		if err := replacer.root.VerifyChild(ctx, targetParentPath, sourcefs.DirectoryIdentity{Platform: replacer.intent.TargetParent.Platform, Volume: replacer.intent.TargetParent.Volume, FileID: replacer.intent.TargetParent.FileID}); err != nil {
-			return fmt.Errorf("revalidate managed publication target parent before replacement: %w", err)
-		}
+	if err := verifyManagedTargetParent(ctx, replacer.root, targetParentPath, targetParentIdentity); err != nil {
+		return fmt.Errorf("revalidate managed publication target parent before replacement: %w", err)
 	}
 	if id, err := replacer.stageDir.Identity(ctx); err != nil || id != stageDirIdentity {
 		return errors.Join(fmt.Errorf("revalidate managed publication stage identity before replacement: %w", err), errors.New("managed publication stage directory identity changed"))
@@ -277,9 +303,73 @@ func (replacer *newPublicationManagedTargetReplacer) Replace(ctx context.Context
 	evidence.From, evidence.To = "replacement_intent", "installed"
 	evidence.Identity = installedIdentity
 	if err := replacer.record(ctx, evidence); err != nil {
+		if completing {
+			replacer.scope.quarantineUncertain()
+		}
 		return err
 	}
+	if completing {
+		mutationMayHaveStarted = false
+		return nil
+	}
 	return errors.New("managed publication replacement is installed and awaits phase-two completion")
+}
+
+// verifyManagedTargetParent walks every portable relative-path component from
+// the pinned output root, comparing identities only after reaching the target.
+func verifyManagedTargetParent(ctx context.Context, root sourcefs.OutputDirectory, relative string, expected sourcefs.DirectoryIdentity) error {
+	if relative == "." {
+		actual, err := root.Identity(ctx)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return errors.New("managed publication target parent identity changed")
+		}
+		return nil
+	}
+	if relative == "" || path.IsAbs(relative) || path.Clean(relative) != relative {
+		return errors.New("managed publication target parent path is invalid")
+	}
+	current := root
+	owned := false
+	for _, component := range strings.Split(relative, "/") {
+		if component == "" || component == "." || component == ".." || strings.ContainsAny(component, `\\:`) {
+			if owned {
+				_ = current.Close()
+			}
+			return errors.New("managed publication target parent path is invalid")
+		}
+		traversal, ok := current.(sourcefs.OutputDirectoryTraversal)
+		if !ok {
+			if owned {
+				_ = current.Close()
+			}
+			return errors.New("managed publication target parent read-only traversal capability is unavailable")
+		}
+		next, err := traversal.OpenExistingDir(ctx, component)
+		if owned {
+			if closeErr := current.Close(); closeErr != nil {
+				if err == nil {
+					_ = next.Close()
+				}
+				return closeErr
+			}
+		}
+		if err != nil {
+			return err
+		}
+		current, owned = next, true
+	}
+	defer func() { _ = current.Close() }()
+	actual, err := current.Identity(ctx)
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		return errors.New("managed publication target parent identity changed")
+	}
+	return nil
 }
 
 func (replacer *newPublicationManagedTargetReplacer) record(ctx context.Context, evidence persistence.PublicationReplacementEvidence) error {

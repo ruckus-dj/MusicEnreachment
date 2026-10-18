@@ -24,6 +24,12 @@ type OutputDirectory interface {
 	Close() error
 }
 
+// OutputDirectoryTraversal is an optional read-only capability for opening an
+// existing child directory relative to a pinned output directory.
+type OutputDirectoryTraversal interface {
+	OpenExistingDir(context.Context, string) (OutputDirectory, error)
+}
+
 // OutputMutation is an optional capability implemented only by native output
 // directories that support handle-relative, no-replace publication operations.
 // Keeping it separate avoids requiring test doubles and wrapped capabilities to

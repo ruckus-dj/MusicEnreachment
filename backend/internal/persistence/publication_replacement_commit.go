@@ -43,8 +43,16 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 			return fmt.Errorf("commit replacement publication: read current row: %w", currentErr)
 		}
 		if attempt.Phase == "committed" {
-			if attempt.FrozenInputs == nil && claim.State == "executing" && operation.Stage == "committed" && currentErr == nil && replacementCommitWitnessMatches(attempt.MutationJournal, guard, attempt, current) {
-				committed = true
+			if attempt.FrozenInputs == nil && claim.State == "executing" && operation.Stage == "committed" && currentErr == nil {
+				if prefix, ok := validateCanonicalReplacementPrefix(attempt.MutationJournal, guard, attempt); ok {
+					if err := validateExposureNamespace(ctx, tx, attempt, prefix.exposure.Intent); err != nil {
+						if !errors.Is(err, sql.ErrNoRows) {
+							return err
+						}
+					} else if entries, err := decodeJournal(attempt.MutationJournal); err == nil && replacementCommitReplayMatches(entries, guard, attempt, current) {
+						committed = true
+					}
+				}
 			}
 			return nil
 		}
@@ -210,31 +218,6 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 		return nil
 	})
 	return committed, err
-}
-
-func replacementCommitWitnessMatches(raw json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt, current TrackPublication) bool {
-	entries, err := decodeJournal(raw)
-	if err != nil {
-		return false
-	}
-	count := 0
-	for i, raw := range entries {
-		var h struct {
-			Kind string `json:"kind"`
-		}
-		if json.Unmarshal(raw, &h) != nil {
-			return false
-		}
-		if h.Kind != "publication_replacement_commit" {
-			continue
-		}
-		count++
-		var w replacementPublicationCommitWitness
-		if i != len(entries)-1 || decodeStrictJSON(raw, &w) != nil || w.Version != replacementPublicationCommitVersion || w.Kind != "publication_replacement_commit" || w.Guard != guard || w.PositionID != attempt.PositionID || w.Epoch != attempt.Epoch || attempt.ExpectedGeneration == nil || w.ExpectedGeneration != *attempt.ExpectedGeneration || w.CandidateGeneration != attempt.CandidateGeneration || current.Generation != w.CandidateGeneration || !currentPublicationMatchesReplacementWitness(current, w.Projection) {
-			return false
-		}
-	}
-	return count == 1
 }
 
 func currentPublicationMatchesReplacementWitness(current, expected TrackPublication) bool {

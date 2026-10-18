@@ -178,6 +178,32 @@ func (d *windowsOutputDir) OpenOrCreateDir(ctx context.Context, name string) (Ou
 	return &windowsOutputDir{handle: h}, nil
 }
 
+func (d *windowsOutputDir) OpenExistingDir(ctx context.Context, name string) (OutputDirectory, error) {
+	if invalidWindowsName(name) {
+		return nil, ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, os.ErrClosed
+	}
+	h, err := outputWindowsOpen(d.handle, name, windowsDirAccess, windows.FILE_OPEN, true)
+	d.mu.Unlock()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if h != windows.InvalidHandle {
+			_ = windows.CloseHandle(h)
+		}
+		return nil, ctxErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &windowsOutputDir{handle: h}, nil
+}
+
 func (d *windowsOutputDir) CreateDirExclusive(ctx context.Context, name string) (OutputDirectory, error) {
 	if invalidWindowsName(name) {
 		return nil, ErrInvalidPath
