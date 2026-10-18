@@ -11,6 +11,16 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Реализованы isolated optional-lyrics helper и native candidate rebuild: исходный
+live reservation удерживается через write/readback/rebuild; rebuild journal
+предшествует identity-checked unlink и exclusive byte-copy из immutable input.
+Opaque writer errors остаются fatal; mismatch допускает fallback лишь с
+независимой required audio/asset validation и restoration authority. Тест FLAC
+проверяет encoded-audio digest, mandatory tags до восстановления cover и exact
+lyrics absence после fallback. Полный локальный `task verify` прошёл; native CI
+ещё не проверен. V3 execution остаётся
+запрещённым; durable warning/retry state и runtime integration ещё отсутствуют.
+
 Реализован unregistered V3 manual-lyrics admission: locked desired revision,
 release membership и confirmed current generation ограждают manual LRC/removal;
 mandatory tags берутся только из current publication. Generic V3 admission

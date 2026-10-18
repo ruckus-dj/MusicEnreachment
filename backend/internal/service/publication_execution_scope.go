@@ -22,28 +22,35 @@ type publicationSyncReservation struct {
 	owner    *PublicationExecutionScope
 	active   bool
 	borrowed bool
+	borrow   *publicationOptionalLyricsBorrow
+}
+
+type publicationOptionalLyricsBorrow struct {
+	scope       *PublicationExecutionScope
+	reservation *publicationSyncReservation
 }
 
 // PublicationExecutionScope privately owns both the local resource lock and
 // the durable delivery guard until finalization is acknowledged. Unknown
 // execution results permanently fence this scope from further launches.
 type PublicationExecutionScope struct {
-	mu          sync.Mutex
-	guard       persistence.PublicationDeliveryGuard
-	commands    PublicationCommandRunner
-	repository  publicationQuiescenceRepository
-	release     func()
-	unresolved  int
-	syncWork    int
-	unknown     bool
-	closeTried  bool
-	closed      bool
-	stageClose  func() error
-	ownedFiles  []*os.File
-	finalizing  bool
-	finalized   bool
-	firstAbsent bool
-	replacement *replacementCompletionToken
+	mu             sync.Mutex
+	guard          persistence.PublicationDeliveryGuard
+	commands       PublicationCommandRunner
+	repository     publicationQuiescenceRepository
+	release        func()
+	unresolved     int
+	syncWork       int
+	unknown        bool
+	closeTried     bool
+	closed         bool
+	stageClose     func() error
+	ownedFiles     []*os.File
+	finalizing     bool
+	finalized      bool
+	firstAbsent    bool
+	replacement    *replacementCompletionToken
+	optionalLyrics *publicationOptionalLyricsBorrow
 }
 
 // replacementCompletionToken is an unforgeable, scope-bound capability for
@@ -241,7 +248,7 @@ func (scope *PublicationExecutionScope) reserveSynchronousWork() *publicationSyn
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.optionalLyrics != nil {
 		return nil
 	}
 	scope.syncWork++
@@ -280,7 +287,7 @@ func (scope *PublicationExecutionScope) releaseReplacementWork(reservation *publ
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if reservation.owner != scope || !reservation.active {
+	if reservation.owner != scope || !reservation.active || reservation.borrow != nil {
 		return
 	}
 	if owned {
@@ -297,6 +304,36 @@ func (scope *PublicationExecutionScope) releaseSynchronousWork(reservation *publ
 	if reservation != nil && reservation.owner == scope && reservation.active && !reservation.borrowed {
 		reservation.active = false
 		scope.syncWork--
+	}
+}
+
+func (scope *PublicationExecutionScope) borrowOptionalLyricsWork(reservation *publicationSyncReservation) *publicationOptionalLyricsBorrow {
+	if scope == nil || reservation == nil {
+		return nil
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil {
+		return nil
+	}
+	borrow := &publicationOptionalLyricsBorrow{scope: scope, reservation: reservation}
+	reservation.borrowed = true
+	reservation.borrow = borrow
+	scope.optionalLyrics = borrow
+	return borrow
+}
+
+func (scope *PublicationExecutionScope) releaseOptionalLyricsWork(borrow *publicationOptionalLyricsBorrow) {
+	if scope == nil || borrow == nil {
+		return
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	reservation := borrow.reservation
+	if !scope.unknown && borrow.scope == scope && reservation != nil && reservation.owner == scope && reservation.active && reservation.borrowed && reservation.borrow == borrow && scope.optionalLyrics == borrow {
+		reservation.borrowed = false
+		reservation.borrow = nil
+		scope.optionalLyrics = nil
 	}
 }
 
@@ -328,7 +365,7 @@ func (scope *PublicationExecutionScope) sealReplacementCompletion(reservation *p
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.unknown || scope.finalized || scope.finalizing || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || reservation.owner != scope || !reservation.active {
+	if scope.unknown || scope.finalized || scope.finalizing || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || reservation.owner != scope || !reservation.active || reservation.borrow != nil {
 		return nil, errors.New("publication execution scope is not exclusively quiescent")
 	}
 	reservation.borrowed = false

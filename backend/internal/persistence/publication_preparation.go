@@ -151,7 +151,7 @@ func appendPublicationPreparationJournal(raw json.RawMessage, record Publication
 			return nil, false, errors.New("journal entry is malformed")
 		}
 		if header.Kind != "publication_preparation" {
-			continue
+			return nil, false, fmt.Errorf("unsupported publication mutation journal kind %q", header.Kind)
 		}
 		var prior PublicationPreparationRecord
 		if err := json.Unmarshal(entry, &prior); err != nil || !validPreparationJournalRecord(prior) {

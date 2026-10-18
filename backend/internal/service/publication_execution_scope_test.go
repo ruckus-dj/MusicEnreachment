@@ -167,6 +167,18 @@ func TestPublicationScopeReplacementReservationBorrowsOnlyItsOuterReservation(t 
 	}
 }
 
+func TestPublicationScopeReplacementSealsItsBorrowedReservation(t *testing.T) {
+	scope := newScopeForTest(t, &scopeCommandFake{}, &scopeRepositoryFake{valid: true, marked: true})
+	outer := scope.reserveSynchronousWork()
+	reservation, owned := scope.reserveReplacementWork(outer)
+	if reservation != outer || owned {
+		t.Fatal("replacement did not borrow outer reservation")
+	}
+	if _, err := scope.sealReplacementCompletion(reservation); err != nil {
+		t.Fatalf("seal replacement reservation: %v", err)
+	}
+}
+
 func TestPublicationScopeFirstAbsentFinalizationRejectsForeignOrBorrowedReservation(t *testing.T) {
 	t.Run("foreign", func(t *testing.T) {
 		scope := newScopeForTest(t, &scopeCommandFake{}, &scopeRepositoryFake{valid: true, marked: true})
