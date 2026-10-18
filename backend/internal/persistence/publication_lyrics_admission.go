@@ -12,7 +12,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// ManualLyricsAdmission couples a V3 rewrite snapshot to the metadata revision
+// ManualLyricsAdmission couples a rewrite snapshot to the metadata revision
 // that the caller reviewed. FrozenInputs is treated as a claim and is rebuilt
 // from the locked publication and metadata rows before it is persisted.
 type ManualLyricsAdmission struct {
@@ -26,14 +26,14 @@ type publicationCurrentMetadata struct {
 	Tags    map[string][]string `json:"tags"`
 }
 
-// AdmitManualLyricsRewrite atomically admits a source-free V3 lyrics rewrite.
+// AdmitManualLyricsRewrite atomically admits a source-free lyrics rewrite.
 func (repository *SetupManagerRepository) AdmitManualLyricsRewrite(ctx context.Context, request ManualLyricsAdmission, client RiverInserter) (uuid.UUID, error) {
 	input, err := DecodePublicationInputs(request.FrozenInputs)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("admit manual lyrics rewrite: %w", err)
 	}
 	if input.Version != PublicationInputsVersion || input.IntentKind != "rewrite" || input.ManualLyrics == nil || request.IntentKind != "rewrite" || request.Source != nil || request.ExpectedReleaseID == uuid.Nil {
-		return uuid.Nil, fmt.Errorf("admit manual lyrics rewrite: V3 source-free rewrite input is required")
+		return uuid.Nil, fmt.Errorf("admit manual lyrics rewrite: source-free rewrite input is required")
 	}
 	if input.ManualLyrics.ExpectedMetadataRevision != request.ExpectedMetadataRevision || input.ManualLyrics.ConfirmedCurrentGeneration != input.Rewrite.CurrentGeneration {
 		return uuid.Nil, fmt.Errorf("admit manual lyrics rewrite: request conflicts with frozen metadata receipt")
@@ -47,22 +47,22 @@ func (repository *SetupManagerRepository) AdmitManualLyricsRewrite(ctx context.C
 
 func validateManualLyricsAdmission(ctx context.Context, tx bun.Tx, request PublicationAdmission, input *PublicationInputs, current TrackPublication) error {
 	if input == nil || input.ManualLyrics == nil || input.Version != PublicationInputsVersion {
-		return fmt.Errorf("admit manual lyrics rewrite: V3 manual lyrics input is required")
+		return fmt.Errorf("admit manual lyrics rewrite: manual lyrics input is required")
 	}
 	if input.ManualLyrics.ExpectedMetadataRevision != request.metadataRevision || input.ManualLyrics.ConfirmedCurrentGeneration != current.Generation {
-		return fmt.Errorf("admit manual lyrics rewrite: metadata revision or generation changed")
+		return fmt.Errorf("admit manual lyrics rewrite: metadata revision or generation changed: %w", ErrPublicationAdmissionConflict)
 	}
 	var metadata []byte
 	var revision int64
 	err := tx.NewRaw(`SELECT metadata,metadata_revision FROM release_track WHERE id=? FOR UPDATE`, request.PositionID).Scan(ctx, &metadata, &revision)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("admit manual lyrics rewrite: position metadata not found")
+			return fmt.Errorf("admit manual lyrics rewrite: position metadata not found: %w", ErrPublicationAdmissionConflict)
 		}
 		return fmt.Errorf("admit manual lyrics rewrite: lock current metadata: %w", err)
 	}
 	if revision != request.metadataRevision {
-		return fmt.Errorf("admit manual lyrics rewrite: metadata revision changed")
+		return fmt.Errorf("admit manual lyrics rewrite: metadata revision changed: %w", ErrPublicationAdmissionConflict)
 	}
 	var currentMetadata publicationCurrentMetadata
 	if err := decodePublicationCurrentContract(current.ActualMetadata, &currentMetadata); err != nil || currentMetadata.Version != 1 || currentMetadata.Tags == nil {
@@ -94,17 +94,17 @@ func validateManualLyricsAdmission(ctx context.Context, tx bun.Tx, request Publi
 	}
 	field, exists := envelope.Desired["synced_lyrics"]
 	if !exists || field.Authority != librarymetadata.AuthorityManual || field.Provenance.Kind != librarymetadata.ProvenanceManual {
-		return fmt.Errorf("admit manual lyrics rewrite: current manual lyrics are missing")
+		return fmt.Errorf("admit manual lyrics rewrite: current manual lyrics are missing: %w", ErrPublicationAdmissionConflict)
 	}
 	manual := input.ManualLyrics
 	if manual.State != string(field.State) {
-		return fmt.Errorf("admit manual lyrics rewrite: current manual lyrics state changed")
+		return fmt.Errorf("admit manual lyrics rewrite: current manual lyrics state changed: %w", ErrPublicationAdmissionConflict)
 	}
 	switch field.State {
 	case librarymetadata.StateValue:
 		value, ok := field.Value.(string)
 		if !ok || manual.Value != value {
-			return fmt.Errorf("admit manual lyrics rewrite: current manual lyrics value changed")
+			return fmt.Errorf("admit manual lyrics rewrite: current manual lyrics value changed: %w", ErrPublicationAdmissionConflict)
 		}
 		manual.Value = value
 	case librarymetadata.StateExplicitEmpty:

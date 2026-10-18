@@ -9,6 +9,7 @@ import { getSetupState } from "../api/generated/client";
 import type { SetupStateBody } from "../api/generated/client.schemas";
 import { AppButton } from "../components/AppButton";
 import { IncomingGroupReviewScreen } from "../features/incoming/IncomingGroupReviewScreen";
+import { LibraryReleaseScreen } from "../features/library/LibraryReleaseScreen";
 import "../features/incoming/incoming.css";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
@@ -162,6 +163,10 @@ export function AppShell() {
           <SourcesScreen />
         ) : state && route === "/incoming-groups" ? (
           <IncomingGroupReviewScreen />
+        ) : state && route.startsWith("/library/releases/") ? (
+          <LibraryReleaseScreen
+            releaseId={decodeURIComponent(route.split("/")[3] ?? "")}
+          />
         ) : state ? (
           "Приложение готово к настройке."
         ) : null}

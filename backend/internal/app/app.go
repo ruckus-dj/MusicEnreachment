@@ -216,6 +216,9 @@ func Run(ctx context.Context, config Config) error {
 	libraryReleaseDetails := service.NewLibraryReleaseDetails(libraryRepository)
 	libraryPrimaryArtists := service.NewLibraryPrimaryArtists(libraryRepository)
 	libraryMetadata := service.NewLibraryMetadataService(libraryRepository)
+	libraryPublications := service.NewLibraryPublications(setupManagerRepository, registry, riverSlot, tools.Platform{
+		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
+	})
 	matchingAuthority := service.NewMatchingAuthorityService(persistence.NewIncomingMatchCandidateRepository(db))
 	manualReleaseSelection := service.NewManualReleaseSelectionService(setupManagerRepository, incomingGroups, providerFetch, riverSlot)
 	manualPickerSearch := service.NewManualPickerSearchService(setupManagerRepository, providerFetch, riverSlot)
@@ -424,6 +427,7 @@ func Run(ctx context.Context, config Config) error {
 		LibraryReleaseDetails:  libraryReleaseDetails,
 		LibraryPrimaryArtists:  libraryPrimaryArtists,
 		LibraryMetadata:        libraryMetadata,
+		LibraryPublications:    libraryPublications,
 	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{

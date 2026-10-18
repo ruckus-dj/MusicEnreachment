@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -21,6 +22,10 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/uptrace/bun"
 )
+
+// ErrPublicationAdmissionConflict reports that authoritative publication state
+// changed or refuses the requested admission.
+var ErrPublicationAdmissionConflict = errors.New("publication admission conflicts with current state")
 
 // PublicationNamespaceNode is a caller-planned namespace reservation. CanonicalKey
 // must use the caller's probed filesystem-equivalence rules; no path policy is
@@ -150,14 +155,17 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 			return fmt.Errorf("admit publication: lock output epoch: %w", err)
 		}
 		if epoch != request.ExpectedEpoch {
-			return fmt.Errorf("admit publication: output epoch changed")
+			return fmt.Errorf("admit publication: output epoch changed: %w", ErrPublicationAdmissionConflict)
 		}
 		var position, releaseID uuid.UUID
 		if err := tx.NewRaw(`SELECT id,release_id FROM release_track WHERE id=? FOR UPDATE`, request.PositionID).Scan(ctx, &position, &releaseID); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("admit publication: position no longer exists: %w", ErrPublicationAdmissionConflict)
+			}
 			return fmt.Errorf("admit publication: lock position: %w", err)
 		}
 		if request.ExpectedReleaseID != uuid.Nil && releaseID != request.ExpectedReleaseID {
-			return fmt.Errorf("admit publication: position does not belong to expected release")
+			return fmt.Errorf("admit publication: position does not belong to expected release: %w", ErrPublicationAdmissionConflict)
 		}
 		var generation *uuid.UUID
 		err := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, request.PositionID).Scan(ctx, &generation)
@@ -165,15 +173,18 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 			return fmt.Errorf("admit publication: read current generation: %w", err)
 		}
 		if !sameOptionalUUID(generation, request.ExpectedGeneration) {
-			return fmt.Errorf("admit publication: current generation changed")
+			return fmt.Errorf("admit publication: current generation changed: %w", ErrPublicationAdmissionConflict)
 		}
 		if input.Rewrite != nil {
 			var current TrackPublication
 			if err := tx.NewSelect().Model(&current).Where("position_id=?", request.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if err == sql.ErrNoRows {
+					return fmt.Errorf("admit publication: current publication changed: %w", ErrPublicationAdmissionConflict)
+				}
 				return fmt.Errorf("admit publication: lock current publication: %w", err)
 			}
 			if !publicationRewriteMatchesCurrent(current, epoch, *input.Rewrite) {
-				return fmt.Errorf("admit publication: frozen rewrite facts do not match current publication")
+				return fmt.Errorf("admit publication: frozen rewrite facts do not match current publication: %w", ErrPublicationAdmissionConflict)
 			}
 			if request.manualLyrics != nil {
 				if err := validateManualLyricsAdmission(ctx, tx, request, &input, current); err != nil {
@@ -183,7 +194,7 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		}
 		var active uuid.UUID
 		if err := tx.NewRaw(`SELECT operation_id FROM track_publication_attempt WHERE position_id=?`, request.PositionID).Scan(ctx, &active); err == nil {
-			return fmt.Errorf("admit publication: position already has an unfinished attempt")
+			return fmt.Errorf("admit publication: position already has an unfinished attempt: %w", ErrPublicationAdmissionConflict)
 		} else if err != sql.ErrNoRows {
 			return fmt.Errorf("admit publication: check active attempt: %w", err)
 		}
@@ -380,10 +391,10 @@ func reservePublicationNamespace(ctx context.Context, tx bun.Tx, request Publica
 					reusable = &old
 					continue
 				}
-				return fmt.Errorf("admit publication: namespace conflict at %q", n.RelativePath)
+				return fmt.Errorf("admit publication: namespace conflict at %q: %w", n.RelativePath, ErrPublicationAdmissionConflict)
 			}
 			if publicationPrefixConflict(old.CanonicalKey, old.NodeKind, n.CanonicalKey, n.NodeKind) {
-				return fmt.Errorf("admit publication: file/directory namespace conflict")
+				return fmt.Errorf("admit publication: file/directory namespace conflict: %w", ErrPublicationAdmissionConflict)
 			}
 		}
 		var owner *uuid.UUID

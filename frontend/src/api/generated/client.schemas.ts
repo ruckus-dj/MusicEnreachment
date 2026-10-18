@@ -4,6 +4,15 @@
  * MeloTrove API
  * OpenAPI spec version: 0.0.0
  */
+export interface ApplyManualLyricsInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_epoch: string;
+  expected_generation: string;
+  /** @minimum 0 */
+  expected_metadata_revision: number;
+}
+
 export interface ArtifactResponse {
   checksum_provided: boolean;
   name: string;
@@ -346,6 +355,99 @@ export interface LibraryPrimaryArtistResponse {
   readonly $schema?: string;
   publication_applied: boolean;
   revision: number;
+}
+
+export interface LibraryPublicationManualLyrics {
+  pending: boolean;
+  state: string;
+  value?: string;
+}
+
+export interface LibraryPublicationManualLyricsReceipt {
+  confirmed_generation: string;
+  desired_revision: number;
+  desired_sha256?: string;
+  desired_state: string;
+  epoch: string;
+  published_generation: string;
+  recorded_at: string;
+  warning_code?: string;
+}
+
+export interface PublicationAttemptResponse {
+  id: string;
+  stage: string;
+  state: string;
+}
+
+export interface PublicationCoverResponse {
+  mime?: string;
+  sha256?: string;
+  size_bytes?: number;
+  state: string;
+}
+
+export interface PublicationLyricsResponse {
+  format?: string;
+  sha256?: string;
+  state: string;
+}
+
+export interface PublicationAssetsResponse {
+  cover: PublicationCoverResponse;
+  lyrics: PublicationLyricsResponse;
+  version: number;
+}
+
+export interface PublicationAudioResponse {
+  alac_capabilities_verified: boolean;
+  bit_depth?: number;
+  bitrate?: number;
+  channels?: number;
+  codec: string;
+  container: string;
+  /** @nullable */
+  lossless: boolean | null;
+  sample_rate?: number;
+  stream_index: number;
+  supported_source_container: boolean;
+}
+
+export type PublicationMetadataResponseTags = {[key: string]: string[] | null};
+
+export interface PublicationMetadataResponse {
+  tags: PublicationMetadataResponseTags;
+  version: number;
+}
+
+export interface PublicationOwnershipResponse {
+  mtime?: number;
+  sha256?: string;
+  size_bytes?: number;
+}
+
+export interface LibraryPublicationResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active_attempt?: PublicationAttemptResponse;
+  active_attempt_candidate?: string;
+  active_attempt_phase?: string;
+  active_epoch: string;
+  can_apply_manual_lyrics: boolean;
+  current_assets?: PublicationAssetsResponse;
+  current_audio?: PublicationAudioResponse;
+  current_epoch?: string;
+  current_generation?: string;
+  current_metadata?: PublicationMetadataResponse;
+  current_ownership?: PublicationOwnershipResponse;
+  current_path?: string;
+  current_quality_policy_version?: number;
+  current_validated_at?: string;
+  manual_lyrics?: LibraryPublicationManualLyrics;
+  manual_lyrics_receipt?: LibraryPublicationManualLyricsReceipt;
+  metadata_revision: number;
+  position_id: string;
+  release_id: string;
 }
 
 export interface LibrarySourceLocationResponse {

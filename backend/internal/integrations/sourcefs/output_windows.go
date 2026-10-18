@@ -145,6 +145,9 @@ func (d *windowsOutputDir) openDir(ctx context.Context, name string) (*windowsOu
 		return nil, ctxErr
 	}
 	if err != nil {
+		if nt, ok := err.(windows.NTStatus); ok && (nt == windows.STATUS_OBJECT_NAME_NOT_FOUND || nt == windows.STATUS_OBJECT_PATH_NOT_FOUND) {
+			return nil, errors.Join(fs.ErrNotExist, err)
+		}
 		return nil, err
 	}
 	return &windowsOutputDir{handle: h}, nil
@@ -199,6 +202,9 @@ func (d *windowsOutputDir) OpenExistingDir(ctx context.Context, name string) (Ou
 		return nil, ctxErr
 	}
 	if err != nil {
+		if nt, ok := err.(windows.NTStatus); ok && (nt == windows.STATUS_OBJECT_NAME_NOT_FOUND || nt == windows.STATUS_OBJECT_PATH_NOT_FOUND) {
+			return nil, errors.Join(fs.ErrNotExist, err)
+		}
 		return nil, err
 	}
 	return &windowsOutputDir{handle: h}, nil

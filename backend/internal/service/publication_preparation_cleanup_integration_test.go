@@ -181,7 +181,7 @@ func testPublicationSourceExecution(t *testing.T, target string) {
 			}
 		}
 		verified := time.Now().UTC()
-		installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "1", RelativePath: "ffmpeg/1", State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVersions: json.RawMessage(`{"ffmpeg":"ffmpeg version 1","ffprobe":"ffprobe version 1"}`)}
+		installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "1", RelativePath: filepath.Join("ffmpeg", "1"), State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVersions: json.RawMessage(`{"ffmpeg":"ffmpeg version 1","ffprobe":"ffprobe version 1"}`)}
 		registry := settings.New(persistence.NewSettingsRepository(db), nil)
 		if err := registry.SetToolsDirectory(ctx, toolsRoot, ""); err != nil {
 			t.Fatal(err)

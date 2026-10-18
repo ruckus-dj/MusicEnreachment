@@ -24,6 +24,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  ApplyManualLyricsInputBody,
   CatalogBody,
   CheckMusicBrainzBody,
   CheckPathsBody,
@@ -42,6 +43,7 @@ import type {
   LibraryMetadataResponse,
   LibraryPrimaryArtistBody,
   LibraryPrimaryArtistResponse,
+  LibraryPublicationResponse,
   LibraryReleaseDetailResponse,
   ListInstallationsParams,
   ListOperationsParams,
@@ -2539,6 +2541,258 @@ export const useSetLibraryPositionPrimaryArtist = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getSetLibraryPositionPrimaryArtistMutationOptions(options), queryClient);
+    }
+
+export type getLibraryPublicationResponse200 = {
+  data: LibraryPublicationResponse
+  status: 200
+}
+
+export type getLibraryPublicationResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryPublicationResponseSuccess = (getLibraryPublicationResponse200) & {
+  headers: Headers;
+};
+export type getLibraryPublicationResponseError = (getLibraryPublicationResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryPublicationResponse = (getLibraryPublicationResponseSuccess | getLibraryPublicationResponseError)
+
+export const getGetLibraryPublicationUrl = (releaseId: string,
+    positionId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/positions/${positionId}/publication`
+}
+
+/**
+ * @summary Read the current publication for a library position
+ */
+export const getLibraryPublication = async (releaseId: string,
+    positionId: string, options?: RequestInit): Promise<getLibraryPublicationResponse> => {
+
+  const res = await fetch(getGetLibraryPublicationUrl(releaseId,positionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getLibraryPublicationResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getLibraryPublicationResponse
+}
+
+
+
+
+
+export const getGetLibraryPublicationQueryKey = (releaseId: string,
+    positionId: string,) => {
+    return [
+    `/api/library/releases/${releaseId}/positions/${positionId}/publication`
+    ] as const;
+    }
+
+
+export const getGetLibraryPublicationQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryPublication>>, TError = ErrorModel>(releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPublication>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryPublicationQueryKey(releaseId,positionId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryPublication>>> = ({ signal }) => getLibraryPublication(releaseId,positionId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseId !== null && releaseId !== undefined && positionId !== null && positionId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryPublication>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryPublicationQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryPublication>>>
+export type GetLibraryPublicationQueryError = ErrorModel
+
+
+export function useGetLibraryPublication<TData = Awaited<ReturnType<typeof getLibraryPublication>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPublication>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryPublication>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryPublication>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryPublication<TData = Awaited<ReturnType<typeof getLibraryPublication>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPublication>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryPublication>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryPublication>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryPublication<TData = Awaited<ReturnType<typeof getLibraryPublication>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPublication>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read the current publication for a library position
+ */
+
+export function useGetLibraryPublication<TData = Awaited<ReturnType<typeof getLibraryPublication>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryPublication>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryPublicationQueryOptions(releaseId,positionId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type applyLibraryManualLyricsResponse202 = {
+  data: OperationResponse
+  status: 202
+}
+
+export type applyLibraryManualLyricsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type applyLibraryManualLyricsResponseSuccess = (applyLibraryManualLyricsResponse202) & {
+  headers: Headers;
+};
+export type applyLibraryManualLyricsResponseError = (applyLibraryManualLyricsResponseDefault) & {
+  headers: Headers;
+};
+
+export type applyLibraryManualLyricsResponse = (applyLibraryManualLyricsResponseSuccess | applyLibraryManualLyricsResponseError)
+
+export const getApplyLibraryManualLyricsUrl = (releaseId: string,
+    positionId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/positions/${positionId}/publication/manual-lyrics`
+}
+
+/**
+ * @summary Apply saved manual lyrics to the current publication
+ */
+export const applyLibraryManualLyrics = async (releaseId: string,
+    positionId: string,
+    applyManualLyricsInputBody: NonReadonly<ApplyManualLyricsInputBody>, options?: RequestInit): Promise<applyLibraryManualLyricsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getApplyLibraryManualLyricsUrl(releaseId,positionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(applyManualLyricsInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: applyLibraryManualLyricsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as applyLibraryManualLyricsResponse
+}
+
+
+
+
+
+export const getApplyLibraryManualLyricsMutationKey = () => ['applyLibraryManualLyrics'] as const;
+
+export const getApplyLibraryManualLyricsMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyLibraryManualLyrics>>, TError,ApplyLibraryManualLyricsMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof applyLibraryManualLyrics>>, TError,ApplyLibraryManualLyricsMutationVariables, TContext> => {
+
+const mutationKey = getApplyLibraryManualLyricsMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyLibraryManualLyrics>>, ApplyLibraryManualLyricsMutationVariables> = (props) => {
+          const {releaseId,positionId,data} = props ?? {};
+
+          return  applyLibraryManualLyrics(releaseId,positionId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyLibraryManualLyricsMutationResult = NonNullable<Awaited<ReturnType<typeof applyLibraryManualLyrics>>>
+    export type ApplyLibraryManualLyricsMutationBody = NonReadonly<ApplyManualLyricsInputBody>
+    export type ApplyLibraryManualLyricsMutationError = ErrorModel
+    export type ApplyLibraryManualLyricsMutationVariables = {releaseId: string;positionId: string;data: NonReadonly<ApplyManualLyricsInputBody>}
+
+    /**
+ * @summary Apply saved manual lyrics to the current publication
+ */
+export const useApplyLibraryManualLyrics = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyLibraryManualLyrics>>, TError,ApplyLibraryManualLyricsMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applyLibraryManualLyrics>>,
+        TError,
+        ApplyLibraryManualLyricsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getApplyLibraryManualLyricsMutationOptions(options), queryClient);
     }
 
 export type setLibraryReleasePrimaryArtistResponse200 = {

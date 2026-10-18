@@ -94,6 +94,10 @@ type ManualLyricsReceiptProjection struct {
 // ReadManualLyricsReceiptProjection reads the desired revision, active epoch,
 // current publication and receipt in one SQL statement/snapshot.
 func (repository *SetupManagerRepository) ReadManualLyricsReceiptProjection(ctx context.Context, positionID uuid.UUID) (ManualLyricsReceiptProjection, error) {
+	return readManualLyricsReceiptProjection(ctx, repository.db, positionID)
+}
+
+func readManualLyricsReceiptProjection(ctx context.Context, database bun.IDB, positionID uuid.UUID) (ManualLyricsReceiptProjection, error) {
 	var row struct {
 		MetadataRevision    int64           `bun:"metadata_revision"`
 		ActiveEpoch         uuid.UUID       `bun:"active_epoch"`
@@ -109,7 +113,7 @@ func (repository *SetupManagerRepository) ReadManualLyricsReceiptProjection(ctx 
 		ActualMetadata      json.RawMessage `bun:"actual_metadata,type:jsonb"`
 		ActualAssets        json.RawMessage `bun:"actual_assets,type:jsonb"`
 	}
-	err := repository.db.NewRaw(`SELECT rt.metadata_revision, ns.output_epoch AS active_epoch,
+	err := database.NewRaw(`SELECT rt.metadata_revision, ns.output_epoch AS active_epoch,
 		tp.generation, r.epoch AS receipt_epoch, r.desired_revision,
 		r.confirmed_generation, r.published_generation, r.desired_state,
 		r.desired_sha256, r.warning_code, r.recorded_at,

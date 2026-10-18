@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Текущий user-facing срез добавляет coherent position publication
+read model, server-owned saved-manual-lyrics admission, GET/POST Huma endpoints
+и library release route с явным Save → Apply. Value/removal admission прошли
+реальную PG проверку без original source; API/UI tests и полный `task verify`
+прошли. UI lifecycle subscriptions/draft/readback gaps исправлены и покрыты
+regression tests. Исправлена Windows native directory error classification
+из CI worker-среза; native CI этого исправления ещё ожидается. First-audio HTTP admission,
+automatic recovery и полный acceptance плана ещё не завершены.
+
 В текущем delivery-срезе добавлены общий ID-only job args,
 River publication worker и app registration с process-wide coordinator/boot ID.
 Executor сам получает durable claim и guarded frozen inputs, использует existing

@@ -1127,9 +1127,20 @@ export function LocalReleaseEditor({
         </section>
       )}
       {state.receipt && (
-        <p role="status">
-          Подтверждён локальный релиз {state.receipt.local_release_id ?? ""}.
-        </p>
+        <div role="status">
+          <p>
+            Подтверждён локальный релиз {state.receipt.local_release_id ?? ""}.
+          </p>
+          {state.receipt.local_release_id && (
+            <AppButton
+              onPress={() => {
+                window.location.hash = `/library/releases/${encodeURIComponent(state.receipt?.local_release_id ?? "")}`;
+              }}
+            >
+              Открыть в медиатеке
+            </AppButton>
+          )}
+        </div>
       )}
     </section>
   );

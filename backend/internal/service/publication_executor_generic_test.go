@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
@@ -29,6 +30,18 @@ func TestOpenPublicationTargetParentCreatesOnlyManifestApprovedDirectories(t *te
 		{CanonicalKey: "Artist/Album/track.flac", RelativePath: "Artist/Album/track.flac", NodeKind: "file"},
 	}
 	parent, err := openPublicationTargetParent(ctx, root, "Artist/Album/track.flac", nodes)
+	if runtime.GOOS == "windows" {
+		if !errors.Is(err, sourcefs.ErrUnsupported) {
+			t.Fatalf("openPublicationTargetParent error = %v, want sourcefs.ErrUnsupported on Windows", err)
+		}
+		if _, statErr := os.Lstat(filepath.Join(rootPath, "Artist")); statErr != nil {
+			t.Fatalf("created approved Artist directory was not retained: %v", statErr)
+		}
+		if _, statErr := os.Lstat(filepath.Join(rootPath, "Artist", "Album")); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("Album directory should not be created after unsupported sync: %v", statErr)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

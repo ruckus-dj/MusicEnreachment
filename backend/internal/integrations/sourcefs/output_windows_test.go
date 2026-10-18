@@ -51,3 +51,35 @@ func TestWindowsOutputAdapterOpenExistingRegularReportsMissingFile(t *testing.T)
 		t.Fatalf("OpenExistingRegular error = %v, want os.ErrNotExist", err)
 	}
 }
+
+func TestWindowsOutputAdapterOpenExistingDirReportsMissingDirectory(t *testing.T) {
+	ctx := context.Background()
+	root, err := NewOutputOpener().OpenRoot(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	traversal := root.(OutputDirectoryTraversal)
+	if _, err := traversal.OpenExistingDir(ctx, "missing-directory"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("OpenExistingDir error = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestWindowsOutputAdapterCreateDirExclusiveReportsCollision(t *testing.T) {
+	ctx := context.Background()
+	root, err := NewOutputOpener().OpenRoot(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	child, err := root.CreateDirExclusive(ctx, "existing-directory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Close()
+	if _, err := root.CreateDirExclusive(ctx, "existing-directory"); !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("CreateDirExclusive error = %v, want fs.ErrExist", err)
+	}
+}

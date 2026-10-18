@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -37,6 +38,15 @@ type Dependencies struct {
 	LibraryReleaseDetails  *service.LibraryReleaseDetails
 	LibraryPrimaryArtists  *service.LibraryPrimaryArtists
 	LibraryMetadata        *service.LibraryMetadataService
+	LibraryPublications    LibraryPublicationService
+}
+
+// LibraryPublicationService is the API's narrow boundary to publication state.
+// Keeping it interface-typed lets route tests verify HTTP behavior without
+// constructing the service's concrete persistence dependencies.
+type LibraryPublicationService interface {
+	Read(context.Context, uuid.UUID, uuid.UUID) (service.LibraryPublicationView, error)
+	ApplyManualLyrics(context.Context, uuid.UUID, uuid.UUID, service.LibraryPublicationApplyManualLyricsRequest) (uuid.UUID, error)
 }
 
 type preflightEntry struct {
