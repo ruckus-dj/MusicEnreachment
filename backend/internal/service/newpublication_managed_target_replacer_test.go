@@ -22,6 +22,17 @@ type replacementRecordingRepository struct {
 	err      error
 }
 
+type replacementRegularFileWithoutSync struct {
+	sourcefs.RegularFile
+}
+
+func TestSyncManagedRegularFileRequiresOptionalCapability(t *testing.T) {
+	err := syncManagedRegularFile(context.Background(), replacementRegularFileWithoutSync{})
+	if !errors.Is(err, sourcefs.ErrUnsupported) {
+		t.Fatalf("syncManagedRegularFile error = %v, want ErrUnsupported", err)
+	}
+}
+
 func (r *replacementRecordingRepository) RecordPublicationReplacement(_ context.Context, _ persistence.PublicationDeliveryGuard, evidence persistence.PublicationReplacementEvidence) (persistence.PublicationReplacementOutcome, error) {
 	r.steps = append(r.steps, evidence.To)
 	r.evidence = append(r.evidence, evidence)

@@ -401,7 +401,7 @@ func managedReplacementIdentity(ctx context.Context, file sourcefs.RegularFile, 
 func syncManagedRegularFile(ctx context.Context, file sourcefs.RegularFile) error {
 	syncer, ok := file.(sourcefs.RegularFileSync)
 	if !ok {
-		return errors.New("native managed publication file sync capability is unavailable")
+		return fmt.Errorf("native managed publication file sync capability is unavailable: %w", sourcefs.ErrUnsupported)
 	}
 	return syncer.Sync(ctx)
 }
