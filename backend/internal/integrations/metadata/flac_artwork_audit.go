@@ -30,6 +30,35 @@ type FlacArtworkSnapshot struct {
 	description string
 	mime        string
 	pictureType uint32
+	imageSize   int
+}
+
+// ApprovedCoverFacts is a detached description of the approved native cover.
+type ApprovedCoverFacts struct {
+	Count       int
+	ImageSHA256 [32]byte
+	MIME        string
+	ImageSize   int
+}
+
+// ApprovedCoverFacts returns detached facts about the snapshot's TagLib image.
+func (s FlacArtworkSnapshot) ApprovedCoverFacts() ApprovedCoverFacts {
+	return ApprovedCoverFacts{Count: s.count, ImageSHA256: s.imageHash, MIME: s.mime, ImageSize: s.imageSize}
+}
+
+// VerifyEquivalent compares native artwork and audio facts, not filesystem identity.
+func (s FlacArtworkSnapshot) VerifyEquivalent(ctx context.Context, otherPath string) error {
+	if s.path == "" || s.identity == nil || s.streamInfo == ([34]byte{}) || s.audioHash == ([32]byte{}) {
+		return errors.New("invalid FLAC artwork snapshot")
+	}
+	other, err := SnapshotFlacArtwork(ctx, otherPath)
+	if err != nil {
+		return fmt.Errorf("verify equivalent FLAC: %w", err)
+	}
+	if !sameFlacArtworkContents(s, other) {
+		return errors.New("FLAC artwork or audio differs from snapshot")
+	}
+	return nil
 }
 
 type flacPicture struct {
@@ -192,7 +221,7 @@ func WritePreservingFlacArtwork(ctx context.Context, path string, tags map[strin
 func sameFlacArtworkFacts(a, b FlacArtworkSnapshot) bool {
 	return a.path == b.path && a.streamInfo == b.streamInfo && a.audioHash == b.audioHash &&
 		a.pictureHash == b.pictureHash && a.imageHash == b.imageHash && a.count == b.count &&
-		a.description == b.description && a.mime == b.mime && a.pictureType == b.pictureType
+		a.description == b.description && a.mime == b.mime && a.pictureType == b.pictureType && a.imageSize == b.imageSize
 }
 
 func verifyTagLibFlac(ctx context.Context, path string, s *FlacArtworkSnapshot, openedInfo os.FileInfo) (retErr error) {
@@ -245,8 +274,81 @@ func verifyTagLibFlac(ctx context.Context, path string, s *FlacArtworkSnapshot, 
 			return errors.New("TagLib FLAC picture descriptor disagrees with structural audit")
 		}
 		s.imageHash = sha256.Sum256(data)
+		s.imageSize = len(data)
 	}
 	return ctx.Err()
+}
+
+// WriteFlacTagsPreservingArtwork updates metadata on the snapshot-bound FLAC and
+// returns fresh TagLib readback. Unlike Writer.Write it permits only LYRICS to
+// differ from the requested metadata, because TagLib may omit that optional field.
+func WriteFlacTagsPreservingArtwork(ctx context.Context, path string, tags map[string][]string, before FlacArtworkSnapshot) (WriteResult, error) {
+	return writeFlacTagsPreservingArtwork(ctx, path, tags, before, taglib.WriteTags, taglib.ReadTags)
+}
+
+func writeFlacTagsPreservingArtwork(ctx context.Context, path string, tags map[string][]string, before FlacArtworkSnapshot, write func(string, map[string][]string, taglib.WriteOption) error, read func(string) (map[string][]string, error)) (WriteResult, error) {
+	if err := ctx.Err(); err != nil {
+		return WriteResult{}, err
+	}
+	if path == "" || before.path != path || before.identity == nil {
+		return WriteResult{}, errors.New("FLAC artwork snapshot does not match path")
+	}
+	current, err := SnapshotFlacArtwork(ctx, path)
+	if err != nil {
+		return WriteResult{}, fmt.Errorf("verify FLAC artwork before write: %w", err)
+	}
+	if current.identity == nil || !os.SameFile(current.identity, before.identity) || !sameFlacArtworkFacts(current, before) {
+		return WriteResult{}, errors.New("FLAC changed since artwork snapshot")
+	}
+	if err := safeWriteTags(write, path, nonEmptyTags(tags), taglib.Clear); err != nil {
+		return WriteResult{}, fmt.Errorf("write FLAC tags: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return WriteResult{}, err
+	}
+	actual, err := safeReadTags(read, path)
+	if err != nil {
+		return WriteResult{}, fmt.Errorf("read back FLAC tags: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return WriteResult{}, err
+	}
+	expected := nonEmptyTags(tags)
+	if !equalTagsExceptLyrics(actual, expected) {
+		return WriteResult{}, errors.New("FLAC metadata tags did not round-trip")
+	}
+	after, err := SnapshotFlacArtwork(ctx, path)
+	if err != nil {
+		return WriteResult{}, fmt.Errorf("verify FLAC after tag write: %w", err)
+	}
+	if !sameFlacArtworkContents(after, before) {
+		return WriteResult{}, errors.New("FLAC artwork or audio changed during tag write; no restoration was attempted")
+	}
+	return WriteResult{Tags: cloneTags(actual)}, nil
+}
+
+func equalTagsExceptLyrics(actual, expected map[string][]string) bool {
+	for k, v := range expected {
+		if k != "LYRICS" {
+			got, ok := actual[k]
+			if !ok || !equalValues(got, v) {
+				return false
+			}
+		}
+	}
+	for k, v := range actual {
+		if k != "LYRICS" {
+			want, ok := expected[k]
+			if !ok || !equalValues(v, want) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func sameFlacArtworkContents(a, b FlacArtworkSnapshot) bool {
+	return a.streamInfo == b.streamInfo && a.audioHash == b.audioHash && a.pictureHash == b.pictureHash && a.imageHash == b.imageHash && a.imageSize == b.imageSize && a.count == b.count && a.description == b.description && a.mime == b.mime && a.pictureType == b.pictureType
 }
 
 func sameFileSnapshot(a, b os.FileInfo) bool {

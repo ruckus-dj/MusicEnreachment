@@ -72,6 +72,155 @@ func TestWritePreservingFlacArtworkRoundTripsNativePicture(t *testing.T) {
 	}
 }
 
+func TestWriteFlacTagsPreservingArtworkAllowsOnlyLyricsReadbackMismatch(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("testdata", "eg.flac"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := generatedPNG(t)
+	path := writeMetadataFixture(t, ".flac", addFlacTestPicture(removeFlacTestPictures(fixture), flacTestPicture(3, "image/png", "cover", 1, 1, 24, 0, image)))
+	before, err := SnapshotFlacArtwork(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := before.ApprovedCoverFacts()
+	if facts.Count != 1 || facts.MIME != "image/png" || facts.ImageSize != len(image) || facts.ImageSHA256 == ([32]byte{}) {
+		t.Fatalf("approved cover facts = %#v", facts)
+	}
+	copyPath := writeMetadataFixture(t, ".flac", mustReadFile(t, path))
+	if err := before.VerifyEquivalent(context.Background(), copyPath); err != nil {
+		t.Fatalf("native copy equivalence: %v", err)
+	}
+	want := map[string][]string{taglib.Title: {"round trip"}, taglib.Lyrics: {"requested lyrics"}}
+	result, err := writeFlacTagsPreservingArtwork(context.Background(), path, want, before, taglib.WriteTags, func(path string) (map[string][]string, error) {
+		got, err := taglib.ReadTags(path)
+		if err == nil {
+			got[taglib.Lyrics] = []string{"TagLib optional mismatch"}
+		}
+		return got, err
+	})
+	if err != nil {
+		t.Fatalf("metadata-only write: %v", err)
+	}
+	assertValues(t, result.Tags, taglib.Title, want[taglib.Title])
+	if result.Tags[taglib.Lyrics][0] != "TagLib optional mismatch" {
+		t.Fatalf("fresh readback = %#v", result.Tags)
+	}
+}
+
+func TestVerifyEquivalentAcceptsNativeFLACWithoutArtwork(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("testdata", "eg.flac"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeMetadataFixture(t, ".flac", removeFlacTestPictures(fixture))
+	before, err := SnapshotFlacArtwork(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.count != 0 {
+		t.Fatalf("expected coverless FLAC snapshot, got %d pictures", before.count)
+	}
+	copyPath := writeMetadataFixture(t, ".flac", mustReadFile(t, path))
+	if err := before.VerifyEquivalent(context.Background(), copyPath); err != nil {
+		t.Fatalf("coverless native copy equivalence: %v", err)
+	}
+	if err := (FlacArtworkSnapshot{}).VerifyEquivalent(context.Background(), copyPath); err == nil {
+		t.Fatal("zero snapshot accepted")
+	}
+}
+
+func TestVerifyEquivalentRejectsNativeFLACContentChanges(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("testdata", "eg.flac"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := generatedPNG(t)
+	picture := flacTestPicture(3, "image/png", "cover", 1, 1, 24, 0, image)
+	original := addFlacTestPicture(removeFlacTestPictures(fixture), picture)
+	path := writeMetadataFixture(t, ".flac", original)
+	before, err := SnapshotFlacArtwork(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		modify func([]byte) []byte
+	}{
+		{name: "picture numeric header", modify: func(file []byte) []byte {
+			file = append([]byte(nil), file...)
+			pictureBody := flacTestPictureBody(file)
+			descriptionLengthOffset := 8 + len("image/png")
+			descriptionLength := int(binary.BigEndian.Uint32(pictureBody[descriptionLengthOffset:]))
+			widthOffset := descriptionLengthOffset + 4 + descriptionLength
+			binary.BigEndian.PutUint32(pictureBody[widthOffset:], 2)
+			return file
+		}},
+		{name: "STREAMINFO", modify: func(file []byte) []byte {
+			file = append([]byte(nil), file...)
+			file[8+33] ^= 1 // Alter the STREAMINFO MD5 while preserving FLAC framing.
+			return file
+		}},
+		{name: "audio frame", modify: func(file []byte) []byte {
+			file = append([]byte(nil), file...)
+			file[len(file)-1] ^= 1
+			return file
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := writeMetadataFixture(t, ".flac", test.modify(original))
+			if err := before.VerifyEquivalent(context.Background(), candidate); err == nil {
+				t.Fatal("changed native FLAC was accepted as equivalent")
+			}
+		})
+	}
+}
+
+func flacTestPictureBody(file []byte) []byte {
+	metadataEnd := 4
+	for {
+		head := file[metadataEnd]
+		size := int(file[metadataEnd+1])<<16 | int(file[metadataEnd+2])<<8 | int(file[metadataEnd+3])
+		bodyStart := metadataEnd + 4
+		if head&0x7f == 6 {
+			return file[bodyStart : bodyStart+size]
+		}
+		metadataEnd = bodyStart + size
+	}
+}
+
+func TestWriteFlacTagsPreservingArtworkRejectsMandatoryTagMismatch(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("testdata", "eg.flac"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := generatedPNG(t)
+	path := writeMetadataFixture(t, ".flac", addFlacTestPicture(removeFlacTestPictures(fixture), flacTestPicture(3, "image/png", "cover", 1, 1, 24, 0, image)))
+	before, err := SnapshotFlacArtwork(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = writeFlacTagsPreservingArtwork(context.Background(), path, map[string][]string{taglib.Title: {"requested"}}, before, taglib.WriteTags, func(path string) (map[string][]string, error) {
+		got, err := taglib.ReadTags(path)
+		if err == nil {
+			got[taglib.Title] = []string{"wrong"}
+		}
+		return got, err
+	})
+	if err == nil || !strings.Contains(err.Error(), "did not round-trip") {
+		t.Fatalf("mandatory mismatch error = %v", err)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func TestWritePreservingFlacArtworkRejectsReplacedIdenticalFile(t *testing.T) {
 	fixture, err := os.ReadFile(filepath.Join("testdata", "eg.flac"))
 	if err != nil {

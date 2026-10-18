@@ -27,6 +27,10 @@ func (repository *optionalLyricsV3Repository) GuardedRecordPublicationOptionalLy
 	return repository.outcome, nil
 }
 
+func (repository *optionalLyricsV3Repository) PublicationManualLyricsPreparationInputs(_ context.Context, _ persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error) {
+	return repository.input, true, nil
+}
+
 func TestApplyAndRecordPublicationManualLyricsUsesNativeEvidence(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -42,7 +46,10 @@ func TestApplyAndRecordPublicationManualLyricsUsesNativeEvidence(t *testing.T) {
 			ctx := context.Background()
 			fixture := makeRewriteFixture(t)
 			t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
-			current := filepath.Join(fixture.output, "current.mp3")
+			if err := os.Remove(filepath.Join(fixture.output, "current.mp3")); err != nil {
+				t.Fatal(err)
+			}
+			current := filepath.Join(fixture.output, "current.flac")
 			contents, err := os.ReadFile("../integrations/metadata/testdata/eg.flac")
 			if err != nil {
 				t.Fatal(err)
@@ -67,17 +74,20 @@ func TestApplyAndRecordPublicationManualLyricsUsesNativeEvidence(t *testing.T) {
 			}
 			size, mtime := info.Size(), info.ModTime().UnixMicro()
 			digest := sha256.Sum256(contents)
-			fixture.repo.input.Rewrite.RelativePath = "current.mp3"
+			fixture.repo.input.Rewrite.RelativePath = "current.flac"
 			fixture.repo.input.Rewrite.Ownership = persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])}
 			fixture.repo.input.Version = persistence.PublicationInputsVersion3
-			fixture.repo.input.QualityPolicyVersion = 0
+			fixture.repo.input.QualityPolicyVersion = 1
+			fixture.repo.input.Format = "source"
+			lossless := true
+			fixture.repo.input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true}
 			lyrics := "[ar:Artist]\r\n[00:01.00]Words\r\n"
 			fixture.repo.input.ManualLyrics = &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics, ConfirmedCurrentGeneration: fixture.repo.input.Rewrite.CurrentGeneration}
 			fixture.repo.input.DesiredTags = map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}
 
 			repository := &optionalLyricsV3Repository{stagePreparationRepository: fixture.repo, outcome: test.ack}
 			fixture.preparer.Repository = repository
-			stage, err := fixture.prepare(t)
+			stage, err := fixture.preparer.prepareManualLyricsFLAC(ctx, fixture.guard, persistence.PublicationDeliveryAcquired, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -163,6 +173,46 @@ func TestApplyAndRecordPublicationManualLyricsUsesNativeEvidence(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPublicationStagePreparerRejectsV3ThroughGenericReaderBeforeMutation(t *testing.T) {
+	fixture := makeRewriteFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	if err := os.Remove(filepath.Join(fixture.output, "current.mp3")); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(fixture.output, "current.flac")
+	contents, err := os.ReadFile("../integrations/metadata/testdata/eg.flac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(current, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size, mtime := info.Size(), info.ModTime().UnixMicro()
+	digest := sha256.Sum256(contents)
+	fixture.repo.input.Version = persistence.PublicationInputsVersion3
+	fixture.repo.input.QualityPolicyVersion = 1
+	fixture.repo.input.Rewrite.RelativePath = "current.flac"
+	fixture.repo.input.Rewrite.Ownership = persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])}
+	lossless := true
+	fixture.repo.input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true}
+	fixture.repo.input.ManualLyrics = &persistence.PublicationManualLyricsInput{State: "value", Value: "[00:01.00]Words", ConfirmedCurrentGeneration: fixture.repo.input.Rewrite.CurrentGeneration}
+
+	if _, err := fixture.prepare(t); err == nil || !strings.Contains(err.Error(), "private manual lyrics FLAC preparation path") {
+		t.Fatalf("generic Prepare error = %v, want V3 capability rejection", err)
+	}
+	entries, err := os.ReadDir(fixture.output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "current.flac" || len(fixture.repo.records) != 0 {
+		t.Fatalf("generic V3 preparation mutated output: entries=%v records=%v", entries, fixture.repo.records)
 	}
 }
 

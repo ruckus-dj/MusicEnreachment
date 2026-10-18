@@ -126,4 +126,23 @@ func TestWritePreservingFlacArtworkRejectsZeroSnapshot(t *testing.T) {
 	if err := WritePreservingFlacArtwork(t.Context(), "some.flac", nil, FlacArtworkSnapshot{}); err == nil {
 		t.Fatal("zero snapshot accepted")
 	}
+	if _, err := writeFlacTagsPreservingArtwork(t.Context(), "some.flac", nil, FlacArtworkSnapshot{}, nil, nil); err == nil {
+		t.Fatal("zero snapshot accepted by metadata-only writer")
+	}
+}
+
+func TestEqualTagsExceptLyricsIsOtherwiseExact(t *testing.T) {
+	expected := map[string][]string{"TITLE": {"title"}, "LYRICS": {"requested"}}
+	if !equalTagsExceptLyrics(map[string][]string{"TITLE": {"title"}, "LYRICS": {"omitted"}}, expected) {
+		t.Fatal("optional LYRICS mismatch was rejected")
+	}
+	for _, actual := range []map[string][]string{
+		{"TITLE": {"different"}},
+		{"TITLE": {"title"}, "ARTIST": {"unexpected"}},
+		{},
+	} {
+		if equalTagsExceptLyrics(actual, expected) {
+			t.Errorf("accepted non-LYRICS mismatch: %#v", actual)
+		}
+	}
 }

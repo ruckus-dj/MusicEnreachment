@@ -11,6 +11,17 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Текущий срез добавляет FLAC artwork equivalence/cover facts и metadata write,
+который проверяет все mandatory tags, оставляя только LYRICS для optional
+readback classifier. Verified absence artwork поддержана отдельно от invalid
+snapshot. Private preparation reader повторно проверяет live delivery, CURRENT
+generation/ownership и namespace; generic V3 execution остаётся запрещённым.
+PostgreSQL positive/refusal tests и полный локальный `task verify` прошли;
+независимое review не нашло блокеров. Native CI этого среза ещё не проверен.
+Preparing-state fixture моделирует состояние в test transaction,
+не доказывает runtime lifecycle. Незавершённый private runner удалён: initial
+candidate copy и callback-free final observation ещё не реализованы.
+
 Реализован private FLAC artwork verification: bounded structural audit отвергает
 multiple/non-front/alternate artwork до mutation; payload/descriptors читаются
 TagLib, полные native PICTURE-body и encoded-audio digests проверяются после

@@ -29,6 +29,10 @@ type PublicationStagePreparationRepository interface {
 	RecordPublicationPreparation(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationPreparationRecord) (persistence.PublicationPreparationOutcome, error)
 }
 
+type publicationManualLyricsPreparationInputs interface {
+	PublicationManualLyricsPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error)
+}
+
 // PublicationStagePreparer copies held source material into a newly-created,
 // private publication directory rooted at an already-pinned output capability.
 type PublicationStagePreparer struct {
@@ -42,6 +46,22 @@ type PublicationStagePreparer struct {
 // Prepare requires the caller to hold coordinator resources and to present a
 // newly acquired delivery claim. It deliberately does not resume journal steps.
 func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard persistence.PublicationDeliveryGuard, claim persistence.PublicationDeliveryClaimOutcome, resourcesHeld bool) (prepared PreparedPublicationStage, resultErr error) {
+	return preparer.prepare(ctx, guard, claim, resourcesHeld, false)
+}
+
+// prepareManualLyricsFLAC is the private staging entry point for the supported
+// manual-lyrics FLAC rewrite capability. Generic callers remain V3-ineligible.
+func (preparer PublicationStagePreparer) prepareManualLyricsFLAC(ctx context.Context, guard persistence.PublicationDeliveryGuard, claim persistence.PublicationDeliveryClaimOutcome, resourcesHeld bool) (PreparedPublicationStage, error) {
+	if _, ok := preparer.Repository.(publicationManualLyricsPreparationInputs); !ok {
+		return nil, errors.New("manual lyrics publication preparation capability is unavailable")
+	}
+	return preparer.prepare(ctx, guard, claim, resourcesHeld, true)
+}
+
+// prepare is shared only at the input-staging layer. V3's manual-lyrics path
+// has a separate private entry point; ordinary publication preparation must
+// never admit that contract.
+func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard persistence.PublicationDeliveryGuard, claim persistence.PublicationDeliveryClaimOutcome, resourcesHeld bool, manualLyricsFLAC bool) (prepared PreparedPublicationStage, resultErr error) {
 	if preparer.Repository == nil || preparer.SourceOpener == nil || preparer.OutputParent == nil {
 		return nil, errors.New("publication stage preparation dependencies are unavailable")
 	}
@@ -51,12 +71,26 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	input, valid, err := preparer.Repository.PublicationPreparationInputs(ctx, guard)
+	var input persistence.PublicationInputs
+	var valid bool
+	var err error
+	if manualLyricsFLAC {
+		reader := preparer.Repository.(publicationManualLyricsPreparationInputs)
+		input, valid, err = reader.PublicationManualLyricsPreparationInputs(ctx, guard)
+	} else {
+		input, valid, err = preparer.Repository.PublicationPreparationInputs(ctx, guard)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if !valid {
 		return nil, errors.New("publication delivery is stale")
+	}
+	if input.Version == persistence.PublicationInputsVersion3 && !manualLyricsFLAC {
+		return nil, errors.New("V3 publication inputs require the private manual lyrics FLAC preparation path")
+	}
+	if manualLyricsFLAC && (input.Version != persistence.PublicationInputsVersion3 || input.IntentKind != "rewrite" || input.Rewrite == nil || input.ManualLyrics == nil || input.Format != publication.AudioFormatSource || input.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC) {
+		return nil, errors.New("private manual lyrics preparation requires a V3 FLAC rewrite")
 	}
 	var sourceRootPath, sourceRelativePath string
 	var sourceSize int64
