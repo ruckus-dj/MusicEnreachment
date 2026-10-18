@@ -121,6 +121,17 @@ func (repository *SetupManagerRepository) GuardedAdvanceManualLyricsStage(ctx co
 	return outcome, err
 }
 
+// validManualLyricsValidatedStagePrefix accepts only a canonical outcome prefix
+// followed by both ordered stage acknowledgements.
+func validManualLyricsValidatedStagePrefix(entries []json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt, input PublicationInputs) bool {
+	baseEnd := manualLyricsStageBaseEnd(entries)
+	if len(entries) != baseEnd+2 {
+		return false
+	}
+	raw, err := json.Marshal(entries)
+	return err == nil && validManualLyricsStageJournal(raw, guard, attempt, input)
+}
+
 func manualLyricsStageBaseEnd(entries []json.RawMessage) int {
 	if len(entries) >= 5 {
 		var header struct {

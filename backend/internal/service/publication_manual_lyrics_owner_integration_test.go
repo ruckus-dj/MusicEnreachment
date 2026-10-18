@@ -287,6 +287,98 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		if err := json.Unmarshal(attempt.MutationJournal, &transitions); err != nil || len(transitions) != 6 || transitions[4].Kind != "stage_observation" || transitions[4].From != "preparing" || transitions[4].To != "staged" || transitions[5].Kind != "stage_observation" || transitions[5].From != "staged" || transitions[5].To != "validated" || !reflect.DeepEqual(transitions[4].Observation, outcome.FinalObservation) || !reflect.DeepEqual(transitions[5].Observation, outcome.FinalObservation) {
 			t.Fatalf("validated owner did not persist both stage acknowledgements: %s, %v", attempt.MutationJournal, err)
 		}
+		// This is a DB-only admission test after the native owner returned its
+		// validated evidence. It does not retain or exercise filesystem authority.
+		intent := persistence.PublicationExposureIntent{
+			Version: persistence.PublicationExposureVersion, StagedPath: stage.paths.RelativePath,
+			TargetCanonicalKey: input.Rewrite.RelativePath, TargetRelativePath: input.Rewrite.RelativePath,
+			Expectation: "expected_current", PrepOwner: stage.preparationRecord.OwnerToken,
+			OutputRootParent: persistence.PublicationDirectoryIdentity{
+				Platform: stage.parentIdentity.Platform, Volume: stage.parentIdentity.Volume, FileID: stage.parentIdentity.FileID,
+			},
+			TargetParent: persistence.PublicationDirectoryIdentity{
+				Platform: stage.parentIdentity.Platform, Volume: stage.parentIdentity.Volume, FileID: stage.parentIdentity.FileID,
+			},
+		}
+		observation := outcome.FinalObservation.Clone()
+		var validatedEntries []json.RawMessage
+		if err := json.Unmarshal(attempt.MutationJournal, &validatedEntries); err != nil {
+			t.Fatal(err)
+		}
+		for _, count := range []int{4, 5} {
+			if _, err := db.ExecContext(ctx, `UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, encode(validatedEntries[:count]), guard.OperationID); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := repository.BeginManualLyricsExposure(ctx, guard, intent, observation); err != nil || got != persistence.PublicationExposureStale {
+				t.Fatalf("truncated %d-entry exposure prefix = %q, %v", count, got, err)
+			}
+			unchanged, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+			if err != nil || unchanged == nil || unchanged.Phase != "validated" {
+				t.Fatalf("truncated admission changed phase: %v", err)
+			}
+			var actual, expected any
+			if json.Unmarshal(unchanged.MutationJournal, &actual) != nil || json.Unmarshal([]byte(encode(validatedEntries[:count])), &expected) != nil || !reflect.DeepEqual(actual, expected) {
+				t.Fatal("truncated admission mutated journal")
+			}
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, string(attempt.MutationJournal), guard.OperationID); err != nil {
+			t.Fatal(err)
+		}
+		admitted, err := repository.BeginManualLyricsExposure(ctx, guard, intent, observation)
+		if err != nil || admitted != persistence.PublicationExposureRecorded {
+			t.Fatalf("manual lyrics exposure admission = %q, %v", admitted, err)
+		}
+		admittedAttempt, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+		if err != nil || admittedAttempt.Phase != "exposing" {
+			t.Fatalf("manual lyrics exposure phase = %v, %v", admittedAttempt, err)
+		}
+		if err := json.Unmarshal(admittedAttempt.MutationJournal, &records); err != nil || len(records) != 7 {
+			t.Fatalf("manual lyrics exposure journal length = %d, %v", len(records), err)
+		}
+		replayed, err := repository.BeginManualLyricsExposure(ctx, guard, intent, observation)
+		if err != nil || replayed != persistence.PublicationExposureAlreadyRecorded {
+			t.Fatalf("manual lyrics exposure replay = %q, %v", replayed, err)
+		}
+		if replayed, err := repository.BeginPublicationExposure(ctx, guard, intent, observation); err != nil || replayed != persistence.PublicationExposureStale {
+			t.Fatalf("generic exposure API accepted V3 replay = %q, %v", replayed, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE track_publication_attempt SET frozen_inputs='{"version":3}'::jsonb WHERE operation_id=?`, guard.OperationID); err != nil {
+			t.Fatal(err)
+		}
+		if replayed, err := repository.BeginPublicationExposure(ctx, guard, intent, observation); err != nil || replayed != persistence.PublicationExposureStale {
+			t.Fatalf("generic exposure accepted malformed V3 replay = %q, %v", replayed, err)
+		}
+		malformedAttempt, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+		if err != nil || malformedAttempt.Phase != "exposing" || !bytes.Equal(malformedAttempt.MutationJournal, admittedAttempt.MutationJournal) {
+			t.Fatalf("malformed generic replay mutated phase/journal: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE track_publication_attempt SET frozen_inputs=?::jsonb WHERE operation_id=?`, string(admittedAttempt.FrozenInputs), guard.OperationID); err != nil {
+			t.Fatal(err)
+		}
+		assertRejected := func(label string, candidateGuard persistence.PublicationDeliveryGuard, candidateIntent persistence.PublicationExposureIntent, candidateObservation persistence.PublicationStageObservation) {
+			t.Helper()
+			got, err := repository.BeginManualLyricsExposure(ctx, candidateGuard, candidateIntent, candidateObservation)
+			if err != nil || got != persistence.PublicationExposureStale {
+				t.Fatalf("%s admission = %q, %v", label, got, err)
+			}
+		}
+		alteredObservation := observation.Clone()
+		alteredObservation.PayloadSHA256 = fmt.Sprintf("%064x", 2)
+		assertRejected("altered observation", guard, intent, alteredObservation)
+		alteredIntent := intent
+		alteredIntent.PrepOwner = uuid.New()
+		assertRejected("altered owner", guard, alteredIntent, observation)
+		staleGuard := guard
+		staleGuard.Epoch = uuid.New()
+		assertRejected("stale guard", staleGuard, intent, observation)
+		unchanged, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+		if err != nil || unchanged.Phase != "exposing" || !bytes.Equal(unchanged.MutationJournal, admittedAttempt.MutationJournal) {
+			t.Fatalf("rejected admission changed exposure journal/phase: %v", err)
+		}
+		currentAfter, err := os.ReadFile(filepath.Join(fixture.output, input.Rewrite.RelativePath))
+		if err != nil || !bytes.Equal(currentAfter, original) {
+			t.Fatalf("DB-only admission changed current bytes: %v", err)
+		}
 		scope.releaseSynchronousWork(reservation)
 		return
 	}

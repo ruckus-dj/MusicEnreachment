@@ -11,6 +11,14 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем persistence-срезе private manual FLAC exposure
+admission принимает только canonical validated prefix и exact stored observation,
+проверяя CURRENT G0 и namespace. Replay требует ровно один final exposure record;
+generic V3 exposure отвергается и на replay. Добавлены native/PG DB-only tests;
+полный локальный `task verify` прошёл, review блокеров не нашло. Native CI
+этого среза ещё не проверен. Это admission, не filesystem exposure,
+не непрерывный service handoff и не разрешение managed replacement/recovery.
+
 В текущем service-срезе отдельный private validated owner
 сохраняет точный work capability через outcome/staged/validated ACK. Между ACK
 проверяются native output identity/hash и namespace без замены acknowledged

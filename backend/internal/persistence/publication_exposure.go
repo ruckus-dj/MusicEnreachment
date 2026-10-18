@@ -51,6 +51,12 @@ func (repository *SetupManagerRepository) BeginPublicationExposure(ctx context.C
 		if err != nil || !live {
 			return err
 		}
+		// V3's manual-lyrics exposure has its own exact journal grammar. Do not
+		// let the generic replay scanner grant even idempotent exposure authority.
+		decoded, decodeErr := DecodePublicationInputs(attempt.FrozenInputs)
+		if decodeErr != nil || decoded.Version == PublicationInputsVersion3 {
+			return nil
+		}
 		if attempt.Phase == "exposing" {
 			if operation.Stage != "exposing" {
 				return nil
