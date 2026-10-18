@@ -37,3 +37,17 @@ func TestWindowsOutputAdapterCreateExclusiveReportsExistingFile(t *testing.T) {
 		t.Fatalf("existing file changed: got %q, want %q", got, want)
 	}
 }
+
+func TestWindowsOutputAdapterOpenExistingRegularReportsMissingFile(t *testing.T) {
+	ctx := context.Background()
+	root, err := NewOutputOpener().OpenRoot(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	mutation := root.(OutputMutation)
+	if _, err := mutation.OpenExistingRegular(ctx, "missing-output.bin"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("OpenExistingRegular error = %v, want os.ErrNotExist", err)
+	}
+}

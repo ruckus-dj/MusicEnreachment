@@ -312,6 +312,9 @@ func (d *windowsOutputDir) OpenExistingRegular(ctx context.Context, name string)
 	h, err := outputWindowsOpen(d.handle, name, windows.GENERIC_READ|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, false)
 	d.mu.Unlock()
 	if err != nil {
+		if nt, ok := err.(windows.NTStatus); ok && (nt == windows.STATUS_OBJECT_NAME_NOT_FOUND || nt == windows.STATUS_OBJECT_PATH_NOT_FOUND) {
+			return nil, errors.Join(os.ErrNotExist, err)
+		}
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
