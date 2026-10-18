@@ -156,6 +156,10 @@ func Run(ctx context.Context, config Config) error {
 		return err
 	}
 	logger.InfoContext(ctx, "application migrations complete")
+	setupManagerRepository := persistence.NewSetupManagerRepository(db)
+	if err := service.NewPublicationStartup(setupManagerRepository).CheckPublicationStartup(ctx); err != nil {
+		return err
+	}
 	settingsRepository := persistence.NewSettingsRepository(db)
 	registry := settings.New(settingsRepository, level)
 	platform, err := registry.InitializePlatform(ctx, settings.CurrentPlatform())
@@ -165,7 +169,6 @@ func Run(ctx context.Context, config Config) error {
 	if err := registry.LoadLogLevel(ctx); err != nil {
 		return fmt.Errorf("load runtime log level: %w", err)
 	}
-	setupManagerRepository := persistence.NewSetupManagerRepository(db)
 	outputReset := service.NewOutputReset(setupManagerRepository, settings.NewResetFilesystem(), []string{"analysis", "publication", "checks", "media"})
 	musicBrainzGate := musicbrainz.NewPublicRateGate()
 	governedHTTPClient := musicbrainz.NewGovernedHTTPClient(musicBrainzGate)

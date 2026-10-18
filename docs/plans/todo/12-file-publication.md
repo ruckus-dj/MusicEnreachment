@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Дополнение (startup barrier): `app.Run` проверяет read-only
+repeatable-read snapshot публикаций до platform initialization, output-reset
+recovery, consumers и HTTP. Retained execution claims независимо от их состояния
+и несогласованные attempts блокируют запуск; never-started queued attempts
+допускаются только с проверенными River delivery и namespace reservations.
+Это не interprocess exclusion, recovery execution или settlement и не разрешение
+на регистрацию publication worker. Полный локальный `task verify` текущего
+среза прошёл; native CI для него ещё не проверен.
+
 После исторической отметки ниже добавлен узкий filesystem publication slice:
 
 - При первом отсутствии target проверенный staged file публикуется через

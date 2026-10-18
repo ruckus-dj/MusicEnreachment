@@ -12,6 +12,15 @@ A1–A16. Он не меняет owner contract и не закрывает ос�
 
 ## 1. Границы, предпосылки и проверенная текущая реализация
 
+Дополнение 2026-10-18 (startup barrier): перед platform
+initialization и output-reset recovery в `app.Run` добавлен read-only
+repeatable-read startup barrier. Retained execution claims и несогласованные
+attempts запрещают дальнейший запуск; queued/unclaimed admission проверяется
+по actual River delivery и namespace reservations. Пустой snapshot не доказывает
+interprocess exclusion; barrier не разрешает takeover, recovery mutation,
+settlement или регистрацию publication worker. Полный локальный `task verify`
+среза прошёл; native CI для него ещё не проверен.
+
 Цель — одна актуальная управляемая публикация на позицию релиза: извлечённое аудио,
 локальные теги, встроенная обложка и допустимые synced lyrics, с подтверждённым
 readback, восстановлением после сбоя и без ложного статуса успеха. Одна River job
