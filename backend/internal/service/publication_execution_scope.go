@@ -51,6 +51,7 @@ type PublicationExecutionScope struct {
 	firstAbsent    bool
 	replacement    *replacementCompletionToken
 	optionalLyrics *publicationOptionalLyricsBorrow
+	initialCopy    bool
 }
 
 // replacementCompletionToken is an unforgeable, scope-bound capability for
@@ -106,7 +107,7 @@ func (scope *PublicationExecutionScope) Run(ctx context.Context, path string, ar
 		return unavailablePublicationCommand()
 	}
 	scope.mu.Lock()
-	if scope.finalized || scope.finalizing || scope.unknown {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.initialCopy {
 		scope.mu.Unlock()
 		return PublicationCommandResult{}, errors.New("publication execution scope is not launchable")
 	}
@@ -149,7 +150,7 @@ func (scope *PublicationExecutionScope) RunFile(ctx context.Context, executable 
 		return unavailablePublicationCommand()
 	}
 	scope.mu.Lock()
-	if scope.finalized || scope.finalizing || scope.unknown {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.initialCopy {
 		scope.mu.Unlock()
 		return PublicationCommandResult{}, errors.New("publication execution scope is not launchable")
 	}
@@ -219,6 +220,43 @@ func (scope *PublicationExecutionScope) RunFile(ctx context.Context, executable 
 	return result, errors.Join(runErr, errors.New("publication command quiescence is unknown"))
 }
 
+// beginInitialOutputCopy excludes new command launches while a narrowly-scoped
+// prepared-stage copy runs. It is not a general reservation mutex.
+func (scope *PublicationExecutionScope) beginInitialOutputCopy(reservation *publicationSyncReservation) bool {
+	if scope == nil || reservation == nil {
+		return false
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unresolved != 0 || scope.initialCopy || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil {
+		return false
+	}
+	reservation.borrowed = true
+	scope.initialCopy = true
+	return true
+}
+
+func (scope *PublicationExecutionScope) endInitialOutputCopy(reservation *publicationSyncReservation, uncertain bool) {
+	if scope == nil || reservation == nil {
+		return
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	valid := reservation.owner == scope && reservation.active && reservation.borrowed && scope.initialCopy
+	if valid {
+		scope.initialCopy = false
+		reservation.borrowed = false
+	} else {
+		// An unexpected state means the copy's execution boundary is no longer
+		// trustworthy. Keep the reservation intact and fail closed.
+		uncertain = true
+	}
+	if uncertain {
+		scope.unknown = true
+		scope.quarantineLocked()
+	}
+}
+
 func (scope *PublicationExecutionScope) removeOwnedFileLocked(file *os.File) {
 	for i, owned := range scope.ownedFiles {
 		if owned == file {
@@ -236,7 +274,7 @@ func (scope *PublicationExecutionScope) CanExecute() bool {
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	return scope.commands != nil && !scope.finalized && !scope.finalizing && !scope.unknown
+	return scope.commands != nil && !scope.finalized && !scope.finalizing && !scope.unknown && !scope.initialCopy
 }
 
 // reserveSynchronousWork protects non-command staging work from concurrent
@@ -248,7 +286,7 @@ func (scope *PublicationExecutionScope) reserveSynchronousWork() *publicationSyn
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.optionalLyrics != nil {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.optionalLyrics != nil || scope.initialCopy {
 		return nil
 	}
 	scope.syncWork++
@@ -264,7 +302,7 @@ func (scope *PublicationExecutionScope) reserveReplacementWork(outer *publicatio
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.initialCopy {
 		return nil, false
 	}
 	if outer != nil {
@@ -313,7 +351,7 @@ func (scope *PublicationExecutionScope) borrowOptionalLyricsWork(reservation *pu
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil {
+	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.initialCopy {
 		return nil
 	}
 	borrow := &publicationOptionalLyricsBorrow{scope: scope, reservation: reservation}
@@ -345,7 +383,7 @@ func (scope *PublicationExecutionScope) beginFirstAbsentFinalization(reservation
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.unknown || scope.finalized || scope.finalizing || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || reservation.owner != scope || !reservation.active || reservation.borrowed {
+	if scope.unknown || scope.finalized || scope.finalizing || scope.initialCopy || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || reservation.owner != scope || !reservation.active || reservation.borrowed {
 		return errors.New("publication execution scope is not quiescent")
 	}
 	// Transfer the staging reservation to first-absent cleanup atomically. The
@@ -365,7 +403,7 @@ func (scope *PublicationExecutionScope) sealReplacementCompletion(reservation *p
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.unknown || scope.finalized || scope.finalizing || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || reservation.owner != scope || !reservation.active || reservation.borrow != nil {
+	if scope.unknown || scope.finalized || scope.finalizing || scope.initialCopy || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || reservation.owner != scope || !reservation.active || reservation.borrow != nil {
 		return nil, errors.New("publication execution scope is not exclusively quiescent")
 	}
 	reservation.borrowed = false
@@ -431,7 +469,7 @@ func (scope *PublicationExecutionScope) Finalize(ctx context.Context, closeStage
 		scope.mu.Unlock()
 		return nil
 	}
-	if scope.replacement != nil || scope.firstAbsent || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 {
+	if scope.replacement != nil || scope.firstAbsent || scope.initialCopy || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 {
 		if scope.unknown {
 			scope.quarantineLocked()
 		}

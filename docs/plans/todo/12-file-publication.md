@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем срезе добавлен private initial-output copy для явно
+подготовленного V3 FLAC stage: exclusive fixed-name creation, frozen SHA checks
+input/CURRENT/output, повторная проверка native output entry и pinned synchronous
+reservation с command-launch/finalization fence. Новых journal records, recovery
+authority или V3 execution wiring нет. Native output-substitution regression,
+reservation/finalization tests и полный локальный `task verify` прошли;
+native CI этого среза ещё не проверен. Durable candidate completion этим helper
+не объявляется.
+
 Текущий срез добавляет FLAC artwork equivalence/cover facts и metadata write,
 который проверяет все mandatory tags, оставляя только LYRICS для optional
 readback classifier. Verified absence artwork поддержана отдельно от invalid
