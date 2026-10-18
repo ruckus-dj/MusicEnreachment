@@ -263,7 +263,8 @@ func validOptionalLyricsOutcomeEvidence(e PublicationOptionalLyricsOutcomeEviden
 		return input.ManualLyrics.State == "value" && len(metadata.Tags["LYRICS"]) == 1 && metadata.Tags["LYRICS"][0] == input.ManualLyrics.Value && assets.Lyrics.State == PublicationAssetEmbedded && assets.Lyrics.SHA256 == hex.EncodeToString(digest[:]) && assets.Lyrics.Format == "lrc" && e.Diagnostic == ""
 	case PublicationOptionalLyricsRebuiltWithoutLyrics:
 		_, present := metadata.Tags["LYRICS"]
-		return !present && assets.Lyrics.State == PublicationAssetAbsent && e.Diagnostic == "optional lyrics did not round-trip; rebuilt output without lyrics" && input.ManualLyrics.State == "value"
+		return !present && assets.Lyrics.State == PublicationAssetAbsent && e.Diagnostic == "optional lyrics did not round-trip; rebuilt output without lyrics" &&
+			(input.ManualLyrics.State == "value" || input.ManualLyrics.State == "explicit_empty")
 	default:
 		return false
 	}

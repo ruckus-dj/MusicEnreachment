@@ -359,7 +359,7 @@ func validateCanonicalReplacementPrefixRaw(entries []json.RawMessage, guard Publ
 	if p.replacement[0].From != "exposing" || p.replacement[0].To != "backup_intent" || p.replacement[1].To != "backup_ready" || p.replacement[2].To != "replacement_intent" || p.replacement[3].To != "installed" {
 		return p, false
 	}
-	if decodeStrictJSON(entries[10], &p.commit) != nil || p.commit.Version != replacementPublicationCommitVersion || p.commit.Kind != "publication_replacement_commit" || p.commit.Guard != guard || p.commit.PositionID != attempt.PositionID || p.commit.Epoch != attempt.Epoch || p.commit.ExpectedGeneration != *attempt.ExpectedGeneration || p.commit.CandidateGeneration != attempt.CandidateGeneration || !currentIsCandidate(p.commit.Projection, attempt) {
+	if decodeStrictJSON(entries[10], &p.commit) != nil || p.commit.Version != replacementPublicationCommitVersion || p.commit.ManualLyricsReceipt != nil || p.commit.Kind != "publication_replacement_commit" || p.commit.Guard != guard || p.commit.PositionID != attempt.PositionID || p.commit.Epoch != attempt.Epoch || p.commit.ExpectedGeneration != *attempt.ExpectedGeneration || p.commit.CandidateGeneration != attempt.CandidateGeneration || !currentIsCandidate(p.commit.Projection, attempt) {
 		return p, false
 	}
 	return p, true

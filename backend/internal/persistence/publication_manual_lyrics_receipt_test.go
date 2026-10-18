@@ -29,6 +29,13 @@ func TestValidateManualLyricsObservation(t *testing.T) {
 	if err := validateManualLyricsObservation(ManualLyricsExplicitEmpty, nil, ManualLyricsObserved{Assets: emptyAssets}); err != nil {
 		t.Fatalf("observed absence rejected: %v", err)
 	}
+	warning := manualLyricsReadbackMismatchWarning
+	if err := validateManualLyricsReceiptObservation(ManualLyricsValue, &hash, &warning, ManualLyricsObserved{Assets: emptyAssets}); err == nil {
+		t.Fatal("warning fulfilled a manual value without observed lyrics")
+	}
+	if err := validateManualLyricsReceiptObservation(ManualLyricsExplicitEmpty, nil, &warning, ManualLyricsObserved{Assets: emptyAssets}); err != nil {
+		t.Fatalf("warning invalidated fulfilled removal: %v", err)
+	}
 	if err := validateManualLyricsObservation(ManualLyricsExplicitEmpty, nil, ManualLyricsObserved{MetadataPresent: true, MetadataValue: "text", Assets: assets}); err == nil {
 		t.Fatal("explicit empty accepted embedded lyrics")
 	}

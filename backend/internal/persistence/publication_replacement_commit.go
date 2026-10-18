@@ -13,16 +13,30 @@ import (
 )
 
 const replacementPublicationCommitVersion = 1
+const replacementManualLyricsCommitVersion = 2
 
 type replacementPublicationCommitWitness struct {
-	Version             int                      `json:"version"`
-	Kind                string                   `json:"kind"`
-	Guard               PublicationDeliveryGuard `json:"guard"`
-	PositionID          uuid.UUID                `json:"position_id"`
-	Epoch               uuid.UUID                `json:"epoch"`
-	ExpectedGeneration  uuid.UUID                `json:"expected_generation"`
-	CandidateGeneration uuid.UUID                `json:"candidate_generation"`
-	Projection          TrackPublication         `json:"projection"`
+	Version             int                        `json:"version"`
+	Kind                string                     `json:"kind"`
+	Guard               PublicationDeliveryGuard   `json:"guard"`
+	PositionID          uuid.UUID                  `json:"position_id"`
+	Epoch               uuid.UUID                  `json:"epoch"`
+	ExpectedGeneration  uuid.UUID                  `json:"expected_generation"`
+	CandidateGeneration uuid.UUID                  `json:"candidate_generation"`
+	Projection          TrackPublication           `json:"projection"`
+	ManualLyricsReceipt *manualLyricsCommitReceipt `json:"manual_lyrics_receipt,omitempty"`
+}
+
+type manualLyricsCommitReceipt struct {
+	PositionID          uuid.UUID `json:"position_id"`
+	Epoch               uuid.UUID `json:"epoch"`
+	DesiredRevision     int64     `json:"desired_revision"`
+	ConfirmedGeneration uuid.UUID `json:"confirmed_generation"`
+	PubGeneration       uuid.UUID `json:"pub_generation"`
+	DesiredState        string    `json:"desired_state"`
+	DesiredSHA256       *string   `json:"desired_sha256"`
+	WarningCode         *string   `json:"warning_code"`
+	RecordedAt          time.Time `json:"recorded_at"`
 }
 
 // CommitReplacementPublication atomically replaces the current projection after
@@ -44,6 +58,21 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 		}
 		if attempt.Phase == "committed" {
 			if attempt.FrozenInputs == nil && claim.State == "executing" && operation.Stage == "committed" && currentErr == nil {
+				if entries, err := decodeJournal(attempt.MutationJournal); err == nil {
+					if prefix, valid := parseCanonicalManualLyricsCommitPrefix(entries, guard, attempt); valid {
+						if !currentPublicationMatchesReplacementWitness(current, prefix.Commit.Projection) {
+							return nil
+						}
+						if err := validateExposureNamespace(ctx, tx, attempt, prefix.Exposure.Intent); err != nil {
+							if errors.Is(err, sql.ErrNoRows) {
+								return nil
+							}
+							return err
+						}
+						committed, err = manualLyricsReceiptMatchesTx(ctx, tx, prefix.Commit.ManualLyricsReceipt)
+						return err
+					}
+				}
 				if prefix, ok := validateCanonicalReplacementPrefix(attempt.MutationJournal, guard, attempt); ok {
 					if err := validateExposureNamespace(ctx, tx, attempt, prefix.exposure.Intent); err != nil {
 						if !errors.Is(err, sql.ErrNoRows) {
@@ -64,6 +93,10 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
+		if err == nil && input.Version == PublicationInputsVersion3 {
+			committed, err = commitManualLyricsReplacementTx(ctx, tx, guard, attempt, current, input)
+			return err
+		}
 		if err != nil || input.Version != PublicationInputsVersion2 || input.IntentKind != "rewrite" || input.Rewrite == nil || input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration {
 			return nil
 		}

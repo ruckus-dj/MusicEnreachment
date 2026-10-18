@@ -11,6 +11,14 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Добавлен атомарный V3 receipt-bearing replacement commit: canonical exact/rebuild
+prefix связывает frozen R, confirmed G0, published G1 и actual outcome; current,
+receipt, witness и SQL NULL frozen inputs записываются в одной транзакции.
+Replay проверяет existing receipt без repair/refresh. PostgreSQL tests покрывают
+value, removal, оба fallback outcomes и rollback при receipt/operation failures.
+Полный локальный `task verify` прошёл; native CI ещё не проверен. V3 execution,
+cleanup/settlement integration и production Apply остаются выключенными.
+
 Реализованы guarded optional-lyrics outcome journal и private service adapter:
 typed ACK различает stale/replay/new record; canonical preparation/rebuild,
 actual namespace, copied-input size/hash и independent final observations

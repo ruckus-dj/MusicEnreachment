@@ -1,10 +1,49 @@
 package persistence
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
 )
+
+func TestOptionalLyricsRebuiltRemovalRequiresObservedAbsence(t *testing.T) {
+	_, prep, evidence, guard := optionalLyricsRebuildFixture()
+	input := publicationInputsFixture(t, "rewrite")
+	input.Version = PublicationInputsVersion3
+	input.QualityPolicyVersion = 1
+	input.ManualLyrics = &PublicationManualLyricsInput{State: "explicit_empty", ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration}
+	input.Rewrite.Ownership = clonePublicationFileIdentity(evidence.InputIdentity)
+	input.Rewrite.Ownership.MTime = prep.InputMTime
+	marshal := func(value any) json.RawMessage {
+		t.Helper()
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	identity := clonePublicationFileIdentity(evidence.InputIdentity)
+	evidence.Kind = PublicationOptionalLyricsRebuiltWithoutLyrics
+	evidence.ManualLyrics = *input.ManualLyrics
+	evidence.Diagnostic = "optional lyrics did not round-trip; rebuilt output without lyrics"
+	evidence.OutputIdentity = identity
+	evidence.FinalObservation = PublicationStageObservation{
+		Version: 1, RelativePath: prep.OutputRel,
+		Ownership: ArtifactOwnership{ExpectedSize: identity.SizeBytes, ExpectedMTime: identity.MTime}, PayloadSHA256: identity.SHA256,
+		ActualAudio:          marshal(PublicationCurrentAudio{Version: 1, Facts: input.Rewrite.AudioFacts}),
+		ActualMetadata:       marshal(PublicationCommitMetadata{Version: 1, Tags: map[string][]string{}}),
+		ActualAssets:         marshal(PublicationAssetOutcomes{Version: 1, Cover: PublicationCoverOutcome{State: PublicationAssetAbsent}, Lyrics: PublicationLyricsOutcome{State: PublicationAssetAbsent}}),
+		QualityPolicyVersion: input.QualityPolicyVersion,
+	}
+	if !validOptionalLyricsOutcomeEvidence(evidence, guard, input) {
+		t.Fatal("verified rebuilt removal was rejected")
+	}
+	evidence.FinalObservation.ActualMetadata = marshal(PublicationCommitMetadata{Version: 1, Tags: map[string][]string{"LYRICS": {"[00:01.00]still present"}}})
+	if validOptionalLyricsOutcomeEvidence(evidence, guard, input) {
+		t.Fatal("removal accepted observed lyrics")
+	}
+}
 
 func optionalLyricsRebuildFixture() ([]PublicationCandidateRebuildRecord, PublicationPreparationRecord, PublicationOptionalLyricsOutcomeEvidence, PublicationDeliveryGuard) {
 	guard := PublicationDeliveryGuard{OperationID: uuid.New(), ClaimUUID: uuid.New()}
