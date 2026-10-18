@@ -11,6 +11,16 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем срезе добавлен sealed native FLAC observation builder:
+initial-copy proof и guarded frozen inputs связывают private authority; observation
+удерживает execution fence, проверяет native output identity/hash, mandatory tags
+и exhaustive artwork/audio equivalence до переноса frozen CURRENT audio facts.
+Ownership берётся от actual output, LYRICS остаются фактическим readback для
+optional classifier. Positive native и mandatory/audio rejection focused tests
+и полный локальный `task verify` прошли; review не нашло блокеров. Native CI
+этого среза ещё не проверен. Wrapper integration,
+durable outcome orchestration и V3 execution этим срезом не включены.
+
 В текущем срезе добавлен private initial-output copy для явно
 подготовленного V3 FLAC stage: exclusive fixed-name creation, frozen SHA checks
 input/CURRENT/output, повторная проверка native output entry и pinned synchronous
