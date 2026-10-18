@@ -233,6 +233,11 @@ func (d *windowsOutputDir) SyncDirectory(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return os.ErrClosed
+	}
 	return ErrUnsupported
 }
 

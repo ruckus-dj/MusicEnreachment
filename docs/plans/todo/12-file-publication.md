@@ -11,6 +11,14 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Реализован атомарный replacement commit: проверяется полный canonical prefix,
+actual namespace, expected current projection, staged observation и отдельная
+identity приватного backup. Commit сохраняет source-free current, потребляет
+frozen inputs через SQL NULL и удерживает claims/holds; replay требует exact
+current witness. Полный локальный `task verify` прошёл; native CI ещё не проверен.
+Replacement cleanup,
+settlement и связь exposure → commit в runtime пока не завершены.
+
 Следующий срез — guarded same-path rewrite exposure: проверенный
 private backup остаётся доступным до единственного native atomic replacement;
 ordered replacement journal связывает actual namespace, current generation и

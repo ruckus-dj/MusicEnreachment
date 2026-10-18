@@ -182,7 +182,7 @@ func (replacer *newPublicationManagedTargetReplacer) Replace(ctx context.Context
 		return fmt.Errorf("sync managed publication stage owning parent directory: %w", err)
 	}
 	backupPath := path.Join(replacer.stage.directoryName, replacer.stage.inputName)
-	evidence := persistence.PublicationReplacementEvidence{Version: 1, Kind: "publication_replacement", From: "exposing", To: "backup_intent", Guard: replacer.guard, PositionID: replacer.guard.ExpectedPositionID, Epoch: replacer.guard.Epoch, CandidateGeneration: replacer.guard.CandidateGeneration, ExpectedGeneration: replacer.expectedGeneration, Intent: replacer.intent, Staged: replacer.validated.Clone(), Identity: identity, BackupPath: backupPath}
+	evidence := persistence.PublicationReplacementEvidence{Version: 1, Kind: "publication_replacement", From: "exposing", To: "backup_intent", Guard: replacer.guard, PositionID: replacer.guard.ExpectedPositionID, Epoch: replacer.guard.Epoch, CandidateGeneration: replacer.guard.CandidateGeneration, ExpectedGeneration: replacer.expectedGeneration, Intent: replacer.intent, Staged: replacer.validated.Clone(), Identity: identity, BackupIdentity: backupIdentity, BackupPath: backupPath}
 	// From the first attempted durable backup-intent transition onward, even a
 	// panic or ambiguous DB result must prevent legacy finalization clearing the
 	// execution fence.

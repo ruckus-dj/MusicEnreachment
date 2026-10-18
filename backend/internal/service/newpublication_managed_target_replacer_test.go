@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,12 +17,14 @@ import (
 )
 
 type replacementRecordingRepository struct {
-	steps []string
-	err   error
+	steps    []string
+	evidence []persistence.PublicationReplacementEvidence
+	err      error
 }
 
 func (r *replacementRecordingRepository) RecordPublicationReplacement(_ context.Context, _ persistence.PublicationDeliveryGuard, evidence persistence.PublicationReplacementEvidence) (persistence.PublicationReplacementOutcome, error) {
 	r.steps = append(r.steps, evidence.To)
+	r.evidence = append(r.evidence, evidence)
 	if r.err != nil {
 		return persistence.PublicationReplacementStale, r.err
 	}
@@ -73,18 +76,29 @@ func TestManagedTargetReplacerNativeReplacement(t *testing.T) {
 	}
 	size, mtime := stageInfo.Size(), stageInfo.ModTime().UnixMicro()
 	digest := sha256.Sum256(candidate)
-	validated := persistence.PublicationStageObservation{Version: 1, RelativePath: paths.RelativePath, PayloadSHA256: hex.EncodeToString(digest[:]), Ownership: persistence.ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime}}
-	// SupportedSync is capability-derived; skip only when the platform cannot
-	// provide the directory durability primitive required by the operation.
-	if _, ok := targetDir.(sourcefs.OutputDirectorySync); !ok {
-		t.Skip("native directory sync unsupported")
-	}
+	validated := persistence.PublicationStageObservation{Version: 1, RelativePath: filepath.ToSlash(paths.RelativePath), PayloadSHA256: hex.EncodeToString(digest[:]), Ownership: persistence.ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime}}
 	scope := &PublicationExecutionScope{guard: fixture.guard, commands: &scopeCommandFake{}, repository: &scopeRepositoryFake{}}
 	repo := &replacementRecordingRepository{}
 	generation := uuid.New()
-	intent := persistence.PublicationExposureIntent{PrepOwner: stage.hold, Expectation: "expected_current", StagedPath: paths.RelativePath, TargetRelativePath: fixture.repo.input.Rewrite.RelativePath, OutputRootParent: persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID}, TargetParent: persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID}}
+	intent := persistence.PublicationExposureIntent{PrepOwner: stage.hold, Expectation: "expected_current", StagedPath: filepath.ToSlash(paths.RelativePath), TargetRelativePath: filepath.ToSlash(fixture.repo.input.Rewrite.RelativePath), OutputRootParent: persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID}, TargetParent: persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID}}
 	replacer := &newPublicationManagedTargetReplacer{scope: scope, repository: repo, guard: fixture.guard, intent: intent, validated: validated, expectedGeneration: &generation, stage: stage, root: root, stageDir: stageDir, targetDir: targetDir, stageName: stage.directoryName, targetName: "current.mp3"}
 	err = replacer.Replace(context.Background())
+	if runtime.GOOS == "windows" {
+		if !errors.Is(err, sourcefs.ErrUnsupported) {
+			t.Fatalf("Replace error = %v, want ErrUnsupported", err)
+		}
+		got, readErr := os.ReadFile(oldPath)
+		if readErr != nil || string(got) != "current published MP3 bytes" {
+			t.Fatalf("original target bytes = %q, err=%v", got, readErr)
+		}
+		if len(repo.steps) != 0 {
+			t.Fatalf("journal steps before unsupported sync = %v, want none", repo.steps)
+		}
+		if _, statErr := os.Stat(paths.OutputPath); statErr != nil {
+			t.Fatalf("candidate missing after unsupported sync: %v", statErr)
+		}
+		return
+	}
 	if err == nil || err.Error() != "managed publication replacement is installed and awaits phase-two completion" {
 		t.Fatalf("Replace error = %v", err)
 	}
@@ -103,6 +117,21 @@ func TestManagedTargetReplacerNativeReplacement(t *testing.T) {
 	}
 	if want := []string{"backup_intent", "backup_ready", "replacement_intent", "installed"}; !reflect.DeepEqual(repo.steps, want) {
 		t.Fatalf("journal sequence = %v, want %v", repo.steps, want)
+	}
+	backup := repo.evidence[0]
+	if backup.BackupPath != filepath.ToSlash(filepath.Join(stage.directoryName, stage.inputName)) || backup.BackupIdentity.SizeBytes == nil || backup.BackupIdentity.MTime == nil || backup.BackupIdentity.SHA256 == "" {
+		t.Fatalf("backup identity/path evidence = %+v", backup)
+	}
+	backupInfo, err := os.Stat(paths.InputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *backup.BackupIdentity.SizeBytes != backupInfo.Size() || *backup.BackupIdentity.MTime != backupInfo.ModTime().UnixMicro() {
+		t.Fatalf("backup facts = %+v, want copied input facts size=%d mtime=%d", backup.BackupIdentity, backupInfo.Size(), backupInfo.ModTime().UnixMicro())
+	}
+	installed := repo.evidence[len(repo.evidence)-1].Identity
+	if installed.SHA256 != validated.PayloadSHA256 || installed.SHA256 == backup.BackupIdentity.SHA256 {
+		t.Fatalf("installed candidate identity = %+v, backup identity = %+v", installed, backup.BackupIdentity)
 	}
 	if !scope.unknown || scope.finalized {
 		t.Fatalf("scope state unknown=%v finalized=%v; installed phase-one result must retain locks", scope.unknown, scope.finalized)

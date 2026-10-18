@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -27,6 +28,7 @@ type PublicationReplacementEvidence struct {
 	Intent              PublicationExposureIntent   `json:"intent"`
 	Staged              PublicationStageObservation `json:"staged"`
 	Identity            PublicationFileIdentity     `json:"identity"`
+	BackupIdentity      PublicationFileIdentity     `json:"backup_identity"`
 	BackupPath          string                      `json:"backup_path,omitempty"`
 }
 
@@ -86,6 +88,13 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 		if exposure.Kind != "publication_exposure" || exposure.Guard != guard || exposure.Intent != evidence.Intent || exposure.ExpectedGeneration == nil || *exposure.ExpectedGeneration != *attempt.ExpectedGeneration || exposure.PositionID != attempt.PositionID || exposure.Epoch != attempt.Epoch || exposure.CandidateGeneration != attempt.CandidateGeneration || !validPublicationStageObservation(exposure.Observation) || !samePublicationStageObservation(exposure.Observation, evidence.Staged) {
 			return nil
 		}
+		preparation, err := decodeReplacementPreparation(entries, guard, exposure)
+		if err != nil {
+			return err
+		}
+		if evidence.BackupPath != preparation[0].InputRel || !sameCopiedBackupIdentity(evidence.BackupIdentity, *preparation[2].CopiedInput, input.Rewrite.Ownership) {
+			return nil
+		}
 		var prior *PublicationReplacementEvidence
 		for _, raw := range entries {
 			var h struct {
@@ -126,7 +135,7 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 }
 
 func validPublicationReplacementEvidence(e PublicationReplacementEvidence) bool {
-	if e.Version != 1 || e.Kind != "publication_replacement" || e.Guard.OperationID == uuid.Nil || validatePublicationDeliveryGuard(e.Guard) != nil || e.PositionID == uuid.Nil || e.Epoch == uuid.Nil || e.CandidateGeneration == uuid.Nil || e.ExpectedGeneration == nil || *e.ExpectedGeneration == uuid.Nil || e.PositionID != e.Guard.ExpectedPositionID || e.Epoch != e.Guard.Epoch || e.CandidateGeneration != e.Guard.CandidateGeneration || !validExposureIntent(e.Intent) || e.Intent.Expectation != "expected_current" || !validPublicationStageObservation(e.Staged) || !stageMatchesIntent(e.Staged, e.Intent) || e.Staged.Ownership.ExpectedSize == nil || e.Staged.Ownership.ExpectedMTime == nil || e.Identity.SizeBytes == nil || *e.Identity.SizeBytes < 0 || e.Identity.MTime == nil || !validSHA256(e.Identity.SHA256) {
+	if e.Version != 1 || e.Kind != "publication_replacement" || e.Guard.OperationID == uuid.Nil || validatePublicationDeliveryGuard(e.Guard) != nil || e.PositionID == uuid.Nil || e.Epoch == uuid.Nil || e.CandidateGeneration == uuid.Nil || e.ExpectedGeneration == nil || *e.ExpectedGeneration == uuid.Nil || e.PositionID != e.Guard.ExpectedPositionID || e.Epoch != e.Guard.Epoch || e.CandidateGeneration != e.Guard.CandidateGeneration || !validExposureIntent(e.Intent) || e.Intent.Expectation != "expected_current" || !validPublicationStageObservation(e.Staged) || !stageMatchesIntent(e.Staged, e.Intent) || e.Staged.Ownership.ExpectedSize == nil || e.Staged.Ownership.ExpectedMTime == nil || e.Identity.SizeBytes == nil || *e.Identity.SizeBytes < 0 || e.Identity.MTime == nil || !validSHA256(e.Identity.SHA256) || !validCopiedInputIdentity(&e.BackupIdentity) || !validSHA256(e.BackupIdentity.SHA256) {
 		return false
 	}
 	switch e.To {
@@ -144,10 +153,38 @@ func validPublicationReplacementEvidence(e PublicationReplacementEvidence) bool 
 	}
 }
 
+func sameCopiedBackupIdentity(actual, copied, frozen PublicationFileIdentity) bool {
+	if actual.SizeBytes == nil || copied.SizeBytes == nil || *actual.SizeBytes != *copied.SizeBytes || actual.MTime == nil || copied.MTime == nil || *actual.MTime != *copied.MTime || actual.SHA256 == "" || copied.SHA256 != "" && actual.SHA256 != copied.SHA256 {
+		return false
+	}
+	return frozen.SHA256 == "" || actual.SHA256 == frozen.SHA256
+}
+
+func decodeReplacementPreparation(entries []json.RawMessage, guard PublicationDeliveryGuard, exposure publicationExposureJournalRecord) ([3]PublicationPreparationRecord, error) {
+	var records [3]PublicationPreparationRecord
+	count := 0
+	for _, raw := range entries {
+		var header struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &header) != nil || header.Kind != "publication_preparation" {
+			continue
+		}
+		if count == len(records) || decodeStrictJSON(raw, &records[count]) != nil || !validPreparationJournalRecord(records[count]) {
+			return records, errors.New("publication preparation journal is malformed")
+		}
+		count++
+	}
+	if count != len(records) || records[0].Step != "intent" || records[1].Step != "directory_created" || records[2].Step != "input_ready" || records[0].OperationID != guard.OperationID || records[0].ClaimUUID != guard.ClaimUUID || records[0].OwnerToken != exposure.Intent.PrepOwner || records[0].OutputRel != exposure.Intent.StagedPath || records[0].PrivateDirRel == "" || !strings.HasPrefix(records[0].InputRel, records[0].PrivateDirRel+"/") || records[0].PrivateDirRel != records[1].PrivateDirRel || records[1].PrivateDirRel != records[2].PrivateDirRel || records[0].InputRel != records[1].InputRel || records[1].InputRel != records[2].InputRel || records[0].OutputRel != records[1].OutputRel || records[1].OutputRel != records[2].OutputRel || records[2].CopiedInput == nil || !validCopiedInputIdentity(records[2].CopiedInput) {
+		return records, errors.New("publication preparation does not authorize replacement backup")
+	}
+	return records, nil
+}
+
 func validReplacementSuccessor(prior, next *PublicationReplacementEvidence) bool {
 	if prior == nil {
 		return next.From == "exposing" && next.To == "backup_intent"
 	}
 	identityMatches := prior != nil && (next.To == "installed" || samePublicationExposureJSON(prior.Identity, next.Identity))
-	return prior.Guard == next.Guard && prior.PositionID == next.PositionID && prior.Epoch == next.Epoch && prior.CandidateGeneration == next.CandidateGeneration && sameOptionalUUID(prior.ExpectedGeneration, next.ExpectedGeneration) && prior.Intent == next.Intent && samePublicationStageObservation(prior.Staged, next.Staged) && identityMatches && prior.BackupPath == next.BackupPath && prior.To == next.From && ((prior.To == "backup_intent" && next.To == "backup_ready") || (prior.To == "backup_ready" && next.To == "replacement_intent") || (prior.To == "replacement_intent" && next.To == "installed"))
+	return prior.Guard == next.Guard && prior.PositionID == next.PositionID && prior.Epoch == next.Epoch && prior.CandidateGeneration == next.CandidateGeneration && sameOptionalUUID(prior.ExpectedGeneration, next.ExpectedGeneration) && prior.Intent == next.Intent && samePublicationStageObservation(prior.Staged, next.Staged) && identityMatches && samePublicationExposureJSON(prior.BackupIdentity, next.BackupIdentity) && prior.BackupPath == next.BackupPath && prior.To == next.From && ((prior.To == "backup_intent" && next.To == "backup_ready") || (prior.To == "backup_ready" && next.To == "replacement_intent") || (prior.To == "replacement_intent" && next.To == "installed"))
 }
