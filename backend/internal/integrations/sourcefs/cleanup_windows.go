@@ -5,6 +5,7 @@ package sourcefs
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"runtime"
 	"strings"
 	"unsafe"
@@ -130,9 +131,9 @@ func openCleanupWindowsFile(parent windows.Handle, name string) (windows.Handle,
 }
 
 func isWindowsCleanupMissing(err error) bool {
-	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
 		return true
 	}
-	status, ok := err.(windows.NTStatus)
-	return ok && (status == windows.STATUS_OBJECT_NAME_NOT_FOUND || status == windows.STATUS_OBJECT_PATH_NOT_FOUND)
+	var status windows.NTStatus
+	return errors.As(err, &status) && (status == windows.STATUS_OBJECT_NAME_NOT_FOUND || status == windows.STATUS_OBJECT_PATH_NOT_FOUND)
 }

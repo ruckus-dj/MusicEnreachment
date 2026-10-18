@@ -96,7 +96,15 @@ func TestLibraryPublicationsApplySavedLyricsPostgreSQL(t *testing.T) {
 			exec(`INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?,?,?)`, claim, position, generation)
 			installationID := uuid.New()
 			verified := time.Now().UTC()
-			installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "1", RelativePath: filepath.Join("ffmpeg", "1"), State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVersions: json.RawMessage(`{"ffmpeg":"ffmpeg version 1","ffprobe":"ffprobe version 1"}`)}
+			versions := map[string]string{}
+			for _, name := range tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS) {
+				versions[name] = strings.TrimSuffix(name, ".exe") + " version 1"
+			}
+			executableVersions, err := json.Marshal(versions)
+			if err != nil {
+				t.Fatal(err)
+			}
+			installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "1", RelativePath: filepath.Join("ffmpeg", "1"), State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVersions: executableVersions}
 			if err := repo.CreateInstallation(ctx, installation); err != nil {
 				t.Fatal(err)
 			}
