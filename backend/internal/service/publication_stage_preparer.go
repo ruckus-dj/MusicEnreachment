@@ -317,7 +317,7 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	if input.Rewrite != nil {
 		rewriteIdentity = clonePublicationIdentity(input.Rewrite.Ownership)
 	}
-	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(preparer.ParentPath, privateName, inputName), OutputPath: filepath.Join(preparer.ParentPath, privateName, outputName), RelativePath: record.OutputRel}, parent: preparer.OutputParent, directory: dir, directoryName: privateName, identity: dirID, parentIdentity: parentIdentity, repository: preparer.Repository, opener: preparer.SourceOpener, sourceRootPath: sourceRootPath, sourceRelativePath: sourceRelativePath, sourceSize: sourceSize, sourceMTime: sourceMTime, sourceFileInfo: inputInfo, inputPath: filepath.Join(preparer.ParentPath, privateName), inputName: inputName, guard: guard, hold: hold, rewrite: isRewrite, rewriteIdentity: rewriteIdentity}
+	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(preparer.ParentPath, privateName, inputName), OutputPath: filepath.Join(preparer.ParentPath, privateName, outputName), RelativePath: record.OutputRel}, parent: preparer.OutputParent, directory: dir, directoryName: privateName, identity: dirID, parentIdentity: parentIdentity, repository: preparer.Repository, opener: preparer.SourceOpener, sourceRootPath: sourceRootPath, sourceRelativePath: sourceRelativePath, sourceSize: sourceSize, sourceMTime: sourceMTime, sourceFileInfo: inputInfo, inputPath: filepath.Join(preparer.ParentPath, privateName), inputName: inputName, guard: guard, hold: hold, rewrite: isRewrite, rewriteIdentity: rewriteIdentity, preparationRecord: ready}
 	// Transfer directory ownership only after all preparation observations have been journaled.
 	transferred = true
 	return stage, nil
@@ -407,6 +407,7 @@ type preparedPublicationStage struct {
 	sourceMTime        time.Time
 	sourceFileInfo     os.FileInfo
 	rewriteIdentity    persistence.PublicationFileIdentity
+	preparationRecord  persistence.PublicationPreparationRecord
 	inputPath          string
 	inputName          string
 	guard              persistence.PublicationDeliveryGuard

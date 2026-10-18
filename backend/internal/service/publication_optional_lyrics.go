@@ -6,10 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
@@ -32,6 +35,145 @@ type publicationOptionalLyricsRestorer interface {
 type publicationOptionalLyricsRequirements struct {
 	validateAudioAndAssets func(context.Context, string) error
 	restoreRequiredAssets  func(context.Context, string) error
+	// recordOutcome is installed only by the V3 publication application entry.
+	// The legacy V2 helper path deliberately has no durable-outcome authority.
+	recordOutcome func(context.Context, publicationOptionalLyricsOutcomeEvidence) error
+}
+
+type publicationOptionalLyricsOutcomeEvidence struct {
+	Kind       string
+	Tags       map[string][]string
+	Lyrics     persistence.PublicationLyricsOutcome
+	Diagnostic string
+}
+
+type publicationOptionalLyricsOutcomeRepository interface {
+	GuardedRecordPublicationOptionalLyricsOutcome(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationOptionalLyricsOutcomeEvidence) (persistence.PublicationOptionalLyricsOutcome, error)
+}
+
+// applyAndRecordPublicationManualLyrics is the private V3-only application path.
+// Evidence is derived from the prepared native handles and the required final
+// validator; callers cannot supply identities or a fabricated observation.
+func applyAndRecordPublicationManualLyrics(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	reservation *publicationSyncReservation,
+	stage PreparedPublicationStage,
+	input persistence.PublicationInputs,
+	writer PublicationMetadataWriter,
+	reader interface {
+		Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
+	},
+	validateAudioAndAssets func(context.Context, string) error,
+	restoreRequiredAssets func(context.Context, string) error,
+	finalObservationAuthority func(context.Context, string, persistence.PublicationInputs) (persistence.PublicationStageObservation, error),
+) (publicationOptionalLyricsResult, error) {
+	prepared, ok := stage.(*preparedPublicationStage)
+	if !ok || prepared == nil || prepared.repository == nil || finalObservationAuthority == nil || input.Version != persistence.PublicationInputsVersion3 || input.ManualLyrics == nil || input.Rewrite == nil {
+		return publicationOptionalLyricsResult{}, errors.New("V3 optional lyrics evidence authority is unavailable")
+	}
+	repo, ok := prepared.repository.(publicationOptionalLyricsOutcomeRepository)
+	if !ok {
+		return publicationOptionalLyricsResult{}, errors.New("V3 optional lyrics outcome repository is unavailable")
+	}
+	requirements := publicationOptionalLyricsRequirements{validateAudioAndAssets: validateAudioAndAssets, restoreRequiredAssets: restoreRequiredAssets}
+	requirements.recordOutcome = func(ctx context.Context, outcome publicationOptionalLyricsOutcomeEvidence) error {
+		if err := checkOptionalLyricsStage(ctx, scope, stage); err != nil {
+			return err
+		}
+		inputIdentity, outputIdentity, err := prepared.optionalLyricsFileIdentities(ctx)
+		if err != nil {
+			return err
+		}
+		ready := prepared.preparationRecord
+		if ready.Step != "input_ready" || ready.CopiedInput == nil || ready.InputSize == nil || ready.InputMTime == nil {
+			return errors.New("prepared publication input readiness evidence is unavailable")
+		}
+		copied := ready.CopiedInput
+		if copied.SizeBytes == nil || copied.MTime == nil || inputIdentity.SizeBytes == nil || inputIdentity.MTime == nil || prepared.sourceFileInfo == nil || *inputIdentity.SizeBytes != *copied.SizeBytes || *inputIdentity.MTime != *copied.MTime || *inputIdentity.SizeBytes != prepared.sourceFileInfo.Size() || *inputIdentity.MTime != prepared.sourceFileInfo.ModTime().UnixMicro() || input.Rewrite.Ownership.SizeBytes != nil && *ready.InputSize != *input.Rewrite.Ownership.SizeBytes {
+			return errors.New("prepared publication input identity does not match its frozen preparation")
+		}
+		if input.Rewrite.Ownership.SizeBytes != nil && *inputIdentity.SizeBytes != *input.Rewrite.Ownership.SizeBytes || input.Rewrite.Ownership.SHA256 != "" && inputIdentity.SHA256 != input.Rewrite.Ownership.SHA256 {
+			return errors.New("prepared publication input identity does not match frozen rewrite ownership")
+		}
+		observation, err := finalObservationAuthority(ctx, prepared.paths.OutputPath, input.Clone())
+		if err != nil {
+			return fmt.Errorf("validate final publication stage for optional lyrics outcome: %w", err)
+		}
+		if observation.RelativePath != ready.OutputRel || observation.Ownership.ExpectedSize == nil || *observation.Ownership.ExpectedSize != *outputIdentity.SizeBytes || observation.Ownership.ExpectedMTime == nil || *observation.Ownership.ExpectedMTime != *outputIdentity.MTime || observation.PayloadSHA256 != outputIdentity.SHA256 {
+			return errors.New("final publication observation does not match native output identity")
+		}
+		kind, diagnostic := persistence.PublicationOptionalLyricsExactRoundTrip, ""
+		if outcome.Kind == "rebuilt_without_lyrics" {
+			kind, diagnostic = persistence.PublicationOptionalLyricsRebuiltWithoutLyrics, "optional lyrics did not round-trip; rebuilt output without lyrics"
+		}
+		evidence := persistence.PublicationOptionalLyricsOutcomeEvidence{Kind: kind, ManualLyrics: *input.ManualLyrics, Preparation: ready, InputIdentity: inputIdentity, OutputIdentity: outputIdentity, FinalObservation: observation.Clone(), Diagnostic: diagnostic}
+		result, err := repo.GuardedRecordPublicationOptionalLyricsOutcome(ctx, scope.guard, evidence)
+		if err != nil {
+			return err
+		}
+		if result != persistence.PublicationOptionalLyricsRecorded && result != persistence.PublicationOptionalLyricsAlreadyRecorded {
+			return errors.New("publication delivery is stale while recording optional lyrics outcome")
+		}
+		return nil
+	}
+	return applyPublicationOptionalLyrics(ctx, scope, reservation, stage, input, writer, reader, requirements)
+}
+
+func (stage *preparedPublicationStage) optionalLyricsFileIdentities(ctx context.Context) (persistence.PublicationFileIdentity, persistence.PublicationFileIdentity, error) {
+	inputRoot, err := stage.opener.OpenRoot(ctx, stage.inputPath)
+	if err != nil {
+		return persistence.PublicationFileIdentity{}, persistence.PublicationFileIdentity{}, err
+	}
+	input, err := sourcefs.OpenRegularAt(ctx, inputRoot, stage.inputName)
+	if err != nil {
+		return persistence.PublicationFileIdentity{}, persistence.PublicationFileIdentity{}, errors.Join(err, inputRoot.Close())
+	}
+	inputIdentity, err := optionalLyricsIdentity(ctx, input)
+	err = errors.Join(err, input.Close(), inputRoot.Close())
+	if err != nil {
+		return persistence.PublicationFileIdentity{}, persistence.PublicationFileIdentity{}, err
+	}
+	mutation, ok := stage.directory.(sourcefs.OutputMutation)
+	if !ok {
+		return persistence.PublicationFileIdentity{}, persistence.PublicationFileIdentity{}, errors.New("native publication output identity capability is unavailable")
+	}
+	name := filepath.Base(stage.paths.OutputPath)
+	output, err := mutation.OpenExistingRegular(ctx, name)
+	if err != nil {
+		return persistence.PublicationFileIdentity{}, persistence.PublicationFileIdentity{}, err
+	}
+	outputIdentity, err := optionalLyricsIdentity(ctx, output)
+	err = errors.Join(err, output.Close())
+	return inputIdentity, outputIdentity, err
+}
+
+func optionalLyricsIdentity(ctx context.Context, file sourcefs.RegularFile) (persistence.PublicationFileIdentity, error) {
+	info, err := file.Stat(ctx)
+	if err != nil {
+		return persistence.PublicationFileIdentity{}, err
+	}
+	if info == nil || !info.Mode().IsRegular() {
+		return persistence.PublicationFileIdentity{}, errors.New("publication identity handle is not a regular file")
+	}
+	var digest [sha256.Size]byte
+	err = file.Borrow(ctx, func(handle *os.File) error {
+		var hashErr error
+		digest, hashErr = hashBorrowedFile(ctx, handle)
+		return hashErr
+	})
+	if err != nil {
+		return persistence.PublicationFileIdentity{}, err
+	}
+	after, err := file.Stat(ctx)
+	if err != nil {
+		return persistence.PublicationFileIdentity{}, err
+	}
+	if after.Size() != info.Size() || after.ModTime().UnixMicro() != info.ModTime().UnixMicro() {
+		return persistence.PublicationFileIdentity{}, errors.New("publication file changed while deriving outcome identity")
+	}
+	size, mtime := info.Size(), info.ModTime().UnixMicro()
+	return persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])}, nil
 }
 
 // applyPublicationOptionalLyrics applies frozen V3 lyrics intent without
@@ -143,10 +285,20 @@ func applyPublicationOptionalLyrics(
 		result.Tags = clean.Tags
 		result.Lyrics = persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetAbsent}
 		result.OptionalDiagnostic = "optional lyrics did not round-trip; rebuilt output without lyrics"
+		if requirements.recordOutcome != nil {
+			if err := requirements.recordOutcome(ctx, publicationOptionalLyricsOutcomeEvidence{Kind: "rebuilt_without_lyrics", Tags: result.Tags, Lyrics: result.Lyrics, Diagnostic: result.OptionalDiagnostic}); err != nil {
+				return result, fmt.Errorf("record rebuilt optional lyrics outcome: %w", err)
+			}
+		}
 		return result, nil
 	}
 	result.Tags = observed.Tags
 	result.Lyrics = lyrics
+	if requirements.recordOutcome != nil {
+		if err := requirements.recordOutcome(ctx, publicationOptionalLyricsOutcomeEvidence{Kind: "exact_roundtrip", Tags: result.Tags, Lyrics: result.Lyrics}); err != nil {
+			return result, fmt.Errorf("record optional lyrics outcome: %w", err)
+		}
+	}
 	return result, nil
 }
 

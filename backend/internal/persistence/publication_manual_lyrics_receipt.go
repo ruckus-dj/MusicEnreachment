@@ -69,6 +69,25 @@ func validateManualLyricsObservation(state ManualLyricsDesiredState, digest *str
 	return nil
 }
 
+const manualLyricsRebuiltWithoutLyricsWarning = "optional_lyrics_rebuilt_without_lyrics"
+const manualLyricsReadbackMismatchWarning = "readback_mismatch"
+
+func validateManualLyricsReceiptObservation(state ManualLyricsDesiredState, digest, warning *string, observed ManualLyricsObserved) error {
+	if warning != nil && *warning == manualLyricsReadbackMismatchWarning {
+		return validateManualLyricsObservation(state, digest, observed)
+	}
+	if warning != nil && *warning == manualLyricsRebuiltWithoutLyricsWarning {
+		if state != ManualLyricsValue || digest == nil || !manualLyricsReceiptHash.MatchString(*digest) || observed.MetadataPresent || observed.Assets.Validate() != nil || observed.Assets.Lyrics.State != PublicationAssetAbsent {
+			return errors.New("rebuilt-without-lyrics receipt requires a valid desired value and observed absence")
+		}
+		return nil
+	}
+	if warning != nil {
+		return errors.New("unsupported manual lyrics receipt warning")
+	}
+	return validateManualLyricsObservation(state, digest, observed)
+}
+
 // ManualLyricsReceiptProjection deliberately distinguishes current publication facts
 // from receipt confirmation facts. A confirmed G0 does not confirm current G1.
 type ManualLyricsReceiptProjection struct {
@@ -116,7 +135,7 @@ func (repository *SetupManagerRepository) ReadManualLyricsReceiptProjection(ctx 
 		if !out.Pending {
 			assets, assetErr := DecodePublicationAssetOutcomes(row.ActualAssets)
 			lyrics, present, metadataErr := EncodeObservedManualLyricsMetadata(row.ActualMetadata)
-			out.Pending = assetErr != nil || metadataErr != nil || validateManualLyricsObservation(out.Receipt.DesiredState, out.Receipt.DesiredSHA256, ManualLyricsObserved{MetadataPresent: present, MetadataValue: lyrics, Assets: assets}) != nil
+			out.Pending = assetErr != nil || metadataErr != nil || validateManualLyricsReceiptObservation(out.Receipt.DesiredState, out.Receipt.DesiredSHA256, out.Receipt.WarningCode, ManualLyricsObserved{MetadataPresent: present, MetadataValue: lyrics, Assets: assets}) != nil
 		}
 	}
 	if out.Receipt == nil {

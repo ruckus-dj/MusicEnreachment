@@ -239,6 +239,34 @@ func preparationOwnsIntent(raw json.RawMessage, guard PublicationDeliveryGuard, 
 }
 
 func validateExposureNamespace(ctx context.Context, tx bun.Tx, attempt *TrackPublicationAttempt, i PublicationExposureIntent) error {
+	return validatePublicationTargetNamespace(ctx, tx, attempt, i.TargetCanonicalKey, i.TargetRelativePath)
+}
+
+func validatePublicationRewriteNamespace(ctx context.Context, tx bun.Tx, attempt *TrackPublicationAttempt, relativePath string) error {
+	var manifest struct {
+		Version int                        `json:"version"`
+		Nodes   []PublicationNamespaceNode `json:"nodes"`
+	}
+	if decodeStrictJSON(attempt.NamespaceManifest, &manifest) != nil || manifest.Version != 1 || validatePublicationManifest(manifest.Nodes) != nil {
+		return sql.ErrNoRows
+	}
+	var target *PublicationNamespaceNode
+	for _, node := range manifest.Nodes {
+		if node.NodeKind == "file" && node.RelativePath == relativePath {
+			if target != nil {
+				return sql.ErrNoRows
+			}
+			copy := node
+			target = &copy
+		}
+	}
+	if target == nil {
+		return sql.ErrNoRows
+	}
+	return validatePublicationTargetNamespace(ctx, tx, attempt, target.CanonicalKey, relativePath)
+}
+
+func validatePublicationTargetNamespace(ctx context.Context, tx bun.Tx, attempt *TrackPublicationAttempt, targetCanonicalKey, targetRelativePath string) error {
 	var manifest struct {
 		Version int                        `json:"version"`
 		Nodes   []PublicationNamespaceNode `json:"nodes"`
@@ -250,15 +278,15 @@ func validateExposureNamespace(ctx context.Context, tx bun.Tx, attempt *TrackPub
 	}
 	var target *PublicationNamespaceNode
 	for n := range manifest.Nodes {
-		if manifest.Nodes[n].CanonicalKey == i.TargetCanonicalKey && manifest.Nodes[n].RelativePath == i.TargetRelativePath && manifest.Nodes[n].NodeKind == "file" {
+		if manifest.Nodes[n].CanonicalKey == targetCanonicalKey && manifest.Nodes[n].RelativePath == targetRelativePath && manifest.Nodes[n].NodeKind == "file" {
 			target = &manifest.Nodes[n]
 		}
 	}
 	if target == nil {
 		return sql.ErrNoRows
 	}
-	keys := []string{i.TargetCanonicalKey}
-	for parent := parentPath(i.TargetCanonicalKey); parent != ""; parent = parentPath(parent) {
+	keys := []string{targetCanonicalKey}
+	for parent := parentPath(targetCanonicalKey); parent != ""; parent = parentPath(parent) {
 		keys = append(keys, parent)
 	}
 	for _, key := range keys {
@@ -269,7 +297,7 @@ func validateExposureNamespace(ctx context.Context, tx bun.Tx, attempt *TrackPub
 				node = &copy
 			}
 		}
-		if node == nil || (key != i.TargetCanonicalKey && node.NodeKind != "dir") || (key == i.TargetCanonicalKey && node.NodeKind != "file") {
+		if node == nil || (key != targetCanonicalKey && node.NodeKind != "dir") || (key == targetCanonicalKey && node.NodeKind != "file") {
 			return sql.ErrNoRows
 		}
 		digest := sha256.Sum256([]byte(key))

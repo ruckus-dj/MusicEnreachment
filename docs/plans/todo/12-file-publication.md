@@ -11,6 +11,14 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Реализованы guarded optional-lyrics outcome journal и private service adapter:
+typed ACK различает stale/replay/new record; canonical preparation/rebuild,
+actual namespace, copied-input size/hash и independent final observations
+проверяются до записи. Frozen revision R не переименовывается в R+1 после нового
+save. V3 execution остаётся запрещённым. Receipt-bearing replacement witness,
+атомарная запись receipt в commit и production Apply пока не реализованы.
+Полный локальный `task verify` outcome-среза прошёл; native CI ещё не проверен.
+
 Добавлен durable manual-lyrics receipt storage/read-model: applicability
 ограничена active epoch, selected desired revision и published generation;
 fulfilled требует строгих actual metadata/assets, warning остаётся diagnostic,

@@ -52,7 +52,7 @@ func (reader optionalLyricsTestReader) Read(ctx context.Context, path string, re
 
 func runOptionalLyricsTest(t *testing.T, writer PublicationMetadataWriter, reader interface {
 	Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
-}, lyrics string) (*PublicationExecutionScope, *scopeRepositoryFake, publicationOptionalLyricsResult, error) {
+}, lyrics string, recorders ...func(context.Context, publicationOptionalLyricsOutcomeEvidence) error) (*PublicationExecutionScope, *scopeRepositoryFake, publicationOptionalLyricsResult, error) {
 	t.Helper()
 	repository := &scopeRepositoryFake{valid: true, marked: true}
 	scope := newScopeForTest(t, &scopeCommandFake{result: PublicationCommandResult{QuiescenceEstablished: true}}, repository)
@@ -68,8 +68,28 @@ func runOptionalLyricsTest(t *testing.T, writer PublicationMetadataWriter, reade
 		validateAudioAndAssets: func(context.Context, string) error { validations++; return nil },
 		restoreRequiredAssets:  func(context.Context, string) error { return nil },
 	}
+	if len(recorders) > 0 {
+		requirements.recordOutcome = recorders[0]
+	}
 	result, err := applyPublicationOptionalLyrics(context.Background(), scope, reservation, optionalLyricsTestStage{path}, input, writer, reader, requirements)
 	return scope, repository, result, err
+}
+
+func TestApplyOptionalLyricsRecordsActualHelperReadbackBeforeReturning(t *testing.T) {
+	lyrics := "[00:01.00]line\n"
+	var recorded *publicationOptionalLyricsOutcomeEvidence
+	_, _, result, err := runOptionalLyricsTest(t, optionalLyricsTestWriter{}, optionalLyricsTestReader{read: func(context.Context, string, metadata.ReadRequest) (metadata.Capture, error) {
+		return metadata.Capture{Tags: map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}, "LYRICS": {lyrics}}}, nil
+	}}, lyrics, func(_ context.Context, evidence publicationOptionalLyricsOutcomeEvidence) error {
+		recorded = &evidence
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("apply optional lyrics: %v", err)
+	}
+	if recorded == nil || recorded.Kind != "exact_roundtrip" || recorded.Lyrics != result.Lyrics || !equalTags(recorded.Tags, result.Tags) {
+		t.Fatalf("recorded helper evidence = %#v, result = %#v", recorded, result)
+	}
 }
 
 func TestApplyOptionalLyricsRejectsMissingRequiredAuthority(t *testing.T) {
