@@ -18,8 +18,6 @@ import (
 )
 
 const PublicationInputsVersion = 1
-const PublicationInputsVersion2 = 2
-const PublicationInputsVersion3 = 3
 
 // PublicationInputs is the versioned, immutable execution contract retained by
 // a publication attempt. Intent-specific data is deliberately disjoint.
@@ -37,7 +35,7 @@ type PublicationInputs struct {
 
 // PublicationManualLyricsInput freezes explicit manual lyrics admission. It is
 // a metadata authority receipt, not an instruction that the current writer can
-// execute. V3 remains deliberately non-executable until a lyrics writer exists.
+// execute.
 type PublicationManualLyricsInput struct {
 	ExpectedMetadataRevision   int64     `json:"expected_metadata_revision"`
 	ConfirmedCurrentGeneration uuid.UUID `json:"confirmed_current_generation"`
@@ -133,21 +131,15 @@ func DecodePublicationInputs(raw json.RawMessage) (PublicationInputs, error) {
 
 // Validate enforces version, discriminated intent, selectors and portable paths.
 func (input PublicationInputs) Validate() error {
-	if input.Version != PublicationInputsVersion && input.Version != PublicationInputsVersion2 && input.Version != PublicationInputsVersion3 {
+	if input.Version != PublicationInputsVersion {
 		return fmt.Errorf("unsupported publication inputs version %d", input.Version)
 	}
-	if input.Version == PublicationInputsVersion && input.QualityPolicyVersion != 0 {
-		return errors.New("version 1 publication inputs cannot claim a quality policy version")
-	}
-	if input.Version == PublicationInputsVersion2 && input.QualityPolicyVersion != publication.QualityPolicyVersion {
+	if input.QualityPolicyVersion != publication.QualityPolicyVersion {
 		return fmt.Errorf("unsupported publication quality policy version %d", input.QualityPolicyVersion)
 	}
-	if input.Version == PublicationInputsVersion3 {
-		if input.QualityPolicyVersion != publication.QualityPolicyVersion {
-			return errors.New("version 3 publication inputs require the current quality policy")
-		}
-		if input.IntentKind != "rewrite" || input.Rewrite == nil || input.Audio != nil || input.ManualLyrics == nil {
-			return errors.New("version 3 publication inputs require a manual lyrics rewrite")
+	if input.ManualLyrics != nil {
+		if input.IntentKind != "rewrite" || input.Rewrite == nil || input.Audio != nil {
+			return errors.New("manual lyrics publication inputs require a rewrite")
 		}
 		if input.ManualLyrics.ExpectedMetadataRevision < 0 || input.ManualLyrics.ConfirmedCurrentGeneration == uuid.Nil || input.ManualLyrics.ConfirmedCurrentGeneration != input.Rewrite.CurrentGeneration {
 			return errors.New("manual lyrics rewrite requires a metadata revision and confirmed current generation")
@@ -165,8 +157,6 @@ func (input PublicationInputs) Validate() error {
 		default:
 			return errors.New("manual lyrics rewrite requires value or explicit_empty")
 		}
-	} else if input.ManualLyrics != nil {
-		return errors.New("manual lyrics are only valid in version 3 publication inputs")
 	}
 	if input.IntentKind != "audio" && input.IntentKind != "rewrite" {
 		return fmt.Errorf("unsupported publication intent %q", input.IntentKind)
@@ -185,7 +175,7 @@ func (input PublicationInputs) Validate() error {
 		if strings.TrimSpace(name) == "" || values == nil {
 			return fmt.Errorf("publication desired tags must contain named, non-nil value lists")
 		}
-		if input.Version == PublicationInputsVersion3 && strings.EqualFold(strings.TrimSpace(name), "LYRICS") {
+		if input.ManualLyrics != nil && strings.EqualFold(strings.TrimSpace(name), "LYRICS") {
 			return errors.New("manual lyrics must not be encoded in mandatory desired tags")
 		}
 	}
@@ -205,10 +195,10 @@ func (input PublicationInputs) Validate() error {
 	return nil
 }
 
-// SupportsExecution excludes V3 admission receipts until a supported writer is
-// implemented. Do not infer capability from an input version being recognized.
+// SupportsExecution reports whether this frozen contract is executable by the
+// generic publication path. Private manual-lyrics execution is separate.
 func (input PublicationInputs) SupportsExecution() bool {
-	return input.Version == PublicationInputsVersion || input.Version == PublicationInputsVersion2
+	return input.Version == PublicationInputsVersion && input.QualityPolicyVersion == publication.QualityPolicyVersion && input.ManualLyrics == nil
 }
 
 func (input PublicationAudioInput) Validate() error {

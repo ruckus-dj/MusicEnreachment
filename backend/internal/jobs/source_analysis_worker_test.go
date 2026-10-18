@@ -244,7 +244,10 @@ func TestSourceAnalysisWorkerWithInputPreparerSharesOneInputAndAppliesFastProbe(
 		release()
 		if !doneReceived {
 			select {
-			case <-done:
+			case err := <-done:
+				if err != nil {
+					t.Errorf("worker returned error after releasing fingerprint runner: %v", err)
+				}
 			case <-time.After(2 * time.Second):
 				t.Error("worker did not exit after releasing fingerprint runner")
 			}
@@ -262,8 +265,11 @@ func TestSourceAnalysisWorkerWithInputPreparerSharesOneInputAndAppliesFastProbe(
 	case <-time.After(2 * time.Second):
 		release()
 		select {
-		case <-done:
+		case err := <-done:
 			doneReceived = true
+			if err != nil {
+				t.Fatalf("run work group after releasing fingerprint runner: %v", err)
+			}
 		case <-time.After(2 * time.Second):
 			t.Fatal("worker did not exit after releasing fingerprint runner")
 		}
@@ -372,7 +378,10 @@ func TestSourceAnalysisWorkerJoinsCanceledRunnerBeforeReturning(t *testing.T) {
 		cancel()
 		if !doneReceived {
 			select {
-			case <-done:
+			case err := <-done:
+				if err != nil && !errors.Is(err, context.Canceled) {
+					t.Errorf("canceled worker returned unexpected error: %v", err)
+				}
 			case <-time.After(2 * time.Second):
 				t.Error("worker did not exit after releasing canceled runner")
 			}

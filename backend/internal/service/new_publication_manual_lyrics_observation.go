@@ -41,7 +41,7 @@ func newPublicationManualLyricsObservationAuthority(
 	}
 	stage := initialCopy.stage
 	if !stage.privatePrepMode || !stage.rewrite || stage.outputName == "" || stage.rewriteIdentity.SHA256 == "" ||
-		input.Version != persistence.PublicationInputsVersion3 || input.IntentKind != "rewrite" || input.Rewrite == nil ||
+		input.Version != persistence.PublicationInputsVersion || input.IntentKind != "rewrite" || input.Rewrite == nil ||
 		input.ManualLyrics == nil || input.Validate() != nil ||
 		!reflect.DeepEqual(input.Rewrite.Ownership, stage.rewriteIdentity) || scope == nil || scope.guard != stage.guard {
 		return nil, errors.New("manual lyrics observation does not match the private prepared rewrite")

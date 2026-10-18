@@ -74,7 +74,7 @@ func (repository *SetupManagerRepository) GuardedRecordPublicationOptionalLyrics
 		if err != nil {
 			return fmt.Errorf("record optional lyrics outcome: decode frozen inputs: %w", err)
 		}
-		if input.Version != PublicationInputsVersion3 || input.IntentKind != "rewrite" || input.ManualLyrics == nil || *input.ManualLyrics != evidence.ManualLyrics || input.Rewrite == nil || attempt.ExpectedGeneration == nil || input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration || input.ManualLyrics.ConfirmedCurrentGeneration != *attempt.ExpectedGeneration {
+		if input.Version != PublicationInputsVersion || input.IntentKind != "rewrite" || input.ManualLyrics == nil || *input.ManualLyrics != evidence.ManualLyrics || input.Rewrite == nil || attempt.ExpectedGeneration == nil || input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration || input.ManualLyrics.ConfirmedCurrentGeneration != *attempt.ExpectedGeneration {
 			return errors.New("record optional lyrics outcome: frozen manual-lyrics intent does not match")
 		}
 		if err := validatePublicationRewriteNamespace(ctx, tx, attempt, input.Rewrite.RelativePath); err != nil {
@@ -298,7 +298,7 @@ func validOptionalLyricsOutcomeRecord(record publicationOptionalLyricsOutcomeJou
 		Diagnostic:       record.Diagnostic,
 	}
 	return record.Version == PublicationOptionalLyricsOutcomeVersion &&
-		record.Kind == "publication_optional_lyrics_outcome" && input.Version == PublicationInputsVersion3 &&
+		record.Kind == "publication_optional_lyrics_outcome" && input.Version == PublicationInputsVersion &&
 		input.ManualLyrics != nil && *input.ManualLyrics == record.ManualLyrics &&
 		validOptionalLyricsOutcomeEvidence(evidence, guard, input)
 }

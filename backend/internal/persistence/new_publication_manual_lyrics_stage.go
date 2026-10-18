@@ -46,6 +46,9 @@ func (repository *SetupManagerRepository) GuardedAdvanceManualLyricsStage(ctx co
 		if err := input.Validate(); err != nil || !validManualLyricsFLACRewrite(input) {
 			return errors.New("advance manual lyrics stage: frozen inputs are not a valid manual lyrics FLAC rewrite")
 		}
+		if from == "staged" && (len(observation.ActualAssets) == 0 || observation.QualityPolicyVersion != input.QualityPolicyVersion) {
+			return errors.New("advance manual lyrics stage: validated phase requires matching asset and quality-policy evidence")
+		}
 		var current TrackPublication
 		if err := tx.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {

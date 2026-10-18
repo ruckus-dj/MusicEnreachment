@@ -31,9 +31,9 @@ func (reader *publicationValidatorMetadataReader) Read(_ context.Context, _ stri
 	return reader.capture, reader.err
 }
 
-func TestRealPublicationStageValidatorCapturesV2AssetEvidence(t *testing.T) {
+func TestRealPublicationStageValidatorCapturesCurrentAssetEvidence(t *testing.T) {
 	_, _, input, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
-	input.Version = persistence.PublicationInputsVersion2
+	input.Version = persistence.PublicationInputsVersion
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
 
 	stage := filepath.Join(t.TempDir(), "stage.flac")
@@ -54,7 +54,7 @@ func TestRealPublicationStageValidatorCapturesV2AssetEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reader.request.CoverInspection {
-		t.Fatal("V2 metadata read did not request cover inspection")
+		t.Fatal("metadata read did not request cover inspection")
 	}
 	var assets persistence.PublicationAssetOutcomes
 	if err := json.Unmarshal(got.Assets, &assets); err != nil {
@@ -68,9 +68,22 @@ func TestRealPublicationStageValidatorCapturesV2AssetEvidence(t *testing.T) {
 	}
 }
 
-func TestRealPublicationStageValidatorRejectsV3BeforeOpeningStageOrDependencies(t *testing.T) {
+func TestRealPublicationStageValidatorRejectsManualLyricsBeforeOpeningStageOrDependencies(t *testing.T) {
 	_, _, input, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
-	input.Version = persistence.PublicationInputsVersion3
+	input.Version = persistence.PublicationInputsVersion
+	input.QualityPolicyVersion = publication.QualityPolicyVersion
+	input.IntentKind, input.Audio = "rewrite", nil
+	input.Format = publication.AudioFormatSource
+	fixture := makeRewriteFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	input.Rewrite = fixture.repo.input.Rewrite
+	input.ManualLyrics = &persistence.PublicationManualLyricsInput{
+		ExpectedMetadataRevision: 1, ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration,
+		State: "explicit_empty",
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("manual-lyrics rewrite is invalid: %v", err)
+	}
 	stage := filepath.Join(t.TempDir(), "stage.flac")
 	if err := os.WriteFile(stage, []byte("stage"), 0o600); err != nil {
 		t.Fatal(err)
@@ -79,7 +92,7 @@ func TestRealPublicationStageValidatorRejectsV3BeforeOpeningStageOrDependencies(
 		Tools:          panicPublicationValidatorTools{},
 		MetadataReader: panicPublicationMetadataReader{},
 		Probe: func(context.Context, string, sourcefs.RegularFile, publication.AudioContainer) ([]byte, error) {
-			panic("unsupported V3 reached probe")
+			panic("unsupported manual-lyrics rewrite reached probe")
 		},
 	}
 	if _, err := validator.Validate(context.Background(), stage, input); err == nil || !strings.Contains(err.Error(), "does not support execution") {
@@ -90,13 +103,13 @@ func TestRealPublicationStageValidatorRejectsV3BeforeOpeningStageOrDependencies(
 type panicPublicationValidatorTools struct{}
 
 func (panicPublicationValidatorTools) Executable(context.Context, []persistence.SourceAnalysisToolSelection, string) (string, error) {
-	panic("unsupported V3 resolved tools")
+	panic("unsupported manual-lyrics rewrite resolved tools")
 }
 
 type panicPublicationMetadataReader struct{}
 
 func (panicPublicationMetadataReader) Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error) {
-	panic("unsupported V3 read metadata")
+	panic("unsupported manual-lyrics rewrite read metadata")
 }
 
 func TestPublicationStageAudioPlanPreservesRewriteCodecAndContainer(t *testing.T) {

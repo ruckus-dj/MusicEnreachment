@@ -142,7 +142,7 @@ func pubStageSetup(t *testing.T, repo *pubStageRepo, command pubStageCommand, va
 		t.Fatal(err)
 	}
 	runner := PublicationStagingRunner{Repository: repo, PinnedTools: pubStageTools{events: &events, root: managedToolsRoot}, Metadata: pubStageWriter{events: &events}, Validator: pubStageValidator{&events, validateErr}}
-	return runner, scope, persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, IntentKind: "audio", Format: publication.AudioFormatMKA, DesiredTags: map[string][]string{"title": {"track"}}, Tools: []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7", VersionBanner: "ffmpeg version 7"}, {PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7", VersionBanner: "ffmpeg version 7"}}, Audio: &persistence.PublicationAudioInput{WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(), ConfiguredRootPath: dir, InventoryRootPath: dir, RelativePath: "input.flac", MTime: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), AnalysisPolicyVersion: 1, FFProbeVersion: "7", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: pubStageBool(true), Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}}}, stage, &events
+	return runner, scope, persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", Format: publication.AudioFormatMKA, DesiredTags: map[string][]string{"title": {"track"}}, Tools: []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7", VersionBanner: "ffmpeg version 7"}, {PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7", VersionBanner: "ffmpeg version 7"}}, Audio: &persistence.PublicationAudioInput{WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(), ConfiguredRootPath: dir, InventoryRootPath: dir, RelativePath: "input.flac", MTime: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), AnalysisPolicyVersion: 1, FFProbeVersion: "7", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: pubStageBool(true), Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}}}, stage, &events
 }
 func pubStageBool(v bool) *bool { return &v }
 
@@ -185,10 +185,10 @@ func TestPublicationStagingSuccessTransitionsInOrderAndClosesBeforeQuiescence(t 
 	}
 }
 
-func TestPublicationStagingRejectsOtherwiseValidV3BeforeStageWork(t *testing.T) {
+func TestPublicationStagingRejectsOtherwiseValidManualLyricsRewriteBeforeStageWork(t *testing.T) {
 	repo := &pubStageRepo{}
 	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
-	input.Version = persistence.PublicationInputsVersion3
+	input.Version = persistence.PublicationInputsVersion
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.Audio = nil
 	input.IntentKind = "rewrite"
@@ -201,17 +201,17 @@ func TestPublicationStagingRejectsOtherwiseValidV3BeforeStageWork(t *testing.T) 
 		State:                      "value", Value: "[00:01.00]lyric",
 	}
 	if err := input.Validate(); err != nil {
-		t.Fatalf("test V3 input must be otherwise valid: %v", err)
+		t.Fatalf("test manual-lyrics rewrite must be otherwise valid: %v", err)
 	}
 	if input.SupportsExecution() {
-		t.Fatal("V3 input unexpectedly supports execution")
+		t.Fatal("manual-lyrics rewrite unexpectedly supports generic execution")
 	}
 	_, err := runner.Run(context.Background(), scope, input, stage)
 	if err == nil || !strings.Contains(err.Error(), "does not support execution") {
 		t.Fatalf("Run error = %v, want unsupported execution", err)
 	}
 	if len(repo.phases) != 0 || repo.checks != 0 || len(*events) != 0 {
-		t.Fatalf("unsupported V3 performed staging work: phases=%v checks=%d events=%v", repo.phases, repo.checks, *events)
+		t.Fatalf("unsupported manual-lyrics rewrite performed staging work: phases=%v checks=%d events=%v", repo.phases, repo.checks, *events)
 	}
 }
 
@@ -391,7 +391,7 @@ func TestPublicationStagingRejectsUnsupervisedRealValidatorPointer(t *testing.T)
 func TestPublicationStagingRejectsInvalidFrozenInputsBeforeMutation(t *testing.T) {
 	repo := &pubStageRepo{}
 	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
-	input.Version++
+	input.Audio.RelativePath = ""
 	if _, err := runner.Run(context.Background(), scope, input, stage); err == nil {
 		t.Fatal("expected invalid frozen inputs")
 	}

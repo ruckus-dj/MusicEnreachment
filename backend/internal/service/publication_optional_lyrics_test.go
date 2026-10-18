@@ -21,6 +21,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 type optionalLyricsTestStage struct{ path string }
@@ -59,9 +60,10 @@ func runOptionalLyricsTest(t *testing.T, writer PublicationMetadataWriter, reade
 	reservation := scope.reserveSynchronousWork()
 	path := filepath.Join(t.TempDir(), "output.flac")
 	input := persistence.PublicationInputs{
-		Version:      persistence.PublicationInputsVersion3,
-		ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics},
-		DesiredTags:  map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}},
+		Version:              persistence.PublicationInputsVersion,
+		QualityPolicyVersion: publication.QualityPolicyVersion,
+		ManualLyrics:         &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics},
+		DesiredTags:          map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}},
 	}
 	validations := 0
 	requirements := publicationOptionalLyricsRequirements{
@@ -143,7 +145,7 @@ func TestApplyOptionalLyricsPanicQuarantinesAndRetainsBorrowedReservation(t *tes
 		}
 	}()
 	_, _ = applyPublicationOptionalLyrics(context.Background(), scope, reservation, optionalLyricsTestStage{path}, persistence.PublicationInputs{
-		Version: persistence.PublicationInputsVersion3, ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: "[00:01.00]line\n"},
+		Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: "[00:01.00]line\n"},
 	}, optionalLyricsTestWriter{write: func(context.Context, string, map[string][]string) error { panic("writer panic") }}, optionalLyricsTestReader{}, publicationOptionalLyricsRequirements{
 		validateAudioAndAssets: func(context.Context, string) error { return nil },
 		restoreRequiredAssets:  func(context.Context, string, map[string][]string) error { return nil },
@@ -155,7 +157,7 @@ func TestApplyOptionalLyricsRejectsConcurrentBorrowWhileWriterBlocked(t *testing
 	scope := newScopeForTest(t, &scopeCommandFake{}, &scopeRepositoryFake{valid: true, marked: true})
 	reservation := scope.reserveSynchronousWork()
 	path := filepath.Join(t.TempDir(), "output.flac")
-	input := persistence.PublicationInputs{Version: persistence.PublicationInputsVersion3, ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: "[00:01.00]line\n"}}
+	input := persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: "[00:01.00]line\n"}}
 	writer := optionalLyricsTestWriter{write: func(context.Context, string, map[string][]string) error { close(entered); <-unblock; return nil }}
 	reader := optionalLyricsTestReader{read: func(context.Context, string, metadata.ReadRequest) (metadata.Capture, error) {
 		return metadata.Capture{Tags: map[string][]string{"LYRICS": {"[00:01.00]line\n"}}}, nil
@@ -258,9 +260,10 @@ func TestApplyOptionalLyricsRealTagLibFLACRoundTrip(t *testing.T) {
 	}}
 	validations := 0
 	result, err := applyPublicationOptionalLyrics(context.Background(), scope, reservation, stage, persistence.PublicationInputs{
-		Version:      persistence.PublicationInputsVersion3,
-		ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics},
-		DesiredTags:  map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}},
+		Version:              persistence.PublicationInputsVersion,
+		QualityPolicyVersion: publication.QualityPolicyVersion,
+		ManualLyrics:         &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics},
+		DesiredTags:          map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}},
 	}, writer, reader, publicationOptionalLyricsRequirements{
 		validateAudioAndAssets: func(context.Context, string) error { validations++; return nil },
 		restoreRequiredAssets:  func(context.Context, string, map[string][]string) error { return nil },
@@ -535,9 +538,10 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 	restoreCalled := false
 	validations := 0
 	result, err := applyPublicationOptionalLyrics(ctx, scope, reservation, stage, persistence.PublicationInputs{
-		Version:      persistence.PublicationInputsVersion3,
-		ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics},
-		DesiredTags:  map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}},
+		Version:              persistence.PublicationInputsVersion,
+		QualityPolicyVersion: publication.QualityPolicyVersion,
+		ManualLyrics:         &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics},
+		DesiredTags:          map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}},
 	}, writer, reader, publicationOptionalLyricsRequirements{
 		validateAudioAndAssets: func(ctx context.Context, path string) error {
 			validations++

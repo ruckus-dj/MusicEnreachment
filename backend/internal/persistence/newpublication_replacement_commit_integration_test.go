@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func TestCommitReplacementPublicationPostgreSQL(t *testing.T) {
@@ -16,7 +17,7 @@ func TestCommitReplacementPublicationPostgreSQL(t *testing.T) {
 	f, intent, staged := readyPublicationExposureFixture(t)
 	repo := NewSetupManagerRepository(f.db)
 	staged.ActualAssets = json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`)
-	staged.QualityPolicyVersion = 1
+	staged.QualityPolicyVersion = publication.QualityPolicyVersion
 	staged.ActualMetadata = json.RawMessage(`{"version":1,"tags":{"TITLE":["replacement"]}}`)
 	attempt, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
 	if err != nil {
@@ -54,7 +55,7 @@ func TestCommitReplacementPublicationPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputs.Version, inputs.QualityPolicyVersion = PublicationInputsVersion2, 1
+	inputs.Version, inputs.QualityPolicyVersion = PublicationInputsVersion, publication.QualityPolicyVersion
 	currentGeneration := uuid.New()
 	identity := PublicationFileIdentity{SizeBytes: int64Pointer(10), MTime: int64Pointer(20), SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	facts := inputs.Audio.AudioFacts

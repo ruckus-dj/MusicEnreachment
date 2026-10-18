@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func TestOptionalLyricsRebuiltRemovalRequiresObservedAbsence(t *testing.T) {
 	_, prep, evidence, guard := optionalLyricsRebuildFixture()
 	input := publicationInputsFixture(t, "rewrite")
-	input.Version = PublicationInputsVersion3
-	input.QualityPolicyVersion = 1
+	input.Version = PublicationInputsVersion
+	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.ManualLyrics = &PublicationManualLyricsInput{State: "explicit_empty", ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration}
 	input.Rewrite.Ownership = clonePublicationFileIdentity(evidence.InputIdentity)
 	input.Rewrite.Ownership.MTime = prep.InputMTime

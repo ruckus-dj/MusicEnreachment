@@ -124,7 +124,7 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 }
 
 func validManualLyricsFLACRewrite(input PublicationInputs) bool {
-	return input.Version == PublicationInputsVersion3 && input.QualityPolicyVersion == publication.QualityPolicyVersion &&
+	return input.Version == PublicationInputsVersion && input.QualityPolicyVersion == publication.QualityPolicyVersion &&
 		input.IntentKind == "rewrite" && input.Rewrite != nil && input.ManualLyrics != nil && input.Audio == nil &&
 		input.Format == publication.AudioFormatSource && input.Rewrite.AudioFacts.Container == publication.AudioContainerFLAC &&
 		input.Rewrite.AudioFacts.Codec == "flac" && input.Rewrite.AudioFacts.SupportedSourceContainer && input.Rewrite.Ownership.SHA256 != ""

@@ -104,7 +104,7 @@ func manualLyricsFallbackStageFixture(t *testing.T) (PublicationDeliveryGuard, P
 	t.Helper()
 	rebuilds, ready, evidence, guard := optionalLyricsRebuildFixture()
 	input := publicationInputsFixture(t, "rewrite")
-	input.Version = PublicationInputsVersion3
+	input.Version = PublicationInputsVersion
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.Format = publication.AudioFormatSource
 	input.Rewrite.RelativePath = "Artist/Album/track.flac"

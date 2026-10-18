@@ -370,12 +370,26 @@ func validateCanonicalReplacementPrefix(raw json.RawMessage, guard PublicationDe
 }
 
 func validateCanonicalReplacementPrefixRaw(entries []json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt) (canonicalReplacementPrefix, bool) {
+	if len(entries) < 11 {
+		return canonicalReplacementPrefix{}, false
+	}
+	p, ok := validateCanonicalReplacementPrefixSharedRaw(entries[:10], guard, attempt)
+	if !ok || decodeStrictJSON(entries[10], &p.commit) != nil || p.commit.Version != replacementPublicationCommitVersion || p.commit.ManualLyricsReceipt != nil || p.commit.Kind != "publication_replacement_commit" || p.commit.Guard != guard || p.commit.PositionID != attempt.PositionID || p.commit.Epoch != attempt.Epoch || p.commit.ExpectedGeneration != *attempt.ExpectedGeneration || p.commit.CandidateGeneration != attempt.CandidateGeneration || !currentIsCandidate(p.commit.Projection, attempt) {
+		return canonicalReplacementPrefix{}, false
+	}
+	return p, true
+}
+
+// validateCanonicalReplacementPrefixSharedRaw validates the semantic replacement
+// prefix shared by ordinary and manual-lyrics commits, without interpreting the
+// contract-specific terminal commit witness.
+func validateCanonicalReplacementPrefixSharedRaw(entries []json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt) (canonicalReplacementPrefix, bool) {
 	var p canonicalReplacementPrefix
-	if len(entries) < 11 || attempt == nil || attempt.ExpectedGeneration == nil {
+	if len(entries) != 10 || attempt == nil || attempt.ExpectedGeneration == nil {
 		return p, false
 	}
-	want := []string{"publication_preparation", "publication_preparation", "publication_preparation", "stage_observation", "stage_observation", "publication_exposure", "publication_replacement", "publication_replacement", "publication_replacement", "publication_replacement", "publication_replacement_commit"}
-	for i, raw := range entries[:11] {
+	want := []string{"publication_preparation", "publication_preparation", "publication_preparation", "stage_observation", "stage_observation", "publication_exposure", "publication_replacement", "publication_replacement", "publication_replacement", "publication_replacement"}
+	for i, raw := range entries {
 		var h struct {
 			Kind string `json:"kind"`
 		}
@@ -424,9 +438,6 @@ func validateCanonicalReplacementPrefixRaw(entries []json.RawMessage, guard Publ
 		}
 	}
 	if p.replacement[0].From != "exposing" || p.replacement[0].To != "backup_intent" || p.replacement[1].To != "backup_ready" || p.replacement[2].To != "replacement_intent" || p.replacement[3].To != "installed" {
-		return p, false
-	}
-	if decodeStrictJSON(entries[10], &p.commit) != nil || p.commit.Version != replacementPublicationCommitVersion || p.commit.ManualLyricsReceipt != nil || p.commit.Kind != "publication_replacement_commit" || p.commit.Guard != guard || p.commit.PositionID != attempt.PositionID || p.commit.Epoch != attempt.Epoch || p.commit.ExpectedGeneration != *attempt.ExpectedGeneration || p.commit.CandidateGeneration != attempt.CandidateGeneration || !currentIsCandidate(p.commit.Projection, attempt) {
 		return p, false
 	}
 	return p, true

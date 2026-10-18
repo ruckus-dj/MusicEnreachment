@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"testing"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func TestCommitFirstPublicationAndQuiescePostgreSQL(t *testing.T) {
@@ -98,7 +100,7 @@ func readyFirstPublicationCommitFixture(t *testing.T) (publicationExecutionFixtu
 	f, intent, staged := readyPublicationExposureFixture(t)
 	repo := NewSetupManagerRepository(f.db)
 	staged.ActualAssets = json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`)
-	staged.QualityPolicyVersion = 1
+	staged.QualityPolicyVersion = publication.QualityPolicyVersion
 	staged.ActualMetadata = json.RawMessage(`{"version":1,"tags":{"TITLE":["Track"]}}`)
 	attempt, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
 	if err != nil {
@@ -135,8 +137,8 @@ func readyFirstPublicationCommitFixture(t *testing.T) (publicationExecutionFixtu
 	if err != nil {
 		t.Fatal(err)
 	}
-	input.Version = PublicationInputsVersion2
-	input.QualityPolicyVersion = 1
+	input.Version = PublicationInputsVersion
+	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	frozen, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)

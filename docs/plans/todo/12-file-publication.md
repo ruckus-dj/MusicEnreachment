@@ -11,6 +11,17 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем refactor-срезе publication inputs сведены к одному
+current envelope: marker 1, обязательная current quality policy, audio/rewrite
+и optional manual-lyrics authority вместо V1/V2/V3 dispatch. Compatibility
+constants/readers удалены; generic/private capability boundaries сохранены по
+семантике. Manual commit parser больше не фабрикует ordinary witness без receipt:
+общий validator получает исходные десять shared records. Прежние frozen inputs
+не переписываются, миграции и локальная БД не сбрасываются. Полный локальный
+`task verify` прошёл; review выявленный policy replay gap исправлен и покрыт
+реальным committed-journal regression. Native CI ещё не проверен;
+это не завершение publication worker/recovery/UI.
+
 Текущее уточнение владельца снимает обязательный process-tree containment gate:
 для команды достаточно дождаться основного процесса. Добавлен Linux/macOS
 backend с cancellation и ограниченным ожиданием inherited output pipes;

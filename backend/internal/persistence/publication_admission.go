@@ -86,8 +86,8 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	if input.IntentKind != request.IntentKind || !samePublicationTools(request.Tools, input.Tools) {
 		return uuid.Nil, fmt.Errorf("admit publication: request conflicts with frozen publication inputs")
 	}
-	if input.Version == PublicationInputsVersion3 && (!request.validatedManualLyrics || request.manualLyrics == nil) || request.validatedManualLyrics && input.Version != PublicationInputsVersion3 {
-		return uuid.Nil, fmt.Errorf("admit publication: V3 inputs require validated manual lyrics admission")
+	if input.ManualLyrics != nil && (!request.validatedManualLyrics || request.manualLyrics == nil) || request.validatedManualLyrics && input.ManualLyrics == nil {
+		return uuid.Nil, fmt.Errorf("admit publication: manual lyrics inputs require validated admission")
 	}
 	if request.IntentKind == "audio" {
 		if request.Source == nil || !publicationSourceMatchesInput(*request.Source, *input.Audio) {

@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strings"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 // canonicalManualLyricsCommitPrefix is the validated, immutable V3 rewrite
@@ -80,9 +82,10 @@ func parseCanonicalManualLyricsCommitPrefix(entries []json.RawMessage, guard Pub
 		return p, false
 	}
 
-	// Reconstruct the V2 canonical base in its established ordering and reuse its
-	// full identity/transition checks without relaxing that parser's contract.
-	base := make([]json.RawMessage, 11)
+	// Reconstruct the shared ten-record semantic prefix in canonical order. The
+	// manual commit witness remains the original journal record and is validated
+	// below under its own receipt-bearing contract.
+	base := make([]json.RawMessage, 10)
 	copy(base[:3], entries[:3])
 	copy(base[3:5], entries[idx:idx+2])
 	copy(base[5:10], entries[idx+2:idx+7])
@@ -91,18 +94,10 @@ func parseCanonicalManualLyricsCommitPrefix(entries []json.RawMessage, guard Pub
 	if decodeStrictJSON(entries[commitIndex], &commit) != nil || commit.Version != replacementManualLyricsCommitVersion || commit.ManualLyricsReceipt == nil {
 		return p, false
 	}
-	// The V2 checker only validates the shared projection and records. Adapt its
-	// terminal witness locally, then independently validate the V3 receipt below.
-	adapted := commit
-	adapted.Version = replacementPublicationCommitVersion
-	adapted.ManualLyricsReceipt = nil
-	base[10], _ = json.Marshal(adapted)
-	shared, ok := validateCanonicalReplacementPrefixRaw(base, guard, attempt)
+	shared, ok := validateCanonicalReplacementPrefixSharedRaw(base, guard, attempt)
 	if !ok {
 		return p, false
 	}
-	// The adapted check uses frozen inputs, which are V3; baseline identity
-	// validation depends only on the rewrite contract, copied through the intent.
 	p.Preparation = shared.preparation
 	p.Exposure = shared.exposure
 	p.Replacement = shared.replacement
@@ -117,16 +112,16 @@ func parseCanonicalManualLyricsCommitPrefix(entries []json.RawMessage, guard Pub
 	// This verification context is not an execution input. The immutable old
 	// projection and recorded manual intent survive consumption of frozen inputs.
 	manual := p.Outcome.ManualLyrics
-	attemptInputs := PublicationInputs{Version: PublicationInputsVersion3, IntentKind: "rewrite", QualityPolicyVersion: old.QualityPolicyVersion, ManualLyrics: &manual,
+	attemptInputs := PublicationInputs{Version: PublicationInputsVersion, IntentKind: "rewrite", QualityPolicyVersion: old.QualityPolicyVersion, ManualLyrics: &manual,
 		Rewrite: &PublicationRewriteInput{CurrentGeneration: old.Generation, RelativePath: old.RelativePath, Ownership: oldOwnership.Identity, AudioFacts: oldAudio.Facts}}
 	if attempt.FrozenInputs != nil {
 		frozen, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || frozen.Version != PublicationInputsVersion3 || frozen.ManualLyrics == nil || *frozen.ManualLyrics != manual || !publicationRewriteMatchesCurrent(old, attempt.Epoch, *frozen.Rewrite) {
+		if err != nil || frozen.Version != PublicationInputsVersion || frozen.ManualLyrics == nil || *frozen.ManualLyrics != manual || frozen.QualityPolicyVersion != old.QualityPolicyVersion || !publicationRewriteMatchesCurrent(old, attempt.Epoch, *frozen.Rewrite) {
 			return p, false
 		}
 		attemptInputs = frozen
 	}
-	if !validOptionalLyricsOutcomeRecord(p.Outcome, guard, attemptInputs) || !samePublicationStageObservation(p.Outcome.FinalObservation, p.Exposure.Observation) ||
+	if attemptInputs.QualityPolicyVersion != publication.QualityPolicyVersion || !validOptionalLyricsOutcomeRecord(p.Outcome, guard, attemptInputs) || !samePublicationStageObservation(p.Outcome.FinalObservation, p.Exposure.Observation) ||
 		!samePublicationExposureJSON(p.Replacement[0].Identity, oldOwnership.Identity) ||
 		!sameCopiedBackupIdentity(p.Replacement[0].BackupIdentity, *p.Preparation[2].CopiedInput, oldOwnership.Identity) {
 		return p, false

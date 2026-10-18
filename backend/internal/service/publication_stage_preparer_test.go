@@ -115,6 +115,7 @@ func newPublicationStageFixture(t *testing.T) publicationStageFixture {
 	lossless := true
 	holdID := uuid.New()
 	input := persistence.PublicationInputs{
+		Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
 		IntentKind: "audio", Format: "source", Audio: &persistence.PublicationAudioInput{
 			InventoryRootPath: sourceRoot, RelativePath: filepath.ToSlash(filepath.Join("album", "track.flac")), SizeBytes: info.Size(), MTime: mtime,
 			AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true},
@@ -153,6 +154,7 @@ func makeRewriteFixture(t *testing.T) publicationStageFixture {
 	digest := sha256.Sum256(contents)
 	lossless := false
 	fixture.repo.input = persistence.PublicationInputs{
+		Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
 		IntentKind: "rewrite", Format: "source", Rewrite: &persistence.PublicationRewriteInput{
 			CurrentGeneration: uuid.New(), RelativePath: "current.mp3",
 			Ownership:  persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])},

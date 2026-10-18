@@ -133,7 +133,7 @@ func TestRunReplacementPublicationCompletesNativeUnixReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := fixture.repo.input
-	input.Version = persistence.PublicationInputsVersion2
+	input.Version = persistence.PublicationInputsVersion
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.DesiredTags = map[string][]string{}
 	input.Tools = selections

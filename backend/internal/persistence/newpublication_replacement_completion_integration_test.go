@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func TestSettleReplacementPublicationPostgreSQL(t *testing.T) {
@@ -16,7 +17,7 @@ func TestSettleReplacementPublicationPostgreSQL(t *testing.T) {
 	f, intent, staged := readyPublicationExposureFixture(t)
 	repo := NewSetupManagerRepository(f.db)
 	staged.ActualAssets = json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`)
-	staged.QualityPolicyVersion = 1
+	staged.QualityPolicyVersion = publication.QualityPolicyVersion
 	staged.ActualMetadata = json.RawMessage(`{"version":1,"tags":{"TITLE":["replacement"]}}`)
 	attempt, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
 	if err != nil {
@@ -68,7 +69,7 @@ func TestSettleReplacementPublicationPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputs.Version, inputs.QualityPolicyVersion = PublicationInputsVersion2, 1
+	inputs.Version, inputs.QualityPolicyVersion = PublicationInputsVersion, publication.QualityPolicyVersion
 	currentGeneration := uuid.New()
 	oldSize := *staged.Ownership.ExpectedSize + 1
 	inputs.Audio.SizeBytes = oldSize

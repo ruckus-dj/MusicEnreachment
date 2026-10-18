@@ -72,7 +72,7 @@ func applyAndRecordPublicationManualLyrics(
 	finalObservationAuthority func(context.Context, string, persistence.PublicationInputs) (persistence.PublicationStageObservation, error),
 ) (publicationOptionalLyricsResult, error) {
 	prepared, ok := stage.(*preparedPublicationStage)
-	if !ok || prepared == nil || prepared.repository == nil || finalObservationAuthority == nil || input.Version != persistence.PublicationInputsVersion3 || input.ManualLyrics == nil || input.Rewrite == nil {
+	if !ok || prepared == nil || prepared.repository == nil || finalObservationAuthority == nil || input.Version != persistence.PublicationInputsVersion || input.ManualLyrics == nil || input.Rewrite == nil {
 		return publicationOptionalLyricsResult{}, errors.New("V3 optional lyrics evidence authority is unavailable")
 	}
 	repo, ok := prepared.repository.(publicationOptionalLyricsOutcomeRepository)
@@ -869,7 +869,7 @@ func validateOptionalLyricsRequest(
 	if scope == nil || reservation == nil || stage == nil || writer == nil || reader == nil || requirements.validateAudioAndAssets == nil || requirements.restoreRequiredAssets == nil {
 		return errors.New("optional lyrics publication dependencies are unavailable")
 	}
-	if input.Version != persistence.PublicationInputsVersion3 || input.ManualLyrics == nil {
+	if input.Version != persistence.PublicationInputsVersion || input.ManualLyrics == nil {
 		return errors.New("optional lyrics helper requires frozen V3 manual lyrics input")
 	}
 	scope.mu.Lock()

@@ -179,12 +179,6 @@ func AssessFirstPublicationCommit(attempt TrackPublicationAttempt, operation Pub
 		missing = removeCommitRequirement(missing, "asset_outcomes")
 	}
 	if validated.QualityPolicyVersion != 0 {
-		if input.Version == PublicationInputsVersion {
-			return FirstPublicationCommitProjection{}, errors.New("publication stage claims quality policy provenance for version 1 inputs")
-		}
-		if input.Version != PublicationInputsVersion2 {
-			return FirstPublicationCommitProjection{}, errors.New("publication stage has unsupported frozen input version")
-		}
 		if validated.QualityPolicyVersion != input.QualityPolicyVersion {
 			return FirstPublicationCommitProjection{}, errors.New("publication stage quality policy provenance contradicts frozen inputs")
 		}

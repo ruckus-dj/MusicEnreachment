@@ -32,7 +32,7 @@ func (repository *SetupManagerRepository) AdmitManualLyricsRewrite(ctx context.C
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("admit manual lyrics rewrite: %w", err)
 	}
-	if input.Version != PublicationInputsVersion3 || input.IntentKind != "rewrite" || input.ManualLyrics == nil || request.IntentKind != "rewrite" || request.Source != nil || request.ExpectedReleaseID == uuid.Nil {
+	if input.Version != PublicationInputsVersion || input.IntentKind != "rewrite" || input.ManualLyrics == nil || request.IntentKind != "rewrite" || request.Source != nil || request.ExpectedReleaseID == uuid.Nil {
 		return uuid.Nil, fmt.Errorf("admit manual lyrics rewrite: V3 source-free rewrite input is required")
 	}
 	if input.ManualLyrics.ExpectedMetadataRevision != request.ExpectedMetadataRevision || input.ManualLyrics.ConfirmedCurrentGeneration != input.Rewrite.CurrentGeneration {
@@ -46,7 +46,7 @@ func (repository *SetupManagerRepository) AdmitManualLyricsRewrite(ctx context.C
 }
 
 func validateManualLyricsAdmission(ctx context.Context, tx bun.Tx, request PublicationAdmission, input *PublicationInputs, current TrackPublication) error {
-	if input == nil || input.ManualLyrics == nil || input.Version != PublicationInputsVersion3 {
+	if input == nil || input.ManualLyrics == nil || input.Version != PublicationInputsVersion {
 		return fmt.Errorf("admit manual lyrics rewrite: V3 manual lyrics input is required")
 	}
 	if input.ManualLyrics.ExpectedMetadataRevision != request.metadataRevision || input.ManualLyrics.ConfirmedCurrentGeneration != current.Generation {

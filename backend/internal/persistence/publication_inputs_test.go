@@ -19,7 +19,7 @@ func publicationInputsFixture(t *testing.T, intent string) PublicationInputs {
 	bitDepth := 16
 	installation := uuid.New()
 	input := PublicationInputs{
-		Version: PublicationInputsVersion, IntentKind: intent,
+		Version: PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: intent,
 		Format:      publication.AudioFormatMKA,
 		DesiredTags: map[string][]string{"title": {"Track"}, "comment": {}},
 		Tools: []SourceAnalysisToolSelection{
@@ -43,10 +43,8 @@ func publicationInputsFixture(t *testing.T, intent string) PublicationInputs {
 	return input
 }
 
-func TestPublicationInputsV3RequiresExactNonEmptySyncedLyrics(t *testing.T) {
+func TestPublicationInputsManualLyricsRequiresExactNonEmptySyncedLyrics(t *testing.T) {
 	input := publicationInputsFixture(t, "rewrite")
-	input.Version = PublicationInputsVersion3
-	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.ManualLyrics = &PublicationManualLyricsInput{
 		State: "value", Value: "[ar:日本語]\r\n[00:01.00]Привет\r\n",
 		ExpectedMetadataRevision: 4, ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration,
@@ -58,7 +56,7 @@ func TestPublicationInputsV3RequiresExactNonEmptySyncedLyrics(t *testing.T) {
 	}
 	decoded, err := DecodePublicationInputs(raw)
 	if err != nil {
-		t.Fatalf("decode valid V3 inputs: %v", err)
+		t.Fatalf("decode valid manual-lyrics inputs: %v", err)
 	}
 	if decoded.ManualLyrics.Value != input.ManualLyrics.Value {
 		t.Fatalf("manual lyrics changed during decode: got %q, want %q", decoded.ManualLyrics.Value, input.ManualLyrics.Value)
@@ -80,13 +78,36 @@ func TestPublicationInputsV3RequiresExactNonEmptySyncedLyrics(t *testing.T) {
 }
 
 func TestPublicationInputsExecutionSupport(t *testing.T) {
-	for _, version := range []int{PublicationInputsVersion, PublicationInputsVersion2} {
-		if !(PublicationInputs{Version: version}).SupportsExecution() {
-			t.Errorf("version %d should support execution", version)
-		}
+	input := publicationInputsFixture(t, "audio")
+	if !input.SupportsExecution() {
+		t.Error("canonical audio inputs should support execution")
 	}
-	if (PublicationInputs{Version: PublicationInputsVersion3}).SupportsExecution() {
-		t.Error("version 3 admission inputs must not support execution")
+	manual := publicationInputsFixture(t, "rewrite")
+	manual.ManualLyrics = &PublicationManualLyricsInput{State: "explicit_empty", ConfirmedCurrentGeneration: manual.Rewrite.CurrentGeneration}
+	if manual.SupportsExecution() {
+		t.Error("manual-lyrics inputs must use private execution capability")
+	}
+}
+
+func TestPublicationInputsCanonicalManualLyricsReceipt(t *testing.T) {
+	input := publicationInputsFixture(t, "rewrite")
+	input.ManualLyrics = &PublicationManualLyricsInput{
+		State: "explicit_empty", ExpectedMetadataRevision: 0,
+		ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration,
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("explicit-empty manual receipt rejected: %v", err)
+	}
+
+	input.DesiredTags["LYRICS"] = []string{"mandatory lyrics"}
+	if err := input.Validate(); err == nil {
+		t.Fatal("manual lyrics were allowed in mandatory desired tags")
+	}
+
+	ordinary := publicationInputsFixture(t, "audio")
+	ordinary.DesiredTags["LYRICS"] = []string{"ordinary lyrics tag"}
+	if err := ordinary.Validate(); err != nil {
+		t.Fatalf("ordinary lyrics desired tag rejected without manual receipt: %v", err)
 	}
 }
 
@@ -127,25 +148,20 @@ func TestPublicationInputsRoundTripAudioAndRewrite(t *testing.T) {
 	}
 }
 
-func TestPublicationInputsQualityPolicyVersioning(t *testing.T) {
-	legacy := publicationInputsFixture(t, "audio")
-	if err := legacy.Validate(); err != nil {
-		t.Fatalf("version 1 inputs without policy provenance rejected: %v", err)
+func TestPublicationInputsRequireCurrentMarkerAndQualityPolicy(t *testing.T) {
+	for _, marker := range []int{0, 2, 3, 4} {
+		input := publicationInputsFixture(t, "audio")
+		input.Version = marker
+		if err := input.Validate(); err == nil {
+			t.Errorf("accepted unsupported marker %d", marker)
+		}
 	}
-	legacy.QualityPolicyVersion = 1
-	if err := legacy.Validate(); err == nil {
-		t.Fatal("version 1 inputs claimed quality policy provenance")
-	}
-
-	current := publicationInputsFixture(t, "audio")
-	current.Version = PublicationInputsVersion2
-	current.QualityPolicyVersion = publication.QualityPolicyVersion
-	if err := current.Validate(); err != nil {
-		t.Fatalf("version 2 inputs rejected: %v", err)
-	}
-	current.QualityPolicyVersion++
-	if err := current.Validate(); err == nil {
-		t.Fatal("unsupported quality policy version accepted")
+	for _, policy := range []int{0, publication.QualityPolicyVersion - 1, publication.QualityPolicyVersion + 1} {
+		input := publicationInputsFixture(t, "audio")
+		input.QualityPolicyVersion = policy
+		if err := input.Validate(); err == nil {
+			t.Errorf("accepted quality policy %d", policy)
+		}
 	}
 }
 

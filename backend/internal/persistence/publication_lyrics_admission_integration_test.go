@@ -75,7 +75,7 @@ func TestAdmitManualLyricsRewriteUsesCurrentMetadataAndCASPostgreSQL(t *testing.
 			t.Fatal(err)
 		}
 		input := publicationInputsFixture(t, "rewrite")
-		input.Version = PublicationInputsVersion3
+		input.Version = PublicationInputsVersion
 		input.QualityPolicyVersion = publication.QualityPolicyVersion
 		input.Tools = append([]SourceAnalysisToolSelection(nil), selections...)
 		input.Rewrite.CurrentGeneration = f.generation
@@ -90,7 +90,7 @@ func TestAdmitManualLyricsRewriteUsesCurrentMetadataAndCASPostgreSQL(t *testing.
 	}
 	newRequest := func(f fixture) ManualLyricsAdmission {
 		input := publicationInputsFixture(t, "rewrite")
-		input.Version = PublicationInputsVersion3
+		input.Version = PublicationInputsVersion
 		input.QualityPolicyVersion = publication.QualityPolicyVersion
 		input.Tools = append([]SourceAnalysisToolSelection(nil), selections...)
 		input.Rewrite.CurrentGeneration = f.generation

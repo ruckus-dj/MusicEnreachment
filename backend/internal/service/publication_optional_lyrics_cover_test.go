@@ -15,6 +15,7 @@ import (
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func TestApplyOptionalLyricsRealTagLibPreservesRequiredCover(t *testing.T) {
@@ -93,9 +94,10 @@ func TestApplyOptionalLyricsRealTagLibPreservesRequiredCover(t *testing.T) {
 	}}
 	validations, restores := 0, 0
 	result, err := applyPublicationOptionalLyrics(ctx, scope, reservation, stage, persistence.PublicationInputs{
-		Version:      persistence.PublicationInputsVersion3,
-		ManualLyrics: &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics},
-		DesiredTags:  mandatory,
+		Version:              persistence.PublicationInputsVersion,
+		QualityPolicyVersion: publication.QualityPolicyVersion,
+		ManualLyrics:         &persistence.PublicationManualLyricsInput{State: "value", Value: lyrics},
+		DesiredTags:          mandatory,
 	}, writer, reader, publicationOptionalLyricsRequirements{
 		validateAudioAndAssets: func(ctx context.Context, path string) error {
 			validations++

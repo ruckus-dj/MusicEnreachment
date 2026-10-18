@@ -304,8 +304,8 @@ func (p *FPCalc) run(parent context.Context, args []string) ([]byte, error) {
 		_ = process.kill()
 		_ = stdout.Close()
 		_ = stderr.Close()
-		<-waitResult
-		return nil, fmt.Errorf("fpcalc did not finish: %w", ctx.Err())
+		waitErr := <-waitResult
+		return nil, fmt.Errorf("fpcalc did not finish: %w", errors.Join(ctx.Err(), waitErr))
 	}
 	if waitErr != nil {
 		if ctx.Err() != nil {

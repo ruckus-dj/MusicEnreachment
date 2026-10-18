@@ -62,7 +62,7 @@ func (repository *SetupManagerRepository) CommitFirstPublication(ctx context.Con
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || input.Version != PublicationInputsVersion2 || input.IntentKind != "audio" {
+		if err != nil || !input.SupportsExecution() || input.IntentKind != "audio" {
 			return nil
 		}
 		projection, err := AssessFirstPublicationCommit(*attempt, PublicationCommitOperationSnapshot{State: operation.State, Stage: operation.Stage}, nil, guard)

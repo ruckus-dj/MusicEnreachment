@@ -90,11 +90,11 @@ func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard pers
 	if !valid {
 		return nil, errors.New("publication delivery is stale")
 	}
-	if input.Version == persistence.PublicationInputsVersion3 && !manualLyricsFLAC {
-		return nil, errors.New("V3 publication inputs require the private manual lyrics FLAC preparation path")
+	if input.ManualLyrics != nil && !manualLyricsFLAC {
+		return nil, errors.New("manual lyrics publication inputs require the private preparation path")
 	}
-	if manualLyricsFLAC && (input.Version != persistence.PublicationInputsVersion3 || input.IntentKind != "rewrite" || input.Rewrite == nil || input.ManualLyrics == nil || input.Format != publication.AudioFormatSource || input.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC) {
-		return nil, errors.New("private manual lyrics preparation requires a V3 FLAC rewrite")
+	if manualLyricsFLAC && (input.Version != persistence.PublicationInputsVersion || input.QualityPolicyVersion != publication.QualityPolicyVersion || input.IntentKind != "rewrite" || input.Rewrite == nil || input.ManualLyrics == nil || input.Format != publication.AudioFormatSource || input.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC) {
+		return nil, errors.New("private manual lyrics preparation requires a current FLAC rewrite")
 	}
 	var sourceRootPath, sourceRelativePath string
 	var sourceSize int64

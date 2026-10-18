@@ -15,7 +15,7 @@ func preparingManualLyricsFLACFixture(t *testing.T) (publicationExecutionFixture
 	t.Helper()
 	ctx := context.Background()
 	f, repo, input, _, _ := prepareManualLyricsCommitFixture(t)
-	input.Version = PublicationInputsVersion3
+	input.Version = PublicationInputsVersion
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.Format = publication.AudioFormatSource
 	input.ManualLyrics = &PublicationManualLyricsInput{
@@ -82,7 +82,7 @@ func TestPublicationManualLyricsPreparationInputsAcceptsCurrentFLACRewritePostgr
 	if err != nil || !ok {
 		t.Fatalf("manual preparation = ok:%v err:%v", ok, err)
 	}
-	if got.Version != PublicationInputsVersion3 || got.Rewrite == nil || got.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC {
+	if got.Version != PublicationInputsVersion || got.Rewrite == nil || got.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC {
 		t.Fatalf("manual preparation returned unexpected inputs: %+v", got)
 	}
 	// Returned snapshots must not alias the decoded/frozen input's mutable maps.

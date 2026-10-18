@@ -161,8 +161,8 @@ func prepareAndAdmitPrivateManualLyricsExposure(ctx context.Context, scope *Publ
 	if attempt == nil || attempt.OperationID != scope.guard.OperationID || attempt.Phase != "validated" {
 		return nil, errors.New("manual lyrics publication attempt is not validated")
 	}
-	var inputs persistence.PublicationInputs
-	if err := strictExposureJSON(attempt.FrozenInputs, &inputs); err != nil || inputs.Version != persistence.PublicationInputsVersion3 || inputs.Rewrite == nil {
+	inputs, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
+	if err != nil || inputs.Version != persistence.PublicationInputsVersion || inputs.ManualLyrics == nil || inputs.Rewrite == nil {
 		return nil, errors.New("frozen manual lyrics publication inputs are invalid")
 	}
 	inputs = inputs.Clone()

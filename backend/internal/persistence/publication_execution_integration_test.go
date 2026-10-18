@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -21,7 +22,10 @@ type publicationExecutionFixture struct {
 func newValidPublicationStageObservation() PublicationStageObservation {
 	return PublicationStageObservation{
 		Version: 1, RelativePath: "album/track.flac", PayloadSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		ActualAudio: json.RawMessage(`{"codec":"flac"}`), ActualMetadata: json.RawMessage(`{"title":"track"}`),
+		ActualAudio:          json.RawMessage(`{"version":1,"facts":{"stream_index":0,"codec":"flac","lossless":true,"container":"flac","supported_source_container":true}}`),
+		ActualMetadata:       json.RawMessage(`{"version":1,"tags":{"title":["track"]}}`),
+		ActualAssets:         json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`),
+		QualityPolicyVersion: publication.QualityPolicyVersion,
 	}
 }
 

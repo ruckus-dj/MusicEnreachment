@@ -93,11 +93,11 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err == nil && input.Version == PublicationInputsVersion3 {
+		if err == nil && input.ManualLyrics != nil {
 			committed, err = commitManualLyricsReplacementTx(ctx, tx, guard, attempt, current, input)
 			return err
 		}
-		if err != nil || input.Version != PublicationInputsVersion2 || input.IntentKind != "rewrite" || input.Rewrite == nil || input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration {
+		if err != nil || !input.SupportsExecution() || input.IntentKind != "rewrite" || input.Rewrite == nil || input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration {
 			return nil
 		}
 		entries, err := decodeJournal(attempt.MutationJournal)

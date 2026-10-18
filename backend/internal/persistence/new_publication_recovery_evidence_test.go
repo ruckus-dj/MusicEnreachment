@@ -148,7 +148,7 @@ func TestAssessPublicationRecoveryEvidenceRequiresOperationIdentity(t *testing.T
 
 func TestAssessPublicationRecoveryEvidenceRequiresUniqueCommittedWitness(t *testing.T) {
 	assets := json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`)
-	attempt, operation, guard := publicationCommitEvidenceV2Fixture(t, PublicationInputsVersion2, publication.QualityPolicyVersion, assets, publication.QualityPolicyVersion)
+	attempt, operation, guard := publicationCommitEvidenceFixture(t, PublicationInputsVersion, publication.QualityPolicyVersion, assets, publication.QualityPolicyVersion)
 	projection, err := AssessFirstPublicationCommit(attempt, operation, nil, guard)
 	if err != nil {
 		t.Fatal(err)

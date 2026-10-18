@@ -34,7 +34,7 @@ func TestGuardedRecordPublicationOptionalLyricsOutcomePostgreSQL(t *testing.T) {
 	const lyrics = "[ar:Artist]\r\n[00:01.00]Words\r\n"
 	const revision = int64(7)
 	input := publicationInputsFixture(t, "rewrite")
-	input.Version = PublicationInputsVersion3
+	input.Version = PublicationInputsVersion
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.Rewrite.CurrentGeneration = generationID
 	input.ManualLyrics = &PublicationManualLyricsInput{ExpectedMetadataRevision: revision, ConfirmedCurrentGeneration: generationID, State: "value", Value: lyrics}

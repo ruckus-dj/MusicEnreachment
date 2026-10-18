@@ -8,7 +8,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
-func publicationCommitEvidenceV2Fixture(t *testing.T, version, policy int, assets json.RawMessage, observationPolicy int) (TrackPublicationAttempt, PublicationCommitOperationSnapshot, PublicationDeliveryGuard) {
+func publicationCommitEvidenceFixture(t *testing.T, version, policy int, assets json.RawMessage, observationPolicy int) (TrackPublicationAttempt, PublicationCommitOperationSnapshot, PublicationDeliveryGuard) {
 	t.Helper()
 	attempt, operation, guard := commitEvidenceFixture(t)
 	input, err := DecodePublicationInputs(attempt.FrozenInputs)
@@ -73,12 +73,11 @@ func TestAssessFirstPublicationCommitSeparatesAssetAndPolicyEvidence(t *testing.
 		observation int
 		want        []string
 	}{
-		{name: "v1 valid assets do not prove policy", version: PublicationInputsVersion, assets: validAssets, want: []string{"quality_policy_provenance", "namespace_revalidation", "live_delivery_fence"}},
-		{name: "v2 valid matching assets and policy", version: PublicationInputsVersion2, policy: publication.QualityPolicyVersion, assets: validAssets, observation: publication.QualityPolicyVersion, want: []string{"namespace_revalidation", "live_delivery_fence"}},
+		{name: "current valid matching assets and policy", version: PublicationInputsVersion, policy: publication.QualityPolicyVersion, assets: validAssets, observation: publication.QualityPolicyVersion, want: []string{"namespace_revalidation", "live_delivery_fence"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			attempt, operation, guard := publicationCommitEvidenceV2Fixture(t, test.version, test.policy, test.assets, test.observation)
+			attempt, operation, guard := publicationCommitEvidenceFixture(t, test.version, test.policy, test.assets, test.observation)
 			got, err := AssessFirstPublicationCommit(attempt, operation, nil, guard)
 			if err != nil {
 				t.Fatal(err)
@@ -101,7 +100,7 @@ func TestAssessFirstPublicationCommitRejectsNullOrMismatchedAssetEvidence(t *tes
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			attempt, operation, guard := publicationCommitEvidenceV2Fixture(t, PublicationInputsVersion2, publication.QualityPolicyVersion, test.assets, test.observation)
+			attempt, operation, guard := publicationCommitEvidenceFixture(t, PublicationInputsVersion, publication.QualityPolicyVersion, test.assets, test.observation)
 			if _, err := AssessFirstPublicationCommit(attempt, operation, nil, guard); err == nil {
 				t.Fatal("invalid stage evidence was accepted")
 			}
@@ -110,7 +109,7 @@ func TestAssessFirstPublicationCommitRejectsNullOrMismatchedAssetEvidence(t *tes
 }
 
 func TestSamePublicationStageObservationComparesAssetEvidenceSemantically(t *testing.T) {
-	base := PublicationStageObservation{Version: 1, RelativePath: "stage/file", ActualAudio: json.RawMessage(`{"x":1}`), ActualMetadata: json.RawMessage(`{"tags":{}}`), ActualAssets: json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`), QualityPolicyVersion: 2}
+	base := PublicationStageObservation{Version: 1, RelativePath: "stage/file", ActualAudio: json.RawMessage(`{"x":1}`), ActualMetadata: json.RawMessage(`{"version":1,"tags":{}}`), ActualAssets: json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`), QualityPolicyVersion: publication.QualityPolicyVersion}
 	reordered := base
 	reordered.ActualAssets = json.RawMessage(` { "lyrics" : {"state":"absent"}, "cover":{"state":"absent"}, "version":1 } `)
 	if !samePublicationStageObservation(base, reordered) {

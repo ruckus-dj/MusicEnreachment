@@ -51,10 +51,10 @@ func (repository *SetupManagerRepository) BeginPublicationExposure(ctx context.C
 		if err != nil || !live {
 			return err
 		}
-		// V3's manual-lyrics exposure has its own exact journal grammar. Do not
+		// Manual-lyrics exposure has its own exact journal grammar. Do not
 		// let the generic replay scanner grant even idempotent exposure authority.
 		decoded, decodeErr := DecodePublicationInputs(attempt.FrozenInputs)
-		if decodeErr != nil || decoded.Version == PublicationInputsVersion3 {
+		if decodeErr != nil || !decoded.SupportsExecution() {
 			return nil
 		}
 		if attempt.Phase == "exposing" {
@@ -70,8 +70,7 @@ func (repository *SetupManagerRepository) BeginPublicationExposure(ctx context.C
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
 		if err != nil || !input.SupportsExecution() || input.IntentKind != attempt.IntentKind || operation.Stage != "validated" ||
-			input.Version == PublicationInputsVersion2 && (len(staged.ActualAssets) == 0 || staged.QualityPolicyVersion != input.QualityPolicyVersion) ||
-			input.Version == PublicationInputsVersion && staged.QualityPolicyVersion != 0 ||
+			len(staged.ActualAssets) == 0 || staged.QualityPolicyVersion != input.QualityPolicyVersion ||
 			!stageMatchesIntent(staged, intent) || !validatedStageJournalObservation(attempt.MutationJournal, staged) {
 			return nil
 		}

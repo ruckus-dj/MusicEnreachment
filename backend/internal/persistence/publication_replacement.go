@@ -54,7 +54,7 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 		}
 		// V3 replacement evidence has a separate, fully bound journal grammar.
 		// Do not let the generic writer recognize any part of it.
-		if input, decodeErr := DecodePublicationInputs(attempt.FrozenInputs); decodeErr == nil && input.Version == PublicationInputsVersion3 {
+		if input, decodeErr := DecodePublicationInputs(attempt.FrozenInputs); decodeErr == nil && input.ManualLyrics != nil {
 			return nil
 		}
 		if attempt.Phase != "exposing" || operation.Stage != "exposing" || attempt.IntentKind != "rewrite" || evidence.PositionID != attempt.PositionID || evidence.Epoch != attempt.Epoch || evidence.CandidateGeneration != attempt.CandidateGeneration || !sameOptionalUUID(evidence.ExpectedGeneration, attempt.ExpectedGeneration) || attempt.ExpectedGeneration == nil || evidence.Intent.Expectation != "expected_current" || evidence.Intent.TargetRelativePath == "" {
@@ -164,7 +164,7 @@ func (repository *SetupManagerRepository) GuardedRecordManualLyricsReplacement(c
 			return err
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || !validManualLyricsFLACRewrite(input) || input.Version != PublicationInputsVersion3 || input.Rewrite == nil ||
+		if err != nil || !validManualLyricsFLACRewrite(input) || input.Version != PublicationInputsVersion || input.Rewrite == nil ||
 			input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration || evidence.Intent.Expectation != "expected_current" || evidence.Intent.TargetRelativePath != input.Rewrite.RelativePath {
 			return nil
 		}

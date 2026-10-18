@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func TestCheckPublicationSourceHoldForDeliveryRequiresLiveAnchoredHoldPostgreSQL(t *testing.T) {
@@ -71,7 +72,7 @@ func TestCheckPublicationSourceHoldForDeliveryRequiresLiveAnchoredHoldPostgreSQL
 
 	var frozen PublicationInputs
 	frozen = PublicationInputs{
-		Version: PublicationInputsVersion, IntentKind: "audio", DesiredTags: map[string][]string{},
+		Version: PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", DesiredTags: map[string][]string{},
 		Format: "source", Tools: []SourceAnalysisToolSelection{
 			{PackageKind: "ffmpeg", InstallationID: uuid.New(), Executable: "ffmpeg", RelativePath: "bin/ffmpeg", Version: "1", VersionBanner: "ffmpeg version 1"},
 			{PackageKind: "ffmpeg", InstallationID: uuid.New(), Executable: "ffprobe", RelativePath: "bin/ffprobe", Version: "1", VersionBanner: "ffprobe version 1"},

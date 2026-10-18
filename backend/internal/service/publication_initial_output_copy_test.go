@@ -10,6 +10,7 @@ import (
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func preparedManualLyricsFLACStage(t *testing.T) (publicationStageFixture, *preparedPublicationStage, []byte) {
@@ -45,8 +46,8 @@ func preparedManualLyricsFLACStage(t *testing.T) (publicationStageFixture, *prep
 	digest := sha256.Sum256(contents)
 	fixture.repo.input.Rewrite.RelativePath = "current.flac"
 	fixture.repo.input.Rewrite.Ownership = persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])}
-	fixture.repo.input.Version = persistence.PublicationInputsVersion3
-	fixture.repo.input.QualityPolicyVersion = 1
+	fixture.repo.input.Version = persistence.PublicationInputsVersion
+	fixture.repo.input.QualityPolicyVersion = publication.QualityPolicyVersion
 	fixture.repo.input.Format = "source"
 	lossless := true
 	fixture.repo.input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true}

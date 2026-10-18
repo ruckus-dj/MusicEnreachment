@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture, *SetupManagerRepository, PublicationInputs, PublicationStageObservation, []json.RawMessage) {
@@ -28,7 +29,7 @@ func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture
 	oldGeneration := uuid.New()
 	oldIdentity := PublicationFileIdentity{SizeBytes: int64Pointer(10), MTime: int64Pointer(20), SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	facts := input.Audio.AudioFacts
-	input.Version, input.QualityPolicyVersion, input.IntentKind, input.Audio = PublicationInputsVersion2, 1, "rewrite", nil
+	input.Version, input.QualityPolicyVersion, input.IntentKind, input.Audio = PublicationInputsVersion, publication.QualityPolicyVersion, "rewrite", nil
 	input.Rewrite = &PublicationRewriteInput{CurrentGeneration: oldGeneration, RelativePath: intent.TargetRelativePath, Ownership: oldIdentity, AudioFacts: facts}
 	input.DesiredTags = map[string][]string{"TITLE": {"published title"}}
 	const lyrics = "[00:01.00]Привет\r\n[00:02.00]world\r\n"
@@ -37,7 +38,7 @@ func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture
 	staged.ActualAudio = mustJSON(PublicationCurrentAudio{Version: 1, Facts: facts})
 	staged.ActualMetadata = mustJSON(PublicationCommitMetadata{Version: 1, Tags: map[string][]string{"TITLE": {"published title"}, "LYRICS": {lyrics}}})
 	staged.ActualAssets = mustJSON(PublicationAssetOutcomes{Version: 1, Cover: PublicationCoverOutcome{State: PublicationAssetAbsent}, Lyrics: PublicationLyricsOutcome{State: PublicationAssetEmbedded, SHA256: lyricsHash, Format: "lrc"}})
-	staged.QualityPolicyVersion = 1
+	staged.QualityPolicyVersion = publication.QualityPolicyVersion
 	entries, err := decodeJournal(attempt.MutationJournal)
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +94,7 @@ func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture
 	}
 	// V3 filesystem execution is intentionally disabled. Seed its canonical
 	// evidence explicitly, without weakening execution gates, to test the DB commit.
-	input.Version = PublicationInputsVersion3
+	input.Version = PublicationInputsVersion
 	input.ManualLyrics = &PublicationManualLyricsInput{ExpectedMetadataRevision: 7, ConfirmedCurrentGeneration: oldGeneration, State: "value", Value: lyrics}
 	attempt, err = repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
 	if err != nil {

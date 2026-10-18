@@ -12,6 +12,7 @@ import (
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 type optionalLyricsV3Repository struct {
@@ -81,8 +82,8 @@ func TestApplyAndRecordPublicationManualLyricsUsesNativeEvidence(t *testing.T) {
 			digest := sha256.Sum256(contents)
 			fixture.repo.input.Rewrite.RelativePath = "current.flac"
 			fixture.repo.input.Rewrite.Ownership = persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])}
-			fixture.repo.input.Version = persistence.PublicationInputsVersion3
-			fixture.repo.input.QualityPolicyVersion = 1
+			fixture.repo.input.Version = persistence.PublicationInputsVersion
+			fixture.repo.input.QualityPolicyVersion = publication.QualityPolicyVersion
 			fixture.repo.input.Format = "source"
 			lossless := true
 			fixture.repo.input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true}
@@ -181,7 +182,7 @@ func TestApplyAndRecordPublicationManualLyricsUsesNativeEvidence(t *testing.T) {
 	}
 }
 
-func TestPublicationStagePreparerRejectsV3ThroughGenericReaderBeforeMutation(t *testing.T) {
+func TestPublicationStagePreparerRejectsManualLyricsThroughGenericReaderBeforeMutation(t *testing.T) {
 	fixture := makeRewriteFixture(t)
 	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
 	if err := os.Remove(filepath.Join(fixture.output, "current.mp3")); err != nil {
@@ -201,16 +202,16 @@ func TestPublicationStagePreparerRejectsV3ThroughGenericReaderBeforeMutation(t *
 	}
 	size, mtime := info.Size(), info.ModTime().UnixMicro()
 	digest := sha256.Sum256(contents)
-	fixture.repo.input.Version = persistence.PublicationInputsVersion3
-	fixture.repo.input.QualityPolicyVersion = 1
+	fixture.repo.input.Version = persistence.PublicationInputsVersion
+	fixture.repo.input.QualityPolicyVersion = publication.QualityPolicyVersion
 	fixture.repo.input.Rewrite.RelativePath = "current.flac"
 	fixture.repo.input.Rewrite.Ownership = persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])}
 	lossless := true
 	fixture.repo.input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true}
 	fixture.repo.input.ManualLyrics = &persistence.PublicationManualLyricsInput{State: "value", Value: "[00:01.00]Words", ConfirmedCurrentGeneration: fixture.repo.input.Rewrite.CurrentGeneration}
 
-	if _, err := fixture.prepare(t); err == nil || !strings.Contains(err.Error(), "private manual lyrics FLAC preparation path") {
-		t.Fatalf("generic Prepare error = %v, want V3 capability rejection", err)
+	if _, err := fixture.prepare(t); err == nil || !strings.Contains(err.Error(), "private preparation path") {
+		t.Fatalf("generic Prepare error = %v, want private preparation path rejection", err)
 	}
 	entries, err := os.ReadDir(fixture.output)
 	if err != nil {

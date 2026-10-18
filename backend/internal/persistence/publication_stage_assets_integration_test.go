@@ -10,12 +10,12 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
-func TestPublicationStageAssetsRequireVersion2EvidencePostgreSQL(t *testing.T) {
+func TestPublicationStageAssetsRequireCurrentInputEvidencePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newPublicationExecutionFixture(t)
 	repo := NewSetupManagerRepository(f.db)
-	// Keep frozen inputs valid by using the established V2 contract fixture.
+	// Keep frozen inputs valid by using the current canonical contract fixture.
 	setFrozenInputs := func(raw string) {
 		t.Helper()
 		if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET frozen_inputs=?::jsonb WHERE operation_id=?`, raw, f.guard.OperationID).Exec(ctx); err != nil {
@@ -23,7 +23,7 @@ func TestPublicationStageAssetsRequireVersion2EvidencePostgreSQL(t *testing.T) {
 		}
 	}
 	publicationInputs := publicationInputsFixture(t, "audio")
-	publicationInputs.Version = PublicationInputsVersion2
+	publicationInputs.Version = PublicationInputsVersion
 	publicationInputs.QualityPolicyVersion = publication.QualityPolicyVersion
 	rawInputs, err := json.Marshal(publicationInputs)
 	if err != nil {
@@ -49,7 +49,7 @@ func TestPublicationStageAssetsRequireVersion2EvidencePostgreSQL(t *testing.T) {
 	valid := base
 	valid.ActualMetadata = json.RawMessage(`{"version":1,"tags":{}}`)
 	valid.ActualAssets = validAssets
-	valid.QualityPolicyVersion = 1
+	valid.QualityPolicyVersion = publication.QualityPolicyVersion
 	if changed, err := repo.AdvancePublicationStage(ctx, f.guard, "staged", valid); err != nil || !changed {
 		t.Fatalf("valid assets evidence = %t, %v", changed, err)
 	}

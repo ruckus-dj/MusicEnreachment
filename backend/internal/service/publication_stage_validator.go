@@ -154,7 +154,7 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	if validator.MetadataReader == nil {
 		return PublicationStageObservation{}, errors.New("publication metadata reader is unavailable")
 	}
-	request := metadata.ReadRequest{CoverInspection: input.Version == persistence.PublicationInputsVersion2}
+	request := metadata.ReadRequest{CoverInspection: true}
 	capture, err := validator.MetadataReader.Read(ctx, stagePath, request)
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("read publication stage metadata: %w", err)
@@ -216,17 +216,15 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	actualMetadata, _ := json.Marshal(map[string]any{"version": 1, "tags": capture.Tags})
 	size, mtime := after.Size(), after.ModTime().UnixMicro()
 	result = PublicationStageObservation{Ownership: persistence.ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime}, Audio: actualAudio, Metadata: actualMetadata, SHA256: hex.EncodeToString(hash.Sum(nil))}
-	if input.Version == persistence.PublicationInputsVersion2 {
-		assets, err := ObservePublicationAssets(capture)
-		if err != nil {
-			return PublicationStageObservation{}, fmt.Errorf("observe publication stage assets: %w", err)
-		}
-		result.Assets, err = json.Marshal(assets)
-		if err != nil {
-			return PublicationStageObservation{}, fmt.Errorf("encode publication stage assets: %w", err)
-		}
-		result.QualityPolicyVersion = input.QualityPolicyVersion
+	assets, err := ObservePublicationAssets(capture)
+	if err != nil {
+		return PublicationStageObservation{}, fmt.Errorf("observe publication stage assets: %w", err)
 	}
+	result.Assets, err = json.Marshal(assets)
+	if err != nil {
+		return PublicationStageObservation{}, fmt.Errorf("encode publication stage assets: %w", err)
+	}
+	result.QualityPolicyVersion = input.QualityPolicyVersion
 	return result, nil
 }
 

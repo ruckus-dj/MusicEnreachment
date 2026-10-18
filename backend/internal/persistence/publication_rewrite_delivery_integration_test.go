@@ -23,7 +23,7 @@ func TestCheckPublicationRewriteForDeliveryTracksCurrentArtifactAndClaimStatePos
 	facts := PersistedAudioFacts{StreamIndex: 0, Codec: "mp3", Lossless: &lossless, Container: publication.AudioContainerMP3, SupportedSourceContainer: true}
 	installationID := uuid.New()
 	input := PublicationInputs{
-		Version: PublicationInputsVersion, IntentKind: "rewrite",
+		Version: PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "rewrite",
 		Rewrite: &PublicationRewriteInput{CurrentGeneration: currentGeneration, RelativePath: "album/current.mp3", Ownership: identity, AudioFacts: facts},
 		Format:  publication.AudioFormatSource, DesiredTags: map[string][]string{},
 		Tools: []SourceAnalysisToolSelection{

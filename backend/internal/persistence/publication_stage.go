@@ -97,12 +97,8 @@ func (repository *SetupManagerRepository) AdvancePublicationStage(ctx context.Co
 			if !input.SupportsExecution() {
 				return errors.New("advance publication stage: frozen inputs do not support execution")
 			}
-			if expectedPhase == "staged" && input.Version == PublicationInputsVersion2 {
-				if len(observation.ActualAssets) == 0 || observation.QualityPolicyVersion != input.QualityPolicyVersion {
-					return errors.New("advance publication stage: version 2 requires matching asset and quality-policy evidence")
-				}
-			} else if expectedPhase == "staged" && observation.QualityPolicyVersion != 0 {
-				return errors.New("advance publication stage: version 1 cannot claim quality-policy evidence")
+			if expectedPhase == "staged" && (len(observation.ActualAssets) == 0 || observation.QualityPolicyVersion != input.QualityPolicyVersion) {
+				return errors.New("advance publication stage: staged phase requires matching asset and quality-policy evidence")
 			}
 		}
 		journal, err := appendPublicationStageJournal(attempt.MutationJournal, expectedPhase, nextPhase, observation)

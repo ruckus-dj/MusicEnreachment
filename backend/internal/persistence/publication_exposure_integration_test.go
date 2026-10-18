@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 // This exercises exposure through the repository API (rather than only the
@@ -58,6 +59,7 @@ func readyPublicationExposureFixture(t *testing.T) (publicationExecutionFixture,
 		t.Fatalf("claim = %q, %v", outcome, err)
 	}
 	input := publicationInputsFixture(t, "audio")
+	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	frozen, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +135,9 @@ func readyPublicationExposureFixture(t *testing.T) (publicationExecutionFixture,
 	observation := PublicationStageObservation{
 		Version: 1, RelativePath: intent.StagedPath, Ownership: ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime},
 		PayloadSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		ActualAudio:   actualAudio, ActualMetadata: json.RawMessage(`{"title":["Track"]}`),
+		ActualAudio:   actualAudio, ActualMetadata: json.RawMessage(`{"version":1,"tags":{}}`),
+		ActualAssets:         json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`),
+		QualityPolicyVersion: publication.QualityPolicyVersion,
 	}
 	for _, phase := range []string{"preparing", "staged"} {
 		if ok, err := repo.AdvancePublicationStage(ctx, f.guard, phase, observation); err != nil || !ok {
