@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -15,14 +16,18 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	riverdatabasesql "github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 // Admission is seeded here; preparation and outcome records must be produced by
@@ -63,6 +68,14 @@ func TestAdmittedManualLyricsReplacementJournalPostgreSQL(t *testing.T) {
 	testPreparedManualLyricsFLACOwner(t, false, false, true, true, false, true)
 }
 
+func TestPreparedManualLyricsFLACNativeReplacementPostgreSQL(t *testing.T) {
+	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true)
+}
+
+func TestPreparedManualLyricsReplacementCommitFailurePostgreSQL(t *testing.T) {
+	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true, true)
+}
+
 func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continuous bool, options ...bool) {
 	ctx := context.Background()
 	fixture, fakeStage, _ := preparedManualLyricsFLACStage(t)
@@ -71,6 +84,8 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	throughAdmission := len(options) > 0 && options[0]
 	nestedPath := len(options) > 1 && options[1]
 	dbReplacement := len(options) > 2 && options[2]
+	nativeReplacement := len(options) > 3 && options[3]
+	commitFailure := len(options) > 4 && options[4]
 	if nestedPath {
 		currentPath = filepath.Join(fixture.output, "Artist", "Album", "Current.FLAC")
 		if err := os.MkdirAll(filepath.Dir(currentPath), 0o700); err != nil {
@@ -93,6 +108,12 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		if err := os.WriteFile(currentPath, appendNativeTestPicture(t, current), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Make the copied stage's native mtime differ from the frozen G0 ownership
+	// timestamp; replacement evidence must continue to bind the old target.
+	oldTargetMTime := time.Date(2020, time.January, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(currentPath, oldTargetMTime, oldTargetMTime); err != nil {
+		t.Fatal(err)
 	}
 	original, err := os.ReadFile(currentPath)
 	if err != nil {
@@ -183,7 +204,7 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	}
 	exec(`INSERT INTO local_release(id,title) VALUES (?,'native lyrics')`, releaseID)
 	exec(`INSERT INTO local_track(id,title) VALUES (?,'native lyrics')`, trackID)
-	exec(`INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, guard.ExpectedPositionID, releaseID, trackID)
+	exec(`INSERT INTO release_track(id,release_id,track_id,position,metadata_revision) VALUES (?,?,?,0,?)`, guard.ExpectedPositionID, releaseID, trackID, input.ManualLyrics.ExpectedMetadataRevision)
 	if err := tx.QueryRowContext(ctx, `INSERT INTO river_job(kind,args,state,attempt) VALUES ('publish_track_v1','{}','running',1) RETURNING id`).Scan(&guard.RiverJobID); err != nil {
 		t.Fatal(err)
 	}
@@ -225,12 +246,17 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		t.Fatal(err)
 	}
 	repository := persistence.NewSetupManagerRepository(db)
+	commitRepository := &manualLyricsReplacementCommitFailureRepository{SetupManagerRepository: repository}
 	claim, err := repository.ClaimPublicationDelivery(ctx, guard)
 	if err != nil || claim != persistence.PublicationDeliveryAcquired {
 		t.Fatalf("claim = %q, %v", claim, err)
 	}
 	preparer := fixture.preparer
-	preparer.Repository = repository
+	if commitFailure {
+		preparer.Repository = commitRepository
+	} else {
+		preparer.Repository = repository
+	}
 	value, err := preparer.prepareManualLyricsFLAC(ctx, guard, claim, true)
 	if err != nil {
 		t.Fatal(err)
@@ -242,10 +268,137 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		}
 	})
 	scope, reservation := initialOutputCopyScope(t, guard)
-	scope.repository = repository
+	if commitFailure {
+		scope.repository = commitRepository
+	} else {
+		scope.repository = repository
+	}
+	release := scope.release
+	releaseCount := 0
+	scope.release = func() {
+		releaseCount++
+		if nativeReplacement && !commitFailure && runtime.GOOS != "windows" {
+			assertReplacementSettledInDB(t, ctx, db, repository, guard, input)
+		}
+		release()
+	}
+	if nativeReplacement && stage.sourceFileInfo.ModTime().UnixMicro() == *input.Rewrite.Ownership.MTime {
+		t.Fatal("native stage copied the frozen target mtime; fixture cannot distinguish backup from G0")
+	}
 	proof, err := stage.initialOutputCopy(ctx, scope, reservation)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if nativeReplacement {
+		result, replaceErr := replacePreparedManualLyricsFLAC(ctx, scope, reservation, proof, input)
+		if runtime.GOOS == "windows" {
+			if !errors.Is(replaceErr, sourcefs.ErrUnsupported) {
+				t.Fatalf("native Windows replacement error = %v, want sourcefs.ErrUnsupported", replaceErr)
+			}
+			assertReplacementStillExposed(t, ctx, db, repository, guard, input)
+			attempt, readErr := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+			if readErr != nil || attempt == nil || attempt.Phase != "exposing" || len(attempt.MutationJournal) == 0 {
+				t.Fatalf("unsupported replacement did not retain the exposed attempt: %#v, %v", attempt, readErr)
+			}
+			got, readErr := os.ReadFile(currentPath)
+			if readErr != nil || !bytes.Equal(got, original) {
+				t.Fatalf("unsupported replacement changed current target: %v", readErr)
+			}
+			if releaseCount != 0 {
+				t.Fatalf("unsupported replacement released local execution resources %d times", releaseCount)
+			}
+			scope.mu.Lock()
+			unknown, held := scope.unknown, scope.privateManualLyricsWork != nil
+			scope.mu.Unlock()
+			if !unknown || !held || result.OptionalDiagnostic != "" {
+				t.Fatalf("unsupported replacement did not quarantine held private work: unknown=%v held=%v", unknown, held)
+			}
+			return
+		}
+		if commitFailure {
+			if !errors.Is(replaceErr, errInjectedReplacementCommit) {
+				t.Fatalf("native replacement commit error = %v, want injected commit failure", replaceErr)
+			}
+			if commitRepository.calls != 1 {
+				t.Fatalf("replacement commit calls = %d, want 1", commitRepository.calls)
+			}
+			projection, readErr := repository.ReadManualLyricsReceiptProjection(ctx, guard.ExpectedPositionID)
+			if readErr != nil || projection.CurrentGeneration == nil || *projection.CurrentGeneration != input.Rewrite.CurrentGeneration || projection.Receipt != nil {
+				t.Fatalf("failed commit changed G0 ownership/receipt: %+v, %v", projection, readErr)
+			}
+			assertReplacementDBCounts(t, ctx, db, guard.OperationID, guard.ExpectedPositionID, 1, 1, 0, 0, 0)
+			attempt, readErr := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+			var journal []struct {
+				To string `json:"to"`
+			}
+			if readErr != nil || attempt == nil || attempt.Phase != "exposing" || json.Unmarshal(attempt.MutationJournal, &journal) != nil || len(journal) != 11 || journal[10].To != "installed" {
+				t.Fatalf("failed commit did not retain installed exposure journal: %s, %v", attempt.MutationJournal, readErr)
+			}
+			var claimState string
+			if err := db.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=?`, guard.OperationID).Scan(ctx, &claimState); err != nil || claimState != "executing" && claimState != "recovery_required" {
+				t.Fatalf("failed commit claim state = %q, %v", claimState, err)
+			}
+			got, readErr := os.ReadFile(currentPath)
+			if readErr != nil || bytes.Equal(got, original) {
+				t.Fatalf("failed commit did not leave installed candidate bytes: %v", readErr)
+			}
+			finalCapture, readErr := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true})
+			if readErr != nil || !reflect.DeepEqual(finalCapture.Tags["LYRICS"], []string{input.ManualLyrics.Value}) {
+				t.Fatalf("failed commit candidate lyrics = %#v, %v", finalCapture.Tags["LYRICS"], readErr)
+			}
+			if err := baselineArtwork.VerifyEquivalent(ctx, currentPath); err != nil {
+				t.Fatalf("failed commit changed native artwork/audio: %v", err)
+			}
+			if _, err := os.Stat(filepath.Dir(stage.paths.InputPath)); err != nil {
+				t.Fatalf("failed commit removed private stage: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(stage.paths.InputPath), filepath.Base(stage.paths.InputPath))); err != nil {
+				t.Fatalf("failed commit removed private backup input: %v", err)
+			}
+			scope.mu.Lock()
+			unknown, finalizing, finalized := scope.unknown, scope.finalizing, scope.finalized
+			held, token, syncWork := scope.privateManualLyricsWork != nil, scope.replacement != nil, scope.syncWork
+			scope.mu.Unlock()
+			if !unknown || !finalizing || finalized || held || !token || syncWork != 0 || releaseCount != 0 {
+				t.Fatalf("failed commit did not retain quarantined completion ownership: unknown=%v finalizing=%v finalized=%v work=%v token=%v syncWork=%d releases=%d", unknown, finalizing, finalized, held, token, syncWork, releaseCount)
+			}
+			return
+		}
+		if replaceErr != nil {
+			t.Fatalf("native replacement: %v", replaceErr)
+		}
+		if _, err := os.Stat(filepath.Dir(stage.paths.InputPath)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("private stage still exists after replacement: %v", err)
+		}
+		projection, err := repository.ReadManualLyricsReceiptProjection(ctx, guard.ExpectedPositionID)
+		if err != nil || projection.Pending || projection.Receipt == nil || projection.CurrentGeneration == nil || *projection.CurrentGeneration != guard.CandidateGeneration || projection.Receipt.ConfirmedGeneration != input.Rewrite.CurrentGeneration || projection.Receipt.PublishedGeneration != guard.CandidateGeneration || projection.Receipt.DesiredSHA256 == nil {
+			t.Fatalf("replacement receipt/current projection = %+v, %v", projection, err)
+		}
+		desiredDigest := sha256.Sum256([]byte(input.ManualLyrics.Value))
+		if projection.Receipt.DesiredRevision != input.ManualLyrics.ExpectedMetadataRevision || projection.Receipt.DesiredState != persistence.ManualLyricsValue || *projection.Receipt.DesiredSHA256 != fmt.Sprintf("%x", desiredDigest) {
+			t.Fatalf("replacement receipt does not bind requested lyrics revision/value: %+v", projection.Receipt)
+		}
+		finalCapture, err := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true})
+		if err != nil {
+			t.Fatalf("read installed target: %v", err)
+		}
+		if got := finalCapture.Tags["LYRICS"]; len(got) != 1 || got[0] != input.ManualLyrics.Value {
+			t.Fatalf("installed target lyrics = %#v", got)
+		}
+		installedBytes, err := os.ReadFile(currentPath)
+		if err != nil || bytes.Equal(installedBytes, original) {
+			t.Fatalf("replacement did not change current file bytes: %v", err)
+		}
+		if err := baselineArtwork.VerifyEquivalent(ctx, currentPath); err != nil {
+			t.Fatalf("installed replacement changed native artwork/audio: %v", err)
+		}
+		scope.mu.Lock()
+		finalized, held, unknown := scope.finalized, scope.privateManualLyricsWork != nil, scope.unknown
+		scope.mu.Unlock()
+		if !finalized || held || unknown || releaseCount != 1 {
+			t.Fatalf("replacement scope did not settle: finalized=%v held=%v unknown=%v releases=%d", finalized, held, unknown, releaseCount)
+		}
+		return
 	}
 	if throughAdmission {
 		if _, err := admitPreparedManualLyricsFLACExposure(ctx, scope, reservation, proof, input); err != nil {
@@ -616,6 +769,70 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		t.Fatalf("invalid validated journal: %s, %v", advanced.MutationJournal, err)
 	}
 	scope.releaseSynchronousWork(reservation)
+}
+
+var errInjectedReplacementCommit = errors.New("injected replacement commit failure")
+
+type manualLyricsReplacementCommitFailureRepository struct {
+	*persistence.SetupManagerRepository
+	calls int
+}
+
+func (repository *manualLyricsReplacementCommitFailureRepository) CommitReplacementPublication(context.Context, persistence.PublicationDeliveryGuard) (bool, error) {
+	repository.calls++
+	return false, errInjectedReplacementCommit
+}
+
+func assertReplacementStillExposed(t *testing.T, ctx context.Context, db *bun.DB, repository *persistence.SetupManagerRepository, guard persistence.PublicationDeliveryGuard, input persistence.PublicationInputs) {
+	t.Helper()
+	projection, err := repository.ReadManualLyricsReceiptProjection(ctx, guard.ExpectedPositionID)
+	if err != nil || projection.CurrentGeneration == nil || *projection.CurrentGeneration != input.Rewrite.CurrentGeneration || projection.Receipt != nil {
+		t.Fatalf("unsupported replacement changed G0 or created a receipt: %+v, %v", projection, err)
+	}
+	assertReplacementDBCounts(t, ctx, db, guard.OperationID, guard.ExpectedPositionID, 1, 1, 0, 0, 0)
+}
+
+func assertReplacementSettledInDB(t *testing.T, ctx context.Context, db *bun.DB, repository *persistence.SetupManagerRepository, guard persistence.PublicationDeliveryGuard, input persistence.PublicationInputs) {
+	t.Helper()
+	projection, err := repository.ReadManualLyricsReceiptProjection(ctx, guard.ExpectedPositionID)
+	if err != nil || projection.Pending || projection.CurrentGeneration == nil || *projection.CurrentGeneration != guard.CandidateGeneration || projection.Receipt == nil || projection.Receipt.ConfirmedGeneration != input.Rewrite.CurrentGeneration || projection.Receipt.PublishedGeneration != guard.CandidateGeneration {
+		t.Errorf("settled replacement receipt/current projection = %+v, %v", projection, err)
+	}
+	assertReplacementDBCounts(t, ctx, db, guard.OperationID, guard.ExpectedPositionID, 0, 0, 0, 0, 1)
+	snapshot, err := repository.LoadPublicationStartupSnapshot(ctx)
+	if err != nil {
+		t.Errorf("read settled publication startup snapshot: %v", err)
+	} else {
+		for _, record := range snapshot.Records {
+			if record.OperationID == guard.OperationID {
+				t.Errorf("settled operation remains in startup snapshot: %+v", record)
+			}
+		}
+	}
+}
+
+func assertReplacementDBCounts(t *testing.T, ctx context.Context, db *bun.DB, operationID, positionID uuid.UUID, wantAttempts, wantClaims, wantSourceHolds, wantToolHolds, wantReceipts int) {
+	t.Helper()
+	for _, check := range []struct {
+		label string
+		query string
+		want  int
+	}{
+		{"attempts", `SELECT count(*) FROM track_publication_attempt WHERE operation_id=?`, wantAttempts},
+		{"execution claims", `SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`, wantClaims},
+		{"source holds", `SELECT count(*) FROM publication_source_hold WHERE operation_id=?`, wantSourceHolds},
+		{"tool holds", `SELECT count(*) FROM operation_tool_read_hold WHERE operation_id=?`, wantToolHolds},
+		{"receipts", `SELECT count(*) FROM publication_manual_lyrics_receipt WHERE position_id=?`, wantReceipts},
+	} {
+		var got int
+		argument := operationID
+		if check.label == "receipts" {
+			argument = positionID
+		}
+		if err := db.NewRaw(check.query, argument).Scan(ctx, &got); err != nil || got != check.want {
+			t.Errorf("%s count = %d, %v; want %d", check.label, got, err, check.want)
+		}
+	}
 }
 
 func equalOptionalSize(a, b *int64) bool {

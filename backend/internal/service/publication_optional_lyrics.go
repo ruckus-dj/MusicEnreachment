@@ -129,10 +129,15 @@ const (
 	preparedManualLyricsOutcomeOnly preparedManualLyricsFLACMode = iota
 	preparedManualLyricsThroughValidated
 	preparedManualLyricsThroughExposureAdmission
+	preparedManualLyricsThroughReplacement
 )
 
 type preparedManualLyricsStageRepository interface {
 	GuardedAdvanceManualLyricsStage(context.Context, persistence.PublicationDeliveryGuard, string, persistence.PublicationStageObservation) (persistence.ManualLyricsStageOutcome, error)
+}
+
+type privateManualLyricsRecordRepository interface {
+	GuardedRecordManualLyricsReplacement(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationReplacementEvidence) (persistence.PublicationReplacementOutcome, error)
 }
 
 // applyAndRecordPreparedManualLyricsFLAC preserves the private outcome-only
@@ -172,6 +177,18 @@ func admitPreparedManualLyricsFLACExposure(
 	return applyPreparedManualLyricsFLAC(ctx, scope, reservation, initialCopy, input, preparedManualLyricsThroughExposureAdmission)
 }
 
+// replacePreparedManualLyricsFLAC is the private V3 owner entry point. It keeps
+// the exact work capability alive through native installation and settlement.
+func replacePreparedManualLyricsFLAC(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	reservation *publicationSyncReservation,
+	initialCopy *publicationInitialOutputCopy,
+	input persistence.PublicationInputs,
+) (publicationOptionalLyricsResult, error) {
+	return applyPreparedManualLyricsFLAC(ctx, scope, reservation, initialCopy, input, preparedManualLyricsThroughReplacement)
+}
+
 func applyPreparedManualLyricsFLAC(
 	ctx context.Context,
 	scope *PublicationExecutionScope,
@@ -181,7 +198,7 @@ func applyPreparedManualLyricsFLAC(
 	mode preparedManualLyricsFLACMode,
 ) (result publicationOptionalLyricsResult, resultErr error) {
 	switch mode {
-	case preparedManualLyricsOutcomeOnly, preparedManualLyricsThroughValidated, preparedManualLyricsThroughExposureAdmission:
+	case preparedManualLyricsOutcomeOnly, preparedManualLyricsThroughValidated, preparedManualLyricsThroughExposureAdmission, preparedManualLyricsThroughReplacement:
 	default:
 		return result, errors.New("unsupported prepared manual lyrics mode")
 	}
@@ -246,7 +263,7 @@ func applyPreparedManualLyricsFLAC(
 		return result, errors.New("V3 optional lyrics outcome repository is unavailable")
 	}
 	var stageRepo preparedManualLyricsStageRepository
-	if mode == preparedManualLyricsThroughValidated || mode == preparedManualLyricsThroughExposureAdmission {
+	if mode == preparedManualLyricsThroughValidated || mode == preparedManualLyricsThroughExposureAdmission || mode == preparedManualLyricsThroughReplacement {
 		var capable bool
 		stageRepo, capable = stage.repository.(preparedManualLyricsStageRepository)
 		if !capable {
@@ -256,9 +273,17 @@ func applyPreparedManualLyricsFLAC(
 			return result, errors.New("private manual lyrics current-input reader is unavailable")
 		}
 	}
-	if mode == preparedManualLyricsThroughExposureAdmission {
+	if mode == preparedManualLyricsThroughExposureAdmission || mode == preparedManualLyricsThroughReplacement {
 		if _, capable := stage.repository.(preparedManualLyricsExposureRepository); !capable {
 			return result, errors.New("manual lyrics exposure repository is unavailable")
+		}
+	}
+	if mode == preparedManualLyricsThroughReplacement {
+		if _, capable := stage.repository.(privateManualLyricsRecordRepository); !capable {
+			return result, errors.New("manual lyrics replacement repository is unavailable")
+		}
+		if _, capable := stage.repository.(replacementPublicationRepository); !capable {
+			return result, errors.New("replacement publication completion repository is unavailable")
 		}
 	}
 	var acknowledged persistence.PublicationStageObservation
@@ -302,7 +327,7 @@ func applyPreparedManualLyricsFLAC(
 	if err != nil {
 		return result, err
 	}
-	if mode == preparedManualLyricsThroughValidated || mode == preparedManualLyricsThroughExposureAdmission {
+	if mode == preparedManualLyricsThroughValidated || mode == preparedManualLyricsThroughExposureAdmission || mode == preparedManualLyricsThroughReplacement {
 		if !scope.validPrivateManualLyricsWork(work, stage) {
 			return result, errors.New("manual lyrics publication work capability was lost before staged acknowledgement")
 		}
@@ -354,11 +379,84 @@ func applyPreparedManualLyricsFLAC(
 			return result, err
 		}
 	}
+	if mode == preparedManualLyricsThroughReplacement {
+		if err := completePrivateManualLyricsReplacement(ctx, scope, work, acknowledged); err != nil {
+			return result, err
+		}
+		completed = true
+		return result, nil
+	}
 	if !scope.finishPrivateManualLyricsWork(work, true) {
 		return result, errors.New("manual lyrics publication work capability was lost before acknowledgement")
 	}
 	completed = true
 	return result, nil
+}
+
+type privateLyricsCompletionRepository struct {
+	replacementPublicationRepository
+	handoff *privateManualLyricsExposureHandoff
+}
+
+func (repository privateLyricsCompletionRepository) SettleReplacementPublication(
+	ctx context.Context,
+	guard persistence.PublicationDeliveryGuard,
+	witness persistence.PublicationReplacementCleanupWitness,
+	installed bool,
+) (bool, error) {
+	closeErr := repository.handoff.Close()
+	if closeErr != nil {
+		return false, fmt.Errorf("close admitted manual lyrics target parent before settlement: %w", closeErr)
+	}
+	return repository.replacementPublicationRepository.SettleReplacementPublication(ctx, guard, witness, installed)
+}
+
+func completePrivateManualLyricsReplacement(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	work *privateManualLyricsWork,
+	validated persistence.PublicationStageObservation,
+) error {
+	if scope == nil || work == nil || work.stage == nil || !scope.validPrivateManualLyricsWork(work, work.stage) {
+		return errors.New("private manual lyrics replacement requires its exact live work")
+	}
+	stage := work.stage
+	handoff, err := prepareAndAdmitPrivateManualLyricsExposure(ctx, scope, work, validated)
+	if err != nil {
+		return err
+	}
+	installed, err := replacePrivateManualLyrics(ctx, scope, work, handoff)
+	if err != nil {
+		return errors.Join(err, handoff.Close())
+	}
+	token, err := scope.sealPrivateManualLyricsReplacement(work, installed)
+	if err != nil {
+		return errors.Join(err, handoff.Close())
+	}
+	repository, ok := stage.repository.(replacementPublicationRepository)
+	if !ok {
+		scope.quarantineUncertain()
+		return errors.Join(errors.New("replacement publication completion repository is unavailable"), handoff.Close())
+	}
+	committed, err := repository.CommitReplacementPublication(context.WithoutCancel(ctx), scope.guard)
+	if err != nil || !committed {
+		scope.quarantineUncertain()
+		return errors.Join(err, errors.New("private manual lyrics publication commit was not acknowledged"), handoff.Close())
+	}
+	witness, backupInfo, fileCleanup, dirCleanup, err := replacementCleanupWitness(
+		context.WithoutCancel(ctx), stage, stage.directory, handoff.root, handoff.parent,
+		filepath.Base(handoff.intent.TargetRelativePath), validated,
+	)
+	if err != nil {
+		scope.quarantineUncertain()
+		return errors.Join(err, handoff.Close())
+	}
+	completionRepository := privateLyricsCompletionRepository{replacementPublicationRepository: repository, handoff: handoff}
+	if err := finishReplacementPublication(context.WithoutCancel(ctx), scope, stage, token, completionRepository, witness, backupInfo, fileCleanup, dirCleanup); err != nil {
+		scope.quarantineUncertain()
+		return errors.Join(err, handoff.Close())
+	}
+	return nil
 }
 
 func cloneManualLyricsPreparationRecord(record persistence.PublicationPreparationRecord) persistence.PublicationPreparationRecord {

@@ -40,6 +40,14 @@ type privateManualLyricsWork struct {
 	borrow      *publicationOptionalLyricsBorrow
 }
 
+// privateManualLyricsReplacementInstalled is an opaque acknowledgement that
+// the private manual-lyrics replacement was installed for this exact work.
+type privateManualLyricsReplacementInstalled struct {
+	work  *privateManualLyricsWork
+	stage *preparedPublicationStage
+	guard persistence.PublicationDeliveryGuard
+}
+
 // PublicationExecutionScope privately owns both the local resource lock and
 // the durable delivery guard until finalization is acknowledged. Unknown
 // execution results permanently fence this scope from further launches.
@@ -62,6 +70,7 @@ type PublicationExecutionScope struct {
 	replacement             *replacementCompletionToken
 	optionalLyrics          *publicationOptionalLyricsBorrow
 	privateManualLyricsWork *privateManualLyricsWork
+	privateLyricsInstalled  *privateManualLyricsReplacementInstalled
 	initialCopy             bool
 }
 
@@ -429,6 +438,12 @@ func (scope *PublicationExecutionScope) finishPrivateManualLyricsWork(work *priv
 	if !scope.validPrivateManualLyricsWorkLocked(work, workStage(work)) {
 		return false
 	}
+	// Once installation has been acknowledged, only the replacement completion
+	// fence may consume this private work. The ordinary optional-lyrics finish
+	// path must not drop the reservation or permit legacy finalization.
+	if scope.privateLyricsInstalled != nil {
+		return false
+	}
 	if !acknowledged {
 		scope.unknown = true
 		scope.quarantineLocked()
@@ -448,6 +463,23 @@ func (scope *PublicationExecutionScope) validPrivateManualLyricsWorkLocked(work 
 	}
 	r := work.reservation
 	return work.borrow.scope == scope && work.borrow.reservation == r && r != nil && r.owner == scope && r.active && r.borrowed && r.borrow == work.borrow && scope.optionalLyrics == work.borrow && scope.syncWork == 1 && scope.unresolved == 0 && !scope.unknown && !scope.finalized && !scope.finalizing
+}
+
+// recordPrivateManualLyricsReplacementInstalled binds the replacer's installed
+// acknowledgement to the live private work. The capability cannot be reused
+// for another work item, stage, or delivery guard.
+func (scope *PublicationExecutionScope) recordPrivateManualLyricsReplacementInstalled(work *privateManualLyricsWork) *privateManualLyricsReplacementInstalled {
+	if scope == nil || work == nil {
+		return nil
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if !scope.validPrivateManualLyricsWorkLocked(work, work.stage) || scope.privateLyricsInstalled != nil {
+		return nil
+	}
+	proof := &privateManualLyricsReplacementInstalled{work: work, stage: work.stage, guard: scope.guard}
+	scope.privateLyricsInstalled = proof
+	return proof
 }
 
 func workStage(work *privateManualLyricsWork) *preparedPublicationStage {
@@ -491,6 +523,40 @@ func (scope *PublicationExecutionScope) sealReplacementCompletion(reservation *p
 	reservation.borrowed = false
 	reservation.active = false
 	scope.syncWork--
+	token := &replacementCompletionToken{scope: scope, active: true}
+	scope.replacement = token
+	scope.finalizing = true
+	return token, nil
+}
+
+// sealPrivateManualLyricsReplacement atomically transfers the active private
+// work and its sole borrowed synchronous reservation into the ordinary
+// replacement-completion fence after the replacer acknowledges installation.
+func (scope *PublicationExecutionScope) sealPrivateManualLyricsReplacement(
+	work *privateManualLyricsWork,
+	installed *privateManualLyricsReplacementInstalled,
+) (*replacementCompletionToken, error) {
+	if scope == nil {
+		return nil, errors.New("publication execution scope is unavailable")
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if !scope.validPrivateManualLyricsWorkLocked(work, workStage(work)) || installed == nil ||
+		scope.privateLyricsInstalled != installed || installed.work != work || installed.stage != work.stage || installed.guard != scope.guard ||
+		scope.unknown || scope.finalized || scope.finalizing || scope.initialCopy || scope.unresolved != 0 || scope.syncWork != 1 {
+		return nil, errors.New("private manual lyrics replacement is not exclusively installed")
+	}
+	r := work.reservation
+	// Consume every private borrow before publishing the regular completion
+	// token. All changes occur under the same lock, so no scope observer can see
+	// an unowned interval between the two capabilities.
+	r.borrowed = false
+	r.borrow = nil
+	r.active = false
+	scope.syncWork--
+	scope.optionalLyrics = nil
+	scope.privateManualLyricsWork = nil
+	scope.privateLyricsInstalled = nil
 	token := &replacementCompletionToken{scope: scope, active: true}
 	scope.replacement = token
 	scope.finalizing = true

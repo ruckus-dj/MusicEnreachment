@@ -11,6 +11,16 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем private lifecycle-срезе объединены retained admission
+handoff, native atomic replacement, exact installed proof → completion-token
+transfer, receipt commit и owned cleanup/settlement. Обычный private finish
+после installed proof запрещён. Native/PG happy path и post-rename commit-error
+retention и полный локальный `task verify` прошли; review блокеров не нашло.
+Native CI этого среза ещё не проверен.
+Installed-ACK ambiguity и cleanup-failure matrix ещё не покрыты V3 full-path
+tests. Production worker/API, межпроцессные containment claims и recovery resume
+не включены; Windows directory durability остаётся fail-closed до replacement.
+
 В текущем persistence-срезе private V3 replacement recorder
 проверяет canonical exposure prefix, все replacement bindings и full locked
 CURRENT snapshot перед каждым append. Generic V3 replacement не разрешён.
