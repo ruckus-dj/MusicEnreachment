@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Текущее уточнение владельца снимает обязательный process-tree containment gate:
+для команды достаточно дождаться основного процесса. Добавлен Linux/macOS
+backend с cancellation и ограниченным ожиданием inherited output pipes;
+Windows Job Object backend сохранён. Focused Unix tests прошли после исправления
+test-helper stdout; окончательный полный gate ещё выполняется. Production worker
+пока не подключён. Согласована консолидация unreleased input V1/V2/V3 в один
+актуальный контракт без compatibility readers и без сброса локальной БД;
+рефакторинг ещё не выполнен. Подробности решения — `docs/design/decisions.md`.
+
 В текущем test-срезе добавлены реальные native/PG lost-installed-
 ACK и post-commit cleanup-intent failure cases. Первый сохраняет G0/no receipt
 при installed bytes и private borrow; второй сохраняет committed G1/receipt и

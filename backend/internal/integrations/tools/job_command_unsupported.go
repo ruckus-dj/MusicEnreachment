@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux && !darwin
 
 package tools
 
@@ -8,5 +8,5 @@ import (
 )
 
 func runPlatformJobCommand(context.Context, JobCommandRequest) (JobCommandResult, error) {
-	return JobCommandResult{}, errors.New("job command containment is unavailable on this platform")
+	return JobCommandResult{}, errors.New("job command backend is unavailable on this platform")
 }

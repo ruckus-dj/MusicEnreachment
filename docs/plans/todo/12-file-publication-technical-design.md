@@ -264,6 +264,14 @@ Delivery обязана перепроверить все claim/fence components
 `operation ID + operation attempt + River job ID + output epoch + claim/borrower
 identity`.
 
+**Позднее уточнение владельца:** обязательное доказательство завершения всего
+дерева дочерних процессов ниже больше не является production gate. Допустимо
+считать подтверждённое завершение основного процесса завершением команды;
+см. `docs/design/decisions.md`, раздел об исполнении инструментов. Остальные
+проверки DB uncertainty, generation/claim и конкурирующих mutators сохраняются.
+Существующий текст о более сильном containment описывает прежнюю техническую
+границу, а не дополнительное обязательное продуктовое требование.
+
 Stale delivery не может продолжить после смены attempt/epoch/claim. Exclusion
 состоит из единого process-local resource coordinator и durable execution claims.
 PostgreSQL session advisory locks дают дополнительную координацию, но теряются
