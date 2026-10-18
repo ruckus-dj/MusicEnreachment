@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем persistence-срезе добавлены guarded manual FLAC stage
+transitions с typed ACK и exact stored-outcome observation. Intermediate grammar
+сохраняет canonical preparation/rebuild/outcome prefix и не более двух ordered
+stage records; replay заново проверяет frozen intent, CURRENT и namespace.
+Native/PG tests дополнены DB advance/replay; это отдельно от service owner и не
+доказательство непрерывного filesystem exclusion после его возврата. Полный
+локальный `task verify` прошёл; review блокеров не нашло. Native CI этого среза
+ещё не проверен. Generic V3 staging/exposure не включены.
+
 В текущем срезе private FLAC owner поддерживает один verified
 native front cover без реконструкции: actual cover SHA/size сопоставляются с
 opaque snapshot, полные PICTURE-body и encoded audio сохраняются. Реальные PG

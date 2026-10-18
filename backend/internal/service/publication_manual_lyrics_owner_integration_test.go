@@ -260,6 +260,53 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal bool) {
 	if err != nil || !bytes.Equal(contents, original) {
 		t.Fatalf("current bytes changed: %v", err)
 	}
+	// These calls test DB transition authority only: the owner above has already
+	// released its private work capability. They are not a continuous runtime handoff.
+	observation := outcome.FinalObservation.Clone()
+	wrong := observation.Clone()
+	wrong.PayloadSHA256 = fmt.Sprintf("%064x", 1)
+	if ack, err := repository.GuardedAdvanceManualLyricsStage(ctx, guard, "preparing", wrong); err != nil || ack != persistence.ManualLyricsStageStale {
+		t.Fatalf("mismatched stage observation = %q, %v", ack, err)
+	}
+	for _, from := range []string{"preparing", "staged"} {
+		if ack, err := repository.GuardedAdvanceManualLyricsStage(ctx, guard, from, observation); err != nil || ack != persistence.ManualLyricsStageAdvanced {
+			t.Fatalf("advance from %s = %q, %v", from, ack, err)
+		}
+		if ack, err := repository.GuardedAdvanceManualLyricsStage(ctx, guard, from, observation); err != nil || ack != persistence.ManualLyricsStageAlreadyRecorded {
+			t.Fatalf("replay from %s = %q, %v", from, ack, err)
+		}
+		phase := "staged"
+		if from == "staged" {
+			phase = "validated"
+		}
+		before, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Deliberately inconsistent test state must not authorize another append.
+		resetPhase := func(phase string) {
+			t.Helper()
+			if _, err := db.ExecContext(ctx, `WITH changed AS (UPDATE track_publication_attempt SET phase=? WHERE operation_id=? RETURNING operation_id) UPDATE operation SET stage=? WHERE id IN (SELECT operation_id FROM changed)`, phase, guard.OperationID, phase); err != nil {
+				t.Fatal(err)
+			}
+		}
+		resetPhase("preparing")
+		if ack, err := repository.GuardedAdvanceManualLyricsStage(ctx, guard, "preparing", observation); err != nil || ack != persistence.ManualLyricsStageStale {
+			t.Fatalf("preparing with existing suffix = %q, %v", ack, err)
+		}
+		after, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+		if err != nil || !bytes.Equal(before.MutationJournal, after.MutationJournal) {
+			t.Fatalf("invalid frontier mutated journal: %v", err)
+		}
+		resetPhase(phase)
+	}
+	advanced, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+	if err != nil || advanced.Phase != "validated" || !bytes.Equal(advanced.FrozenInputs, attempt.FrozenInputs) {
+		t.Fatalf("invalid validated attempt: %+v, %v", advanced, err)
+	}
+	if err := json.Unmarshal(advanced.MutationJournal, &records); err != nil || len(records) != 6 {
+		t.Fatalf("invalid validated journal: %s, %v", advanced.MutationJournal, err)
+	}
 	scope.releaseSynchronousWork(reservation)
 }
 
