@@ -148,6 +148,7 @@ func TestRunReplacementPublicationCompletesNativeUnixReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	intent := persistence.PublicationExposureIntent{
+		PrepOwner:   stage.preparationRecord.OwnerToken,
 		Expectation: "expected_current", StagedPath: filepath.ToSlash(stage.Paths().RelativePath),
 		TargetRelativePath: "current.mp3",
 		OutputRootParent:   persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID},

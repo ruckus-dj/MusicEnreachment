@@ -11,6 +11,18 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем delivery-срезе добавлены общий ID-only job args,
+River publication worker и app registration с process-wide coordinator/boot ID.
+Executor сам получает durable claim и guarded frozen inputs, использует existing
+source hold и запускает existing generic или manual-FLAC lifecycle. Approved
+target ancestors создаются через pinned native capabilities по frozen manifest;
+при неопределённости claim удерживается, safe diagnostic не подменяет settlement.
+Real-PG manual delivery и ordinary audio delivery в пустой root/nested target
+прошли; audio fixture использует контролируемый command transport, не codec E2E.
+Полный локальный `task verify` прошёл, review блокеров не нашло; native CI ещё
+не проверен. HTTP admission, automatic recovery и остальные acceptance
+gates плана этим не объявляются завершёнными.
+
 В текущем refactor-срезе publication inputs сведены к одному
 current envelope: marker 1, обязательная current quality policy, audio/rewrite
 и optional manual-lyrics authority вместо V1/V2/V3 dispatch. Compatibility

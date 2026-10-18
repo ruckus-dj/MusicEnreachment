@@ -58,7 +58,7 @@ func (replacer *newPublicationManagedTargetReplacer) replaceAndComplete(ctx cont
 }
 
 func (replacer *newPublicationManagedTargetReplacer) replace(ctx context.Context, completing bool) (resultErr error) {
-	if replacer == nil || replacer.scope == nil || replacer.repository == nil || replacer.stage == nil || replacer.root == nil || replacer.stageDir == nil || replacer.targetDir == nil || replacer.guard != replacer.scope.guard || replacer.stage.guard != replacer.guard || replacer.intent.PrepOwner != replacer.stage.hold || replacer.intent.Expectation != "expected_current" || replacer.expectedGeneration == nil || *replacer.expectedGeneration == uuid.Nil || replacer.validated.Ownership.ExpectedSize == nil || replacer.validated.Ownership.ExpectedMTime == nil || *replacer.validated.Ownership.ExpectedSize < 0 || !validReplacementDigest(replacer.validated.PayloadSHA256) {
+	if replacer == nil || replacer.scope == nil || replacer.repository == nil || replacer.stage == nil || replacer.root == nil || replacer.stageDir == nil || replacer.targetDir == nil || replacer.guard != replacer.scope.guard || replacer.stage.guard != replacer.guard || replacer.intent.PrepOwner != replacer.stage.preparationRecord.OwnerToken || replacer.intent.Expectation != "expected_current" || replacer.expectedGeneration == nil || *replacer.expectedGeneration == uuid.Nil || replacer.validated.Ownership.ExpectedSize == nil || replacer.validated.Ownership.ExpectedMTime == nil || *replacer.validated.Ownership.ExpectedSize < 0 || !validReplacementDigest(replacer.validated.PayloadSHA256) {
 		return errors.New("managed publication replacement dependencies are unavailable")
 	}
 	replacer.validated = replacer.validated.Clone()

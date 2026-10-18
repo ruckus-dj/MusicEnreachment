@@ -91,7 +91,7 @@ func TestManagedTargetReplacerNativeReplacement(t *testing.T) {
 	scope := &PublicationExecutionScope{guard: fixture.guard, commands: &scopeCommandFake{}, repository: &scopeRepositoryFake{}}
 	repo := &replacementRecordingRepository{}
 	generation := uuid.New()
-	intent := persistence.PublicationExposureIntent{PrepOwner: stage.hold, Expectation: "expected_current", StagedPath: filepath.ToSlash(paths.RelativePath), TargetRelativePath: filepath.ToSlash(fixture.repo.input.Rewrite.RelativePath), OutputRootParent: persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID}, TargetParent: persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID}}
+	intent := persistence.PublicationExposureIntent{PrepOwner: stage.preparationRecord.OwnerToken, Expectation: "expected_current", StagedPath: filepath.ToSlash(paths.RelativePath), TargetRelativePath: filepath.ToSlash(fixture.repo.input.Rewrite.RelativePath), OutputRootParent: persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID}, TargetParent: persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID}}
 	replacer := &newPublicationManagedTargetReplacer{scope: scope, repository: repo, guard: fixture.guard, intent: intent, validated: validated, expectedGeneration: &generation, stage: stage, root: root, stageDir: stageDir, targetDir: targetDir, stageName: stage.directoryName, targetName: "current.mp3"}
 	err = replacer.Replace(context.Background())
 	if runtime.GOOS == "windows" {

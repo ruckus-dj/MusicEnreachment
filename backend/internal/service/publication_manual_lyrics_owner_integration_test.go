@@ -25,7 +25,10 @@ import (
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -72,6 +75,10 @@ func TestPreparedManualLyricsFLACNativeReplacementPostgreSQL(t *testing.T) {
 	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true)
 }
 
+func TestPublicationExecutorManualLyricsDeliveryPostgreSQL(t *testing.T) {
+	testPreparedManualLyricsFLACOwner(t, true, false, false, false, false, false, false, false, true)
+}
+
 func TestPreparedManualLyricsReplacementCommitFailurePostgreSQL(t *testing.T) {
 	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true, true)
 }
@@ -96,6 +103,7 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	commitFailure := len(options) > 4 && options[4]
 	installedAckLost := len(options) > 5 && options[5]
 	cleanupIntentFailure := len(options) > 6 && options[6]
+	delivery := len(options) > 7 && options[7]
 	if nestedPath {
 		currentPath = filepath.Join(fixture.output, "Artist", "Album", "Current.FLAC")
 		if err := os.MkdirAll(filepath.Dir(currentPath), 0o700); err != nil {
@@ -256,6 +264,44 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		t.Fatal(err)
 	}
 	repository := persistence.NewSetupManagerRepository(db)
+	if delivery {
+		registry := settings.New(persistence.NewSettingsRepository(db), nil)
+		if err := registry.SetOutputDirectory(ctx, fixture.output, ""); err != nil {
+			t.Fatal(err)
+		}
+		commands, err := NewPublicationJobCommands(1<<20, 64<<10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		executor := NewPublicationExecutor(repository, registry, tools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), commands)
+		err = executor.ExecutePublicationDelivery(ctx, guard.OperationID, guard.RiverJobID, guard.RiverAttempt)
+		if runtime.GOOS == "windows" {
+			if !errors.Is(err, sourcefs.ErrUnsupported) {
+				t.Fatalf("manual lyrics executor error = %v, want sourcefs.ErrUnsupported", err)
+			}
+			assertReplacementStillExposed(t, ctx, db, repository, guard, input)
+			return
+		}
+		if err != nil {
+			t.Fatalf("execute manual lyrics delivery: %v", err)
+		}
+		if _, err := os.Stat(currentPath); err != nil {
+			t.Fatalf("published target unavailable: %v", err)
+		}
+		finalCapture, err := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true})
+		if err != nil || !reflect.DeepEqual(finalCapture.Tags["LYRICS"], []string{input.ManualLyrics.Value}) {
+			t.Fatalf("executor-installed lyrics = %#v, %v", finalCapture.Tags["LYRICS"], err)
+		}
+		if err := baselineArtwork.VerifyEquivalent(ctx, currentPath); err != nil {
+			t.Fatalf("executor replacement changed native artwork/audio: %v", err)
+		}
+		projection, err := repository.ReadManualLyricsReceiptProjection(ctx, guard.ExpectedPositionID)
+		if err != nil || projection.Pending || projection.Receipt == nil || projection.CurrentGeneration == nil || *projection.CurrentGeneration != guard.CandidateGeneration {
+			t.Fatalf("executor receipt/current projection = %+v, %v", projection, err)
+		}
+		assertReplacementSettledInDB(t, ctx, db, repository, guard, input)
+		return
+	}
 	commitRepository := &manualLyricsReplacementCommitFailureRepository{SetupManagerRepository: repository}
 	installedAckRepository := &manualLyricsInstalledAckLostRepository{SetupManagerRepository: repository}
 	cleanupIntentRepository := &manualLyricsCleanupIntentFailureRepository{SetupManagerRepository: repository}

@@ -11,6 +11,7 @@ import (
 	"io"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/uptrace/bun"
 )
 
@@ -116,10 +117,10 @@ func (repository *SetupManagerRepository) LoadPublicationStartupSnapshot(ctx con
 }
 
 func validQueuedPublicationContract(ctx context.Context, tx bun.Tx, jobKind string, jobArgs json.RawMessage, operation Operation, attempt TrackPublicationAttempt, record PublicationStartupRecord) (bool, error) {
-	if jobKind != (publicationTrackArgs{}).Kind() {
+	if jobKind != (publication.TrackArgs{}).Kind() {
 		return false, nil
 	}
-	var args publicationTrackArgs
+	var args publication.TrackArgs
 	decoder := json.NewDecoder(bytes.NewReader(jobArgs))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&args) != nil || decoder.Decode(new(any)) != io.EOF || args.OperationID != attempt.OperationID {

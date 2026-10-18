@@ -3,19 +3,28 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	riverdatabasesql "github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	rivermigrate "github.com/riverqueue/river/rivermigrate"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
+	integrationtools "github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
@@ -24,6 +33,17 @@ import (
 // covered separately by the publication cleanup flow tests.
 func TestPublicationStagePreparationPersistsObservedInputFactsPostgreSQL(t *testing.T) {
 	t.Parallel()
+	testPublicationSourceExecution(t, "")
+}
+
+func TestPublicationExecutorAudioDeliveryPostgreSQL(t *testing.T) {
+	for _, target := range []string{"Track.flac", "Artist/Album/Track.flac"} {
+		t.Run(target, func(t *testing.T) { testPublicationSourceExecution(t, target) })
+	}
+}
+
+func testPublicationSourceExecution(t *testing.T, target string) {
+	t.Helper()
 	ctx := context.Background()
 	db := testpostgres.OpenMigrated(t)
 	driver := riverdatabasesql.New(db.DB)
@@ -42,7 +62,18 @@ func TestPublicationStagePreparationPersistsObservedInputFactsPostgreSQL(t *test
 		t.Fatal(err)
 	}
 	sourceFile := filepath.Join(sourceRoot, "track.flac")
-	if err := os.WriteFile(sourceFile, []byte("integration audio bytes"), 0o600); err != nil {
+	sourceBytes := []byte("integration audio bytes")
+	if target != "" {
+		sourceBytes, err = os.ReadFile("../integrations/metadata/testdata/eg.flac")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sourceBytes, err = flacFixtureWithoutPictures(sourceBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(sourceFile, sourceBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	oldMTime := time.Date(2020, 2, 3, 4, 5, 6, 0, time.UTC)
@@ -128,6 +159,126 @@ func TestPublicationStagePreparationPersistsObservedInputFactsPostgreSQL(t *test
 	if _, err := db.ExecContext(ctx, `INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime) VALUES (?,1,?,?,?,?,?,?,?,?,?,'track.flac',?,?)`, operationID, riverJobID, epoch, holdID, rootID, locationID, workID, variantID, sourceRoot, sourceRoot, info.Size(), oldMTime); err != nil {
 		t.Fatal(err)
 	}
+	if target != "" {
+		output, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		toolsRoot, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(toolsRoot, "ffmpeg", "1")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"ffmpeg", "ffprobe"} {
+			if runtime.GOOS == "windows" {
+				name += ".exe"
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("controlled command transport"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		verified := time.Now().UTC()
+		installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "1", RelativePath: "ffmpeg/1", State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVersions: json.RawMessage(`{"ffmpeg":"ffmpeg version 1","ffprobe":"ffprobe version 1"}`)}
+		registry := settings.New(persistence.NewSettingsRepository(db), nil)
+		if err := registry.SetToolsDirectory(ctx, toolsRoot, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.SetOutputDirectory(ctx, output, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.CreateInstallation(ctx, installation); err != nil {
+			t.Fatal(err)
+		}
+		inputs.DesiredTags = map[string][]string{"TITLE": {"Published track"}, "ARTIST": {"Artist"}}
+		for index := range inputs.Tools {
+			inputs.Tools[index].RelativePath = "ffmpeg/1"
+		}
+		frozen, err := json.Marshal(inputs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nodes := []persistence.PublicationNamespaceNode{{CanonicalKey: strings.ToLower(target), RelativePath: target, NodeKind: "file"}}
+		if strings.Contains(target, "/") {
+			nodes = append([]persistence.PublicationNamespaceNode{{CanonicalKey: "artist", RelativePath: "Artist", NodeKind: "dir", DirectoryScope: "artist"}, {CanonicalKey: "artist/album", RelativePath: "Artist/Album", NodeKind: "dir", DirectoryScope: "album"}}, nodes...)
+		}
+		manifest, err := json.Marshal(map[string]any{"version": 1, "nodes": nodes})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.ExecContext(ctx, `UPDATE track_publication_attempt SET frozen_inputs=?::jsonb, namespace_manifest=?::jsonb WHERE operation_id=?`, string(frozen), string(manifest), operationID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE operation SET tools_read_required=true WHERE id=?`, operationID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO operation_tool_read_hold(operation_id,installation_id) VALUES (?,?)`, operationID, installationID); err != nil {
+			t.Fatal(err)
+		}
+		for _, node := range nodes {
+			id := uuid.New()
+			digest := sha256.Sum256([]byte(node.CanonicalKey))
+			var owner, scope any
+			if node.NodeKind == "file" {
+				owner = positionID
+			} else {
+				scope = node.DirectoryScope
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id,directory_scope_key) VALUES (?,?,?,?,?,?,?,?)`, id, epoch, digest[:], node.CanonicalKey, node.RelativePath, node.NodeKind, owner, scope); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?,?,?)`, id, positionID, candidateID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		executor := NewPublicationExecutor(manager, registry, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), audioDeliveryTestCommands{})
+		err = executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
+		if runtime.GOOS == "windows" {
+			if !errors.Is(err, sourcefs.ErrUnsupported) {
+				t.Fatalf("expected unsupported directory durability: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(output, filepath.FromSlash(target))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("unexpected exposed target: %v", err)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		capture, err := (metadata.Reader{}).Read(ctx, filepath.Join(output, filepath.FromSlash(target)), metadata.ReadRequest{CoverInspection: true})
+		if err != nil || len(capture.Tags["TITLE"]) != 1 || capture.Tags["TITLE"][0] != "Published track" {
+			t.Fatalf("published metadata = %#v, %v", capture.Tags, err)
+		}
+		var current persistence.TrackPublication
+		if err := db.NewSelect().Model(&current).Where("position_id=?", positionID).Scan(ctx); err != nil || current.Generation != candidateID {
+			t.Fatalf("current generation: %v", err)
+		}
+		for _, table := range []string{"track_publication_attempt", "publication_execution_claim", "publication_source_hold", "operation_tool_read_hold"} {
+			var count int
+			if err := db.NewRaw(`SELECT count(*) FROM `+table+` WHERE operation_id=?`, operationID).Scan(ctx, &count); err != nil || count != 0 {
+				t.Fatalf("retained %s = %d, %v", table, count, err)
+			}
+		}
+		op, err := manager.GetOperation(ctx, operationID)
+		if err != nil || op.State != "succeeded" {
+			t.Fatalf("publication operation = %+v, %v", op, err)
+		}
+		actualSource, err := os.ReadFile(sourceFile)
+		if err != nil || !bytes.Equal(actualSource, sourceBytes) {
+			t.Fatal("source changed during publication")
+		}
+		return
+	}
 	guard := persistence.PublicationDeliveryGuard{OperationID: operationID, ApplicationAttempt: 1, RiverJobID: riverJobID, RiverAttempt: 1, ClaimUUID: uuid.New(), BootUUID: uuid.New(), DeliveryToken: uuid.NewString(), Epoch: epoch, CandidateGeneration: candidateID, ExpectedPositionID: positionID}
 	if outcome, err := manager.ClaimPublicationDelivery(ctx, guard); err != nil || outcome != persistence.PublicationDeliveryAcquired {
 		t.Fatalf("claim = %q, %v", outcome, err)
@@ -198,3 +349,45 @@ func TestPublicationStagePreparationPersistsObservedInputFactsPostgreSQL(t *test
 func preparationBoolPointer(value bool) *bool { return &value }
 
 func preparationIntPointer(value int) *int { return &value }
+
+// This transport exercises dispatch/settlement with real FLAC bytes, not codec
+// or executable compatibility. All metadata and filesystem readback stay native.
+type audioDeliveryTestCommands struct{}
+
+func (audioDeliveryTestCommands) Run(ctx context.Context, executable string, args ...string) (PublicationCommandResult, error) {
+	result := PublicationCommandResult{QuiescenceEstablished: true}
+	if len(args) == 1 && args[0] == "-version" {
+		name := strings.TrimSuffix(filepath.Base(executable), ".exe")
+		result.Output = []byte(name + " version 1")
+		return result, nil
+	}
+	var input string
+	for i, arg := range args {
+		if arg == "-i" && i+1 < len(args) {
+			input = args[i+1]
+		}
+	}
+	if input == "" || len(args) == 0 {
+		return result, fmt.Errorf("unexpected audio test command: %v", args)
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	contents, err := os.ReadFile(input)
+	if err != nil {
+		return result, err
+	}
+	file, err := os.OpenFile(args[len(args)-1], os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return result, err
+	}
+	_, writeErr := file.Write(contents)
+	return result, errors.Join(writeErr, file.Close())
+}
+
+func (audioDeliveryTestCommands) RunFile(_ context.Context, request integrationtools.FileCommandRequest) (PublicationCommandResult, error) {
+	if request.Input == nil {
+		return PublicationCommandResult{QuiescenceEstablished: true}, errors.New("missing borrowed audio input")
+	}
+	return PublicationCommandResult{QuiescenceEstablished: true, Output: []byte(`{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2}]}`)}, nil
+}

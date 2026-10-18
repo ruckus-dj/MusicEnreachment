@@ -26,6 +26,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/static"
@@ -221,6 +222,16 @@ func Run(ctx context.Context, config Config) error {
 	matchingAcquisition := service.NewMatchingAcquisitionService(setupManagerRepository, providerFetch, riverSlot)
 	matchingEvaluationWorker := jobs.NewMatchingEvaluationWorker(setupManagerRepository, matchingEvaluation, operationService).WithAcquisition(matchingAcquisition)
 	matchingApplyWorker := jobs.NewMatchingApplyWorker(setupManagerRepository, operationService)
+	publicationCommands, err := service.NewPublicationJobCommands(1<<20, 64<<10)
+	if err != nil {
+		return fmt.Errorf("create publication command runner: %w", err)
+	}
+	publicationExecutor := service.NewPublicationExecutor(
+		setupManagerRepository, registry,
+		tools.Platform{GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH},
+		publication.NewCoordinator(), uuid.New(), publicationCommands,
+	)
+	publicationWorker := jobs.NewPublicationWorker(publicationExecutor)
 	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, registry, riverSlot)
 	catalog := tools.NewDefaultCatalog(nil)
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
@@ -267,6 +278,7 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, providerFetchWorker)
 		river.AddWorker(workers, matchingEvaluationWorker)
 		river.AddWorker(workers, matchingApplyWorker)
+		river.AddWorker(workers, publicationWorker)
 		river.AddWorker(workers, incomingMatchingReconcileWorker)
 		river.AddWorker(workers, incomingMatchingReconcileDispatchWorker)
 		river.AddWorker(workers, sourceAnalysisPendingDispatchWorker)

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func TestLoadPublicationStartupSnapshotRejectsInvalidQueuedContractsPostgreSQL(t *testing.T) {
@@ -27,7 +28,7 @@ func TestLoadPublicationStartupSnapshotRejectsInvalidQueuedContractsPostgreSQL(t
 		{
 			name: "wrong operation identity",
 			change: func(t *testing.T, f publicationExecutionFixture) {
-				args, err := json.Marshal(publicationTrackArgs{OperationID: uuid.New()})
+				args, err := json.Marshal(publication.TrackArgs{OperationID: uuid.New()})
 				if err != nil {
 					t.Fatal(err)
 				}

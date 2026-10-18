@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
@@ -31,7 +32,7 @@ func (i *publicationAdmissionInserter) InsertTx(ctx context.Context, tx *sql.Tx,
 		return nil, errors.New("injected enqueue failure")
 	}
 	var id int64
-	err := tx.QueryRowContext(ctx, `INSERT INTO river_job(kind,args,state,attempt) VALUES ($1,$2::jsonb,'available',0) RETURNING id`, args.Kind(), `{"operation_id":"`+args.(publicationTrackArgs).OperationID.String()+`"}`).Scan(&id)
+	err := tx.QueryRowContext(ctx, `INSERT INTO river_job(kind,args,state,attempt) VALUES ($1,$2::jsonb,'available',0) RETURNING id`, args.Kind(), `{"operation_id":"`+args.(publication.TrackArgs).OperationID.String()+`"}`).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +102,7 @@ func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inserter.args.Kind() != "publish_track_v1" || inserter.args.(publicationTrackArgs).OperationID != op {
+	if inserter.args.Kind() != "publish_track_v1" || inserter.args.(publication.TrackArgs).OperationID != op {
 		t.Fatal("River args did not contain only operation ID")
 	}
 	jobArgs, err := json.Marshal(inserter.args)

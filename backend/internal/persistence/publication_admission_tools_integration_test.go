@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -165,7 +166,7 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 	if failedInserter.args == nil {
 		t.Fatal("failing River inserter was not reached")
 	}
-	failedOperationID := failedInserter.args.(publicationTrackArgs).OperationID
+	failedOperationID := failedInserter.args.(publication.TrackArgs).OperationID
 	assertNoAdmissionArtifacts(t, ctx, db, failed, &failedOperationID)
 	var failedHolds int
 	if err := db.NewRaw(`SELECT count(*) FROM operation_tool_read_hold WHERE installation_id=?`, installationID).Scan(ctx, &failedHolds); err != nil || failedHolds != 1 {

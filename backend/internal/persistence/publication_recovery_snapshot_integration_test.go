@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -73,11 +74,11 @@ func prepareQueuedStartupFixture(t *testing.T, f publicationExecutionFixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args, err := json.Marshal(publicationTrackArgs{OperationID: f.guard.OperationID})
+	args, err := json.Marshal(publication.TrackArgs{OperationID: f.guard.OperationID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.NewRaw(`UPDATE river_job SET kind=?, args=?::jsonb, state='available' WHERE id=?`, (publicationTrackArgs{}).Kind(), string(args), f.guard.RiverJobID).Exec(ctx); err != nil {
+	if _, err := f.db.NewRaw(`UPDATE river_job SET kind=?, args=?::jsonb, state='available' WHERE id=?`, (publication.TrackArgs{}).Kind(), string(args), f.guard.RiverJobID).Exec(ctx); err != nil {
 		t.Fatalf("prepare queued River job: %v", err)
 	}
 	if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET namespace_manifest=?::jsonb WHERE operation_id=?`, string(manifest), f.guard.OperationID).Exec(ctx); err != nil {

@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/uptrace/bun"
 )
 
@@ -63,12 +63,6 @@ type PublicationSourceSelection struct {
 	MTime          time.Time
 	HoldUUID       uuid.UUID
 }
-
-type publicationTrackArgs struct {
-	OperationID uuid.UUID `json:"operation_id"`
-}
-
-func (publicationTrackArgs) Kind() string { return "publish_track_v1" }
 
 // AdmitPublication atomically inserts the source-free operation snapshot, attempt,
 // namespace reservations, and its River delivery.
@@ -204,7 +198,7 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 				return fmt.Errorf("admit publication: encode frozen manual lyrics input: %w", err)
 			}
 		}
-		result, err := client.InsertTx(ctx, tx.Tx, publicationTrackArgs{OperationID: operationID}, nil)
+		result, err := client.InsertTx(ctx, tx.Tx, publication.TrackArgs{OperationID: operationID}, nil)
 		if err != nil {
 			return fmt.Errorf("admit publication: insert River job: %w", err)
 		}
@@ -479,5 +473,3 @@ func publicationJSONObject(raw json.RawMessage) bool {
 	var value map[string]json.RawMessage
 	return json.Unmarshal(raw, &value) == nil && value != nil
 }
-
-var _ river.JobArgs = publicationTrackArgs{}
