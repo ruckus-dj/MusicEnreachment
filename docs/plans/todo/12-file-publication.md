@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Добавлен durable manual-lyrics receipt storage/read-model: applicability
+ограничена active epoch, selected desired revision и published generation;
+fulfilled требует строгих actual metadata/assets, warning остаётся diagnostic,
+а не самостоятельным pending-флагом. Production receipt writer и canonical
+commit integration ещё отсутствуют. PostgreSQL constraints, read projection и
+populated rollback refusal проверены; полный локальный `task verify` прошёл,
+native CI ещё не проверен. Native rebuild test теперь наблюдает успешные
+unlink/exclusive-create вместо предположения о lifetime-уникальности file ID.
+
 Реализованы isolated optional-lyrics helper и native candidate rebuild: исходный
 live reservation удерживается через write/readback/rebuild; rebuild journal
 предшествует identity-checked unlink и exclusive byte-copy из immutable input.

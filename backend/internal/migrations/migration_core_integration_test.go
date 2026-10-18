@@ -33,6 +33,7 @@ var additiveMigrationNames = []string{
 	"20261017000005",
 	"20261017000006",
 	"20261017000007",
+	"20261018000001",
 }
 
 var currentMigrationNames = append(append([]string(nil), baselineMigrationNames...), additiveMigrationNames...)
@@ -70,7 +71,7 @@ func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 		t.Fatalf("rollback clean migration group: %v", err)
 	}
 	assertMigrationGroup(t, rolledBack, currentMigrationNames, "rolled back")
-	for _, table := range []string{"app_setting", "operation", "source_root", "media_metadata_result", "release_track"} {
+	for _, table := range []string{"app_setting", "operation", "source_root", "media_metadata_result", "release_track", "publication_manual_lyrics_receipt"} {
 		if relationName(t, db, table) != nil {
 			t.Errorf("application table %s remains after current rollback", table)
 		}

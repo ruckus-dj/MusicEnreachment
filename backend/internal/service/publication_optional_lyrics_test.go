@@ -12,12 +12,14 @@ import (
 	"image/jpeg"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
@@ -420,6 +422,12 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 		t.Fatalf("prepared stage type = %T", stage)
 	}
 	preparedStage.repository = rebuildRepo
+	trace := []string{}
+	expectedParent, err := preparedStage.directory.Identity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedStage.directory = &observedRebuildDirectory{OutputDirectory: preparedStage.directory, trace: &trace, outputName: filepath.Base(preparedStage.paths.OutputPath), expectedParent: expectedParent}
 	scope := newScopeForTest(t, &scopeCommandFake{}, &scopeRepositoryFake{valid: true, marked: true})
 	preparedStage.guard = scope.guard
 	reservation := scope.reserveSynchronousWork()
@@ -437,8 +445,37 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 	if err := os.WriteFile(paths.OutputPath, fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	initial, err := os.Stat(paths.OutputPath)
+	mutation := preparedStage.directory.(sourcefs.OutputMutation)
+	inputHandle, err := mutation.OpenExistingRegular(ctx, filepath.Base(paths.InputPath))
 	if err != nil {
+		t.Fatal(err)
+	}
+	inputInfo, err := inputHandle.Stat(ctx)
+	if err != nil {
+		_ = inputHandle.Close()
+		t.Fatal(err)
+	}
+	candidateHandle, err := mutation.OpenExistingRegular(ctx, filepath.Base(paths.OutputPath))
+	if err != nil {
+		_ = inputHandle.Close()
+		t.Fatal(err)
+	}
+	candidateInfo, err := candidateHandle.Stat(ctx)
+	if err != nil {
+		_ = inputHandle.Close()
+		_ = candidateHandle.Close()
+		t.Fatal(err)
+	}
+	if os.SameFile(inputInfo, candidateInfo) {
+		_ = inputHandle.Close()
+		_ = candidateHandle.Close()
+		t.Fatal("prepared input and output candidate alias the same native file")
+	}
+	if err := candidateHandle.Close(); err != nil {
+		_ = inputHandle.Close()
+		t.Fatal(err)
+	}
+	if err := inputHandle.Close(); err != nil {
 		t.Fatal(err)
 	}
 	initialCapture, err := (metadata.Reader{}).Read(ctx, paths.OutputPath, metadata.ReadRequest{CoverInspection: true})
@@ -457,6 +494,22 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 	reader := optionalLyricsTestReader{read: func(ctx context.Context, path string, request metadata.ReadRequest) (metadata.Capture, error) {
 		return (metadata.Reader{}).Read(ctx, path, request)
 	}}
+	rebuildRepo.onRecord = func(record persistence.PublicationCandidateRebuildRecord) error {
+		switch record.Step {
+		case "intent":
+			trace = append(trace, "db-intent-ack")
+		case "complete":
+			trace = append(trace, "db-complete-ack")
+			candidate, err := os.ReadFile(paths.OutputPath)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(candidate, fixture) {
+				return errors.New("rebuild completion acknowledged before exact immutable input bytes were restored")
+			}
+		}
+		return nil
+	}
 	restoreCalled := false
 	result, err := applyPublicationOptionalLyrics(ctx, scope, reservation, stage, persistence.PublicationInputs{
 		Version:      persistence.PublicationInputsVersion3,
@@ -493,15 +546,11 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 			if !equalTags(withoutLyrics(beforeRestore.Tags), mandatory) {
 				return errors.New("mandatory tags were not restored before required asset restoration")
 			}
-			restored, err := os.Stat(path)
-			if err != nil {
-				return err
-			}
-			if os.SameFile(initial, restored) {
-				return errors.New("fallback did not create a new native output identity")
-			}
 			restoreCalled = true
 			_, err = (metadata.Writer{}).Write(ctx, path, map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}, &metadata.Cover{Data: cover, MIME: "image/jpeg"})
+			if err == nil {
+				trace = append(trace, "assets-restored")
+			}
 			return err
 		},
 	})
@@ -510,6 +559,10 @@ func TestApplyOptionalLyricsRealTagLibMismatchRestoresNativeOutput(t *testing.T)
 	}
 	if !restoreCalled || len(rebuildRepo.records) != 2 || rebuildRepo.records[0].Step != "intent" || rebuildRepo.records[1].Step != "complete" {
 		t.Fatalf("fallback/rebuild journal = restored %v, records %#v", restoreCalled, rebuildRepo.records)
+	}
+	wantTrace := []string{"db-intent-ack", "native-remove-success", "native-exclusive-create-success", "db-complete-ack", "assets-restored"}
+	if !reflect.DeepEqual(trace, wantTrace) {
+		t.Fatalf("native rebuild trace = %#v, want %#v", trace, wantTrace)
 	}
 	if result.OptionalDiagnostic == "" || result.Lyrics.State != persistence.PublicationAssetAbsent {
 		t.Fatalf("optional mismatch result = %#v", result)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,7 +16,8 @@ import (
 )
 
 type candidateRebuildTestRepo struct {
-	records []persistence.PublicationCandidateRebuildRecord
+	records  []persistence.PublicationCandidateRebuildRecord
+	onRecord func(persistence.PublicationCandidateRebuildRecord) error
 }
 
 func (*candidateRebuildTestRepo) PublicationPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error) {
@@ -30,8 +33,72 @@ func (*candidateRebuildTestRepo) RecordPublicationPreparation(context.Context, p
 	return persistence.PublicationPreparationRecorded, nil
 }
 func (repo *candidateRebuildTestRepo) RecordPublicationCandidateRebuild(_ context.Context, _ persistence.PublicationDeliveryGuard, record persistence.PublicationCandidateRebuildRecord) error {
+	if repo.onRecord != nil {
+		if err := repo.onRecord(record); err != nil {
+			return err
+		}
+	}
 	repo.records = append(repo.records, record)
 	return nil
+}
+
+// observedRebuildDirectory forwards the native capability set while recording
+// successful namespace mutations. Embedding OutputDirectory alone would hide
+// optional capabilities and accidentally test a fallback path instead.
+type observedRebuildDirectory struct {
+	sourcefs.OutputDirectory
+	trace          *[]string
+	outputName     string
+	expectedParent sourcefs.DirectoryIdentity
+}
+
+func (d *observedRebuildDirectory) OpenExistingDir(ctx context.Context, name string) (sourcefs.OutputDirectory, error) {
+	child, err := d.OutputDirectory.(sourcefs.OutputDirectoryTraversal).OpenExistingDir(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return &observedRebuildDirectory{OutputDirectory: child, trace: d.trace, outputName: d.outputName, expectedParent: d.expectedParent}, nil
+}
+func (d *observedRebuildDirectory) RenameNoReplace(ctx context.Context, from sourcefs.OutputDirectory, fromName string, to sourcefs.OutputDirectory, toName string) error {
+	return d.OutputDirectory.(sourcefs.OutputMutation).RenameNoReplace(ctx, unwrapRebuildDirectory(from), fromName, unwrapRebuildDirectory(to), toName)
+}
+func unwrapRebuildDirectory(dir sourcefs.OutputDirectory) sourcefs.OutputDirectory {
+	if wrapped, ok := dir.(*observedRebuildDirectory); ok {
+		return wrapped.OutputDirectory
+	}
+	return dir
+}
+func (d *observedRebuildDirectory) OpenExistingRegular(ctx context.Context, name string) (sourcefs.RegularFile, error) {
+	return d.OutputDirectory.(sourcefs.OutputMutation).OpenExistingRegular(ctx, name)
+}
+func (d *observedRebuildDirectory) RemoveOwnedRegular(ctx context.Context, name string, parent sourcefs.DirectoryIdentity, expected fs.FileInfo) error {
+	if name != d.outputName || parent != d.expectedParent || expected == nil || !expected.Mode().IsRegular() {
+		return errors.New("native removal did not receive the expected output name, parent, and regular-file facts")
+	}
+	if err := d.OutputDirectory.(sourcefs.OutputCleanup).RemoveOwnedRegular(ctx, name, parent, expected); err != nil {
+		return err
+	}
+	*d.trace = append(*d.trace, "native-remove-success")
+	return nil
+}
+func (d *observedRebuildDirectory) RemoveEmptyChildDir(ctx context.Context, name string, parent, child sourcefs.DirectoryIdentity) error {
+	return d.OutputDirectory.(sourcefs.OutputCleanup).RemoveEmptyChildDir(ctx, name, parent, child)
+}
+func (d *observedRebuildDirectory) CreateExclusive(ctx context.Context, name string) (sourcefs.OutputFile, error) {
+	if name != d.outputName {
+		return nil, errors.New("native exclusive creation did not receive the expected output name")
+	}
+	file, err := d.OutputDirectory.CreateExclusive(ctx, name)
+	if err == nil {
+		*d.trace = append(*d.trace, "native-exclusive-create-success")
+	}
+	return file, err
+}
+func (d *observedRebuildDirectory) SyncDirectory(ctx context.Context) error {
+	return d.OutputDirectory.(sourcefs.OutputDirectorySync).SyncDirectory(ctx)
+}
+func (d *observedRebuildDirectory) AtomicReplaceExisting(ctx context.Context, from sourcefs.OutputDirectory, fromName string, fromInfo fs.FileInfo, toName string, toInfo fs.FileInfo) error {
+	return d.OutputDirectory.(sourcefs.OutputAtomicReplace).AtomicReplaceExisting(ctx, unwrapRebuildDirectory(from), fromName, fromInfo, toName, toInfo)
 }
 
 func TestRebuildPublicationOutputCopiesPreparedInputNatively(t *testing.T) {
