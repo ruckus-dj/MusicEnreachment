@@ -319,3 +319,144 @@ func TestManualLyricsCommitReplayRejectsTamperedReceiptPostgreSQL(t *testing.T) 
 		t.Fatalf("replay mutated tampered receipt: before=%+v after=%+v", before, after)
 	}
 }
+
+func TestManualLyricsCleanupRequiresReceiptAfterIntentPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, repo, _, _, _ := prepareManualLyricsCommitFixture(t)
+	if committed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !committed {
+		t.Fatalf("manual commit = %v, %v", committed, err)
+	}
+	attempt, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := decodeJournal(attempt.MutationJournal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prep PublicationPreparationRecord
+	var installed PublicationReplacementEvidence
+	for _, raw := range entries {
+		var header struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &header) != nil {
+			t.Fatal("invalid journal")
+		}
+		if header.Kind == "publication_preparation" {
+			var r PublicationPreparationRecord
+			if decodeStrictJSON(raw, &r) == nil && r.Step == "input_ready" {
+				prep = r
+			}
+		}
+		if header.Kind == "publication_replacement" {
+			var r PublicationReplacementEvidence
+			if decodeStrictJSON(raw, &r) == nil && r.To == "installed" {
+				installed = r
+			}
+		}
+	}
+	w := PublicationReplacementCleanupWitness{PrivateDirRel: prep.PrivateDirRel, BackupRel: prep.InputRel, Directory: *prep.DirectoryIdentity, Parent: prep.ParentIdentity, Backup: installed.BackupIdentity}
+	if out, err := repo.BeginPublicationReplacementCleanup(ctx, f.guard, w); err != nil || out != PublicationReplacementCleanupRecorded {
+		t.Fatalf("cleanup intent = %q, %v", out, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `DELETE FROM publication_manual_lyrics_receipt WHERE position_id=?`, f.guard.ExpectedPositionID); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := repo.RecordPublicationReplacementCleanupResult(ctx, f.guard, w, "backup", "already_absent"); err != nil || out != PublicationReplacementCleanupStale {
+		t.Fatalf("cleanup result without receipt = %q, %v", out, err)
+	}
+	if out, err := repo.BeginPublicationReplacementCleanup(ctx, f.guard, w); err != nil || out != PublicationReplacementCleanupStale {
+		t.Fatalf("already-recorded intent without receipt = %q, %v", out, err)
+	}
+}
+
+func TestManualLyricsCleanupSettlesWithReceiptPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, repo, _, _, _ := prepareManualLyricsCommitFixture(t)
+	if committed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !committed {
+		t.Fatalf("manual commit = %v, %v", committed, err)
+	}
+	var receiptBefore PublicationManualLyricsReceipt
+	if err := f.db.NewSelect().Model(&receiptBefore).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE release_track SET metadata_revision=metadata_revision+1 WHERE id=?`, f.guard.ExpectedPositionID); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := decodeJournal(attempt.MutationJournal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prep PublicationPreparationRecord
+	var installed PublicationReplacementEvidence
+	for _, raw := range entries {
+		var h struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &h) != nil {
+			t.Fatal("invalid journal")
+		}
+		if h.Kind == "publication_preparation" {
+			var r PublicationPreparationRecord
+			if decodeStrictJSON(raw, &r) == nil && r.Step == "input_ready" {
+				prep = r
+			}
+		}
+		if h.Kind == "publication_replacement" {
+			var r PublicationReplacementEvidence
+			if decodeStrictJSON(raw, &r) == nil && r.To == "installed" {
+				installed = r
+			}
+		}
+	}
+	w := PublicationReplacementCleanupWitness{PrivateDirRel: prep.PrivateDirRel, BackupRel: prep.InputRel, Directory: *prep.DirectoryIdentity, Parent: prep.ParentIdentity, Backup: installed.BackupIdentity}
+	if out, err := repo.BeginPublicationReplacementCleanup(ctx, f.guard, w); err != nil || out != PublicationReplacementCleanupRecorded {
+		t.Fatalf("backup intent = %q, %v", out, err)
+	}
+	if out, err := repo.RecordPublicationReplacementCleanupResult(ctx, f.guard, w, "backup", "already_absent"); err != nil || out != PublicationReplacementCleanupRecorded {
+		t.Fatalf("backup result = %q, %v", out, err)
+	}
+	if out, err := repo.BeginPublicationReplacementDirectoryCleanup(ctx, f.guard, w); err != nil || out != PublicationReplacementCleanupRecorded {
+		t.Fatalf("directory intent = %q, %v", out, err)
+	}
+	if out, err := repo.RecordPublicationReplacementCleanupResult(ctx, f.guard, w, "directory", "already_absent"); err != nil || out != PublicationReplacementCleanupRecorded {
+		t.Fatalf("directory result = %q, %v", out, err)
+	}
+	if settled, err := repo.SettleReplacementPublication(ctx, f.guard, w, true); err != nil || !settled {
+		t.Fatalf("settle = %v, %v", settled, err)
+	}
+	var receiptAfter PublicationManualLyricsReceipt
+	if err := f.db.NewSelect().Model(&receiptAfter).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if receiptBefore.DesiredRevision != receiptAfter.DesiredRevision || !receiptBefore.RecordedAt.Equal(receiptAfter.RecordedAt) {
+		t.Fatalf("receipt changed during cleanup: before=%+v after=%+v", receiptBefore, receiptAfter)
+	}
+	var count int
+	if err := f.db.NewSelect().Table("track_publication_attempt").ColumnExpr("count(*)").Where("operation_id=?", f.guard.OperationID).Scan(ctx, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("attempt count after settle = %d, want 0", count)
+	}
+	if err := f.db.NewSelect().Table("publication_source_hold").ColumnExpr("count(*)").Where("operation_id=?", f.guard.OperationID).Scan(ctx, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("source hold count after settle = %d, want 0", count)
+	}
+	var epoch uuid.UUID
+	if err := f.db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {
+		t.Fatal(err)
+	}
+	if epoch != f.guard.Epoch {
+		t.Fatalf("namespace epoch after settle = %s, want %s", epoch, f.guard.Epoch)
+	}
+}

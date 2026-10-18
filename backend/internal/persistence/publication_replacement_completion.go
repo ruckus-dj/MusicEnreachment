@@ -75,8 +75,22 @@ func (repository *SetupManagerRepository) beginPublicationReplacementCleanup(ctx
 			return nil
 		}
 		prefix, ok := validateCanonicalReplacementPrefix(attempt.MutationJournal, guard, attempt)
+		boundary := 11
+		var receipt *manualLyricsCommitReceipt
+		if !ok {
+			prefix, boundary, receipt, ok = canonicalReplacementCompletionPrefix(attempt.MutationJournal, guard, attempt)
+		}
 		if !ok {
 			return nil
+		}
+		if receipt != nil {
+			matches, err := manualLyricsReceiptMatchesTx(ctx, tx, receipt)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return nil
+			}
 		}
 		if err := validateExposureNamespace(ctx, tx, attempt, prefix.exposure.Intent); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -92,7 +106,7 @@ func (repository *SetupManagerRepository) beginPublicationReplacementCleanup(ctx
 		if err != nil {
 			return err
 		}
-		if !replacementCleanupPrefixMatches(entries, guard, attempt, current, witness) {
+		if !replacementCleanupPrefixMatches(entries, guard, attempt, current, witness, boundary) {
 			return nil
 		}
 		if replacementCleanupIntentExists(entries, step, name, witness) {
@@ -140,8 +154,22 @@ func (repository *SetupManagerRepository) RecordPublicationReplacementCleanupRes
 			return nil
 		}
 		prefix, ok := validateCanonicalReplacementPrefix(attempt.MutationJournal, guard, attempt)
+		boundary := 11
+		var receipt *manualLyricsCommitReceipt
+		if !ok {
+			prefix, boundary, receipt, ok = canonicalReplacementCompletionPrefix(attempt.MutationJournal, guard, attempt)
+		}
 		if !ok {
 			return nil
+		}
+		if receipt != nil {
+			matches, err := manualLyricsReceiptMatchesTx(ctx, tx, receipt)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return nil
+			}
 		}
 		if err := validateExposureNamespace(ctx, tx, attempt, prefix.exposure.Intent); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -157,7 +185,7 @@ func (repository *SetupManagerRepository) RecordPublicationReplacementCleanupRes
 		if err != nil {
 			return err
 		}
-		if !replacementCleanupPrefixMatches(entries, guard, attempt, current, witness) {
+		if !replacementCleanupPrefixMatches(entries, guard, attempt, current, witness, boundary) {
 			return nil
 		}
 		if replacementCleanupResultExists(entries, step, name) {
@@ -202,8 +230,22 @@ func (repository *SetupManagerRepository) SettleReplacementPublication(ctx conte
 			return err
 		}
 		prefix, ok := validateCanonicalReplacementPrefix(attempt.MutationJournal, guard, attempt)
+		boundary := 11
+		var receipt *manualLyricsCommitReceipt
+		if !ok {
+			prefix, boundary, receipt, ok = canonicalReplacementCompletionPrefix(attempt.MutationJournal, guard, attempt)
+		}
 		if !ok {
 			return nil
+		}
+		if receipt != nil {
+			matches, err := manualLyricsReceiptMatchesTx(ctx, tx, receipt)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return nil
+			}
 		}
 		if err := validateExposureNamespace(ctx, tx, attempt, prefix.exposure.Intent); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -219,7 +261,7 @@ func (repository *SetupManagerRepository) SettleReplacementPublication(ctx conte
 		if err != nil {
 			return err
 		}
-		if !replacementCleanupPrefixMatches(entries, guard, attempt, current, witness) || !replacementCleanupResultExists(entries, "backup", witness.BackupRel) || !replacementCleanupResultExists(entries, "directory", witness.PrivateDirRel) {
+		if !replacementCleanupPrefixMatches(entries, guard, attempt, current, witness, boundary) || !replacementCleanupResultExists(entries, "backup", witness.BackupRel) || !replacementCleanupResultExists(entries, "directory", witness.PrivateDirRel) {
 			return nil
 		}
 		var hold PublicationSourceHold
@@ -265,8 +307,16 @@ func replacementCommittedState(a *TrackPublicationAttempt, o *Operation, c *Publ
 	return a != nil && o != nil && c != nil && a.IntentKind == "rewrite" && a.ExpectedGeneration != nil && a.Phase == "committed" && a.FrozenInputs == nil && o.State == "running" && o.Stage == "committed" && c.State == "executing"
 }
 
-func replacementCleanupPrefixMatches(entries []json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt, current TrackPublication, w PublicationReplacementCleanupWitness) bool {
+func replacementCleanupPrefixMatches(entries []json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt, current TrackPublication, w PublicationReplacementCleanupWitness, boundary int) bool {
 	prefix, ok := validateCanonicalReplacementPrefixRaw(entries, guard, attempt)
+	if !ok {
+		manual, valid := parseCanonicalManualLyricsCommitPrefix(entries, guard, attempt)
+		if !valid || manual.PrefixEnd != boundary {
+			return false
+		}
+		prefix = canonicalReplacementPrefix{preparation: manual.Preparation, exposure: manual.Exposure, replacement: manual.Replacement, commit: manual.Commit}
+		ok = true
+	}
 	if !ok || !currentPublicationMatchesReplacementWitness(current, prefix.commit.Projection) || !currentIsCandidate(current, attempt) {
 		return false
 	}
@@ -274,7 +324,10 @@ func replacementCleanupPrefixMatches(entries []json.RawMessage, guard Publicatio
 		return false
 	}
 	steps := []struct{ step, name string }{{"backup_intent", w.BackupRel}, {"backup_result", w.BackupRel}, {"directory_intent", w.PrivateDirRel}, {"directory_result", w.PrivateDirRel}}
-	for i, raw := range entries[11:] {
+	if boundary < 0 || boundary > len(entries) {
+		return false
+	}
+	for i, raw := range entries[boundary:] {
 		var rec publicationReplacementCleanupRecord
 		if i >= len(steps) || decodeStrictJSON(raw, &rec) != nil || rec.Version != publicationReplacementCleanupVersion || rec.Kind != "publication_replacement_cleanup" || rec.Guard != guard || !samePublicationReplacementCleanupWitness(rec.Witness, w) || rec.Step != steps[i].step || rec.Name != steps[i].name || (strings.HasSuffix(rec.Step, "_intent") && rec.Result != "") || (strings.HasSuffix(rec.Step, "_result") && rec.Result != "removed" && rec.Result != "already_absent") {
 			return false
@@ -283,6 +336,20 @@ func replacementCleanupPrefixMatches(entries []json.RawMessage, guard Publicatio
 	// The immutable prefix's strict witness is recorded only after all four
 	// preparation, stage, exposure and replacement observations were validated.
 	return true
+}
+
+// canonicalReplacementCompletionPrefix adapts completion-only V3 evidence to
+// the shared V2 replacement projection. It never changes the V2 parser.
+func canonicalReplacementCompletionPrefix(raw json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt) (canonicalReplacementPrefix, int, *manualLyricsCommitReceipt, bool) {
+	entries, err := decodeJournal(raw)
+	if err != nil {
+		return canonicalReplacementPrefix{}, 0, nil, false
+	}
+	p, ok := parseCanonicalManualLyricsCommitPrefix(entries, guard, attempt)
+	if !ok {
+		return canonicalReplacementPrefix{}, 0, nil, false
+	}
+	return canonicalReplacementPrefix{preparation: p.Preparation, exposure: p.Exposure, replacement: p.Replacement, commit: p.Commit}, p.PrefixEnd, p.Commit.ManualLyricsReceipt, true
 }
 
 type canonicalReplacementPrefix struct {

@@ -11,6 +11,14 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем срезе V3 receipt-bearing journals поддержаны в
+replacement cleanup/settlement: canonical boundary определяется отдельно для
+V2/V3, stored receipt сверяется в каждой транзакции до idempotent ACK.
+Новый desired revision не переименовывает receipt старого admitted revision.
+Независимое review не нашло блокеров; полный локальный `task verify` прошёл.
+Native CI этого среза ещё не проверен.
+V3 filesystem execution и production Apply не включены.
+
 Добавлен атомарный V3 receipt-bearing replacement commit: canonical exact/rebuild
 prefix связывает frozen R, confirmed G0, published G1 и actual outcome; current,
 receipt, witness и SQL NULL frozen inputs записываются в одной транзакции.
