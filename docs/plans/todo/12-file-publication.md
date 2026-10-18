@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем service-срезе continuous private owner удерживает
+work capability через exposure-admission ACK, выводя intent внутри из frozen
+manifest и anchored existing target parent. Nested target/canonical-key case и
+четвёртый-ACK success/error tests добавлены; полный локальный `task verify`
+прошёл, review блокеров не нашло. Native CI этого среза ещё не проверен.
+Root namespace сравнивается с pinned output handle, target name перепроверяется
+после hashing; каталогов и replacement capability owner не создаёт. Admission
+по-прежнему не разрешает filesystem replacement или recovery resume.
+
 В текущем срезе добавлены private validated/exposing CURRENT
 reader и post-validation checkpoint, требующий active scope-held capability.
 Generic rewrite checks сохраняют preparing/staged границу. Native/PG tests

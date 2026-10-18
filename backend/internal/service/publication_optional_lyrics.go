@@ -128,6 +128,7 @@ type preparedManualLyricsFLACMode uint8
 const (
 	preparedManualLyricsOutcomeOnly preparedManualLyricsFLACMode = iota
 	preparedManualLyricsThroughValidated
+	preparedManualLyricsThroughExposureAdmission
 )
 
 type preparedManualLyricsStageRepository interface {
@@ -158,6 +159,19 @@ func validatePreparedManualLyricsFLAC(
 	return applyPreparedManualLyricsFLAC(ctx, scope, reservation, initialCopy, input, preparedManualLyricsThroughValidated)
 }
 
+// admitPreparedManualLyricsFLACExposure performs the same private rewrite and
+// ordered stage acknowledgements as validation, then admits exposure without
+// exposing caller-controlled intent or an observation value.
+func admitPreparedManualLyricsFLACExposure(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	reservation *publicationSyncReservation,
+	initialCopy *publicationInitialOutputCopy,
+	input persistence.PublicationInputs,
+) (publicationOptionalLyricsResult, error) {
+	return applyPreparedManualLyricsFLAC(ctx, scope, reservation, initialCopy, input, preparedManualLyricsThroughExposureAdmission)
+}
+
 func applyPreparedManualLyricsFLAC(
 	ctx context.Context,
 	scope *PublicationExecutionScope,
@@ -166,6 +180,11 @@ func applyPreparedManualLyricsFLAC(
 	input persistence.PublicationInputs,
 	mode preparedManualLyricsFLACMode,
 ) (result publicationOptionalLyricsResult, resultErr error) {
+	switch mode {
+	case preparedManualLyricsOutcomeOnly, preparedManualLyricsThroughValidated, preparedManualLyricsThroughExposureAdmission:
+	default:
+		return result, errors.New("unsupported prepared manual lyrics mode")
+	}
 	if initialCopy == nil || initialCopy.stage == nil {
 		return result, errors.New("manual lyrics application requires its initial output copy")
 	}
@@ -227,7 +246,7 @@ func applyPreparedManualLyricsFLAC(
 		return result, errors.New("V3 optional lyrics outcome repository is unavailable")
 	}
 	var stageRepo preparedManualLyricsStageRepository
-	if mode == preparedManualLyricsThroughValidated {
+	if mode == preparedManualLyricsThroughValidated || mode == preparedManualLyricsThroughExposureAdmission {
 		var capable bool
 		stageRepo, capable = stage.repository.(preparedManualLyricsStageRepository)
 		if !capable {
@@ -235,6 +254,11 @@ func applyPreparedManualLyricsFLAC(
 		}
 		if _, capable := stage.repository.(publicationManualLyricsCurrentInputReader); !capable {
 			return result, errors.New("private manual lyrics current-input reader is unavailable")
+		}
+	}
+	if mode == preparedManualLyricsThroughExposureAdmission {
+		if _, capable := stage.repository.(preparedManualLyricsExposureRepository); !capable {
+			return result, errors.New("manual lyrics exposure repository is unavailable")
 		}
 	}
 	var acknowledged persistence.PublicationStageObservation
@@ -278,7 +302,7 @@ func applyPreparedManualLyricsFLAC(
 	if err != nil {
 		return result, err
 	}
-	if mode == preparedManualLyricsThroughValidated {
+	if mode == preparedManualLyricsThroughValidated || mode == preparedManualLyricsThroughExposureAdmission {
 		if !scope.validPrivateManualLyricsWork(work, stage) {
 			return result, errors.New("manual lyrics publication work capability was lost before staged acknowledgement")
 		}
@@ -322,6 +346,11 @@ func applyPreparedManualLyricsFLAC(
 			return result, errors.New("publication delivery is stale while acknowledging validated manual lyrics")
 		}
 		if err := stage.checkPrivateManualLyricsPostValidationCheckpoint(ctx, scope, work, acknowledged, acknowledgedOutputInfo); err != nil {
+			return result, err
+		}
+	}
+	if mode == preparedManualLyricsThroughExposureAdmission {
+		if err := admitPreparedManualLyricsExposure(ctx, scope, work, acknowledged); err != nil {
 			return result, err
 		}
 	}

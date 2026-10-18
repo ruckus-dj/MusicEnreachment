@@ -37,15 +37,44 @@ func TestPreparedManualLyricsFLACOwnerPostgreSQL(t *testing.T) {
 		{name: "cover_value", cover: true},
 		{name: "cover_explicit_empty", cover: true, removal: true},
 	} {
-		t.Run(test.name, func(t *testing.T) { testPreparedManualLyricsFLACOwner(t, test.cover, test.removal, false) })
+		t.Run(test.name, func(t *testing.T) { testPreparedManualLyricsFLACOwner(t, test.cover, test.removal, false, false) })
 	}
 }
 
-func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continuous bool) {
+func TestAdmittedPreparedManualLyricsFLACPostgreSQL(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		cover   bool
+		removal bool
+	}{
+		{name: "no_cover_value"},
+		{name: "cover_value", cover: true},
+		{name: "cover_explicit_empty", cover: true, removal: true},
+	} {
+		t.Run(test.name, func(t *testing.T) { testPreparedManualLyricsFLACOwner(t, test.cover, test.removal, true, true) })
+	}
+}
+
+func TestAdmittedPreparedManualLyricsFLACNestedPathPostgreSQL(t *testing.T) {
+	testPreparedManualLyricsFLACOwner(t, true, false, true, true, true)
+}
+
+func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continuous bool, options ...bool) {
 	ctx := context.Background()
 	fixture, fakeStage, _ := preparedManualLyricsFLACStage(t)
 	t.Cleanup(func() { _ = fakeStage.Close() })
 	currentPath := filepath.Join(fixture.output, "current.flac")
+	throughAdmission := len(options) > 0 && options[0]
+	nestedPath := len(options) > 1 && options[1]
+	if nestedPath {
+		currentPath = filepath.Join(fixture.output, "Artist", "Album", "Current.FLAC")
+		if err := os.MkdirAll(filepath.Dir(currentPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(filepath.Join(fixture.output, "current.flac"), currentPath); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if removal {
 		if _, err := (metadata.Writer{}).Write(ctx, currentPath, map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}, "LYRICS": {"[00:00.00]old current lyrics\n"}}, nil); err != nil {
 			t.Fatal(err)
@@ -65,6 +94,9 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		t.Fatal(err)
 	}
 	input := fixture.repo.input.Clone()
+	if nestedPath {
+		input.Rewrite.RelativePath = "Artist/Album/Current.FLAC"
+	}
 	input.DesiredTags = map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}
 	installationID := uuid.New()
 	input.Tools = []persistence.SourceAnalysisToolSelection{
@@ -152,7 +184,15 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	}
 	guard.RiverAttempt, guard.ApplicationAttempt = 1, 1
 	snapshot := encode(map[string]any{"version": 1, "position_id": guard.ExpectedPositionID, "output_epoch": epoch, "intent_kind": "rewrite"})
-	manifest := encode(map[string]any{"version": 1, "nodes": []persistence.PublicationNamespaceNode{{CanonicalKey: input.Rewrite.RelativePath, RelativePath: input.Rewrite.RelativePath, NodeKind: "file"}}})
+	nodes := []persistence.PublicationNamespaceNode{{CanonicalKey: input.Rewrite.RelativePath, RelativePath: input.Rewrite.RelativePath, NodeKind: "file"}}
+	if nestedPath {
+		nodes = []persistence.PublicationNamespaceNode{
+			{CanonicalKey: "artist", RelativePath: "Artist", NodeKind: "dir", DirectoryScope: "artist"},
+			{CanonicalKey: "artist/album", RelativePath: "Artist/Album", NodeKind: "dir", DirectoryScope: "album"},
+			{CanonicalKey: "artist/album/current.flac", RelativePath: "Artist/Album/Current.FLAC", NodeKind: "file"},
+		}
+	}
+	manifest := encode(map[string]any{"version": 1, "nodes": nodes})
 	exec(`INSERT INTO operation(id,kind,state,stage,input_snapshot,attempt,river_job_id) VALUES (?,'publish_track_v1','queued','queued',?::jsonb,1,?)`, guard.OperationID, snapshot, guard.RiverJobID)
 	exec(`INSERT INTO track_publication_attempt(operation_id,position_id,epoch,expected_generation,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal) VALUES (?,?,?,?,?,'rewrite','queued',?::jsonb,?::jsonb,'[]')`, guard.OperationID, guard.ExpectedPositionID, epoch, input.Rewrite.CurrentGeneration, guard.CandidateGeneration, encode(input), manifest)
 	exec(`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?::jsonb,1,now())`, guard.ExpectedPositionID, epoch, input.Rewrite.CurrentGeneration, input.Rewrite.RelativePath,
@@ -160,11 +200,21 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		encode(persistence.PublicationCurrentAudio{Version: 1, Facts: input.Rewrite.AudioFacts}),
 		encode(persistence.PublicationCommitMetadata{Version: 1, Tags: capture.Tags}),
 		encode(actualAssets))
-	claimID := uuid.New()
-	namespaceDigest := sha256.Sum256([]byte(input.Rewrite.RelativePath))
-	exec(`INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id) VALUES (?,?,?,?,?,'file',?)`, claimID, epoch, namespaceDigest[:], input.Rewrite.RelativePath, input.Rewrite.RelativePath, guard.ExpectedPositionID)
-	for _, generation := range []uuid.UUID{input.Rewrite.CurrentGeneration, guard.CandidateGeneration} {
-		exec(`INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?,?,?)`, claimID, guard.ExpectedPositionID, generation)
+	for _, node := range nodes {
+		claimID := uuid.New()
+		namespaceDigest := sha256.Sum256([]byte(node.CanonicalKey))
+		var owner any
+		if node.NodeKind == "file" {
+			owner = guard.ExpectedPositionID
+		}
+		var directoryScope any
+		if node.NodeKind == "dir" {
+			directoryScope = node.DirectoryScope
+		}
+		exec(`INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id,directory_scope_key) VALUES (?,?,?,?,?,?,?,?)`, claimID, epoch, namespaceDigest[:], node.CanonicalKey, node.RelativePath, node.NodeKind, owner, directoryScope)
+		for _, generation := range []uuid.UUID{input.Rewrite.CurrentGeneration, guard.CandidateGeneration} {
+			exec(`INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?,?,?)`, claimID, guard.ExpectedPositionID, generation)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
@@ -192,7 +242,11 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	if err != nil {
 		t.Fatal(err)
 	}
-	if continuous {
+	if throughAdmission {
+		if _, err := admitPreparedManualLyricsFLACExposure(ctx, scope, reservation, proof, input); err != nil {
+			t.Fatal(err)
+		}
+	} else if continuous {
 		if _, err := validatePreparedManualLyricsFLAC(ctx, scope, reservation, proof, input); err != nil {
 			t.Fatal(err)
 		}
@@ -257,7 +311,9 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		t.Fatalf("private final output changed native FLAC picture/audio: %v", err)
 	}
 	wantPhase, wantRecords := "preparing", 4
-	if continuous {
+	if throughAdmission {
+		wantPhase, wantRecords = "exposing", 7
+	} else if continuous {
 		wantPhase, wantRecords = "validated", 6
 	}
 	if attempt.Phase != wantPhase || len(records) != wantRecords || records[0].Step != "intent" || records[1].Step != "directory_created" || records[2].Step != "input_ready" || records[3].Kind != "publication_optional_lyrics_outcome" {
@@ -273,7 +329,26 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	}
 	// These calls test DB transition authority only: the owner above has already
 	// released its private work capability. They are not a continuous runtime handoff.
-	if continuous {
+	if throughAdmission {
+		if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil || len(entries) != 7 {
+			t.Fatalf("admitted owner did not persist exposure admission: %s, %v", attempt.MutationJournal, err)
+		}
+		var exposure struct {
+			Kind string `json:"kind"`
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if err := json.Unmarshal(entries[6], &exposure); err != nil || exposure.Kind != "publication_exposure" || exposure.From != "validated" || exposure.To != "exposing" {
+			t.Fatalf("invalid native exposure admission record: %s, %v", entries[6], err)
+		}
+		frozen, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
+		if err != nil || !reflect.DeepEqual(frozen, input) {
+			t.Fatalf("admitted owner changed frozen publication inputs: %v", err)
+		}
+		scope.releaseSynchronousWork(reservation)
+		return
+	}
+	if continuous && !nestedPath {
 		frozen, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
 		if err != nil || !reflect.DeepEqual(frozen, input) {
 			t.Fatalf("validated owner changed frozen publication inputs: %v", err)
