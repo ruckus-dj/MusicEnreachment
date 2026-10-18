@@ -11,6 +11,14 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Реализован следующий срез: завершение first-absent публикации
+в исходном live execution scope — sealed synchronous reservation, anchored
+удаление только собственного private input и пустого attempt directory,
+cleanup journal и атомарный terminal settlement. Полный локальный `task verify`
+прошёл; native CI ещё не проверен. Это не recovery takeover, optional source
+cleanup или разрешение регистрации worker. Сквозной тест real preparer → real
+persistence и полное покрытие commit/cleanup panic boundaries ещё отсутствуют.
+
 Дополнение (startup barrier): `app.Run` проверяет read-only
 repeatable-read snapshot публикаций до platform initialization, output-reset
 recovery, consumers и HTTP. Retained execution claims независимо от их состояния
@@ -18,7 +26,10 @@ recovery, consumers и HTTP. Retained execution claims независимо от
 допускаются только с проверенными River delivery и namespace reservations.
 Это не interprocess exclusion, recovery execution или settlement и не разрешение
 на регистрацию publication worker. Полный локальный `task verify` текущего
-среза прошёл; native CI для него ещё не проверен.
+среза прошёл. CI `edb5fc9` (run `39112796255`) прошёл на Linux amd64/arm64,
+macOS x64 и Windows x64, но завершился ошибкой macOS arm64 в независимом
+MusicBrainz cooldown concurrency test; container publish пропущен. Исправление
+тестового измерения через `testing/synctest` ещё проверяется.
 
 После исторической отметки ниже добавлен узкий filesystem publication slice:
 

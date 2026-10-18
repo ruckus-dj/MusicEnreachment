@@ -449,6 +449,102 @@ func (d *windowsOutputDir) Verify(ctx context.Context) error {
 	return nil
 }
 
+func (d *windowsOutputDir) RemoveOwnedRegular(ctx context.Context, name string, expectedParent DirectoryIdentity, expected fs.FileInfo) error {
+	if invalidWindowsName(name) {
+		return ErrInvalidPath
+	}
+	if expected == nil || !expected.Mode().IsRegular() {
+		return ErrNotRegular
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return os.ErrClosed
+	}
+	parent := d.handle
+	var parentInfo windows.ByHandleFileInformation
+	err := windows.GetFileInformationByHandle(parent, &parentInfo)
+	if err == nil && windowsOutputIdentity(parentInfo) != expectedParent {
+		err = errors.New("sourcefs: output namespace changed")
+	}
+	h := windows.InvalidHandle
+	if err == nil {
+		h, err = outputWindowsOpen(parent, name, windows.DELETE|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, false)
+	}
+	d.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	file := os.NewFile(uintptr(h), name)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(expected, info) {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return markWindowsDelete(h)
+}
+
+func (d *windowsOutputDir) RemoveEmptyChildDir(ctx context.Context, name string, expectedParent, expected DirectoryIdentity) error {
+	if invalidWindowsName(name) {
+		return ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return os.ErrClosed
+	}
+	var parentInfo windows.ByHandleFileInformation
+	err := windows.GetFileInformationByHandle(d.handle, &parentInfo)
+	if err == nil && windowsOutputIdentity(parentInfo) != expectedParent {
+		err = errors.New("sourcefs: output namespace changed")
+	}
+	h := windows.InvalidHandle
+	if err == nil {
+		h, err = outputWindowsOpen(d.handle, name, windows.DELETE|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, true)
+	}
+	d.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return err
+	}
+	if windowsOutputIdentity(info) != expected {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return ErrLink
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return markWindowsDelete(h)
+}
+
+func windowsOutputIdentity(info windows.ByHandleFileInformation) DirectoryIdentity {
+	fileID := uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow)
+	return DirectoryIdentity{Platform: "windows", Volume: fmt.Sprintf("%08x", info.VolumeSerialNumber), FileID: fmt.Sprintf("%016x", fileID)}
+}
+
+func markWindowsDelete(handle windows.Handle) error {
+	delete := uint8(1)
+	return windows.SetFileInformationByHandle(handle, windows.FileDispositionInfo, (*byte)(unsafe.Pointer(&delete)), uint32(unsafe.Sizeof(delete)))
+}
+
 type windowsOutputFile struct {
 	mu     sync.Mutex
 	file   *os.File

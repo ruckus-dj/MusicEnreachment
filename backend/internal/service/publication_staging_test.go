@@ -438,7 +438,7 @@ func TestRunWithValidatedStageContinuationOrder(t *testing.T) {
 	validator := &pubStageObservationValidator{events: events, observation: validatorObservation}
 	runner.Validator = validator
 	callbackCalled := false
-	result, err := runner.runWithValidatedStage(context.Background(), scope, input, stage, func(_ context.Context, observation persistence.PublicationStageObservation, prepared PreparedPublicationStage) error {
+	result, err := runner.runWithValidatedStage(context.Background(), scope, input, stage, func(_ context.Context, observation persistence.PublicationStageObservation, prepared PreparedPublicationStage, _ *publicationSyncReservation) error {
 		callbackCalled = true
 		if prepared != stage {
 			t.Fatal("continuation received a different prepared stage")
@@ -476,7 +476,7 @@ func TestRunWithValidatedStageCallbackErrorFinalizes(t *testing.T) {
 	repo := &pubStageRepo{}
 	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
 	wantErr := errors.New("continuation failed")
-	_, err := runner.runWithValidatedStage(context.Background(), scope, input, stage, func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage) error {
+	_, err := runner.runWithValidatedStage(context.Background(), scope, input, stage, func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage, *publicationSyncReservation) error {
 		*events = append(*events, "continuation")
 		return wantErr
 	})
@@ -493,7 +493,7 @@ func TestRunWithValidatedStageValidatorFailureSuppressesContinuation(t *testing.
 	validatorErr := errors.New("validator failed")
 	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, validatorErr, nil)
 	callbackCalled := false
-	_, err := runner.runWithValidatedStage(context.Background(), scope, input, stage, func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage) error {
+	_, err := runner.runWithValidatedStage(context.Background(), scope, input, stage, func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage, *publicationSyncReservation) error {
 		callbackCalled = true
 		return nil
 	})

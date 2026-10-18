@@ -33,6 +33,17 @@ type OutputMutation interface {
 	OpenExistingRegular(context.Context, string) (RegularFile, error)
 }
 
+// OutputCleanup is an optional native capability for deleting only an
+// identity-matched regular file or an identity-matched empty child directory.
+// expectedParent binds the requested name to the caller's pinned parent.
+// The expected file info passed to RemoveOwnedRegular must be a native,
+// handle-derived snapshot (for example, from OutputFile.Stat), not os.Stat on a
+// pathname. Call Stat while the file handle is open, before closing it.
+type OutputCleanup interface {
+	RemoveOwnedRegular(context.Context, string, DirectoryIdentity, fs.FileInfo) error
+	RemoveEmptyChildDir(context.Context, string, DirectoryIdentity, DirectoryIdentity) error
+}
+
 // DirectoryIdentity identifies the directory referenced by an open output
 // handle. It is suitable for persistence preparation, not proof against
 // hostile concurrent actors or filesystem identifier reuse.

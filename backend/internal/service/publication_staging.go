@@ -81,15 +81,22 @@ func (runner PublicationStagingRunner) Run(ctx context.Context, scope *Publicati
 // runWithValidatedStage continues only after the durable validated transition
 // has been acknowledged. The callback receives detached evidence and runs
 // before deferred scope finalization.
-func (runner PublicationStagingRunner) runWithValidatedStage(ctx context.Context, scope *PublicationExecutionScope, input persistence.PublicationInputs, stage PreparedPublicationStage, continuation func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage) error) (result PublicationStageObservation, resultErr error) {
+func (runner PublicationStagingRunner) runWithValidatedStage(ctx context.Context, scope *PublicationExecutionScope, input persistence.PublicationInputs, stage PreparedPublicationStage, continuation func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage, *publicationSyncReservation) error) (result PublicationStageObservation, resultErr error) {
 	if runner.Repository == nil || stage == nil {
 		return result, errors.New("publication staging dependencies are unavailable")
 	}
-	if scope == nil || !scope.CanExecute() || scope.repository == nil {
+	if scope == nil || scope.repository == nil {
+		return result, errors.New("publication execution scope is unavailable")
+	}
+	reservation := scope.reserveSynchronousWork()
+	if reservation == nil {
 		return result, errors.New("publication execution scope is unavailable")
 	}
 	guard := scope.guard
 	defer func() {
+		// Release the reservation before Finalize; first-absent continuation
+		// transfers it to its settlement fence instead.
+		scope.releaseSynchronousWork(reservation)
 		if err := scope.Finalize(ctx, stage.Close); err != nil {
 			resultErr = errors.Join(resultErr, err)
 		}
@@ -241,7 +248,7 @@ func (runner PublicationStagingRunner) runWithValidatedStage(ctx context.Context
 		return result, errors.New("publication validation transition was not accepted")
 	}
 	if continuation != nil {
-		if err := continuation(ctx, validated.Clone(), stage); err != nil {
+		if err := continuation(ctx, validated.Clone(), stage, reservation); err != nil {
 			return result, err
 		}
 	}

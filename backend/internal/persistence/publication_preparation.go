@@ -43,6 +43,7 @@ type PublicationPreparationRecord struct {
 	DirectoryIdentity *PublicationDirectoryIdentity `json:"directory_identity,omitempty"`
 	InputSize         *int64                        `json:"input_size,omitempty"`
 	InputMTime        *int64                        `json:"input_mtime,omitempty"`
+	CopiedInput       *PublicationFileIdentity      `json:"copied_input,omitempty"`
 }
 
 type PublicationPreparationOutcome string
@@ -100,11 +101,11 @@ func validPublicationPreparationRecord(record PublicationPreparationRecord, guar
 	}
 	switch record.Step {
 	case "intent":
-		return record.DirectoryIdentity == nil && record.InputSize == nil && record.InputMTime == nil
+		return record.DirectoryIdentity == nil && record.InputSize == nil && record.InputMTime == nil && record.CopiedInput == nil
 	case "directory_created":
-		return validPreparationPlatformIdentityPtr(record.DirectoryIdentity) && record.DirectoryIdentity.Platform == record.ParentIdentity.Platform && record.InputSize == nil && record.InputMTime == nil
+		return validPreparationPlatformIdentityPtr(record.DirectoryIdentity) && record.DirectoryIdentity.Platform == record.ParentIdentity.Platform && record.InputSize == nil && record.InputMTime == nil && record.CopiedInput == nil
 	case "input_ready":
-		return validPreparationPlatformIdentityPtr(record.DirectoryIdentity) && record.DirectoryIdentity.Platform == record.ParentIdentity.Platform && record.InputSize != nil && *record.InputSize >= 0 && record.InputMTime != nil
+		return validPreparationPlatformIdentityPtr(record.DirectoryIdentity) && record.DirectoryIdentity.Platform == record.ParentIdentity.Platform && record.InputSize != nil && *record.InputSize >= 0 && record.InputMTime != nil && (record.CopiedInput == nil || validCopiedInputIdentity(record.CopiedInput))
 	default:
 		return false
 	}
@@ -218,14 +219,18 @@ func validPreparationJournalRecord(record PublicationPreparationRecord) bool {
 	}
 	switch record.Step {
 	case "intent":
-		return record.DirectoryIdentity == nil && record.InputSize == nil && record.InputMTime == nil
+		return record.DirectoryIdentity == nil && record.InputSize == nil && record.InputMTime == nil && record.CopiedInput == nil
 	case "directory_created":
-		return validPreparationPlatformIdentityPtr(record.DirectoryIdentity) && record.DirectoryIdentity.Platform == record.ParentIdentity.Platform && record.InputSize == nil && record.InputMTime == nil
+		return validPreparationPlatformIdentityPtr(record.DirectoryIdentity) && record.DirectoryIdentity.Platform == record.ParentIdentity.Platform && record.InputSize == nil && record.InputMTime == nil && record.CopiedInput == nil
 	case "input_ready":
-		return validPreparationPlatformIdentityPtr(record.DirectoryIdentity) && record.DirectoryIdentity.Platform == record.ParentIdentity.Platform && record.InputSize != nil && *record.InputSize >= 0 && record.InputMTime != nil
+		return validPreparationPlatformIdentityPtr(record.DirectoryIdentity) && record.DirectoryIdentity.Platform == record.ParentIdentity.Platform && record.InputSize != nil && *record.InputSize >= 0 && record.InputMTime != nil && (record.CopiedInput == nil || validCopiedInputIdentity(record.CopiedInput))
 	default:
 		return false
 	}
+}
+
+func validCopiedInputIdentity(identity *PublicationFileIdentity) bool {
+	return identity != nil && identity.SizeBytes != nil && *identity.SizeBytes >= 0 && identity.MTime != nil
 }
 
 func preparationPathsOverlap(a, b string) bool {

@@ -111,6 +111,10 @@ func clonePublicationPreparationRecord(record PublicationPreparationRecord) Publ
 		mtime := *record.InputMTime
 		record.InputMTime = &mtime
 	}
+	if record.CopiedInput != nil {
+		identity := clonePublicationFileIdentity(*record.CopiedInput)
+		record.CopiedInput = &identity
+	}
 	return record
 }
 

@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
@@ -24,6 +26,50 @@ type firstAbsentFlowRepo struct {
 	commit    bool
 	commitErr error
 	release   bool
+	cleanup   persistence.PublicationFirstAbsentCleanupWitness
+}
+
+func (r *firstAbsentFlowRepo) CheckPublicationSourceHoldForDelivery(context.Context, persistence.PublicationDeliveryGuard, uuid.UUID) (persistence.PublicationSourceHold, bool, error) {
+	return persistence.PublicationSourceHold{}, true, nil
+}
+
+func (*firstAbsentFlowRepo) PublicationPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error) {
+	return persistence.PublicationInputs{}, false, nil
+}
+
+func (*firstAbsentFlowRepo) CheckPublicationRewriteForDelivery(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationRewritePreparationFacts, bool, error) {
+	return persistence.PublicationRewritePreparationFacts{}, false, nil
+}
+
+func (*firstAbsentFlowRepo) RecordPublicationPreparation(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationPreparationRecord) (persistence.PublicationPreparationOutcome, error) {
+	return persistence.PublicationPreparationStale, nil
+}
+
+func (r *firstAbsentFlowRepo) BeginPublicationFirstAbsentCleanup(_ context.Context, _ persistence.PublicationDeliveryGuard, witness persistence.PublicationFirstAbsentCleanupWitness) (persistence.PublicationFirstAbsentCleanupOutcome, error) {
+	*r.events = append(*r.events, "input-intent")
+	r.cleanup = witness
+	return persistence.PublicationFirstAbsentCleanupRecorded, nil
+}
+
+func (r *firstAbsentFlowRepo) BeginPublicationFirstAbsentDirectoryCleanup(_ context.Context, _ persistence.PublicationDeliveryGuard, witness persistence.PublicationFirstAbsentCleanupWitness) (persistence.PublicationFirstAbsentCleanupOutcome, error) {
+	*r.events = append(*r.events, "directory-intent")
+	if witness != r.cleanup {
+		return persistence.PublicationFirstAbsentCleanupStale, nil
+	}
+	return persistence.PublicationFirstAbsentCleanupRecorded, nil
+}
+
+func (r *firstAbsentFlowRepo) RecordPublicationFirstAbsentCleanupResult(_ context.Context, _ persistence.PublicationDeliveryGuard, witness persistence.PublicationFirstAbsentCleanupWitness, name, result string) (persistence.PublicationFirstAbsentCleanupOutcome, error) {
+	*r.events = append(*r.events, name+"-result:"+result)
+	if witness != r.cleanup || (name != "input" && name != "directory") {
+		return persistence.PublicationFirstAbsentCleanupStale, nil
+	}
+	return persistence.PublicationFirstAbsentCleanupRecorded, nil
+}
+
+func (r *firstAbsentFlowRepo) SettleFirstAbsentPublication(_ context.Context, _ persistence.PublicationDeliveryGuard, witness persistence.PublicationFirstAbsentCleanupWitness, acknowledged bool) (bool, error) {
+	*r.events = append(*r.events, "settle")
+	return acknowledged && witness == r.cleanup, nil
 }
 
 func (r *firstAbsentFlowRepo) PublicationToolsForDelivery(ctx context.Context, guard persistence.PublicationDeliveryGuard) ([]persistence.SourceAnalysisToolSelection, *persistence.ToolInstallation, string, bool, error) {
@@ -132,11 +178,40 @@ func TestRunFirstAbsentPublicationCompletesExposureCommitAndInputReleaseInOrder(
 					}
 				}
 			}
-			inputPath := filepath.Join(fixture.rootPath, "input")
+			inputPath := filepath.Join(fixture.stagePath, "input")
 			if err := os.WriteFile(inputPath, []byte("source"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			stage := &pubStagePrepared{paths: PublicationStagePaths{InputPath: inputPath, OutputPath: filepath.Join(fixture.stagePath, "candidate"), RelativePath: "stage/candidate"}, events: &events}
+			stageIdentity, err := fixture.stageDir.Identity(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			parentIdentity, err := fixture.root.Identity(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			sourceFileInfo, err := os.Stat(inputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stage := &preparedPublicationStage{
+				paths:              PublicationStagePaths{InputPath: inputPath, OutputPath: filepath.Join(fixture.stagePath, "candidate"), RelativePath: "stage/candidate"},
+				parent:             fixture.root,
+				directory:          fixture.stageDir,
+				directoryName:      filepath.Base(fixture.stagePath),
+				identity:           persistence.PublicationDirectoryIdentity{Platform: stageIdentity.Platform, Volume: stageIdentity.Volume, FileID: stageIdentity.FileID},
+				parentIdentity:     parentIdentity,
+				repository:         repo,
+				opener:             sourcefs.NewOpener(),
+				sourceRootPath:     fixture.rootPath,
+				sourceRelativePath: filepath.Join(filepath.Base(fixture.stagePath), "input"),
+				sourceSize:         sourceFileInfo.Size(),
+				sourceMTime:        sourceFileInfo.ModTime(),
+				sourceFileInfo:     sourceFileInfo,
+				inputPath:          fixture.stagePath,
+				inputName:          "input",
+				guard:              guard,
+			}
 			stageRunner := PublicationStagingRunner{
 				Repository: repo,
 				Metadata:   firstAbsentFlowWriter{events: &events},
@@ -160,7 +235,7 @@ func TestRunFirstAbsentPublicationCompletesExposureCommitAndInputReleaseInOrder(
 				}
 				return
 			}
-			if !containsPubStage(events, "commit") || !containsPubStage(events, "release") || indexPubStage(events, "record-installed") > indexPubStage(events, "commit") || indexPubStage(events, "commit") > indexPubStage(events, "release") {
+			if !containsPubStage(events, "commit") || !containsPubStage(events, "settle") || indexPubStage(events, "record-installed") > indexPubStage(events, "commit") || indexPubStage(events, "commit") > indexPubStage(events, "input-intent") || indexPubStage(events, "input-intent") > indexPubStage(events, "directory-intent") || indexPubStage(events, "directory-intent") > indexPubStage(events, "settle") {
 				t.Fatalf("exposure/commit/release order is wrong: %v", events)
 			}
 			if _, err := os.Stat(filepath.Join(fixture.rootPath, "installed.bin")); err != nil {
@@ -168,6 +243,113 @@ func TestRunFirstAbsentPublicationCompletesExposureCommitAndInputReleaseInOrder(
 			}
 		})
 	}
+}
+
+func TestFinishFirstAbsentPublicationUsesNativeCleanupAndSettlesInOrder(t *testing.T) {
+	ctx := context.Background()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentPath := filepath.Join(root, "stage")
+	if err := os.Mkdir(parentPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := sourcefs.NewOutputOpener().OpenRoot(ctx, parentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := parent.Close(); err != nil {
+			t.Errorf("close test parent: %v", err)
+		}
+	}()
+	dir, err := parent.CreateDirExclusive(ctx, "attempt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := dir.Identity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentIdentity, err := parent.Identity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputContents := []byte("private source bytes")
+	inputPath := filepath.Join(parentPath, "attempt", "input")
+	if err := os.WriteFile(inputPath, inputContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutation := dir.(sourcefs.OutputMutation)
+	inputHandle, err := mutation.OpenExistingRegular(ctx, "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputInfo, err := inputHandle.Stat(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inputHandle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	targetContents := []byte("published target")
+	targetPath := filepath.Join(root, "installed.bin")
+	if err := os.WriteFile(targetPath, targetContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targetInfo, err := os.Stat(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := []string{}
+	repo := &firstAbsentFlowRepo{events: &events}
+	scope := &PublicationExecutionScope{firstAbsent: true, finalizing: true, release: func() {}}
+	stage := &preparedPublicationStage{
+		paths:          PublicationStagePaths{OutputPath: filepath.Join(parentPath, "attempt", "candidate")},
+		parent:         parent,
+		directory:      dir,
+		directoryName:  "attempt",
+		identity:       persistence.PublicationDirectoryIdentity{Platform: identity.Platform, Volume: identity.Volume, FileID: identity.FileID},
+		parentIdentity: parentIdentity,
+		sourceFileInfo: inputInfo,
+		inputName:      "input",
+	}
+	if err := finishFirstAbsentPublication(ctx, scope, stage, repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(inputPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("private input remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parentPath, "attempt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("private attempt directory remains: %v", err)
+	}
+	contents, err := os.ReadFile(targetPath)
+	if err != nil || string(contents) != string(targetContents) {
+		t.Fatalf("published target changed: contents=%q err=%v", contents, err)
+	}
+	currentTargetInfo, err := os.Stat(targetPath)
+	if err != nil || !os.SameFile(targetInfo, currentTargetInfo) {
+		t.Fatalf("published target identity changed: %v", err)
+	}
+	if got := events; !equalStrings(got, []string{"input-intent", "input-result:removed", "directory-intent", "directory-result:removed", "settle"}) {
+		t.Fatalf("cleanup/settlement acknowledgement order = %v", got)
+	}
+	if !scope.firstAbsent || !scope.finalized || scope.finalizing {
+		t.Fatalf("scope was not acknowledged as first-absent finalized: %+v", scope)
+	}
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 type firstAbsentFlowWriter struct{ events *[]string }

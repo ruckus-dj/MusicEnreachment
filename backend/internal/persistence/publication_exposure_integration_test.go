@@ -117,8 +117,10 @@ func readyPublicationExposureFixture(t *testing.T) (publicationExecutionFixture,
 		}
 	}
 	size, mtime := int64(10), int64(20)
+	copiedSize, copiedMTime := int64(30), int64(40)
 	ready := base
 	ready.Step, ready.DirectoryIdentity, ready.InputSize, ready.InputMTime = "input_ready", &directory, &size, &mtime
+	ready.CopiedInput = &PublicationFileIdentity{SizeBytes: &copiedSize, MTime: &copiedMTime}
 	if outcome, err := repo.RecordPublicationPreparation(ctx, f.guard, ready); err != nil || outcome != PublicationPreparationRecorded {
 		t.Fatalf("preparation input_ready = %q, %v", outcome, err)
 	}

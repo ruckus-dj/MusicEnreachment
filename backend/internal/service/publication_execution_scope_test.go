@@ -125,6 +125,72 @@ func TestPublicationScopeUnknownExecutionRetainsResourcesAndRejectsLaunch(t *tes
 	}
 }
 
+func TestPublicationScopeFinalizeWaitsForSynchronousReservation(t *testing.T) {
+	repository := &scopeRepositoryFake{valid: true, marked: true}
+	scope := newScopeForTest(t, &scopeCommandFake{}, repository)
+	reservation := scope.reserveSynchronousWork()
+	if reservation == nil {
+		t.Fatal("synchronous work reservation was rejected")
+	}
+	closed := false
+	if err := scope.Finalize(context.Background(), func() error { closed = true; return nil }); err == nil {
+		t.Fatal("finalize succeeded while synchronous work was reserved")
+	}
+	if closed || repository.marks != 0 {
+		t.Fatalf("finalized during synchronous work: closed=%v marks=%d", closed, repository.marks)
+	}
+	scope.releaseSynchronousWork(reservation)
+}
+
+func TestPublicationScopeFirstAbsentFenceBlocksLegacyFinalizeUntilAcknowledged(t *testing.T) {
+	repository := &scopeRepositoryFake{valid: true, marked: true}
+	scope := newScopeForTest(t, &scopeCommandFake{}, repository)
+	reservation := scope.reserveSynchronousWork()
+	if reservation == nil {
+		t.Fatal("synchronous work reservation was rejected")
+	}
+	if err := scope.beginFirstAbsentFinalization(reservation); err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	if err := scope.Finalize(context.Background(), func() error { closed = true; return nil }); err == nil {
+		t.Fatal("legacy finalize succeeded while first-absent cleanup owned the scope")
+	}
+	if closed || repository.marks != 0 {
+		t.Fatalf("legacy finalize crossed first-absent fence: closed=%v marks=%d", closed, repository.marks)
+	}
+	scope.acknowledgeFirstAbsentFinalization()
+	if !scope.finalized || scope.release != nil {
+		t.Fatal("acknowledged first-absent completion did not release local ownership")
+	}
+}
+
+func TestPublicationScopeFirstAbsentPanicQuarantineRetainsOwnership(t *testing.T) {
+	repository := &scopeRepositoryFake{valid: true, marked: true}
+	scope := newScopeForTest(t, &scopeCommandFake{}, repository)
+	reservation := scope.reserveSynchronousWork()
+	if reservation == nil {
+		t.Fatal("synchronous work reservation was rejected")
+	}
+	if err := scope.beginFirstAbsentFinalization(reservation); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected cleanup panic")
+		}
+		scope.quarantineUncertain()
+		closed := false
+		if err := scope.Finalize(context.Background(), func() error { closed = true; return nil }); err == nil {
+			t.Fatal("quarantined cleanup finalized")
+		}
+		if closed || repository.marks != 0 || scope.release == nil {
+			t.Fatalf("quarantined cleanup released ownership: closed=%v marks=%d", closed, repository.marks)
+		}
+	}()
+	panic("cleanup")
+}
+
 func TestPublicationScopeFileRunQuarantinesOwnedDuplicate(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), "input")
 	if err != nil {

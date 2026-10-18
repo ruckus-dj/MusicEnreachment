@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -292,6 +293,7 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	if inputInfo == nil || !inputInfo.Mode().IsRegular() || inputInfo.Size() != sourceSize {
 		return nil, errors.New("copied publication input facts changed")
 	}
+	copiedSize, copiedMTime := inputInfo.Size(), inputInfo.ModTime().UnixMicro()
 	if err := verifyPublicationDirectoryNamespace(ctx, preparer.OutputParent, privateName, dir, dirIdentity, preparer.SourceOpener, filepath.Join(preparer.ParentPath, privateName)); err != nil {
 		return nil, err
 	}
@@ -303,6 +305,7 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	ready.Step = "input_ready"
 	ready.InputSize = &size
 	ready.InputMTime = &mtime
+	ready.CopiedInput = &persistence.PublicationFileIdentity{SizeBytes: &copiedSize, MTime: &copiedMTime}
 	outcome, err = preparer.Repository.RecordPublicationPreparation(ctx, guard, ready)
 	if err != nil {
 		return nil, err
@@ -314,7 +317,7 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	if input.Rewrite != nil {
 		rewriteIdentity = clonePublicationIdentity(input.Rewrite.Ownership)
 	}
-	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(preparer.ParentPath, privateName, inputName), OutputPath: filepath.Join(preparer.ParentPath, privateName, outputName), RelativePath: record.OutputRel}, parent: preparer.OutputParent, directory: dir, directoryName: privateName, identity: dirID, repository: preparer.Repository, opener: preparer.SourceOpener, sourceRootPath: sourceRootPath, sourceRelativePath: sourceRelativePath, sourceSize: sourceSize, sourceMTime: sourceMTime, sourceFileInfo: inputInfo, inputPath: filepath.Join(preparer.ParentPath, privateName), inputName: inputName, guard: guard, hold: hold, rewrite: isRewrite, rewriteIdentity: rewriteIdentity}
+	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(preparer.ParentPath, privateName, inputName), OutputPath: filepath.Join(preparer.ParentPath, privateName, outputName), RelativePath: record.OutputRel}, parent: preparer.OutputParent, directory: dir, directoryName: privateName, identity: dirID, parentIdentity: parentIdentity, repository: preparer.Repository, opener: preparer.SourceOpener, sourceRootPath: sourceRootPath, sourceRelativePath: sourceRelativePath, sourceSize: sourceSize, sourceMTime: sourceMTime, sourceFileInfo: inputInfo, inputPath: filepath.Join(preparer.ParentPath, privateName), inputName: inputName, guard: guard, hold: hold, rewrite: isRewrite, rewriteIdentity: rewriteIdentity}
 	// Transfer directory ownership only after all preparation observations have been journaled.
 	transferred = true
 	return stage, nil
@@ -395,6 +398,7 @@ type preparedPublicationStage struct {
 	parent, directory  sourcefs.OutputDirectory
 	directoryName      string
 	identity           persistence.PublicationDirectoryIdentity
+	parentIdentity     sourcefs.DirectoryIdentity
 	repository         PublicationStagePreparationRepository
 	opener             sourcefs.Opener
 	sourceRootPath     string
@@ -536,6 +540,41 @@ func (stage *preparedPublicationStage) Close() error {
 	}
 	stage.closed = true
 	return errors.Join(stage.directory.Close())
+}
+
+func (stage *preparedPublicationStage) firstAbsentCleanupWitness(ctx context.Context) (persistence.PublicationFirstAbsentCleanupWitness, sourcefs.OutputCleanup, sourcefs.OutputCleanup, error) {
+	inputCleanup, inputOK := stage.directory.(sourcefs.OutputCleanup)
+	directoryCleanup, directoryOK := stage.parent.(sourcefs.OutputCleanup)
+	if !inputOK || !directoryOK {
+		return persistence.PublicationFirstAbsentCleanupWitness{}, nil, nil, errors.New("native publication cleanup capability is unavailable")
+	}
+	if stage.sourceFileInfo == nil || !stage.sourceFileInfo.Mode().IsRegular() {
+		return persistence.PublicationFirstAbsentCleanupWitness{}, nil, nil, errors.New("prepared publication input identity is unavailable")
+	}
+	mutation, ok := stage.directory.(sourcefs.OutputMutation)
+	if !ok {
+		return persistence.PublicationFirstAbsentCleanupWitness{}, nil, nil, errors.New("native publication mutation capability is unavailable")
+	}
+	stagedOutput, err := mutation.OpenExistingRegular(ctx, filepath.Base(stage.paths.OutputPath))
+	if err == nil {
+		closeErr := stagedOutput.Close()
+		return persistence.PublicationFirstAbsentCleanupWitness{}, nil, nil, errors.Join(errors.New("staged publication output was not renamed"), closeErr)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return persistence.PublicationFirstAbsentCleanupWitness{}, nil, nil, fmt.Errorf("verify staged publication output was renamed: %w", err)
+	}
+	inputSize, inputMTime := stage.sourceFileInfo.Size(), stage.sourceFileInfo.ModTime().UnixMicro()
+	inputRel := path.Join(stage.directoryName, stage.inputName)
+	witness := persistence.PublicationFirstAbsentCleanupWitness{
+		PrivateDirRel: stage.directoryName,
+		InputRel:      inputRel,
+		Directory:     persistence.PublicationDirectoryIdentity{Platform: stage.identity.Platform, Volume: stage.identity.Volume, FileID: stage.identity.FileID},
+		Input:         persistence.PublicationFileIdentity{SizeBytes: &inputSize, MTime: &inputMTime},
+	}
+	if stage.parentIdentity.Platform == "" {
+		return persistence.PublicationFirstAbsentCleanupWitness{}, nil, nil, errors.New("publication parent identity is unavailable")
+	}
+	return witness, inputCleanup, directoryCleanup, nil
 }
 
 func verifyPublicationDirectoryNamespace(ctx context.Context, parent sourcefs.OutputDirectory, name string, pinned sourcefs.OutputDirectory, expected sourcefs.DirectoryIdentity, opener sourcefs.Opener, path string) error {

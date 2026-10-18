@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -280,6 +281,100 @@ func (d *unixOutputDir) RenameNoReplace(ctx context.Context, sourceParent Output
 		return err
 	}
 	return renameNoReplaceNative(sourceFD, sourceName, targetFD, targetName)
+}
+
+// RemoveOwnedRegular checks the named entry without following links and then
+// unlinks it relative to this pinned directory. The check and unlink are not
+// atomic against hostile concurrent namespace writers.
+func (d *unixOutputDir) RemoveOwnedRegular(ctx context.Context, name string, expectedParent DirectoryIdentity, expected fs.FileInfo) error {
+	if err := validateUnixMutationComponent(name); err != nil {
+		return err
+	}
+	if expected == nil {
+		return ErrInvalidPath
+	}
+	if !expected.Mode().IsRegular() {
+		return ErrNotRegular
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return os.ErrClosed
+	}
+	var parent unix.Stat_t
+	if err := unix.Fstat(int(d.file.Fd()), &parent); err != nil {
+		return err
+	}
+	if outputUnixIdentity(parent) != expectedParent {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	var child unix.Stat_t
+	if err := unix.Fstatat(int(d.file.Fd()), name, &child, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if child.Mode&unix.S_IFMT != unix.S_IFREG {
+		return ErrNotRegular
+	}
+	if !sameUnixFileInfo(expected, &child) {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return unix.Unlinkat(int(d.file.Fd()), name, 0)
+}
+
+func (d *unixOutputDir) RemoveEmptyChildDir(ctx context.Context, name string, expectedParent, expected DirectoryIdentity) error {
+	if err := validateUnixMutationComponent(name); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return os.ErrClosed
+	}
+	var parent unix.Stat_t
+	if err := unix.Fstat(int(d.file.Fd()), &parent); err != nil {
+		return err
+	}
+	if outputUnixIdentity(parent) != expectedParent {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	fd, err := d.open(int(d.file.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW)
+	if err != nil {
+		return classifyUnixError(err, true)
+	}
+	var child unix.Stat_t
+	err = unix.Fstat(fd, &child)
+	_ = unix.Close(fd)
+	if err != nil {
+		return err
+	}
+	if child.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return ErrNotDirectory
+	}
+	if outputUnixIdentity(child) != expected {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return unix.Unlinkat(int(d.file.Fd()), name, unix.AT_REMOVEDIR)
+}
+
+func outputUnixIdentity(stat unix.Stat_t) DirectoryIdentity {
+	return DirectoryIdentity{Platform: runtime.GOOS, Volume: fmt.Sprintf("%d", stat.Dev), FileID: fmt.Sprintf("%d", stat.Ino)}
+}
+
+func sameUnixFileInfo(expected fs.FileInfo, actual *unix.Stat_t) bool {
+	st, ok := expected.Sys().(*syscall.Stat_t)
+	return ok && st.Dev == actual.Dev && st.Ino == actual.Ino && st.Mode&unix.S_IFMT == unix.S_IFREG
 }
 
 func validateUnixMutationComponent(name string) error {

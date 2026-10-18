@@ -18,23 +18,29 @@ type publicationQuiescenceRepository interface {
 	MarkPublicationQuiescent(context.Context, persistence.PublicationDeliveryGuard) (bool, error)
 }
 
+type publicationSyncReservation struct {
+	active bool
+}
+
 // PublicationExecutionScope privately owns both the local resource lock and
 // the durable delivery guard until finalization is acknowledged. Unknown
 // execution results permanently fence this scope from further launches.
 type PublicationExecutionScope struct {
-	mu         sync.Mutex
-	guard      persistence.PublicationDeliveryGuard
-	commands   PublicationCommandRunner
-	repository publicationQuiescenceRepository
-	release    func()
-	unresolved int
-	unknown    bool
-	closeTried bool
-	closed     bool
-	stageClose func() error
-	ownedFiles []*os.File
-	finalizing bool
-	finalized  bool
+	mu          sync.Mutex
+	guard       persistence.PublicationDeliveryGuard
+	commands    PublicationCommandRunner
+	repository  publicationQuiescenceRepository
+	release     func()
+	unresolved  int
+	syncWork    int
+	unknown     bool
+	closeTried  bool
+	closed      bool
+	stageClose  func() error
+	ownedFiles  []*os.File
+	finalizing  bool
+	finalized   bool
+	firstAbsent bool
 }
 
 // quarantineUncertain permanently fences this local scope after an operation
@@ -215,6 +221,64 @@ func (scope *PublicationExecutionScope) CanExecute() bool {
 	return scope.commands != nil && !scope.finalized && !scope.finalizing && !scope.unknown
 }
 
+// reserveSynchronousWork protects non-command staging work from concurrent
+// finalization. The token makes releasing or transferring this reservation
+// explicitly owned by its caller.
+func (scope *PublicationExecutionScope) reserveSynchronousWork() *publicationSyncReservation {
+	if scope == nil {
+		return nil
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil {
+		return nil
+	}
+	scope.syncWork++
+	return &publicationSyncReservation{active: true}
+}
+
+func (scope *PublicationExecutionScope) releaseSynchronousWork(reservation *publicationSyncReservation) {
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if reservation != nil && reservation.active {
+		reservation.active = false
+		scope.syncWork--
+	}
+}
+
+// beginFirstAbsentFinalization seals this scope against any further command
+// launches while retaining its coordinator locks and durable delivery claim.
+func (scope *PublicationExecutionScope) beginFirstAbsentFinalization(reservation *publicationSyncReservation) error {
+	if scope == nil {
+		return errors.New("publication execution scope is unavailable")
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if scope.unknown || scope.finalized || scope.finalizing || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || !reservation.active {
+		return errors.New("publication execution scope is not quiescent")
+	}
+	// Transfer the staging reservation to first-absent cleanup atomically. The
+	// cleanup fence then owns the scope until settlement is acknowledged.
+	reservation.active = false
+	scope.syncWork--
+	scope.finalizing = true
+	scope.firstAbsent = true
+	return nil
+}
+
+// acknowledgeFirstAbsentFinalization releases local ownership only after the
+// guarded terminal transaction has acknowledged cleanup and settlement.
+func (scope *PublicationExecutionScope) acknowledgeFirstAbsentFinalization() {
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if scope.firstAbsent && scope.finalizing && !scope.unknown && scope.unresolved == 0 && !scope.finalized {
+		scope.finalized = true
+		scope.finalizing = false
+		scope.release()
+		scope.release = nil
+	}
+}
+
 // Finalize acknowledges a stopped scope only after stage cleanup and a
 // successful guarded quiescence transition. Close is never retried after an
 // error; DB uncertainty can be retried after a successful close without
@@ -234,7 +298,7 @@ func (scope *PublicationExecutionScope) Finalize(ctx context.Context, closeStage
 		scope.mu.Unlock()
 		return nil
 	}
-	if scope.unknown || scope.unresolved != 0 {
+	if scope.firstAbsent || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 {
 		if scope.unknown {
 			scope.quarantineLocked()
 		}

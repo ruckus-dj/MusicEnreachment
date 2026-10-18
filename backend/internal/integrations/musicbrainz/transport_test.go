@@ -8,47 +8,52 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"golang.org/x/time/rate"
 )
 
 func TestPublicGateConcurrentWaitersRespectExtendedCooldownAndRate(t *testing.T) {
-	waiter := rateWaiter{limiter: rate.NewLimiter(rate.Every(10*time.Millisecond), 1)}
-	gate := NewPublicRateGateWithWaiter(waiter, time.Now)
-	gate.mu.Lock()
-	gate.cooldownUntil = time.Now().Add(40 * time.Millisecond)
-	gate.mu.Unlock()
+	synctest.Test(t, func(t *testing.T) {
+		limiterInterval := 10 * time.Millisecond
+		waiter := rateWaiter{limiter: rate.NewLimiter(rate.Every(limiterInterval), 1)}
+		gate := NewPublicRateGateWithWaiter(waiter, time.Now)
+		gate.mu.Lock()
+		gate.cooldownUntil = time.Now().Add(40 * time.Millisecond)
+		gate.mu.Unlock()
 
-	started := time.Now()
-	type arrival struct {
-		at  time.Time
-		err error
-	}
-	results := make(chan arrival, 3)
-	for range 3 {
-		go func() { err := gate.wait(context.Background()); results <- arrival{at: time.Now(), err: err} }()
-	}
-	time.Sleep(10 * time.Millisecond)
-	gate.mu.Lock()
-	gate.cooldownUntil = time.Now().Add(80 * time.Millisecond)
-	gate.mu.Unlock()
-	arrivals := make([]time.Time, 0, 3)
-	for range 3 {
-		result := <-results
-		if result.err != nil {
-			t.Fatal(result.err)
+		type arrival struct {
+			at  time.Time
+			err error
 		}
-		arrivals = append(arrivals, result.at)
-	}
-	if elapsed := arrivals[0].Sub(started); elapsed < 70*time.Millisecond {
-		t.Fatalf("gate returned before extended cooldown: %s", elapsed)
-	}
-	for i := 1; i < len(arrivals); i++ {
-		if arrivals[i].Sub(arrivals[i-1]) < 8*time.Millisecond {
-			t.Fatalf("concurrent waiters burst after cooldown: %v", arrivals)
+		results := make(chan arrival, 3)
+		for range 3 {
+			go func() { err := gate.wait(context.Background()); results <- arrival{at: time.Now(), err: err} }()
 		}
-	}
+		synctest.Wait()
+		time.Sleep(10 * time.Millisecond)
+		gate.mu.Lock()
+		extendedDeadline := time.Now().Add(80 * time.Millisecond)
+		gate.cooldownUntil = extendedDeadline
+		gate.mu.Unlock()
+		arrivals := make([]time.Time, 0, 3)
+		for range 3 {
+			result := <-results
+			if result.err != nil {
+				t.Fatal(result.err)
+			}
+			arrivals = append(arrivals, result.at)
+		}
+		for i, at := range arrivals {
+			if at.Before(extendedDeadline) {
+				t.Fatalf("gate returned before extended cooldown: arrival %d at %s, deadline %s", i, at, extendedDeadline)
+			}
+			if i > 0 && at.Sub(arrivals[i-1]) < limiterInterval {
+				t.Fatalf("concurrent waiters burst after cooldown: %v", arrivals)
+			}
+		}
+	})
 }
 
 func TestRateWaiterCancellationDoesNotLeaveFutureReservation(t *testing.T) {
