@@ -195,9 +195,8 @@ func (authority *publicationManualLyricsObservationAuthority) observeBody(ctx co
 	if err != nil {
 		return persistence.PublicationStageObservation{}, errors.Join(err, native.Close())
 	}
-	approved := authority.artwork.ApprovedCoverFacts()
-	if approved.Count == 0 && assets.Cover.State != persistence.PublicationAssetAbsent || approved.Count == 1 && (assets.Cover.State != persistence.PublicationAssetEmbedded || assets.Cover.SHA256 != hex.EncodeToString(approved.ImageSHA256[:])) {
-		return persistence.PublicationStageObservation{}, errors.Join(errors.New("native publication cover differs from frozen artwork"), native.Close())
+	if err := validateManualLyricsApprovedCover(authority.artwork.ApprovedCoverFacts(), capture); err != nil {
+		return persistence.PublicationStageObservation{}, errors.Join(err, native.Close())
 	}
 	if err := stage.Validate(ctx); err != nil {
 		return result, errors.Join(err, native.Close())
@@ -258,4 +257,27 @@ func (authority *publicationManualLyricsObservationAuthority) observeBody(ctx co
 	actualSize, actualMTime := info.Size(), info.ModTime().UnixMicro()
 	result = persistence.PublicationStageObservation{Version: 1, RelativePath: stage.paths.RelativePath, Ownership: persistence.ArtifactOwnership{ExpectedSize: &actualSize, ExpectedMTime: &actualMTime}, PayloadSHA256: hex.EncodeToString(digest[:]), ActualAudio: audio, ActualMetadata: commitMetadata, ActualAssets: assetJSON, QualityPolicyVersion: authority.input.QualityPolicyVersion}
 	return result, nil
+}
+
+// validateManualLyricsApprovedCover permits only absence or the exact single
+// native FLAC picture captured before rewriting. CoverInspection is TagLib's
+// bounded first-picture observation, not a complete inventory.
+func validateManualLyricsApprovedCover(approved metadata.ApprovedCoverFacts, capture metadata.Capture) error {
+	assets, err := ObservePublicationAssets(capture)
+	if err != nil {
+		return err
+	}
+	switch approved.Count {
+	case 0:
+		if assets.Cover.State != persistence.PublicationAssetAbsent {
+			return errors.New("native publication cover differs from frozen artwork")
+		}
+	case 1:
+		if assets.Cover.State != persistence.PublicationAssetEmbedded || assets.Cover.SHA256 != hex.EncodeToString(approved.ImageSHA256[:]) || assets.Cover.SizeBytes == nil || *assets.Cover.SizeBytes != int64(approved.ImageSize) {
+			return errors.New("native publication cover differs from frozen artwork")
+		}
+	default:
+		return errors.New("native publication artwork count is unsupported")
+	}
+	return nil
 }

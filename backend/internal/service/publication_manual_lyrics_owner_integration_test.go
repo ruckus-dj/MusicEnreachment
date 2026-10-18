@@ -6,7 +6,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	riverdatabasesql "github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
@@ -21,8 +27,42 @@ import (
 // Admission is seeded here; preparation and outcome records must be produced by
 // the actual native service and PostgreSQL repository, never by this fixture.
 func TestPreparedManualLyricsFLACOwnerPostgreSQL(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		cover   bool
+		removal bool
+	}{
+		{name: "no_cover_value"},
+		{name: "cover_value", cover: true},
+		{name: "cover_explicit_empty", cover: true, removal: true},
+	} {
+		t.Run(test.name, func(t *testing.T) { testPreparedManualLyricsFLACOwner(t, test.cover, test.removal) })
+	}
+}
+
+func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal bool) {
 	ctx := context.Background()
-	fixture, _, original := preparedManualLyricsFLACStage(t)
+	fixture, fakeStage, _ := preparedManualLyricsFLACStage(t)
+	t.Cleanup(func() { _ = fakeStage.Close() })
+	currentPath := filepath.Join(fixture.output, "current.flac")
+	if removal {
+		if _, err := (metadata.Writer{}).Write(ctx, currentPath, map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}, "LYRICS": {"[00:00.00]old current lyrics\n"}}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if withCover {
+		current, err := os.ReadFile(currentPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(currentPath, appendNativeTestPicture(t, current), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	original, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	input := fixture.repo.input.Clone()
 	input.DesiredTags = map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}
 	installationID := uuid.New()
@@ -32,7 +72,37 @@ func TestPreparedManualLyricsFLACOwnerPostgreSQL(t *testing.T) {
 	}
 	input.ManualLyrics.State = "value"
 	input.ManualLyrics.Value = "[00:01.00]native PostgreSQL lyrics\r\n"
+	if removal {
+		input.ManualLyrics.State = "explicit_empty"
+		input.ManualLyrics.Value = ""
+	}
 	input.ManualLyrics.ExpectedMetadataRevision = 7
+	info, err := os.Stat(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size, mtime := info.Size(), info.ModTime().UnixMicro()
+	digest := sha256.Sum256(original)
+	input.Rewrite.Ownership = persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: fmt.Sprintf("%x", digest)}
+	fixture.repo.input = input.Clone()
+	capture, err := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselineArtwork, err := metadata.SnapshotFlacArtwork(ctx, currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualAssets, err := ObservePublicationAssets(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withCover && (baselineArtwork.ApprovedCoverFacts().Count != 1 || actualAssets.Cover.State != persistence.PublicationAssetEmbedded) {
+		t.Fatal("covered fixture has no verified native front cover")
+	}
+	if removal && (len(capture.Tags["LYRICS"]) != 1 || actualAssets.Lyrics.State != persistence.PublicationAssetEmbedded) {
+		t.Fatal("removal fixture must contain actual current lyrics")
+	}
 	if err := input.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +157,11 @@ func TestPreparedManualLyricsFLACOwnerPostgreSQL(t *testing.T) {
 	exec(`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?::jsonb,1,now())`, guard.ExpectedPositionID, epoch, input.Rewrite.CurrentGeneration, input.Rewrite.RelativePath,
 		encode(persistence.PublicationCurrentOwnership{Version: 1, Identity: input.Rewrite.Ownership}),
 		encode(persistence.PublicationCurrentAudio{Version: 1, Facts: input.Rewrite.AudioFacts}),
-		encode(persistence.PublicationCommitMetadata{Version: 1, Tags: input.DesiredTags}),
-		`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`)
+		encode(persistence.PublicationCommitMetadata{Version: 1, Tags: capture.Tags}),
+		encode(actualAssets))
 	claimID := uuid.New()
-	digest := sha256.Sum256([]byte(input.Rewrite.RelativePath))
-	exec(`INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id) VALUES (?,?,?,?,?,'file',?)`, claimID, epoch, digest[:], input.Rewrite.RelativePath, input.Rewrite.RelativePath, guard.ExpectedPositionID)
+	namespaceDigest := sha256.Sum256([]byte(input.Rewrite.RelativePath))
+	exec(`INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id) VALUES (?,?,?,?,?,'file',?)`, claimID, epoch, namespaceDigest[:], input.Rewrite.RelativePath, input.Rewrite.RelativePath, guard.ExpectedPositionID)
 	for _, generation := range []uuid.UUID{input.Rewrite.CurrentGeneration, guard.CandidateGeneration} {
 		exec(`INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?,?,?)`, claimID, guard.ExpectedPositionID, generation)
 	}
@@ -135,6 +205,50 @@ func TestPreparedManualLyricsFLACOwnerPostgreSQL(t *testing.T) {
 	if err := json.Unmarshal(attempt.MutationJournal, &records); err != nil {
 		t.Fatal(err)
 	}
+	var outcome persistence.PublicationOptionalLyricsOutcomeEvidence
+	var entries []json.RawMessage
+	if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range entries {
+		var item struct {
+			Kind             string                                   `json:"kind"`
+			Outcome          string                                   `json:"outcome"`
+			FinalObservation persistence.PublicationStageObservation  `json:"final_observation"`
+			ManualLyrics     persistence.PublicationManualLyricsInput `json:"manual_lyrics"`
+			Preparation      persistence.PublicationPreparationRecord `json:"preparation"`
+			InputIdentity    persistence.PublicationFileIdentity      `json:"input_identity"`
+			OutputIdentity   persistence.PublicationFileIdentity      `json:"output_identity"`
+			Diagnostic       string                                   `json:"diagnostic"`
+		}
+		if json.Unmarshal(raw, &item) == nil && item.Kind == "publication_optional_lyrics_outcome" {
+			outcome = persistence.PublicationOptionalLyricsOutcomeEvidence{Kind: item.Outcome, FinalObservation: item.FinalObservation, ManualLyrics: item.ManualLyrics, Preparation: item.Preparation, InputIdentity: item.InputIdentity, OutputIdentity: item.OutputIdentity, Diagnostic: item.Diagnostic}
+		}
+	}
+	if outcome.Kind != persistence.PublicationOptionalLyricsExactRoundTrip {
+		t.Fatalf("unexpected durable lyrics outcome: %q", outcome.Kind)
+	}
+	var finalAssets persistence.PublicationAssetOutcomes
+	if err := json.Unmarshal(outcome.FinalObservation.ActualAssets, &finalAssets); err != nil {
+		t.Fatalf("final assets: %v", err)
+	}
+	if finalAssets.Cover.State != actualAssets.Cover.State || finalAssets.Cover.SHA256 != actualAssets.Cover.SHA256 || finalAssets.Cover.MIME != actualAssets.Cover.MIME || !equalOptionalSize(finalAssets.Cover.SizeBytes, actualAssets.Cover.SizeBytes) {
+		t.Fatalf("final cover outcome = %+v, want observed %+v", finalAssets.Cover, actualAssets.Cover)
+	}
+	var finalMetadata persistence.PublicationCommitMetadata
+	if err := json.Unmarshal(outcome.FinalObservation.ActualMetadata, &finalMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if removal {
+		if _, present := finalMetadata.Tags["LYRICS"]; present {
+			t.Fatalf("removed LYRICS still present: %#v", finalMetadata.Tags["LYRICS"])
+		}
+	} else if got := finalMetadata.Tags["LYRICS"]; len(got) != 1 || got[0] != input.ManualLyrics.Value {
+		t.Fatalf("final lyrics = %#v", got)
+	}
+	if err := baselineArtwork.VerifyEquivalent(ctx, stage.paths.OutputPath); err != nil {
+		t.Fatalf("private final output changed native FLAC picture/audio: %v", err)
+	}
 	if attempt.Phase != "preparing" || len(records) != 4 || records[0].Step != "intent" || records[1].Step != "directory_created" || records[2].Step != "input_ready" || records[3].Kind != "publication_optional_lyrics_outcome" {
 		t.Fatalf("unexpected native preparation/outcome journal: %s", attempt.MutationJournal)
 	}
@@ -147,4 +261,58 @@ func TestPreparedManualLyricsFLACOwnerPostgreSQL(t *testing.T) {
 		t.Fatalf("current bytes changed: %v", err)
 	}
 	scope.releaseSynchronousWork(reservation)
+}
+
+func equalOptionalSize(a, b *int64) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+// appendNativeTestPicture serializes a FLAC PICTURE metadata block, leaving
+// the original STREAMINFO/audio payload untouched.
+func appendNativeTestPicture(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var pngData bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	img.Set(1, 1, color.RGBA{B: 255, A: 255})
+	if err := png.Encode(&pngData, img); err != nil {
+		t.Fatal(err)
+	}
+	imageData := pngData.Bytes()
+	var body bytes.Buffer
+	_ = binary.Write(&body, binary.BigEndian, uint32(3))
+	writeText := func(value string) {
+		_ = binary.Write(&body, binary.BigEndian, uint32(len(value)))
+		body.WriteString(value)
+	}
+	writeText("image/png")
+	writeText("正面の絵🎵")
+	for _, value := range []uint32{2, 2, 32, 1, uint32(len(imageData))} {
+		_ = binary.Write(&body, binary.BigEndian, value)
+	}
+	body.Write(imageData)
+	if len(data) < 8 || string(data[:4]) != "fLaC" {
+		t.Fatal("invalid FLAC fixture")
+	}
+	out := append([]byte(nil), data[:4]...)
+	for offset := 4; ; {
+		header := data[offset]
+		length := int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
+		end := offset + 4 + length
+		if end > len(data) {
+			t.Fatal("malformed FLAC metadata")
+		}
+		if header&0x80 != 0 {
+			out = append(out, header&0x7f, data[offset+1], data[offset+2], data[offset+3])
+			out = append(out, data[offset+4:end]...)
+			data = data[end:]
+			break
+		}
+		out = append(out, data[offset:end]...)
+		offset = end
+	}
+	block := body.Bytes()
+	out = append(out, 0x80|6, byte(len(block)>>16), byte(len(block)>>8), byte(len(block)))
+	out = append(out, block...)
+	return append(out, data...)
 }

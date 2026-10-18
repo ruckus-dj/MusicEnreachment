@@ -168,8 +168,8 @@ func applyAndRecordPreparedManualLyricsFLAC(
 		if !equalTags(withoutLyrics(capture.Tags), mandatory) {
 			return errors.New("required publication metadata did not round-trip")
 		}
-		if artwork.ApprovedCoverFacts().Count != 0 || capture.CoverInspection != nil && capture.CoverInspection.Cover != nil {
-			return errors.New("manual lyrics FLAC path does not permit cover artwork")
+		if err := validateManualLyricsApprovedCover(artwork.ApprovedCoverFacts(), capture); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -181,8 +181,8 @@ func applyAndRecordPreparedManualLyricsFLAC(
 		if err != nil {
 			return err
 		}
-		if capture.CoverInspection != nil && capture.CoverInspection.Cover != nil {
-			return errors.New("manual lyrics FLAC path does not permit cover artwork")
+		if err := validateManualLyricsApprovedCover(artwork.ApprovedCoverFacts(), capture); err != nil {
+			return err
 		}
 		return nil
 	}}
@@ -446,8 +446,8 @@ func applyPublicationOptionalLyricsBody(
 			scope.quarantineUncertain()
 			return result, fmt.Errorf("restore required publication metadata after optional lyrics mismatch: %w", err)
 		}
-		// TagLib's mandatory metadata write clears images as well as tags, so
-		// restore required assets only after that write and validate the final file.
+		// Restore format-specific required assets only after the mandatory metadata
+		// write; native FLAC artwork is preserved and audited separately.
 		if err := requirements.restoreRequiredAssets(ctx, paths.OutputPath, mandatory); err != nil {
 			scope.quarantineUncertain()
 			return result, fmt.Errorf("restore required publication assets after optional lyrics mismatch: %w", err)

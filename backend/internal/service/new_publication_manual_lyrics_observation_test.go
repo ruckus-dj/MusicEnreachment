@@ -30,6 +30,27 @@ func TestManualLyricsObservationRequiresNativeCopyProof(t *testing.T) {
 	}
 }
 
+func TestValidateManualLyricsApprovedCover(t *testing.T) {
+	image := []byte("\x89PNG\r\n\x1a\ncover")
+	digest := sha256.Sum256(image)
+	approved := metadata.ApprovedCoverFacts{Count: 1, ImageSHA256: digest, ImageSize: len(image)}
+	capture := metadata.Capture{Tags: map[string][]string{}, CoverInspection: &metadata.CoverInspection{Observed: true, Cover: &metadata.Cover{Data: image}}}
+	if err := validateManualLyricsApprovedCover(approved, capture); err != nil {
+		t.Fatalf("accepted exact approved image: %v", err)
+	}
+	changed := capture
+	changed.CoverInspection = &metadata.CoverInspection{Observed: true, Cover: &metadata.Cover{Data: append(append([]byte(nil), image...), 0)}}
+	if err := validateManualLyricsApprovedCover(approved, changed); err == nil {
+		t.Fatal("accepted changed approved image")
+	}
+	if err := validateManualLyricsApprovedCover(metadata.ApprovedCoverFacts{}, capture); err == nil {
+		t.Fatal("accepted an unapproved image")
+	}
+	if err := validateManualLyricsApprovedCover(metadata.ApprovedCoverFacts{Count: 1, ImageSHA256: digest, ImageSize: len(image) + 1}, capture); err == nil {
+		t.Fatal("accepted approved image with wrong size")
+	}
+}
+
 func TestManualLyricsObservationAuthorityUsesNativePositiveEvidence(t *testing.T) {
 	stage, input, authority, scope, reservation, _ := manualLyricsObservationFixture(t)
 	beforeInput, err := os.ReadFile(stage.paths.InputPath)

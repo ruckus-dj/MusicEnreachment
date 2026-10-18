@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем срезе private FLAC owner поддерживает один verified
+native front cover без реконструкции: actual cover SHA/size сопоставляются с
+opaque snapshot, полные PICTURE-body и encoded audio сохраняются. Реальные PG
+cases no-cover/value, covered/value и covered/removal прошли focused-проверку;
+removal начинается с существующих native lyrics. Полный локальный `task verify`
+прошёл; native CI этого среза ещё не проверен.
+Multiple/alternate artwork остаются за private capability boundary, без выбора
+или удаления картинок; generic V3 execution и production Apply не включены.
+
 В текущем срезе concrete private FLAC owner объединяет native
 metadata write, sealed observation и typed optional-outcome ACK. Scope хранит
 точный issued capability и исключает commands/finalization через весь boundary;
