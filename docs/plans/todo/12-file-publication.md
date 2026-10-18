@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем persistence-срезе private V3 replacement recorder
+проверяет canonical exposure prefix, все replacement bindings и full locked
+CURRENT snapshot перед каждым append. Generic V3 replacement не разрешён.
+Native-fixture PG tests моделируют только четыре DB journal transitions:
+installed evidence не означает filesystem rename, fixture не коммитится.
+Review выявило missing installed-mtime binding; исправление и regression
+прошли полный локальный `task verify`. Финальное review блокеров не нашло;
+native CI этого среза ещё не проверен.
+
 В текущем service-срезе continuous private owner удерживает
 work capability через exposure-admission ACK, выводя intent внутри из frozen
 manifest и anchored existing target parent. Nested target/canonical-key case и

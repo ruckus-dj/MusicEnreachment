@@ -138,24 +138,11 @@ func (repository *SetupManagerRepository) BeginManualLyricsExposure(ctx context.
 // manualLyricsExposureReplay accepts only the complete canonical validated
 // stage prefix followed by one matching final exposure record.
 func manualLyricsExposureReplay(attempt *TrackPublicationAttempt, guard PublicationDeliveryGuard, intent PublicationExposureIntent, observation PublicationStageObservation, input PublicationInputs, currentSnapshot json.RawMessage) (PublicationExposureOutcome, bool) {
-	entries, err := decodeJournal(attempt.MutationJournal)
-	if err != nil || (len(entries) != 7 && len(entries) != 9) {
+	entries, prefixEnd, record, outcome, ok := canonicalManualLyricsExposurePrefix(attempt, guard, input)
+	if !ok || len(entries) != prefixEnd {
 		return PublicationExposureStale, false
 	}
-	baseEnd := manualLyricsStageBaseEnd(entries)
-	if len(entries) != baseEnd+3 || !validManualLyricsValidatedStagePrefix(entries[:len(entries)-1], guard, attempt, input) {
-		return PublicationExposureStale, false
-	}
-	stagePrefix, err := json.Marshal(entries[:len(entries)-1])
-	if err != nil || !validManualLyricsStageJournal(stagePrefix, guard, attempt, input) {
-		return PublicationExposureStale, false
-	}
-	var outcome publicationOptionalLyricsOutcomeJournalRecord
-	if decodeStrictJSON(entries[baseEnd-1], &outcome) != nil {
-		return PublicationExposureStale, false
-	}
-	var record publicationExposureJournalRecord
-	if decodeStrictJSON(entries[len(entries)-1], &record) != nil || record.Version != PublicationExposureVersion ||
+	if record.Version != PublicationExposureVersion ||
 		record.Kind != "publication_exposure" || record.From != "validated" || record.To != "exposing" ||
 		record.Guard != guard || record.PositionID != attempt.PositionID || record.Epoch != attempt.Epoch ||
 		record.CandidateGeneration != attempt.CandidateGeneration || !sameOptionalUUID(record.ExpectedGeneration, attempt.ExpectedGeneration) ||
@@ -169,4 +156,32 @@ func manualLyricsExposureReplay(attempt *TrackPublicationAttempt, guard Publicat
 		return PublicationExposureStale, false
 	}
 	return PublicationExposureAlreadyRecorded, true
+}
+
+// canonicalManualLyricsExposurePrefix extracts only the exact validated V3
+// stage prefix and its exposure record. Later replacement entries are returned
+// untouched for their own stricter grammar; replay callers must still require
+// that no suffix exists.
+func canonicalManualLyricsExposurePrefix(attempt *TrackPublicationAttempt, guard PublicationDeliveryGuard, input PublicationInputs) ([]json.RawMessage, int, publicationExposureJournalRecord, publicationOptionalLyricsOutcomeJournalRecord, bool) {
+	var exposure publicationExposureJournalRecord
+	var outcome publicationOptionalLyricsOutcomeJournalRecord
+	entries, err := decodeJournal(attempt.MutationJournal)
+	if err != nil || (len(entries) < 7 || len(entries) > 13) {
+		return entries, 0, exposure, outcome, false
+	}
+	baseEnd := manualLyricsStageBaseEnd(entries)
+	prefixEnd := baseEnd + 3
+	if len(entries) < prefixEnd || (baseEnd != 4 && baseEnd != 6) || !validManualLyricsValidatedStagePrefix(entries[:prefixEnd-1], guard, attempt, input) {
+		return entries, 0, exposure, outcome, false
+	}
+	stagePrefix, err := json.Marshal(entries[:prefixEnd-1])
+	if err != nil || !validManualLyricsStageJournal(stagePrefix, guard, attempt, input) || decodeStrictJSON(entries[baseEnd-1], &outcome) != nil ||
+		decodeStrictJSON(entries[prefixEnd-1], &exposure) != nil || exposure.Version != PublicationExposureVersion || exposure.Kind != "publication_exposure" ||
+		exposure.From != "validated" || exposure.To != "exposing" || exposure.Guard != guard || exposure.PositionID != attempt.PositionID ||
+		exposure.Epoch != attempt.Epoch || exposure.CandidateGeneration != attempt.CandidateGeneration || !sameOptionalUUID(exposure.ExpectedGeneration, attempt.ExpectedGeneration) ||
+		exposure.Current == nil || !validExposureIntent(exposure.Intent) || !stageMatchesIntent(exposure.Observation, exposure.Intent) ||
+		!samePublicationStageObservation(exposure.Observation, outcome.FinalObservation) || !preparationOwnsIntent(attempt.MutationJournal, guard, exposure.Intent, exposure.Observation) {
+		return entries, 0, exposure, outcome, false
+	}
+	return entries, prefixEnd, exposure, outcome, true
 }

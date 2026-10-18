@@ -59,6 +59,10 @@ func TestAdmittedPreparedManualLyricsFLACNestedPathPostgreSQL(t *testing.T) {
 	testPreparedManualLyricsFLACOwner(t, true, false, true, true, true)
 }
 
+func TestAdmittedManualLyricsReplacementJournalPostgreSQL(t *testing.T) {
+	testPreparedManualLyricsFLACOwner(t, false, false, true, true, false, true)
+}
+
 func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continuous bool, options ...bool) {
 	ctx := context.Background()
 	fixture, fakeStage, _ := preparedManualLyricsFLACStage(t)
@@ -66,6 +70,7 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	currentPath := filepath.Join(fixture.output, "current.flac")
 	throughAdmission := len(options) > 0 && options[0]
 	nestedPath := len(options) > 1 && options[1]
+	dbReplacement := len(options) > 2 && options[2]
 	if nestedPath {
 		currentPath = filepath.Join(fixture.output, "Artist", "Album", "Current.FLAC")
 		if err := os.MkdirAll(filepath.Dir(currentPath), 0o700); err != nil {
@@ -344,6 +349,86 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		frozen, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
 		if err != nil || !reflect.DeepEqual(frozen, input) {
 			t.Fatalf("admitted owner changed frozen publication inputs: %v", err)
+		}
+		// Exercise only the PostgreSQL journal contract after the real admitted
+		// owner has persisted exposure. This deliberately does not perform a
+		// filesystem replacement or call replacement commit.
+		if dbReplacement {
+			backupIdentity, installedIdentity, err := stage.optionalLyricsFileIdentities(ctx)
+			if err != nil {
+				t.Fatalf("read native admitted replacement identities: %v", err)
+			}
+			var exposure struct {
+				Kind        string                                  `json:"kind"`
+				Intent      persistence.PublicationExposureIntent   `json:"intent"`
+				Observation persistence.PublicationStageObservation `json:"observation"`
+			}
+			if err := json.Unmarshal(entries[6], &exposure); err != nil || exposure.Kind != "publication_exposure" {
+				t.Fatalf("decode admitted exposure observation: %v", err)
+			}
+			base := persistence.PublicationReplacementEvidence{
+				Version: 1, Kind: "publication_replacement", Guard: guard,
+				PositionID: guard.ExpectedPositionID, Epoch: guard.Epoch,
+				CandidateGeneration: guard.CandidateGeneration,
+				ExpectedGeneration:  &input.Rewrite.CurrentGeneration,
+				Intent:              exposure.Intent,
+				Staged:              outcome.FinalObservation, Identity: input.Rewrite.Ownership,
+				BackupIdentity: backupIdentity, BackupPath: outcome.Preparation.InputRel,
+			}
+			// V3's generic guarded replacement API is intentionally not an owner
+			// capability; it must reject before the first replacement transition.
+			generic := base
+			generic.From, generic.To = "exposing", "backup_intent"
+			if got, callErr := repository.RecordPublicationReplacement(ctx, guard, generic); got != persistence.PublicationReplacementStale {
+				t.Fatalf("generic V3 replacement = %q, %v; want stale", got, callErr)
+			}
+			for _, transition := range []struct{ from, to string }{
+				{"exposing", "backup_intent"},
+				{"backup_intent", "backup_ready"},
+				{"backup_ready", "replacement_intent"},
+				{"replacement_intent", "installed"},
+			} {
+				evidence := base
+				evidence.From, evidence.To = transition.from, transition.to
+				if transition.to == "installed" {
+					evidence.Identity = installedIdentity
+					if evidence.Identity.MTime == nil {
+						t.Fatal("native installed identity has no modification time")
+					}
+					mutated := *evidence.Identity.MTime + 1
+					evidence.Identity.MTime = &mutated
+					before, readErr := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+					if readErr != nil {
+						t.Fatal(readErr)
+					}
+					if got, callErr := repository.GuardedRecordManualLyricsReplacement(ctx, guard, evidence); callErr != nil || got != persistence.PublicationReplacementStale {
+						t.Fatalf("installed replacement with altered mtime = %q, %v; want stale", got, callErr)
+					}
+					unchanged, readErr := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+					if readErr != nil || unchanged.Phase != before.Phase || !bytes.Equal(unchanged.MutationJournal, before.MutationJournal) {
+						t.Fatalf("rejected installed mtime mutation changed phase/journal: %v", readErr)
+					}
+					evidence.Identity = installedIdentity
+				}
+				if got, callErr := repository.GuardedRecordManualLyricsReplacement(ctx, guard, evidence); callErr != nil || got != persistence.PublicationReplacementRecorded {
+					t.Fatalf("native DB-only replacement %s->%s = %q, %v", transition.from, transition.to, got, callErr)
+				}
+			}
+			completed, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var completedEntries []json.RawMessage
+			if err := json.Unmarshal(completed.MutationJournal, &completedEntries); err != nil || len(completedEntries) != 11 {
+				t.Fatalf("exposure plus replacement journal has %d entries, %v; want 11", len(completedEntries), err)
+			}
+			if got, callErr := repository.RecordPublicationReplacement(ctx, guard, generic); got != persistence.PublicationReplacementStale {
+				t.Fatalf("replacement replay = %q, %v; want stale", got, callErr)
+			}
+			stillCompleted, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+			if err != nil || !bytes.Equal(stillCompleted.MutationJournal, completed.MutationJournal) {
+				t.Fatalf("rejected replacement replay changed journal: %v", err)
+			}
 		}
 		scope.releaseSynchronousWork(reservation)
 		return

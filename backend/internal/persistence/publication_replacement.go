@@ -49,7 +49,15 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 	result := PublicationReplacementStale
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		attempt, operation, _, live, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "record publication replacement")
-		if err != nil || !live || attempt.Phase != "exposing" || operation.Stage != "exposing" || attempt.IntentKind != "rewrite" || evidence.PositionID != attempt.PositionID || evidence.Epoch != attempt.Epoch || evidence.CandidateGeneration != attempt.CandidateGeneration || !sameOptionalUUID(evidence.ExpectedGeneration, attempt.ExpectedGeneration) || attempt.ExpectedGeneration == nil || evidence.Intent.Expectation != "expected_current" || evidence.Intent.TargetRelativePath == "" {
+		if err != nil || !live {
+			return err
+		}
+		// V3 replacement evidence has a separate, fully bound journal grammar.
+		// Do not let the generic writer recognize any part of it.
+		if input, decodeErr := DecodePublicationInputs(attempt.FrozenInputs); decodeErr == nil && input.Version == PublicationInputsVersion3 {
+			return nil
+		}
+		if attempt.Phase != "exposing" || operation.Stage != "exposing" || attempt.IntentKind != "rewrite" || evidence.PositionID != attempt.PositionID || evidence.Epoch != attempt.Epoch || evidence.CandidateGeneration != attempt.CandidateGeneration || !sameOptionalUUID(evidence.ExpectedGeneration, attempt.ExpectedGeneration) || attempt.ExpectedGeneration == nil || evidence.Intent.Expectation != "expected_current" || evidence.Intent.TargetRelativePath == "" {
 			return err
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
@@ -138,6 +146,133 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 		return PublicationReplacementStale, err
 	}
 	return result, nil
+}
+
+// GuardedRecordManualLyricsReplacement appends one V3 manual-lyrics
+// replacement transition. It records evidence only; it never mutates files or
+// publication state.
+func (repository *SetupManagerRepository) GuardedRecordManualLyricsReplacement(ctx context.Context, guard PublicationDeliveryGuard, evidence PublicationReplacementEvidence) (PublicationReplacementOutcome, error) {
+	evidence = clonePublicationReplacementEvidence(evidence)
+	if validatePublicationDeliveryGuard(guard) != nil || !validPublicationReplacementEvidence(evidence) || evidence.Guard != guard {
+		return PublicationReplacementStale, errors.New("invalid manual lyrics replacement evidence")
+	}
+	result := PublicationReplacementStale
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		attempt, operation, _, live, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "record manual lyrics replacement")
+		if err != nil || !live || attempt.Phase != "exposing" || operation.Stage != "exposing" || attempt.IntentKind != "rewrite" || attempt.ExpectedGeneration == nil ||
+			evidence.PositionID != attempt.PositionID || evidence.Epoch != attempt.Epoch || evidence.CandidateGeneration != attempt.CandidateGeneration || !sameOptionalUUID(evidence.ExpectedGeneration, attempt.ExpectedGeneration) {
+			return err
+		}
+		input, err := DecodePublicationInputs(attempt.FrozenInputs)
+		if err != nil || !validManualLyricsFLACRewrite(input) || input.Version != PublicationInputsVersion3 || input.Rewrite == nil ||
+			input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration || evidence.Intent.Expectation != "expected_current" || evidence.Intent.TargetRelativePath != input.Rewrite.RelativePath {
+			return nil
+		}
+		if err := validateExposureNamespace(ctx, tx, attempt, evidence.Intent); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("record manual lyrics replacement: validate namespace: %w", err)
+		}
+		entries, prefixEnd, exposure, _, ok := canonicalManualLyricsExposurePrefix(attempt, guard, input)
+		if !ok || len(entries) < prefixEnd || !samePublicationStageObservation(exposure.Observation, evidence.Staged) || exposure.Intent != evidence.Intent ||
+			exposure.Guard != guard || exposure.PositionID != attempt.PositionID || exposure.Epoch != attempt.Epoch || exposure.CandidateGeneration != attempt.CandidateGeneration || !sameOptionalUUID(exposure.ExpectedGeneration, attempt.ExpectedGeneration) {
+			return nil
+		}
+		preparation, err := decodeReplacementPreparation(entries[:prefixEnd], guard, exposure)
+		if err != nil {
+			return err
+		}
+		if evidence.BackupPath != preparation[0].InputRel || preparation[2].CopiedInput == nil ||
+			!sameCopiedBackupIdentity(evidence.BackupIdentity, *preparation[2].CopiedInput, input.Rewrite.Ownership) {
+			return nil
+		}
+		var current TrackPublication
+		if err := tx.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("record manual lyrics replacement: read current publication: %w", err)
+		}
+		currentJSON, err := json.Marshal(current)
+		if err != nil {
+			return fmt.Errorf("record manual lyrics replacement: encode current publication: %w", err)
+		}
+		if current.Generation != *attempt.ExpectedGeneration || current.Epoch != attempt.Epoch || current.RelativePath != evidence.Intent.TargetRelativePath ||
+			!publicationRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) || !sameJSONValue(currentJSON, exposure.Current) {
+			return nil
+		}
+		prior := []PublicationReplacementEvidence{}
+		for _, raw := range entries[prefixEnd:] {
+			var existing PublicationReplacementEvidence
+			if decodeStrictJSON(raw, &existing) != nil || !validPublicationReplacementEvidence(existing) || !manualLyricsReplacementBinding(existing, guard, attempt, exposure, input, preparation) ||
+				(existing.To != "installed" && !samePublicationExposureJSON(input.Rewrite.Ownership, existing.Identity)) {
+				return errors.New("manual lyrics replacement journal is malformed or foreign")
+			}
+			if len(prior) == 0 {
+				if existing.From != "exposing" || existing.To != "backup_intent" {
+					return nil
+				}
+			} else if !validReplacementSuccessor(&prior[len(prior)-1], &existing) {
+				return nil
+			}
+			prior = append(prior, existing)
+		}
+		if len(prior) >= 4 {
+			return nil
+		}
+		if len(prior) == 0 {
+			if evidence.From != "exposing" || evidence.To != "backup_intent" {
+				return nil
+			}
+		} else if !validReplacementSuccessor(&prior[len(prior)-1], &evidence) {
+			return nil
+		}
+		if !manualLyricsReplacementBinding(evidence, guard, attempt, exposure, input, preparation) ||
+			(evidence.To != "installed" && !samePublicationExposureJSON(input.Rewrite.Ownership, evidence.Identity)) {
+			return nil
+		}
+		journal, err := appendJournalEntry(attempt.MutationJournal, evidence)
+		if err != nil {
+			return err
+		}
+		updated, err := tx.NewRaw(`UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=? AND phase='exposing'`, string(journal), guard.OperationID).Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("record manual lyrics replacement: %w", err)
+		}
+		rows, err := updated.RowsAffected()
+		if err != nil || rows != 1 {
+			return errors.New("record manual lyrics replacement: attempt changed concurrently")
+		}
+		result = PublicationReplacementRecorded
+		return nil
+	})
+	if err != nil {
+		return PublicationReplacementStale, err
+	}
+	return result, nil
+}
+
+func clonePublicationReplacementEvidence(e PublicationReplacementEvidence) PublicationReplacementEvidence {
+	if e.ExpectedGeneration != nil {
+		value := *e.ExpectedGeneration
+		e.ExpectedGeneration = &value
+	}
+	e.Staged = e.Staged.Clone()
+	e.Identity = clonePublicationFileIdentity(e.Identity)
+	e.BackupIdentity = clonePublicationFileIdentity(e.BackupIdentity)
+	return e
+}
+
+func manualLyricsReplacementBinding(e PublicationReplacementEvidence, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt, exposure publicationExposureJournalRecord, input PublicationInputs, preparation [3]PublicationPreparationRecord) bool {
+	if e.To == "installed" && (e.Identity.MTime == nil || e.Staged.Ownership.ExpectedMTime == nil || *e.Identity.MTime != *e.Staged.Ownership.ExpectedMTime) {
+		return false
+	}
+	return input.Rewrite != nil && preparation[2].CopiedInput != nil && attempt.ExpectedGeneration != nil &&
+		*attempt.ExpectedGeneration != attempt.CandidateGeneration && e.Guard == guard && e.PositionID == attempt.PositionID && e.Epoch == attempt.Epoch &&
+		e.CandidateGeneration == attempt.CandidateGeneration && sameOptionalUUID(e.ExpectedGeneration, attempt.ExpectedGeneration) &&
+		e.Intent == exposure.Intent && samePublicationStageObservation(e.Staged, exposure.Observation) && e.BackupPath == preparation[0].InputRel &&
+		sameCopiedBackupIdentity(e.BackupIdentity, *preparation[2].CopiedInput, input.Rewrite.Ownership)
 }
 
 func validPublicationReplacementEvidence(e PublicationReplacementEvidence) bool {
