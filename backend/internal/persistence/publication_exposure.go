@@ -278,7 +278,9 @@ func validateExposureNamespace(ctx context.Context, tx bun.Tx, attempt *TrackPub
 		if err != nil {
 			return err
 		}
-		if claim.CanonicalKey != key || claim.RelativePath != node.RelativePath || claim.NodeKind != node.NodeKind || (claim.OwnerPositionID != nil && *claim.OwnerPositionID != attempt.PositionID) {
+		if claim.CanonicalKey != key || claim.RelativePath != node.RelativePath || claim.NodeKind != node.NodeKind ||
+			(node.NodeKind == "file" && (claim.OwnerPositionID == nil || *claim.OwnerPositionID != attempt.PositionID)) ||
+			(node.NodeKind == "dir" && claim.OwnerPositionID != nil) {
 			return sql.ErrNoRows
 		}
 		if node.NodeKind == "dir" && (claim.DirectoryScopeKey == nil || *claim.DirectoryScopeKey != node.DirectoryScope) {

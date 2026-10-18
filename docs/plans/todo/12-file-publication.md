@@ -11,6 +11,15 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Следующий срез — guarded same-path rewrite exposure: проверенный
+private backup остаётся доступным до единственного native atomic replacement;
+ordered replacement journal связывает actual namespace, current generation и
+validated candidate. Unix использует file/directory sync barriers; Windows
+exposure пока fail-closed из-за неподтверждённой directory durability capability.
+Replacement commit, cleanup/settlement и workflow wiring ещё отсутствуют;
+после exposure scope остаётся fenced. Полный локальный `task verify` среза прошёл;
+native CI для него ещё не проверен.
+
 Реализован следующий срез: завершение first-absent публикации
 в исходном live execution scope — sealed synchronous reservation, anchored
 удаление только собственного private input и пустого attempt directory,

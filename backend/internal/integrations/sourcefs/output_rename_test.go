@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -74,6 +75,34 @@ func TestOutputRenameNoReplaceMovesExistingRegularFile(t *testing.T) {
 	if content != "content" {
 		t.Fatalf("opened source handle read %q", content)
 	}
+}
+
+func TestOutputDirectorySyncPinnedHandleAndFailures(t *testing.T) {
+	ctx := context.Background()
+	root := openOutputRenameRoot(t, outputRenameRoot(t))
+	if syncer, ok := root.(OutputDirectorySync); ok {
+		err := syncer.SyncDirectory(ctx)
+		if runtime.GOOS == "windows" {
+			if !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("Windows directory sync error = %v, want ErrUnsupported", err)
+			}
+		} else if err != nil {
+			t.Fatalf("sync pinned directory: %v", err)
+		}
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		if err := syncer.SyncDirectory(cancelled); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled directory sync error = %v, want context.Canceled", err)
+		}
+		if err := root.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := syncer.SyncDirectory(ctx); !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("closed directory sync error = %v, want os.ErrClosed", err)
+		}
+		return
+	}
+	t.Fatal("output directory does not expose directory sync capability")
 }
 
 func TestOutputRenameNoReplacePreservesSourceAndCollisions(t *testing.T) {

@@ -227,6 +227,15 @@ func (d *windowsOutputDir) Identity(ctx context.Context) (DirectoryIdentity, err
 	return DirectoryIdentity{Platform: "windows", Volume: fmt.Sprintf("%08x", info.VolumeSerialNumber), FileID: fmt.Sprintf("%016x", fileID)}, nil
 }
 
+// SyncDirectory is unsupported until Windows provides an implementation with
+// the required pinned-handle durability semantics. Never claim a fake flush.
+func (d *windowsOutputDir) SyncDirectory(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return ErrUnsupported
+}
+
 func (d *windowsOutputDir) VerifyChild(ctx context.Context, name string, expected DirectoryIdentity) error {
 	if invalidWindowsName(name) {
 		return ErrInvalidPath
@@ -389,6 +398,101 @@ func (d *windowsOutputDir) RenameNoReplace(ctx context.Context, sourceParent Out
 	}
 	var iosb windows.IO_STATUS_BLOCK
 	if err := windows.NtSetInformationFile(fileHandle, &iosb, &buffer[0], uint32(len(buffer)), 10); err != nil {
+		return err
+	}
+	runtime.KeepAlive(buffer)
+	return nil
+}
+
+// AtomicReplaceExisting validates both named regular files against snapshots
+// obtained from open handles, then uses the native replace-existing rename
+// operation. As on Unix, validation is not hostile-writer compare-and-swap.
+func (d *windowsOutputDir) AtomicReplaceExisting(ctx context.Context, sourceParent OutputDirectory, sourceName string, expectedSource fs.FileInfo, targetName string, expectedTarget fs.FileInfo) error {
+	if invalidWindowsName(sourceName) || invalidWindowsName(targetName) {
+		return ErrInvalidPath
+	}
+	source, ok := sourceParent.(*windowsOutputDir)
+	if !ok {
+		return ErrUnsupported
+	}
+	if expectedSource == nil || !expectedSource.Mode().IsRegular() || expectedTarget == nil || !expectedTarget.Mode().IsRegular() {
+		return ErrNotRegular
+	}
+	if source == d && strings.EqualFold(sourceName, targetName) {
+		return ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sourceHandle, err := duplicateOutputDirectoryHandle(source)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(sourceHandle)
+	targetHandle, err := duplicateOutputDirectoryHandle(d)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(targetHandle)
+	check := func(parent windows.Handle, name string, expected fs.FileInfo, access uint32) (windows.Handle, *os.File, error) {
+		h, openErr := outputWindowsOpen(parent, name, access|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, false)
+		if openErr != nil {
+			return windows.InvalidHandle, nil, openErr
+		}
+		file := os.NewFile(uintptr(h), name)
+		actual, statErr := file.Stat()
+		if statErr != nil || !actual.Mode().IsRegular() || !os.SameFile(expected, actual) {
+			_ = file.Close()
+			if statErr != nil {
+				return windows.InvalidHandle, nil, statErr
+			}
+			if !actual.Mode().IsRegular() {
+				return windows.InvalidHandle, nil, ErrNotRegular
+			}
+			return windows.InvalidHandle, nil, errors.New("sourcefs: output namespace changed")
+		}
+		return h, file, nil
+	}
+	fileHandle, sourceFile, err := check(sourceHandle, sourceName, expectedSource, windows.DELETE)
+	if err != nil {
+		return err
+	}
+	// os.NewFile owns fileHandle; do not close the raw handle separately.
+	defer func() { _ = sourceFile.Close() }()
+	_, targetOSFile, err := check(targetHandle, targetName, expectedTarget, 0)
+	if err != nil {
+		return err
+	}
+	_ = targetOSFile.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	name, err := windows.UTF16FromString(targetName)
+	if err != nil {
+		return ErrInvalidPath
+	}
+	name = name[:len(name)-1]
+	nameBytes := len(name) * 2
+	// FILE_RENAME_INFORMATION_EX begins with DWORD Flags, followed by an
+	// aligned HANDLE RootDirectory and the filename length/name.
+	rootOffset := (4 + int(unsafe.Sizeof(uintptr(0))) - 1) &^ (int(unsafe.Sizeof(uintptr(0))) - 1)
+	fileNameOffset := rootOffset + int(unsafe.Sizeof(uintptr(0))) + 4
+	buffer := make([]byte, fileNameOffset+nameBytes)
+	flags := uint32(windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS)
+	binary.LittleEndian.PutUint32(buffer, flags)
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		binary.LittleEndian.PutUint64(buffer[rootOffset:], uint64(targetHandle))
+	} else {
+		binary.LittleEndian.PutUint32(buffer[rootOffset:], uint32(targetHandle))
+	}
+	binary.LittleEndian.PutUint32(buffer[rootOffset+int(unsafe.Sizeof(uintptr(0))):], uint32(nameBytes))
+	for i, unit := range name {
+		binary.LittleEndian.PutUint16(buffer[fileNameOffset+i*2:], unit)
+	}
+	var iosb windows.IO_STATUS_BLOCK
+	// FileRenameInformationEx is FILE_INFO_BY_HANDLE_CLASS 65. Do not fall
+	// back to the legacy class: it cannot replace while the target is open.
+	if err := windows.NtSetInformationFile(fileHandle, &iosb, &buffer[0], uint32(len(buffer)), 65); err != nil {
 		return err
 	}
 	runtime.KeepAlive(buffer)

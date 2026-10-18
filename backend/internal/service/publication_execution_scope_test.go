@@ -142,6 +142,59 @@ func TestPublicationScopeFinalizeWaitsForSynchronousReservation(t *testing.T) {
 	scope.releaseSynchronousWork(reservation)
 }
 
+func TestPublicationScopeReplacementReservationBorrowsOnlyItsOuterReservation(t *testing.T) {
+	scope := newScopeForTest(t, &scopeCommandFake{}, &scopeRepositoryFake{valid: true, marked: true})
+	outer := scope.reserveSynchronousWork()
+	if outer == nil {
+		t.Fatal("outer reservation was rejected")
+	}
+	borrowed, owned := scope.reserveReplacementWork(outer)
+	if borrowed != outer || owned {
+		t.Fatal("replacement did not borrow the live outer reservation")
+	}
+	if unrelated, _ := scope.reserveReplacementWork(nil); unrelated != nil {
+		t.Fatal("replacement borrowed an unrelated synchronous reservation")
+	}
+	scope.releaseReplacementWork(borrowed, false)
+	scope.releaseSynchronousWork(outer)
+	if borrowed, owned := scope.reserveReplacementWork(outer); borrowed != nil || owned {
+		t.Fatal("replacement borrowed a released reservation")
+	}
+	if ownedReservation, owned := scope.reserveReplacementWork(nil); ownedReservation == nil || !owned {
+		t.Fatal("replacement could not reserve an idle scope")
+	} else {
+		scope.releaseSynchronousWork(ownedReservation)
+	}
+}
+
+func TestPublicationScopeFirstAbsentFinalizationRejectsForeignOrBorrowedReservation(t *testing.T) {
+	t.Run("foreign", func(t *testing.T) {
+		scope := newScopeForTest(t, &scopeCommandFake{}, &scopeRepositoryFake{valid: true, marked: true})
+		foreignScope := newScopeForTest(t, &scopeCommandFake{}, &scopeRepositoryFake{valid: true, marked: true})
+		reservation := scope.reserveSynchronousWork()
+		foreign := foreignScope.reserveSynchronousWork()
+		if err := scope.beginFirstAbsentFinalization(foreign); err == nil {
+			t.Fatal("first-absent finalization accepted a foreign reservation")
+		}
+		scope.releaseSynchronousWork(reservation)
+		foreignScope.releaseSynchronousWork(foreign)
+	})
+
+	t.Run("borrowed", func(t *testing.T) {
+		scope := newScopeForTest(t, &scopeCommandFake{}, &scopeRepositoryFake{valid: true, marked: true})
+		outer := scope.reserveSynchronousWork()
+		borrowed, owned := scope.reserveReplacementWork(outer)
+		if borrowed != outer || owned {
+			t.Fatal("replacement did not borrow the outer reservation")
+		}
+		if err := scope.beginFirstAbsentFinalization(borrowed); err == nil {
+			t.Fatal("first-absent finalization accepted a borrowed reservation")
+		}
+		scope.releaseReplacementWork(borrowed, false)
+		scope.releaseSynchronousWork(outer)
+	})
+}
+
 func TestPublicationScopeFirstAbsentFenceBlocksLegacyFinalizeUntilAcknowledged(t *testing.T) {
 	repository := &scopeRepositoryFake{valid: true, marked: true}
 	scope := newScopeForTest(t, &scopeCommandFake{}, repository)

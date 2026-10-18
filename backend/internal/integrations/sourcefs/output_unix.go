@@ -153,6 +153,22 @@ func (d *unixOutputDir) Identity(ctx context.Context) (DirectoryIdentity, error)
 	return DirectoryIdentity{Platform: runtime.GOOS, Volume: fmt.Sprintf("%d", stat.Dev), FileID: fmt.Sprintf("%d", stat.Ino)}, nil
 }
 
+// SyncDirectory flushes entry changes through this pinned directory descriptor.
+func (d *unixOutputDir) SyncDirectory(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return os.ErrClosed
+	}
+	if err := unix.Fsync(int(d.file.Fd())); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
 func (d *unixOutputDir) CreateExclusive(ctx context.Context, name string) (OutputFile, error) {
 	if err := validateComponent(name); err != nil {
 		return nil, err
@@ -281,6 +297,69 @@ func (d *unixOutputDir) RenameNoReplace(ctx context.Context, sourceParent Output
 		return err
 	}
 	return renameNoReplaceNative(sourceFD, sourceName, targetFD, targetName)
+}
+
+// AtomicReplaceExisting uses renameat's same-filesystem atomic replacement.
+// The identity checks are snapshots, not a compare-and-swap against hostile
+// concurrent directory writers; managed output directories exclude that actor.
+func (d *unixOutputDir) AtomicReplaceExisting(ctx context.Context, sourceParent OutputDirectory, sourceName string, expectedSource fs.FileInfo, targetName string, expectedTarget fs.FileInfo) error {
+	if err := validateUnixMutationComponent(sourceName); err != nil {
+		return err
+	}
+	if err := validateUnixMutationComponent(targetName); err != nil {
+		return err
+	}
+	source, ok := sourceParent.(*unixOutputDir)
+	if !ok {
+		return ErrUnsupported
+	}
+	if expectedSource == nil || !expectedSource.Mode().IsRegular() || expectedTarget == nil || !expectedTarget.Mode().IsRegular() {
+		return ErrNotRegular
+	}
+	if source == d && sourceName == targetName {
+		return ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sourceFD, err := duplicateOutputDirFD(source)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(sourceFD) }()
+	targetFD, err := duplicateOutputDirFD(d)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(targetFD) }()
+	check := func(parent int, name string, expected fs.FileInfo) error {
+		fd, openErr := unix.Openat(parent, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+		if openErr != nil {
+			return classifyUnixError(openErr, false)
+		}
+		defer func() { _ = unix.Close(fd) }()
+		var stat unix.Stat_t
+		if err := unix.Fstat(fd, &stat); err != nil {
+			return err
+		}
+		if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+			return ErrNotRegular
+		}
+		if !sameUnixFileInfo(expected, &stat) {
+			return errors.New("sourcefs: output namespace changed")
+		}
+		return nil
+	}
+	if err := check(sourceFD, sourceName, expectedSource); err != nil {
+		return err
+	}
+	if err := check(targetFD, targetName, expectedTarget); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return unix.Renameat(sourceFD, sourceName, targetFD, targetName)
 }
 
 // RemoveOwnedRegular checks the named entry without following links and then

@@ -19,7 +19,9 @@ type publicationQuiescenceRepository interface {
 }
 
 type publicationSyncReservation struct {
-	active bool
+	owner    *PublicationExecutionScope
+	active   bool
+	borrowed bool
 }
 
 // PublicationExecutionScope privately owns both the local resource lock and
@@ -234,13 +236,56 @@ func (scope *PublicationExecutionScope) reserveSynchronousWork() *publicationSyn
 		return nil
 	}
 	scope.syncWork++
-	return &publicationSyncReservation{active: true}
+	return &publicationSyncReservation{owner: scope, active: true}
+}
+
+// reserveReplacementWork borrows the caller's live staging reservation when
+// supplied; otherwise it reserves an idle scope atomically. It deliberately
+// refuses to borrow an unrelated reservation or a scope being finalized.
+func (scope *PublicationExecutionScope) reserveReplacementWork(outer *publicationSyncReservation) (*publicationSyncReservation, bool) {
+	if scope == nil {
+		return nil, false
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil {
+		return nil, false
+	}
+	if outer != nil {
+		if outer.owner != scope || !outer.active || outer.borrowed || scope.syncWork != 1 {
+			return nil, false
+		}
+		outer.borrowed = true
+		return outer, false
+	}
+	if scope.syncWork != 0 {
+		return nil, false
+	}
+	scope.syncWork++
+	return &publicationSyncReservation{owner: scope, active: true}, true
+}
+
+func (scope *PublicationExecutionScope) releaseReplacementWork(reservation *publicationSyncReservation, owned bool) {
+	if scope == nil || reservation == nil {
+		return
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if reservation.owner != scope || !reservation.active {
+		return
+	}
+	if owned {
+		reservation.active = false
+		scope.syncWork--
+		return
+	}
+	reservation.borrowed = false
 }
 
 func (scope *PublicationExecutionScope) releaseSynchronousWork(reservation *publicationSyncReservation) {
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if reservation != nil && reservation.active {
+	if reservation != nil && reservation.owner == scope && reservation.active && !reservation.borrowed {
 		reservation.active = false
 		scope.syncWork--
 	}
@@ -254,7 +299,7 @@ func (scope *PublicationExecutionScope) beginFirstAbsentFinalization(reservation
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.unknown || scope.finalized || scope.finalizing || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || !reservation.active {
+	if scope.unknown || scope.finalized || scope.finalizing || scope.unresolved != 0 || scope.syncWork != 1 || reservation == nil || reservation.owner != scope || !reservation.active || reservation.borrowed {
 		return errors.New("publication execution scope is not quiescent")
 	}
 	// Transfer the staging reservation to first-absent cleanup atomically. The

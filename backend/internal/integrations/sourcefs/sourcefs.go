@@ -162,6 +162,12 @@ type RegularFile interface {
 	Close() error
 }
 
+// RegularFileSync is an optional durability capability for an opened regular
+// file. Platforms that cannot safely sync a read-only handle must not implement it.
+type RegularFileSync interface {
+	Sync(ctx context.Context) error
+}
+
 type unsupportedOpener struct{}
 
 // NewOpener returns the platform opener.

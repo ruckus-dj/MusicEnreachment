@@ -33,6 +33,23 @@ type OutputMutation interface {
 	OpenExistingRegular(context.Context, string) (RegularFile, error)
 }
 
+// OutputAtomicReplace is a separate optional capability for replacing an
+// existing regular output with an expected regular candidate. expectedSource
+// and expectedTarget must be snapshots taken from open native file handles.
+// The caller must have created and verified any required private backup first:
+// this operation is not by itself authority to discard the old contents.
+// Implementations provide atomic namespace replacement, not hostile-writer CAS.
+type OutputAtomicReplace interface {
+	AtomicReplaceExisting(context.Context, OutputDirectory, string, fs.FileInfo, string, fs.FileInfo) error
+}
+
+// OutputDirectorySync is an optional capability for flushing directory-entry
+// changes through a pinned directory handle. This improves crash durability but
+// does not guarantee survival of every filesystem/device power-loss scenario.
+type OutputDirectorySync interface {
+	SyncDirectory(context.Context) error
+}
+
 // OutputCleanup is an optional native capability for deleting only an
 // identity-matched regular file or an identity-matched empty child directory.
 // expectedParent binds the requested name to the caller's pinned parent.
