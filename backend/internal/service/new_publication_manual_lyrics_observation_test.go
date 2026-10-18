@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"testing"
@@ -30,7 +31,7 @@ func TestManualLyricsObservationRequiresNativeCopyProof(t *testing.T) {
 }
 
 func TestManualLyricsObservationAuthorityUsesNativePositiveEvidence(t *testing.T) {
-	stage, input, authority, scope, reservation := manualLyricsObservationFixture(t)
+	stage, input, authority, scope, reservation, _ := manualLyricsObservationFixture(t)
 	beforeInput, err := os.ReadFile(stage.paths.InputPath)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +96,71 @@ func TestManualLyricsObservationAuthorityUsesNativePositiveEvidence(t *testing.T
 	scope.releaseSynchronousWork(reservation)
 }
 
-func manualLyricsObservationFixture(t *testing.T) (*preparedPublicationStage, persistence.PublicationInputs, *publicationManualLyricsObservationAuthority, *PublicationExecutionScope, *publicationSyncReservation) {
+func TestApplyAndRecordPreparedManualLyricsFLACUsesNativeEvidenceAndFencesAckFailure(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		ackErr  error
+		wantErr bool
+	}{
+		{name: "recorded"},
+		{name: "ack error", ackErr: errors.New("outcome acknowledgement unavailable"), wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stage, input, _, scope, reservation, proof := manualLyricsObservationFixture(t)
+			repo := stage.repository.(*optionalLyricsV3Repository)
+			repo.outcome = persistence.PublicationOptionalLyricsRecorded
+			repo.recordErr = test.ackErr
+			ackSawWork := false
+			repo.onRecord = func(persistence.PublicationOptionalLyricsOutcomeEvidence) {
+				ackSawWork = reservation.borrowed && scope.validPrivateManualLyricsWork(scope.privateManualLyricsWork, stage)
+			}
+			result, err := applyAndRecordPreparedManualLyricsFLAC(context.Background(), scope, reservation, proof, input)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected acknowledgement error")
+				}
+				if !ackSawWork {
+					t.Fatal("failed acknowledgement ran without the exact borrowed work capability")
+				}
+				scope.mu.Lock()
+				unknown, borrowed := scope.unknown, reservation.borrowed
+				scope.mu.Unlock()
+				if !unknown || !borrowed {
+					t.Fatalf("ack error did not retain and quarantine work: unknown=%v borrowed=%v", unknown, borrowed)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Lyrics.State != persistence.PublicationAssetEmbedded || repo.called != 1 || len(repo.records) != 1 {
+				t.Fatalf("result=%#v records=%d calls=%d", result, len(repo.records), repo.called)
+			}
+			if !ackSawWork {
+				t.Fatal("durable acknowledgement ran without the exact borrowed work capability")
+			}
+			evidence := repo.records[0]
+			if evidence.InputIdentity.SHA256 != stage.rewriteIdentity.SHA256 || evidence.OutputIdentity.SHA256 == "" || evidence.OutputIdentity.SHA256 != evidence.FinalObservation.PayloadSHA256 {
+				t.Fatalf("evidence is not bound to native input/output: %#v", evidence)
+			}
+			var tags persistence.PublicationCommitMetadata
+			if err := json.Unmarshal(evidence.FinalObservation.ActualMetadata, &tags); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(tags.Tags, map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}, "LYRICS": {input.ManualLyrics.Value}}) {
+				t.Fatalf("final observation metadata = %#v", tags.Tags)
+			}
+			scope.mu.Lock()
+			borrowed := reservation.borrowed
+			scope.mu.Unlock()
+			if borrowed {
+				t.Fatal("successful durable acknowledgement retained the reservation borrow")
+			}
+		})
+	}
+}
+
+func manualLyricsObservationFixture(t *testing.T) (*preparedPublicationStage, persistence.PublicationInputs, *publicationManualLyricsObservationAuthority, *PublicationExecutionScope, *publicationSyncReservation, *publicationInitialOutputCopy) {
 	t.Helper()
 	fixture, stage, _ := preparedManualLyricsFLACStage(t)
 	repository := fixture.preparer.Repository.(*optionalLyricsV3Repository)
@@ -131,11 +196,11 @@ func manualLyricsObservationFixture(t *testing.T) (*preparedPublicationStage, pe
 	}, baseline); err != nil {
 		t.Fatal(err)
 	}
-	return stage, input, authority, scope, reservation
+	return stage, input, authority, scope, reservation, proof
 }
 
 func TestManualLyricsObservationRejectsMandatoryMetadataMismatch(t *testing.T) {
-	stage, _, authority, scope, reservation := manualLyricsObservationFixture(t)
+	stage, _, authority, scope, reservation, _ := manualLyricsObservationFixture(t)
 	baseline, err := metadata.SnapshotFlacArtwork(context.Background(), stage.paths.OutputPath)
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +217,7 @@ func TestManualLyricsObservationRejectsMandatoryMetadataMismatch(t *testing.T) {
 }
 
 func TestManualLyricsObservationRejectsEncodedAudioMutation(t *testing.T) {
-	stage, _, authority, scope, reservation := manualLyricsObservationFixture(t)
+	stage, _, authority, scope, reservation, _ := manualLyricsObservationFixture(t)
 	original, err := os.ReadFile(stage.paths.OutputPath)
 	if err != nil {
 		t.Fatal(err)

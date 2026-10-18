@@ -120,6 +120,145 @@ func applyAndRecordPublicationManualLyrics(
 	return applyPublicationOptionalLyrics(ctx, scope, reservation, stage, input, writer, reader, requirements)
 }
 
+// applyAndRecordPreparedManualLyricsFLAC is the concrete owner for the private
+// prepared-FLAC path. It keeps the reservation borrowed through native readback
+// and the guarded outcome acknowledgement.
+func applyAndRecordPreparedManualLyricsFLAC(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	reservation *publicationSyncReservation,
+	initialCopy *publicationInitialOutputCopy,
+	input persistence.PublicationInputs,
+) (result publicationOptionalLyricsResult, resultErr error) {
+	if initialCopy == nil || initialCopy.stage == nil {
+		return result, errors.New("manual lyrics application requires its initial output copy")
+	}
+	stage := initialCopy.stage
+	authority, err := newPublicationManualLyricsObservationAuthority(ctx, scope, reservation, initialCopy, input)
+	if err != nil {
+		return result, err
+	}
+	work, err := authority.acquireWork(initialCopy)
+	if err != nil {
+		return result, err
+	}
+	completed := false
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			scope.quarantineUncertain()
+			panic(recovered)
+		}
+		if !completed {
+			scope.quarantineUncertain()
+		}
+	}()
+
+	mandatory := withoutLyrics(input.DesiredTags)
+	artwork := authority.artwork
+	writer := preparedManualLyricsFLACWriter{authority: authority}
+	reader := metadata.Reader{}
+	validate := func(ctx context.Context, path string) error {
+		if err := artwork.VerifyEquivalent(ctx, path); err != nil {
+			return err
+		}
+		capture, err := reader.Read(ctx, path, metadata.ReadRequest{CoverInspection: true})
+		if err != nil {
+			return err
+		}
+		if !equalTags(withoutLyrics(capture.Tags), mandatory) {
+			return errors.New("required publication metadata did not round-trip")
+		}
+		if artwork.ApprovedCoverFacts().Count != 0 || capture.CoverInspection != nil && capture.CoverInspection.Cover != nil {
+			return errors.New("manual lyrics FLAC path does not permit cover artwork")
+		}
+		return nil
+	}
+	requirements := publicationOptionalLyricsRequirements{validateAudioAndAssets: validate, restoreRequiredAssets: func(ctx context.Context, path string, _ map[string][]string) error {
+		if err := artwork.VerifyEquivalent(ctx, path); err != nil {
+			return err
+		}
+		capture, err := reader.Read(ctx, path, metadata.ReadRequest{CoverInspection: true})
+		if err != nil {
+			return err
+		}
+		if capture.CoverInspection != nil && capture.CoverInspection.Cover != nil {
+			return errors.New("manual lyrics FLAC path does not permit cover artwork")
+		}
+		return nil
+	}}
+	repo, ok := stage.repository.(publicationOptionalLyricsOutcomeRepository)
+	if !ok {
+		return result, errors.New("V3 optional lyrics outcome repository is unavailable")
+	}
+	requirements.recordOutcome = func(ctx context.Context, outcome publicationOptionalLyricsOutcomeEvidence) error {
+		observation, err := authority.observeBorrowed(ctx, work)
+		if err != nil {
+			return err
+		}
+		inputIdentity, outputIdentity, err := stage.optionalLyricsFileIdentities(ctx)
+		if err != nil {
+			return err
+		}
+		ready := stage.preparationRecord
+		if ready.Step != "input_ready" || ready.CopiedInput == nil || ready.InputSize == nil || ready.InputMTime == nil {
+			return errors.New("prepared publication input readiness evidence is unavailable")
+		}
+		if inputIdentity.SHA256 != stage.rewriteIdentity.SHA256 || observation.PayloadSHA256 != outputIdentity.SHA256 || observation.RelativePath != ready.OutputRel {
+			return errors.New("prepared manual lyrics identities differ from final native observation")
+		}
+		kind, diagnostic := persistence.PublicationOptionalLyricsExactRoundTrip, ""
+		if outcome.Kind == "rebuilt_without_lyrics" {
+			kind, diagnostic = persistence.PublicationOptionalLyricsRebuiltWithoutLyrics, "optional lyrics did not round-trip; rebuilt output without lyrics"
+		}
+		evidence := persistence.PublicationOptionalLyricsOutcomeEvidence{Kind: kind, ManualLyrics: *input.ManualLyrics, Preparation: ready, InputIdentity: inputIdentity, OutputIdentity: outputIdentity, FinalObservation: observation, Diagnostic: diagnostic}
+		ack, err := repo.GuardedRecordPublicationOptionalLyricsOutcome(ctx, scope.guard, evidence)
+		if err != nil {
+			return err
+		}
+		if ack != persistence.PublicationOptionalLyricsRecorded && ack != persistence.PublicationOptionalLyricsAlreadyRecorded {
+			return errors.New("publication delivery is stale while recording optional lyrics outcome")
+		}
+		return nil
+	}
+	result, err = applyPublicationOptionalLyricsWork(ctx, scope, work, stage, input, writer, reader, requirements)
+	if err != nil {
+		return result, err
+	}
+	if !scope.finishPrivateManualLyricsWork(work, true) {
+		return result, errors.New("manual lyrics publication work capability was lost before acknowledgement")
+	}
+	completed = true
+	return result, nil
+}
+
+type preparedManualLyricsFLACWriter struct {
+	authority *publicationManualLyricsObservationAuthority
+}
+
+func (writer preparedManualLyricsFLACWriter) Write(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.WriteResult, error) {
+	if cover != nil || writer.authority == nil || writer.authority.stage == nil || path != writer.authority.stage.paths.OutputPath {
+		return metadata.WriteResult{}, errors.New("manual lyrics FLAC writer requires its owned path and no cover")
+	}
+	if err := writer.authority.artwork.VerifyEquivalent(ctx, path); err != nil {
+		return metadata.WriteResult{}, err
+	}
+	before, err := metadata.SnapshotFlacArtwork(ctx, path)
+	if err != nil {
+		return metadata.WriteResult{}, err
+	}
+	if err := writer.authority.artwork.VerifyEquivalent(ctx, path); err != nil {
+		return metadata.WriteResult{}, err
+	}
+	result, err := metadata.WriteFlacTagsPreservingArtwork(ctx, path, tags, before)
+	if err != nil {
+		return metadata.WriteResult{}, err
+	}
+	if err := writer.authority.artwork.VerifyEquivalent(ctx, path); err != nil {
+		return metadata.WriteResult{}, err
+	}
+	return result, nil
+}
+
 func (stage *preparedPublicationStage) optionalLyricsFileIdentities(ctx context.Context) (persistence.PublicationFileIdentity, persistence.PublicationFileIdentity, error) {
 	inputRoot, err := stage.opener.OpenRoot(ctx, stage.inputPath)
 	if err != nil {
@@ -199,6 +338,47 @@ func applyPublicationOptionalLyrics(
 	if borrow == nil {
 		return result, errors.New("optional lyrics helper could not borrow its active reservation")
 	}
+	result, err := applyPublicationOptionalLyricsBody(ctx, scope, borrow, stage, input, writer, reader, requirements)
+	if err == nil {
+		scope.releaseOptionalLyricsWork(borrow)
+	}
+	return result, err
+}
+
+// applyPublicationOptionalLyricsWork is the only mutation entry for private
+// prepared manual-lyrics work. Pointer identity and stage/proof binding are
+// checked before any metadata or filesystem mutation.
+func applyPublicationOptionalLyricsWork(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	work *privateManualLyricsWork,
+	stage PreparedPublicationStage,
+	input persistence.PublicationInputs,
+	writer PublicationMetadataWriter,
+	reader interface {
+		Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
+	},
+	requirements publicationOptionalLyricsRequirements,
+) (publicationOptionalLyricsResult, error) {
+	prepared, ok := stage.(*preparedPublicationStage)
+	if !ok || prepared == nil || scope == nil || !scope.validPrivateManualLyricsWork(work, prepared) || work.borrow == nil || work.borrow != work.reservation.borrow {
+		return publicationOptionalLyricsResult{}, errors.New("optional lyrics mutation requires its exact private work capability")
+	}
+	return applyPublicationOptionalLyricsBody(ctx, scope, work.borrow, stage, input, writer, reader, requirements)
+}
+
+func applyPublicationOptionalLyricsBody(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	borrow *publicationOptionalLyricsBorrow,
+	stage PreparedPublicationStage,
+	input persistence.PublicationInputs,
+	writer PublicationMetadataWriter,
+	reader interface {
+		Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
+	},
+	requirements publicationOptionalLyricsRequirements,
+) (result publicationOptionalLyricsResult, resultErr error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			scope.quarantineUncertain()
@@ -208,7 +388,6 @@ func applyPublicationOptionalLyrics(
 			scope.quarantineUncertain()
 			return
 		}
-		scope.releaseOptionalLyricsWork(borrow)
 	}()
 	paths := stage.Paths()
 	mandatory := withoutLyrics(input.DesiredTags)

@@ -263,6 +263,41 @@ func (d *unixOutputDir) OpenExistingRegular(ctx context.Context, name string) (R
 	return newRegularFile(os.NewFile(uintptr(fd), "sourcefs-existing-output")), nil
 }
 
+func (d *unixOutputDir) SyncExistingRegular(ctx context.Context, name string, expected fs.FileInfo) (result error) {
+	if err := validateUnixMutationComponent(name); err != nil {
+		return err
+	}
+	if expected == nil || !expected.Mode().IsRegular() {
+		return ErrNotRegular
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return os.ErrClosed
+	}
+	fd, err := d.open(int(d.file.Fd()), name, unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK)
+	d.mu.Unlock()
+	if err != nil {
+		return classifyUnixError(err, false)
+	}
+	file := os.NewFile(uintptr(fd), "sourcefs-sync-existing-output")
+	defer func() { result = errors.Join(result, file.Close()) }()
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG || !sameUnixFileInfo(expected, &stat) {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
 func (d *unixOutputDir) RenameNoReplace(ctx context.Context, sourceParent OutputDirectory, sourceName string, targetParent OutputDirectory, targetName string) error {
 	if err := validateUnixMutationComponent(sourceName); err != nil {
 		return err

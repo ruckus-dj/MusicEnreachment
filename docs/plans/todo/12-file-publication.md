@@ -11,6 +11,19 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем срезе concrete private FLAC owner объединяет native
+metadata write, sealed observation и typed optional-outcome ACK. Scope хранит
+точный issued capability и исключает commands/finalization через весь boundary;
+неподтверждённый ACK сохраняет quarantine и borrow. Native positive/failure tests
+и реальный PostgreSQL/native prepare → outcome ACK test прошли; подготовка и
+outcome journal записаны реальными методами, admission fixture seeded отдельно.
+Полный локальный `task verify` прошёл. Private composed path пока допускает
+только verified absence cover; это временная capability, не продуктовая политика.
+Windows CI `0a8b793` выявил sync через read-only handle; добавлен anchored
+identity-bound writable sync без пропуска durability gate. Финальное review не
+нашло блокеров; native CI исправления ещё ожидается. Это не production worker, не exposure и
+не разрешение generic V3 execution.
+
 В текущем срезе добавлен sealed native FLAC observation builder:
 initial-copy proof и guarded frozen inputs связывают private authority; observation
 удерживает execution fence, проверяет native output identity/hash, mandatory tags

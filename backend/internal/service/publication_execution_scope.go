@@ -30,28 +30,39 @@ type publicationOptionalLyricsBorrow struct {
 	reservation *publicationSyncReservation
 }
 
+// privateManualLyricsWork is issued only for one stage-bound initial-copy
+// proof. Its pointer identity is the authority; callers cannot reconstruct it.
+type privateManualLyricsWork struct {
+	scope       *PublicationExecutionScope
+	reservation *publicationSyncReservation
+	stage       *preparedPublicationStage
+	proof       *publicationInitialOutputCopy
+	borrow      *publicationOptionalLyricsBorrow
+}
+
 // PublicationExecutionScope privately owns both the local resource lock and
 // the durable delivery guard until finalization is acknowledged. Unknown
 // execution results permanently fence this scope from further launches.
 type PublicationExecutionScope struct {
-	mu             sync.Mutex
-	guard          persistence.PublicationDeliveryGuard
-	commands       PublicationCommandRunner
-	repository     publicationQuiescenceRepository
-	release        func()
-	unresolved     int
-	syncWork       int
-	unknown        bool
-	closeTried     bool
-	closed         bool
-	stageClose     func() error
-	ownedFiles     []*os.File
-	finalizing     bool
-	finalized      bool
-	firstAbsent    bool
-	replacement    *replacementCompletionToken
-	optionalLyrics *publicationOptionalLyricsBorrow
-	initialCopy    bool
+	mu                      sync.Mutex
+	guard                   persistence.PublicationDeliveryGuard
+	commands                PublicationCommandRunner
+	repository              publicationQuiescenceRepository
+	release                 func()
+	unresolved              int
+	syncWork                int
+	unknown                 bool
+	closeTried              bool
+	closed                  bool
+	stageClose              func() error
+	ownedFiles              []*os.File
+	finalizing              bool
+	finalized               bool
+	firstAbsent             bool
+	replacement             *replacementCompletionToken
+	optionalLyrics          *publicationOptionalLyricsBorrow
+	privateManualLyricsWork *privateManualLyricsWork
+	initialCopy             bool
 }
 
 // replacementCompletionToken is an unforgeable, scope-bound capability for
@@ -107,7 +118,7 @@ func (scope *PublicationExecutionScope) Run(ctx context.Context, path string, ar
 		return unavailablePublicationCommand()
 	}
 	scope.mu.Lock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.initialCopy {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.initialCopy || scope.privateManualLyricsWork != nil {
 		scope.mu.Unlock()
 		return PublicationCommandResult{}, errors.New("publication execution scope is not launchable")
 	}
@@ -150,7 +161,7 @@ func (scope *PublicationExecutionScope) RunFile(ctx context.Context, executable 
 		return unavailablePublicationCommand()
 	}
 	scope.mu.Lock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.initialCopy {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.initialCopy || scope.privateManualLyricsWork != nil {
 		scope.mu.Unlock()
 		return PublicationCommandResult{}, errors.New("publication execution scope is not launchable")
 	}
@@ -286,7 +297,7 @@ func (scope *PublicationExecutionScope) reserveSynchronousWork() *publicationSyn
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.optionalLyrics != nil || scope.initialCopy {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.initialCopy {
 		return nil
 	}
 	scope.syncWork++
@@ -351,7 +362,7 @@ func (scope *PublicationExecutionScope) borrowOptionalLyricsWork(reservation *pu
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.initialCopy {
+	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.initialCopy {
 		return nil
 	}
 	borrow := &publicationOptionalLyricsBorrow{scope: scope, reservation: reservation}
@@ -368,11 +379,82 @@ func (scope *PublicationExecutionScope) releaseOptionalLyricsWork(borrow *public
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
 	reservation := borrow.reservation
-	if !scope.unknown && borrow.scope == scope && reservation != nil && reservation.owner == scope && reservation.active && reservation.borrowed && reservation.borrow == borrow && scope.optionalLyrics == borrow {
+	if !scope.unknown && (scope.privateManualLyricsWork == nil || scope.privateManualLyricsWork.borrow != borrow) && borrow.scope == scope && reservation != nil && reservation.owner == scope && reservation.active && reservation.borrowed && reservation.borrow == borrow && scope.optionalLyrics == borrow {
 		reservation.borrowed = false
 		reservation.borrow = nil
 		scope.optionalLyrics = nil
 	}
+}
+
+func (scope *PublicationExecutionScope) acquirePrivateManualLyricsWork(
+	reservation *publicationSyncReservation,
+	stage *preparedPublicationStage,
+	proof *publicationInitialOutputCopy,
+) *privateManualLyricsWork {
+	if scope == nil || reservation == nil || stage == nil || proof == nil || proof.stage != stage ||
+		!stage.privatePrepMode || !stage.rewrite || stage.guard != scope.guard {
+		return nil
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unresolved != 0 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.initialCopy {
+		return nil
+	}
+	borrow := &publicationOptionalLyricsBorrow{scope: scope, reservation: reservation}
+	work := &privateManualLyricsWork{scope: scope, reservation: reservation, stage: stage, proof: proof, borrow: borrow}
+	reservation.borrowed = true
+	reservation.borrow = borrow
+	scope.optionalLyrics = borrow
+	scope.privateManualLyricsWork = work
+	return work
+}
+
+func (scope *PublicationExecutionScope) validPrivateManualLyricsWork(work *privateManualLyricsWork, stage *preparedPublicationStage) bool {
+	if scope == nil || work == nil {
+		return false
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	return scope.validPrivateManualLyricsWorkLocked(work, stage)
+}
+
+// finishPrivateManualLyricsWork retains the reservation until the caller has
+// received an accepted durable ACK. Any other result permanently fences scope.
+func (scope *PublicationExecutionScope) finishPrivateManualLyricsWork(work *privateManualLyricsWork, acknowledged bool) bool {
+	if scope == nil || work == nil {
+		return false
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if !scope.validPrivateManualLyricsWorkLocked(work, workStage(work)) {
+		return false
+	}
+	if !acknowledged {
+		scope.unknown = true
+		scope.quarantineLocked()
+		return false
+	}
+	r := work.reservation
+	r.borrowed = false
+	r.borrow = nil
+	scope.optionalLyrics = nil
+	scope.privateManualLyricsWork = nil
+	return true
+}
+
+func (scope *PublicationExecutionScope) validPrivateManualLyricsWorkLocked(work *privateManualLyricsWork, stage *preparedPublicationStage) bool {
+	if scope == nil || work == nil || scope.privateManualLyricsWork != work || work.scope != scope || stage == nil || work.stage != stage || work.proof == nil || work.proof.stage != stage || !stage.privatePrepMode || !stage.rewrite || stage.guard != scope.guard || work.borrow == nil {
+		return false
+	}
+	r := work.reservation
+	return work.borrow.scope == scope && work.borrow.reservation == r && r != nil && r.owner == scope && r.active && r.borrowed && r.borrow == work.borrow && scope.optionalLyrics == work.borrow && scope.syncWork == 1 && scope.unresolved == 0 && !scope.unknown && !scope.finalized && !scope.finalizing
+}
+
+func workStage(work *privateManualLyricsWork) *preparedPublicationStage {
+	if work == nil {
+		return nil
+	}
+	return work.stage
 }
 
 // beginFirstAbsentFinalization seals this scope against any further command
@@ -469,7 +551,7 @@ func (scope *PublicationExecutionScope) Finalize(ctx context.Context, closeStage
 		scope.mu.Unlock()
 		return nil
 	}
-	if scope.replacement != nil || scope.firstAbsent || scope.initialCopy || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 {
+	if scope.replacement != nil || scope.firstAbsent || scope.initialCopy || scope.privateManualLyricsWork != nil || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 {
 		if scope.unknown {
 			scope.quarantineLocked()
 		}

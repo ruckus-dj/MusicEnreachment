@@ -22,6 +22,7 @@ type publicationManualLyricsObservationAuthority struct {
 	artwork     metadata.FlacArtworkSnapshot
 	scope       *PublicationExecutionScope
 	reservation *publicationSyncReservation
+	work        *privateManualLyricsWork
 }
 
 type publicationManualLyricsPreparationInputReader interface {
@@ -81,6 +82,18 @@ func newPublicationManualLyricsObservationAuthority(
 	return &publicationManualLyricsObservationAuthority{stage: stage, input: input.Clone(), artwork: artwork, scope: scope, reservation: reservation}, nil
 }
 
+func (authority *publicationManualLyricsObservationAuthority) acquireWork(proof *publicationInitialOutputCopy) (*privateManualLyricsWork, error) {
+	if authority == nil || authority.scope == nil || authority.stage == nil || proof == nil || proof.stage != authority.stage {
+		return nil, errors.New("manual lyrics work requires the authority's initial-copy proof")
+	}
+	work := authority.scope.acquirePrivateManualLyricsWork(authority.reservation, authority.stage, proof)
+	if work == nil {
+		return nil, errors.New("manual lyrics work requires the sole unborrowed publication reservation")
+	}
+	authority.work = work
+	return work, nil
+}
+
 func (authority *publicationManualLyricsObservationAuthority) Observe(ctx context.Context) (result persistence.PublicationStageObservation, resultErr error) {
 	if authority == nil || authority.stage == nil {
 		return persistence.PublicationStageObservation{}, errors.New("manual lyrics observation authority is unavailable")
@@ -90,6 +103,21 @@ func (authority *publicationManualLyricsObservationAuthority) Observe(ctx contex
 	}
 	completed := false
 	defer func() { authority.scope.endInitialOutputCopy(authority.reservation, !completed) }()
+	result, err := authority.observeBody(ctx)
+	completed = err == nil
+	return result, err
+}
+
+// observeBorrowed reads back under the same private mutation borrow; unlike
+// Observe it does not acquire the initial-copy fence or release the borrow.
+func (authority *publicationManualLyricsObservationAuthority) observeBorrowed(ctx context.Context, work *privateManualLyricsWork) (persistence.PublicationStageObservation, error) {
+	if authority == nil || authority.scope == nil || authority.work != work || !authority.scope.validPrivateManualLyricsWork(work, authority.stage) {
+		return persistence.PublicationStageObservation{}, errors.New("manual lyrics observation requires its exact private work capability")
+	}
+	return authority.observeBody(ctx)
+}
+
+func (authority *publicationManualLyricsObservationAuthority) observeBody(ctx context.Context) (result persistence.PublicationStageObservation, resultErr error) {
 	stage := authority.stage
 	if err := stage.Validate(ctx); err != nil {
 		return persistence.PublicationStageObservation{}, err
@@ -134,7 +162,11 @@ func (authority *publicationManualLyricsObservationAuthority) Observe(ctx contex
 	if err != nil {
 		return persistence.PublicationStageObservation{}, errors.Join(err, native.Close())
 	}
-	if err := native.Borrow(ctx, func(file *os.File) error { return file.Sync() }); err != nil {
+	syncer, ok := stage.directory.(sourcefs.OutputRegularFileSync)
+	if !ok {
+		return persistence.PublicationStageObservation{}, errors.Join(sourcefs.ErrUnsupported, native.Close())
+	}
+	if err := syncer.SyncExistingRegular(ctx, name, info); err != nil {
 		return persistence.PublicationStageObservation{}, errors.Join(err, native.Close())
 	}
 	capture, err := (metadata.Reader{}).Read(ctx, stage.paths.OutputPath, metadata.ReadRequest{CoverInspection: true})
@@ -225,6 +257,5 @@ func (authority *publicationManualLyricsObservationAuthority) Observe(ctx contex
 	}
 	actualSize, actualMTime := info.Size(), info.ModTime().UnixMicro()
 	result = persistence.PublicationStageObservation{Version: 1, RelativePath: stage.paths.RelativePath, Ownership: persistence.ArtifactOwnership{ExpectedSize: &actualSize, ExpectedMTime: &actualMTime}, PayloadSHA256: hex.EncodeToString(digest[:]), ActualAudio: audio, ActualMetadata: commitMetadata, ActualAssets: assetJSON, QualityPolicyVersion: authority.input.QualityPolicyVersion}
-	completed = true
 	return result, nil
 }

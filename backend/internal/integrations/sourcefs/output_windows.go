@@ -369,6 +369,45 @@ func (d *windowsOutputDir) OpenExistingRegular(ctx context.Context, name string)
 	return newRegularFile(f), nil
 }
 
+func (d *windowsOutputDir) SyncExistingRegular(ctx context.Context, name string, expected fs.FileInfo) (result error) {
+	if invalidWindowsName(name) {
+		return ErrInvalidPath
+	}
+	if expected == nil || !expected.Mode().IsRegular() {
+		return ErrNotRegular
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return os.ErrClosed
+	}
+	h, err := outputWindowsOpen(d.handle, name, windows.GENERIC_READ|windows.GENERIC_WRITE|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, false)
+	d.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	file := os.NewFile(uintptr(h), name)
+	if file == nil {
+		_ = windows.CloseHandle(h)
+		return ErrNotRegular
+	}
+	defer func() { result = errors.Join(result, file.Close()) }()
+	actual, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !actual.Mode().IsRegular() || actual.Mode()&os.ModeSymlink != 0 || !os.SameFile(expected, actual) {
+		return errors.New("sourcefs: output namespace changed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
 func (d *windowsOutputDir) RenameNoReplace(ctx context.Context, sourceParent OutputDirectory, sourceName string, targetParent OutputDirectory, targetName string) error {
 	if invalidWindowsName(sourceName) || invalidWindowsName(targetName) {
 		return ErrInvalidPath

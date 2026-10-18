@@ -39,6 +39,13 @@ type OutputMutation interface {
 	OpenExistingRegular(context.Context, string) (RegularFile, error)
 }
 
+// OutputRegularFileSync flushes an identity-matched file through a writable
+// handle opened relative to the pinned output directory. The expected snapshot
+// must come from the already-open native file, never from a pathname lookup.
+type OutputRegularFileSync interface {
+	SyncExistingRegular(context.Context, string, fs.FileInfo) error
+}
+
 // OutputAtomicReplace is a separate optional capability for replacing an
 // existing regular output with an expected regular candidate. expectedSource
 // and expectedTarget must be snapshots taken from open native file handles.

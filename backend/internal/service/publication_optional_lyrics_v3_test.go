@@ -16,15 +16,20 @@ import (
 
 type optionalLyricsV3Repository struct {
 	*stagePreparationRepository
-	outcome persistence.PublicationOptionalLyricsOutcome
-	records []persistence.PublicationOptionalLyricsOutcomeEvidence
-	called  int
+	outcome   persistence.PublicationOptionalLyricsOutcome
+	recordErr error
+	records   []persistence.PublicationOptionalLyricsOutcomeEvidence
+	called    int
+	onRecord  func(persistence.PublicationOptionalLyricsOutcomeEvidence)
 }
 
 func (repository *optionalLyricsV3Repository) GuardedRecordPublicationOptionalLyricsOutcome(_ context.Context, _ persistence.PublicationDeliveryGuard, evidence persistence.PublicationOptionalLyricsOutcomeEvidence) (persistence.PublicationOptionalLyricsOutcome, error) {
 	repository.called++
 	repository.records = append(repository.records, evidence)
-	return repository.outcome, nil
+	if repository.onRecord != nil {
+		repository.onRecord(evidence)
+	}
+	return repository.outcome, repository.recordErr
 }
 
 func (repository *optionalLyricsV3Repository) PublicationManualLyricsPreparationInputs(_ context.Context, _ persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error) {
