@@ -11,6 +11,13 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем test-срезе добавлены реальные native/PG lost-installed-
+ACK и post-commit cleanup-intent failure cases. Первый сохраняет G0/no receipt
+при installed bytes и private borrow; второй сохраняет committed G1/receipt и
+completion fence до cleanup, оба без local release. Review замечаний не нашло;
+полный локальный `task verify` прошёл. Native CI этого среза ещё не проверен.
+Recovery/resume этим не добавлены.
+
 В текущем private lifecycle-срезе объединены retained admission
 handoff, native atomic replacement, exact installed proof → completion-token
 transfer, receipt commit и owned cleanup/settlement. Обычный private finish

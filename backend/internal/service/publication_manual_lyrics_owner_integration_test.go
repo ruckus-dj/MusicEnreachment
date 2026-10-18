@@ -76,6 +76,14 @@ func TestPreparedManualLyricsReplacementCommitFailurePostgreSQL(t *testing.T) {
 	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true, true)
 }
 
+func TestPreparedManualLyricsReplacementInstalledAckLostPostgreSQL(t *testing.T) {
+	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true, false, true)
+}
+
+func TestPreparedManualLyricsReplacementCleanupIntentFailurePostgreSQL(t *testing.T) {
+	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true, false, false, true)
+}
+
 func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continuous bool, options ...bool) {
 	ctx := context.Background()
 	fixture, fakeStage, _ := preparedManualLyricsFLACStage(t)
@@ -86,6 +94,8 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	dbReplacement := len(options) > 2 && options[2]
 	nativeReplacement := len(options) > 3 && options[3]
 	commitFailure := len(options) > 4 && options[4]
+	installedAckLost := len(options) > 5 && options[5]
+	cleanupIntentFailure := len(options) > 6 && options[6]
 	if nestedPath {
 		currentPath = filepath.Join(fixture.output, "Artist", "Album", "Current.FLAC")
 		if err := os.MkdirAll(filepath.Dir(currentPath), 0o700); err != nil {
@@ -247,6 +257,8 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	}
 	repository := persistence.NewSetupManagerRepository(db)
 	commitRepository := &manualLyricsReplacementCommitFailureRepository{SetupManagerRepository: repository}
+	installedAckRepository := &manualLyricsInstalledAckLostRepository{SetupManagerRepository: repository}
+	cleanupIntentRepository := &manualLyricsCleanupIntentFailureRepository{SetupManagerRepository: repository}
 	claim, err := repository.ClaimPublicationDelivery(ctx, guard)
 	if err != nil || claim != persistence.PublicationDeliveryAcquired {
 		t.Fatalf("claim = %q, %v", claim, err)
@@ -254,6 +266,10 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	preparer := fixture.preparer
 	if commitFailure {
 		preparer.Repository = commitRepository
+	} else if installedAckLost {
+		preparer.Repository = installedAckRepository
+	} else if cleanupIntentFailure {
+		preparer.Repository = cleanupIntentRepository
 	} else {
 		preparer.Repository = repository
 	}
@@ -270,6 +286,10 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	scope, reservation := initialOutputCopyScope(t, guard)
 	if commitFailure {
 		scope.repository = commitRepository
+	} else if installedAckLost {
+		scope.repository = installedAckRepository
+	} else if cleanupIntentFailure {
+		scope.repository = cleanupIntentRepository
 	} else {
 		scope.repository = repository
 	}
@@ -295,6 +315,12 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 			if !errors.Is(replaceErr, sourcefs.ErrUnsupported) {
 				t.Fatalf("native Windows replacement error = %v, want sourcefs.ErrUnsupported", replaceErr)
 			}
+			if installedAckLost && (installedAckRepository.installedCalls != 0 || installedAckRepository.commitCalls != 0) {
+				t.Fatalf("unsupported replacement reached installed-ack wrapper: %+v", installedAckRepository)
+			}
+			if cleanupIntentFailure && (cleanupIntentRepository.cleanupCalls != 0 || cleanupIntentRepository.commitCalls != 0) {
+				t.Fatalf("unsupported replacement reached cleanup wrapper: %+v", cleanupIntentRepository)
+			}
 			assertReplacementStillExposed(t, ctx, db, repository, guard, input)
 			attempt, readErr := repository.ReadPublicationAttempt(ctx, guard.OperationID)
 			if readErr != nil || attempt == nil || attempt.Phase != "exposing" || len(attempt.MutationJournal) == 0 {
@@ -312,6 +338,83 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 			scope.mu.Unlock()
 			if !unknown || !held || result.OptionalDiagnostic != "" {
 				t.Fatalf("unsupported replacement did not quarantine held private work: unknown=%v held=%v", unknown, held)
+			}
+			return
+		}
+		if installedAckLost {
+			if !errors.Is(replaceErr, errInjectedInstalledAckLost) || installedAckRepository.installedCalls != 1 || installedAckRepository.commitCalls != 0 {
+				t.Fatalf("installed acknowledgement loss = %v, installed calls %d, commits %d", replaceErr, installedAckRepository.installedCalls, installedAckRepository.commitCalls)
+			}
+			assertReplacementStillExposed(t, ctx, db, repository, guard, input)
+			attempt, readErr := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+			var journal []struct {
+				To string `json:"to"`
+			}
+			if readErr != nil || attempt == nil || attempt.Phase != "exposing" || json.Unmarshal(attempt.MutationJournal, &journal) != nil || len(journal) != 11 || journal[10].To != "installed" {
+				t.Fatalf("lost installed acknowledgement did not retain installed journal: %s, %v", attempt.MutationJournal, readErr)
+			}
+			got, readErr := os.ReadFile(currentPath)
+			if readErr != nil || bytes.Equal(got, original) {
+				t.Fatalf("installed target bytes unavailable: %v", readErr)
+			}
+			candidateCapture, readErr := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true})
+			if readErr != nil || !reflect.DeepEqual(candidateCapture.Tags["LYRICS"], []string{input.ManualLyrics.Value}) {
+				t.Fatalf("installed target lyrics = %#v, %v", candidateCapture.Tags["LYRICS"], readErr)
+			}
+			if _, readErr := os.Stat(filepath.Dir(stage.paths.InputPath)); readErr != nil {
+				t.Fatalf("ambiguous private stage removed: %v", readErr)
+			}
+			if _, readErr := os.Stat(stage.paths.InputPath); readErr != nil {
+				t.Fatalf("ambiguous backup removed: %v", readErr)
+			}
+			scope.mu.Lock()
+			unknown, held, token, syncWork := scope.unknown, scope.privateManualLyricsWork != nil, scope.replacement != nil, scope.syncWork
+			scope.mu.Unlock()
+			if !unknown || !held || token || syncWork != 1 || releaseCount != 0 {
+				t.Fatalf("lost ACK ownership state: unknown=%v held=%v token=%v syncWork=%d releases=%d", unknown, held, token, syncWork, releaseCount)
+			}
+			return
+		}
+		if cleanupIntentFailure {
+			if replaceErr == nil || cleanupIntentRepository.cleanupCalls != 1 || cleanupIntentRepository.commitCalls != 1 {
+				t.Fatalf("cleanup intent failure = %v, cleanup calls %d commits %d", replaceErr, cleanupIntentRepository.cleanupCalls, cleanupIntentRepository.commitCalls)
+			}
+			projection, projectionErr := repository.ReadManualLyricsReceiptProjection(ctx, guard.ExpectedPositionID)
+			if projectionErr != nil || projection.Pending || projection.CurrentGeneration == nil || *projection.CurrentGeneration != guard.CandidateGeneration || projection.Receipt == nil || projection.Receipt.ConfirmedGeneration != input.Rewrite.CurrentGeneration || projection.Receipt.PublishedGeneration != guard.CandidateGeneration {
+				t.Fatalf("committed cleanup-failure receipt = %+v, %v", projection, projectionErr)
+			}
+			assertReplacementDBCounts(t, ctx, db, guard.OperationID, guard.ExpectedPositionID, 1, 1, 0, 0, 1)
+			attempt, readErr := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+			var entries []struct {
+				Kind string `json:"kind"`
+				Step string `json:"step"`
+			}
+			if readErr != nil || attempt == nil || attempt.Phase != "committed" || json.Unmarshal(attempt.MutationJournal, &entries) != nil || len(entries) != 12 || entries[11].Kind != "publication_replacement_commit" {
+				t.Fatalf("cleanup failure journal = %s, %v", attempt.MutationJournal, readErr)
+			}
+			if _, readErr := os.Stat(filepath.Dir(stage.paths.InputPath)); readErr != nil {
+				t.Fatalf("cleanup failure removed private directory: %v", readErr)
+			}
+			if _, readErr := os.Stat(stage.paths.InputPath); readErr != nil {
+				t.Fatalf("cleanup failure removed backup: %v", readErr)
+			}
+			backupBytes, readErr := os.ReadFile(stage.paths.InputPath)
+			if readErr != nil || !bytes.Equal(backupBytes, original) {
+				t.Fatalf("cleanup failure changed retained backup: %v", readErr)
+			}
+			if attempt.FrozenInputs != nil {
+				t.Fatalf("committed cleanup-failure attempt retained frozen SQL inputs: %s", attempt.FrozenInputs)
+			}
+			var claimState string
+			if err := db.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=?`, guard.OperationID).Scan(ctx, &claimState); err != nil || claimState != "executing" && claimState != "recovery_required" {
+				t.Fatalf("cleanup-failure claim state = %q, %v", claimState, err)
+			}
+			scope.mu.Lock()
+			unknown, finalizing, finalized := scope.unknown, scope.finalizing, scope.finalized
+			held, token, syncWork := scope.privateManualLyricsWork != nil, scope.replacement != nil, scope.syncWork
+			scope.mu.Unlock()
+			if !unknown || !finalizing || finalized || held || !token || syncWork != 0 || releaseCount != 0 {
+				t.Fatalf("cleanup failure ownership: unknown=%v finalizing=%v finalized=%v held=%v token=%v syncWork=%d releases=%d", unknown, finalizing, finalized, held, token, syncWork, releaseCount)
 			}
 			return
 		}
@@ -772,6 +875,47 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 }
 
 var errInjectedReplacementCommit = errors.New("injected replacement commit failure")
+var errInjectedInstalledAckLost = errors.New("injected installed acknowledgement loss")
+
+type manualLyricsInstalledAckLostRepository struct {
+	*persistence.SetupManagerRepository
+	installedCalls int
+	commitCalls    int
+}
+
+func (repository *manualLyricsInstalledAckLostRepository) GuardedRecordManualLyricsReplacement(ctx context.Context, guard persistence.PublicationDeliveryGuard, evidence persistence.PublicationReplacementEvidence) (persistence.PublicationReplacementOutcome, error) {
+	if evidence.To == "installed" {
+		repository.installedCalls++
+		if outcome, err := repository.SetupManagerRepository.GuardedRecordManualLyricsReplacement(ctx, guard, evidence); err != nil || outcome != persistence.PublicationReplacementRecorded {
+			return persistence.PublicationReplacementStale, err
+		}
+		return persistence.PublicationReplacementStale, errInjectedInstalledAckLost
+	}
+	return repository.SetupManagerRepository.GuardedRecordManualLyricsReplacement(ctx, guard, evidence)
+}
+
+func (repository *manualLyricsInstalledAckLostRepository) CommitReplacementPublication(ctx context.Context, guard persistence.PublicationDeliveryGuard) (bool, error) {
+	repository.commitCalls++
+	return repository.SetupManagerRepository.CommitReplacementPublication(ctx, guard)
+}
+
+type manualLyricsCleanupIntentFailureRepository struct {
+	*persistence.SetupManagerRepository
+	cleanupCalls int
+	commitCalls  int
+}
+
+func (repository *manualLyricsCleanupIntentFailureRepository) BeginPublicationReplacementCleanup(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationReplacementCleanupWitness) (persistence.PublicationReplacementCleanupOutcome, error) {
+	repository.cleanupCalls++
+	return persistence.PublicationReplacementCleanupStale, errInjectedCleanupIntentFailure
+}
+
+func (repository *manualLyricsCleanupIntentFailureRepository) CommitReplacementPublication(ctx context.Context, guard persistence.PublicationDeliveryGuard) (bool, error) {
+	repository.commitCalls++
+	return repository.SetupManagerRepository.CommitReplacementPublication(ctx, guard)
+}
+
+var errInjectedCleanupIntentFailure = errors.New("injected cleanup intent failure")
 
 type manualLyricsReplacementCommitFailureRepository struct {
 	*persistence.SetupManagerRepository
