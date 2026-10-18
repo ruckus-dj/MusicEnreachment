@@ -11,6 +11,16 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Реализован private FLAC artwork verification: bounded structural audit отвергает
+multiple/non-front/alternate artwork до mutation; payload/descriptors читаются
+TagLib, полные native PICTURE-body и encoded-audio digests проверяются после
+tag-only write. Snapshot связывается с native identity до записи; identity
+сменившего файл TagLib после записи не считается fidelity failure. Full picture
+restoration пока unsupported: pinned TagLib API не предоставляет все numeric
+PICTURE fields для реконструкции. Это временная private capability, не новая
+продуктовая политика выбора/удаления covers. Полный локальный `task verify`
+прошёл; native CI этого среза ещё не проверен.
+
 В текущем срезе required assets восстанавливаются после каждой
 успешной clearing metadata write, включая initial lyrics attempt; callback
 получает expected tags, чтобы не стереть выбранный LRC. Rebuild использует
