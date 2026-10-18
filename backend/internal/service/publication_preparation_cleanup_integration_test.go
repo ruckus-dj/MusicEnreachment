@@ -251,7 +251,9 @@ func testPublicationSourceExecution(t *testing.T, target string) {
 		}
 		executor := NewPublicationExecutor(manager, registry, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), audioDeliveryTestCommands{})
 		err = executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
-		if runtime.GOOS == "windows" {
+		// Newly created ancestors require directory sync, unsupported on Windows.
+		// Root-level first-absent installation has its own native success contract.
+		if runtime.GOOS == "windows" && strings.Contains(target, "/") {
 			if !errors.Is(err, sourcefs.ErrUnsupported) {
 				t.Fatalf("expected unsupported directory durability: %v", err)
 			}
