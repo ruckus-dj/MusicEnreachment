@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -40,6 +41,53 @@ func publicationInputsFixture(t *testing.T, intent string) PublicationInputs {
 		input.Rewrite = &PublicationRewriteInput{CurrentGeneration: uuid.New(), RelativePath: "Artist/Album/track.mka", Ownership: PublicationFileIdentity{SizeBytes: &size}, AudioFacts: facts}
 	}
 	return input
+}
+
+func TestPublicationInputsV3RequiresExactNonEmptySyncedLyrics(t *testing.T) {
+	input := publicationInputsFixture(t, "rewrite")
+	input.Version = PublicationInputsVersion3
+	input.QualityPolicyVersion = publication.QualityPolicyVersion
+	input.ManualLyrics = &PublicationManualLyricsInput{
+		State: "value", Value: "[ar:日本語]\r\n[00:01.00]Привет\r\n",
+		ExpectedMetadataRevision: 4, ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration,
+	}
+
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodePublicationInputs(raw)
+	if err != nil {
+		t.Fatalf("decode valid V3 inputs: %v", err)
+	}
+	if decoded.ManualLyrics.Value != input.ManualLyrics.Value {
+		t.Fatalf("manual lyrics changed during decode: got %q, want %q", decoded.ManualLyrics.Value, input.ManualLyrics.Value)
+	}
+	clone := decoded.Clone()
+	if clone.ManualLyrics.Value != input.ManualLyrics.Value {
+		t.Fatalf("manual lyrics changed during clone: got %q, want %q", clone.ManualLyrics.Value, input.ManualLyrics.Value)
+	}
+
+	for _, value := range []string{"", " \r\n\t", "plain lyrics", "[00:60.00]invalid", "[ar:Artist]\nplain lyrics"} {
+		t.Run(fmt.Sprintf("reject %q", value), func(t *testing.T) {
+			invalid := input.Clone()
+			invalid.ManualLyrics.Value = value
+			if err := invalid.Validate(); err == nil {
+				t.Fatalf("Validate accepted manual lyrics %q", value)
+			}
+		})
+	}
+}
+
+func TestPublicationInputsExecutionSupport(t *testing.T) {
+	for _, version := range []int{PublicationInputsVersion, PublicationInputsVersion2} {
+		if !(PublicationInputs{Version: version}).SupportsExecution() {
+			t.Errorf("version %d should support execution", version)
+		}
+	}
+	if (PublicationInputs{Version: PublicationInputsVersion3}).SupportsExecution() {
+		t.Error("version 3 admission inputs must not support execution")
+	}
 }
 
 func TestPublicationInputsRoundTripAudioAndRewrite(t *testing.T) {

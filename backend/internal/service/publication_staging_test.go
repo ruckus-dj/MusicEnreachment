@@ -185,6 +185,36 @@ func TestPublicationStagingSuccessTransitionsInOrderAndClosesBeforeQuiescence(t 
 	}
 }
 
+func TestPublicationStagingRejectsOtherwiseValidV3BeforeStageWork(t *testing.T) {
+	repo := &pubStageRepo{}
+	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+	input.Version = persistence.PublicationInputsVersion3
+	input.QualityPolicyVersion = publication.QualityPolicyVersion
+	input.Audio = nil
+	input.IntentKind = "rewrite"
+	fixture := makeRewriteFixture(t)
+	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+	input.Rewrite = fixture.repo.input.Rewrite
+	input.ManualLyrics = &persistence.PublicationManualLyricsInput{
+		ExpectedMetadataRevision:   1,
+		ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration,
+		State:                      "value", Value: "[00:01.00]lyric",
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("test V3 input must be otherwise valid: %v", err)
+	}
+	if input.SupportsExecution() {
+		t.Fatal("V3 input unexpectedly supports execution")
+	}
+	_, err := runner.Run(context.Background(), scope, input, stage)
+	if err == nil || !strings.Contains(err.Error(), "does not support execution") {
+		t.Fatalf("Run error = %v, want unsupported execution", err)
+	}
+	if len(repo.phases) != 0 || repo.checks != 0 || len(*events) != 0 {
+		t.Fatalf("unsupported V3 performed staging work: phases=%v checks=%d events=%v", repo.phases, repo.checks, *events)
+	}
+}
+
 func TestPublicationStagingCommandFailureWaitsForReturnBeforeClose(t *testing.T) {
 	failure := errors.New("ffmpeg failure")
 	repo := &pubStageRepo{}

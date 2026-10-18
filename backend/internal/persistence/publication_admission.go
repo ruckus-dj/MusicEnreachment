@@ -33,16 +33,20 @@ type PublicationNamespaceNode struct {
 }
 
 type PublicationAdmission struct {
-	PositionID          uuid.UUID
-	ExpectedEpoch       uuid.UUID
-	ExpectedGeneration  *uuid.UUID
-	CandidateGeneration uuid.UUID
-	IntentKind          string
-	ToolsReadRequired   bool
-	Tools               []SourceAnalysisToolSelection
-	Source              *PublicationSourceSelection
-	FrozenInputs        json.RawMessage
-	NamespaceManifest   []PublicationNamespaceNode
+	PositionID            uuid.UUID
+	ExpectedReleaseID     uuid.UUID
+	ExpectedEpoch         uuid.UUID
+	ExpectedGeneration    *uuid.UUID
+	CandidateGeneration   uuid.UUID
+	IntentKind            string
+	ToolsReadRequired     bool
+	Tools                 []SourceAnalysisToolSelection
+	Source                *PublicationSourceSelection
+	FrozenInputs          json.RawMessage
+	NamespaceManifest     []PublicationNamespaceNode
+	manualLyrics          *PublicationManualLyricsInput
+	validatedManualLyrics bool
+	metadataRevision      int64
 }
 
 // PublicationSourceSelection is the caller's exact inventory selector. The
@@ -81,6 +85,9 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	}
 	if input.IntentKind != request.IntentKind || !samePublicationTools(request.Tools, input.Tools) {
 		return uuid.Nil, fmt.Errorf("admit publication: request conflicts with frozen publication inputs")
+	}
+	if input.Version == PublicationInputsVersion3 && (!request.validatedManualLyrics || request.manualLyrics == nil) || request.validatedManualLyrics && input.Version != PublicationInputsVersion3 {
+		return uuid.Nil, fmt.Errorf("admit publication: V3 inputs require validated manual lyrics admission")
 	}
 	if request.IntentKind == "audio" {
 		if request.Source == nil || !publicationSourceMatchesInput(*request.Source, *input.Audio) {
@@ -151,9 +158,12 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		if epoch != request.ExpectedEpoch {
 			return fmt.Errorf("admit publication: output epoch changed")
 		}
-		var position uuid.UUID
-		if err := tx.NewRaw(`SELECT id FROM release_track WHERE id=? FOR UPDATE`, request.PositionID).Scan(ctx, &position); err != nil {
+		var position, releaseID uuid.UUID
+		if err := tx.NewRaw(`SELECT id,release_id FROM release_track WHERE id=? FOR UPDATE`, request.PositionID).Scan(ctx, &position, &releaseID); err != nil {
 			return fmt.Errorf("admit publication: lock position: %w", err)
+		}
+		if request.ExpectedReleaseID != uuid.Nil && releaseID != request.ExpectedReleaseID {
+			return fmt.Errorf("admit publication: position does not belong to expected release")
 		}
 		var generation *uuid.UUID
 		err := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, request.PositionID).Scan(ctx, &generation)
@@ -171,6 +181,11 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 			if !publicationRewriteMatchesCurrent(current, epoch, *input.Rewrite) {
 				return fmt.Errorf("admit publication: frozen rewrite facts do not match current publication")
 			}
+			if request.manualLyrics != nil {
+				if err := validateManualLyricsAdmission(ctx, tx, request, &input, current); err != nil {
+					return err
+				}
+			}
 		}
 		var active uuid.UUID
 		if err := tx.NewRaw(`SELECT operation_id FROM track_publication_attempt WHERE position_id=?`, request.PositionID).Scan(ctx, &active); err == nil {
@@ -183,6 +198,12 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		}
 		snapshot, _ := json.Marshal(map[string]any{"version": 1, "position_id": request.PositionID.String(), "output_epoch": epoch.String(), "intent_kind": request.IntentKind})
 		frozenInputs := append(json.RawMessage(nil), request.FrozenInputs...)
+		if request.manualLyrics != nil {
+			frozenInputs, err = json.Marshal(input)
+			if err != nil {
+				return fmt.Errorf("admit publication: encode frozen manual lyrics input: %w", err)
+			}
+		}
 		result, err := client.InsertTx(ctx, tx.Tx, publicationTrackArgs{OperationID: operationID}, nil)
 		if err != nil {
 			return fmt.Errorf("admit publication: insert River job: %w", err)

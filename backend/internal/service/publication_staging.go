@@ -82,6 +82,9 @@ func (runner PublicationStagingRunner) Run(ctx context.Context, scope *Publicati
 // has been acknowledged. The callback receives detached evidence and runs
 // before deferred scope finalization.
 func (runner PublicationStagingRunner) runWithValidatedStage(ctx context.Context, scope *PublicationExecutionScope, input persistence.PublicationInputs, stage PreparedPublicationStage, continuation func(context.Context, persistence.PublicationStageObservation, PreparedPublicationStage, *publicationSyncReservation) error) (result PublicationStageObservation, resultErr error) {
+	if !input.SupportsExecution() {
+		return result, fmt.Errorf("publication inputs version %d does not support execution", input.Version)
+	}
 	if runner.Repository == nil || stage == nil {
 		return result, errors.New("publication staging dependencies are unavailable")
 	}

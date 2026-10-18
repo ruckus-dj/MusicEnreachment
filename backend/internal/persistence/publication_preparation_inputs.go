@@ -23,6 +23,9 @@ func (repository *SetupManagerRepository) PublicationPreparationInputs(ctx conte
 		if err != nil {
 			return fmt.Errorf("read publication preparation inputs: decode frozen inputs: %w", err)
 		}
+		if !decoded.SupportsExecution() {
+			return fmt.Errorf("read publication preparation inputs: frozen publication contract is admitted but not executable")
+		}
 		input, valid = decoded, true
 		return nil
 	})

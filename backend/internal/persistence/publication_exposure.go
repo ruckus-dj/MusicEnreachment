@@ -63,7 +63,7 @@ func (repository *SetupManagerRepository) BeginPublicationExposure(ctx context.C
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || input.IntentKind != attempt.IntentKind || operation.Stage != "validated" ||
+		if err != nil || !input.SupportsExecution() || input.IntentKind != attempt.IntentKind || operation.Stage != "validated" ||
 			input.Version == PublicationInputsVersion2 && (len(staged.ActualAssets) == 0 || staged.QualityPolicyVersion != input.QualityPolicyVersion) ||
 			input.Version == PublicationInputsVersion && staged.QualityPolicyVersion != 0 ||
 			!stageMatchesIntent(staged, intent) || !validatedStageJournalObservation(attempt.MutationJournal, staged) {

@@ -13,11 +13,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 const PublicationInputsVersion = 1
 const PublicationInputsVersion2 = 2
+const PublicationInputsVersion3 = 3
 
 // PublicationInputs is the versioned, immutable execution contract retained by
 // a publication attempt. Intent-specific data is deliberately disjoint.
@@ -27,9 +29,20 @@ type PublicationInputs struct {
 	IntentKind           string                             `json:"intent_kind"`
 	Audio                *PublicationAudioInput             `json:"audio,omitempty"`
 	Rewrite              *PublicationRewriteInput           `json:"rewrite,omitempty"`
+	ManualLyrics         *PublicationManualLyricsInput      `json:"manual_lyrics,omitempty"`
 	Format               publication.AudioPublicationFormat `json:"format"`
 	DesiredTags          map[string][]string                `json:"desired_tags"`
 	Tools                []SourceAnalysisToolSelection      `json:"tools"`
+}
+
+// PublicationManualLyricsInput freezes explicit manual lyrics admission. It is
+// a metadata authority receipt, not an instruction that the current writer can
+// execute. V3 remains deliberately non-executable until a lyrics writer exists.
+type PublicationManualLyricsInput struct {
+	ExpectedMetadataRevision   int64     `json:"expected_metadata_revision"`
+	ConfirmedCurrentGeneration uuid.UUID `json:"confirmed_current_generation"`
+	State                      string    `json:"state"`
+	Value                      string    `json:"value,omitempty"`
 }
 
 // PublicationAudioInput identifies the source file and verified audio result
@@ -120,7 +133,7 @@ func DecodePublicationInputs(raw json.RawMessage) (PublicationInputs, error) {
 
 // Validate enforces version, discriminated intent, selectors and portable paths.
 func (input PublicationInputs) Validate() error {
-	if input.Version != PublicationInputsVersion && input.Version != PublicationInputsVersion2 {
+	if input.Version != PublicationInputsVersion && input.Version != PublicationInputsVersion2 && input.Version != PublicationInputsVersion3 {
 		return fmt.Errorf("unsupported publication inputs version %d", input.Version)
 	}
 	if input.Version == PublicationInputsVersion && input.QualityPolicyVersion != 0 {
@@ -128,6 +141,32 @@ func (input PublicationInputs) Validate() error {
 	}
 	if input.Version == PublicationInputsVersion2 && input.QualityPolicyVersion != publication.QualityPolicyVersion {
 		return fmt.Errorf("unsupported publication quality policy version %d", input.QualityPolicyVersion)
+	}
+	if input.Version == PublicationInputsVersion3 {
+		if input.QualityPolicyVersion != publication.QualityPolicyVersion {
+			return errors.New("version 3 publication inputs require the current quality policy")
+		}
+		if input.IntentKind != "rewrite" || input.Rewrite == nil || input.Audio != nil || input.ManualLyrics == nil {
+			return errors.New("version 3 publication inputs require a manual lyrics rewrite")
+		}
+		if input.ManualLyrics.ExpectedMetadataRevision < 0 || input.ManualLyrics.ConfirmedCurrentGeneration == uuid.Nil || input.ManualLyrics.ConfirmedCurrentGeneration != input.Rewrite.CurrentGeneration {
+			return errors.New("manual lyrics rewrite requires a metadata revision and confirmed current generation")
+		}
+		switch input.ManualLyrics.State {
+		case "value":
+			validated, err := lrclib.ValidateSyncedLyrics(input.ManualLyrics.Value)
+			if err != nil || validated == "" || validated != input.ManualLyrics.Value {
+				return errors.New("manual lyrics value must be non-empty valid synced LRC")
+			}
+		case "explicit_empty":
+			if input.ManualLyrics.Value != "" {
+				return errors.New("explicitly empty manual lyrics cannot include a value")
+			}
+		default:
+			return errors.New("manual lyrics rewrite requires value or explicit_empty")
+		}
+	} else if input.ManualLyrics != nil {
+		return errors.New("manual lyrics are only valid in version 3 publication inputs")
 	}
 	if input.IntentKind != "audio" && input.IntentKind != "rewrite" {
 		return fmt.Errorf("unsupported publication intent %q", input.IntentKind)
@@ -146,6 +185,9 @@ func (input PublicationInputs) Validate() error {
 		if strings.TrimSpace(name) == "" || values == nil {
 			return fmt.Errorf("publication desired tags must contain named, non-nil value lists")
 		}
+		if input.Version == PublicationInputsVersion3 && strings.EqualFold(strings.TrimSpace(name), "LYRICS") {
+			return errors.New("manual lyrics must not be encoded in mandatory desired tags")
+		}
 	}
 	if err := validateFrozenPublicationTools(input.Tools); err != nil {
 		return err
@@ -161,6 +203,12 @@ func (input PublicationInputs) Validate() error {
 		}
 	}
 	return nil
+}
+
+// SupportsExecution excludes V3 admission receipts until a supported writer is
+// implemented. Do not infer capability from an input version being recognized.
+func (input PublicationInputs) SupportsExecution() bool {
+	return input.Version == PublicationInputsVersion || input.Version == PublicationInputsVersion2
 }
 
 func (input PublicationAudioInput) Validate() error {
@@ -268,6 +316,10 @@ func (input PublicationInputs) Clone() PublicationInputs {
 		rewrite.AudioFacts = clonePersistedAudioFacts(rewrite.AudioFacts)
 		rewrite.Ownership = clonePublicationFileIdentity(rewrite.Ownership)
 		clone.Rewrite = &rewrite
+	}
+	if input.ManualLyrics != nil {
+		manual := *input.ManualLyrics
+		clone.ManualLyrics = &manual
 	}
 	return clone
 }

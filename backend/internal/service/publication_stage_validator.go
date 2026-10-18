@@ -42,6 +42,9 @@ func (validator RealPublicationStageValidator) validateSupervised(scope *Publica
 }
 
 func (validator RealPublicationStageValidator) Validate(ctx context.Context, stagePath string, input persistence.PublicationInputs) (result PublicationStageObservation, resultErr error) {
+	if !input.SupportsExecution() {
+		return PublicationStageObservation{}, fmt.Errorf("publication inputs version %d does not support execution", input.Version)
+	}
 	if err := ctx.Err(); err != nil {
 		return PublicationStageObservation{}, err
 	}

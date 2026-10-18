@@ -11,6 +11,14 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Реализован unregistered V3 manual-lyrics admission: locked desired revision,
+release membership и confirmed current generation ограждают manual LRC/removal;
+mandatory tags берутся только из current publication. Generic V3 admission
+запрещён, существующие execution paths явно отвергают V3 до tools/filesystem
+mutation. Это не executable Apply: optional-writer isolation, durable warning/
+retry status, route/UI и runtime wiring ещё отсутствуют. Полный локальный
+`task verify` прошёл; native CI этого среза ещё не проверен.
+
 В текущем срезе связаны staging → sealed replacement → commit →
 owned backup cleanup → terminal settlement в исходном live execution scope.
 Rewrite settlement не требует original source hold; отсутствие источников не

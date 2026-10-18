@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
@@ -65,6 +66,37 @@ func TestRealPublicationStageValidatorCapturesV2AssetEvidence(t *testing.T) {
 	if got.QualityPolicyVersion != publication.QualityPolicyVersion {
 		t.Fatalf("quality policy = %d", got.QualityPolicyVersion)
 	}
+}
+
+func TestRealPublicationStageValidatorRejectsV3BeforeOpeningStageOrDependencies(t *testing.T) {
+	_, _, input, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
+	input.Version = persistence.PublicationInputsVersion3
+	stage := filepath.Join(t.TempDir(), "stage.flac")
+	if err := os.WriteFile(stage, []byte("stage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validator := RealPublicationStageValidator{
+		Tools:          panicPublicationValidatorTools{},
+		MetadataReader: panicPublicationMetadataReader{},
+		Probe: func(context.Context, string, sourcefs.RegularFile, publication.AudioContainer) ([]byte, error) {
+			panic("unsupported V3 reached probe")
+		},
+	}
+	if _, err := validator.Validate(context.Background(), stage, input); err == nil || !strings.Contains(err.Error(), "does not support execution") {
+		t.Fatalf("Validate error = %v, want unsupported execution", err)
+	}
+}
+
+type panicPublicationValidatorTools struct{}
+
+func (panicPublicationValidatorTools) Executable(context.Context, []persistence.SourceAnalysisToolSelection, string) (string, error) {
+	panic("unsupported V3 resolved tools")
+}
+
+type panicPublicationMetadataReader struct{}
+
+func (panicPublicationMetadataReader) Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error) {
+	panic("unsupported V3 read metadata")
 }
 
 func TestPublicationStageAudioPlanPreservesRewriteCodecAndContainer(t *testing.T) {
