@@ -2947,7 +2947,7 @@ describe("SettingsScreen", () => {
       await screen.findByRole("heading", { name: "Настройки" }),
     ).toHaveFocus();
     expect(
-      screen.getByRole("region", { name: "Состояние конфигурации" }),
+      await screen.findByRole("region", { name: "Состояние конфигурации" }),
     ).toBeTruthy();
     await waitFor(() =>
       expect(
