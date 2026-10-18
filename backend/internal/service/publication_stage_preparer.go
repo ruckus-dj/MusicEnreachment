@@ -33,6 +33,10 @@ type publicationManualLyricsPreparationInputs interface {
 	PublicationManualLyricsPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error)
 }
 
+type publicationManualLyricsCurrentInputReader interface {
+	PublicationManualLyricsCurrentInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error)
+}
+
 // PublicationStagePreparer copies held source material into a newly-created,
 // private publication directory rooted at an already-pinned output capability.
 type PublicationStagePreparer struct {
@@ -354,6 +358,7 @@ func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard pers
 	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(preparer.ParentPath, privateName, inputName), OutputPath: filepath.Join(preparer.ParentPath, privateName, outputName), RelativePath: record.OutputRel}, parent: preparer.OutputParent, directory: dir, directoryName: privateName, identity: dirID, parentIdentity: parentIdentity, repository: preparer.Repository, opener: preparer.SourceOpener, sourceRootPath: sourceRootPath, sourceRelativePath: sourceRelativePath, sourceSize: sourceSize, sourceMTime: sourceMTime, sourceFileInfo: inputInfo, inputPath: filepath.Join(preparer.ParentPath, privateName), inputName: inputName, guard: guard, hold: hold, rewrite: isRewrite, rewriteIdentity: rewriteIdentity, preparationRecord: ready}
 	if manualLyricsFLAC {
 		stage.privatePrepMode = true
+		stage.privateInputs = input.Clone()
 		stage.outputName = outputName
 	}
 	// Transfer directory ownership only after all preparation observations have been journaled.
@@ -454,11 +459,36 @@ type preparedPublicationStage struct {
 	mu                 sync.Mutex
 	closed             bool
 	privatePrepMode    bool
+	privateInputs      persistence.PublicationInputs
 	outputName         string
 }
 
 func (stage *preparedPublicationStage) Paths() PublicationStagePaths { return stage.paths }
 func (stage *preparedPublicationStage) Validate(ctx context.Context) error {
+	return stage.validate(ctx, nil)
+}
+
+func (stage *preparedPublicationStage) validatePrivateManualLyrics(ctx context.Context, scope *PublicationExecutionScope, work *privateManualLyricsWork) error {
+	return stage.validate(ctx, func(ctx context.Context) error {
+		if !scope.validPrivateManualLyricsWork(work, stage) {
+			return errors.New("private manual lyrics validation requires its active work capability")
+		}
+		reader, ok := stage.repository.(publicationManualLyricsCurrentInputReader)
+		if !ok {
+			return errors.New("private manual lyrics current-input reader is unavailable")
+		}
+		input, valid, err := reader.PublicationManualLyricsCurrentInputs(ctx, stage.guard)
+		if err != nil {
+			return err
+		}
+		if !valid || !reflect.DeepEqual(input, stage.privateInputs) {
+			return errors.New("current manual lyrics publication inputs differ from the frozen stage contract")
+		}
+		return nil
+	})
+}
+
+func (stage *preparedPublicationStage) validate(ctx context.Context, privateCheck func(context.Context) error) error {
 	stage.mu.Lock()
 	defer stage.mu.Unlock()
 	if stage.closed {
@@ -525,7 +555,11 @@ func (stage *preparedPublicationStage) Validate(ctx context.Context) error {
 	if statErr != nil {
 		return statErr
 	}
-	if stage.rewrite {
+	if stage.rewrite && privateCheck != nil {
+		if err := privateCheck(ctx); err != nil {
+			return err
+		}
+	} else if stage.rewrite {
 		_, valid, err := stage.repository.CheckPublicationRewriteForDelivery(ctx, stage.guard)
 		if err != nil {
 			return err
@@ -563,7 +597,9 @@ func (stage *preparedPublicationStage) Validate(ctx context.Context) error {
 	if statErr == nil {
 		statErr = stage.parent.VerifyChild(ctx, stage.directoryName, sourcefs.DirectoryIdentity{Platform: stage.identity.Platform, Volume: stage.identity.Volume, FileID: stage.identity.FileID})
 	}
-	if statErr == nil && stage.rewrite {
+	if statErr == nil && stage.rewrite && privateCheck != nil {
+		statErr = privateCheck(ctx)
+	} else if statErr == nil && stage.rewrite {
 		_, valid, guardErr := stage.repository.CheckPublicationRewriteForDelivery(ctx, stage.guard)
 		if guardErr != nil {
 			statErr = guardErr

@@ -301,6 +301,21 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 			},
 		}
 		observation := outcome.FinalObservation.Clone()
+		currentInputs, currentValid, err := repository.PublicationManualLyricsCurrentInputs(ctx, guard)
+		if err != nil || !currentValid || !reflect.DeepEqual(currentInputs, input) {
+			t.Fatalf("validated current manual lyrics inputs = valid %v, err %v", currentValid, err)
+		}
+		currentInputs.DesiredTags["TITLE"][0] = "detached mutation"
+		reloadedInputs, reloadedValid, err := repository.PublicationManualLyricsCurrentInputs(ctx, guard)
+		if err != nil || !reloadedValid || !reflect.DeepEqual(reloadedInputs, input) {
+			t.Fatalf("current manual lyrics inputs were not detached: valid %v, err %v", reloadedValid, err)
+		}
+		if _, valid, err := repository.PublicationPreparationInputs(ctx, guard); err != nil || valid {
+			t.Fatalf("generic preparation reader accepted validated V3 inputs: valid %v, err %v", valid, err)
+		}
+		if _, valid, err := repository.CheckPublicationRewriteForDelivery(ctx, guard); err != nil || valid {
+			t.Fatalf("preparation rewrite checker accepted validated stage: valid %v, err %v", valid, err)
+		}
 		var validatedEntries []json.RawMessage
 		if err := json.Unmarshal(attempt.MutationJournal, &validatedEntries); err != nil {
 			t.Fatal(err)
@@ -334,6 +349,19 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		}
 		if err := json.Unmarshal(admittedAttempt.MutationJournal, &records); err != nil || len(records) != 7 {
 			t.Fatalf("manual lyrics exposure journal length = %d, %v", len(records), err)
+		}
+		exposingInputs, exposingValid, err := repository.PublicationManualLyricsCurrentInputs(ctx, guard)
+		if err != nil || !exposingValid || !reflect.DeepEqual(exposingInputs, input) {
+			t.Fatalf("exposing current manual lyrics inputs = valid %v, err %v", exposingValid, err)
+		}
+		staleInputGuard := guard
+		staleInputGuard.ClaimUUID = uuid.New()
+		if _, valid, err := repository.PublicationManualLyricsCurrentInputs(ctx, staleInputGuard); err != nil || valid {
+			t.Fatalf("current manual lyrics reader accepted stale delivery guard: valid %v, err %v", valid, err)
+		}
+		unchangedAfterRead, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+		if err != nil || unchangedAfterRead.Phase != admittedAttempt.Phase || !bytes.Equal(unchangedAfterRead.MutationJournal, admittedAttempt.MutationJournal) {
+			t.Fatalf("current-input reads changed exposure phase/journal: %v", err)
 		}
 		replayed, err := repository.BeginManualLyricsExposure(ctx, guard, intent, observation)
 		if err != nil || replayed != persistence.PublicationExposureAlreadyRecorded {

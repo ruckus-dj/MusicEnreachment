@@ -11,6 +11,14 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+В текущем срезе добавлены private validated/exposing CURRENT
+reader и post-validation checkpoint, требующий active scope-held capability.
+Generic rewrite checks сохраняют preparing/staged границу. Native/PG tests
+проверяют detached frozen input, stale guard и отсутствие mutation при чтении;
+полный локальный `task verify` прошёл, review блокеров не нашло. Native CI
+этого среза ещё не проверен. Reader не даёт resume/replacement authority;
+continuous exposure admission owner пока не подключён.
+
 В текущем persistence-срезе private manual FLAC exposure
 admission принимает только canonical validated prefix и exact stored observation,
 проверяя CURRENT G0 и namespace. Replay требует ровно один final exposure record;

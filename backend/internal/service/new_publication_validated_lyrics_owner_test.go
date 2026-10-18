@@ -63,6 +63,16 @@ func (repository *validatedLyricsOwnerRepository) PublicationManualLyricsPrepara
 	return repository.optionalLyricsV3Repository.PublicationManualLyricsPreparationInputs(ctx, guard)
 }
 
+func (repository *validatedLyricsOwnerRepository) PublicationManualLyricsCurrentInputs(_ context.Context, guard persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error) {
+	if repository.phase != "validated" && repository.phase != "exposing" {
+		return persistence.PublicationInputs{}, false, errors.New("current inputs read before validated acknowledgement")
+	}
+	if guard != repository.stage.guard {
+		return persistence.PublicationInputs{}, false, nil
+	}
+	return repository.stage.privateInputs.Clone(), true, nil
+}
+
 func (repository *validatedLyricsOwnerRepository) GuardedRecordPublicationOptionalLyricsOutcome(ctx context.Context, guard persistence.PublicationDeliveryGuard, evidence persistence.PublicationOptionalLyricsOutcomeEvidence) (persistence.PublicationOptionalLyricsOutcome, error) {
 	if !repository.ownsWork() {
 		return persistence.PublicationOptionalLyricsStale, errors.New("outcome acknowledgement did not retain private work")
@@ -120,6 +130,9 @@ func (repository *validatedLyricsOwnerRepository) GuardedAdvanceManualLyricsStag
 func TestValidatedManualLyricsStageAcknowledgementsRetainOneOwner(t *testing.T) {
 	t.Run("same owner through outcome staged validated and isolated evidence", func(t *testing.T) {
 		stage, input, _, scope, reservation, proof := manualLyricsObservationFixture(t)
+		// The private stage contract is frozen by preparation. Keep the in-memory
+		// fixture aligned with this test's repository input mutations.
+		stage.privateInputs = input.Clone()
 		base := stage.repository.(*optionalLyricsV3Repository)
 		base.outcome = persistence.PublicationOptionalLyricsRecorded
 		owner := &validatedLyricsOwnerRepository{optionalLyricsV3Repository: base, stage: stage, scope: scope, reservation: reservation, phase: "preparing", mutate: true}
@@ -172,6 +185,7 @@ func TestValidatedManualLyricsStageFailureRetainsUnknownOwner(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			stage, input, _, scope, reservation, proof := manualLyricsObservationFixture(t)
+			stage.privateInputs = input.Clone()
 			base := stage.repository.(*optionalLyricsV3Repository)
 			base.outcome = persistence.PublicationOptionalLyricsRecorded
 			owner := &validatedLyricsOwnerRepository{optionalLyricsV3Repository: base, stage: stage, scope: scope, reservation: reservation, phase: "preparing", failAt: test.at, failMode: test.mode}

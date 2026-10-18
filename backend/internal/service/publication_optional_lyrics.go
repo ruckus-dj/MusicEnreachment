@@ -233,6 +233,9 @@ func applyPreparedManualLyricsFLAC(
 		if !capable {
 			return result, errors.New("manual lyrics stage acknowledgement repository is unavailable")
 		}
+		if _, capable := stage.repository.(publicationManualLyricsCurrentInputReader); !capable {
+			return result, errors.New("private manual lyrics current-input reader is unavailable")
+		}
 	}
 	var acknowledged persistence.PublicationStageObservation
 	var acknowledgedOutputInfo os.FileInfo
@@ -318,6 +321,9 @@ func applyPreparedManualLyricsFLAC(
 			}
 			return result, errors.New("publication delivery is stale while acknowledging validated manual lyrics")
 		}
+		if err := stage.checkPrivateManualLyricsPostValidationCheckpoint(ctx, scope, work, acknowledged, acknowledgedOutputInfo); err != nil {
+			return result, err
+		}
 	}
 	if !scope.finishPrivateManualLyricsWork(work, true) {
 		return result, errors.New("manual lyrics publication work capability was lost before acknowledgement")
@@ -346,8 +352,8 @@ func cloneManualLyricsPreparationRecord(record persistence.PublicationPreparatio
 	return record
 }
 
-// checkPrivateManualLyricsCheckpoint revalidates the exact private output after
-// the staged acknowledgement without deriving new observation evidence.
+// checkPrivateManualLyricsCheckpoint validates the generic stage and revalidates
+// the exact private output without deriving new observation evidence.
 func (stage *preparedPublicationStage) checkPrivateManualLyricsCheckpoint(
 	ctx context.Context,
 	scope *PublicationExecutionScope,
@@ -368,6 +374,39 @@ func (stage *preparedPublicationStage) checkPrivateManualLyricsCheckpoint(
 	if err := stage.Validate(ctx); err != nil {
 		return err
 	}
+	return stage.checkPrivateManualLyricsNativeCheckpoint(ctx, acknowledged, expectedNative)
+}
+
+// checkPrivateManualLyricsPostValidationCheckpoint requires the private
+// manual-lyrics validation capability after the validated acknowledgement.
+func (stage *preparedPublicationStage) checkPrivateManualLyricsPostValidationCheckpoint(
+	ctx context.Context,
+	scope *PublicationExecutionScope,
+	work *privateManualLyricsWork,
+	acknowledged persistence.PublicationStageObservation,
+	expectedNative os.FileInfo,
+) error {
+	if !scope.validPrivateManualLyricsWork(work, stage) {
+		return errors.New("manual lyrics publication work capability was lost after validated checkpoint")
+	}
+	live, err := scope.repository.CheckPublicationDelivery(ctx, scope.guard)
+	if err != nil {
+		return fmt.Errorf("check publication delivery after validated checkpoint: %w", err)
+	}
+	if !live {
+		return errors.New("publication delivery is stale after validated checkpoint")
+	}
+	if err := stage.validatePrivateManualLyrics(ctx, scope, work); err != nil {
+		return err
+	}
+	return stage.checkPrivateManualLyricsNativeCheckpoint(ctx, acknowledged, expectedNative)
+}
+
+func (stage *preparedPublicationStage) checkPrivateManualLyricsNativeCheckpoint(
+	ctx context.Context,
+	acknowledged persistence.PublicationStageObservation,
+	expectedNative os.FileInfo,
+) error {
 	if err := stage.verifyInitialCopyInputs(ctx); err != nil {
 		return err
 	}

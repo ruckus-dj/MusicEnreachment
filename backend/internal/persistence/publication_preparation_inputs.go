@@ -23,6 +23,55 @@ func (repository *SetupManagerRepository) PublicationManualLyricsPreparationInpu
 	return repository.publicationPreparationInputs(ctx, guard, true)
 }
 
+// PublicationManualLyricsCurrentInputs re-reads the frozen manual-lyrics
+// contract only while its delivery is live in validated or exposing. It grants
+// no permission to resume, execute, or expose the publication.
+func (repository *SetupManagerRepository) PublicationManualLyricsCurrentInputs(ctx context.Context, guard PublicationDeliveryGuard) (PublicationInputs, bool, error) {
+	var input PublicationInputs
+	valid := false
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		attempt, operation, _, ok, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "read current manual lyrics publication inputs")
+		if err != nil || !ok || (attempt.Phase != "validated" && attempt.Phase != "exposing") || operation.Stage != attempt.Phase {
+			return err
+		}
+		decoded, err := DecodePublicationInputs(attempt.FrozenInputs)
+		if err != nil {
+			return fmt.Errorf("read current manual lyrics publication inputs: decode frozen inputs: %w", err)
+		}
+		if !validManualLyricsFLACRewrite(decoded) || attempt.IntentKind != "rewrite" || attempt.Epoch != guard.Epoch || attempt.CandidateGeneration != guard.CandidateGeneration || attempt.PositionID != guard.ExpectedPositionID {
+			return nil
+		}
+		var current TrackPublication
+		if err := tx.NewSelect().Model(&current).Where("position_id=?", guard.ExpectedPositionID).For("UPDATE").Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("read current manual lyrics publication inputs: read current publication: %w", err)
+		}
+		if !publicationRewriteMatchesCurrent(current, guard.Epoch, *decoded.Rewrite) {
+			return nil
+		}
+		if err := validatePublicationRewriteNamespace(ctx, tx, attempt, decoded.Rewrite.RelativePath); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("read current manual lyrics publication inputs: validate rewrite namespace: %w", err)
+		}
+		input, valid = decoded, true
+		return nil
+	})
+	if err != nil {
+		return PublicationInputs{}, false, err
+	}
+	if !valid {
+		return PublicationInputs{}, false, nil
+	}
+	if err := input.Validate(); err != nil {
+		return PublicationInputs{}, false, errors.New("read current manual lyrics publication inputs: frozen inputs are invalid")
+	}
+	return input.Clone(), true, nil
+}
+
 func (repository *SetupManagerRepository) publicationPreparationInputs(ctx context.Context, guard PublicationDeliveryGuard, manualLyricsFLAC bool) (PublicationInputs, bool, error) {
 	var input PublicationInputs
 	valid := false
