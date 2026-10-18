@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
@@ -94,6 +95,16 @@ func (service *LibraryMetadataService) Update(ctx context.Context, scope library
 			}
 		}
 		field := librarymetadata.ManualFieldValue(wire.State, value, present)
+		if name == "synced_lyrics" && wire.State == librarymetadata.StateValue {
+			lyrics, ok := value.(string)
+			if !ok {
+				return LibraryMetadataResult{}, fmt.Errorf("%w: synced lyrics must be a string", ErrLibraryMetadataInvalidRequest)
+			}
+			normalized, err := lrclib.ValidateSyncedLyrics(lyrics)
+			if err != nil || normalized == "" {
+				return LibraryMetadataResult{}, fmt.Errorf("%w: synced lyrics are invalid", ErrLibraryMetadataInvalidRequest)
+			}
+		}
 		probe := librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: scope, Desired: map[string]librarymetadata.FieldValue{name: field}}
 		if err := probe.Validate(); err != nil {
 			return LibraryMetadataResult{}, fmt.Errorf("%w: %v", ErrLibraryMetadataInvalidRequest, err)

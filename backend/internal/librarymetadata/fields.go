@@ -88,6 +88,7 @@ var fieldDefinitions = []FieldDefinition{
 	{Name: "track_total", Type: TypeInteger, Scopes: []Scope{ScopePosition}},
 	{Name: "disc_number", Type: TypeInteger, Scopes: []Scope{ScopePosition}},
 	{Name: "disc_total", Type: TypeInteger, Scopes: []Scope{ScopePosition}},
+	{Name: "synced_lyrics", Type: TypeString, Scopes: []Scope{ScopePosition}},
 }
 
 var fieldByName = func() map[string]FieldDefinition {

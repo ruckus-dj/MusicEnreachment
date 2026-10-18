@@ -105,6 +105,10 @@ func TestLibraryMetadataUpdateRejectsInvalidChanges(t *testing.T) {
 		{name: "forged provenance", changes: `{"genre":{"state":"value","value":["rock"],"provenance":{"kind":"provider"}}}`},
 		{name: "null absent value", changes: `{"genre":{"state":"absent","value":null}}`},
 		{name: "null value", changes: `{"genre":{"state":"value","value":null}}`},
+		{name: "invalid synced lyrics", scope: "position", changes: `{"synced_lyrics":{"state":"value","value":"not LRC"}}`},
+		{name: "empty synced lyrics", scope: "position", changes: `{"synced_lyrics":{"state":"value","value":""}}`},
+		{name: "whitespace synced lyrics", scope: "position", changes: `{"synced_lyrics":{"state":"value","value":" \t\r\n "}}`},
+		{name: "synced lyrics wrong scope", changes: `{"synced_lyrics":{"state":"value","value":"[00:01.00]x"}}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &fakeLibraryMetadataRepository{current: persistence.LibraryMetadata{Revision: 1, Envelope: librarymetadata.Envelope{
@@ -123,6 +127,32 @@ func TestLibraryMetadataUpdateRejectsInvalidChanges(t *testing.T) {
 				t.Fatalf("repository updates = %d, want 0", len(repository.updates))
 			}
 		})
+	}
+}
+
+func TestLibraryMetadataUpdatePreservesManualSyncedLyricsBytesAndRemoval(t *testing.T) {
+	lyrics := "[00:01.00]雪\r\n[00:02.00]café"
+	repository := &fakeLibraryMetadataRepository{current: persistence.LibraryMetadata{Revision: 4, Envelope: librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition, Desired: map[string]librarymetadata.FieldValue{},
+	}}}
+	service := NewLibraryMetadataService(repository)
+	result, err := service.Update(context.Background(), librarymetadata.ScopePosition, uuid.New(), uuid.New(), 4,
+		libraryMetadataChanges(t, `{"synced_lyrics":{"state":"value","value":"[00:01.00]雪\r\n[00:02.00]café"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := result.Envelope.Desired["synced_lyrics"]
+	if field.Value != lyrics || field.Authority != librarymetadata.AuthorityManual || field.Provenance.Kind != librarymetadata.ProvenanceManual {
+		t.Fatalf("saved field = %#v, want exact manual lyrics", field)
+	}
+	removed, err := service.Update(context.Background(), librarymetadata.ScopePosition, uuid.New(), uuid.New(), 4,
+		libraryMetadataChanges(t, `{"synced_lyrics":{"state":"explicit_empty"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	field = removed.Envelope.Desired["synced_lyrics"]
+	if field.State != librarymetadata.StateExplicitEmpty || field.Authority != librarymetadata.AuthorityManual || field.Provenance.Kind != librarymetadata.ProvenanceManual {
+		t.Fatalf("removed field = %#v, want manual explicit-empty", field)
 	}
 }
 

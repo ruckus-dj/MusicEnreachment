@@ -116,6 +116,28 @@ func TestProjectTagsSupportsDecodedEnvelopeValues(t *testing.T) {
 	}
 }
 
+func TestProjectTagsDoesNotPublishUnconfirmedSyncedLyrics(t *testing.T) {
+	position := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
+		Desired: map[string]librarymetadata.FieldValue{
+			"synced_lyrics": librarymetadata.ManualFieldValue(librarymetadata.StateValue, "[00:01.00]hello", true),
+		},
+	}
+	result, err := ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &position},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := result.Tags["LYRICS"]; exists {
+		t.Fatalf("unconfirmed synced lyrics leaked into tags: %#v", result.Tags["LYRICS"])
+	}
+	if result.Fields["position.synced_lyrics"].Status != "unsupported" {
+		t.Fatalf("synced lyrics status = %#v, want unsupported", result.Fields["position.synced_lyrics"])
+	}
+}
+
 func TestProjectTagsMapsArtistMBIDByScope(t *testing.T) {
 	trackArtistID, releaseArtistID := uuid.NewString(), uuid.NewString()
 	release := librarymetadata.Envelope{

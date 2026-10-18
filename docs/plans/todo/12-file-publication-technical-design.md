@@ -21,6 +21,13 @@ interprocess exclusion; barrier не разрешает takeover, recovery mutat
 settlement или регистрацию publication worker. Полный локальный `task verify`
 среза прошёл; native CI для него ещё не проверен.
 
+Дополнение 2026-10-18 (bounded lyrics slice): generic position metadata допускает
+ручное сохранение валидного synced LRC текста как desired value с manual authority
+и optimistic metadata revision. Это только pending-save/read-model foundation:
+apply, выбор LRCLIB/source, review UI и публикация lyrics этим не реализованы.
+Desired текст не добавляется в обычную tag projection и не изменяет текущий
+published asset.
+
 Цель — одна актуальная управляемая публикация на позицию релиза: извлечённое аудио,
 локальные теги, встроенная обложка и допустимые synced lyrics, с подтверждённым
 readback, восстановлением после сбоя и без ложного статуса успеха. Одна River job
