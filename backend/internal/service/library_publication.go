@@ -325,6 +325,10 @@ func (service *LibraryPublications) selectedFFmpegPair(ctx context.Context) ([]p
 	if err != nil {
 		return nil, fmt.Errorf("read active ffmpeg installation: %w", err)
 	}
+	return service.selectedFFmpegPairForSettings(ctx, runtimeSettings)
+}
+
+func (service *LibraryPublications) selectedFFmpegPairForSettings(ctx context.Context, runtimeSettings settings.RuntimeSettings) ([]persistence.SourceAnalysisToolSelection, error) {
 	id, err := uuid.Parse(runtimeSettings.ActiveFFmpegInstallation)
 	if err != nil || id == uuid.Nil {
 		return nil, errors.New("active managed ffmpeg installation is unavailable")
@@ -333,9 +337,15 @@ func (service *LibraryPublications) selectedFFmpegPair(ctx context.Context) ([]p
 	if err != nil {
 		return nil, fmt.Errorf("read active ffmpeg installation: %w", err)
 	}
-	if installation == nil || installation.ID != id || installation.PackageKind != string(tools.PackageFFmpeg) ||
-		installation.State != "ready" || installation.VerifiedAt == nil ||
-		installation.PlatformGOOS != service.platform.GOOS || installation.PlatformGOARCH != service.platform.GOARCH || !service.platform.Supported() {
+	if installation == nil || installation.ID != id {
+		return nil, errors.New("active managed ffmpeg installation is not verified for this platform")
+	}
+	return selectedFFmpegPairFromInstallation(installation, service.platform)
+}
+
+func selectedFFmpegPairFromInstallation(installation *persistence.ToolInstallation, platform tools.Platform) ([]persistence.SourceAnalysisToolSelection, error) {
+	if installation == nil || installation.PackageKind != string(tools.PackageFFmpeg) || installation.State != "ready" ||
+		installation.VerifiedAt == nil || installation.PlatformGOOS != platform.GOOS || installation.PlatformGOARCH != platform.GOARCH || !platform.Supported() {
 		return nil, errors.New("active managed ffmpeg installation is not verified for this platform")
 	}
 	var versions map[string]string
@@ -354,7 +364,7 @@ func (service *LibraryPublications) selectedFFmpegPair(ctx context.Context) ([]p
 			return nil, fmt.Errorf("active managed %s executable has an invalid verified version", executable)
 		}
 		selections = append(selections, persistence.SourceAnalysisToolSelection{
-			PackageKind: string(tools.PackageFFmpeg), InstallationID: id,
+			PackageKind: string(tools.PackageFFmpeg), InstallationID: installation.ID,
 			RelativePath: filepath.ToSlash(installation.RelativePath), Executable: executable,
 			Version: parts[2], VersionBanner: banner,
 		})
