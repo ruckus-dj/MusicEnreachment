@@ -42,7 +42,15 @@ func TestPublicationExecutorAudioDeliveryPostgreSQL(t *testing.T) {
 	}
 }
 
-func testPublicationSourceExecution(t *testing.T, target string) {
+func TestFirstPublicationPreviewConfirmationDeliveryPostgreSQL(t *testing.T) {
+	for _, target := range []string{"Track.flac", "Artist/Album/Track.flac"} {
+		t.Run(target, func(t *testing.T) {
+			testPublicationSourceExecution(t, "Track.flac", true, target == "Artist/Album/Track.flac")
+		})
+	}
+}
+
+func testPublicationSourceExecution(t *testing.T, target string, confirmation ...bool) {
 	t.Helper()
 	ctx := context.Background()
 	db := testpostgres.OpenMigrated(t)
@@ -248,6 +256,90 @@ func testPublicationSourceExecution(t *testing.T, target string) {
 		}
 		if err := tx.Commit(); err != nil {
 			t.Fatal(err)
+		}
+		if len(confirmation) > 0 && confirmation[0] {
+			// Remove only this fixture's synthetic admission. The source graph and
+			// verified installation remain the exact inputs consumed by PreviewFirst.
+			cleanup, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = cleanup.Rollback() }()
+			for _, table := range []string{"publication_source_hold", "operation_tool_read_hold", "publication_execution_claim", "track_publication_attempt"} {
+				if _, err := cleanup.ExecContext(ctx, "DELETE FROM "+table+" WHERE operation_id=?", operationID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := cleanup.ExecContext(ctx, `DELETE FROM operation WHERE id=?`, operationID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cleanup.ExecContext(ctx, `DELETE FROM river_job WHERE id=?`, riverJobID); err != nil {
+				t.Fatal(err)
+			}
+			if err := cleanup.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			// The synthetic admission reserved the same candidate namespace. Remove
+			// only its generation reservations before exercising real admission.
+			if _, err := db.ExecContext(ctx, `DELETE FROM publication_namespace_reservation WHERE position_id=? AND generation=?`, positionID, candidateID); err != nil {
+				t.Fatal(err)
+			}
+			if err := persistence.NewSettingsRepository(db).Set(ctx, settings.PublicationPathTemplateKey, "Track.{EXT}"); err != nil {
+				t.Fatal(err)
+			}
+			if err := persistence.NewSettingsRepository(db).SetMany(ctx, map[string]string{
+				settings.PublicationFormatKey:        "source",
+				settings.ActiveFFmpegInstallationKey: installationID.String(),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			artistID := uuid.New()
+			if _, err := db.ExecContext(ctx, `INSERT INTO local_artist(id,name) VALUES (?,'Artist')`, artistID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO release_artist(release_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,'Artist','')`, releaseID, artistID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO track_artist(track_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,'Artist','')`, trackID, artistID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `UPDATE local_track SET title='Published track' WHERE id=?`, trackID); err != nil {
+				t.Fatal(err)
+			}
+			publications := NewLibraryPublications(manager, registry, libraryPublicationTestInserter{}, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
+			if len(confirmation) > 1 && confirmation[1] {
+				if err := persistence.NewSettingsRepository(db).Set(ctx, settings.PublicationPathTemplateKey, publication.DefaultTemplate); err != nil {
+					t.Fatal(err)
+				}
+			}
+			preview, err := publications.PreviewFirst(ctx, releaseID, positionID)
+			if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil {
+				t.Fatalf("first publication preview = %+v, %v", preview, err)
+			}
+			if len(confirmation) > 1 && confirmation[1] {
+				if len(preview.PathComponents) != 4 {
+					t.Fatalf("default-layout preview components = %#v, want 4", preview.PathComponents)
+				}
+				target = strings.Join(preview.PathComponents, "/")
+			}
+			admittedID, err := publications.AdmitFirst(ctx, releaseID, positionID, FirstPublicationConfirmation{PreviewDigest: preview.ContextDigest, ExpectedEpoch: epoch})
+			if err != nil {
+				t.Fatalf("confirm first publication: %v", err)
+			}
+			operationID = admittedID
+			attempt, err := manager.ReadPublicationAttempt(ctx, operationID)
+			if err != nil || attempt == nil {
+				t.Fatalf("read admitted attempt = %+v, %v", attempt, err)
+			}
+			candidateID = attempt.CandidateGeneration
+			op, err := manager.GetOperation(ctx, operationID)
+			if err != nil || op.RiverJobID == nil {
+				t.Fatalf("read admitted operation = %+v, %v", op, err)
+			}
+			riverJobID = *op.RiverJobID
+			if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1 WHERE id=?`, riverJobID); err != nil {
+				t.Fatal(err)
+			}
 		}
 		executor := NewPublicationExecutor(manager, registry, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), audioDeliveryTestCommands{})
 		err = executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
