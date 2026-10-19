@@ -47,6 +47,8 @@ type Dependencies struct {
 type LibraryPublicationService interface {
 	Read(context.Context, uuid.UUID, uuid.UUID) (service.LibraryPublicationView, error)
 	ApplyManualLyrics(context.Context, uuid.UUID, uuid.UUID, service.LibraryPublicationApplyManualLyricsRequest) (uuid.UUID, error)
+	PreviewFirst(context.Context, uuid.UUID, uuid.UUID) (service.FirstPublicationPreview, error)
+	AdmitFirst(context.Context, uuid.UUID, uuid.UUID, service.FirstPublicationConfirmation) (uuid.UUID, error)
 }
 
 type preflightEntry struct {

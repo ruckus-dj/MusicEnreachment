@@ -27,6 +27,14 @@ type libraryPublicationHTTPFake struct {
 	applyReleaseID  uuid.UUID
 	applyPositionID uuid.UUID
 	applyRequest    service.LibraryPublicationApplyManualLyricsRequest
+	preview         service.FirstPublicationPreview
+	previewErr      error
+	previewCalls    int
+	admitErr        error
+	admitCalls      int
+	admitRequest    service.FirstPublicationConfirmation
+	admitReleaseID  uuid.UUID
+	admitPositionID uuid.UUID
 }
 
 type libraryPublicationOperationSnapshotRepository struct {
@@ -48,6 +56,17 @@ func (fake *libraryPublicationHTTPFake) ApplyManualLyrics(_ context.Context, rel
 	fake.applyCalls++
 	fake.applyReleaseID, fake.applyPositionID, fake.applyRequest = releaseID, positionID, request
 	return fake.operationID, fake.applyErr
+}
+
+func (fake *libraryPublicationHTTPFake) PreviewFirst(_ context.Context, releaseID, positionID uuid.UUID) (service.FirstPublicationPreview, error) {
+	fake.previewCalls++
+	return fake.preview, fake.previewErr
+}
+
+func (fake *libraryPublicationHTTPFake) AdmitFirst(_ context.Context, releaseID, positionID uuid.UUID, request service.FirstPublicationConfirmation) (uuid.UUID, error) {
+	fake.admitCalls++
+	fake.admitReleaseID, fake.admitPositionID, fake.admitRequest = releaseID, positionID, request
+	return fake.operationID, fake.admitErr
 }
 
 func TestLibraryPublicationHTTPReadAndApply(t *testing.T) {

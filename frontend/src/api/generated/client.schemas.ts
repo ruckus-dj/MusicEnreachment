@@ -160,6 +160,21 @@ export interface ErrorModel {
   type?: string;
 }
 
+export interface FirstPublicationPreviewSource {
+  codec: string;
+  location_id: string;
+  media_variant_id: string;
+  root_id: string;
+  stream_index: number;
+}
+
+export interface FirstPublicationPreviewTransform {
+  action: string;
+  bitrate: number;
+  extension: string;
+  output_container: string;
+}
+
 export type IncomingFileResponseTags = {[key: string]: string[] | null};
 
 export interface IncomingLocationResponse {
@@ -322,6 +337,39 @@ export interface LibraryArtistResolution {
   effective_artist_mbid: string;
   selected_artist_id: string;
   status: string;
+}
+
+export interface LibraryFirstPublicationAdmissionInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_epoch: string;
+  /**
+     * @minLength 64
+     * @maxLength 64
+     * @pattern ^[0-9a-fA-F]{64}$
+     */
+  preview_digest: string;
+}
+
+export type LibraryFirstPublicationPreviewResponseMetadataRevisions = {[key: string]: number};
+
+export interface LibraryFirstPublicationPreviewResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  blockers: string[] | null;
+  context_digest: string;
+  epoch: string;
+  metadata_revisions: LibraryFirstPublicationPreviewResponseMetadataRevisions;
+  native_status: string;
+  /** @nullable */
+  path_components?: string[] | null;
+  position_id: string;
+  release_id: string;
+  selected_source?: FirstPublicationPreviewSource;
+  transform?: FirstPublicationPreviewTransform;
+  /** @nullable */
+  warnings: string[] | null;
 }
 
 export type LibraryMetadataBodyChanges = {[key: string]: unknown};

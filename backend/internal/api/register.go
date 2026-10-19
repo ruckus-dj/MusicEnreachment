@@ -30,6 +30,8 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerLibraryReleaseDetail(api, dependencies)
 	registerLibraryMetadata(api, dependencies.LibraryMetadata)
 	registerLibraryPublication(api, dependencies)
+	registerLibraryFirstPublicationPreview(api, dependencies)
+	registerLibraryFirstPublicationAdmission(api, dependencies)
 }
 
 func registerOperationEvents(router chi.Router, operations *service.Operations) {

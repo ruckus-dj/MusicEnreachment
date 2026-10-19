@@ -39,6 +39,8 @@ import type {
   InstallPreflightInputBody,
   InstallationActionInputBody,
   InstallationsBody,
+  LibraryFirstPublicationAdmissionInputBody,
+  LibraryFirstPublicationPreviewResponse,
   LibraryMetadataBody,
   LibraryMetadataResponse,
   LibraryPrimaryArtistBody,
@@ -2678,6 +2680,123 @@ export function useGetLibraryPublication<TData = Awaited<ReturnType<typeof getLi
 
 
 
+export type startLibraryFirstPublicationResponse202 = {
+  data: OperationResponse
+  status: 202
+}
+
+export type startLibraryFirstPublicationResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type startLibraryFirstPublicationResponseSuccess = (startLibraryFirstPublicationResponse202) & {
+  headers: Headers;
+};
+export type startLibraryFirstPublicationResponseError = (startLibraryFirstPublicationResponseDefault) & {
+  headers: Headers;
+};
+
+export type startLibraryFirstPublicationResponse = (startLibraryFirstPublicationResponseSuccess | startLibraryFirstPublicationResponseError)
+
+export const getStartLibraryFirstPublicationUrl = (releaseId: string,
+    positionId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/positions/${positionId}/publication`
+}
+
+/**
+ * @summary Start first publication for a library position
+ */
+export const startLibraryFirstPublication = async (releaseId: string,
+    positionId: string,
+    libraryFirstPublicationAdmissionInputBody: NonReadonly<LibraryFirstPublicationAdmissionInputBody>, options?: RequestInit): Promise<startLibraryFirstPublicationResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getStartLibraryFirstPublicationUrl(releaseId,positionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(libraryFirstPublicationAdmissionInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: startLibraryFirstPublicationResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as startLibraryFirstPublicationResponse
+}
+
+
+
+
+
+export const getStartLibraryFirstPublicationMutationKey = () => ['startLibraryFirstPublication'] as const;
+
+export const getStartLibraryFirstPublicationMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startLibraryFirstPublication>>, TError,StartLibraryFirstPublicationMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof startLibraryFirstPublication>>, TError,StartLibraryFirstPublicationMutationVariables, TContext> => {
+
+const mutationKey = getStartLibraryFirstPublicationMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startLibraryFirstPublication>>, StartLibraryFirstPublicationMutationVariables> = (props) => {
+          const {releaseId,positionId,data} = props ?? {};
+
+          return  startLibraryFirstPublication(releaseId,positionId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartLibraryFirstPublicationMutationResult = NonNullable<Awaited<ReturnType<typeof startLibraryFirstPublication>>>
+    export type StartLibraryFirstPublicationMutationBody = NonReadonly<LibraryFirstPublicationAdmissionInputBody>
+    export type StartLibraryFirstPublicationMutationError = ErrorModel
+    export type StartLibraryFirstPublicationMutationVariables = {releaseId: string;positionId: string;data: NonReadonly<LibraryFirstPublicationAdmissionInputBody>}
+
+    /**
+ * @summary Start first publication for a library position
+ */
+export const useStartLibraryFirstPublication = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startLibraryFirstPublication>>, TError,StartLibraryFirstPublicationMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startLibraryFirstPublication>>,
+        TError,
+        StartLibraryFirstPublicationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartLibraryFirstPublicationMutationOptions(options), queryClient);
+    }
+
 export type applyLibraryManualLyricsResponse202 = {
   data: OperationResponse
   status: 202
@@ -2794,6 +2913,141 @@ export const useApplyLibraryManualLyrics = <TError = ErrorModel,
       > => {
       return useMutation(getApplyLibraryManualLyricsMutationOptions(options), queryClient);
     }
+
+export type getLibraryFirstPublicationPreviewResponse200 = {
+  data: LibraryFirstPublicationPreviewResponse
+  status: 200
+}
+
+export type getLibraryFirstPublicationPreviewResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryFirstPublicationPreviewResponseSuccess = (getLibraryFirstPublicationPreviewResponse200) & {
+  headers: Headers;
+};
+export type getLibraryFirstPublicationPreviewResponseError = (getLibraryFirstPublicationPreviewResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryFirstPublicationPreviewResponse = (getLibraryFirstPublicationPreviewResponseSuccess | getLibraryFirstPublicationPreviewResponseError)
+
+export const getGetLibraryFirstPublicationPreviewUrl = (releaseId: string,
+    positionId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/positions/${positionId}/publication/preview`
+}
+
+/**
+ * @summary Preview first publication for a library position
+ */
+export const getLibraryFirstPublicationPreview = async (releaseId: string,
+    positionId: string, options?: RequestInit): Promise<getLibraryFirstPublicationPreviewResponse> => {
+
+  const res = await fetch(getGetLibraryFirstPublicationPreviewUrl(releaseId,positionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getLibraryFirstPublicationPreviewResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getLibraryFirstPublicationPreviewResponse
+}
+
+
+
+
+
+export const getGetLibraryFirstPublicationPreviewQueryKey = (releaseId: string,
+    positionId: string,) => {
+    return [
+    `/api/library/releases/${releaseId}/positions/${positionId}/publication/preview`
+    ] as const;
+    }
+
+
+export const getGetLibraryFirstPublicationPreviewQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryFirstPublicationPreviewQueryKey(releaseId,positionId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>> = ({ signal }) => getLibraryFirstPublicationPreview(releaseId,positionId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseId !== null && releaseId !== undefined && positionId !== null && positionId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryFirstPublicationPreviewQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>>
+export type GetLibraryFirstPublicationPreviewQueryError = ErrorModel
+
+
+export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Preview first publication for a library position
+ */
+
+export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryFirstPublicationPreviewQueryOptions(releaseId,positionId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type setLibraryReleasePrimaryArtistResponse200 = {
   data: LibraryPrimaryArtistResponse
