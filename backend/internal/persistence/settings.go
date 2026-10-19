@@ -28,6 +28,23 @@ type SettingsRepository struct{ db *bun.DB }
 
 func NewSettingsRepository(db *bun.DB) *SettingsRepository { return &SettingsRepository{db: db} }
 
+// GetPublicationPlanningValues reads every setting used by first-publication
+// planning in one SQL statement, so the planner cannot mix revisions.
+func (r *SettingsRepository) GetPublicationPlanningValues(ctx context.Context) (map[string]string, error) {
+	values := make(map[string]string, 7)
+	var rows []AppSetting
+	if err := r.db.NewSelect().Model(&rows).Where("setting_name IN (?)", bun.List([]string{
+		"output_directory", "output_case_sensitive", "output_unicode_normalization",
+		"publication_format", "publication_path_template", "active_ffmpeg_installation_id", "active_fpcalc_installation_id",
+	})).Scan(ctx); err != nil {
+		return nil, fmt.Errorf("read publication planning settings: %w", err)
+	}
+	for _, row := range rows {
+		values[row.Name] = row.Value
+	}
+	return values, nil
+}
+
 func (r *SettingsRepository) Get(ctx context.Context, name string) (string, bool, error) {
 	var setting AppSetting
 	err := r.db.NewSelect().Model(&setting).Where("setting_name = ?", name).Scan(ctx)

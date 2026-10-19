@@ -65,6 +65,10 @@ type musicBrainzConfigSnapshotStore interface {
 	GetMusicBrainzConfigValues(context.Context) (map[string]string, error)
 }
 
+type publicationPlanningSnapshotStore interface {
+	GetPublicationPlanningValues(context.Context) (map[string]string, error)
+}
+
 type runtimeUpdateStore interface {
 	UpdateRuntime(context.Context, string, string, map[string]string) error
 }
@@ -805,6 +809,63 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 		HasAcoustIDApplicationKey:         hasAcoustIDKey,
 		MusicBrainzSelfHostedThrottle:     selfHostedThrottle,
 		MusicBrainzSelfHostedDelaySeconds: selfHostedDelay,
+	}, nil
+}
+
+// ReadPublicationPlanningSettings reads the exact runtime settings consumed by
+// a publication planner from one store snapshot. It deliberately excludes
+// unrelated settings and secrets.
+func (r *Registry) ReadPublicationPlanningSettings(ctx context.Context) (RuntimeSettings, error) {
+	store, ok := r.store.(publicationPlanningSnapshotStore)
+	if !ok {
+		return RuntimeSettings{}, fmt.Errorf("coherent publication settings snapshot is unavailable")
+	}
+	values, err := store.GetPublicationPlanningValues(ctx)
+	if err != nil {
+		return RuntimeSettings{}, fmt.Errorf("read publication planning settings: %w", err)
+	}
+	return ParsePublicationPlanningValues(values)
+}
+
+// ParsePublicationPlanningValues decodes the exact settings needed by a
+// publication planner from a previously captured settings snapshot.
+func ParsePublicationPlanningValues(values map[string]string) (RuntimeSettings, error) {
+	output, err := parseSnapshotSetting(values, outputRootSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	format, err := parseSnapshotSetting(values, publicationSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	template, err := parseSnapshotSetting(values, publicationPathTemplateSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	var caseSensitive *bool
+	if _, exists := values[OutputCaseSensitiveKey]; exists {
+		parsed, err := parseSnapshotSetting(values, outputCaseSetting)
+		if err != nil {
+			return RuntimeSettings{}, err
+		}
+		caseSensitive = &parsed
+	}
+	unicodeNormalization, err := parseSnapshotSetting(values, outputUnicodeSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	ffmpeg, err := parseSnapshotSetting(values, activeFFmpegSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	fpcalc, err := parseSnapshotSetting(values, activeFPCalcSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	return RuntimeSettings{
+		OutputDirectory: output, PublicationFormat: format, PublicationPathTemplate: template,
+		OutputCaseSensitive: caseSensitive, OutputUnicodeNormalization: unicodeNormalization,
+		ActiveFFmpegInstallation: ffmpeg.String(), ActiveFPCalcInstallation: fpcalc.String(),
 	}, nil
 }
 
