@@ -111,6 +111,9 @@ func compareInOwnedScratch(ctx context.Context, parent OutputDirectory, parentCl
 	if !cleanupOK {
 		return false, ErrUnsupported
 	}
+	if err := verifyNamespaceProbeScope(ctx, parent, scratch); err != nil {
+		return false, err
+	}
 
 	if err := ctx.Err(); err != nil {
 		return false, err

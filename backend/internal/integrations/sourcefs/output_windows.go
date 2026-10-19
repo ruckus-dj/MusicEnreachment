@@ -22,7 +22,7 @@ import (
 // documented directory-access aliases of FILE_WRITE_DATA and FILE_APPEND_DATA;
 // x/sys/windows exports only the latter names.
 const windowsDirAccess = windows.FILE_LIST_DIRECTORY | windows.FILE_WRITE_DATA |
-	windows.FILE_APPEND_DATA | windows.FILE_READ_ATTRIBUTES | windows.SYNCHRONIZE
+	windows.FILE_APPEND_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_WRITE_ATTRIBUTES | windows.SYNCHRONIZE
 
 type windowsOutputOpener struct{}
 

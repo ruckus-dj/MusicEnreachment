@@ -67,6 +67,8 @@ type unixOutputDir struct {
 	closed bool
 }
 
+func (d *unixOutputDir) namespaceScopeDirectory() OutputDirectory { return d }
+
 func (d *unixOutputDir) OpenOrCreateDir(ctx context.Context, name string) (OutputDirectory, error) {
 	if err := validateComponent(name); err != nil {
 		return nil, err
