@@ -52,6 +52,16 @@ type LibraryPublicationContext struct {
 func (repository *SetupManagerRepository) ReadLibraryPublicationContext(ctx context.Context, releaseUUID, positionUUID uuid.UUID) (*LibraryPublicationContext, error) {
 	var result *LibraryPublicationContext
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		return readLibraryPublicationContextTx(ctx, tx, releaseUUID, positionUUID, &result)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func readLibraryPublicationContextTx(ctx context.Context, tx bun.IDB, releaseUUID, positionUUID uuid.UUID, result **LibraryPublicationContext) error {
+	{
 		var row struct {
 			ReleaseID  uuid.UUID       `bun:"release_id,type:uuid"`
 			PositionID uuid.UUID       `bun:"position_id,type:uuid"`
@@ -72,7 +82,7 @@ func (repository *SetupManagerRepository) ReadLibraryPublicationContext(ctx cont
 		if err != nil {
 			return err
 		}
-		result = &LibraryPublicationContext{ReleaseID: row.ReleaseID, PositionID: row.PositionID, ActiveEpoch: row.Epoch, Metadata: metadata}
+		*result = &LibraryPublicationContext{ReleaseID: row.ReleaseID, PositionID: row.PositionID, ActiveEpoch: row.Epoch, Metadata: metadata}
 
 		var current TrackPublication
 		err = tx.NewSelect().Model(&current).Where("position_id=?", positionUUID).Scan(ctx)
@@ -92,7 +102,7 @@ func (repository *SetupManagerRepository) ReadLibraryPublicationContext(ctx cont
 				return fmt.Errorf("decode current publication assets: %w", err)
 			}
 			decoded.Assets = assets
-			result.Current = decoded
+			(*result).Current = decoded
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read current publication: %w", err)
 		}
@@ -107,9 +117,9 @@ func (repository *SetupManagerRepository) ReadLibraryPublicationContext(ctx cont
 		err = tx.NewRaw(`SELECT a.operation_id, a.candidate_generation, a.phase, o.state, o.stage
 			FROM track_publication_attempt a JOIN operation o ON o.id=a.operation_id WHERE a.position_id=?`, positionUUID).Scan(ctx, &attempt)
 		if err == nil {
-			result.ActiveAttempt = &LibraryPublicationOperation{ID: attempt.OperationID, State: attempt.State, Stage: attempt.Stage}
-			result.AttemptCandidate = &attempt.Candidate
-			result.AttemptPhase = &attempt.Phase
+			(*result).ActiveAttempt = &LibraryPublicationOperation{ID: attempt.OperationID, State: attempt.State, Stage: attempt.Stage}
+			(*result).AttemptCandidate = &attempt.Candidate
+			(*result).AttemptPhase = &attempt.Phase
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read publication attempt summary: %w", err)
 		}
@@ -126,33 +136,29 @@ func (repository *SetupManagerRepository) ReadLibraryPublicationContext(ctx cont
 			PositionID        *uuid.UUID `bun:"position_id,type:uuid"`
 			Generation        *uuid.UUID `bun:"generation,type:uuid"`
 		}
-		if result.Current != nil {
+		if (*result).Current != nil {
 			err = tx.NewRaw(`SELECT c.id, c.epoch, c.key_digest, c.canonical_key, c.relative_path, c.node_kind,
 			c.owner_position_id, c.directory_scope_key, r.position_id, r.generation
 			FROM publication_namespace_claim c JOIN publication_namespace_reservation r ON r.namespace_claim_id=c.id
 			WHERE c.epoch=? AND r.position_id=? AND r.generation=?
-			ORDER BY c.canonical_key`, result.Current.Record.Epoch, positionUUID, result.Current.Record.Generation).Scan(ctx, &rows)
+				ORDER BY c.canonical_key`, (*result).Current.Record.Epoch, positionUUID, (*result).Current.Record.Generation).Scan(ctx, &rows)
 		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read publication namespace manifest: %w", err)
 		}
-		result.NamespaceManifest = make([]LibraryPublicationNamespaceNode, 0, len(rows))
+		(*result).NamespaceManifest = make([]LibraryPublicationNamespaceNode, 0, len(rows))
 		for _, node := range rows {
-			result.NamespaceManifest = append(result.NamespaceManifest, LibraryPublicationNamespaceNode{
+			(*result).NamespaceManifest = append((*result).NamespaceManifest, LibraryPublicationNamespaceNode{
 				Claim:      PublicationNamespaceClaim{ID: node.ID, Epoch: node.Epoch, KeyDigest: node.KeyDigest, CanonicalKey: node.CanonicalKey, RelativePath: node.RelativePath, NodeKind: node.NodeKind, OwnerPositionID: node.OwnerPositionID, DirectoryScopeKey: node.DirectoryScopeKey},
 				PositionID: node.PositionID, Generation: node.Generation,
 			})
 		}
-		result.ManualLyrics, err = readManualLyricsReceiptProjection(ctx, tx, positionUUID)
+		(*result).ManualLyrics, err = readManualLyricsReceiptProjection(ctx, tx, positionUUID)
 		if err != nil {
 			return fmt.Errorf("read manual lyrics receipt: %w", err)
 		}
 		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
-	return result, nil
 }
 
 func decodePositionPublicationMetadata(raw json.RawMessage, revision int64) (LibraryMetadata, error) {

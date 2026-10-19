@@ -1,0 +1,88 @@
+//go:build integration
+
+package persistence
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+)
+
+func TestReadLibraryFirstPublicationContextUsesCurrentSelectedSourcePostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := testpostgres.OpenMigrated(t)
+	repo := NewSetupManagerRepository(db)
+
+	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'source context fixture')`, releaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'source context fixture')`, trackID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
+		t.Fatal(err)
+	}
+
+	const configuredPath = "/library/source"
+	const relativePath = "track.flac"
+	const sizeBytes int64 = 42
+	mtime := time.Date(2025, time.January, 2, 3, 4, 5, 123456000, time.UTC)
+	rootID, locationID, workID, variantID, scanOperationID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,enabled,status) VALUES (?,?, 'Source',1,?,true,'available')`, rootID, configuredPath, configuredPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,finished_at) VALUES (?,'scan_source','succeeded','succeeded','{}'::jsonb,now())`, scanOperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes,analysis_policy_version,ffprobe_version,ffprobe_json,observed_tags,inspected_at,applied_operation_id,audio_stream_count) VALUES (?, ?,1,'ffprobe 1','{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2}]}'::jsonb,'{}'::jsonb,?,?,1)`, variantID, sizeBytes, mtime, scanOperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_location(id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,media_variant_id) VALUES (?,?, ?,?,?,1,'audio',?)`, locationID, rootID, relativePath, sizeBytes, mtime, variantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_analysis_work(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id,current_location_id) VALUES (?,?,?,?,?,?,?, ?,false,?,?)`, workID, locationID, rootID, configuredPath, configuredPath, relativePath, sizeBytes, mtime, scanOperationID, locationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_work_variant_identity(work_id,media_variant_id) VALUES (?,?)`, workID, variantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id,step,state,success_probe_variant_id,success_reuse_origin) VALUES (?,'probe','succeeded',?,'executed')`, workID, variantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, uuid.New(), trackID, variantID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.ReadLibraryFirstPublicationContext(ctx, releaseID, positionID)
+	if err != nil {
+		t.Fatalf("read first publication context: %v", err)
+	}
+	if len(got.Sources) != 1 || len(got.Blockers) != 0 {
+		t.Fatalf("source context = sources %d, blockers %v", len(got.Sources), got.Blockers)
+	}
+	source := got.Sources[0]
+	if source.Selection.RootID != rootID || source.Selection.LocationID != locationID || source.Selection.WorkID != workID || source.Selection.MediaVariantID != variantID ||
+		source.Selection.ConfiguredPath != configuredPath || source.Selection.InventoryPath != configuredPath || source.Selection.RelativePath != relativePath ||
+		source.Selection.SizeBytes != sizeBytes || !source.Selection.MTime.Equal(mtime) {
+		t.Fatalf("selected source = %+v", source.Selection)
+	}
+	if source.Input.ProbeResultID != variantID || source.Input.MediaVariantID != variantID || source.Quality.StreamIndex != 0 {
+		t.Fatalf("probe and quality facts = input %+v quality %+v", source.Input, source.Quality)
+	}
+
+	if _, err := db.ExecContext(ctx, `UPDATE source_location SET relative_path='renamed.flac' WHERE id=?`, locationID); err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.ReadLibraryFirstPublicationContext(ctx, releaseID, positionID)
+	if err != nil {
+		t.Fatalf("read context after inventory location changed: %v", err)
+	}
+	if len(got.Sources) != 0 || len(got.Blockers) != 1 || got.Blockers[0] != "one or more selected source inventory locations are stale" {
+		t.Fatalf("changed location context = sources %+v, blockers %v", got.Sources, got.Blockers)
+	}
+}

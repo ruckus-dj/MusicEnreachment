@@ -245,7 +245,7 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 	return detail, nil
 }
 
-func loadMusicBrainzArtistMBIDs(ctx context.Context, tx bun.Tx, artistIDs []uuid.UUID) (map[uuid.UUID]*uuid.UUID, error) {
+func loadMusicBrainzArtistMBIDs(ctx context.Context, tx bun.IDB, artistIDs []uuid.UUID) (map[uuid.UUID]*uuid.UUID, error) {
 	result := make(map[uuid.UUID]*uuid.UUID, len(artistIDs))
 	if len(artistIDs) == 0 {
 		return result, nil

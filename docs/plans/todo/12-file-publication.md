@@ -11,6 +11,18 @@ runtime acceptance ещё не достигнуты.
 
 ### Текущий прогресс реализации — 2026-10-18
 
+Срез подготовки first-audio publication: coherent repeatable-read context
+с metadata четырёх scopes, credits, template bindings и проверенным selected
+source/probe; optional resolution position → track → recording → release,
+где explicit-empty останавливает наследование. Добавлены unit/PG regressions
+для projection, fresh source и stale inventory path. Native Unicode component
+probe сравнивает реальные filesystem identities и выполняет owned cleanup,
+включая отмену; это ещё не production namespace planner или admission witness.
+ASCII-only comparison helper не подключается и удалён. Полный локальный
+`task verify` прошёл перед удалением этого неиспользуемого helper; commit hooks
+повторно проверяют итоговое дерево. First-audio preview/admission/API/UI
+и native witness binding ещё не завершены.
+
 Текущий user-facing срез добавляет coherent position publication
 read model, server-owned saved-manual-lyrics admission, GET/POST Huma endpoints
 и library release route с явным Save → Apply. Value/removal admission прошли
