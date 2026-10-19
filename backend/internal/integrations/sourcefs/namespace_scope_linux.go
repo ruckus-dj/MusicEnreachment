@@ -12,7 +12,7 @@ import (
 
 const fsCasefoldFlag = 0x40000000
 
-func verifyNativeNamespaceProbeScope(ctx context.Context, parent, scratch OutputDirectory) error {
+func verifyNativeNamespaceProbeScope(ctx context.Context, parent, scratch OutputDirectory) (resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -30,12 +30,12 @@ func verifyNativeNamespaceProbeScope(ctx context.Context, parent, scratch Output
 	if err != nil {
 		return err
 	}
-	defer unix.Close(pfd)
+	defer func() { resultErr = errors.Join(resultErr, unix.Close(pfd)) }()
 	sfd, err := duplicateOutputDirFD(s)
 	if err != nil {
 		return err
 	}
-	defer unix.Close(sfd)
+	defer func() { resultErr = errors.Join(resultErr, unix.Close(sfd)) }()
 	var ps, ss unix.Stat_t
 	if err = unix.Fstat(pfd, &ps); err != nil {
 		return err
