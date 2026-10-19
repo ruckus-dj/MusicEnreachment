@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, expect, it, vi } from "vitest";
 import { server } from "../../test/server";
@@ -603,4 +609,259 @@ it("recovers a failed publication refresh with a read-only refresh action", asyn
   ).toBeDisabled();
   view.unmount();
   expect(applyRequests).toBe(0);
+});
+
+it("keeps monitoring an admitted first publication when the immediate publication refresh fails", async () => {
+  FakeEventSource.instances = [];
+  let publicationReads = 0;
+  let operationReads = 0;
+  server.use(
+    http.get("*/api/library/releases/release-first", () =>
+      HttpResponse.json({
+        id: "release-first",
+        title: "Album",
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        primary_artist: {},
+        artists: [],
+        tracks: [
+          {
+            id: "position-first",
+            local_track_id: "track-first",
+            title: "Song",
+            displayed_number: "1",
+            medium: 1,
+            position: 1,
+            metadata: {},
+            metadata_revision: 2,
+            metadata_version: 1,
+            track_metadata_revision: 1,
+            primary_artist: {},
+            recording_id: "recording-first",
+            artists: [],
+            sources: [],
+          },
+        ],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/release-first/positions/position-first/metadata",
+      () =>
+        HttpResponse.json({
+          revision: 2,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/release-first/positions/position-first/publication",
+      () => {
+        publicationReads += 1;
+        if (publicationReads === 2)
+          return HttpResponse.json(
+            { detail: "temporarily unavailable" },
+            { status: 503 },
+          );
+        return HttpResponse.json({
+          release_id: "release-first",
+          position_id: "position-first",
+          active_epoch: "epoch-first",
+          current_epoch: publicationReads > 2 ? "epoch-first" : undefined,
+          current_generation:
+            publicationReads > 2 ? "generation-first" : undefined,
+          current_path:
+            publicationReads > 2 ? "/music/Album/Song.mka" : undefined,
+          metadata_revision: 2,
+          can_apply_manual_lyrics: false,
+        });
+      },
+    ),
+    http.get(
+      "*/api/library/releases/release-first/positions/position-first/publication/preview",
+      () =>
+        HttpResponse.json({
+          release_id: "release-first",
+          position_id: "position-first",
+          epoch: "epoch-first",
+          context_digest: "a".repeat(64),
+          selected_source: {
+            root_id: "root",
+            location_id: "location",
+            media_variant_id: "variant",
+            stream_index: 0,
+            codec: "flac",
+          },
+          transform: {
+            action: "copy",
+            output_container: "mka",
+            extension: "mka",
+          },
+          path_components: ["Album", "Song.mka"],
+          metadata_revisions: {},
+          warnings: [],
+          blockers: [],
+          native_status: "native verification required",
+        }),
+    ),
+    http.post(
+      "*/api/library/releases/release-first/positions/position-first/publication",
+      () => HttpResponse.json({ id: "first-operation" }, { status: 202 }),
+    ),
+    http.get("*/api/operations/first-operation", () => {
+      operationReads += 1;
+      return HttpResponse.json({
+        id: "first-operation",
+        kind: "library_publication",
+        state: "succeeded",
+        stage: "completed",
+        bytes_completed: 0,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      });
+    }),
+  );
+  vi.stubGlobal("EventSource", FakeEventSource);
+  render(<LibraryReleaseScreen releaseId="release-first" />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Опубликовать" }));
+  await waitFor(() => expect(publicationReads).toBe(2));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "temporarily unavailable",
+  );
+  await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+  FakeEventSource.instances[0].emit("open");
+  await waitFor(() => expect(operationReads).toBeGreaterThan(0));
+  await waitFor(() => expect(publicationReads).toBe(3));
+  expect(
+    await screen.findByText(/\/music\/Album\/Song\.mka/),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(FakeEventSource.instances[0].closed).toBe(true));
+});
+
+it("ignores a deferred read-only retry failure after navigating to another release", async () => {
+  FakeEventSource.instances = [];
+  let releaseRetry: (() => void) | undefined;
+  let oldPublicationReads = 0;
+  let newPublicationReads = 0;
+  const track = {
+    id: "position-shared",
+    local_track_id: "track-shared",
+    title: "Song",
+    displayed_number: "1",
+    medium: 1,
+    position: 1,
+    metadata: {},
+    metadata_revision: 2,
+    metadata_version: 1,
+    track_metadata_revision: 1,
+    primary_artist: {},
+    recording_id: "recording-shared",
+    artists: [],
+    sources: [],
+  };
+  server.use(
+    http.get("*/api/library/releases/release-old", () =>
+      HttpResponse.json({
+        id: "release-old",
+        title: "Old Album",
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        primary_artist: {},
+        artists: [],
+        tracks: [track],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/release-old/positions/position-shared/metadata",
+      () =>
+        HttpResponse.json({
+          revision: 2,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/release-old/positions/position-shared/publication",
+      async () => {
+        oldPublicationReads += 1;
+        if (oldPublicationReads === 1)
+          return HttpResponse.json(
+            { detail: "old release unavailable" },
+            { status: 503 },
+          );
+        await new Promise<void>((resolve) => {
+          releaseRetry = resolve;
+        });
+        return HttpResponse.error();
+      },
+    ),
+    http.get("*/api/library/releases/release-new", () =>
+      HttpResponse.json({
+        id: "release-new",
+        title: "New Album",
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        primary_artist: {},
+        artists: [],
+        tracks: [track],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/release-new/positions/position-shared/metadata",
+      () =>
+        HttpResponse.json({
+          revision: 1,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/release-new/positions/position-shared/publication",
+      () => {
+        newPublicationReads += 1;
+        return HttpResponse.json({
+          release_id: "release-new",
+          position_id: "position-shared",
+          active_epoch: "epoch-new",
+          metadata_revision: 1,
+          can_apply_manual_lyrics: false,
+          current_path: "/music/New/Song.flac",
+        });
+      },
+    ),
+  );
+  vi.stubGlobal("EventSource", FakeEventSource);
+
+  const view = render(<LibraryReleaseScreen releaseId="release-old" />);
+  expect(
+    await screen.findByText("old release unavailable"),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Обновить данные" }));
+  await waitFor(() => expect(oldPublicationReads).toBe(2));
+
+  view.rerender(<LibraryReleaseScreen releaseId="release-new" />);
+  expect(await screen.findByText("New Album")).toBeInTheDocument();
+  expect(
+    await screen.findByText(/\/music\/New\/Song\.flac/),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(newPublicationReads).toBe(1));
+
+  const retry = releaseRetry;
+  if (!retry) throw new Error("Deferred publication retry did not start");
+  await act(async () => {
+    retry();
+    await Promise.resolve();
+  });
+
+  expect(screen.queryByText("old release unavailable")).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Обновить данные" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Сохранённый текст песни")).toHaveValue("");
 });

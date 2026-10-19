@@ -12,6 +12,7 @@ import type {
   LibraryPublicationResponse,
   LibraryReleaseDetailResponse,
 } from "../../api/generated/client.schemas";
+import { FirstPublicationPreview } from "./FirstPublicationPreview";
 
 type PositionData = {
   metadata?: LibraryMetadataResponse;
@@ -23,6 +24,7 @@ type PositionData = {
   saving?: boolean;
   applying?: boolean;
   applyOperationID?: string;
+  firstPublicationOperationID?: string;
   notice?: string;
 };
 
@@ -36,6 +38,8 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
   const [positions, setPositions] = useState<Record<string, PositionData>>({});
   const [error, setError] = useState("");
   const mounted = useRef(false);
+  const currentReleaseID = useRef(releaseId);
+  currentReleaseID.current = releaseId;
   const scope = useRef({ releaseId, generation: 0 });
   if (scope.current.releaseId !== releaseId) {
     scope.current = { releaseId, generation: scope.current.generation + 1 };
@@ -148,12 +152,15 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
   // Keep one wake-only SSE subscription per operation, including attempts that
   // were already active when the release screen was opened.
   useEffect(() => {
+    const requestScope = scope.current;
     const byOperation = new Map<string, Set<string>>();
     for (const [positionId, position] of Object.entries(
       loadedReleaseID === releaseId ? positions : {},
     )) {
       const operationID =
-        position.applyOperationID ?? position.publication?.active_attempt?.id;
+        position.applyOperationID ??
+        position.firstPublicationOperationID ??
+        position.publication?.active_attempt?.id;
       if (!operationID || finishedOperations.current.has(operationID)) continue;
       const associated = byOperation.get(operationID) ?? new Set<string>();
       associated.add(positionId);
@@ -174,44 +181,78 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
       const stop = subscribeToOperation(
         operationID,
         (snapshot) => {
-          if (!mounted.current || scope.current.releaseId !== releaseId) return;
+          if (
+            !mounted.current ||
+            currentReleaseID.current !== releaseId ||
+            scope.current !== requestScope
+          )
+            return;
           for (const positionID of entry.positions) {
             void refreshPosition(positionID)
               .then(() => {
-                if (!mounted.current || scope.current.releaseId !== releaseId)
+                if (
+                  !mounted.current ||
+                  currentReleaseID.current !== releaseId ||
+                  scope.current !== requestScope
+                )
                   return;
                 if (
                   ["succeeded", "failed", "cancelled"].includes(snapshot.state)
                 ) {
                   finishedOperations.current.add(operationID);
-                  setPositions((current) => ({
+                  setPositions((current) => {
+                    if (
+                      !mounted.current ||
+                      currentReleaseID.current !== releaseId ||
+                      scope.current !== requestScope
+                    )
+                      return current;
+                    return {
+                      ...current,
+                      [positionID]: {
+                        ...current[positionID],
+                        applying: false,
+                        applyOperationID: undefined,
+                        firstPublicationOperationID:
+                          current[positionID]?.firstPublicationOperationID ===
+                          operationID
+                            ? undefined
+                            : current[positionID]?.firstPublicationOperationID,
+                        notice:
+                          snapshot.state === "succeeded"
+                            ? "Операция завершена. Сверьте опубликованные данные и квитанцию ниже."
+                            : `Операция завершилась со статусом: ${snapshot.state}.`,
+                      },
+                    };
+                  });
+                }
+              })
+              .catch((reason: unknown) => {
+                if (
+                  !mounted.current ||
+                  currentReleaseID.current !== releaseId ||
+                  scope.current !== requestScope
+                )
+                  return;
+                setPositions((current) => {
+                  if (
+                    !mounted.current ||
+                    currentReleaseID.current !== releaseId ||
+                    scope.current !== requestScope
+                  )
+                    return current;
+                  return {
                     ...current,
                     [positionID]: {
                       ...current[positionID],
                       applying: false,
-                      applyOperationID: undefined,
-                      notice:
-                        snapshot.state === "succeeded"
-                          ? "Операция завершена. Сверьте опубликованные данные и квитанцию ниже."
-                          : `Операция завершилась со статусом: ${snapshot.state}.`,
+                      readError:
+                        reason instanceof Error
+                          ? reason.message
+                          : "Не удалось обновить публикацию.",
                     },
-                  }));
-                }
-              })
-              .catch((reason: unknown) => {
-                if (!mounted.current || scope.current.releaseId !== releaseId)
-                  return;
-                setPositions((current) => ({
-                  ...current,
-                  [positionID]: {
-                    ...current[positionID],
-                    applying: false,
-                    readError:
-                      reason instanceof Error
-                        ? reason.message
-                        : "Не удалось обновить публикацию.",
-                  },
-                }));
+                  };
+                });
               });
           }
         },
@@ -220,18 +261,30 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
           // on reconnect, its subsequent snapshot callback does the same.
           for (const positionID of entry.positions) {
             void refreshPosition(positionID).catch((reason: unknown) => {
-              if (mounted.current && scope.current.releaseId === releaseId) {
-                setPositions((current) => ({
-                  ...current,
-                  [positionID]: {
-                    ...current[positionID],
-                    applying: false,
-                    readError:
-                      reason instanceof Error
-                        ? reason.message
-                        : "Не удалось обновить публикацию.",
-                  },
-                }));
+              if (
+                mounted.current &&
+                currentReleaseID.current === releaseId &&
+                scope.current === requestScope
+              ) {
+                setPositions((current) => {
+                  if (
+                    !mounted.current ||
+                    currentReleaseID.current !== releaseId ||
+                    scope.current !== requestScope
+                  )
+                    return current;
+                  return {
+                    ...current,
+                    [positionID]: {
+                      ...current[positionID],
+                      applying: false,
+                      readError:
+                        reason instanceof Error
+                          ? reason.message
+                          : "Не удалось обновить публикацию.",
+                    },
+                  };
+                });
               }
             });
           }
@@ -461,12 +514,41 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         </p>
       </header>
       {(release.tracks ?? []).map((track) => {
+        const renderScope = scope.current;
         const position = positions[track.id];
         const publication = position?.publication;
         const lyricsField = position?.metadata?.envelope.desired.lyrics;
         const hasManualLyrics =
           lyricsField?.authority === "manual" &&
           ["value", "explicit_empty"].includes(lyricsField.state);
+
+        function isPositionScopeCurrent() {
+          return (
+            mounted.current &&
+            currentReleaseID.current === releaseId &&
+            scope.current === renderScope
+          );
+        }
+
+        function refreshReadState() {
+          if (!isPositionScopeCurrent()) return;
+          void refreshPosition(track.id).catch((reason: unknown) => {
+            if (!isPositionScopeCurrent()) return;
+            setPositions((current) => {
+              if (!isPositionScopeCurrent()) return current;
+              return {
+                ...current,
+                [track.id]: {
+                  ...current[track.id],
+                  readError:
+                    reason instanceof Error
+                      ? reason.message
+                      : "Не удалось обновить публикацию.",
+                },
+              };
+            });
+          });
+        }
         return (
           <article
             key={track.id}
@@ -540,6 +622,30 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                 ? ` · поколение ${publication.current_generation}`
                 : ""}
             </p>
+            {!publication?.current_path &&
+              !publication?.current_generation &&
+              !publication?.active_attempt &&
+              !position?.firstPublicationOperationID && (
+                <FirstPublicationPreview
+                  releaseId={releaseId}
+                  positionId={track.id}
+                  onAdmitted={(operationID) => {
+                    if (!isPositionScopeCurrent()) return;
+                    setPositions((current) => {
+                      if (!isPositionScopeCurrent()) return current;
+                      return {
+                        ...current,
+                        [track.id]: {
+                          ...current[track.id],
+                          firstPublicationOperationID: operationID,
+                        },
+                      };
+                    });
+                    refreshReadState();
+                  }}
+                  onRefresh={refreshReadState}
+                />
+              )}
             <p>
               {publication?.active_attempt
                 ? `Выполняется операция: ${publication.active_attempt.stage} (${publication.active_attempt.state})`
@@ -579,23 +685,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
             {position?.readError && (
               <div role="alert">
                 {position.readError}{" "}
-                <button
-                  type="button"
-                  onClick={() =>
-                    void refreshPosition(track.id).catch((reason: unknown) =>
-                      setPositions((current) => ({
-                        ...current,
-                        [track.id]: {
-                          ...current[track.id],
-                          readError:
-                            reason instanceof Error
-                              ? reason.message
-                              : "Не удалось обновить публикацию.",
-                        },
-                      })),
-                    )
-                  }
-                >
+                <button type="button" onClick={refreshReadState}>
                   Обновить данные
                 </button>
               </div>
