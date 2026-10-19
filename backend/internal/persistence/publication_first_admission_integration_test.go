@@ -39,11 +39,14 @@ func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 			if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {
 				t.Fatal(err)
 			}
-			const rootPath = "/library/first-admission"
+			rootPath, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatalf("canonicalize fixture root: %v", err)
+			}
 			const relative = "track.flac"
 			now := time.Date(2025, time.January, 2, 3, 4, 5, 123456000, time.UTC)
 			rootID, locationID, workID, variantID, scanID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-			_, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,enabled,status) VALUES (?,?, 'Source',1,?,true,'available')`, rootID, rootPath, rootPath)
+			_, err = db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,enabled,status) VALUES (?,?, 'Source',1,?,true,'available')`, rootID, rootPath, rootPath)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -42,7 +42,10 @@ func TestFirstPublicationAdmissionGuardsPhantomTrackSourcePostgreSQL(t *testing.
 	if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {
 		t.Fatal(err)
 	}
-	const rootPath = "/library/first-admission-concurrency"
+	rootPath, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("canonicalize fixture root: %v", err)
+	}
 	now := time.Date(2025, 1, 2, 3, 4, 5, 123456000, time.UTC)
 	rootID, locationID, workID, variantID, scanID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	seed := []struct {
