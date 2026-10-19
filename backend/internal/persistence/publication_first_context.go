@@ -50,142 +50,150 @@ type FirstPublicationMetadata struct {
 func (repository *SetupManagerRepository) ReadLibraryFirstPublicationContext(ctx context.Context, releaseID, positionID uuid.UUID) (*LibraryFirstPublicationContext, error) {
 	var result *LibraryFirstPublicationContext
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
-		var library *LibraryPublicationContext
-		err := readLibraryPublicationContextTx(ctx, tx, releaseID, positionID, &library)
-		if err != nil {
-			return err
-		}
-		result = &LibraryFirstPublicationContext{Library: library, Sources: []FirstPublicationSource{}, TemplateTokens: map[string]string{}, Blockers: []string{}}
-		var release struct {
-			ID              uuid.UUID       `bun:"id,type:uuid"`
-			PrimaryArtistID *uuid.UUID      `bun:"primary_artist_id,type:uuid"`
-			Title           string          `bun:"title"`
-			Metadata        json.RawMessage `bun:"metadata,type:jsonb"`
-			Revision        int64           `bun:"metadata_revision"`
-		}
-		if err := tx.NewRaw(`SELECT id,primary_artist_id,title,metadata,metadata_revision FROM local_release WHERE id=?`, releaseID).Scan(ctx, &release); err != nil {
-			return fmt.Errorf("read first publication release metadata: %w", err)
-		}
-		var position struct {
-			PositionID      uuid.UUID  `bun:"id,type:uuid"`
-			PrimaryArtistID *uuid.UUID `bun:"primary_artist_id,type:uuid"`
-			TrackID         uuid.UUID  `bun:"track_id,type:uuid"`
-			RecordingID     *uuid.UUID `bun:"recording_id,type:uuid"`
-			Medium          int        `bun:"medium"`
-			Number          string     `bun:"displayed_number"`
-		}
-		if err := tx.NewRaw(`SELECT id,primary_artist_id,track_id, recording_id, medium, displayed_number FROM release_track WHERE id=? AND release_id=?`, positionID, releaseID).Scan(ctx, &position); err != nil {
-			return fmt.Errorf("read first publication position: %w", err)
-		}
-		var track struct {
-			ID       uuid.UUID       `bun:"id,type:uuid"`
-			Title    string          `bun:"title"`
-			Metadata json.RawMessage `bun:"metadata,type:jsonb"`
-			Revision int64           `bun:"metadata_revision"`
-		}
-		if err := tx.NewRaw(`SELECT id,title,metadata,metadata_revision FROM local_track WHERE id=?`, position.TrackID).Scan(ctx, &track); err != nil {
-			return fmt.Errorf("read first publication track metadata: %w", err)
-		}
-		releaseEnv, err := decodeFirstPublicationEnvelope(release.Metadata, librarymetadata.ScopeRelease)
-		if err != nil {
-			return err
-		}
-		releaseTitle := release.Title
-		if title, exists := releaseEnv.Desired["title"]; exists {
-			switch title.State {
-			case librarymetadata.StateExplicitEmpty:
-				releaseTitle = ""
-			case librarymetadata.StateValue:
-				if value, ok := title.Value.(string); ok {
-					releaseTitle = value
-				}
-			}
-		}
-		positionEnv := &library.Metadata.Envelope
-		result.Metadata.Release = LibraryMetadata{Revision: release.Revision}
-		result.Metadata.Release.Envelope, err = decodeFirstPublicationEnvelopeValue(release.Metadata, librarymetadata.ScopeRelease)
-		if err != nil {
-			return err
-		}
-		result.Metadata.Track = LibraryMetadata{Revision: track.Revision}
-		result.Metadata.Track.Envelope, err = decodeFirstPublicationEnvelopeValue(track.Metadata, librarymetadata.ScopeTrack)
-		if err != nil {
-			return err
-		}
-		result.Metadata.Position = library.Metadata
-		result.Metadata.Position.Envelope = *positionEnv
-		positionTagsEnvelope := cloneFirstPublicationEnvelope(positionEnv)
-		result.TemplateTokens["ALBUM_NAME"] = releaseTitle
-		result.TemplateTokens["TRACK_NAME"] = track.Title
-		result.TemplateTokens["POSITION_ID"] = positionID.String()
-		result.TemplateTokens["ALBUM_ID"] = releaseID.String()
-		result.TemplateTokens["TRACK_NUMBER"] = position.Number
-		result.TemplateTokens["DISC_NUMBER"] = strconv.Itoa(position.Medium)
-		result.Tags = publication.TagProjectionInput{
-			Release:  publication.ReleaseTags{Title: releaseTitle, Desired: releaseEnv},
-			Position: publication.PositionTags{Title: track.Title, Desired: positionTagsEnvelope, DiscNumber: firstPublicationIntPointer(position.Medium)},
-		}
-		result.Tags.Release.Artist, err = firstPublicationCredits(ctx, tx, "release_artist", "release_id", releaseID)
-		if err != nil {
-			return err
-		}
-		result.Tags.Position.Artist, err = firstPublicationCredits(ctx, tx, "track_artist", "track_id", position.TrackID)
-		if err != nil {
-			return err
-		}
-		result.ReleasePrimaryCredits = append([]librarymetadata.ArtistCredit(nil), result.Tags.Release.Artist...)
-		result.PositionPrimaryCredits = append([]librarymetadata.ArtistCredit(nil), result.Tags.Position.Artist...)
-		result.SelectedReleasePrimaryArtistID = release.PrimaryArtistID
-		result.SelectedPositionPrimaryArtistID = position.PrimaryArtistID
-		setPrimaryArtistTemplateTokens(result.TemplateTokens, "ALBUM", result.ReleasePrimaryCredits, release.PrimaryArtistID)
-		setPrimaryArtistTemplateTokens(result.TemplateTokens, "TRACK", result.PositionPrimaryCredits, position.PrimaryArtistID)
-		result.Tags.Release.ID = firstPublicationUUID(releaseEnv, "release_mbid")
-		result.Tags.Release.GroupID = firstPublicationUUID(releaseEnv, "release_group_mbid")
-		result.Tags.Release.Compilation = firstPublicationBool(releaseEnv, "compilation")
-		result.Tags.Position.ReleaseTrackID = firstPublicationUUID(positionEnv, "release_track_mbid")
-		result.Tags.Position.RecordingID = firstPublicationUUID(positionEnv, "recording_mbid")
-		if result.Tags.Release.ID != nil {
-			result.TemplateTokens["ALBUM_MBID"] = result.Tags.Release.ID.String()
-			result.TemplateTokens["ALBUM_MBID_PART"] = "[" + result.Tags.Release.ID.String() + "]"
-		}
-		if position.Number != "" {
-			if n, parseErr := strconv.Atoi(position.Number); parseErr == nil {
-				result.Tags.Position.TrackNumber = &n
-			}
-		}
-		result.Tags.Position.TrackTotal = nil
-		copyFirstPublicationTokens(result.TemplateTokens, releaseEnv)
-		if position.RecordingID != nil {
-			var recording struct {
-				ID       uuid.UUID       `bun:"id,type:uuid"`
-				Title    string          `bun:"title"`
-				Metadata json.RawMessage `bun:"metadata,type:jsonb"`
-				Revision int64           `bun:"metadata_revision"`
-			}
-			if err := tx.NewRaw(`SELECT id,title,metadata,metadata_revision FROM local_recording WHERE id=?`, *position.RecordingID).Scan(ctx, &recording); err != nil {
-				return fmt.Errorf("read first publication recording metadata: %w", err)
-			}
-			result.Metadata.Recording = LibraryMetadata{Revision: recording.Revision}
-			result.Metadata.Recording.Envelope, err = decodeFirstPublicationEnvelopeValue(recording.Metadata, librarymetadata.ScopeRecording)
-			if err != nil {
-				return err
-			}
-			if result.Tags.Position.RecordingID == nil {
-				result.Tags.Position.RecordingID = firstPublicationUUID(&result.Metadata.Recording.Envelope, "recording_mbid")
-			}
-		}
-		if err := resolveFirstPublicationOptionalFields(result); err != nil {
-			return err
-		}
-		if err := readFirstPublicationSources(ctx, tx, position.TrackID, &result.Sources, &result.Blockers); err != nil {
-			return err
-		}
-		return nil
+		return readLibraryFirstPublicationContextTx(ctx, tx, releaseID, positionID, &result)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// readLibraryFirstPublicationContextTx reads the same factual inputs as the
+// public snapshot reader, but allows admission to consume them in its existing
+// transaction rather than opening a nested transaction.
+func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, releaseID, positionID uuid.UUID, out **LibraryFirstPublicationContext) error {
+	var library *LibraryPublicationContext
+	if err := readLibraryPublicationContextTx(ctx, tx, releaseID, positionID, &library); err != nil {
+		return err
+	}
+	result := &LibraryFirstPublicationContext{Library: library, Sources: []FirstPublicationSource{}, TemplateTokens: map[string]string{}, Blockers: []string{}}
+	var release struct {
+		ID              uuid.UUID       `bun:"id,type:uuid"`
+		PrimaryArtistID *uuid.UUID      `bun:"primary_artist_id,type:uuid"`
+		Title           string          `bun:"title"`
+		Metadata        json.RawMessage `bun:"metadata,type:jsonb"`
+		Revision        int64           `bun:"metadata_revision"`
+	}
+	if err := tx.NewRaw(`SELECT id,primary_artist_id,title,metadata,metadata_revision FROM local_release WHERE id=?`, releaseID).Scan(ctx, &release); err != nil {
+		return fmt.Errorf("read first publication release metadata: %w", err)
+	}
+	var position struct {
+		PositionID      uuid.UUID  `bun:"id,type:uuid"`
+		PrimaryArtistID *uuid.UUID `bun:"primary_artist_id,type:uuid"`
+		TrackID         uuid.UUID  `bun:"track_id,type:uuid"`
+		RecordingID     *uuid.UUID `bun:"recording_id,type:uuid"`
+		Medium          int        `bun:"medium"`
+		Number          string     `bun:"displayed_number"`
+	}
+	if err := tx.NewRaw(`SELECT id,primary_artist_id,track_id, recording_id, medium, displayed_number FROM release_track WHERE id=? AND release_id=?`, positionID, releaseID).Scan(ctx, &position); err != nil {
+		return fmt.Errorf("read first publication position: %w", err)
+	}
+	var track struct {
+		ID       uuid.UUID       `bun:"id,type:uuid"`
+		Title    string          `bun:"title"`
+		Metadata json.RawMessage `bun:"metadata,type:jsonb"`
+		Revision int64           `bun:"metadata_revision"`
+	}
+	if err := tx.NewRaw(`SELECT id,title,metadata,metadata_revision FROM local_track WHERE id=?`, position.TrackID).Scan(ctx, &track); err != nil {
+		return fmt.Errorf("read first publication track metadata: %w", err)
+	}
+	releaseEnv, err := decodeFirstPublicationEnvelope(release.Metadata, librarymetadata.ScopeRelease)
+	if err != nil {
+		return err
+	}
+	releaseTitle := release.Title
+	if title, exists := releaseEnv.Desired["title"]; exists {
+		switch title.State {
+		case librarymetadata.StateExplicitEmpty:
+			releaseTitle = ""
+		case librarymetadata.StateValue:
+			if value, ok := title.Value.(string); ok {
+				releaseTitle = value
+			}
+		}
+	}
+	positionEnv := &library.Metadata.Envelope
+	result.Metadata.Release = LibraryMetadata{Revision: release.Revision}
+	result.Metadata.Release.Envelope, err = decodeFirstPublicationEnvelopeValue(release.Metadata, librarymetadata.ScopeRelease)
+	if err != nil {
+		return err
+	}
+	result.Metadata.Track = LibraryMetadata{Revision: track.Revision}
+	result.Metadata.Track.Envelope, err = decodeFirstPublicationEnvelopeValue(track.Metadata, librarymetadata.ScopeTrack)
+	if err != nil {
+		return err
+	}
+	result.Metadata.Position = library.Metadata
+	result.Metadata.Position.Envelope = *positionEnv
+	positionTagsEnvelope := cloneFirstPublicationEnvelope(positionEnv)
+	result.TemplateTokens["ALBUM_NAME"] = releaseTitle
+	result.TemplateTokens["TRACK_NAME"] = track.Title
+	result.TemplateTokens["POSITION_ID"] = positionID.String()
+	result.TemplateTokens["ALBUM_ID"] = releaseID.String()
+	result.TemplateTokens["TRACK_NUMBER"] = position.Number
+	result.TemplateTokens["DISC_NUMBER"] = strconv.Itoa(position.Medium)
+	result.Tags = publication.TagProjectionInput{
+		Release:  publication.ReleaseTags{Title: releaseTitle, Desired: releaseEnv},
+		Position: publication.PositionTags{Title: track.Title, Desired: positionTagsEnvelope, DiscNumber: firstPublicationIntPointer(position.Medium)},
+	}
+	result.Tags.Release.Artist, err = firstPublicationCredits(ctx, tx, "release_artist", "release_id", releaseID)
+	if err != nil {
+		return err
+	}
+	result.Tags.Position.Artist, err = firstPublicationCredits(ctx, tx, "track_artist", "track_id", position.TrackID)
+	if err != nil {
+		return err
+	}
+	result.ReleasePrimaryCredits = append([]librarymetadata.ArtistCredit(nil), result.Tags.Release.Artist...)
+	result.PositionPrimaryCredits = append([]librarymetadata.ArtistCredit(nil), result.Tags.Position.Artist...)
+	result.SelectedReleasePrimaryArtistID = release.PrimaryArtistID
+	result.SelectedPositionPrimaryArtistID = position.PrimaryArtistID
+	if err := setPrimaryArtistTemplateTokens(result.TemplateTokens, "ALBUM", result.ReleasePrimaryCredits, release.PrimaryArtistID); err != nil {
+		return err
+	}
+	if err := setPrimaryArtistTemplateTokens(result.TemplateTokens, "TRACK", result.PositionPrimaryCredits, position.PrimaryArtistID); err != nil {
+		return err
+	}
+	result.Tags.Release.ID = firstPublicationUUID(releaseEnv, "release_mbid")
+	result.Tags.Release.GroupID = firstPublicationUUID(releaseEnv, "release_group_mbid")
+	result.Tags.Release.Compilation = firstPublicationBool(releaseEnv, "compilation")
+	result.Tags.Position.ReleaseTrackID = firstPublicationUUID(positionEnv, "release_track_mbid")
+	result.Tags.Position.RecordingID = firstPublicationUUID(positionEnv, "recording_mbid")
+	setReleaseMBIDTemplateTokens(result.TemplateTokens, result.Tags.Release.ID)
+	if position.Number != "" {
+		if n, parseErr := strconv.Atoi(position.Number); parseErr == nil {
+			result.Tags.Position.TrackNumber = &n
+		}
+	}
+	result.Tags.Position.TrackTotal = nil
+	copyFirstPublicationTokens(result.TemplateTokens, releaseEnv)
+	if position.RecordingID != nil {
+		var recording struct {
+			ID       uuid.UUID       `bun:"id,type:uuid"`
+			Title    string          `bun:"title"`
+			Metadata json.RawMessage `bun:"metadata,type:jsonb"`
+			Revision int64           `bun:"metadata_revision"`
+		}
+		if err := tx.NewRaw(`SELECT id,title,metadata,metadata_revision FROM local_recording WHERE id=?`, *position.RecordingID).Scan(ctx, &recording); err != nil {
+			return fmt.Errorf("read first publication recording metadata: %w", err)
+		}
+		result.Metadata.Recording = LibraryMetadata{Revision: recording.Revision}
+		result.Metadata.Recording.Envelope, err = decodeFirstPublicationEnvelopeValue(recording.Metadata, librarymetadata.ScopeRecording)
+		if err != nil {
+			return err
+		}
+		if result.Tags.Position.RecordingID == nil {
+			result.Tags.Position.RecordingID = firstPublicationUUID(&result.Metadata.Recording.Envelope, "recording_mbid")
+		}
+	}
+	if err := resolveFirstPublicationOptionalFields(result); err != nil {
+		return err
+	}
+	if err := readFirstPublicationSources(ctx, tx, position.TrackID, &result.Sources, &result.Blockers); err != nil {
+		return err
+	}
+	*out = result
+	return nil
 }
 
 func resolveFirstPublicationOptionalFields(result *LibraryFirstPublicationContext) error {
@@ -293,7 +301,16 @@ func copyFirstPublicationTokens(tokens map[string]string, envelope *librarymetad
 	}
 }
 
-func setPrimaryArtistTemplateTokens(tokens map[string]string, prefix string, credits []librarymetadata.ArtistCredit, selected *uuid.UUID) {
+func setReleaseMBIDTemplateTokens(tokens map[string]string, mbid *uuid.UUID) {
+	if mbid == nil || *mbid == uuid.Nil {
+		return
+	}
+	full := mbid.String()
+	tokens["ALBUM_MBID"] = full
+	tokens["ALBUM_MBID_PART"] = full[:8]
+}
+
+func setPrimaryArtistTemplateTokens(tokens map[string]string, prefix string, credits []librarymetadata.ArtistCredit, selected *uuid.UUID) error {
 	if len(credits) > 0 {
 		var full strings.Builder
 		for _, credit := range credits {
@@ -307,7 +324,7 @@ func setPrimaryArtistTemplateTokens(tokens map[string]string, prefix string, cre
 		tokens[prefix+"_ARTIST"] = full.String()
 	}
 	if selected == nil {
-		return
+		return nil
 	}
 	for _, credit := range credits {
 		if credit.ArtistID != selected.String() {
@@ -320,11 +337,19 @@ func setPrimaryArtistTemplateTokens(tokens map[string]string, prefix string, cre
 		tokens[prefix+"_PRIMARY_ARTIST"] = name
 		tokens[prefix+"_PRIMARY_ARTIST_ID"] = credit.ArtistID
 		if credit.MBID != nil {
-			tokens[prefix+"_PRIMARY_ARTIST_MBID"] = *credit.MBID
-			tokens[prefix+"_PRIMARY_ARTIST_MBID_PART"] = "[" + *credit.MBID + "]"
+			mbid, err := uuid.Parse(*credit.MBID)
+			if err != nil {
+				return fmt.Errorf("parse first publication artist MBID: %w", err)
+			}
+			if mbid != uuid.Nil {
+				full := mbid.String()
+				tokens[prefix+"_PRIMARY_ARTIST_MBID"] = full
+				tokens[prefix+"_PRIMARY_ARTIST_MBID_PART"] = full[:8]
+			}
 		}
-		return
+		return nil
 	}
+	return nil
 }
 
 func firstPublicationUUID(envelope *librarymetadata.Envelope, field string) *uuid.UUID {
@@ -483,6 +508,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		return fmt.Errorf("read first publication source candidates: %w", err)
 	}
 	for _, row := range rows {
+		row.MTime = row.MTime.UTC()
 		index, ok := uniquePublicationAudioIndex(row.Variant.FFProbeJSON)
 		if !ok {
 			*blockers = append(*blockers, fmt.Sprintf("selected source %s has multiple or invalid audio streams; explicit stream selection is required", row.LocationID))

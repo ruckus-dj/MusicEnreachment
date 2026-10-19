@@ -31,7 +31,7 @@ func validateAndLockPublicationSource(ctx context.Context, tx bun.IDB, position 
 		return fmt.Errorf("admit publication: lock source location: %w", err)
 	}
 	if location.RelativePath != frozen.RelativePath || location.SizeBytes != frozen.SizeBytes || !location.Mtime.Equal(frozen.MTime) || location.MediaVariantID == nil || *location.MediaVariantID != frozen.MediaVariantID {
-		return fmt.Errorf("admit publication: source location changed")
+		return fmt.Errorf("admit publication: source location changed: %w", ErrPublicationAdmissionConflict)
 	}
 	var work SourceAnalysisWork
 	if err := tx.NewSelect().Model(&work).Where("id=?", source.WorkID).For("UPDATE").Scan(ctx); err != nil {

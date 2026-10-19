@@ -52,6 +52,7 @@ type PublicationAdmission struct {
 	manualLyrics          *PublicationManualLyricsInput
 	validatedManualLyrics bool
 	metadataRevision      int64
+	firstAdmission        *firstPublicationAdmissionHook
 }
 
 // PublicationSourceSelection is the caller's exact inventory selector. The
@@ -102,150 +103,163 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		return uuid.Nil, err
 	}
 	operationID := uuid.New()
+	var admittedOperationID uuid.UUID
 	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
-			return fmt.Errorf("admit publication: lock output gate: %w", err)
-		}
-		var pinnedInstallation *ToolInstallation
-		if request.Source != nil {
-			if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
-				return fmt.Errorf("admit publication: lock source mutation gate: %w", err)
-			}
-		}
-		if request.ToolsReadRequired {
-			if err := lockToolsMoveReaders(ctx, tx); err != nil {
-				return fmt.Errorf("admit publication: lock tools-root readers: %w", err)
-			}
-			moving, err := activeToolsMoveExists(ctx, tx)
-			if err != nil {
-				return fmt.Errorf("admit publication: check active tools-root move: %w", err)
-			}
-			if moving {
-				return ErrToolsRootMoveActive
-			}
-			if err := validatePublicationToolSelections(request.Tools); err != nil {
-				return err
-			}
-			if err := lockPackageSelections(ctx, tx, []string{"ffmpeg"}); err != nil {
-				return fmt.Errorf("admit publication: lock ffmpeg selection: %w", err)
-			}
-		} else if len(request.Tools) != 0 {
-			return fmt.Errorf("admit publication: tool selections require tools-read admission")
-		}
-		if request.Source != nil {
-			if err := validateAndLockPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio); err != nil {
-				return err
-			}
-		}
-		if request.ToolsReadRequired {
-			installationID := request.Tools[0].InstallationID
-			if err := lockCompatibleInstallations(ctx, tx, []uuid.UUID{installationID}); err != nil {
-				return fmt.Errorf("admit publication: lock pinned ffmpeg installation: %w", err)
-			}
-			pinnedInstallation = new(ToolInstallation)
-			if err := tx.NewSelect().Model(pinnedInstallation).Where("id = ?", installationID).Scan(ctx); err != nil {
-				return fmt.Errorf("admit publication: read pinned ffmpeg installation: %w", err)
-			}
-			if err := validatePublicationInstallation(pinnedInstallation, request.Tools); err != nil {
-				return err
-			}
-		}
-		var epoch uuid.UUID
-		if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &epoch); err != nil {
-			return fmt.Errorf("admit publication: lock output epoch: %w", err)
-		}
-		if epoch != request.ExpectedEpoch {
-			return fmt.Errorf("admit publication: output epoch changed: %w", ErrPublicationAdmissionConflict)
-		}
-		var position, releaseID uuid.UUID
-		if err := tx.NewRaw(`SELECT id,release_id FROM release_track WHERE id=? FOR UPDATE`, request.PositionID).Scan(ctx, &position, &releaseID); err != nil {
-			if err == sql.ErrNoRows {
-				return fmt.Errorf("admit publication: position no longer exists: %w", ErrPublicationAdmissionConflict)
-			}
-			return fmt.Errorf("admit publication: lock position: %w", err)
-		}
-		if request.ExpectedReleaseID != uuid.Nil && releaseID != request.ExpectedReleaseID {
-			return fmt.Errorf("admit publication: position does not belong to expected release: %w", ErrPublicationAdmissionConflict)
-		}
-		var generation *uuid.UUID
-		err := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, request.PositionID).Scan(ctx, &generation)
-		if err != nil && err != sql.ErrNoRows {
-			return fmt.Errorf("admit publication: read current generation: %w", err)
-		}
-		if !sameOptionalUUID(generation, request.ExpectedGeneration) {
-			return fmt.Errorf("admit publication: current generation changed: %w", ErrPublicationAdmissionConflict)
-		}
-		if input.Rewrite != nil {
-			var current TrackPublication
-			if err := tx.NewSelect().Model(&current).Where("position_id=?", request.PositionID).For("UPDATE").Scan(ctx); err != nil {
-				if err == sql.ErrNoRows {
-					return fmt.Errorf("admit publication: current publication changed: %w", ErrPublicationAdmissionConflict)
-				}
-				return fmt.Errorf("admit publication: lock current publication: %w", err)
-			}
-			if !publicationRewriteMatchesCurrent(current, epoch, *input.Rewrite) {
-				return fmt.Errorf("admit publication: frozen rewrite facts do not match current publication: %w", ErrPublicationAdmissionConflict)
-			}
-			if request.manualLyrics != nil {
-				if err := validateManualLyricsAdmission(ctx, tx, request, &input, current); err != nil {
-					return err
-				}
-			}
-		}
-		var active uuid.UUID
-		if err := tx.NewRaw(`SELECT operation_id FROM track_publication_attempt WHERE position_id=?`, request.PositionID).Scan(ctx, &active); err == nil {
-			return fmt.Errorf("admit publication: position already has an unfinished attempt: %w", ErrPublicationAdmissionConflict)
-		} else if err != sql.ErrNoRows {
-			return fmt.Errorf("admit publication: check active attempt: %w", err)
-		}
-		if err := reservePublicationNamespace(ctx, tx, request); err != nil {
-			return err
-		}
-		snapshot, _ := json.Marshal(map[string]any{"version": 1, "position_id": request.PositionID.String(), "output_epoch": epoch.String(), "intent_kind": request.IntentKind})
-		frozenInputs := append(json.RawMessage(nil), request.FrozenInputs...)
-		if request.manualLyrics != nil {
-			frozenInputs, err = json.Marshal(input)
-			if err != nil {
-				return fmt.Errorf("admit publication: encode frozen manual lyrics input: %w", err)
-			}
-		}
-		result, err := client.InsertTx(ctx, tx.Tx, publication.TrackArgs{OperationID: operationID}, nil)
-		if err != nil {
-			return fmt.Errorf("admit publication: insert River job: %w", err)
-		}
-		if result == nil || result.Job == nil {
-			return fmt.Errorf("admit publication: insert River job returned no job")
-		}
-		op := &Operation{ID: operationID, Kind: "publish_track_v1", State: "queued", Stage: "queued", InputSnapshot: snapshot, ToolsReadRequired: request.ToolsReadRequired, Attempt: 1, RiverJobID: &result.Job.ID}
-		if err := repository.CreateOperationWith(ctx, tx, op); err != nil {
-			return fmt.Errorf("admit publication: create operation: %w", err)
-		}
-		manifest, _ := json.Marshal(struct {
-			Version int                        `json:"version"`
-			Nodes   []PublicationNamespaceNode `json:"nodes"`
-		}{Version: 1, Nodes: request.NamespaceManifest})
-		attempt := &TrackPublicationAttempt{OperationID: operationID, PositionID: request.PositionID, Epoch: epoch, ExpectedGeneration: request.ExpectedGeneration, CandidateGeneration: request.CandidateGeneration, IntentKind: request.IntentKind, Phase: "queued", FrozenInputs: frozenInputs, NamespaceManifest: manifest, MutationJournal: json.RawMessage("[]")}
-		if _, err := tx.NewInsert().Model(attempt).Exec(ctx); err != nil {
-			return fmt.Errorf("admit publication: create attempt: %w", err)
-		}
-		if pinnedInstallation != nil {
-			if _, err := tx.NewRaw(`INSERT INTO operation_tool_read_hold(operation_id, installation_id) VALUES (?, ?)`, operationID, pinnedInstallation.ID).Exec(ctx); err != nil {
-				return fmt.Errorf("admit publication: hold pinned ffmpeg installation: %w", err)
-			}
-		}
-		if request.Source != nil {
-			source := request.Source
-			if source.HoldUUID == uuid.Nil {
-				return fmt.Errorf("admit publication: source hold UUID is required")
-			}
-			if _, err := tx.NewRaw(`INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, operationID, 1, result.Job.ID, epoch, source.HoldUUID, source.RootID, source.LocationID, source.WorkID, source.MediaVariantID, source.ConfiguredPath, source.InventoryPath, source.RelativePath, source.SizeBytes, source.MTime).Exec(ctx); err != nil {
-				return fmt.Errorf("admit publication: create source hold: %w", err)
-			}
-		}
-		return nil
+		admittedOperationID, err = repository.admitPublicationTx(ctx, tx, request, input, operationID, client)
+		return err
 	})
 	if err != nil {
 		return uuid.Nil, err
+	}
+	return admittedOperationID, nil
+}
+
+func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context, tx bun.Tx, request PublicationAdmission, input PublicationInputs, operationID uuid.UUID, client RiverInserter) (uuid.UUID, error) {
+	if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+		return uuid.Nil, fmt.Errorf("admit publication: lock output gate: %w", err)
+	}
+	var pinnedInstallation *ToolInstallation
+	if request.Source != nil {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: lock source mutation gate: %w", err)
+		}
+	}
+	if request.ToolsReadRequired {
+		if err := lockToolsMoveReaders(ctx, tx); err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: lock tools-root readers: %w", err)
+		}
+		moving, err := activeToolsMoveExists(ctx, tx)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: check active tools-root move: %w", err)
+		}
+		if moving {
+			return uuid.Nil, ErrToolsRootMoveActive
+		}
+		if err := validatePublicationToolSelections(request.Tools); err != nil {
+			return uuid.Nil, err
+		}
+		if err := lockPackageSelections(ctx, tx, []string{"ffmpeg"}); err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: lock ffmpeg selection: %w", err)
+		}
+	} else if len(request.Tools) != 0 {
+		return uuid.Nil, fmt.Errorf("admit publication: tool selections require tools-read admission")
+	}
+	if request.Source != nil {
+		if err := validateAndLockPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	if request.ToolsReadRequired {
+		installationID := request.Tools[0].InstallationID
+		if err := lockCompatibleInstallations(ctx, tx, []uuid.UUID{installationID}); err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: lock pinned ffmpeg installation: %w", err)
+		}
+		pinnedInstallation = new(ToolInstallation)
+		if err := tx.NewSelect().Model(pinnedInstallation).Where("id = ?", installationID).Scan(ctx); err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: read pinned ffmpeg installation: %w", err)
+		}
+		if err := validatePublicationInstallation(pinnedInstallation, request.Tools); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	var epoch uuid.UUID
+	if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &epoch); err != nil {
+		return uuid.Nil, fmt.Errorf("admit publication: lock output epoch: %w", err)
+	}
+	if epoch != request.ExpectedEpoch {
+		return uuid.Nil, fmt.Errorf("admit publication: output epoch changed: %w", ErrPublicationAdmissionConflict)
+	}
+	if request.firstAdmission != nil {
+		manifest, err := repository.prepareFirstPublicationAdmission(ctx, tx, request)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		request.NamespaceManifest = manifest
+	}
+	var position, releaseID uuid.UUID
+	if err := tx.NewRaw(`SELECT id,release_id FROM release_track WHERE id=? FOR UPDATE`, request.PositionID).Scan(ctx, &position, &releaseID); err != nil {
+		if err == sql.ErrNoRows {
+			return uuid.Nil, fmt.Errorf("admit publication: position no longer exists: %w", ErrPublicationAdmissionConflict)
+		}
+		return uuid.Nil, fmt.Errorf("admit publication: lock position: %w", err)
+	}
+	if request.ExpectedReleaseID != uuid.Nil && releaseID != request.ExpectedReleaseID {
+		return uuid.Nil, fmt.Errorf("admit publication: position does not belong to expected release: %w", ErrPublicationAdmissionConflict)
+	}
+	var generation *uuid.UUID
+	err := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, request.PositionID).Scan(ctx, &generation)
+	if err != nil && err != sql.ErrNoRows {
+		return uuid.Nil, fmt.Errorf("admit publication: read current generation: %w", err)
+	}
+	if !sameOptionalUUID(generation, request.ExpectedGeneration) {
+		return uuid.Nil, fmt.Errorf("admit publication: current generation changed: %w", ErrPublicationAdmissionConflict)
+	}
+	if input.Rewrite != nil {
+		var current TrackPublication
+		if err := tx.NewSelect().Model(&current).Where("position_id=?", request.PositionID).For("UPDATE").Scan(ctx); err != nil {
+			if err == sql.ErrNoRows {
+				return uuid.Nil, fmt.Errorf("admit publication: current publication changed: %w", ErrPublicationAdmissionConflict)
+			}
+			return uuid.Nil, fmt.Errorf("admit publication: lock current publication: %w", err)
+		}
+		if !publicationRewriteMatchesCurrent(current, epoch, *input.Rewrite) {
+			return uuid.Nil, fmt.Errorf("admit publication: frozen rewrite facts do not match current publication: %w", ErrPublicationAdmissionConflict)
+		}
+		if request.manualLyrics != nil {
+			if err := validateManualLyricsAdmission(ctx, tx, request, &input, current); err != nil {
+				return uuid.Nil, err
+			}
+		}
+	}
+	var active uuid.UUID
+	if err := tx.NewRaw(`SELECT operation_id FROM track_publication_attempt WHERE position_id=?`, request.PositionID).Scan(ctx, &active); err == nil {
+		return uuid.Nil, fmt.Errorf("admit publication: position already has an unfinished attempt: %w", ErrPublicationAdmissionConflict)
+	} else if err != sql.ErrNoRows {
+		return uuid.Nil, fmt.Errorf("admit publication: check active attempt: %w", err)
+	}
+	if err := reservePublicationNamespace(ctx, tx, request); err != nil {
+		return uuid.Nil, err
+	}
+	snapshot, _ := json.Marshal(map[string]any{"version": 1, "position_id": request.PositionID.String(), "output_epoch": epoch.String(), "intent_kind": request.IntentKind})
+	frozenInputs := append(json.RawMessage(nil), request.FrozenInputs...)
+	if request.manualLyrics != nil {
+		frozenInputs, err = json.Marshal(input)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: encode frozen manual lyrics input: %w", err)
+		}
+	}
+	result, err := client.InsertTx(ctx, tx.Tx, publication.TrackArgs{OperationID: operationID}, nil)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("admit publication: insert River job: %w", err)
+	}
+	if result == nil || result.Job == nil {
+		return uuid.Nil, fmt.Errorf("admit publication: insert River job returned no job")
+	}
+	op := &Operation{ID: operationID, Kind: "publish_track_v1", State: "queued", Stage: "queued", InputSnapshot: snapshot, ToolsReadRequired: request.ToolsReadRequired, Attempt: 1, RiverJobID: &result.Job.ID}
+	if err := repository.CreateOperationWith(ctx, tx, op); err != nil {
+		return uuid.Nil, fmt.Errorf("admit publication: create operation: %w", err)
+	}
+	manifest, _ := json.Marshal(struct {
+		Version int                        `json:"version"`
+		Nodes   []PublicationNamespaceNode `json:"nodes"`
+	}{Version: 1, Nodes: request.NamespaceManifest})
+	attempt := &TrackPublicationAttempt{OperationID: operationID, PositionID: request.PositionID, Epoch: epoch, ExpectedGeneration: request.ExpectedGeneration, CandidateGeneration: request.CandidateGeneration, IntentKind: request.IntentKind, Phase: "queued", FrozenInputs: frozenInputs, NamespaceManifest: manifest, MutationJournal: json.RawMessage("[]")}
+	if _, err := tx.NewInsert().Model(attempt).Exec(ctx); err != nil {
+		return uuid.Nil, fmt.Errorf("admit publication: create attempt: %w", err)
+	}
+	if pinnedInstallation != nil {
+		if _, err := tx.NewRaw(`INSERT INTO operation_tool_read_hold(operation_id, installation_id) VALUES (?, ?)`, operationID, pinnedInstallation.ID).Exec(ctx); err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: hold pinned ffmpeg installation: %w", err)
+		}
+	}
+	if request.Source != nil {
+		source := request.Source
+		if source.HoldUUID == uuid.Nil {
+			return uuid.Nil, fmt.Errorf("admit publication: source hold UUID is required")
+		}
+		if _, err := tx.NewRaw(`INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, operationID, 1, result.Job.ID, epoch, source.HoldUUID, source.RootID, source.LocationID, source.WorkID, source.MediaVariantID, source.ConfiguredPath, source.InventoryPath, source.RelativePath, source.SizeBytes, source.MTime).Exec(ctx); err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: create source hold: %w", err)
+		}
 	}
 	return operationID, nil
 }
