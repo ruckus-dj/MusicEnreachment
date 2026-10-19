@@ -288,6 +288,32 @@ describe("AppShell sources routing", () => {
     expect(await screen.findByText("Managed tools")).toBeVisible();
   });
 });
+describe("AppShell library routing", () => {
+  it("opens the local release editor from a #/library/releases/{uuid} link once Setup is complete", async () => {
+    const releaseId = "3f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get(`*/api/library/releases/${releaseId}`, () =>
+        HttpResponse.json({
+          id: releaseId,
+          title: "Local release",
+          metadata: {},
+          metadata_revision: 1,
+          metadata_version: 1,
+          primary_artist: {},
+          artists: [],
+          tracks: [],
+        }),
+      ),
+    );
+    window.location.hash = `/library/releases/${releaseId}`;
+    render(<AppShell />);
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Local release" }),
+    ).toBeVisible();
+    expect(window.location.hash).toBe(`#/library/releases/${releaseId}`);
+  });
+});
 describe("AppShell themed shell", () => {
   it("uses the themed Settings shell for the settings route", async () => {
     window.location.hash = "/settings";

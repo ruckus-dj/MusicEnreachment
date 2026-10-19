@@ -15,17 +15,30 @@ import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
 import { SourcesScreen } from "../features/sources/SourcesScreen";
 
-type Route = "/" | "/settings" | "/setup" | "/sources" | "/incoming-groups";
+type Route =
+  | "/"
+  | "/settings"
+  | "/setup"
+  | "/sources"
+  | "/incoming-groups"
+  | `/library/releases/${string}`;
 
 // The inventory screen owns its own #/sources/{id} address, so any string
 // under #/sources maps to the same shell route.
 const sourcesRoute = /^#\/sources(\/[^/]+(\/locations\/[^/]+)?)?$/;
+// The local release editor is addressed by the release UUID only. The backend
+// validates the identifier, so the shell accepts a plain canonical UUID and
+// leaves any other #/library/releases value to the landing fallback.
+const libraryReleaseRoute =
+  /^#\/library\/releases\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 function currentRoute(): Route {
   const hash = window.location.hash;
   if (hash === "#/settings") return "/settings";
   if (hash === "#/setup") return "/setup";
   if (sourcesRoute.test(hash)) return "/sources";
   if (hash === "#/incoming-groups") return "/incoming-groups";
+  const libraryRelease = libraryReleaseRoute.exec(hash);
+  if (libraryRelease) return `/library/releases/${libraryRelease[1]}`;
   return "/";
 }
 function subscribe(onChange: () => void) {
