@@ -125,6 +125,68 @@ func TestPublicationReconciliationDeliveryAttemptAndRepairFencesPostgreSQL(t *te
 	}
 }
 
+func TestPublicationReconciliationParkingAndReleasePostgreSQL(t *testing.T) {
+	t.Parallel()
+	repo, ctx, epoch, position := reconciliationDeliveryFixture(t)
+	reconciliationDeliveryRequest(t, repo, ctx, epoch, position, []string{"scope"})
+	inserter := new(reconciliationDeliveryInserter)
+	if n, err := repo.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || n != 1 {
+		t.Fatalf("dispatch=%d err=%v", n, err)
+	}
+	opID, jobID := inserter.args[0].OperationID, inserter.ids[0]
+	if _, err := repo.db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	guard, result, err := repo.ClaimPublicationReconciliationDelivery(ctx, opID, jobID, 1)
+	if err != nil || result != PublicationReconciliationClaimed {
+		t.Fatalf("claim=%s err=%v", result, err)
+	}
+	if released, err := repo.ReleasePublicationReconciliationDelivery(ctx, guard); err != nil || !released {
+		t.Fatalf("release=%v err=%v", released, err)
+	}
+	var state, stage string
+	var started sql.NullTime
+	if err := repo.db.NewRaw(`SELECT state,stage,started_at FROM operation WHERE id=?`, opID).Scan(ctx, &state, &stage, &started); err != nil {
+		t.Fatal(err)
+	}
+	if state != "queued" || stage != "waiting" || started.Valid {
+		t.Fatalf("released operation=%s/%s started=%v", state, stage, started)
+	}
+	guard2, result, err := repo.ClaimPublicationReconciliationDelivery(ctx, opID, jobID, 1)
+	if err != nil || result != PublicationReconciliationClaimed || guard2.ClaimToken == guard.ClaimToken {
+		t.Fatalf("same-attempt reentry claim=%s err=%v", result, err)
+	}
+	reconciliationDeliveryRequest(t, repo, ctx, epoch, position, []string{"new-scope"})
+	if parked, err := repo.ParkPublicationReconciliationDelivery(ctx, guard, 1, "waiting for source"); err != nil || parked {
+		t.Fatalf("stale park=%v err=%v", parked, err)
+	}
+	if parked, err := repo.ParkPublicationReconciliationDelivery(ctx, guard2, 1, "waiting for source"); err != nil || parked {
+		t.Fatalf("newer generation park=%v err=%v", parked, err)
+	}
+	if parked, err := repo.ParkPublicationReconciliationDelivery(ctx, guard2, 2, "waiting for source"); err != nil || !parked {
+		t.Fatalf("park=%v err=%v", parked, err)
+	}
+	var requested, reconciled, evaluated int64
+	var reason string
+	if err := repo.db.NewRaw(`SELECT requested_generation,reconciled_generation,evaluated_generation,parked_reason FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, epoch, position).Scan(ctx, &requested, &reconciled, &evaluated, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if requested != 2 || reconciled != 0 || evaluated != 2 || reason != "waiting for source" {
+		t.Fatalf("request=%d/%d evaluated=%d reason=%q", requested, reconciled, evaluated, reason)
+	}
+	var dirty int
+	if err := repo.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=?`, epoch, position).Scan(ctx, &dirty); err != nil || dirty != 2 {
+		t.Fatalf("dirty=%d err=%v", dirty, err)
+	}
+	if n, err := repo.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || n != 0 {
+		t.Fatalf("parked dispatch=%d err=%v", n, err)
+	}
+	reconciliationDeliveryRequest(t, repo, ctx, epoch, position, []string{"third-scope"})
+	if n, err := repo.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || n != 1 {
+		t.Fatalf("new generation dispatch=%d err=%v", n, err)
+	}
+}
+
 func TestPublicationReconciliationDispatchRepairsMissingRiverJobPostgreSQL(t *testing.T) {
 	t.Parallel()
 	repo, ctx, epoch, position := reconciliationDeliveryFixture(t)
@@ -352,9 +414,10 @@ func TestPublicationReconciliationDispatchDoesNotStarveEligiblePositionsPostgreS
 			}
 			generation := int64(1)
 			if index < blockedCount {
-				generation = 2
-			}
-			if _, err := tx.NewRaw(`INSERT INTO publication_reconciliation_request(output_epoch,position_id,requested_generation) VALUES (?,?,?)`, epoch, position, generation).Exec(ctx); err != nil {
+				if _, err := tx.NewRaw(`INSERT INTO publication_reconciliation_request(output_epoch,position_id,requested_generation,evaluated_generation,parked_reason) VALUES (?,?,1,1,'waiting')`, epoch, position).Exec(ctx); err != nil {
+					return err
+				}
+			} else if _, err := tx.NewRaw(`INSERT INTO publication_reconciliation_request(output_epoch,position_id,requested_generation) VALUES (?,?,?)`, epoch, position, generation).Exec(ctx); err != nil {
 				return err
 			}
 			oldOp, oldEvent := uuid.New(), uuid.New()
@@ -382,7 +445,7 @@ func TestPublicationReconciliationDispatchDoesNotStarveEligiblePositionsPostgreS
 				if _, err := tx.NewRaw(`INSERT INTO operation(id,kind,state,stage,input_snapshot) VALUES (?,?,'queued','queued',?::jsonb)`, pendingOp, PublicationReconciliationOperationKind, string(oldSnapshot)).Exec(ctx); err != nil {
 					return err
 				}
-				if _, err := tx.NewRaw(`INSERT INTO publication_reconciliation_event(id,output_epoch,position_id,operation_id,observed_generation,state) VALUES (?,?, ?, ?,2,'pending')`, pendingEvent, epoch, position, pendingOp).Exec(ctx); err != nil {
+				if _, err := tx.NewRaw(`INSERT INTO publication_reconciliation_event(id,output_epoch,position_id,operation_id,observed_generation,state) VALUES (?,?, ?, ?,1,'pending')`, pendingEvent, epoch, position, pendingOp).Exec(ctx); err != nil {
 					return err
 				}
 			}

@@ -89,6 +89,7 @@ func (repository *SetupManagerRepository) DispatchPendingPublicationReconciliati
 			JOIN river_job active_job ON active_job.id=active.registered_job_id
 			WHERE active.output_epoch=r.output_epoch AND active.position_id=r.position_id
 			AND active.state='dispatched' AND active_job.state NOT IN ('cancelled','discarded','completed'))
+		AND NOT (r.parked_reason IS NOT NULL AND r.evaluated_generation >= r.requested_generation)
 		ORDER BY r.position_id LIMIT 64`).Scan(ctx, &candidates); err != nil {
 		return 0, fmt.Errorf("select publication reconciliation dispatch batch: %w", err)
 	}
@@ -99,6 +100,13 @@ func (repository *SetupManagerRepository) DispatchPendingPublicationReconciliati
 			current, err := lockPublicationReconciliationRequest(ctx, tx, candidate.Epoch, candidate.Position)
 			if err != nil || !current {
 				return err
+			}
+			var parked bool
+			if err := tx.NewRaw(`SELECT parked_reason IS NOT NULL AND evaluated_generation>=requested_generation FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, candidate.Epoch, candidate.Position).Scan(ctx, &parked); err != nil {
+				return fmt.Errorf("recheck publication reconciliation parking: %w", err)
+			}
+			if parked {
+				return nil
 			}
 			var events []publicationReconciliationEvent
 			if err := tx.NewRaw(`SELECT * FROM publication_reconciliation_event
@@ -237,11 +245,96 @@ func (repository *SetupManagerRepository) ReleasePublicationReconciliationDelive
 		if err != nil || event == nil {
 			return err
 		}
-		_, err = tx.NewRaw(`UPDATE publication_reconciliation_event SET delivery_claimed=false,claim_token=NULL WHERE id=?`, event.ID).Exec(ctx)
+		if _, err = tx.NewRaw(`UPDATE publication_reconciliation_event SET delivery_claimed=false,claim_token=NULL WHERE id=?`, event.ID).Exec(ctx); err == nil {
+			_, err = tx.NewRaw(`UPDATE operation SET state='queued',stage='waiting',safe_error=NULL,started_at=NULL,finished_at=NULL,updated_at=now() WHERE id=?`, guard.OperationID).Exec(ctx)
+		}
 		released = err == nil
 		return err
 	})
 	return released && err == nil, err
+}
+
+// ParkPublicationReconciliationDelivery records an evaluated-but-unsatisfied
+// result without acknowledging dirty work. Newer requests invalidate the result.
+func (repository *SetupManagerRepository) ParkPublicationReconciliationDelivery(ctx context.Context, guard PublicationReconciliationDeliveryGuard, evaluatedGeneration int64, reason string) (bool, error) {
+	if evaluatedGeneration < 0 || reason == "" {
+		return false, fmt.Errorf("park publication reconciliation: generation and reason are required")
+	}
+	var parked bool
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		event, err := repository.lockPublicationReconciliationDelivery(ctx, tx, guard)
+		if err != nil || event == nil {
+			return err
+		}
+		var requested int64
+		if err := tx.NewRaw(`SELECT requested_generation FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, guard.OutputEpoch, guard.PositionID).Scan(ctx, &requested); err != nil {
+			return err
+		}
+		if evaluatedGeneration != requested || evaluatedGeneration < event.ObservedGeneration {
+			return nil
+		}
+		if _, err := tx.NewRaw(`UPDATE publication_reconciliation_request SET evaluated_generation=?,parked_reason=?,retry_not_before=NULL WHERE output_epoch=? AND position_id=?`, evaluatedGeneration, reason, guard.OutputEpoch, guard.PositionID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`UPDATE publication_reconciliation_event SET state='completed',completed_at=now(),delivery_claimed=false,claim_token=NULL WHERE id=?`, event.ID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`UPDATE operation SET state='failed',stage='waiting',safe_error=?,finished_at=now(),updated_at=now() WHERE id=?`, reason, guard.OperationID).Exec(ctx); err != nil {
+			return err
+		}
+		parked = true
+		return nil
+	})
+	return parked && err == nil, err
+}
+
+// PublicationReconciliationContext is a short-transaction factual snapshot for
+// an owned delivery. It contains no settings, filesystem state, or policy.
+type PublicationReconciliationContext struct {
+	ReleaseID             uuid.UUID
+	RequestedGeneration   int64
+	DirtyScopes           []PublicationReconciliationDirtyScope
+	HasCurrentPublication bool
+	HasActiveAttempt      bool
+}
+
+type PublicationReconciliationDirtyScope struct {
+	Scope      string
+	Generation int64
+}
+
+// ResolvePublicationReconciliationContext validates the full live delivery
+// fence and reads only database facts; callers perform external I/O afterward.
+func (repository *SetupManagerRepository) ResolvePublicationReconciliationContext(ctx context.Context, guard PublicationReconciliationDeliveryGuard) (*PublicationReconciliationContext, error) {
+	var result *PublicationReconciliationContext
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		event, err := repository.lockPublicationReconciliationDelivery(ctx, tx, guard)
+		if err != nil {
+			return err
+		}
+		if event == nil {
+			return fmt.Errorf("resolve publication reconciliation context: delivery fence is stale")
+		}
+		var snapshot PublicationReconciliationContext
+		if err := tx.NewRaw(`SELECT rt.release_id,r.requested_generation,
+			EXISTS (SELECT 1 FROM track_publication p WHERE p.position_id=r.position_id) AS has_current_publication,
+			EXISTS (SELECT 1 FROM track_publication_attempt a
+				WHERE a.position_id=r.position_id) AS has_active_attempt
+			FROM publication_reconciliation_request r JOIN release_track rt ON rt.id=r.position_id
+			WHERE r.output_epoch=? AND r.position_id=?`, guard.OutputEpoch, guard.PositionID).Scan(ctx, &snapshot); err != nil {
+			return fmt.Errorf("read publication reconciliation facts: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT scope,generation FROM publication_reconciliation_dirty_scope
+			WHERE output_epoch=? AND position_id=? ORDER BY scope`, guard.OutputEpoch, guard.PositionID).Scan(ctx, &snapshot.DirtyScopes); err != nil {
+			return fmt.Errorf("read publication reconciliation dirty scopes: %w", err)
+		}
+		result = &snapshot
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // AcknowledgePublicationReconciliationDeliveryWith belongs in the transaction
