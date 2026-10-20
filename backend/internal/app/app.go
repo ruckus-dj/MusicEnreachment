@@ -62,6 +62,16 @@ type incomingMatchingReconcileDispatcher struct {
 	logger          *slog.Logger
 }
 
+type publicationReconciliationDispatcher struct {
+	repository *persistence.SetupManagerRepository
+	river      persistence.RiverInserter
+}
+
+func (dispatcher publicationReconciliationDispatcher) DispatchPendingPublicationReconciliations(ctx context.Context) error {
+	_, err := dispatcher.repository.DispatchPendingPublicationReconciliations(ctx, dispatcher.river)
+	return err
+}
+
 func (dispatcher incomingMatchingReconcileDispatcher) DispatchPendingMatchingReconciliations(ctx context.Context) error {
 	if dispatcher.matchingRuntime != nil {
 		if err := dispatcher.matchingRuntime.RecoverMatchingRuntime(ctx, dispatcher.river); err != nil {
@@ -235,6 +245,9 @@ func Run(ctx context.Context, config Config) error {
 		publication.NewCoordinator(), uuid.New(), publicationCommands,
 	)
 	publicationWorker := jobs.NewPublicationWorker(publicationExecutor)
+	publicationReconciliationWorker := jobs.NewPublicationReconciliationWorker(setupManagerRepository, libraryPublications, operationService)
+	publicationReconciliationDispatcher := publicationReconciliationDispatcher{repository: setupManagerRepository, river: riverSlot}
+	publicationReconciliationDispatchWorker := jobs.NewPublicationReconciliationDispatchWorker(publicationReconciliationDispatcher)
 	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, registry, riverSlot)
 	catalog := tools.NewDefaultCatalog(nil)
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
@@ -282,6 +295,8 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, matchingEvaluationWorker)
 		river.AddWorker(workers, matchingApplyWorker)
 		river.AddWorker(workers, publicationWorker)
+		river.AddWorker(workers, publicationReconciliationWorker)
+		river.AddWorker(workers, publicationReconciliationDispatchWorker)
 		river.AddWorker(workers, incomingMatchingReconcileWorker)
 		river.AddWorker(workers, incomingMatchingReconcileDispatchWorker)
 		river.AddWorker(workers, sourceAnalysisPendingDispatchWorker)
@@ -290,7 +305,7 @@ func Run(ctx context.Context, config Config) error {
 	// Keep exactly one base analysis slot on the main client. Additional River
 	// clients are provisioned only for actual queued/running demand.
 	primaryAnalysisCapacity := 1
-	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob())
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob(), jobs.NewPublicationReconciliationDispatchPeriodicJob())
 	if err != nil {
 		return err
 	}
@@ -311,6 +326,9 @@ func Run(ctx context.Context, config Config) error {
 	}
 	if err := matchingReconcileDispatcher.DispatchPendingMatchingReconciliations(ctx); err != nil {
 		return fmt.Errorf("dispatch pending incoming matching reconciliations: %w", err)
+	}
+	if err := publicationReconciliationDispatcher.DispatchPendingPublicationReconciliations(ctx); err != nil {
+		return fmt.Errorf("dispatch pending publication reconciliations: %w", err)
 	}
 
 	if err := riverClient.Start(ctx); err != nil {

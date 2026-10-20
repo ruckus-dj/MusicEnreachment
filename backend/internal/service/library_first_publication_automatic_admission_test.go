@@ -81,12 +81,13 @@ func automaticAdmissionFixture(t *testing.T) (*automaticAdmissionServiceReposito
 	makeSource := func(location, variant uuid.UUID, codec string, lossless bool, streamCount int) persistence.FirstPublicationSource {
 		channels := 2
 		root, work := uuid.New(), uuid.New()
+		sourceRoot := t.TempDir()
 		mtime := time.Unix(2, 0).UTC()
 		source := persistence.FirstPublicationSource{
 			Selection: persistence.PublicationSourceSelection{RootID: root, LocationID: location, WorkID: work, MediaVariantID: variant,
-				ConfiguredPath: "/source", InventoryPath: "/source", RelativePath: "track.flac", SizeBytes: 10, MTime: mtime},
+				ConfiguredPath: sourceRoot, InventoryPath: sourceRoot, RelativePath: "track.flac", SizeBytes: 10, MTime: mtime},
 			Input: persistence.PublicationAudioInput{RootID: root, LocationID: location, WorkID: work, MediaVariantID: variant,
-				ProbeResultID: uuid.New(), ConfiguredRootPath: "/source", InventoryRootPath: "/source", RelativePath: "track.flac", SizeBytes: 10,
+				ProbeResultID: uuid.New(), ConfiguredRootPath: sourceRoot, InventoryRootPath: sourceRoot, RelativePath: "track.flac", SizeBytes: 10,
 				MTime: mtime, AnalysisPolicyVersion: 1, FFProbeVersion: "7.0.0"},
 			Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: codec, Lossless: &lossless, Channels: &channels,
 				Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},

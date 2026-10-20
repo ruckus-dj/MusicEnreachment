@@ -87,16 +87,26 @@ func (service *LibraryPublications) admitAutomaticFirstPublication(ctx context.C
 }
 
 func automaticFirstSourceChoice(snapshot *persistence.LibraryFirstPublicationContext, format publication.AudioPublicationFormat) (FirstPublicationSourceChoice, error) {
+	choice, _, err := automaticFirstSourceChoiceWithReason(snapshot, format)
+	return choice, err
+}
+
+func automaticFirstSourceChoiceWithReason(snapshot *persistence.LibraryFirstPublicationContext, format publication.AudioPublicationFormat) (FirstPublicationSourceChoice, string, error) {
 	if snapshot == nil {
-		return FirstPublicationSourceChoice{}, persistence.ErrPublicationAdmissionConflict
+		return FirstPublicationSourceChoice{}, "", persistence.ErrPublicationAdmissionConflict
 	}
 	candidates := make([]publication.QualityCandidate, 0, len(snapshot.Sources))
+	hasExplicitStream := false
 	for _, source := range snapshot.Sources {
 		// Automatic admission does not make a stream choice inside a multi-audio file.
-		if source.RequiresExplicitStreamSelection || source.AudioStreamCount != 1 {
+		requiresExplicitStream := source.RequiresExplicitStreamSelection || source.AudioStreamCount != 1
+		if _, err := publication.PlanAudioTransform(format, source.Quality.AudioSourceFacts()); err != nil {
 			continue
 		}
-		if _, err := publication.PlanAudioTransform(format, source.Quality.AudioSourceFacts()); err != nil {
+		if requiresExplicitStream {
+			if source.RequiresExplicitStreamSelection || source.AudioStreamCount > 1 {
+				hasExplicitStream = true
+			}
 			continue
 		}
 		lossless := source.Quality.Lossless
@@ -107,14 +117,20 @@ func automaticFirstSourceChoice(snapshot *persistence.LibraryFirstPublicationCon
 	}
 	selection := publication.SelectQuality(candidates, nil)
 	if selection.RequiresManual || selection.Candidate == nil {
-		return FirstPublicationSourceChoice{}, persistence.ErrPublicationAdmissionConflict
+		if len(candidates) > 0 {
+			return FirstPublicationSourceChoice{}, "ambiguous_quality", persistence.ErrPublicationAdmissionConflict
+		}
+		if hasExplicitStream {
+			return FirstPublicationSourceChoice{}, "manual_stream_selection", persistence.ErrPublicationAdmissionConflict
+		}
+		return FirstPublicationSourceChoice{}, "", persistence.ErrPublicationAdmissionConflict
 	}
 	for _, source := range snapshot.Sources {
 		if source.Selection.MediaVariantID.String() == selection.Candidate.VariantUUID && source.Selection.LocationID.String() == selection.Candidate.LocationUUID && source.Quality.StreamIndex == selection.Candidate.StreamIndex {
-			return FirstPublicationSourceChoice{LocationID: source.Selection.LocationID, MediaVariantID: source.Selection.MediaVariantID, StreamIndex: source.Quality.StreamIndex}, nil
+			return FirstPublicationSourceChoice{LocationID: source.Selection.LocationID, MediaVariantID: source.Selection.MediaVariantID, StreamIndex: source.Quality.StreamIndex}, "", nil
 		}
 	}
-	return FirstPublicationSourceChoice{}, persistence.ErrPublicationAdmissionConflict
+	return FirstPublicationSourceChoice{}, "", persistence.ErrPublicationAdmissionConflict
 }
 
 func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, positionID uuid.UUID, previewDigest string, expectedEpoch uuid.UUID, sourceChoice *FirstPublicationSourceChoice, guard *persistence.PublicationReconciliationDeliveryGuard) (uuid.UUID, error) {

@@ -169,6 +169,7 @@ func prepareWithWorkers(ctx context.Context, databaseURL string, database *sql.D
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault:          {MaxWorkers: 1},
 			"matching":                  {MaxWorkers: 1},
+			"publication":               {MaxWorkers: 1},
 			service.SourceAnalysisQueue: {MaxWorkers: analysisWorkers},
 		},
 		PeriodicJobs: periodicJobs,
