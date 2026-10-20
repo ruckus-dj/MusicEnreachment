@@ -191,6 +191,8 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingManual(ctx co
 		if result.PreviewDigest != previewDigest {
 			return ErrIncomingMatchConflict
 		}
+		var touchedTrackIDs []uuid.UUID
+		state.touchedTrackIDs = &touchedTrackIDs
 		if err := materializeManualMatching(ctx, tx, state, result, explicitAssignments); err != nil {
 			return err
 		}
@@ -202,6 +204,21 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingManual(ctx co
 			return fmt.Errorf("confirm manual matching: read local release mapping: %w", err)
 		}
 		result.LocalReleaseID = localReleaseID
+		positions, err := manualMatchingPublicationPositions(ctx, tx, localReleaseID, touchedTrackIDs)
+		if err != nil {
+			return err
+		}
+		var outputEpoch uuid.UUID
+		if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &outputEpoch); err != nil {
+			return fmt.Errorf("confirm manual matching: read output epoch: %w", err)
+		}
+		// Empty accepted confirmations may materialize a release without positions.
+		// Preserve that matching behavior without manufacturing publication work.
+		if len(positions) > 0 {
+			if err := NewSetupManagerRepository(repository.db).RequestPublicationReconciliationWith(ctx, tx, outputEpoch, positions, []string{"manual_confirmation"}); err != nil {
+				return fmt.Errorf("confirm manual matching: request publication reconciliation: %w", err)
+			}
+		}
 		encoded, err := json.Marshal(result)
 		if err != nil {
 			return fmt.Errorf("confirm manual matching: encode receipt response: %w", err)
@@ -215,13 +232,14 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingManual(ctx co
 }
 
 type manualMatchingTxState struct {
-	header         IncomingMatchEvaluationHeader
-	fence          IncomingMatchProviderFence
-	release        MatchingRelease
-	localReleaseID *uuid.UUID
-	frozen         *FrozenMaterialization
-	seal           *MatchingFallbackSealAuthority
-	context        *MatchingFallbackCalculationContext
+	header          IncomingMatchEvaluationHeader
+	fence           IncomingMatchProviderFence
+	release         MatchingRelease
+	localReleaseID  *uuid.UUID
+	frozen          *FrozenMaterialization
+	seal            *MatchingFallbackSealAuthority
+	context         *MatchingFallbackCalculationContext
+	touchedTrackIDs *[]uuid.UUID
 }
 
 func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, expectedRevision string, releaseID uuid.UUID, assignments []MatchingManualAssignment, locking bool) (MatchingManualPreview, manualMatchingTxState, error) {
@@ -946,6 +964,9 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 		if err != nil {
 			return err
 		}
+		if state.touchedTrackIDs != nil {
+			*state.touchedTrackIDs = append(*state.touchedTrackIDs, localTrackID)
+		}
 		if recordingCreated {
 			credits, err := acceptedRecordingArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, recordingID)
 			if err != nil {
@@ -1070,6 +1091,9 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 		if err != nil {
 			return err
 		}
+		if state.touchedTrackIDs != nil {
+			*state.touchedTrackIDs = append(*state.touchedTrackIDs, localTrackID)
+		}
 		if trackCreated {
 			field, key, source := "title", track.RecordingProviderKey, FrozenFieldSource{EntityKind: "recording", ProviderKey: track.RecordingProviderKey, Field: "title"}
 			if track.TitleSource != nil {
@@ -1106,6 +1130,21 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 		}
 	}
 	return nil
+}
+
+func manualMatchingPublicationPositions(ctx context.Context, tx bun.Tx, releaseID uuid.UUID, touchedTrackIDs []uuid.UUID) ([]uuid.UUID, error) {
+	query := `SELECT DISTINCT affected.id FROM release_track affected WHERE affected.release_id=?`
+	args := []any{releaseID}
+	if len(touchedTrackIDs) > 0 {
+		query += ` OR affected.track_id IN (?)`
+		args = append(args, bun.List(touchedTrackIDs))
+	}
+	query += ` ORDER BY affected.id`
+	var positions []uuid.UUID
+	if err := tx.NewRaw(query, args...).Scan(ctx, &positions); err != nil {
+		return nil, fmt.Errorf("confirm manual matching: read publication positions: %w", err)
+	}
+	return positions, nil
 }
 
 func jsonEvidence(field string, source FrozenFieldSource) json.RawMessage {
