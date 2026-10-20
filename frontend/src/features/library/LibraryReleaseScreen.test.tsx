@@ -1,5 +1,6 @@
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -10,7 +11,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import { server } from "../../test/server";
 import { LibraryReleaseScreen } from "./LibraryReleaseScreen";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  // Unmount while the EventSource stub is still installed. Queued passive
+  // effects otherwise subscribe to an operation after unstubAllGlobals().
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 it("shows read-back tags and submits revision-fenced primary artist selections", async () => {
   const primaryBodies: unknown[] = [];
@@ -320,26 +326,27 @@ it("retains the release screen and lyrics draft when release primary artist sele
   );
 });
 
-class FakeEventSource {
+// Only EventSource is replaced; SSE wake-ups still use the real REST adapter.
+class FakeEventSource extends EventTarget {
   static instances: FakeEventSource[] = [];
-  listeners = new Map<string, Array<() => void>>();
+  readonly url: string;
   closed = false;
-  constructor() {
+  constructor(url: string) {
+    super();
+    this.url = url;
     FakeEventSource.instances.push(this);
   }
-  addEventListener(type: string, listener: EventListener) {
-    this.listeners.set(type, [
-      ...(this.listeners.get(type) ?? []),
-      listener as () => void,
-    ]);
-  }
-  removeEventListener() {}
   close() {
     this.closed = true;
   }
   emit(type: string) {
-    for (const listener of this.listeners.get(type) ?? []) listener();
+    this.dispatchEvent(new Event(type));
   }
+}
+
+function stubEventSource() {
+  FakeEventSource.instances = [];
+  vi.stubGlobal("EventSource", FakeEventSource);
 }
 
 it("saves explicit manual lyrics before applying with the current publication revisions", async () => {
@@ -444,7 +451,7 @@ it("saves explicit manual lyrics before applying with the current publication re
       }),
     ),
   );
-  vi.stubGlobal("EventSource", FakeEventSource);
+  stubEventSource();
 
   render(<LibraryReleaseScreen releaseId="release-1" />);
   const editor = await screen.findByLabelText("Сохранённый текст песни");
@@ -469,6 +476,10 @@ it("saves explicit manual lyrics before applying with the current publication re
     screen.getByRole("button", { name: "Применить сохранённый текст" }),
   );
   await waitFor(() => expect(applyBodies).toHaveLength(1));
+  await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+  expect(FakeEventSource.instances[0].url).toBe(
+    "/api/operations/operation-1/events",
+  );
   expect(applyBodies[0]).toEqual({
     expected_epoch: "epoch-1",
     expected_generation: "generation-1",

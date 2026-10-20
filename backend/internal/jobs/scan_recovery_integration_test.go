@@ -119,8 +119,10 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retry the interrupted scan: %v", err)
 	}
-	requireScanDispatchCandidates(t, ctx, database, queued.ID, 0)
+	// Retry commits a new job to the live worker, which may already have
+	// populated this attempt's candidates. Assert cleanup after it finishes.
 	awaitRiverCompletion(t, ctx, events, *retried.RiverJobID)
+	requireScanDispatchCandidates(t, ctx, database, queued.ID, 0)
 
 	// Then the retry walks the tree again: the file the interrupted attempt never
 	// reached is inventoried as not yet analyzed, and the dropped candidates played no part.
