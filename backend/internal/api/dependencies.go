@@ -51,6 +51,10 @@ type LibraryPublicationService interface {
 	AdmitFirst(context.Context, uuid.UUID, uuid.UUID, service.FirstPublicationConfirmation) (uuid.UUID, error)
 }
 
+type libraryPublicationSourceSelectionService interface {
+	PreviewFirstSelected(context.Context, uuid.UUID, uuid.UUID, *service.FirstPublicationSourceChoice) (service.FirstPublicationPreview, error)
+}
+
 type preflightEntry struct {
 	createdAt time.Time
 	install   *service.InstallPreflight

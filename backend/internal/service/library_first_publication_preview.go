@@ -27,35 +27,54 @@ type firstPublicationFormatSettings interface {
 // FirstPublicationPreview is a read-only planning result. It contains no output
 // filesystem path and is not an admission or publication authorization.
 type FirstPublicationPreview struct {
-	ReleaseID         uuid.UUID                                `json:"release_id"`
-	PositionID        uuid.UUID                                `json:"position_id"`
-	Epoch             uuid.UUID                                `json:"epoch"`
-	Current           *persistence.LibraryPublicationCurrent   `json:"current,omitempty"`
-	ActiveAttempt     *persistence.LibraryPublicationOperation `json:"active_attempt,omitempty"`
-	ContextDigest     string                                   `json:"context_digest"`
-	SelectedSource    *FirstPublicationPreviewSource           `json:"selected_source,omitempty"`
-	Transform         *publication.AudioTransformPlan          `json:"transform,omitempty"`
-	PathComponents    []string                                 `json:"path_components,omitempty"`
-	DesiredTags       publication.TagProjection                `json:"desired_tags"`
-	MetadataRevisions map[string]int64                         `json:"metadata_revisions"`
-	Warnings          []string                                 `json:"warnings"`
-	Blockers          []string                                 `json:"blockers"`
-	NativeStatus      string                                   `json:"native_status"`
+	ReleaseID              uuid.UUID                                `json:"release_id"`
+	PositionID             uuid.UUID                                `json:"position_id"`
+	Epoch                  uuid.UUID                                `json:"epoch"`
+	Current                *persistence.LibraryPublicationCurrent   `json:"current,omitempty"`
+	ActiveAttempt          *persistence.LibraryPublicationOperation `json:"active_attempt,omitempty"`
+	ContextDigest          string                                   `json:"context_digest"`
+	SelectedSource         *FirstPublicationPreviewSource           `json:"selected_source,omitempty"`
+	SourceCandidates       []FirstPublicationPreviewSource          `json:"source_candidates"`
+	Transform              *publication.AudioTransformPlan          `json:"transform,omitempty"`
+	PathComponents         []string                                 `json:"path_components,omitempty"`
+	ResolvedPathComponents []string                                 `json:"resolved_path_components,omitempty"`
+	DesiredTags            publication.TagProjection                `json:"desired_tags"`
+	MetadataRevisions      map[string]int64                         `json:"metadata_revisions"`
+	Warnings               []string                                 `json:"warnings"`
+	Blockers               []string                                 `json:"blockers"`
+	NativeStatus           string                                   `json:"native_status"`
 }
 
 type FirstPublicationPreviewSource struct {
-	RootID         uuid.UUID                       `json:"root_id"`
-	LocationID     uuid.UUID                       `json:"location_id"`
-	WorkID         uuid.UUID                       `json:"work_id"`
-	MediaVariantID uuid.UUID                       `json:"media_variant_id"`
-	StreamIndex    int                             `json:"stream_index"`
-	Codec          string                          `json:"codec"`
-	Quality        persistence.PersistedAudioFacts `json:"quality"`
+	RootID                          uuid.UUID                       `json:"root_id"`
+	LocationID                      uuid.UUID                       `json:"location_id"`
+	WorkID                          uuid.UUID                       `json:"work_id"`
+	MediaVariantID                  uuid.UUID                       `json:"media_variant_id"`
+	StreamIndex                     int                             `json:"stream_index"`
+	Codec                           string                          `json:"codec"`
+	Quality                         persistence.PersistedAudioFacts `json:"quality"`
+	Title                           string                          `json:"title"`
+	Language                        string                          `json:"language"`
+	RequiresExplicitStreamSelection bool                            `json:"requires_explicit_stream_selection"`
+	AudioStreamCount                int                             `json:"audio_stream_count"`
+	UnsupportedAudioStreamCount     int                             `json:"unsupported_audio_stream_count"`
+}
+
+// FirstPublicationSourceChoice identifies one server-verified source stream.
+type FirstPublicationSourceChoice struct {
+	LocationID     uuid.UUID `json:"location_id"`
+	MediaVariantID uuid.UUID `json:"media_variant_id"`
+	StreamIndex    int       `json:"stream_index"`
 }
 
 // PreviewFirst constructs a preview from a coherent database snapshot and the
-// current publication settings. It deliberately performs no I/O against paths.
+// current publication settings. Native comparisons use the output technical-data
+// area for private probes and never create publication directories.
 func (service *LibraryPublications) PreviewFirst(ctx context.Context, releaseID, positionID uuid.UUID) (FirstPublicationPreview, error) {
+	return service.PreviewFirstSelected(ctx, releaseID, positionID, nil)
+}
+
+func (service *LibraryPublications) PreviewFirstSelected(ctx context.Context, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice) (FirstPublicationPreview, error) {
 	if service == nil || service.repository == nil || releaseID == uuid.Nil || positionID == uuid.Nil {
 		return FirstPublicationPreview{}, errors.New("first publication preview is unavailable")
 	}
@@ -79,13 +98,31 @@ func (service *LibraryPublications) PreviewFirst(ctx context.Context, releaseID,
 		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
 	}
 	selectedTools, _ := service.selectedFFmpegPairForSettings(ctx, runtimeSettings)
-	return buildFirstPublicationPreview(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID)
+	preview, err := buildFirstPublicationPreviewSelected(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice)
+	if err != nil || len(preview.Blockers) != 0 {
+		return preview, err
+	}
+	if service.resolveNamespace == nil {
+		return preview, nil
+	}
+	if _, err := service.resolveNamespace(ctx, contextSnapshot, runtimeSettings.OutputDirectory, runtimeSettings.PublicationPathTemplate, &preview); err != nil {
+		if ctx.Err() != nil {
+			return FirstPublicationPreview{}, ctx.Err()
+		}
+		preview.Blockers = append(preview.Blockers, "native publication namespace could not be resolved: "+err.Error())
+		preview.NativeStatus = "native namespace unavailable"
+	}
+	return preview, nil
 }
 
 // buildFirstPublicationPreview performs deterministic planning from captured
 // inputs only. Callers that admit a publication can use the same builder with
 // the tool selections captured by their transaction.
 func buildFirstPublicationPreview(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID) (FirstPublicationPreview, error) {
+	return buildFirstPublicationPreviewSelected(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, nil)
+}
+
+func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice) (FirstPublicationPreview, error) {
 	format, pathTemplate := runtimeSettings.PublicationFormat, runtimeSettings.PublicationPathTemplate
 	if contextSnapshot == nil || contextSnapshot.Library == nil {
 		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
@@ -112,31 +149,41 @@ func buildFirstPublicationPreview(contextSnapshot *persistence.LibraryFirstPubli
 	if len(selectedTools) == 0 {
 		preview.Blockers = append(preview.Blockers, "verified managed FFmpeg executables are unavailable")
 	}
-	candidates := make([]publication.QualityCandidate, 0, len(contextSnapshot.Sources))
-	byIdentity := make(map[string]persistence.FirstPublicationSource, len(contextSnapshot.Sources))
+	preview.SourceCandidates = make([]FirstPublicationPreviewSource, 0, len(contextSnapshot.Sources))
 	for _, source := range contextSnapshot.Sources {
-		facts := source.Quality
-		candidate := publication.QualityCandidate{
-			VariantUUID: source.Selection.MediaVariantID.String(), LocationUUID: source.Selection.LocationID.String(),
-			StreamIndex: facts.StreamIndex, Lossless: facts.Lossless, Codec: facts.Codec,
-			Channels: facts.Channels, BitDepth: facts.BitDepth, SampleRate: facts.SampleRate, Bitrate: facts.Bitrate,
-		}
-		candidates = append(candidates, candidate)
-		byIdentity[candidate.VariantUUID+"/"+candidate.LocationUUID] = source
+		preview.SourceCandidates = append(preview.SourceCandidates, FirstPublicationPreviewSource{
+			RootID: source.Selection.RootID, LocationID: source.Selection.LocationID, WorkID: source.Selection.WorkID,
+			MediaVariantID: source.Selection.MediaVariantID, StreamIndex: source.Quality.StreamIndex,
+			Codec: source.Quality.Codec, Quality: source.Quality, Title: source.StreamTitle, Language: source.StreamLanguage,
+			RequiresExplicitStreamSelection: source.RequiresExplicitStreamSelection,
+			AudioStreamCount:                source.AudioStreamCount, UnsupportedAudioStreamCount: source.UnsupportedAudioStreamCount,
+		})
 	}
-	selection := publication.SelectQuality(candidates, nil)
-	if selection.RequiresManual || selection.Candidate == nil {
-		preview.Blockers = append(preview.Blockers, "source quality selection is ambiguous or unproven")
-	} else {
-		candidate := selection.Candidate
-		source, found := byIdentity[candidate.VariantUUID+"/"+candidate.LocationUUID]
-		if !found {
-			return FirstPublicationPreview{}, errors.New("selected first publication source is unavailable")
+	var source *persistence.FirstPublicationSource
+	if choice != nil {
+		for i := range contextSnapshot.Sources {
+			candidate := &contextSnapshot.Sources[i]
+			if candidate.Selection.LocationID == choice.LocationID && candidate.Selection.MediaVariantID == choice.MediaVariantID && candidate.Quality.StreamIndex == choice.StreamIndex {
+				source = candidate
+				break
+			}
 		}
+		if source == nil {
+			return FirstPublicationPreview{}, persistence.ErrPublicationAdmissionConflict
+		}
+	} else if len(contextSnapshot.Sources) == 1 && !contextSnapshot.Sources[0].RequiresExplicitStreamSelection {
+		source = &contextSnapshot.Sources[0]
+	}
+	if source == nil {
+		preview.Blockers = append(preview.Blockers, "explicit source and audio stream selection is required")
+	} else {
 		preview.SelectedSource = &FirstPublicationPreviewSource{
 			RootID: source.Selection.RootID, LocationID: source.Selection.LocationID,
 			WorkID: source.Selection.WorkID, MediaVariantID: source.Selection.MediaVariantID,
 			StreamIndex: source.Quality.StreamIndex, Codec: source.Quality.Codec, Quality: source.Quality,
+			Title: source.StreamTitle, Language: source.StreamLanguage,
+			RequiresExplicitStreamSelection: source.RequiresExplicitStreamSelection,
+			AudioStreamCount:                source.AudioStreamCount, UnsupportedAudioStreamCount: source.UnsupportedAudioStreamCount,
 		}
 		plan, planErr := publication.PlanAudioTransform(publication.AudioPublicationFormat(format), source.Quality.AudioSourceFacts())
 		if planErr != nil {
@@ -174,6 +221,10 @@ func buildFirstPublicationPreview(contextSnapshot *persistence.LibraryFirstPubli
 			preview.Blockers = append(preview.Blockers, "publication namespace layout is unsupported: "+namespaceErr.Error())
 		}
 	}
+	boundChoice := choice
+	if boundChoice == nil && preview.SelectedSource != nil {
+		boundChoice = &FirstPublicationSourceChoice{LocationID: preview.SelectedSource.LocationID, MediaVariantID: preview.SelectedSource.MediaVariantID, StreamIndex: preview.SelectedSource.StreamIndex}
+	}
 	digestInput := struct {
 		Context                    *persistence.LibraryFirstPublicationContext `json:"context"`
 		Format                     string                                      `json:"format"`
@@ -184,8 +235,9 @@ func buildFirstPublicationPreview(contextSnapshot *persistence.LibraryFirstPubli
 		FFmpeg                     string                                      `json:"ffmpeg_installation"`
 		FPCalc                     string                                      `json:"fpcalc_installation"`
 		SelectedTools              []persistence.SourceAnalysisToolSelection   `json:"selected_tools"`
+		Choice                     *FirstPublicationSourceChoice               `json:"selected_source_choice"`
 	}{contextSnapshot, format, pathTemplate, runtimeSettings.OutputDirectory, runtimeSettings.OutputCaseSensitive,
-		runtimeSettings.OutputUnicodeNormalization, runtimeSettings.ActiveFFmpegInstallation, runtimeSettings.ActiveFPCalcInstallation, selectedTools}
+		runtimeSettings.OutputUnicodeNormalization, runtimeSettings.ActiveFFmpegInstallation, runtimeSettings.ActiveFPCalcInstallation, selectedTools, boundChoice}
 	encoded, err := json.Marshal(digestInput)
 	if err != nil {
 		return FirstPublicationPreview{}, fmt.Errorf("encode first publication context digest: %w", err)

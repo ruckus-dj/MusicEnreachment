@@ -16,25 +16,27 @@ import (
 )
 
 type libraryPublicationHTTPFake struct {
-	view            service.LibraryPublicationView
-	readErr         error
-	applyErr        error
-	operationID     uuid.UUID
-	readCalls       int
-	applyCalls      int
-	readReleaseID   uuid.UUID
-	readPositionID  uuid.UUID
-	applyReleaseID  uuid.UUID
-	applyPositionID uuid.UUID
-	applyRequest    service.LibraryPublicationApplyManualLyricsRequest
-	preview         service.FirstPublicationPreview
-	previewErr      error
-	previewCalls    int
-	admitErr        error
-	admitCalls      int
-	admitRequest    service.FirstPublicationConfirmation
-	admitReleaseID  uuid.UUID
-	admitPositionID uuid.UUID
+	view                  service.LibraryPublicationView
+	readErr               error
+	applyErr              error
+	operationID           uuid.UUID
+	readCalls             int
+	applyCalls            int
+	readReleaseID         uuid.UUID
+	readPositionID        uuid.UUID
+	applyReleaseID        uuid.UUID
+	applyPositionID       uuid.UUID
+	applyRequest          service.LibraryPublicationApplyManualLyricsRequest
+	preview               service.FirstPublicationPreview
+	previewErr            error
+	previewCalls          int
+	selectedPreviewCalls  int
+	selectedPreviewChoice *service.FirstPublicationSourceChoice
+	admitErr              error
+	admitCalls            int
+	admitRequest          service.FirstPublicationConfirmation
+	admitReleaseID        uuid.UUID
+	admitPositionID       uuid.UUID
 }
 
 type libraryPublicationOperationSnapshotRepository struct {
@@ -60,6 +62,12 @@ func (fake *libraryPublicationHTTPFake) ApplyManualLyrics(_ context.Context, rel
 
 func (fake *libraryPublicationHTTPFake) PreviewFirst(_ context.Context, releaseID, positionID uuid.UUID) (service.FirstPublicationPreview, error) {
 	fake.previewCalls++
+	return fake.preview, fake.previewErr
+}
+
+func (fake *libraryPublicationHTTPFake) PreviewFirstSelected(_ context.Context, releaseID, positionID uuid.UUID, choice *service.FirstPublicationSourceChoice) (service.FirstPublicationPreview, error) {
+	fake.selectedPreviewCalls++
+	fake.selectedPreviewChoice = choice
 	return fake.preview, fake.previewErr
 }
 

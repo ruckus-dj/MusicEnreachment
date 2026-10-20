@@ -19,9 +19,14 @@ import (
 // FirstPublicationSource is the current inventory selection and the facts
 // proven by its successful probe. It contains no filesystem-derived values.
 type FirstPublicationSource struct {
-	Selection PublicationSourceSelection
-	Input     PublicationAudioInput
-	Quality   PersistedAudioFacts
+	Selection                       PublicationSourceSelection
+	Input                           PublicationAudioInput
+	Quality                         PersistedAudioFacts
+	StreamTitle                     string
+	StreamLanguage                  string
+	RequiresExplicitStreamSelection bool
+	AudioStreamCount                int
+	UnsupportedAudioStreamCount     int
 }
 
 // LibraryFirstPublicationContext is a factual snapshot for constructing a
@@ -39,6 +44,7 @@ type LibraryFirstPublicationContext struct {
 	SelectedReleasePrimaryArtistID  *uuid.UUID
 	SelectedPositionPrimaryArtistID *uuid.UUID
 	ResolvedOptionalFields          map[string]librarymetadata.ResolvedField
+	NamespaceClaims                 []PublicationNamespaceClaim `json:"-"`
 }
 
 type FirstPublicationMetadata struct {
@@ -67,6 +73,12 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 		return err
 	}
 	result := &LibraryFirstPublicationContext{Library: library, Sources: []FirstPublicationSource{}, TemplateTokens: map[string]string{}, Blockers: []string{}}
+	result.NamespaceClaims = make([]PublicationNamespaceClaim, 0)
+	if library.ActiveEpoch != uuid.Nil {
+		if err := tx.NewSelect().Model(&result.NamespaceClaims).Where("epoch = ?", library.ActiveEpoch).Scan(ctx); err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("read first publication namespace claims: %w", err)
+		}
+	}
 	var release struct {
 		ID              uuid.UUID       `bun:"id,type:uuid"`
 		PrimaryArtistID *uuid.UUID      `bun:"primary_artist_id,type:uuid"`
@@ -509,21 +521,16 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 	}
 	for _, row := range rows {
 		row.MTime = row.MTime.UTC()
-		index, ok := uniquePublicationAudioIndex(row.Variant.FFProbeJSON)
-		if !ok {
-			*blockers = append(*blockers, fmt.Sprintf("selected source %s has multiple or invalid audio streams; explicit stream selection is required", row.LocationID))
-			continue
-		}
-		facts, err := publicationAudioFactsFromProbe(row.Variant, index)
-		if err != nil {
-			*blockers = append(*blockers, fmt.Sprintf("selected source %s has unusable probe facts: %v", row.LocationID, err))
+		streams, streamErr := publicationAudioStreams(row.Variant.FFProbeJSON)
+		if streamErr != nil || len(streams) == 0 {
+			*blockers = append(*blockers, fmt.Sprintf("selected source %s has no usable audio streams", row.LocationID))
 			continue
 		}
 		selection := PublicationSourceSelection{RootID: row.RootID, LocationID: row.LocationID, WorkID: row.WorkID, MediaVariantID: row.VariantID, ConfiguredPath: row.Configured, InventoryPath: row.Inventory, RelativePath: row.Relative, SizeBytes: row.Size, MTime: row.MTime}
 		input := PublicationAudioInput{
 			RootID: row.RootID, LocationID: row.LocationID, WorkID: row.WorkID, MediaVariantID: row.VariantID,
 			ProbeResultID: row.VariantID, ConfiguredRootPath: row.Configured, InventoryRootPath: row.Inventory,
-			RelativePath: row.Relative, SizeBytes: row.Size, MTime: row.MTime, AudioFacts: facts,
+			RelativePath: row.Relative, SizeBytes: row.Size, MTime: row.MTime,
 		}
 		if row.Variant.AnalysisPolicyVersion != nil {
 			input.AnalysisPolicyVersion = *row.Variant.AnalysisPolicyVersion
@@ -535,7 +542,29 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 			*blockers = append(*blockers, fmt.Sprintf("selected source %s has stale or incomplete probe provenance", row.LocationID))
 			continue
 		}
-		*result = append(*result, FirstPublicationSource{Selection: selection, Input: input, Quality: facts})
+		added := 0
+		unsupported := 0
+		resultStart := len(*result)
+		for _, stream := range streams {
+			facts, factsErr := publicationAudioFactsFromProbe(row.Variant, stream.Index)
+			if factsErr != nil {
+				unsupported++
+				continue
+			}
+			streamInput := input
+			streamInput.AudioFacts = facts
+			*result = append(*result, FirstPublicationSource{
+				Selection: selection, Input: streamInput, Quality: facts, StreamTitle: stream.Title, StreamLanguage: stream.Language,
+				RequiresExplicitStreamSelection: len(streams) > 1, AudioStreamCount: len(streams),
+			})
+			added++
+		}
+		if added == 0 {
+			*blockers = append(*blockers, fmt.Sprintf("selected source %s has unusable probe facts", row.LocationID))
+		}
+		for i := resultStart; i < len(*result); i++ {
+			(*result)[i].UnsupportedAudioStreamCount = unsupported
+		}
 	}
 	if len(*result) == 0 && len(*blockers) == 0 {
 		*blockers = append(*blockers, "no selected source has a current inventory identity and successful probe")
@@ -544,32 +573,43 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 }
 
 func uniquePublicationAudioIndex(raw json.RawMessage) (int, bool) {
+	streams, err := publicationAudioStreams(raw)
+	if err != nil || len(streams) != 1 {
+		return 0, false
+	}
+	return streams[0].Index, true
+}
+
+type publicationAudioStream struct {
+	Index           int
+	Title, Language string
+}
+
+func publicationAudioStreams(raw json.RawMessage) ([]publicationAudioStream, error) {
 	var probe struct {
 		Streams []struct {
-			Index json.Number `json:"index"`
-			Type  string      `json:"codec_type"`
+			Index json.Number       `json:"index"`
+			Type  string            `json:"codec_type"`
+			Tags  map[string]string `json:"tags"`
 		} `json:"streams"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.UseNumber()
 	if decoder.Decode(&probe) != nil {
-		return 0, false
+		return nil, errors.New("decode ffprobe streams")
 	}
-	index := -1
+	result := make([]publicationAudioStream, 0)
 	for _, stream := range probe.Streams {
 		if stream.Type != "audio" {
 			continue
 		}
-		if index >= 0 {
-			return 0, false
-		}
 		n, err := stream.Index.Int64()
 		if err != nil || n < 0 || int64(int(n)) != n {
-			return 0, false
+			return nil, errors.New("invalid ffprobe stream index")
 		}
-		index = int(n)
+		result = append(result, publicationAudioStream{Index: int(n), Title: stream.Tags["title"], Language: stream.Tags["language"]})
 	}
-	return index, index >= 0
+	return result, nil
 }
 
 func firstPublicationIntPointer(value int) *int { return &value }

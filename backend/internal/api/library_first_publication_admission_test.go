@@ -64,6 +64,19 @@ func TestLibraryFirstPublicationAdmissionHTTP(t *testing.T) {
 		t.Fatalf("queued operation = %+v", queued)
 	}
 
+	locationID, variantID := uuid.New(), uuid.New()
+	response = libraryPublicationRequest(t, handler, http.MethodPost, path,
+		`{"preview_digest":"`+digest+`","expected_epoch":"`+epoch.String()+`","location_id":"`+locationID.String()+`"}`)
+	if response.Code != http.StatusBadRequest || fake.admitCalls != 1 {
+		t.Fatalf("partial source choice status=%d admit calls=%d: %s", response.Code, fake.admitCalls, response.Body)
+	}
+	response = libraryPublicationRequest(t, handler, http.MethodPost, path,
+		`{"preview_digest":"`+digest+`","expected_epoch":"`+epoch.String()+`","location_id":"`+locationID.String()+`","media_variant_id":"`+variantID.String()+`","stream_index":3}`)
+	if response.Code != http.StatusAccepted || fake.admitCalls != 2 || fake.admitRequest.SourceChoice == nil ||
+		fake.admitRequest.SourceChoice.LocationID != locationID || fake.admitRequest.SourceChoice.MediaVariantID != variantID || fake.admitRequest.SourceChoice.StreamIndex != 3 {
+		t.Fatalf("full source choice status=%d admit calls=%d request=%+v: %s", response.Code, fake.admitCalls, fake.admitRequest, response.Body)
+	}
+
 	fake.admitErr = persistence.ErrPublicationAdmissionConflict
 	response = libraryPublicationRequest(t, handler, http.MethodPost, path,
 		`{"preview_digest":"`+digest+`","expected_epoch":"`+epoch.String()+`"}`)

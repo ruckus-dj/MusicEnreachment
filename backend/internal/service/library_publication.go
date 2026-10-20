@@ -85,14 +85,17 @@ type LibraryPublicationApplyManualLyricsRequest struct {
 }
 
 type LibraryPublications struct {
-	repository libraryPublicationRepository
-	settings   libraryPublicationSettings
-	river      persistence.RiverInserter
-	platform   tools.Platform
+	repository       libraryPublicationRepository
+	settings         libraryPublicationSettings
+	river            persistence.RiverInserter
+	platform         tools.Platform
+	resolveNamespace func(context.Context, *persistence.LibraryFirstPublicationContext, string, string, *FirstPublicationPreview) ([]persistence.PublicationNamespaceNode, error)
 }
 
 func NewLibraryPublications(repository *persistence.SetupManagerRepository, runtime *settings.Registry, client persistence.RiverInserter, platform tools.Platform) *LibraryPublications {
-	return newLibraryPublications(repository, runtime, client, platform)
+	service := newLibraryPublications(repository, runtime, client, platform)
+	service.resolveNamespace = finalizeFirstPublicationNamespace
+	return service
 }
 
 func newLibraryPublications(repository libraryPublicationRepository, runtime libraryPublicationSettings, client persistence.RiverInserter, platform tools.Platform) *LibraryPublications {

@@ -161,11 +161,17 @@ export interface ErrorModel {
 }
 
 export interface FirstPublicationPreviewSource {
+  audio_stream_count: number;
+  channels?: number;
   codec: string;
+  language: string;
   location_id: string;
   media_variant_id: string;
+  requires_explicit_stream_selection: boolean;
   root_id: string;
   stream_index: number;
+  title: string;
+  unsupported_audio_stream_count: number;
 }
 
 export interface FirstPublicationPreviewTransform {
@@ -343,13 +349,19 @@ export interface LibraryFirstPublicationAdmissionInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   expected_epoch: string;
+  location_id?: string;
+  media_variant_id?: string;
   /**
      * @minLength 64
      * @maxLength 64
      * @pattern ^[0-9a-fA-F]{64}$
      */
   preview_digest: string;
+  /** @minimum 0 */
+  stream_index?: number;
 }
+
+export type LibraryFirstPublicationPreviewResponseDesiredTags = {[key: string]: string[] | null};
 
 export type LibraryFirstPublicationPreviewResponseMetadataRevisions = {[key: string]: number};
 
@@ -359,6 +371,7 @@ export interface LibraryFirstPublicationPreviewResponse {
   /** @nullable */
   blockers: string[] | null;
   context_digest: string;
+  desired_tags: LibraryFirstPublicationPreviewResponseDesiredTags;
   epoch: string;
   metadata_revisions: LibraryFirstPublicationPreviewResponseMetadataRevisions;
   native_status: string;
@@ -366,7 +379,11 @@ export interface LibraryFirstPublicationPreviewResponse {
   path_components?: string[] | null;
   position_id: string;
   release_id: string;
+  /** @nullable */
+  resolved_path_components?: string[] | null;
   selected_source?: FirstPublicationPreviewSource;
+  /** @nullable */
+  source_candidates: FirstPublicationPreviewSource[] | null;
   transform?: FirstPublicationPreviewTransform;
   /** @nullable */
   warnings: string[] | null;
@@ -1365,6 +1382,12 @@ export interface UpdateSourceBody {
   display_name?: string;
   processing_mode?: UpdateSourceBodyProcessingMode;
 }
+
+export type GetLibraryFirstPublicationPreviewParams = {
+location_id?: string;
+media_variant_id?: string;
+stream_index?: string;
+};
 
 export type ListOperationsParams = {
 state?: ListOperationsState;

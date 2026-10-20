@@ -56,7 +56,7 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 	}
 	tables := []string{
 		"app_setting", "local_artist", "local_recording", "local_release", "local_track", "media_variant",
-		"provider", "provider_artist", "provider_local_artist", "release_artist", "release_track",
+		"provider", "provider_artist", "provider_local_artist", "publication_namespace_claim", "publication_namespace_reservation", "release_artist", "release_track",
 		"source_analysis_step", "source_analysis_work", "source_location", "source_root", "source_work_variant_identity",
 		"tool_installation", "track_artist", "track_source",
 	}

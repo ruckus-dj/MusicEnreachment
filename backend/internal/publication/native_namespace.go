@@ -99,26 +99,6 @@ func PlanNativeNamespace(ctx context.Context, candidates []NamespaceCandidate, c
 	for _, e := range entries {
 		siblings[canonicalParent(e.key)] = append(siblings[canonicalParent(e.key)], e)
 	}
-	for parentKey, group := range siblings {
-		parent := ""
-		if p := keys[parentKey]; p != nil {
-			parent = p.path
-		}
-		for i, a := range group {
-			for _, b := range group[i+1:] {
-				eq, err := compare(ctx, parent, path.Base(a.path), path.Base(b.path))
-				if err != nil {
-					return nil, fmt.Errorf("plan native namespace: compare existing components: %w", err)
-				}
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-				if eq && a.key != b.key {
-					return nil, fmt.Errorf("plan native namespace: equivalent existing claims have different canonical keys")
-				}
-			}
-		}
-	}
 	ordered := append([]NamespaceCandidate(nil), candidates...)
 	for _, c := range ordered {
 		if !validNamespacePath(c.RelativePath) || (c.NodeKind != "file" && c.NodeKind != "directory") || c.PositionID == uuid.Nil {
@@ -159,10 +139,11 @@ func PlanNativeNamespace(ctx context.Context, candidates []NamespaceCandidate, c
 				rel = parentPath + "/" + component
 			}
 			var found *namespaceEntry
+			siblingsForParent := siblings[parentKey]
 			if kind == "directory" {
 				var scoped *namespaceEntry
-				for _, e := range entries {
-					if canonicalParent(e.key) != parentKey || e.kind != "directory" {
+				for _, e := range siblingsForParent {
+					if e.kind != "directory" {
 						continue
 					}
 					if e.scope == scope {
@@ -177,34 +158,27 @@ func PlanNativeNamespace(ctx context.Context, candidates []NamespaceCandidate, c
 					if p := keys[parentKey]; p != nil {
 						parentRelative = p.path
 					}
-					for _, e := range entries {
-						if canonicalParent(e.key) != parentKey || e.key == scoped.key {
+					for _, e := range siblingsForParent {
+						if e.key == scoped.key {
 							continue
 						}
-						eq, err := compare(ctx, parentRelative, path.Base(e.path), component)
-						if err != nil {
-							return nil, fmt.Errorf("plan native namespace: compare scoped directory sibling: %w", err)
-						}
-						if err := ctx.Err(); err != nil {
-							return nil, err
-						}
-						if eq {
-							return nil, fmt.Errorf("plan native namespace: directory name collides with another scope")
+						for _, requestedName := range []string{component, path.Base(scoped.path)} {
+							eq, err := compare(ctx, parentRelative, path.Base(e.path), requestedName)
+							if err != nil {
+								return nil, fmt.Errorf("plan native namespace: compare scoped directory sibling: %w", err)
+							}
+							if err := ctx.Err(); err != nil {
+								return nil, err
+							}
+							if eq {
+								return nil, fmt.Errorf("plan native namespace: directory name collides with another scope")
+							}
 						}
 					}
 					found = scoped
 				}
 			}
-			for _, e := range entries {
-				if found != nil {
-					break
-				}
-				if path.Dir(e.path) != parentPath && (parentPath != "" || path.Dir(e.path) != ".") {
-					continue
-				}
-				if canonicalParent(e.key) != parentKey {
-					continue
-				}
+			for _, e := range siblingsForParent {
 				eq, err := compare(ctx, parentPath, path.Base(e.path), component)
 				if err != nil {
 					return nil, fmt.Errorf("plan native namespace: compare components: %w", err)
@@ -244,6 +218,7 @@ func PlanNativeNamespace(ctx context.Context, candidates []NamespaceCandidate, c
 				found = &namespaceEntry{rel, key, kind, scope, owner}
 				entries = append(entries, found)
 				keys[key] = found
+				siblings[parentKey] = append(siblings[parentKey], found)
 				parentKey = key
 			}
 			parentPath = rel

@@ -3,7 +3,32 @@ import {
   getLibraryFirstPublicationPreview,
   startLibraryFirstPublication,
 } from "../../api/generated/client";
-import type { LibraryFirstPublicationPreviewResponse } from "../../api/generated/client.schemas";
+import type {
+  FirstPublicationPreviewSource,
+  LibraryFirstPublicationPreviewResponse,
+} from "../../api/generated/client.schemas";
+
+type SourceChoice = Pick<
+  FirstPublicationPreviewSource,
+  "location_id" | "media_variant_id" | "stream_index"
+>;
+
+function choiceKey(choice: SourceChoice | null) {
+  return choice
+    ? `${choice.location_id}:${choice.media_variant_id}:${choice.stream_index}`
+    : "unresolved";
+}
+
+function sameChoice(
+  source: FirstPublicationPreviewSource,
+  choice: SourceChoice,
+) {
+  return (
+    source.location_id === choice.location_id &&
+    source.media_variant_id === choice.media_variant_id &&
+    source.stream_index === choice.stream_index
+  );
+}
 
 function responseError(data: { detail?: string }, status: number) {
   return data.detail || `Запрос не выполнен (HTTP ${status}).`;
@@ -22,6 +47,13 @@ export function FirstPublicationPreview({
 }) {
   const [preview, setPreview] =
     useState<LibraryFirstPublicationPreviewResponse>();
+  const [selectedChoice, setSelectedChoice] = useState<SourceChoice | null>(
+    null,
+  );
+  const [sourceCandidates, setSourceCandidates] = useState<
+    FirstPublicationPreviewSource[]
+  >([]);
+  const [previewChoiceKey, setPreviewChoiceKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
@@ -29,13 +61,28 @@ export function FirstPublicationPreview({
   const [admissionUncertain, setAdmissionUncertain] = useState(false);
   const mounted = useRef(false);
   const requestSequence = useRef(0);
-  const currentIdentity = useRef({ releaseId, positionId });
-  currentIdentity.current = { releaseId, positionId };
+  const currentIdentity = useRef({
+    releaseId,
+    positionId,
+    choiceKey: "unresolved",
+  });
+  currentIdentity.current = {
+    releaseId,
+    positionId,
+    choiceKey: choiceKey(selectedChoice),
+  };
 
   useEffect(() => {
-    currentIdentity.current = { releaseId, positionId };
+    currentIdentity.current = {
+      releaseId,
+      positionId,
+      choiceKey: "unresolved",
+    };
     mounted.current = true;
+    setSelectedChoice(null);
+    setSourceCandidates([]);
     setPreview(undefined);
+    setPreviewChoiceKey("");
     setLoading(false);
     setConfirming(false);
     setError("");
@@ -49,38 +96,60 @@ export function FirstPublicationPreview({
 
   function isCurrentRequest(
     request: number,
-    requestIdentity: { releaseId: string; positionId: string },
+    requestIdentity: {
+      releaseId: string;
+      positionId: string;
+      choiceKey: string;
+    },
   ) {
     return (
       mounted.current &&
       requestSequence.current === request &&
       currentIdentity.current.releaseId === requestIdentity.releaseId &&
-      currentIdentity.current.positionId === requestIdentity.positionId
+      currentIdentity.current.positionId === requestIdentity.positionId &&
+      currentIdentity.current.choiceKey === requestIdentity.choiceKey
     );
   }
 
-  async function loadPreview() {
+  async function loadPreview(choice: SourceChoice | null = selectedChoice) {
     const request = ++requestSequence.current;
-    const requestIdentity = { releaseId, positionId };
+    const requestIdentity = {
+      releaseId,
+      positionId,
+      choiceKey: choiceKey(choice),
+    };
+    currentIdentity.current = requestIdentity;
     setLoading(true);
     setError("");
     setPreview(undefined);
+    setPreviewChoiceKey("");
     try {
       const response = await getLibraryFirstPublicationPreview(
         releaseId,
         positionId,
+        choice
+          ? {
+              location_id: choice.location_id,
+              media_variant_id: choice.media_variant_id,
+              stream_index: String(choice.stream_index),
+            }
+          : undefined,
         { cache: "no-store" },
       );
       if (!isCurrentRequest(request, requestIdentity)) return;
       if (response.status !== 200) {
         setError(
-          response.status === 409
-            ? "Снимок устарел. Обновите данные релиза и запросите новый предпросмотр."
-            : responseError(response.data, response.status),
+          response.status === 409 && choice
+            ? "Выбранный источник больше недоступен. Выберите источник заново и запросите новый предпросмотр."
+            : response.status === 409
+              ? "Снимок устарел. Обновите данные релиза и запросите новый предпросмотр."
+              : responseError(response.data, response.status),
         );
         return;
       }
       setPreview(response.data);
+      setSourceCandidates(response.data.source_candidates ?? []);
+      setPreviewChoiceKey(requestIdentity.choiceKey);
     } catch (reason) {
       if (!isCurrentRequest(request, requestIdentity)) return;
       setError(
@@ -93,11 +162,32 @@ export function FirstPublicationPreview({
     }
   }
 
+  function changeChoice(choice: SourceChoice | null) {
+    if (confirming || admissionUncertain || admittedOperationID) return;
+    const nextKey = choiceKey(choice);
+    ++requestSequence.current;
+    currentIdentity.current = { releaseId, positionId, choiceKey: nextKey };
+    setSelectedChoice(choice);
+    setPreview(undefined);
+    setPreviewChoiceKey("");
+    setLoading(false);
+    setError("");
+    setAdmissionUncertain(false);
+    setAdmittedOperationID("");
+    void loadPreview(choice);
+  }
+
   async function confirmPreview() {
     if (!preview || !canConfirm || confirming || admissionUncertain) return;
     const request = ++requestSequence.current;
-    const requestIdentity = { releaseId, positionId };
+    const confirmedChoice = selectedChoice;
+    const requestIdentity = {
+      releaseId,
+      positionId,
+      choiceKey: choiceKey(confirmedChoice),
+    };
     const confirmedPreview = preview;
+    if (previewChoiceKey !== requestIdentity.choiceKey) return;
     setConfirming(true);
     setError("");
     try {
@@ -107,6 +197,14 @@ export function FirstPublicationPreview({
         {
           preview_digest: confirmedPreview.context_digest,
           expected_epoch: confirmedPreview.epoch,
+          ...(confirmedChoice && confirmedPreview.selected_source
+            ? {
+                location_id: confirmedPreview.selected_source.location_id,
+                media_variant_id:
+                  confirmedPreview.selected_source.media_variant_id,
+                stream_index: confirmedPreview.selected_source.stream_index,
+              }
+            : {}),
         },
       );
       if (!isCurrentRequest(request, requestIdentity)) return;
@@ -119,7 +217,9 @@ export function FirstPublicationPreview({
       if (response.status === 409) {
         setPreview(undefined);
         setError(
-          "Предпросмотр устарел. Обновите состояние и запросите новый предпросмотр; подтверждение не повторено.",
+          confirmedChoice
+            ? "Выбранный источник больше недоступен. Выберите источник заново и запросите новый предпросмотр."
+            : "Предпросмотр устарел. Обновите состояние и запросите новый предпросмотр; подтверждение не повторено.",
         );
         onRefresh();
         return;
@@ -139,12 +239,23 @@ export function FirstPublicationPreview({
     }
   }
 
+  const candidates = sourceCandidates;
+  const needsExplicitChoice =
+    candidates.length > 1 ||
+    candidates.some((candidate) => candidate.audio_stream_count > 1);
+  const choiceMatchesPreview = Boolean(
+    selectedChoice &&
+      preview?.selected_source &&
+      sameChoice(preview.selected_source, selectedChoice),
+  );
   const canConfirm = Boolean(
     preview &&
+      previewChoiceKey === choiceKey(selectedChoice) &&
       preview.blockers?.length === 0 &&
       preview.selected_source &&
+      (!needsExplicitChoice || choiceMatchesPreview) &&
       preview.transform &&
-      preview.path_components?.length,
+      preview.resolved_path_components?.length,
   );
 
   return (
@@ -165,6 +276,54 @@ export function FirstPublicationPreview({
         {loading ? "Загрузка предпросмотра…" : "Предпросмотр публикации"}
       </button>
       {error && <p role="alert">{error}</p>}
+      {needsExplicitChoice && (
+        <fieldset
+          className="space-y-2"
+          disabled={
+            confirming || admissionUncertain || Boolean(admittedOperationID)
+          }
+        >
+          <legend className="font-medium">
+            Выберите аудиопоток для публикации
+          </legend>
+          <label className="block">
+            <input
+              type="radio"
+              name={`publication-source-${releaseId}-${positionId}`}
+              checked={selectedChoice === null}
+              onChange={() => changeChoice(null)}
+            />{" "}
+            Источник не выбран
+          </label>
+          {candidates.map((candidate) => {
+            const candidateChoice: SourceChoice = {
+              location_id: candidate.location_id,
+              media_variant_id: candidate.media_variant_id,
+              stream_index: candidate.stream_index,
+            };
+            return (
+              <label className="block" key={choiceKey(candidateChoice)}>
+                <input
+                  type="radio"
+                  name={`publication-source-${releaseId}-${positionId}`}
+                  checked={
+                    choiceKey(selectedChoice) === choiceKey(candidateChoice)
+                  }
+                  onChange={() => changeChoice(candidateChoice)}
+                />{" "}
+                {candidate.title || candidate.codec} · {candidate.codec}, поток{" "}
+                {candidate.stream_index}
+                {candidate.language ? ` · ${candidate.language}` : ""}
+                {candidate.channels ? ` · ${candidate.channels} канал(а)` : ""}
+                {candidate.unsupported_audio_stream_count > 0
+                  ? ` · неподдерживаемых аудиопотоков: ${candidate.unsupported_audio_stream_count}`
+                  : ""}
+                {` · корень ${candidate.root_id}, расположение ${candidate.location_id}, вариант ${candidate.media_variant_id}`}
+              </label>
+            );
+          })}
+        </fieldset>
+      )}
       {preview && (
         <div className="space-y-2">
           <h3 className="font-semibold">План первой публикации</h3>
@@ -182,10 +341,22 @@ export function FirstPublicationPreview({
           </p>
           <p>
             Планируемый относительный путь:{" "}
-            {preview.path_components?.length
-              ? preview.path_components.join("/")
-              : "не определён"}
+            {preview.resolved_path_components?.length
+              ? preview.resolved_path_components.join("/")
+              : "не определён; namespace не подтверждён"}
           </p>
+          <div className="rounded bg-amber-50 p-3">
+            <h4 className="font-medium">
+              Планируемые теги (не фактическое чтение файла)
+            </h4>
+            {Object.entries(preview.desired_tags ?? {}).map(
+              ([name, values]) => (
+                <p key={name}>
+                  {name}: {(values ?? []).join(", ")}
+                </p>
+              ),
+            )}
+          </div>
           <div>
             <h4 className="font-medium">Проекции метаданных (ревизии)</h4>
             {Object.keys(preview.metadata_revisions ?? {}).length ? (

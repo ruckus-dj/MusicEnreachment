@@ -32,6 +32,7 @@ import type {
   CreateSourceBody,
   DeleteSourceBody,
   ErrorModel,
+  GetLibraryFirstPublicationPreviewParams,
   IncomingGroupReturnAutomaticResult,
   IncomingGroupingEditBody,
   IncomingGroupsBody,
@@ -2934,21 +2935,30 @@ export type getLibraryFirstPublicationPreviewResponseError = (getLibraryFirstPub
 export type getLibraryFirstPublicationPreviewResponse = (getLibraryFirstPublicationPreviewResponseSuccess | getLibraryFirstPublicationPreviewResponseError)
 
 export const getGetLibraryFirstPublicationPreviewUrl = (releaseId: string,
-    positionId: string,) => {
+    positionId: string,
+    params?: GetLibraryFirstPublicationPreviewParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/library/releases/${releaseId}/positions/${positionId}/publication/preview`
+  return stringifiedParams.length > 0 ? `/api/library/releases/${releaseId}/positions/${positionId}/publication/preview?${stringifiedParams}` : `/api/library/releases/${releaseId}/positions/${positionId}/publication/preview`
 }
 
 /**
  * @summary Preview first publication for a library position
  */
 export const getLibraryFirstPublicationPreview = async (releaseId: string,
-    positionId: string, options?: RequestInit): Promise<getLibraryFirstPublicationPreviewResponse> => {
+    positionId: string,
+    params?: GetLibraryFirstPublicationPreviewParams, options?: RequestInit): Promise<getLibraryFirstPublicationPreviewResponse> => {
 
-  const res = await fetch(getGetLibraryFirstPublicationPreviewUrl(releaseId,positionId),
+  const res = await fetch(getGetLibraryFirstPublicationPreviewUrl(releaseId,positionId,params),
   {
     ...options,
     method: 'GET'
@@ -2969,24 +2979,26 @@ export const getLibraryFirstPublicationPreview = async (releaseId: string,
 
 
 export const getGetLibraryFirstPublicationPreviewQueryKey = (releaseId: string,
-    positionId: string,) => {
+    positionId: string,
+    params?: GetLibraryFirstPublicationPreviewParams,) => {
     return [
-    `/api/library/releases/${releaseId}/positions/${positionId}/publication/preview`
+    `/api/library/releases/${releaseId}/positions/${positionId}/publication/preview`, ...(params ? [params] : [])
     ] as const;
     }
 
 
 export const getGetLibraryFirstPublicationPreviewQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(releaseId: string,
-    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>>, fetch?: RequestInit}
+    positionId: string,
+    params?: GetLibraryFirstPublicationPreviewParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>>, fetch?: RequestInit}
 ) => {
 
 const {query: queryOptions, fetch: fetchOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetLibraryFirstPublicationPreviewQueryKey(releaseId,positionId);
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryFirstPublicationPreviewQueryKey(releaseId,positionId,params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>> = ({ signal }) => getLibraryFirstPublicationPreview(releaseId,positionId, { signal, ...fetchOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>> = ({ signal }) => getLibraryFirstPublicationPreview(releaseId,positionId,params, { signal, ...fetchOptions });
 
 
 
@@ -3001,7 +3013,8 @@ export type GetLibraryFirstPublicationPreviewQueryError = ErrorModel
 
 export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(
  releaseId: string,
-    positionId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>> & Pick<
+    positionId: string,
+    params: undefined |  GetLibraryFirstPublicationPreviewParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>,
           TError,
@@ -3012,7 +3025,8 @@ export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(
  releaseId: string,
-    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>> & Pick<
+    positionId: string,
+    params?: GetLibraryFirstPublicationPreviewParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>,
           TError,
@@ -3023,7 +3037,8 @@ export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(
  releaseId: string,
-    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>>, fetch?: RequestInit}
+    positionId: string,
+    params?: GetLibraryFirstPublicationPreviewParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>>, fetch?: RequestInit}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -3032,11 +3047,12 @@ export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<
 
 export function useGetLibraryFirstPublicationPreview<TData = Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError = ErrorModel>(
  releaseId: string,
-    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>>, fetch?: RequestInit}
+    positionId: string,
+    params?: GetLibraryFirstPublicationPreviewParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryFirstPublicationPreview>>, TError, TData>>, fetch?: RequestInit}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetLibraryFirstPublicationPreviewQueryOptions(releaseId,positionId,options)
+  const queryOptions = getGetLibraryFirstPublicationPreviewQueryOptions(releaseId,positionId,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

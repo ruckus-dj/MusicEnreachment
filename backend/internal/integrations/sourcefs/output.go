@@ -30,6 +30,12 @@ type OutputDirectoryTraversal interface {
 	OpenExistingDir(context.Context, string) (OutputDirectory, error)
 }
 
+// OutputDirectoryReader is an optional read-only capability for enumerating
+// entries beneath a pinned output directory.
+type OutputDirectoryReader interface {
+	ReadDir(context.Context) ([]Entry, error)
+}
+
 // OutputMutation is an optional capability implemented only by native output
 // directories that support handle-relative, no-replace publication operations.
 // Keeping it separate avoids requiring test doubles and wrapped capabilities to

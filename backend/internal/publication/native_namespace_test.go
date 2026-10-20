@@ -3,6 +3,7 @@ package publication
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -129,10 +130,66 @@ func TestPlanNativeNamespaceScopeReuseStillRejectsNativeAlias(t *testing.T) {
 	}
 }
 
+func TestPlanNativeNamespaceScopeReuseChecksRepresentativeAgainstSiblings(t *testing.T) {
+	owner := uuid.New()
+	claims := []NamespaceClaim{
+		{CanonicalKey: "selected", RelativePath: "Alpha", NodeKind: "directory", DirectoryScope: "selected-scope"},
+		{CanonicalKey: "other", RelativePath: "ALPHA", NodeKind: "directory", DirectoryScope: "other-scope"},
+	}
+	candidate := NamespaceCandidate{RelativePath: "New Name", NodeKind: "directory", DirectoryScope: "selected-scope", PositionID: owner}
+	if _, err := PlanNativeNamespace(context.Background(), []NamespaceCandidate{candidate}, claims, nativeComparator); err == nil {
+		t.Fatal("expected selected representative alias to reject scope reuse")
+	}
+}
+
 func TestPlanNativeNamespaceRejectsExistingEquivalentClaims(t *testing.T) {
 	claims := []NamespaceClaim{{CanonicalKey: "one", RelativePath: "A", NodeKind: "directory"}, {CanonicalKey: "two", RelativePath: "a", NodeKind: "directory"}}
-	if _, err := PlanNativeNamespace(context.Background(), nil, claims, nativeComparator); err == nil {
-		t.Fatal("expected conflicting existing classes")
+	if _, err := PlanNativeNamespace(context.Background(), []NamespaceCandidate{{RelativePath: "a", NodeKind: "file", PositionID: uuid.New()}}, claims, nativeComparator); err == nil {
+		t.Fatal("expected conflicting existing aliases to block a relevant candidate")
+	}
+}
+
+func TestPlanNativeNamespaceComparesOnlyCandidateSiblings(t *testing.T) {
+	const count = 1000
+	claims := make([]NamespaceClaim, 0, count+2)
+	for i := 0; i < count; i++ {
+		owner := uuid.New()
+		claims = append(claims, NamespaceClaim{CanonicalKey: uuid.NewString(), RelativePath: fmt.Sprintf("claim-%d", i), NodeKind: "file", OwnerPositionID: &owner})
+	}
+	unrelatedOwner := uuid.New()
+	claims = append(claims,
+		NamespaceClaim{CanonicalKey: "unrelated", RelativePath: "Unrelated", NodeKind: "directory", DirectoryScope: "unrelated"},
+		NamespaceClaim{CanonicalKey: "unrelated/child", RelativePath: "Unrelated/Child", NodeKind: "file", OwnerPositionID: &unrelatedOwner},
+	)
+	calls := 0
+	cmp := func(_ context.Context, parent, _, _ string) (bool, error) {
+		calls++
+		if parent != "" {
+			t.Errorf("compared unrelated subtree at parent %q", parent)
+		}
+		return false, nil
+	}
+	_, err := PlanNativeNamespace(context.Background(), []NamespaceCandidate{{RelativePath: "target", NodeKind: "file", PositionID: uuid.New()}}, claims, cmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls > 2*len(claims) {
+		t.Fatalf("native comparisons = %d for %d claims; want linear candidate-scoped work", calls, len(claims))
+	}
+}
+
+func TestPlanNativeNamespaceDoesNotCompareWithoutCandidates(t *testing.T) {
+	claims := []NamespaceClaim{
+		{CanonicalKey: "one", RelativePath: "A", NodeKind: "directory", DirectoryScope: "one"},
+		{CanonicalKey: "two", RelativePath: "a", NodeKind: "directory", DirectoryScope: "two"},
+	}
+	calls := 0
+	cmp := func(context.Context, string, string, string) (bool, error) { calls++; return true, nil }
+	if _, err := PlanNativeNamespace(context.Background(), nil, claims, cmp); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("native comparisons = %d, want zero", calls)
 	}
 }
 

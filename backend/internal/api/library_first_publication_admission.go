@@ -14,8 +14,11 @@ import (
 type LibraryFirstPublicationAdmissionInput struct {
 	LibraryPublicationInput
 	Body struct {
-		PreviewDigest string    `json:"preview_digest" pattern:"^[0-9a-fA-F]{64}$" minLength:"64" maxLength:"64"`
-		ExpectedEpoch uuid.UUID `json:"expected_epoch"`
+		PreviewDigest  string     `json:"preview_digest" pattern:"^[0-9a-fA-F]{64}$" minLength:"64" maxLength:"64"`
+		ExpectedEpoch  uuid.UUID  `json:"expected_epoch"`
+		LocationID     *uuid.UUID `json:"location_id,omitempty"`
+		MediaVariantID *uuid.UUID `json:"media_variant_id,omitempty"`
+		StreamIndex    *int       `json:"stream_index,omitempty" minimum:"0"`
 	}
 }
 
@@ -35,9 +38,14 @@ func registerLibraryFirstPublicationAdmission(api huma.API, dependencies Depende
 		if dependencies.LibraryPublications == nil || dependencies.Operations == nil {
 			return nil, huma.Error503ServiceUnavailable("library publication service is unavailable")
 		}
+		choice, choiceErr := previewSourceChoice(input.Body.LocationID, input.Body.MediaVariantID, input.Body.StreamIndex)
+		if choiceErr != nil {
+			return nil, huma.Error400BadRequest("source selection requires location_id, media_variant_id, and stream_index")
+		}
 		id, err := dependencies.LibraryPublications.AdmitFirst(ctx, input.ReleaseID, input.PositionID, service.FirstPublicationConfirmation{
 			PreviewDigest: input.Body.PreviewDigest,
 			ExpectedEpoch: input.Body.ExpectedEpoch,
+			SourceChoice:  choice,
 		})
 		if err != nil {
 			return nil, firstPublicationAdmissionError(err)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"reflect"
 
 	"github.com/google/uuid"
@@ -20,6 +19,7 @@ import (
 type FirstPublicationConfirmation struct {
 	PreviewDigest string
 	ExpectedEpoch uuid.UUID
+	SourceChoice  *FirstPublicationSourceChoice
 }
 
 type firstPublicationAdmissionRepository interface {
@@ -62,11 +62,18 @@ func (service *LibraryPublications) AdmitFirst(ctx context.Context, releaseID, p
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("select verified publication tools: %w", err)
 	}
-	preview, err := buildFirstPublicationPreview(snapshot, runtimeSettings, selectedTools, releaseID, positionID)
+	preview, err := buildFirstPublicationPreviewSelected(snapshot, runtimeSettings, selectedTools, releaseID, positionID, confirmation.SourceChoice)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("plan first publication: %w", err)
 	}
-	if preview.ContextDigest != confirmation.PreviewDigest || len(preview.Blockers) != 0 || preview.SelectedSource == nil || preview.Transform == nil {
+	if len(preview.Blockers) != 0 || preview.SelectedSource == nil || preview.Transform == nil {
+		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+	}
+	initialManifest, err := finalizeFirstPublicationNamespace(ctx, snapshot, runtimeSettings.OutputDirectory, runtimeSettings.PublicationPathTemplate, &preview)
+	if err != nil || preview.ContextDigest != confirmation.PreviewDigest {
+		if ctx.Err() != nil {
+			return uuid.Nil, ctx.Err()
+		}
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
 	}
 
@@ -99,36 +106,18 @@ func (service *LibraryPublications) AdmitFirst(ctx context.Context, releaseID, p
 	candidateID := uuid.New()
 	sourceSelection := selected.Selection
 	sourceSelection.HoldUUID = uuid.New()
-	candidates, err := firstPublicationNamespaceCandidates(snapshot, runtimeSettings.PublicationPathTemplate, preview.PathComponents, releaseID, positionID)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	provisional := make([]persistence.PublicationNamespaceNode, 0, len(candidates))
-	keys := make(map[string]string, len(candidates))
-	for _, candidate := range candidates {
-		key := uuid.NewString()
-		if parent := path.Dir(candidate.RelativePath); parent != "." {
-			key = keys[parent] + "/" + key
-		}
-		keys[candidate.RelativePath] = key
-		kind := candidate.NodeKind
-		if kind == "directory" {
-			kind = "dir"
-		}
-		provisional = append(provisional, persistence.PublicationNamespaceNode{CanonicalKey: key, RelativePath: candidate.RelativePath, NodeKind: kind, DirectoryScope: candidate.DirectoryScope})
-	}
 	request := persistence.PublicationAdmission{
 		PositionID: positionID, ExpectedReleaseID: releaseID, ExpectedEpoch: confirmation.ExpectedEpoch,
 		CandidateGeneration: candidateID, IntentKind: "audio", ToolsReadRequired: true,
 		Tools:  append([]persistence.SourceAnalysisToolSelection(nil), selectedTools...),
 		Source: &sourceSelection, FrozenInputs: rawFrozen,
-		NamespaceManifest: provisional,
+		NamespaceManifest: initialManifest,
 	}
 	return repository.AdmitFirstPublicationFromPreview(ctx, persistence.FirstPublicationAdmission{
 		PublicationAdmission: request, PreviewDigest: confirmation.PreviewDigest,
 		PrepareFirst: func(ctx context.Context, authoritative persistence.FirstPublicationAdmissionSnapshot, actual persistence.PublicationAdmission) ([]persistence.PublicationNamespaceNode, error) {
 			if authoritative.Context == nil || authoritative.Context.Library == nil ||
-				authoritative.Context.Library.ActiveEpoch != confirmation.ExpectedEpoch || authoritative.PreviewDigest != confirmation.PreviewDigest ||
+				authoritative.Context.Library.ActiveEpoch != confirmation.ExpectedEpoch ||
 				actual.CandidateGeneration != candidateID || actual.ExpectedReleaseID != releaseID || actual.PositionID != positionID || actual.Source == nil {
 				return nil, persistence.ErrPublicationAdmissionConflict
 			}
@@ -147,9 +136,16 @@ func (service *LibraryPublications) AdmitFirst(ctx context.Context, releaseID, p
 			if err != nil {
 				return nil, persistence.ErrPublicationAdmissionConflict
 			}
-			transactionPreview, err := buildFirstPublicationPreview(authoritative.Context, transactionSettings, transactionTools, releaseID, positionID)
-			if err != nil || transactionPreview.ContextDigest != confirmation.PreviewDigest || len(transactionPreview.Blockers) != 0 ||
+			transactionPreview, err := buildFirstPublicationPreviewSelected(authoritative.Context, transactionSettings, transactionTools, releaseID, positionID, confirmation.SourceChoice)
+			if err != nil || len(transactionPreview.Blockers) != 0 ||
 				transactionPreview.SelectedSource == nil || transactionPreview.Transform == nil || !reflect.DeepEqual(transactionTools, actual.Tools) {
+				return nil, persistence.ErrPublicationAdmissionConflict
+			}
+			transactionManifest, err := finalizeFirstPublicationNamespace(ctx, authoritative.Context, transactionSettings.OutputDirectory, transactionSettings.PublicationPathTemplate, &transactionPreview)
+			if err != nil || transactionPreview.ContextDigest != confirmation.PreviewDigest {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				return nil, persistence.ErrPublicationAdmissionConflict
 			}
 			if !reflect.DeepEqual(transactionPreview.DesiredTags.Tags, frozen.DesiredTags) ||
@@ -158,11 +154,7 @@ func (service *LibraryPublications) AdmitFirst(ctx context.Context, releaseID, p
 				transactionPreview.SelectedSource.StreamIndex != selected.Quality.StreamIndex {
 				return nil, persistence.ErrPublicationAdmissionConflict
 			}
-			candidates, err := firstPublicationNamespaceCandidates(authoritative.Context, transactionSettings.PublicationPathTemplate, transactionPreview.PathComponents, releaseID, positionID)
-			if err != nil {
-				return nil, err
-			}
-			return planFirstPublicationNamespace(ctx, transactionSettings.OutputDirectory, positionID, candidates, authoritative.Claims)
+			return transactionManifest, nil
 		},
 	}, service.river)
 }

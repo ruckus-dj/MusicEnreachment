@@ -26,6 +26,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 // This PostgreSQL test exercises the preparation journal through the real
@@ -50,7 +51,7 @@ func TestFirstPublicationPreviewConfirmationDeliveryPostgreSQL(t *testing.T) {
 	}
 }
 
-func testPublicationSourceExecution(t *testing.T, target string, confirmation ...bool) {
+func testPublicationSourceExecution(t *testing.T, target string, confirmation ...any) {
 	t.Helper()
 	ctx := context.Background()
 	db := testpostgres.OpenMigrated(t)
@@ -205,6 +206,9 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		if err := registry.SetOutputDirectory(ctx, output, ""); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.Mkdir(filepath.Join(output, "analysis"), 0o700); err != nil {
+			t.Fatal(err)
+		}
 		if err := manager.CreateInstallation(ctx, installation); err != nil {
 			t.Fatal(err)
 		}
@@ -257,7 +261,7 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		if err := tx.Commit(); err != nil {
 			t.Fatal(err)
 		}
-		if len(confirmation) > 0 && confirmation[0] {
+		if len(confirmation) > 0 && confirmation[0] == true {
 			// Remove only this fixture's synthetic admission. The source graph and
 			// verified installation remain the exact inputs consumed by PreviewFirst.
 			cleanup, err := db.BeginTx(ctx, nil)
@@ -307,7 +311,13 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 				t.Fatal(err)
 			}
 			publications := NewLibraryPublications(manager, registry, libraryPublicationTestInserter{}, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
-			if len(confirmation) > 1 && confirmation[1] {
+			for _, option := range confirmation {
+				if run, ok := option.(func(*bun.DB, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, *LibraryPublications)); ok {
+					run(db, releaseID, positionID, trackID, epoch, publications)
+					return
+				}
+			}
+			if len(confirmation) > 1 && confirmation[1] == true {
 				if err := persistence.NewSettingsRepository(db).Set(ctx, settings.PublicationPathTemplateKey, publication.DefaultTemplate); err != nil {
 					t.Fatal(err)
 				}
@@ -316,7 +326,7 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil {
 				t.Fatalf("first publication preview = %+v, %v", preview, err)
 			}
-			if len(confirmation) > 1 && confirmation[1] {
+			if len(confirmation) > 1 && confirmation[1] == true {
 				if len(preview.PathComponents) != 4 {
 					t.Fatalf("default-layout preview components = %#v, want 4", preview.PathComponents)
 				}

@@ -67,6 +67,44 @@ type unixOutputDir struct {
 	closed bool
 }
 
+func (d *unixOutputDir) ReadDir(ctx context.Context) (_ []Entry, resultErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, os.ErrClosed
+	}
+	fd, err := unix.Openat(int(d.file.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	d.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), "sourcefs-output-enumeration")
+	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
+	items, err := file.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries := make([]Entry, 0, len(items))
+	for _, item := range items {
+		kind := KindUnknown
+		if item.IsDir() {
+			kind = KindDir
+		} else if item.Type().IsRegular() {
+			kind = KindRegular
+		} else if item.Type()&os.ModeSymlink != 0 || item.Type() != 0 {
+			kind = KindExcluded
+		}
+		entries = append(entries, Entry{Name: item.Name(), Kind: kind})
+	}
+	return entries, nil
+}
+
 func (d *unixOutputDir) namespaceScopeDirectory() OutputDirectory { return d }
 
 func (d *unixOutputDir) OpenOrCreateDir(ctx context.Context, name string) (OutputDirectory, error) {

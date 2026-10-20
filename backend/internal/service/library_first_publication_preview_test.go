@@ -151,6 +151,83 @@ func TestPreviewFirstBlocksAmbiguousQualityAndExistingCurrent(t *testing.T) {
 	}
 }
 
+func TestPreviewFirstRequiresAndBindsExplicitSourceStreamChoice(t *testing.T) {
+	releaseID, positionID := uuid.New(), uuid.New()
+	location1, variant1, location2, variant2 := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	known := true
+	settings := firstPreviewSettings{format: "mka", template: "Artist/Track", caseSensitive: true}
+	makeService := func(sources []persistence.FirstPublicationSource) *LibraryPublications {
+		return newLibraryPublications(firstPreviewRepository{snapshot: &persistence.LibraryFirstPublicationContext{
+			Library: &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: uuid.New()}, Sources: sources,
+		}}, settings, nil, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
+	}
+	stream := func(location, variant uuid.UUID, index int, title string) persistence.FirstPublicationSource {
+		return persistence.FirstPublicationSource{Selection: persistence.PublicationSourceSelection{LocationID: location, MediaVariantID: variant},
+			Quality: persistence.PersistedAudioFacts{Codec: "flac", StreamIndex: index, Lossless: &known, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}, StreamTitle: title, StreamLanguage: "eng"}
+	}
+	// Multiple verified source files are never selected without an explicit choice.
+	service := makeService([]persistence.FirstPublicationSource{stream(location1, variant1, 0, "main"), stream(location2, variant2, 0, "alternate")})
+	withoutChoice, err := service.PreviewFirst(context.Background(), releaseID, positionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutChoice.SelectedSource != nil || len(withoutChoice.SourceCandidates) != 2 {
+		t.Fatalf("implicit multi-source selection: %#v", withoutChoice)
+	}
+	choice := &FirstPublicationSourceChoice{LocationID: location2, MediaVariantID: variant2, StreamIndex: 0}
+	selected, err := service.PreviewFirstSelected(context.Background(), releaseID, positionID, choice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.SelectedSource == nil || selected.SelectedSource.LocationID != location2 || selected.SelectedSource.Title != "alternate" {
+		t.Fatalf("selected source = %#v", selected.SelectedSource)
+	}
+	if selected.ContextDigest == withoutChoice.ContextDigest {
+		t.Fatal("selection did not bind digest")
+	}
+	// Two streams in one file are also separate choices; neither is implicit.
+	multiStreamService := makeService([]persistence.FirstPublicationSource{stream(location1, variant1, 0, "English"), stream(location1, variant1, 1, "Commentary")})
+	multiStream, err := multiStreamService.PreviewFirst(context.Background(), releaseID, positionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if multiStream.SelectedSource != nil || len(multiStream.SourceCandidates) != 2 {
+		t.Fatalf("implicit multistream selection: %#v", multiStream)
+	}
+	streamChoice := &FirstPublicationSourceChoice{LocationID: location1, MediaVariantID: variant1, StreamIndex: 1}
+	selectedStream, err := multiStreamService.PreviewFirstSelected(context.Background(), releaseID, positionID, streamChoice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selectedStream.SelectedSource == nil || selectedStream.SelectedSource.StreamIndex != 1 {
+		t.Fatalf("stream selection = %#v", selectedStream.SelectedSource)
+	}
+	if _, err := multiStreamService.PreviewFirstSelected(context.Background(), releaseID, positionID, &FirstPublicationSourceChoice{LocationID: location1, MediaVariantID: uuid.New(), StreamIndex: 1}); err == nil {
+		t.Fatal("stale/substituted source choice was accepted")
+	}
+	if _, err := multiStreamService.PreviewFirstSelected(context.Background(), releaseID, positionID, &FirstPublicationSourceChoice{LocationID: location1, MediaVariantID: variant1, StreamIndex: 7}); err == nil {
+		t.Fatal("substituted stream index was accepted")
+	}
+	// A second raw audio stream may be unsupported and therefore absent from
+	// SourceCandidates. Its presence still requires explicit user confirmation.
+	validOnly := stream(location1, variant1, 2, "supported stream")
+	validOnly.RequiresExplicitStreamSelection = true
+	validOnly.AudioStreamCount = 2
+	validOnly.UnsupportedAudioStreamCount = 1
+	unsupportedService := makeService([]persistence.FirstPublicationSource{validOnly})
+	implicitSupported, err := unsupportedService.PreviewFirst(context.Background(), releaseID, positionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if implicitSupported.SelectedSource != nil || len(implicitSupported.SourceCandidates) != 1 || !implicitSupported.SourceCandidates[0].RequiresExplicitStreamSelection || implicitSupported.SourceCandidates[0].UnsupportedAudioStreamCount != 1 {
+		t.Fatalf("unsupported second stream was hidden by unique eligible stream: %#v", implicitSupported)
+	}
+	explicitSupported, err := unsupportedService.PreviewFirstSelected(context.Background(), releaseID, positionID, &FirstPublicationSourceChoice{LocationID: location1, MediaVariantID: variant1, StreamIndex: 2})
+	if err != nil || explicitSupported.SelectedSource == nil || explicitSupported.SelectedSource.StreamIndex != 2 {
+		t.Fatalf("explicit supported stream choice = %#v, %v", explicitSupported.SelectedSource, err)
+	}
+}
+
 func TestPreviewFirstLazilyResolvesPrimaryArtistTokens(t *testing.T) {
 	releaseID, positionID := uuid.New(), uuid.New()
 	first, second := uuid.New(), uuid.New()

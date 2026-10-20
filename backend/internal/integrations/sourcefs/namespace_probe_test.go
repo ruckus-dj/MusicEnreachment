@@ -40,6 +40,34 @@ func TestNativeCompareComponentsUnicodeAndCleanup(t *testing.T) {
 	}
 }
 
+func TestNativeCompareComponentsInKeepsScratchInTechnicalParent(t *testing.T) {
+	root, rootPath := openNamespaceProbeRoot(t)
+	technical, err := root.CreateDirExclusive(context.Background(), "analysis")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = technical.Close() }()
+
+	if _, err := NativeCompareComponentsIn(context.Background(), root, technical, "release.flac", "release.flac"); err != nil {
+		t.Fatalf("NativeCompareComponentsIn: %v", err)
+	}
+	rootEntries, err := os.ReadDir(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootEntries) != 1 || rootEntries[0].Name() != "analysis" || !rootEntries[0].IsDir() {
+		t.Fatalf("probe created entries outside technical area: %v", rootEntries)
+	}
+	technicalPath := filepath.Join(rootPath, "analysis")
+	technicalEntries, err := os.ReadDir(technicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(technicalEntries) != 0 {
+		t.Fatalf("probe left scratch entries in technical area: %v", technicalEntries)
+	}
+}
+
 func nativeLookupEquivalent(t *testing.T, a, b string) bool {
 	t.Helper()
 	root := t.TempDir()

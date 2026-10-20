@@ -115,6 +115,19 @@ type windowsOutputDir struct {
 	path         string
 }
 
+func (d *windowsOutputDir) ReadDir(ctx context.Context) ([]Entry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	handle, err := duplicateOutputDirectoryHandle(d)
+	if err != nil {
+		return nil, err
+	}
+	reader := &windowsDirectory{handle: handle, first: true}
+	entries, readErr := reader.ReadDir(ctx, -1)
+	return entries, errors.Join(readErr, reader.Close())
+}
+
 func (d *windowsOutputDir) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

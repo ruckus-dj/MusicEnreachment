@@ -17,6 +17,18 @@ import (
 // that scratch namespace; it is not a global filename canonicalizer and does
 // not prove that another directory inherits the same filesystem semantics.
 func NativeCompareComponents(ctx context.Context, parent OutputDirectory, a, b string) (bool, error) {
+	return nativeCompareComponentsIn(ctx, parent, parent, a, b)
+}
+
+// NativeCompareComponentsIn compares names using namespaceParent's rules while
+// creating and cleaning its private scratch directory only beneath technicalParent.
+// The platform scope check still compares the scratch directory with
+// namespaceParent, so an incompatible technical area fails closed.
+func NativeCompareComponentsIn(ctx context.Context, namespaceParent, technicalParent OutputDirectory, a, b string) (bool, error) {
+	return nativeCompareComponentsIn(ctx, namespaceParent, technicalParent, a, b)
+}
+
+func nativeCompareComponentsIn(ctx context.Context, namespaceParent, technicalParent OutputDirectory, a, b string) (bool, error) {
 	if err := validateNamespaceProbeComponent(a); err != nil {
 		return false, err
 	}
@@ -26,15 +38,15 @@ func NativeCompareComponents(ctx context.Context, parent OutputDirectory, a, b s
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if parent == nil {
+	if namespaceParent == nil || technicalParent == nil {
 		return false, errors.Join(ErrUnsupported, errors.New("sourcefs: output cleanup capabilities are unavailable"))
 	}
-	cleanup, cleanupOK := parent.(OutputCleanup)
-	identifier, identityOK := parent.(DirectoryIdentifier)
+	cleanup, cleanupOK := technicalParent.(OutputCleanup)
+	identifier, identityOK := technicalParent.(DirectoryIdentifier)
 	if !cleanupOK || !identityOK {
 		return false, ErrUnsupported
 	}
-	parentID, err := identifier.Identity(ctx)
+	technicalParentID, err := identifier.Identity(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -43,7 +55,7 @@ func NativeCompareComponents(ctx context.Context, parent OutputDirectory, a, b s
 	var scratchName string
 	for attempts := 0; attempts < 8; attempts++ {
 		scratchName = ".namespace-probe-" + uuid.NewString()
-		scratch, err = parent.CreateDirExclusive(ctx, scratchName)
+		scratch, err = technicalParent.CreateDirExclusive(ctx, scratchName)
 		if err == nil {
 			break
 		}
@@ -55,7 +67,7 @@ func NativeCompareComponents(ctx context.Context, parent OutputDirectory, a, b s
 		return false, fmt.Errorf("sourcefs: unable to allocate private namespace probe directory")
 	}
 
-	return compareInOwnedScratch(ctx, parent, cleanup, scratchName, parentID, scratch, a, b)
+	return compareInOwnedScratch(ctx, namespaceParent, technicalParent, cleanup, scratchName, technicalParentID, scratch, a, b)
 }
 
 func validateNamespaceProbeComponent(name string) error {
@@ -65,7 +77,7 @@ func validateNamespaceProbeComponent(name string) error {
 	return nil
 }
 
-func compareInOwnedScratch(ctx context.Context, parent OutputDirectory, parentCleanup OutputCleanup, scratchName string, parentID DirectoryIdentity, scratch OutputDirectory, a, b string) (equivalent bool, resultErr error) {
+func compareInOwnedScratch(ctx context.Context, namespaceParent, technicalParent OutputDirectory, parentCleanup OutputCleanup, scratchName string, parentID DirectoryIdentity, scratch OutputDirectory, a, b string) (equivalent bool, resultErr error) {
 	var scratchID DirectoryIdentity
 	identityReady := false
 	cleanup, cleanupOK := scratch.(OutputCleanup)
@@ -91,7 +103,7 @@ func compareInOwnedScratch(ctx context.Context, parent OutputDirectory, parentCl
 		}
 		closeErr := scratch.Close()
 		if identityReady {
-			verifyErr := parent.VerifyChild(cleanCtx, scratchName, scratchID)
+			verifyErr := technicalParent.VerifyChild(cleanCtx, scratchName, scratchID)
 			var removeDirErr error
 			if verifyErr == nil {
 				removeDirErr = parentCleanup.RemoveEmptyChildDir(cleanCtx, scratchName, parentID, scratchID)
@@ -111,7 +123,7 @@ func compareInOwnedScratch(ctx context.Context, parent OutputDirectory, parentCl
 	if !cleanupOK {
 		return false, ErrUnsupported
 	}
-	if err := verifyNamespaceProbeScope(ctx, parent, scratch); err != nil {
+	if err := verifyNamespaceProbeScope(ctx, namespaceParent, scratch); err != nil {
 		return false, err
 	}
 
