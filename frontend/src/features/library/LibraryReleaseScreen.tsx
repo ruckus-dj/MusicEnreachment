@@ -6,6 +6,8 @@ import {
   getLibraryPublication,
   getLibraryRelease,
   patchLibraryPositionMetadata,
+  setLibraryPositionPrimaryArtist,
+  setLibraryReleasePrimaryArtist,
 } from "../../api/generated/client";
 import type {
   LibraryMetadataResponse,
@@ -26,6 +28,8 @@ type PositionData = {
   applyOperationID?: string;
   firstPublicationOperationID?: string;
   notice?: string;
+  primaryArtistSaving?: boolean;
+  writePending?: boolean;
 };
 
 function errorMessage(data: { detail?: string }, status: number) {
@@ -33,23 +37,69 @@ function errorMessage(data: { detail?: string }, status: number) {
 }
 
 export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
-  const [release, setRelease] = useState<LibraryReleaseDetailResponse>();
-  const [loadedReleaseID, setLoadedReleaseID] = useState("");
-  const [positions, setPositions] = useState<Record<string, PositionData>>({});
-  const [error, setError] = useState("");
-  const mounted = useRef(false);
-  const currentReleaseID = useRef(releaseId);
-  currentReleaseID.current = releaseId;
   const scope = useRef({ releaseId, generation: 0 });
   if (scope.current.releaseId !== releaseId) {
     scope.current = { releaseId, generation: scope.current.generation + 1 };
   }
+  const [release, setRelease] = useState<LibraryReleaseDetailResponse>();
+  const [loadedReleaseID, setLoadedReleaseID] = useState("");
+  const [positions, setPositions] = useState<Record<string, PositionData>>({});
+  const [error, setError] = useState("");
+  const [releasePrimaryArtist, setReleasePrimaryArtist] = useState({
+    scope: scope.current,
+    token: 0,
+    saving: false,
+    error: "",
+  });
+  const releasePrimaryArtistSaving =
+    releasePrimaryArtist.scope === scope.current && releasePrimaryArtist.saving;
+  const releasePrimaryArtistError =
+    releasePrimaryArtist.scope === scope.current
+      ? releasePrimaryArtist.error
+      : "";
+  const releasePrimaryArtistPending = useRef<
+    { scope: typeof scope.current; token: number } | undefined
+  >(undefined);
+  const mounted = useRef(false);
+  const currentReleaseID = useRef(releaseId);
+  currentReleaseID.current = releaseId;
   const monitors = useRef(
     new Map<string, { stop: () => void; positions: Set<string> }>(),
   );
   const finishedOperations = useRef(new Set<string>());
   const positionReadGenerations = useRef(new Map<string, number>());
   const lyricsEditGenerations = useRef(new Map<string, number>());
+  const releaseReadGeneration = useRef(0);
+  const positionWriteLocks = useRef(
+    new Map<string, { scope: typeof scope.current; token: number }>(),
+  );
+  const writeToken = useRef(0);
+
+  function acquirePositionWrite(positionId: string) {
+    if (positionWriteLocks.current.get(positionId)?.scope === scope.current)
+      return undefined;
+    const lock = { scope: scope.current, token: ++writeToken.current };
+    positionWriteLocks.current.set(positionId, lock);
+    return lock;
+  }
+
+  function releasePositionWrite(
+    positionId: string,
+    lock: { scope: typeof scope.current; token: number },
+  ) {
+    if (positionWriteLocks.current.get(positionId) !== lock) return;
+    positionWriteLocks.current.delete(positionId);
+    if (!mounted.current || scope.current !== lock.scope) return;
+    setPositions((current) => ({
+      ...current,
+      [positionId]: {
+        ...current[positionId],
+        writePending: false,
+        saving: false,
+        primaryArtistSaving: false,
+      },
+    }));
+  }
 
   useEffect(() => {
     mounted.current = true;
@@ -297,8 +347,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
 
   async function saveLyrics(positionId: string, explicitEmpty = false) {
     const position = positions[positionId];
-    if (!position?.metadata || position.saving) return;
+    if (!position?.metadata) return;
     const requestScope = scope.current;
+    const writeLock = acquirePositionWrite(positionId);
+    if (!writeLock) return;
     const submittedEditGeneration =
       lyricsEditGenerations.current.get(positionId) ?? 0;
     setPositions((current) => ({
@@ -306,6 +358,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
       [positionId]: {
         ...current[positionId],
         saving: true,
+        writePending: true,
         error: undefined,
         notice: undefined,
       },
@@ -382,11 +435,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         },
       }));
     } finally {
-      if (mounted.current && scope.current === requestScope)
-        setPositions((current) => ({
-          ...current,
-          [positionId]: { ...current[positionId], saving: false },
-        }));
+      releasePositionWrite(positionId, writeLock);
     }
   }
 
@@ -477,6 +526,130 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
     }
   }
 
+  async function selectPrimaryArtist(
+    positionId: string,
+    artistID: string | null,
+  ) {
+    const track = release?.tracks?.find((item) => item.id === positionId);
+    const position = positions[positionId];
+    if (!track || !position?.metadata) return;
+    const requestScope = scope.current;
+    const writeLock = acquirePositionWrite(positionId);
+    if (!writeLock) return;
+    setPositions((current) => ({
+      ...current,
+      [positionId]: {
+        ...current[positionId],
+        primaryArtistSaving: true,
+        writePending: true,
+        error: undefined,
+      },
+    }));
+    try {
+      const result = await setLibraryPositionPrimaryArtist(
+        releaseId,
+        positionId,
+        {
+          artist_id: artistID,
+          expected_revision: position.metadata.revision,
+          expected_track_revision: track.track_metadata_revision,
+        },
+      );
+      if (!mounted.current || scope.current !== requestScope) return;
+      if (result.status !== 200)
+        throw new Error(errorMessage(result.data, result.status));
+      await refreshReleaseDetail(requestScope);
+      if (!mounted.current || scope.current !== requestScope) return;
+      await refreshPosition(positionId);
+      if (!mounted.current || scope.current !== requestScope) return;
+    } catch (reason) {
+      if (!mounted.current || scope.current !== requestScope) return;
+      setPositions((current) => ({
+        ...current,
+        [positionId]: {
+          ...current[positionId],
+          error:
+            reason instanceof Error
+              ? reason.message
+              : "Не удалось выбрать исполнителя.",
+        },
+      }));
+    } finally {
+      releasePositionWrite(positionId, writeLock);
+    }
+  }
+
+  async function selectReleasePrimaryArtist(artistID: string | null) {
+    if (!release || releasePrimaryArtistSaving) return;
+    const requestScope = scope.current;
+    if (releasePrimaryArtistPending.current?.scope === requestScope) return;
+    const pending = { scope: requestScope, token: ++writeToken.current };
+    releasePrimaryArtistPending.current = pending;
+    setReleasePrimaryArtist({ ...pending, saving: true, error: "" });
+    try {
+      const result = await setLibraryReleasePrimaryArtist(releaseId, {
+        artist_id: artistID,
+        expected_revision: release.metadata_revision,
+      });
+      if (!mounted.current || scope.current !== requestScope) return;
+      if (result.status !== 200)
+        throw new Error(errorMessage(result.data, result.status));
+      if (!(await refreshReleaseDetail(requestScope))) return;
+    } catch (reason) {
+      if (
+        !mounted.current ||
+        scope.current !== requestScope ||
+        releasePrimaryArtistPending.current !== pending
+      )
+        return;
+      setReleasePrimaryArtist({
+        ...pending,
+        saving: false,
+        error:
+          reason instanceof Error
+            ? reason.message
+            : "Не удалось выбрать исполнителя релиза.",
+      });
+    } finally {
+      if (releasePrimaryArtistPending.current === pending)
+        releasePrimaryArtistPending.current = undefined;
+      if (mounted.current && scope.current === requestScope)
+        setReleasePrimaryArtist((current) =>
+          current.scope === requestScope && current.token === pending.token
+            ? { ...current, saving: false }
+            : current,
+        );
+    }
+  }
+
+  async function refreshReleaseDetail(
+    requestScope: typeof scope.current,
+  ): Promise<boolean> {
+    if (!mounted.current || scope.current !== requestScope) return false;
+    const generation = ++releaseReadGeneration.current;
+    const response = await getLibraryRelease(requestScope.releaseId, {
+      cache: "no-store",
+    });
+    if (
+      !mounted.current ||
+      scope.current !== requestScope ||
+      releaseReadGeneration.current !== generation
+    )
+      return false;
+    if (response.status !== 200)
+      throw new Error(errorMessage(response.data, response.status));
+    setRelease(response.data);
+    return true;
+  }
+
+  function uniqueArtists(artists: LibraryReleaseDetailResponse["artists"]) {
+    return Array.from(
+      new Map(
+        (artists ?? []).map((artist) => [artist.artist_id, artist]),
+      ).values(),
+    );
+  }
+
   if (error)
     return (
       <section>
@@ -512,6 +685,29 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
             ?.map((artist) => artist.credit_name || artist.artist_name)
             .join(", ")}
         </p>
+        {(release.artists?.length ?? 0) > 1 && (
+          <label className="block">
+            Основной исполнитель релиза
+            <select
+              aria-label="Основной исполнитель релиза"
+              value={release.primary_artist.selected_artist_id || ""}
+              disabled={releasePrimaryArtistSaving}
+              onChange={(event) =>
+                void selectReleasePrimaryArtist(event.target.value || null)
+              }
+            >
+              <option value="">Не выбран</option>
+              {uniqueArtists(release.artists).map((artist) => (
+                <option key={artist.artist_id} value={artist.artist_id}>
+                  {artist.credit_name || artist.artist_name}
+                </option>
+              ))}
+            </select>
+            {releasePrimaryArtistError && (
+              <p role="alert">{releasePrimaryArtistError}</p>
+            )}
+          </label>
+        )}
       </header>
       {(release.tracks ?? []).map((track) => {
         const renderScope = scope.current;
@@ -521,6 +717,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         const hasManualLyrics =
           lyricsField?.authority === "manual" &&
           ["value", "explicit_empty"].includes(lyricsField.state);
+        const credits = track.artists ?? [];
 
         function isPositionScopeCurrent() {
           return (
@@ -557,6 +754,29 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
             <h2 className="font-semibold">
               {track.displayed_number}. {track.title}
             </h2>
+            {credits.length > 1 && (
+              <label className="block">
+                Основной исполнитель композиции
+                <select
+                  aria-label={`Основной исполнитель композиции ${track.displayed_number}`}
+                  value={track.primary_artist.selected_artist_id || ""}
+                  disabled={!position?.metadata || position.writePending}
+                  onChange={(event) =>
+                    void selectPrimaryArtist(
+                      track.id,
+                      event.target.value || null,
+                    )
+                  }
+                >
+                  <option value="">Не выбран</option>
+                  {uniqueArtists(credits).map((artist) => (
+                    <option key={artist.artist_id} value={artist.artist_id}>
+                      {artist.credit_name || artist.artist_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="block">
               Сохранённый текст песни
               <textarea
@@ -583,6 +803,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                 type="button"
                 disabled={
                   !position?.metadata ||
+                  position.writePending ||
                   position.saving ||
                   Boolean(position.readError)
                 }
@@ -594,6 +815,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                 type="button"
                 disabled={
                   !position?.metadata ||
+                  position.writePending ||
                   position.saving ||
                   Boolean(position.readError)
                 }
@@ -656,7 +878,12 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
             <p>
               Текущая публикация:{" "}
               {publication?.current_metadata?.tags
-                ? "теги загружены"
+                ? Object.entries(publication.current_metadata.tags)
+                    .map(
+                      ([name, values]) =>
+                        `${name}: ${(values ?? []).join(", ")}`,
+                    )
+                    .join("; ") || "теги отсутствуют"
                 : "метаданные не доступны"}
               ; аудио{" "}
               {publication?.current_audio

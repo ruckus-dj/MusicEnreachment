@@ -12,6 +12,314 @@ import { LibraryReleaseScreen } from "./LibraryReleaseScreen";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("shows read-back tags and submits revision-fenced primary artist selections", async () => {
+  const primaryBodies: unknown[] = [];
+  let selectedArtist = "";
+  let positionRevision = 4;
+  let releaseRevision = 7;
+  server.use(
+    http.get("*/api/library/releases/credits", () =>
+      HttpResponse.json({
+        id: "credits",
+        title: "Album",
+        metadata: {},
+        metadata_revision: releaseRevision,
+        metadata_version: 1,
+        primary_artist: { selected_artist_id: selectedArtist },
+        artists: [
+          { artist_id: "artist-a", credit_name: "Artist A" },
+          { artist_id: "artist-b", credit_name: "Artist B" },
+          { artist_id: "artist-a", credit_name: "Duplicate Artist A" },
+        ],
+        tracks: [
+          {
+            id: "position-a",
+            local_track_id: "track-a",
+            title: "Song",
+            displayed_number: "1",
+            medium: 1,
+            position: 1,
+            metadata: {},
+            metadata_revision: 4,
+            metadata_version: 1,
+            track_metadata_revision: 3,
+            primary_artist: { selected_artist_id: selectedArtist },
+            recording_id: "recording",
+            artists: [
+              { artist_id: "artist-a", credit_name: "Artist A" },
+              { artist_id: "artist-b", credit_name: "Artist B" },
+              { artist_id: "artist-a", credit_name: "Duplicate Artist A" },
+            ],
+            sources: [],
+          },
+        ],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/credits/positions/position-a/metadata",
+      () =>
+        HttpResponse.json({
+          revision: positionRevision,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/credits/positions/position-a/publication",
+      () =>
+        HttpResponse.json({
+          release_id: "credits",
+          position_id: "position-a",
+          active_epoch: "epoch",
+          metadata_revision: 4,
+          can_apply_manual_lyrics: false,
+          current_metadata: {
+            version: 1,
+            tags: { ARTIST: ["Read back artist"], TITLE: ["Read back song"] },
+          },
+        }),
+    ),
+    http.put(
+      "*/api/library/releases/credits/positions/position-a/primary-artist",
+      async ({ request }) => {
+        primaryBodies.push(await request.json());
+        selectedArtist = "artist-b";
+        positionRevision += 1;
+        return HttpResponse.json({
+          revision: positionRevision,
+          publication_applied: false,
+        });
+      },
+    ),
+    http.put(
+      "*/api/library/releases/credits/primary-artist",
+      async ({ request }) => {
+        const body = (await request.json()) as { artist_id: string };
+        selectedArtist = body.artist_id;
+        releaseRevision += 1;
+        return HttpResponse.json({
+          revision: releaseRevision,
+          publication_applied: false,
+        });
+      },
+    ),
+  );
+  render(<LibraryReleaseScreen releaseId="credits" />);
+  expect(await screen.findByText(/ARTIST: Read back artist/)).toBeTruthy();
+  const positionSelect = screen.getByLabelText(
+    "Основной исполнитель композиции 1",
+  );
+  expect(positionSelect).toHaveValue("");
+  expect(positionSelect.querySelectorAll("option")).toHaveLength(3);
+  fireEvent.change(positionSelect, {
+    target: { value: "artist-b" },
+  });
+  await waitFor(() =>
+    expect(primaryBodies).toEqual([
+      {
+        artist_id: "artist-b",
+        expected_revision: 4,
+        expected_track_revision: 3,
+      },
+    ]),
+  );
+  await waitFor(() => expect(positionSelect).toHaveValue("artist-b"));
+  fireEvent.change(screen.getByLabelText("Основной исполнитель релиза"), {
+    target: { value: "artist-a" },
+  });
+  await waitFor(() =>
+    expect(screen.getByLabelText("Основной исполнитель релиза")).toHaveValue(
+      "artist-a",
+    ),
+  );
+});
+
+it("ignores a pending primary-artist mutation after navigating to another release", async () => {
+  let finishMutation: (() => void) | undefined;
+  let releaseAReads = 0;
+  server.use(
+    http.get("*/api/library/releases/:releaseId", ({ params }) => {
+      if (params.releaseId === "release-a") releaseAReads += 1;
+      return HttpResponse.json({
+        id: params.releaseId,
+        title: String(params.releaseId),
+        metadata: {},
+        metadata_revision: 2,
+        metadata_version: 1,
+        primary_artist: { selected_artist_id: "artist-a" },
+        artists: [
+          { artist_id: "artist-a", credit_name: "Artist A" },
+          { artist_id: "artist-b", credit_name: "Artist B" },
+        ],
+        tracks: [],
+      });
+    }),
+    http.put(
+      "*/api/library/releases/release-a/primary-artist",
+      () =>
+        new Promise((resolve) => {
+          finishMutation = () =>
+            resolve(
+              HttpResponse.json({ revision: 3, publication_applied: false }),
+            );
+        }),
+    ),
+  );
+  const view = render(<LibraryReleaseScreen releaseId="release-a" />);
+  fireEvent.change(
+    await screen.findByLabelText("Основной исполнитель релиза"),
+    { target: { value: "artist-b" } },
+  );
+  await waitFor(() => expect(finishMutation).toBeDefined());
+  view.rerender(<LibraryReleaseScreen releaseId="release-b" />);
+  expect(
+    await screen.findByRole("heading", { name: "release-b" }),
+  ).toBeTruthy();
+  const readCountAtNavigation = releaseAReads;
+  await act(async () => finishMutation?.());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(releaseAReads).toBe(readCountAtNavigation);
+  expect(screen.getByRole("heading", { name: "release-b" })).toBeTruthy();
+});
+
+it("keeps the second release selection pending when an earlier A request finishes after A-B-A", async () => {
+  const finishers: Array<() => void> = [];
+  server.use(
+    http.get("*/api/library/releases/:releaseId", ({ params }) =>
+      HttpResponse.json({
+        id: params.releaseId,
+        title: String(params.releaseId),
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        primary_artist: { selected_artist_id: "artist-a" },
+        artists: [
+          { artist_id: "artist-a", credit_name: "Artist A" },
+          { artist_id: "artist-b", credit_name: "Artist B" },
+        ],
+        tracks: [],
+      }),
+    ),
+    http.put(
+      "*/api/library/releases/release-a/primary-artist",
+      () =>
+        new Promise((resolve) => {
+          finishers.push(() =>
+            resolve(
+              HttpResponse.json({ revision: 2, publication_applied: false }),
+            ),
+          );
+        }),
+    ),
+  );
+  const view = render(<LibraryReleaseScreen releaseId="release-a" />);
+  fireEvent.change(
+    await screen.findByLabelText("Основной исполнитель релиза"),
+    {
+      target: { value: "artist-b" },
+    },
+  );
+  await waitFor(() => expect(finishers).toHaveLength(1));
+  view.rerender(<LibraryReleaseScreen releaseId="release-b" />);
+  await screen.findByRole("heading", { name: "release-b" });
+  view.rerender(<LibraryReleaseScreen releaseId="release-a" />);
+  const selector = await screen.findByLabelText("Основной исполнитель релиза");
+  await waitFor(() => expect(selector).not.toBeDisabled());
+  fireEvent.change(selector, { target: { value: "artist-b" } });
+  await waitFor(() => expect(finishers).toHaveLength(2));
+  expect(selector).toBeDisabled();
+  await act(async () => finishers[0]());
+  expect(selector).toBeDisabled();
+  await act(async () => finishers[1]());
+  await waitFor(() => expect(selector).not.toBeDisabled());
+});
+
+it("retains the release screen and lyrics draft when release primary artist selection fails", async () => {
+  server.use(
+    http.get("*/api/library/releases/release-artist-failure", () =>
+      HttpResponse.json({
+        id: "release-artist-failure",
+        title: "Album",
+        metadata: {},
+        metadata_revision: 2,
+        metadata_version: 1,
+        primary_artist: { selected_artist_id: "artist-a" },
+        artists: [
+          { artist_id: "artist-a", credit_name: "Artist A" },
+          { artist_id: "artist-b", credit_name: "Artist B" },
+        ],
+        tracks: [
+          {
+            id: "position-artist-failure",
+            local_track_id: "track-artist-failure",
+            title: "Song",
+            displayed_number: "1",
+            medium: 1,
+            position: 1,
+            metadata: {},
+            metadata_revision: 4,
+            metadata_version: 1,
+            track_metadata_revision: 3,
+            primary_artist: { selected_artist_id: "artist-a" },
+            recording_id: "recording-artist-failure",
+            artists: [{ artist_id: "artist-a", credit_name: "Artist A" }],
+            sources: [],
+          },
+        ],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/release-artist-failure/positions/position-artist-failure/metadata",
+      () =>
+        HttpResponse.json({
+          revision: 4,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/release-artist-failure/positions/position-artist-failure/publication",
+      () =>
+        HttpResponse.json({
+          release_id: "release-artist-failure",
+          position_id: "position-artist-failure",
+          metadata_revision: 4,
+          can_apply_manual_lyrics: false,
+        }),
+    ),
+    http.put(
+      "*/api/library/releases/release-artist-failure/primary-artist",
+      () =>
+        HttpResponse.json(
+          { detail: "library metadata revision is stale" },
+          { status: 409 },
+        ),
+    ),
+  );
+
+  render(<LibraryReleaseScreen releaseId="release-artist-failure" />);
+  const editor = await screen.findByLabelText("Сохранённый текст песни");
+  fireEvent.change(editor, { target: { value: "Unsaved draft" } });
+  const selector = screen.getByLabelText("Основной исполнитель релиза");
+  expect(selector).toHaveValue("artist-a");
+  fireEvent.change(selector, { target: { value: "artist-b" } });
+
+  expect(
+    await screen.findByText("library metadata revision is stale"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "Медиатека" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Album" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Основной исполнитель релиза")).toHaveValue(
+    "artist-a",
+  );
+  expect(screen.getByLabelText("Основной исполнитель релиза")).toBeEnabled();
+  expect(screen.getByLabelText("Сохранённый текст песни")).toHaveValue(
+    "Unsaved draft",
+  );
+});
+
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
   listeners = new Map<string, Array<() => void>>();
@@ -698,6 +1006,7 @@ it("keeps monitoring an admitted first publication when the immediate publicatio
             extension: "mka",
           },
           path_components: ["Album", "Song.mka"],
+          resolved_path_components: ["Album", "Song.mka"],
           metadata_revisions: {},
           warnings: [],
           blockers: [],
