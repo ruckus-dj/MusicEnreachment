@@ -206,7 +206,7 @@ async function pressEnter(target: HTMLElement) {
 }
 
 describe("SettingsScreen", () => {
-  it("moves focus into each dialog when opened with Enter", async () => {
+  it("moves focus into the move dialog when opened with Enter", async () => {
     render(<SettingsScreen />);
     const moveTrigger = await screen.findByRole("button", {
       name: "Перенести каталог",
@@ -220,7 +220,10 @@ describe("SettingsScreen", () => {
       within(moveDialog).getByLabelText("Новый Tools directory"),
     ).toHaveFocus();
     fireEvent.click(within(moveDialog).getByRole("button", { name: "Отмена" }));
+  });
 
+  it("moves focus into the install dialog when opened with Enter", async () => {
+    render(<SettingsScreen />);
     server.use(
       http.post("/api/tools/installations/preflight", () =>
         HttpResponse.json({
