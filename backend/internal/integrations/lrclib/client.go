@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,12 +26,13 @@ type Client struct {
 	endpoint   string
 }
 
-// Metadata identifies the exact recording to look up.
+// Metadata identifies the exact recording to look up. Duration is in exact
+// seconds; the provider accepts fractional values.
 type Metadata struct {
 	Artist   string
 	Title    string
 	Album    string
-	Duration int
+	Duration float64
 }
 
 // Track is one LRCLIB result. Lyrics is populated only from valid synced lyrics;
@@ -97,9 +99,12 @@ func NewClientWithEndpoint(httpClient *http.Client, endpoint string) (*Client, e
 // Lookup requests one exact metadata match. A 404 or a result without synced
 // lyrics is a normal absence, not an invitation to search for another version.
 func (c *Client) Lookup(ctx context.Context, metadata Metadata) (LookupResult, error) {
+	if math.IsNaN(metadata.Duration) || math.IsInf(metadata.Duration, 0) {
+		return LookupResult{}, errors.New("invalid lrclib duration")
+	}
 	values := url.Values{
 		"artist_name": {metadata.Artist}, "track_name": {metadata.Title},
-		"album_name": {metadata.Album}, "duration": {strconv.Itoa(metadata.Duration)},
+		"album_name": {metadata.Album}, "duration": {strconv.FormatFloat(metadata.Duration, 'f', -1, 64)},
 	}
 	var track Track
 	found, err := c.get(ctx, "/api/get", values, &track, true)

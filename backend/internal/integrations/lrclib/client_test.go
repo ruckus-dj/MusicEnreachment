@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,17 @@ import (
 	"testing"
 	"time"
 )
+
+func TestLookupRejectsNonFiniteDurationWithoutRequest(t *testing.T) {
+	client, _ := testClient(t, func(http.ResponseWriter, *http.Request) {
+		t.Error("non-finite duration reached provider")
+	})
+	for _, duration := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if _, err := client.Lookup(context.Background(), Metadata{Duration: duration}); err == nil {
+			t.Fatalf("accepted non-finite duration %v", duration)
+		}
+	}
+}
 
 func testClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Server) {
 	t.Helper()
@@ -45,6 +57,23 @@ func TestLookupUsesExactMetadataAndPreservesSyncedLyrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !result.Found || result.Lyrics != want {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestLookupSendsExactFractionalDuration(t *testing.T) {
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("duration"); got != "123.456" {
+			t.Errorf("duration = %q, want exact seconds 123.456", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"syncedLyrics":"[00:01.00]line"}`)
+	})
+	result, err := client.Lookup(context.Background(), Metadata{Artist: "Artist", Title: "Title", Album: "Album", Duration: 123.456})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Found || result.Lyrics != "[00:01.00]line" {
 		t.Fatalf("result = %#v", result)
 	}
 }
