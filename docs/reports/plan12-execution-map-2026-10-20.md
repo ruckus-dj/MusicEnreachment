@@ -169,6 +169,32 @@ tools tests и production build. GitHub CI pending-изменений этим �
   snapshot: до полного wake/revalidation протокола сохраняется через retry.
   Busy delivery retry не освобождает чужой claim; cleanup cancellation-independent.
   Включено исправление Windows service fixture на платформенный temp path.
-  Полный `task verify` и commit hook прошли, коммит отправлен; CI ещё не завершён.
+  Полный `task verify` и commit hook прошли, коммит отправлен. CI `39500956951`
+  завершён с `success`: verify, полная платформенная матрица, Compose smoke и
+  контейнер прошли. Windows fixture correction подтверждена этим run.
   Confident matching producer, improvement/rewrite, assets journal, source cleanup,
   cross-process recovery и полная acceptance matrix остаются незавершёнными.
+
+### Последующее уточнение 2026-10-21
+
+- `cd0d0d5` — отчёт и статус плана. CI `39501316187` полностью завершён с
+  `success`, включая платформенную матрицу, Compose smoke и контейнер.
+- `8ade812` — original-owner cleanup пустого private directory после
+  `directory_created` и до попытки создания input. Capability seal исключает
+  новую работу; intent/result предшествуют guarded failed settlement.
+  Проверены native identity/empty-directory boundary, journal transitions,
+  scope exclusion и runtime source-open failure. На Windows тест требует
+  удаления directory, неподтверждённого cleanup intent и retained ownership
+  при unsupported directory sync. Полный gate и отдельный commit hook прошли;
+  коммит отправлен, CI `39503767661` выполняется. ACK-loss/crash boundaries,
+  populated-hold deletion и barrier-controlled concurrency ещё не доказаны;
+  cross-process recovery не добавлен.
+- `cda0527` — manual matching confirmation транзакционно создаёт publication
+  requests перед receipt; оба materialization paths собирают actual touched
+  track IDs. Проверены preview без requests, receipt replay и rollback при
+  ошибке receipt. Shared-track/frozen-path impact expansion пока не имеет
+  независимого сценария. Пустые ранее допустимые confirmations сохранены.
+  Полный commit hook прошёл; коммит отправлен, результат CI пока не получен.
+
+Эти результаты не закрывают план №12 и не заменяют реальную media/Navidrome
+acceptance или оставшуюся lifecycle-интеграцию assets/source cleanup.
