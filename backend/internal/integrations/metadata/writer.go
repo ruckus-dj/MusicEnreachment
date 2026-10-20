@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"go.senan.xyz/taglib"
 )
@@ -31,6 +32,22 @@ type CoverObservation struct {
 type WriteResult struct {
 	Tags  map[string][]string
 	Cover *CoverObservation
+}
+
+// OptionalLyricsWriteStatus describes only the optional LYRICS readback.
+type OptionalLyricsWriteStatus uint8
+
+const (
+	OptionalLyricsUnobserved OptionalLyricsWriteStatus = iota
+	OptionalLyricsVerified
+	OptionalLyricsAbsent
+	OptionalLyricsMismatch
+)
+
+// OptionalLyricsWriteResult contains detached tags from the final readback.
+type OptionalLyricsWriteResult struct {
+	Tags   map[string][]string
+	Status OptionalLyricsWriteStatus
 }
 
 // Writer writes only the owned, already-prepared staged path provided by its
@@ -106,6 +123,86 @@ func (writer Writer) Write(ctx context.Context, preparedPath string, requested m
 		return result, coverErr
 	}
 	return result, nil
+}
+
+// WriteWithOptionalLyrics writes normalized tags and treats only LYRICS
+// readback mismatch as an optional outcome. All other write, readback, and
+// cover failures remain fatal. The returned tags are from a fresh read after
+// every requested mutation has completed.
+func (writer Writer) WriteWithOptionalLyrics(ctx context.Context, preparedPath string, requested map[string][]string, cover *Cover) (OptionalLyricsWriteResult, error) {
+	if err := ctx.Err(); err != nil {
+		return OptionalLyricsWriteResult{}, err
+	}
+	if preparedPath == "" {
+		return OptionalLyricsWriteResult{}, errors.New("prepared metadata path is required")
+	}
+	lyrics, ok := requested["LYRICS"]
+	if !ok || len(lyrics) != 1 || strings.TrimSpace(lyrics[0]) == "" {
+		return OptionalLyricsWriteResult{}, errors.New("optional lyrics must contain one non-empty text value")
+	}
+	expected := nonEmptyTags(requested)
+	delete(expected, "LYRICS")
+	writeTags := writer.writeTags
+	if writeTags == nil {
+		writeTags = taglib.WriteTags
+	}
+	if err := ctx.Err(); err != nil {
+		return OptionalLyricsWriteResult{}, err
+	}
+	if err := safeWriteTags(writeTags, preparedPath, nonEmptyTags(requested), taglib.Clear); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return OptionalLyricsWriteResult{}, contextErr
+		}
+		return OptionalLyricsWriteResult{}, fmt.Errorf("write normalized metadata tags: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return OptionalLyricsWriteResult{}, err
+	}
+	if cover != nil {
+		if _, err := writer.writeAndObserveCover(ctx, preparedPath, *cover); err != nil {
+			return OptionalLyricsWriteResult{}, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return OptionalLyricsWriteResult{}, err
+	}
+	readTags := writer.readTags
+	if readTags == nil {
+		readTags = taglib.ReadTags
+	}
+	actual, err := safeReadTags(readTags, preparedPath)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return OptionalLyricsWriteResult{}, contextErr
+	}
+	if err != nil {
+		return OptionalLyricsWriteResult{}, fmt.Errorf("read back normalized metadata tags: %w", err)
+	}
+	actualMandatory := cloneTags(actual)
+	delete(actualMandatory, "LYRICS")
+	if !equalTagMaps(actualMandatory, expected) {
+		return OptionalLyricsWriteResult{}, errors.New("required metadata tags did not round-trip")
+	}
+	status := OptionalLyricsMismatch
+	gotLyrics, present := actual["LYRICS"]
+	if !present {
+		status = OptionalLyricsAbsent
+	} else if equalValues(gotLyrics, lyrics) {
+		status = OptionalLyricsVerified
+	}
+	return OptionalLyricsWriteResult{Tags: cloneTags(actual), Status: status}, nil
+}
+
+func equalTagMaps(left, right map[string][]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, values := range right {
+		got, ok := left[key]
+		if !ok || !equalValues(got, values) {
+			return false
+		}
+	}
+	return true
 }
 
 func (writer Writer) writeAndObserveCover(ctx context.Context, path string, cover Cover) (*CoverObservation, error) {
