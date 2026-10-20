@@ -103,7 +103,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		if recovered := recover(); recovered != nil {
 			resultErr = fmt.Errorf("publication execution panicked: %v", recovered)
 		}
-		if resultErr != nil {
+		if resultErr != nil && !scope.failureSettled() {
 			scope.quarantineUncertain()
 			_, diagnosticErr := executor.repository.GuardedPublicationDeliveryDiagnostic(context.WithoutCancel(ctx), guard, "Publication could not finish; its retained state requires reconciliation.")
 			resultErr = errors.Join(resultErr, diagnosticErr)

@@ -54,6 +54,41 @@ func TestAssessPublicationRecoveryEvidenceAcceptsRealJournalFrontiers(t *testing
 	}
 }
 
+func TestPublicationPreparationCleanupIntentIsRetainedNotReplayable(t *testing.T) {
+	attempt, operation, guard := commitEvidenceFixture(t)
+	entries, err := decodeJournal(attempt.MutationJournal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var preparation PublicationPreparationRecord
+	if err := decodeStrictJSON(entries[1], &preparation); err != nil {
+		t.Fatal(err)
+	}
+	preparation.Step = "directory_created"
+	witness := PublicationPreparationCleanupWitness{Preparation: preparation}
+	journal, err := json.Marshal([]any{
+		json.RawMessage(entries[0]), json.RawMessage(entries[1]),
+		publicationPreparationCleanupRecord{Version: publicationPreparationCleanupVersion, Kind: "publication_preparation_cleanup", Step: "intent", Guard: guard, Witness: witness},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.MutationJournal = journal
+	attempt.Phase, operation.Stage = "preparing", "preparing"
+	snapshot := recoveryEvidenceFromFixture(attempt, operation, guard)
+	snapshot.Current = nil
+	assessment, err := AssessPublicationRecoveryEvidence(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessment.JournalFrontier != "preparation_cleanup_retained" {
+		t.Fatalf("frontier = %q", assessment.JournalFrontier)
+	}
+	if _, err := PublicationRecoveryObservationPlanFor(snapshot); err != nil {
+		t.Fatalf("observation plan rejected retained cleanup: %v", err)
+	}
+}
+
 func TestPublicationRecoveryObservationPlanTracksRecordedPrefixes(t *testing.T) {
 	for _, test := range []struct {
 		count    int

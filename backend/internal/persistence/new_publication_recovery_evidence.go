@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/google/uuid"
@@ -182,6 +183,7 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 	var exposure publicationExposureJournalRecord
 	var installed publicationCandidateInstalledJournalRecord
 	var commitCount int
+	var cleanupIntent *publicationPreparationCleanupRecord
 	wantGuard := PublicationDeliveryGuard{OperationID: claim.OperationID, ApplicationAttempt: claim.ApplicationAttempt, RiverJobID: claim.RiverJobID, RiverAttempt: claim.RiverAttempt, ClaimUUID: claim.ClaimUUID, BootUUID: claim.BootUUID, DeliveryToken: claim.DeliveryToken, Epoch: claim.Epoch, CandidateGeneration: attempt.CandidateGeneration, ExpectedPositionID: attempt.PositionID}
 	for _, raw := range entries {
 		var h struct {
@@ -222,6 +224,23 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 			} else {
 				return "", errors.New("invalid stage transition")
 			}
+		case "publication_preparation_cleanup":
+			var r publicationPreparationCleanupRecord
+			if (frontier != "prep_2" && frontier != "preparation_cleanup_retained") || decodeStrictJSON(raw, &r) != nil || r.Version != publicationPreparationCleanupVersion || r.Kind != "publication_preparation_cleanup" || r.Guard != wantGuard || !validPublicationPreparationCleanupWitness(wantGuard, r.Witness) || !samePreparationPlan(r.Witness.Preparation, prior) || r.Witness.Preparation.DirectoryIdentity == nil || prior.DirectoryIdentity == nil || *r.Witness.Preparation.DirectoryIdentity != *prior.DirectoryIdentity {
+				return "", errors.New("invalid publication preparation cleanup journal")
+			}
+			if cleanupIntent == nil {
+				if r.Step != "intent" || r.Result != "" {
+					return "", errors.New("publication preparation cleanup result has no intent")
+				}
+				copy := r
+				cleanupIntent = &copy
+			} else {
+				if r.Step != "result" || r.Result != "removed" || !reflect.DeepEqual(r.Witness, cleanupIntent.Witness) {
+					return "", errors.New("invalid publication preparation cleanup result")
+				}
+			}
+			frontier = "preparation_cleanup_retained"
 		case "publication_exposure":
 			if frontier != "validated" || decodeStrictJSON(raw, &exposure) != nil || exposure.Version != PublicationExposureVersion || exposure.Kind != "publication_exposure" || exposure.From != "validated" || exposure.To != "exposing" || validatePublicationDeliveryGuard(exposure.Guard) != nil || exposure.Guard != wantGuard || exposure.PositionID != attempt.PositionID || exposure.Epoch != attempt.Epoch || exposure.CandidateGeneration != attempt.CandidateGeneration || exposure.ExpectedGeneration != nil || exposure.Intent.Expectation != "absent" || exposure.Current == nil || string(exposure.Current) != "null" || !validExposureIntent(exposure.Intent) || !validPublicationStageObservation(exposure.Observation) || !samePublicationStageObservation(exposure.Observation, validated) || !stageMatchesIntent(validated, exposure.Intent) || !preparationOwnsIntent(attempt.MutationJournal, exposure.Guard, exposure.Intent, validated) {
 				return "", errors.New("invalid publication exposure journal")
@@ -282,7 +301,7 @@ func publicationRecoveryIdentityMatchesInstalled(a, b PublicationFileIdentity) b
 func publicationRecoveryPhaseMatches(phase, frontier string) bool {
 	switch phase {
 	case "preparing":
-		return frontier == "empty" || strings.HasPrefix(frontier, "prep_")
+		return frontier == "empty" || strings.HasPrefix(frontier, "prep_") || frontier == "preparation_cleanup_retained"
 	case "staged":
 		return frontier == "staged"
 	case "validated":

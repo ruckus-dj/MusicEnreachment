@@ -29,6 +29,12 @@ type PublicationStagePreparationRepository interface {
 	RecordPublicationPreparation(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationPreparationRecord) (persistence.PublicationPreparationOutcome, error)
 }
 
+type publicationPreparationCleanupRepository interface {
+	BeginPublicationPreparationCleanup(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationPreparationCleanupWitness) (persistence.PublicationPreparationCleanupOutcome, error)
+	RecordPublicationPreparationCleanupResult(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationPreparationCleanupWitness) (persistence.PublicationPreparationCleanupOutcome, error)
+	SettlePublicationPreparationFailure(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationPreparationCleanupWitness, bool) (bool, error)
+}
+
 type publicationManualLyricsPreparationInputs interface {
 	PublicationManualLyricsPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error)
 }
@@ -50,7 +56,14 @@ type PublicationStagePreparer struct {
 // Prepare requires the caller to hold coordinator resources and to present a
 // newly acquired delivery claim. It deliberately does not resume journal steps.
 func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard persistence.PublicationDeliveryGuard, claim persistence.PublicationDeliveryClaimOutcome, resourcesHeld bool) (prepared PreparedPublicationStage, resultErr error) {
-	return preparer.prepare(ctx, guard, claim, resourcesHeld, false)
+	return preparer.prepare(ctx, guard, claim, resourcesHeld, false, nil)
+}
+
+func (preparer PublicationStagePreparer) prepareUnderScope(ctx context.Context, scope *PublicationExecutionScope) (PreparedPublicationStage, error) {
+	if scope == nil {
+		return nil, errors.New("publication execution scope is unavailable")
+	}
+	return preparer.prepare(ctx, scope.guard, persistence.PublicationDeliveryAcquired, true, false, scope)
 }
 
 // prepareManualLyricsFLAC is the private staging entry point for the supported
@@ -59,13 +72,13 @@ func (preparer PublicationStagePreparer) prepareManualLyricsFLAC(ctx context.Con
 	if _, ok := preparer.Repository.(publicationManualLyricsPreparationInputs); !ok {
 		return nil, errors.New("manual lyrics publication preparation capability is unavailable")
 	}
-	return preparer.prepare(ctx, guard, claim, resourcesHeld, true)
+	return preparer.prepare(ctx, guard, claim, resourcesHeld, true, nil)
 }
 
 // prepare is shared only at the input-staging layer. V3's manual-lyrics path
 // has a separate private entry point; ordinary publication preparation must
 // never admit that contract.
-func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard persistence.PublicationDeliveryGuard, claim persistence.PublicationDeliveryClaimOutcome, resourcesHeld bool, manualLyricsFLAC bool) (prepared PreparedPublicationStage, resultErr error) {
+func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard persistence.PublicationDeliveryGuard, claim persistence.PublicationDeliveryClaimOutcome, resourcesHeld bool, manualLyricsFLAC bool, scope *PublicationExecutionScope) (prepared PreparedPublicationStage, resultErr error) {
 	if preparer.Repository == nil || preparer.SourceOpener == nil || preparer.OutputParent == nil {
 		return nil, errors.New("publication stage preparation dependencies are unavailable")
 	}
@@ -214,6 +227,20 @@ func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard pers
 	if outcome != persistence.PublicationPreparationRecorded {
 		return nil, errors.New("publication directory journal replay; recovery required")
 	}
+	var cleanupCapability *publicationPreInputCleanupCapability
+	inputCreationAttempted := false
+	if scope != nil {
+		cleanupCapability = scope.beginPreInputCleanup()
+	}
+	defer func() {
+		if resultErr == nil || inputCreationAttempted || cleanupCapability == nil {
+			return
+		}
+		cleanupErr := preparer.cleanupFailedPreInput(context.WithoutCancel(ctx), scope, cleanupCapability, created, dir)
+		if cleanupErr != nil {
+			resultErr = errors.Join(resultErr, cleanupErr)
+		}
+	}()
 	root, err := preparer.SourceOpener.OpenRoot(ctx, sourceRootPath)
 	if err != nil {
 		return nil, fmt.Errorf("open held publication source root: %w", err)
@@ -280,6 +307,7 @@ func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard pers
 	} else if !valid {
 		return nil, errors.New("publication rewrite is stale before copy")
 	}
+	inputCreationAttempted = true
 	destination, err := dir.CreateExclusive(ctx, inputName)
 	if err != nil {
 		return nil, fmt.Errorf("create publication input: %w", err)
@@ -362,6 +390,9 @@ func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard pers
 		stage.outputName = outputName
 	}
 	// Transfer directory ownership only after all preparation observations have been journaled.
+	if cleanupCapability != nil && !scope.finishPreInputCleanup(cleanupCapability, false) {
+		return nil, errors.Join(errors.New("publication pre-input cleanup scope changed during preparation"), dir.Close())
+	}
 	transferred = true
 	return stage, nil
 }

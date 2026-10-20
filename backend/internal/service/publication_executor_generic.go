@@ -85,7 +85,7 @@ func executeGenericPublication(
 	} else {
 		preparer.HoldUUID = uuid.Nil
 	}
-	stage, err := preparer.Prepare(ctx, scope.guard, persistence.PublicationDeliveryAcquired, true)
+	stage, err := preparer.prepareUnderScope(ctx, scope)
 	if err != nil {
 		return result, err
 	}
