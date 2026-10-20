@@ -22,6 +22,7 @@ type FirstPublicationSource struct {
 	Selection                       PublicationSourceSelection
 	Input                           PublicationAudioInput
 	Quality                         PersistedAudioFacts
+	ChannelLayout                   string
 	StreamTitle                     string
 	StreamLanguage                  string
 	RequiresExplicitStreamSelection bool
@@ -555,6 +556,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 			streamInput.AudioFacts = facts
 			*result = append(*result, FirstPublicationSource{
 				Selection: selection, Input: streamInput, Quality: facts, StreamTitle: stream.Title, StreamLanguage: stream.Language,
+				ChannelLayout:                   stream.ChannelLayout,
 				RequiresExplicitStreamSelection: len(streams) > 1, AudioStreamCount: len(streams),
 			})
 			added++
@@ -583,14 +585,16 @@ func uniquePublicationAudioIndex(raw json.RawMessage) (int, bool) {
 type publicationAudioStream struct {
 	Index           int
 	Title, Language string
+	ChannelLayout   string
 }
 
 func publicationAudioStreams(raw json.RawMessage) ([]publicationAudioStream, error) {
 	var probe struct {
 		Streams []struct {
-			Index json.Number       `json:"index"`
-			Type  string            `json:"codec_type"`
-			Tags  map[string]string `json:"tags"`
+			Index         json.Number       `json:"index"`
+			Type          string            `json:"codec_type"`
+			ChannelLayout string            `json:"channel_layout"`
+			Tags          map[string]string `json:"tags"`
 		} `json:"streams"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
@@ -607,7 +611,7 @@ func publicationAudioStreams(raw json.RawMessage) ([]publicationAudioStream, err
 		if err != nil || n < 0 || int64(int(n)) != n {
 			return nil, errors.New("invalid ffprobe stream index")
 		}
-		result = append(result, publicationAudioStream{Index: int(n), Title: stream.Tags["title"], Language: stream.Tags["language"]})
+		result = append(result, publicationAudioStream{Index: int(n), Title: stream.Tags["title"], Language: stream.Tags["language"], ChannelLayout: stream.ChannelLayout})
 	}
 	return result, nil
 }

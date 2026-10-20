@@ -53,6 +53,7 @@ type PublicationAdmission struct {
 	validatedManualLyrics bool
 	metadataRevision      int64
 	firstAdmission        *firstPublicationAdmissionHook
+	reconciliationGuard   *PublicationReconciliationDeliveryGuard
 }
 
 // PublicationSourceSelection is the caller's exact inventory selector. The
@@ -73,6 +74,13 @@ type PublicationSourceSelection struct {
 // AdmitPublication atomically inserts the source-free operation snapshot, attempt,
 // namespace reservations, and its River delivery.
 func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, request PublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	if request.reconciliationGuard != nil {
+		guard := *request.reconciliationGuard
+		request.reconciliationGuard = &guard
+		if guard.OutputEpoch != request.ExpectedEpoch || guard.PositionID != request.PositionID || guard.OperationID == uuid.Nil || guard.ClaimToken == uuid.Nil {
+			return uuid.Nil, fmt.Errorf("admit publication: reconciliation guard does not match admission: %w", ErrPublicationAdmissionConflict)
+		}
+	}
 	if client == nil || request.PositionID == uuid.Nil || request.ExpectedEpoch == uuid.Nil || request.CandidateGeneration == uuid.Nil {
 		return uuid.Nil, fmt.Errorf("admit publication: invalid identity or missing River client")
 	}
@@ -106,6 +114,16 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	var admittedOperationID uuid.UUID
 	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		admittedOperationID, err = repository.admitPublicationTx(ctx, tx, request, input, operationID, client)
+		if err != nil || request.reconciliationGuard == nil {
+			return err
+		}
+		acknowledged, err := repository.AcknowledgePublicationReconciliationDeliveryWith(ctx, tx, *request.reconciliationGuard)
+		if err != nil {
+			return fmt.Errorf("admit publication: acknowledge reconciliation delivery: %w", err)
+		}
+		if !acknowledged {
+			return fmt.Errorf("admit publication: reconciliation delivery is stale: %w", ErrPublicationAdmissionConflict)
+		}
 		return err
 	})
 	if err != nil {

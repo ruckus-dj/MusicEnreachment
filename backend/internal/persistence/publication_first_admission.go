@@ -49,6 +49,18 @@ func (repository *SetupManagerRepository) AdmitFirstPublicationFromPreview(ctx c
 	return repository.AdmitPublication(ctx, request, client)
 }
 
+// AdmitAutomaticFirstPublicationFromPreview binds an internal automatic source
+// choice and reconciliation delivery to the same first-publication transaction.
+func (repository *SetupManagerRepository) AdmitAutomaticFirstPublicationFromPreview(ctx context.Context, first FirstPublicationAdmission, guard PublicationReconciliationDeliveryGuard, client RiverInserter) (uuid.UUID, error) {
+	if guard.OutputEpoch != first.ExpectedEpoch || guard.PositionID != first.PositionID ||
+		guard.OperationID == uuid.Nil || guard.ClaimToken == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("admit automatic first publication: invalid reconciliation guard: %w", ErrPublicationAdmissionConflict)
+	}
+	guardCopy := guard
+	first.reconciliationGuard = &guardCopy
+	return repository.AdmitFirstPublicationFromPreview(ctx, first, client)
+}
+
 func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx context.Context, tx bun.Tx, request PublicationAdmission) ([]PublicationNamespaceNode, error) {
 	hook := request.firstAdmission
 	if hook == nil || hook.prepare == nil {
@@ -92,6 +104,7 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 	// Detach every mutable request component before handing it to service code.
 	plannerRequest := request
 	plannerRequest.firstAdmission = nil
+	plannerRequest.reconciliationGuard = nil
 	plannerRequest.FrozenInputs = append(json.RawMessage(nil), request.FrozenInputs...)
 	plannerRequest.Tools = append([]SourceAnalysisToolSelection(nil), request.Tools...)
 	plannerRequest.NamespaceManifest = append([]PublicationNamespaceNode(nil), request.NamespaceManifest...)

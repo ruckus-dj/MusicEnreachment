@@ -157,6 +157,17 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingLocal(ctx con
 			return err
 		}
 		result.AuthorityRevision = authorityRevision
+		positions, err := matchingLocalPublicationPositions(ctx, tx, localReleaseID, intent)
+		if err != nil {
+			return err
+		}
+		var outputEpoch uuid.UUID
+		if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &outputEpoch); err != nil {
+			return fmt.Errorf("confirm local matching: read output epoch: %w", err)
+		}
+		if err := NewSetupManagerRepository(repository.db).RequestPublicationReconciliationWith(ctx, tx, outputEpoch, positions, []string{"local_confirmation"}); err != nil {
+			return fmt.Errorf("confirm local matching: request publication reconciliation: %w", err)
+		}
 		encoded, err := json.Marshal(result)
 		if err != nil {
 			return err
@@ -170,6 +181,29 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingLocal(ctx con
 		return result, ErrMatchingLocalConflict
 	}
 	return result, err
+}
+
+func matchingLocalPublicationPositions(ctx context.Context, tx bun.Tx, releaseID uuid.UUID, intent MatchingLocalIntent) ([]uuid.UUID, error) {
+	trackIDs := make([]uuid.UUID, 0, len(intent.Tracks))
+	for _, track := range intent.Tracks {
+		if track.LocalTrackID != nil {
+			trackIDs = append(trackIDs, *track.LocalTrackID)
+		}
+	}
+	var positions []uuid.UUID
+	query := `SELECT DISTINCT affected.id
+		FROM release_track affected
+		WHERE affected.release_id=?`
+	args := []any{releaseID}
+	if len(trackIDs) > 0 {
+		query += ` OR affected.track_id IN (?)`
+		args = append(args, bun.List(trackIDs))
+	}
+	query += ` ORDER BY affected.id`
+	if err := tx.NewRaw(query, args...).Scan(ctx, &positions); err != nil {
+		return nil, fmt.Errorf("read local matching publication positions: %w", err)
+	}
+	return positions, nil
 }
 
 func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, intent MatchingLocalIntent, locking bool) (MatchingLocalPreview, error) {
