@@ -196,7 +196,8 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 		Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
 		IntentKind: "audio", Format: publication.AudioPublicationFormat(runtimeSettings.PublicationFormat),
 		Audio: audioInputCopy(&selected.Input), DesiredTags: cloneDesiredPublicationTags(preview.DesiredTags.Tags),
-		Tools: append([]persistence.SourceAnalysisToolSelection(nil), selectedTools...),
+		InitialLyrics: initialLyricsAuthorityInput(snapshot),
+		Tools:         append([]persistence.SourceAnalysisToolSelection(nil), selectedTools...),
 	}
 	if err := frozen.Validate(); err != nil {
 		return uuid.Nil, fmt.Errorf("validate first publication inputs: %w", err)
@@ -221,6 +222,9 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 			if authoritative.Context == nil || authoritative.Context.Library == nil ||
 				authoritative.Context.Library.ActiveEpoch != expectedEpoch ||
 				actual.CandidateGeneration != candidateID || actual.ExpectedReleaseID != releaseID || actual.PositionID != positionID || actual.Source == nil {
+				return nil, persistence.ErrPublicationAdmissionConflict
+			}
+			if !sameInitialLyricsAuthority(authoritative.Context, frozen.InitialLyrics) {
 				return nil, persistence.ErrPublicationAdmissionConflict
 			}
 			transactionSettings, err := settings.ParsePublicationPlanningValues(authoritative.Settings)
@@ -275,6 +279,22 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 		return automaticRepository.AdmitAutomaticFirstPublicationFromPreview(ctx, first, *guard, service.river)
 	}
 	return repository.AdmitFirstPublicationFromPreview(ctx, first, service.river)
+}
+
+func initialLyricsAuthorityInput(snapshot *persistence.LibraryFirstPublicationContext) *persistence.PublicationInitialLyricsInput {
+	if snapshot == nil {
+		return nil
+	}
+	input := &persistence.PublicationInitialLyricsInput{ExpectedMetadataRevision: snapshot.Metadata.Position.Revision}
+	if desired, exists := snapshot.Metadata.Position.Envelope.Desired["synced_lyrics"]; exists {
+		copy := desired
+		input.Desired = &copy
+	}
+	return input
+}
+
+func sameInitialLyricsAuthority(snapshot *persistence.LibraryFirstPublicationContext, expected *persistence.PublicationInitialLyricsInput) bool {
+	return snapshot != nil && expected != nil && reflect.DeepEqual(initialLyricsAuthorityInput(snapshot), expected)
 }
 
 func validFirstPublicationPreviewDigest(digest string) bool {

@@ -142,7 +142,7 @@ func pubStageSetup(t *testing.T, repo *pubStageRepo, command pubStageCommand, va
 		t.Fatal(err)
 	}
 	runner := PublicationStagingRunner{Repository: repo, PinnedTools: pubStageTools{events: &events, root: managedToolsRoot}, Metadata: pubStageWriter{events: &events}, Validator: pubStageValidator{&events, validateErr}}
-	return runner, scope, persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", Format: publication.AudioFormatMKA, DesiredTags: map[string][]string{"title": {"track"}}, Tools: []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7", VersionBanner: "ffmpeg version 7"}, {PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7", VersionBanner: "ffmpeg version 7"}}, Audio: &persistence.PublicationAudioInput{WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(), ConfiguredRootPath: dir, InventoryRootPath: dir, RelativePath: "input.flac", MTime: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), AnalysisPolicyVersion: 1, FFProbeVersion: "7", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: pubStageBool(true), Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}}}, stage, &events
+	return runner, scope, persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", InitialLyrics: &persistence.PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}, Format: publication.AudioFormatMKA, DesiredTags: map[string][]string{"title": {"track"}}, Tools: []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7", VersionBanner: "ffmpeg version 7"}, {PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7", VersionBanner: "ffmpeg version 7"}}, Audio: &persistence.PublicationAudioInput{WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(), ConfiguredRootPath: dir, InventoryRootPath: dir, RelativePath: "input.flac", MTime: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), AnalysisPolicyVersion: 1, FFProbeVersion: "7", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: pubStageBool(true), Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}}}, stage, &events
 }
 func pubStageBool(v bool) *bool { return &v }
 
@@ -192,6 +192,7 @@ func TestPublicationStagingRejectsOtherwiseValidManualLyricsRewriteBeforeStageWo
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.Audio = nil
 	input.IntentKind = "rewrite"
+	input.InitialLyrics = nil
 	fixture := makeRewriteFixture(t)
 	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
 	input.Rewrite = fixture.repo.input.Rewrite

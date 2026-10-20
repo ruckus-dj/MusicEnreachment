@@ -73,6 +73,7 @@ func TestRealPublicationStageValidatorRejectsManualLyricsBeforeOpeningStageOrDep
 	input.Version = persistence.PublicationInputsVersion
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.IntentKind, input.Audio = "rewrite", nil
+	input.InitialLyrics = nil
 	input.Format = publication.AudioFormatSource
 	fixture := makeRewriteFixture(t)
 	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })

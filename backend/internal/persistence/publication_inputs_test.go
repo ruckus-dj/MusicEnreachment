@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
@@ -29,6 +30,7 @@ func publicationInputsFixture(t *testing.T, intent string) PublicationInputs {
 	}
 	facts := PersistedAudioFacts{StreamIndex: 1, Codec: "flac", Lossless: &lossless, Channels: &channels, BitDepth: &bitDepth, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}
 	if intent == "audio" {
+		input.InitialLyrics = &PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}
 		input.Audio = &PublicationAudioInput{
 			WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(),
 			ConfiguredRootPath: root, InventoryRootPath: root,
@@ -41,6 +43,58 @@ func publicationInputsFixture(t *testing.T, intent string) PublicationInputs {
 		input.Rewrite = &PublicationRewriteInput{CurrentGeneration: uuid.New(), RelativePath: "Artist/Album/track.mka", Ownership: PublicationFileIdentity{SizeBytes: &size}, AudioFacts: facts}
 	}
 	return input
+}
+
+func TestPublicationInitialLyricsAuthorityContract(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		field *librarymetadata.FieldValue
+	}{
+		{name: "missing"},
+		{name: "absent", field: ptrLyricsValue(librarymetadata.FieldValue{State: librarymetadata.StateAbsent, Authority: librarymetadata.AuthorityAutomatic, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceProvider}})},
+		{name: "automatic provider value", field: ptrLyricsValue(librarymetadata.FieldValue{State: librarymetadata.StateValue, Value: "[00:01.00]line", Authority: librarymetadata.AuthorityAutomatic, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceProvider, Reference: "lrclib"}})},
+		{name: "manual value", field: ptrLyricsValue(librarymetadata.FieldValue{State: librarymetadata.StateValue, Value: "[00:01.00]manual", Authority: librarymetadata.AuthorityManual, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceProvider, Reference: "lrclib"}})},
+		{name: "manual empty", field: ptrLyricsValue(librarymetadata.FieldValue{State: librarymetadata.StateExplicitEmpty, Authority: librarymetadata.AuthorityManual, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual}})},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := publicationInputsFixture(t, "audio")
+			input.InitialLyrics.Desired = test.field
+			if err := input.Validate(); err != nil {
+				t.Fatalf("valid authority snapshot rejected: %v", err)
+			}
+		})
+	}
+	for _, field := range []*librarymetadata.FieldValue{
+		{State: "bad", Authority: librarymetadata.AuthorityManual, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual}},
+		{State: librarymetadata.StateExplicitEmpty, Value: "fabricated", Authority: librarymetadata.AuthorityManual, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual}},
+	} {
+		input := publicationInputsFixture(t, "audio")
+		input.InitialLyrics.Desired = field
+		if err := input.Validate(); err == nil {
+			t.Fatal("invalid initial lyrics authority snapshot accepted")
+		}
+	}
+	input := publicationInputsFixture(t, "audio")
+	input.InitialLyrics = nil
+	if err := input.Validate(); err == nil {
+		t.Fatal("audio contract without initial lyrics evidence accepted")
+	}
+}
+
+func ptrLyricsValue(value librarymetadata.FieldValue) *librarymetadata.FieldValue { return &value }
+
+func TestPublicationInputsCloneDetachesInitialLyricsValue(t *testing.T) {
+	input := publicationInputsFixture(t, "audio")
+	raw := json.RawMessage(`{"nested":["original"]}`)
+	input.InitialLyrics.Desired = &librarymetadata.FieldValue{State: librarymetadata.StateValue, Value: map[string]any{"raw": raw, "items": []any{"original"}}, Authority: librarymetadata.AuthorityManual, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual}}
+	clone := input.Clone()
+	cloneValue := clone.InitialLyrics.Desired.Value.(map[string]any)
+	cloneValue["items"].([]any)[0] = "changed"
+	cloneValue["raw"].(json.RawMessage)[2] = 'X'
+	original := input.InitialLyrics.Desired.Value.(map[string]any)
+	if original["items"].([]any)[0] != "original" || string(original["raw"].(json.RawMessage)) != string(raw) {
+		t.Fatal("initial lyrics clone shares mutable metadata value storage")
+	}
 }
 
 func TestPublicationInputsManualLyricsRequiresExactNonEmptySyncedLyrics(t *testing.T) {

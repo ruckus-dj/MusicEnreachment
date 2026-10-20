@@ -116,7 +116,7 @@ func newPublicationStageFixture(t *testing.T) publicationStageFixture {
 	holdID := uuid.New()
 	input := persistence.PublicationInputs{
 		Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
-		IntentKind: "audio", Format: "source", Audio: &persistence.PublicationAudioInput{
+		IntentKind: "audio", InitialLyrics: &persistence.PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}, Format: "source", Audio: &persistence.PublicationAudioInput{
 			InventoryRootPath: sourceRoot, RelativePath: filepath.ToSlash(filepath.Join("album", "track.flac")), SizeBytes: info.Size(), MTime: mtime,
 			AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true},
 		},

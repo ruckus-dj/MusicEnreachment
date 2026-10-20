@@ -30,6 +30,7 @@ func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture
 	oldIdentity := PublicationFileIdentity{SizeBytes: int64Pointer(10), MTime: int64Pointer(20), SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	facts := input.Audio.AudioFacts
 	input.Version, input.QualityPolicyVersion, input.IntentKind, input.Audio = PublicationInputsVersion, publication.QualityPolicyVersion, "rewrite", nil
+	input.InitialLyrics = nil
 	input.Rewrite = &PublicationRewriteInput{CurrentGeneration: oldGeneration, RelativePath: intent.TargetRelativePath, Ownership: oldIdentity, AudioFacts: facts}
 	input.DesiredTags = map[string][]string{"TITLE": {"published title"}}
 	const lyrics = "[00:01.00]Привет\r\n[00:02.00]world\r\n"

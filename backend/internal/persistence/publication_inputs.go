@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
@@ -28,9 +29,18 @@ type PublicationInputs struct {
 	Audio                *PublicationAudioInput             `json:"audio,omitempty"`
 	Rewrite              *PublicationRewriteInput           `json:"rewrite,omitempty"`
 	ManualLyrics         *PublicationManualLyricsInput      `json:"manual_lyrics,omitempty"`
+	InitialLyrics        *PublicationInitialLyricsInput     `json:"initial_lyrics,omitempty"`
 	Format               publication.AudioPublicationFormat `json:"format"`
 	DesiredTags          map[string][]string                `json:"desired_tags"`
 	Tools                []SourceAnalysisToolSelection      `json:"tools"`
+}
+
+// PublicationInitialLyricsInput freezes the position's synced-lyrics authority
+// at initial-audio admission. It is evidence only, never permission to apply a
+// saved manual value.
+type PublicationInitialLyricsInput struct {
+	ExpectedMetadataRevision int64                       `json:"expected_metadata_revision"`
+	Desired                  *librarymetadata.FieldValue `json:"desired,omitempty"`
 }
 
 // PublicationManualLyricsInput freezes explicit manual lyrics admission. It is
@@ -157,6 +167,19 @@ func (input PublicationInputs) Validate() error {
 		default:
 			return errors.New("manual lyrics rewrite requires value or explicit_empty")
 		}
+	}
+	if input.IntentKind == "audio" {
+		if input.InitialLyrics == nil || input.InitialLyrics.ExpectedMetadataRevision < 0 {
+			return errors.New("initial audio publication requires a lyrics authority snapshot and metadata revision")
+		}
+		if field := input.InitialLyrics.Desired; field != nil {
+			lyrics := librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition, Desired: map[string]librarymetadata.FieldValue{"synced_lyrics": *field}}
+			if err := lyrics.Validate(); err != nil {
+				return fmt.Errorf("invalid initial lyrics authority snapshot: %w", err)
+			}
+		}
+	} else if input.InitialLyrics != nil {
+		return errors.New("initial lyrics authority snapshot is only valid for audio publication")
 	}
 	if input.IntentKind != "audio" && input.IntentKind != "rewrite" {
 		return fmt.Errorf("unsupported publication intent %q", input.IntentKind)
@@ -311,7 +334,39 @@ func (input PublicationInputs) Clone() PublicationInputs {
 		manual := *input.ManualLyrics
 		clone.ManualLyrics = &manual
 	}
+	if input.InitialLyrics != nil {
+		initial := *input.InitialLyrics
+		if initial.Desired != nil {
+			field := *initial.Desired
+			field.Value = clonePublicationJSONValue(field.Value)
+			initial.Desired = &field
+		}
+		clone.InitialLyrics = &initial
+	}
 	return clone
+}
+
+func clonePublicationJSONValue(value any) any {
+	switch value := value.(type) {
+	case json.RawMessage:
+		return append(json.RawMessage(nil), value...)
+	case []byte:
+		return append([]byte(nil), value...)
+	case []any:
+		copy := make([]any, len(value))
+		for i := range value {
+			copy[i] = clonePublicationJSONValue(value[i])
+		}
+		return copy
+	case map[string]any:
+		copy := make(map[string]any, len(value))
+		for key, item := range value {
+			copy[key] = clonePublicationJSONValue(item)
+		}
+		return copy
+	default:
+		return value
+	}
 }
 
 func (facts PersistedAudioFacts) AudioSourceFacts() publication.AudioSourceFacts {

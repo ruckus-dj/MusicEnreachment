@@ -32,6 +32,7 @@ func TestPublicationReplacementRejectsWrongGuardAndOutOfOrderPostgreSQL(t *testi
 	identity := PublicationFileIdentity{SizeBytes: int64Pointer(10), MTime: int64Pointer(20), SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	facts := inputs.Audio.AudioFacts
 	inputs.IntentKind, inputs.Audio = "rewrite", nil
+	inputs.InitialLyrics = nil
 	inputs.Rewrite = &PublicationRewriteInput{CurrentGeneration: currentGeneration, RelativePath: intent.TargetRelativePath, Ownership: identity, AudioFacts: facts}
 	rawInputs, err := json.Marshal(inputs)
 	if err != nil {
@@ -125,6 +126,7 @@ func TestPublicationReplacementRecordsOrderedRewriteTransitionsPostgreSQL(t *tes
 	facts := inputs.Audio.AudioFacts
 	inputs.IntentKind = "rewrite"
 	inputs.Audio = nil
+	inputs.InitialLyrics = nil
 	inputs.Rewrite = &PublicationRewriteInput{CurrentGeneration: currentGeneration, RelativePath: intent.TargetRelativePath, Ownership: identity, AudioFacts: facts}
 	rawInputs, err := json.Marshal(inputs)
 	if err != nil {
@@ -229,6 +231,7 @@ func TestPublicationReplacementRejectsLostNamespaceReservationPostgreSQL(t *test
 	facts := inputs.Audio.AudioFacts
 	inputs.IntentKind = "rewrite"
 	inputs.Audio = nil
+	inputs.InitialLyrics = nil
 	inputs.Rewrite = &PublicationRewriteInput{CurrentGeneration: currentGeneration, RelativePath: intent.TargetRelativePath, Ownership: identity, AudioFacts: facts}
 	rawInputs, err := json.Marshal(inputs)
 	if err != nil {
