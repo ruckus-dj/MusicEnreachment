@@ -36,7 +36,7 @@ func TestCurrentSchemaRollbackPreservesRiverAndUnrelatedData(t *testing.T) {
 	}
 	// The five baselines contain 85 tables; publication state, source holds, and
 	// manual-lyrics receipts add nine.
-	const currentApplicationTables = 85 + 9
+	const currentApplicationTables = 85 + 12
 	if tableCount != currentApplicationTables {
 		t.Fatalf("current schema contains %d application tables, want %d", tableCount, currentApplicationTables)
 	}

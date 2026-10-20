@@ -277,6 +277,7 @@ func checkResetAllowed(ctx context.Context, queryer interface {
 		EXISTS (SELECT 1 FROM operation WHERE state='running') OR
 		EXISTS (SELECT 1 FROM tools_execution_claim) OR
 		EXISTS (SELECT 1 FROM publication_execution_claim) OR
+		EXISTS (SELECT 1 FROM publication_reconciliation_event WHERE delivery_claimed) OR
 		EXISTS (
 			SELECT 1 FROM publication_source_hold hold
 				JOIN operation operation ON operation.id=hold.operation_id
@@ -479,6 +480,29 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	}
 	if err := validateRuntimeUpdateSQL(ctx, tx, expectedToolsRoot, oldRoot, newRoot, runtimeValues); err != nil {
 		return fmt.Errorf("validate output reset runtime settings: %w", err)
+	}
+	// Claimed deliveries were refused by the reset gate. Cancel unclaimed work
+	// and its jobs before terminalizing operations or rotating the epoch.
+	if _, err := tx.ExecContext(ctx, `UPDATE publication_reconciliation_event SET state='cancelled',delivery_epoch=delivery_epoch+1,delivery_claimed=false,claim_token=NULL
+		WHERE state IN ('pending','dispatched') AND NOT delivery_claimed`); err != nil {
+		return fmt.Errorf("cancel old-epoch publication reconciliation events: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE river_job job SET state='cancelled',finalized_at=now()
+		FROM publication_reconciliation_event event
+		WHERE job.id=event.registered_job_id AND event.state='cancelled'
+		AND job.state IN ('available','pending','retryable','scheduled','running')`); err != nil {
+		return fmt.Errorf("cancel old-epoch publication reconciliation deliveries: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE operation operation SET state='failed',stage='finished',safe_error=$1,finished_at=now(),updated_at=now()
+		FROM publication_reconciliation_event event
+		WHERE operation.id=event.operation_id AND event.state='cancelled' AND operation.state IN ('queued','running')`, outputResetSafeError); err != nil {
+		return fmt.Errorf("fail old-epoch publication reconciliation operations: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM publication_reconciliation_event`); err != nil {
+		return fmt.Errorf("clear old-epoch publication reconciliation events: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM publication_reconciliation_request`); err != nil {
+		return fmt.Errorf("clear old-epoch publication reconciliation requests: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM track_publication`); err != nil {
 		return fmt.Errorf("clear current track publications: %w", err)
