@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "../../test/server";
@@ -90,7 +90,8 @@ describe("inspector file navigation", () => {
     await observe(
       () => !!screen.queryByText("Выполняется этап анализа файла."),
     );
-    const oldStream = stream();
+    // The pending DOM can commit before the subscription's passive effect.
+    const oldStream = await waitFor(stream);
     hold = true;
     oldStream.dispatchEvent(new Event("open"));
     await started;
