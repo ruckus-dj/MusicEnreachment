@@ -18,6 +18,8 @@ type publicationSourceCleanupFake struct {
 	startErr       error
 	cancel         bool
 	cancelErr      error
+	retire         bool
+	retireErr      error
 	removeResult   persistence.PublicationSourceCleanupRemovalOutcome
 	removeErr      error
 	settle         bool
@@ -54,6 +56,11 @@ func (fake *publicationSourceCleanupFake) CancelUnstartedPublicationSourceCleanu
 	fake.recordGuard(g)
 	fake.trace = append(fake.trace, "cancel:"+safe)
 	return fake.cancel, fake.cancelErr
+}
+func (fake *publicationSourceCleanupFake) FailUnstartedPublicationSourceCleanupDelivery(_ context.Context, g persistence.PublicationSourceCleanupDeliveryGuard, safe string) (bool, error) {
+	fake.recordGuard(g)
+	fake.trace = append(fake.trace, "retire:"+safe)
+	return fake.retire, fake.retireErr
 }
 func (fake *publicationSourceCleanupFake) RemovePublicationSourceCleanupItem(ctx context.Context, g persistence.PublicationSourceCleanupDeliveryGuard, item uuid.UUID, remove func(context.Context, persistence.PublicationSourceCleanupRemovalRequest) error) (persistence.PublicationSourceCleanupRemovalOutcome, error) {
 	fake.recordGuard(g)
@@ -194,7 +201,7 @@ func TestPublicationSourceCleanupRunnerFalseTransitionsAndCancelErrors(t *testin
 		fake := validPublicationSourceCleanupFake()
 		fake.removeResult = persistence.PublicationSourceCleanupRemovalBlocked
 		outcome, err := newPublicationSourceCleanupRunner(t, fake, new(publicationSourceCleanupFakeRemover)).ExecutePublicationSourceCleanupDelivery(context.Background(), uuid.New(), 91, 1)
-		if outcome != PublicationSourceCleanupBlocked || err != nil || !reflect.DeepEqual(fake.trace, []string{"load", "claim", "start", "remove", "fail:" + publicationSourceCleanupSafeError}) {
+		if outcome != PublicationSourceCleanupBlocked || err != nil || !reflect.DeepEqual(fake.trace, []string{"load", "claim", "start", "remove", "fail:" + publicationSourceCleanupSafeError, "cancel:Publication source removal is disabled.", "retire:Source cleanup inputs changed before source removal could start."}) {
 			t.Fatalf("= %q, %v, %v", outcome, err, fake.trace)
 		}
 	})
@@ -270,6 +277,32 @@ func TestPublicationSourceCleanupRunnerBlockedStartAttemptsOnlySafeCancel(t *tes
 	outcome, err := newPublicationSourceCleanupRunner(t, fake, new(publicationSourceCleanupFakeRemover)).ExecutePublicationSourceCleanupDelivery(context.Background(), uuid.New(), 91, 1)
 	if err != nil || outcome != PublicationSourceCleanupCancelled || !reflect.DeepEqual(fake.trace, []string{"load", "claim", "start", "cancel:Publication source removal is disabled."}) {
 		t.Fatalf("Execute() = %q, %v, trace %v", outcome, err, fake.trace)
+	}
+}
+
+func TestPublicationSourceCleanupRunnerBlockedStartRetiresExactDelivery(t *testing.T) {
+	fake := validPublicationSourceCleanupFake()
+	fake.start = false
+	fake.retire = true
+	outcome, err := newPublicationSourceCleanupRunner(t, fake, new(publicationSourceCleanupFakeRemover)).ExecutePublicationSourceCleanupDelivery(context.Background(), uuid.New(), 91, 1)
+	want := []string{"load", "claim", "start", "cancel:Publication source removal is disabled.", "retire:Source cleanup inputs changed before source removal could start."}
+	if err != nil || outcome != PublicationSourceCleanupFailed || !reflect.DeepEqual(fake.trace, want) {
+		t.Fatalf("Execute() = %q, %v, trace %v", outcome, err, fake.trace)
+	}
+}
+
+func TestPublicationSourceCleanupRunnerPropagatesCancellationAfterBlockedRemoval(t *testing.T) {
+	fake := validPublicationSourceCleanupFake()
+	fake.removeResult = persistence.PublicationSourceCleanupRemovalBlocked
+	fake.removeErr = errors.New("removal permission changed")
+	fake.cancel = true
+	remover := new(publicationSourceCleanupFakeRemover)
+	outcome, err := newPublicationSourceCleanupRunner(t, fake, remover).ExecutePublicationSourceCleanupDelivery(context.Background(), uuid.New(), 91, 1)
+	if outcome != PublicationSourceCleanupCancelled || !errors.Is(err, fake.removeErr) || len(remover.paths) != 0 {
+		t.Fatalf("cancelled removal = %q, %v, paths=%v", outcome, err, remover.paths)
+	}
+	if fake.trace[len(fake.trace)-1] != "cancel:Publication source removal is disabled." {
+		t.Fatalf("cancellation continued to another settlement: %v", fake.trace)
 	}
 }
 

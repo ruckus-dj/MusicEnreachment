@@ -15,6 +15,7 @@ type publicationSourceCleanupRepository interface {
 	ClaimPublicationSourceCleanupDelivery(context.Context, persistence.PublicationSourceCleanupDeliveryGuard) (persistence.PublicationDeliveryClaimOutcome, error)
 	StartPublicationSourceCleanupExecution(context.Context, persistence.PublicationSourceCleanupDeliveryGuard) (bool, error)
 	CancelUnstartedPublicationSourceCleanupDelivery(context.Context, persistence.PublicationSourceCleanupDeliveryGuard, string) (bool, error)
+	FailUnstartedPublicationSourceCleanupDelivery(context.Context, persistence.PublicationSourceCleanupDeliveryGuard, string) (bool, error)
 	RemovePublicationSourceCleanupItem(context.Context, persistence.PublicationSourceCleanupDeliveryGuard, uuid.UUID, func(context.Context, persistence.PublicationSourceCleanupRemovalRequest) error) (persistence.PublicationSourceCleanupRemovalOutcome, error)
 	SettlePublicationSourceCleanup(context.Context, persistence.PublicationSourceCleanupDeliveryGuard) (bool, error)
 	FailPublicationSourceCleanupDelivery(context.Context, persistence.PublicationSourceCleanupDeliveryGuard, string) (bool, error)
@@ -31,6 +32,7 @@ const (
 	PublicationSourceCleanupCancelled        PublicationSourceCleanupRunOutcome = "cancelled"
 	PublicationSourceCleanupCompleted        PublicationSourceCleanupRunOutcome = "completed"
 	PublicationSourceCleanupRecoveryRequired PublicationSourceCleanupRunOutcome = "recovery_required"
+	PublicationSourceCleanupFailed           PublicationSourceCleanupRunOutcome = "failed"
 )
 
 const publicationSourceCleanupSafeError = "One or more publication source files could not be safely removed."
@@ -89,7 +91,7 @@ func (runner *PublicationSourceCleanupRunner) ExecutePublicationSourceCleanupDel
 		return PublicationSourceCleanupBlocked, fmt.Errorf("start publication source cleanup execution: %w", err)
 	}
 	if !started {
-		return runner.cancelIfUnstarted(ctx, guard)
+		return runner.retireIfUnstarted(ctx, guard, "Source cleanup inputs changed before source removal could start.")
 	}
 	for _, itemID := range input.ItemIDs {
 		result, removeErr := runner.repository.RemovePublicationSourceCleanupItem(ctx, guard, itemID, func(ctx context.Context, request persistence.PublicationSourceCleanupRemovalRequest) error {
@@ -101,6 +103,13 @@ func (runner *PublicationSourceCleanupRunner) ExecutePublicationSourceCleanupDel
 				return PublicationSourceCleanupBlocked, errors.Join(wrapCleanupError("record publication source cleanup failure", failErr), wrapCleanupError("remove publication source cleanup item", removeErr))
 			}
 			if !failed {
+				outcome, retireErr := runner.retireIfUnstarted(ctx, guard, "Source cleanup inputs changed before source removal could start.")
+				if retireErr != nil {
+					return PublicationSourceCleanupBlocked, errors.Join(wrapCleanupError("remove publication source cleanup item", removeErr), retireErr)
+				}
+				if outcome == PublicationSourceCleanupFailed || outcome == PublicationSourceCleanupCancelled {
+					return outcome, wrapCleanupError("remove publication source cleanup item", removeErr)
+				}
 				return PublicationSourceCleanupBlocked, wrapCleanupError("remove publication source cleanup item", removeErr)
 			}
 			return PublicationSourceCleanupRecoveryRequired, wrapCleanupError("remove publication source cleanup item", removeErr)
@@ -126,6 +135,24 @@ func (runner *PublicationSourceCleanupRunner) cancelIfUnstarted(ctx context.Cont
 	}
 	if cancelled {
 		return PublicationSourceCleanupCancelled, nil
+	}
+	return PublicationSourceCleanupBlocked, nil
+}
+
+func (runner *PublicationSourceCleanupRunner) retireIfUnstarted(ctx context.Context, guard persistence.PublicationSourceCleanupDeliveryGuard, reason string) (PublicationSourceCleanupRunOutcome, error) {
+	cancelled, err := runner.repository.CancelUnstartedPublicationSourceCleanupDelivery(ctx, guard, "Publication source removal is disabled.")
+	if err != nil {
+		return PublicationSourceCleanupBlocked, fmt.Errorf("cancel unstarted publication source cleanup delivery: %w", err)
+	}
+	if cancelled {
+		return PublicationSourceCleanupCancelled, nil
+	}
+	failed, failErr := runner.repository.FailUnstartedPublicationSourceCleanupDelivery(ctx, guard, reason)
+	if failErr != nil {
+		return PublicationSourceCleanupBlocked, fmt.Errorf("fail unstarted publication source cleanup delivery: %w", failErr)
+	}
+	if failed {
+		return PublicationSourceCleanupFailed, nil
 	}
 	return PublicationSourceCleanupBlocked, nil
 }
