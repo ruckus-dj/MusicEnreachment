@@ -100,12 +100,8 @@ func (repository *SetupManagerRepository) ClaimPublicationSourceCleanupExplicitR
 		if err != nil {
 			return fmt.Errorf("claim explicit publication source cleanup retry: reread original binding: %w", err)
 		}
-		freshJSON, err := json.Marshal(freshBinding)
+		sameBinding, err := publicationSourceCleanupRetryBindingMatches(ctx, tx, freshBinding, grant.Binding)
 		if err != nil {
-			return fmt.Errorf("claim explicit publication source cleanup retry: encode fresh binding: %w", err)
-		}
-		var sameBinding bool
-		if err := tx.NewRaw(`SELECT ?::jsonb = ?::jsonb`, string(freshJSON), string(grant.Binding)).Scan(ctx, &sameBinding); err != nil {
 			return fmt.Errorf("claim explicit publication source cleanup retry: compare binding: %w", err)
 		}
 		if !sameBinding {
@@ -174,6 +170,20 @@ func (repository *SetupManagerRepository) ClaimPublicationSourceCleanupExplicitR
 		return PublicationDeliveryBlocked, err
 	}
 	return outcome, nil
+}
+
+// publicationSourceCleanupRetryBindingMatches performs the canonical PostgreSQL
+// jsonb comparison used whenever retained retry evidence is revalidated.
+func publicationSourceCleanupRetryBindingMatches(ctx context.Context, tx bun.IDB, fresh publicationSourceCleanupRetryBinding, retained json.RawMessage) (bool, error) {
+	freshJSON, err := json.Marshal(fresh)
+	if err != nil {
+		return false, fmt.Errorf("encode fresh binding: %w", err)
+	}
+	var matches bool
+	if err := tx.NewRaw(`SELECT ?::jsonb = ?::jsonb`, string(freshJSON), string(retained)).Scan(ctx, &matches); err != nil {
+		return false, err
+	}
+	return matches, nil
 }
 
 func retryItemReferencesMatch(ctx context.Context, tx bun.IDB, binding publicationSourceCleanupRetryBinding, grantID, originalOperationID uuid.UUID) (bool, error) {

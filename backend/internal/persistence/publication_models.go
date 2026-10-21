@@ -145,3 +145,18 @@ type SourceCleanupExplicitRetryItem struct {
 	ItemID              uuid.UUID `bun:"item_id,pk,type:uuid"`
 	OwnerUUID           uuid.UUID `bun:"owner_uuid,type:uuid"`
 }
+
+// SourceCleanupExplicitRetryResolution is the one-shot per-item native outcome
+// journal for an explicitly claimed retry delivery.
+type SourceCleanupExplicitRetryResolution struct {
+	bun.BaseModel       `bun:"table:source_cleanup_explicit_retry_resolution"`
+	RetryID             uuid.UUID  `bun:"retry_id,pk,type:uuid"`
+	ItemID              uuid.UUID  `bun:"item_id,pk,type:uuid"`
+	RecoveryOperationID uuid.UUID  `bun:"recovery_operation_id,type:uuid"`
+	ApplicationAttempt  int        `bun:"application_attempt"`
+	RiverJobID          int64      `bun:"river_job_id"`
+	ClaimUUID           uuid.UUID  `bun:"claim_uuid,type:uuid"`
+	StartedAt           time.Time  `bun:"started_at"`
+	CompletedAt         *time.Time `bun:"completed_at,nullzero"`
+	ResolutionKind      *string    `bun:"resolution_kind,nullzero"`
+}
