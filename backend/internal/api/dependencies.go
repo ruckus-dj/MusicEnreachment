@@ -28,6 +28,7 @@ type Dependencies struct {
 	// diagnostic or Setup is unfinished.
 	SourceLocationDetails  *service.SourceLocationDetails
 	SourceArtifactCleanup  *service.SourceAnalysisArtifactCleanup
+	SourceCleanupRetries   *service.SourceCleanupRetries
 	IncomingGroups         *service.IncomingGroups
 	MatchingReview         *service.MatchingReviewService
 	MatchingManual         *service.MatchingManualService

@@ -239,16 +239,25 @@ func Run(ctx context.Context, config Config) error {
 	if err != nil {
 		return fmt.Errorf("create publication command runner: %w", err)
 	}
+	publicationBootUUID, err := uuid.NewRandom()
+	if err != nil {
+		return fmt.Errorf("create publication boot identity: %w", err)
+	}
 	publicationExecutor := service.NewPublicationExecutor(
 		setupManagerRepository, registry,
 		tools.Platform{GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH},
-		publication.NewCoordinator(), uuid.New(), publicationCommands,
+		publication.NewCoordinator(), publicationBootUUID, publicationCommands,
 	)
 	publicationWorker := jobs.NewPublicationWorker(publicationExecutor)
 	publicationReconciliationWorker := jobs.NewPublicationReconciliationWorker(setupManagerRepository, libraryPublications, operationService)
 	publicationReconciliationDispatcher := publicationReconciliationDispatcher{repository: setupManagerRepository, river: riverSlot}
 	publicationReconciliationDispatchWorker := jobs.NewPublicationReconciliationDispatchWorker(publicationReconciliationDispatcher)
 	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, registry, riverSlot)
+	sourceCleanupRetries := service.NewSourceCleanupRetries(setupManagerRepository, riverSlot)
+	publicationSourceCleanupWorkers, err := newPublicationSourceCleanupWorkers(setupManagerRepository, publicationBootUUID)
+	if err != nil {
+		return err
+	}
 	catalog := tools.NewDefaultCatalog(nil)
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
@@ -291,6 +300,7 @@ func Run(ctx context.Context, config Config) error {
 		// is initialized from the source-file setting and bounded live by worker.
 		river.AddWorker(workers, analysisWorker)
 		river.AddWorker(workers, artifactCleanupWorker)
+		registerPublicationSourceCleanupWorkers(workers, publicationSourceCleanupWorkers)
 		river.AddWorker(workers, providerFetchWorker)
 		river.AddWorker(workers, matchingEvaluationWorker)
 		river.AddWorker(workers, matchingApplyWorker)
@@ -438,7 +448,8 @@ func Run(ctx context.Context, config Config) error {
 		Installations: installations, MoveTools: moveTools, Operations: apiOperations,
 		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
-		SourceArtifactCleanup: artifactCleanup, IncomingGroups: incomingGroups, MatchingReview: matchingReview, MatchingManual: matchingManual, MatchingAuthority: matchingAuthority,
+		SourceArtifactCleanup: artifactCleanup, SourceCleanupRetries: sourceCleanupRetries,
+		IncomingGroups: incomingGroups, MatchingReview: matchingReview, MatchingManual: matchingManual, MatchingAuthority: matchingAuthority,
 		MatchingLocal:          matchingLocal,
 		ManualReleaseSelection: manualReleaseSelection,
 		ManualPickerSearch:     manualPickerSearch,

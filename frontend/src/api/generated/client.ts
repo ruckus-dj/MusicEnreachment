@@ -4010,6 +4010,106 @@ export const useRetryOperation = <TError = ErrorModel,
       return useMutation(getRetryOperationMutationOptions(options), queryClient);
     }
 
+export type retryPublicationSourceCleanupResponse202 = {
+  data: OperationResponse
+  status: 202
+}
+
+export type retryPublicationSourceCleanupResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type retryPublicationSourceCleanupResponseSuccess = (retryPublicationSourceCleanupResponse202) & {
+  headers: Headers;
+};
+export type retryPublicationSourceCleanupResponseError = (retryPublicationSourceCleanupResponseDefault) & {
+  headers: Headers;
+};
+
+export type retryPublicationSourceCleanupResponse = (retryPublicationSourceCleanupResponseSuccess | retryPublicationSourceCleanupResponseError)
+
+export const getRetryPublicationSourceCleanupUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/operations/${operationId}/source-cleanup/retry`
+}
+
+/**
+ * @summary Explicitly retry a failed publication source cleanup
+ */
+export const retryPublicationSourceCleanup = async (operationId: string, options?: RequestInit): Promise<retryPublicationSourceCleanupResponse> => {
+
+  const res = await fetch(getRetryPublicationSourceCleanupUrl(operationId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: retryPublicationSourceCleanupResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as retryPublicationSourceCleanupResponse
+}
+
+
+
+
+
+export const getRetryPublicationSourceCleanupMutationKey = () => ['retryPublicationSourceCleanup'] as const;
+
+export const getRetryPublicationSourceCleanupMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryPublicationSourceCleanup>>, TError,RetryPublicationSourceCleanupMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof retryPublicationSourceCleanup>>, TError,RetryPublicationSourceCleanupMutationVariables, TContext> => {
+
+const mutationKey = getRetryPublicationSourceCleanupMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryPublicationSourceCleanup>>, RetryPublicationSourceCleanupMutationVariables> = (props) => {
+          const {operationId} = props ?? {};
+
+          return  retryPublicationSourceCleanup(operationId,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryPublicationSourceCleanupMutationResult = NonNullable<Awaited<ReturnType<typeof retryPublicationSourceCleanup>>>
+
+    export type RetryPublicationSourceCleanupMutationError = ErrorModel
+    export type RetryPublicationSourceCleanupMutationVariables = {operationId: string}
+
+    /**
+ * @summary Explicitly retry a failed publication source cleanup
+ */
+export const useRetryPublicationSourceCleanup = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryPublicationSourceCleanup>>, TError,RetryPublicationSourceCleanupMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof retryPublicationSourceCleanup>>,
+        TError,
+        RetryPublicationSourceCleanupMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRetryPublicationSourceCleanupMutationOptions(options), queryClient);
+    }
+
 export type getSettingsResponse200 = {
   data: SetupStateBody
   status: 200
