@@ -94,6 +94,12 @@ tasks:
     cmds:
       - go test -tags=integration -count=1 -p 8 -parallel 8 ./...
 
+  ci:windows-tests:
+    desc: Run Windows CI backend tests with the persistence package split into two deterministic shards
+    dir: backend
+    cmds:
+      - node ../tools/windows-persistence-shards.mjs
+
   format:
     desc: Apply Go and frontend formatting
     deps: [frontend:install]
