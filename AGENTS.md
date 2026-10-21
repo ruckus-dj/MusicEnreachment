@@ -138,6 +138,32 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 - For an isolated commit, keep its worktree free of unrelated untracked code as
   well as tracked edits. Pre-commit stashes unstaged tracked files but leaves
   untracked helpers/tests visible, producing an invalid mixed test/lint context.
+- `testpostgres.OpenMigrated(t)` creates an isolated database per call: when
+  extending a fixture, use its existing `f.db` for all setup and assertions.
+  Clone slices before mutating copied request structs so rejection scenarios do
+  not silently change the baseline or omitted-member scenarios.
+- A subagent does not inherit an assigned worktree as its tool working directory.
+  Use absolute paths for file edits and explicit `workdir` for every shell call;
+  verify the target tree before writing. Resolve command paths relative to that
+  explicit directory, not the repository root by habit.
+- Reused fixtures are not automatically eligible for a new lifecycle phase:
+  explicitly establish required root availability, step intent, selected-source
+  authority and valid operation snapshots. Do not weaken production checks to
+  accommodate a fixture's default `unknown` status or incomplete evidence.
+- For delegated worktree edits, enforce the child's session directory with
+  `session_move` before permitting writes; prose instructions alone are not
+  isolation. Start the child read-only, move that session, then assign edits.
+  Verify changed-file locations before accepting the result.
+- Normalized analysis fixtures transitioning to terminal states must clear their
+  target selectors and set `finished_at` with a nonempty failure diagnostic.
+  Retire the baseline operation and remove its exact-work holds/triples in the
+  same transaction: deferred constraints reject either half committed alone.
+  Rebuild any deleted pending steps before testing admission again. A second work needs
+  its own location identity, not a copied `current_location_id`.
+- Prefer `SettleNormalizedSourceAnalysisOperation` for retiring analysis fixtures;
+  manually deleting operations can invalidate deferred step-history checks.
+  Terminal normalized operations cannot retain work holds by schema: cover live
+  terminal deliveries without holds separately from active admitted hold owners.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 
