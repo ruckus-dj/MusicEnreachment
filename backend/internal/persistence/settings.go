@@ -529,6 +529,14 @@ func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoo
 		return err
 	}
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if value, changes := values["publication_remove_sources"]; changes && value == "false" {
+			if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+				return fmt.Errorf("lock publication source removal output gate: %w", err)
+			}
+			if err := lockPublicationSourceCleanupPolicy(ctx, tx, false); err != nil {
+				return fmt.Errorf("lock publication source removal policy gate: %w", err)
+			}
+		}
 		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("lock tools operations: %w", err)
 		}
@@ -582,6 +590,11 @@ func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoo
 		}
 		if err := validateOutputAgainstActiveMoves(ctx, tx, nextOutput, caseSensitive); err != nil {
 			return err
+		}
+		if value, changes := values["publication_remove_sources"]; changes && value == "false" {
+			if _, err := tx.NewRaw(`DELETE FROM publication_source_cleanup_request`).Exec(ctx); err != nil {
+				return fmt.Errorf("discard pending publication source cleanup requests: %w", err)
+			}
 		}
 		return setManyTx(ctx, tx, values)
 	})

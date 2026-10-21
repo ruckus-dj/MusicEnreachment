@@ -40,6 +40,12 @@ func (repository *SetupManagerRepository) CommitFirstPublication(ctx context.Con
 	}
 	committed := false
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("commit first publication: acquire output admission: %w", err)
+		}
+		if err := lockPublicationSourceCleanupPolicy(ctx, tx, true); err != nil {
+			return fmt.Errorf("commit first publication: lock source cleanup policy: %w", err)
+		}
 		attempt, operation, claim, live, err := lockPublicationDeliveryIdentity(ctx, tx, guard, "commit first publication")
 		if err != nil || !live {
 			return err
@@ -141,6 +147,9 @@ func (repository *SetupManagerRepository) CommitFirstPublication(ctx context.Con
 		n, err = stage.RowsAffected()
 		if err != nil || n != 1 {
 			return errors.New("commit first publication: operation changed concurrently")
+		}
+		if err := repository.requestSourceCleanupTx(ctx, tx, guard.OperationID, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration); err != nil {
+			return fmt.Errorf("commit first publication: request source cleanup: %w", err)
 		}
 		committed = true
 		return nil

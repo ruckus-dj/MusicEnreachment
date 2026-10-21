@@ -1947,6 +1947,7 @@ func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, 
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM publication_source_hold WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM publication_reconciliation_event WHERE operation_id = operation.id)").
+		Where("NOT EXISTS (SELECT 1 FROM publication_source_cleanup_request WHERE originating_operation_id = operation.id)").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("dismiss operation: %w", err)
@@ -1973,6 +1974,7 @@ func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Cont
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM publication_source_hold WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM publication_reconciliation_event WHERE operation_id = operation.id)").
+		Where("NOT EXISTS (SELECT 1 FROM publication_source_cleanup_request WHERE originating_operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM matching_run WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM matching_apply_request WHERE apply_operation_id = operation.id OR parent_run_id IN (SELECT id FROM matching_run WHERE operation_id = operation.id))").
 		Where("NOT EXISTS (SELECT 1 FROM matching_provider_dependency WHERE request_id = operation.id)").

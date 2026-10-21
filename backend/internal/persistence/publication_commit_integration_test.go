@@ -168,6 +168,35 @@ func readyFirstPublicationCommitFixture(t *testing.T) (publicationExecutionFixtu
 	return f, intent, staged, repo
 }
 
+func TestCommitFirstPublicationCreatesOnlyCurrentSourceCleanupRequestPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, _, _, repo := readyFirstPublicationCommitFixture(t)
+	if err := NewSettingsRepository(f.db).Set(ctx, "publication_remove_sources", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if committed, err := repo.CommitFirstPublication(ctx, f.guard); err != nil || !committed {
+		t.Fatalf("commit = %t, %v", committed, err)
+	}
+	var count int
+	var requestedAt string
+	if err := f.db.NewRaw(`SELECT count(*),min(requested_at)::text FROM publication_source_cleanup_request WHERE originating_operation_id=? AND position_id=? AND output_epoch=? AND publication_generation=?`, f.guard.OperationID, f.guard.ExpectedPositionID, f.guard.Epoch, f.guard.CandidateGeneration).Scan(ctx, &count, &requestedAt); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("first commit created %d current cleanup requests, want one", count)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE publication_source_cleanup_request SET requested_at='2000-01-01T00:00:00Z' WHERE originating_operation_id=?`, f.guard.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if committed, err := repo.CommitFirstPublication(ctx, f.guard); err != nil || !committed {
+		t.Fatalf("replay = %t, %v", committed, err)
+	}
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_source_cleanup_request WHERE originating_operation_id=? AND requested_at='2000-01-01T00:00:00Z'`, f.guard.OperationID).Scan(ctx, &count); err != nil || count != 1 {
+		t.Fatalf("replay changed cleanup request: count=%d err=%v", count, err)
+	}
+}
+
 func TestCommitFirstPublicationRejectsChangedReplayPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

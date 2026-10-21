@@ -117,9 +117,13 @@ func TestManualLyricsCommitWritesReceiptAndDoesNotRepairReplayPostgreSQL(t *test
 	t.Parallel()
 	ctx := context.Background()
 	f, repo, input, _, _ := prepareManualLyricsCommitFixture(t)
+	if err := NewSettingsRepository(f.db).Set(ctx, "publication_remove_sources", "true"); err != nil {
+		t.Fatal(err)
+	}
 	if committed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !committed {
 		t.Fatalf("manual commit = %v, %v", committed, err)
 	}
+	assertReplacementCleanupRequest(t, ctx, f)
 	var receipt PublicationManualLyricsReceipt
 	if err := f.db.NewSelect().Model(&receipt).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
 		t.Fatal(err)
@@ -135,6 +139,16 @@ func TestManualLyricsCommitWritesReceiptAndDoesNotRepairReplayPostgreSQL(t *test
 	}
 	if replayed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !replayed {
 		t.Fatalf("manual replay = %v, %v", replayed, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `DELETE FROM publication_source_cleanup_request WHERE position_id=?`, f.guard.ExpectedPositionID); err != nil {
+		t.Fatal(err)
+	}
+	if replayed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !replayed {
+		t.Fatalf("manual replay after request consumption = %v, %v", replayed, err)
+	}
+	var requestCount int
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_source_cleanup_request WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &requestCount); err != nil || requestCount != 0 {
+		t.Fatalf("manual replay recreated cleanup request: count=%d, err=%v", requestCount, err)
 	}
 	for _, generation := range []uuid.UUID{input.Rewrite.CurrentGeneration, f.guard.CandidateGeneration} {
 		projection := PublicationInitialLyricsProjection{
@@ -171,6 +185,26 @@ func TestManualLyricsCommitWritesReceiptAndDoesNotRepairReplayPostgreSQL(t *test
 	}
 }
 
+func TestManualLyricsCommitDoesNotRequestSourceCleanupWhenDisabledPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, repo, _, _, _ := prepareManualLyricsCommitFixture(t)
+	if err := NewSettingsRepository(f.db).Set(ctx, "publication_remove_sources", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if committed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !committed {
+		t.Fatalf("manual commit with cleanup disabled = %v, %v", committed, err)
+	}
+	var requestCount int
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_source_cleanup_request WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &requestCount); err != nil || requestCount != 0 {
+		t.Fatalf("cleanup requests with setting disabled = %d, err=%v; want 0", requestCount, err)
+	}
+	var receiptCount int
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_manual_lyrics_receipt WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &receiptCount); err != nil || receiptCount != 1 {
+		t.Fatalf("manual lyrics receipts with cleanup disabled = %d, err=%v; want 1", receiptCount, err)
+	}
+}
+
 func TestManualLyricsCommitRemovalAndRebuiltOutcomesPostgreSQL(t *testing.T) {
 	for _, test := range []struct {
 		name, state string
@@ -184,6 +218,9 @@ func TestManualLyricsCommitRemovalAndRebuiltOutcomesPostgreSQL(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			f, repo, input, staged, entries := prepareManualLyricsCommitFixture(t)
+			if err := NewSettingsRepository(f.db).Set(ctx, "publication_remove_sources", "true"); err != nil {
+				t.Fatal(err)
+			}
 			input.ManualLyrics.State = test.state
 			if test.state == "explicit_empty" {
 				input.ManualLyrics.Value = ""
@@ -247,6 +284,7 @@ func TestManualLyricsCommitRemovalAndRebuiltOutcomesPostgreSQL(t *testing.T) {
 			if committed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !committed {
 				t.Fatalf("commit = %v, %v", committed, err)
 			}
+			assertReplacementCleanupRequest(t, ctx, f)
 			var receipt PublicationManualLyricsReceipt
 			if err := f.db.NewSelect().Model(&receipt).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
 				t.Fatal(err)

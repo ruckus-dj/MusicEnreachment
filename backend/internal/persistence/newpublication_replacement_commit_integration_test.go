@@ -259,9 +259,13 @@ func TestCommitReplacementPublicationPostgreSQL(t *testing.T) {
 	if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, string(mustJSON(canonicalJournal)), f.guard.OperationID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := NewSettingsRepository(f.db).Set(ctx, "publication_remove_sources", "true"); err != nil {
+		t.Fatal(err)
+	}
 	if committed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !committed {
 		t.Fatalf("replacement commit = %t, %v", committed, err)
 	}
+	assertReplacementCleanupRequest(t, ctx, f)
 	var current TrackPublication
 	if err := f.db.NewSelect().Model(&current).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
 		t.Fatal(err)
@@ -291,6 +295,17 @@ func TestCommitReplacementPublicationPostgreSQL(t *testing.T) {
 	if committed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !committed {
 		t.Fatalf("exact replay = %t, %v", committed, err)
 	}
+	// A replay must not recreate a cleanup request that was already consumed.
+	if _, err := f.db.ExecContext(ctx, `DELETE FROM publication_source_cleanup_request WHERE position_id=?`, f.guard.ExpectedPositionID); err != nil {
+		t.Fatal(err)
+	}
+	if committed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !committed {
+		t.Fatalf("replay after request consumption = %t, %v", committed, err)
+	}
+	var requestCount int
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_source_cleanup_request WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &requestCount); err != nil || requestCount != 0 {
+		t.Fatalf("replay recreated cleanup request: count=%d, err=%v", requestCount, err)
+	}
 	if _, err := f.db.NewRaw(`UPDATE track_publication SET actual_metadata='{"version":1,"tags":{"GENRE":["changed"]}}'::jsonb WHERE position_id=?`, f.guard.ExpectedPositionID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -299,6 +314,17 @@ func TestCommitReplacementPublicationPostgreSQL(t *testing.T) {
 	}
 	if err := f.db.NewRaw(`SELECT mutation_journal::text FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &journalAfter); err != nil || journalAfter != journalBefore {
 		t.Fatalf("replay changed commit journal: %v", err)
+	}
+}
+
+func assertReplacementCleanupRequest(t *testing.T, ctx context.Context, f publicationExecutionFixture) {
+	t.Helper()
+	var operationID, positionID, epoch, generation uuid.UUID
+	if err := f.db.NewRaw(`SELECT originating_operation_id,position_id,output_epoch,publication_generation FROM publication_source_cleanup_request WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &operationID, &positionID, &epoch, &generation); err != nil {
+		t.Fatal(err)
+	}
+	if operationID != f.guard.OperationID || positionID != f.guard.ExpectedPositionID || epoch != f.guard.Epoch || generation != f.guard.CandidateGeneration {
+		t.Fatalf("cleanup request = %s/%s/%s/%s; want %s/%s/%s/%s", operationID, positionID, epoch, generation, f.guard.OperationID, f.guard.ExpectedPositionID, f.guard.Epoch, f.guard.CandidateGeneration)
 	}
 }
 

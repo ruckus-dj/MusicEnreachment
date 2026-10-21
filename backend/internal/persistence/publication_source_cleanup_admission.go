@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -87,106 +86,17 @@ func (repository *SetupManagerRepository) AdmitPublicationSourceCleanup(ctx cont
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("admit publication source cleanup: lock output gate: %w", err)
 		}
+		if err := lockPublicationSourceCleanupPolicy(ctx, tx, true); err != nil {
+			return fmt.Errorf("admit publication source cleanup: lock policy gate: %w", err)
+		}
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("admit publication source cleanup: lock source mutation gate: %w", err)
 		}
-		var setting string
-		err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='publication_remove_sources'`).Scan(ctx, &setting)
-		switch err {
-		case nil:
-			enabled, parseErr := strconv.ParseBool(setting)
-			if parseErr != nil {
-				return fmt.Errorf("admit publication source cleanup: parse publication_remove_sources: %w", parseErr)
-			}
-			if !enabled {
-				result.Blockers = []string{"publication source removal is disabled"}
-				return nil
-			}
-		case sql.ErrNoRows:
-			result.Blockers = []string{"publication source removal is disabled"}
-			return nil
-		default:
-			return fmt.Errorf("admit publication source cleanup: read publication_remove_sources: %w", err)
-		}
-
-		assessment := PublicationSourceCleanupAssessment{PositionID: request.PositionID}
-		if err := readPublicationSourceCleanupAssessmentTx(ctx, tx, request.PositionID, &assessment); err != nil {
-			return fmt.Errorf("admit publication source cleanup: assess sources: %w", err)
-		}
-		if err := filterHandledSourceCleanupAssessment(ctx, tx, &assessment); err != nil {
-			return err
-		}
-		if len(assessment.Candidates) == 0 {
-			result.Blockers = uniquePublicationCleanupStrings(assessment.Blockers)
-			return nil
-		}
-		if err := lockCleanupCandidateRows(ctx, tx, assessment.Candidates); err != nil {
-			return fmt.Errorf("admit publication source cleanup: lock source identities: %w", err)
-		}
-		busy, err := hasExistingSourceAnalysisWorkHold(ctx, tx, assessment.Candidates)
-		if err != nil {
-			return fmt.Errorf("admit publication source cleanup: check source analysis work holds: %w", err)
-		}
-		if busy {
-			result.Blockers = []string{"source has an analysis work hold"}
-			return nil
-		}
-		var epoch uuid.UUID
-		if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &epoch); err != nil {
-			return fmt.Errorf("admit publication source cleanup: lock output epoch: %w", err)
-		}
-		if epoch != request.ExpectedEpoch || assessment.Epoch != request.ExpectedEpoch || assessment.Generation != request.ExpectedGeneration {
-			result.Blockers = []string{"current publication witness changed"}
-			return nil
-		}
-		if err := lockCleanupBorrowerPositions(ctx, tx, assessment.Candidates); err != nil {
-			return fmt.Errorf("admit publication source cleanup: lock borrower positions: %w", err)
-		}
-		assessment = PublicationSourceCleanupAssessment{PositionID: request.PositionID}
-		if err := readPublicationSourceCleanupAssessmentTx(ctx, tx, request.PositionID, &assessment); err != nil {
-			return fmt.Errorf("admit publication source cleanup: recheck sources: %w", err)
-		}
-		if err := filterHandledSourceCleanupAssessment(ctx, tx, &assessment); err != nil {
-			return err
-		}
-		if assessment.Epoch != epoch || assessment.Generation != request.ExpectedGeneration {
-			result.Blockers = []string{"current publication witness changed"}
-			return nil
-		}
-		if blockers := cleanupAdmissionBlockers(assessment, epoch); len(blockers) != 0 {
-			result.Blockers = blockers
-			return nil
-		}
-		owned, err := hasExistingCleanupOwner(ctx, tx, assessment.Candidates)
+		admissionResult, err := repository.admitPublicationSourceCleanupTx(ctx, tx, request, client)
+		result = admissionResult
 		if err != nil {
 			return err
 		}
-		if owned {
-			result.Blockers = []string{"source already has a cleanup owner"}
-			return nil
-		}
-		if err := verifyCleanupCandidateFacts(ctx, tx, assessment.Candidates); err != nil {
-			if err == errCleanupCandidateConflict {
-				result.Blockers = []string{"source cleanup candidate identities changed or conflict"}
-				return nil
-			}
-			return err
-		}
-		operationID := uuid.New()
-		snapshot, err := json.Marshal(publicationSourceCleanupOperationSnapshot{Version: 1, PositionID: request.PositionID, OutputEpoch: epoch})
-		if err != nil {
-			return fmt.Errorf("admit publication source cleanup: encode operation snapshot: %w", err)
-		}
-		operation := &Operation{ID: operationID, Kind: "cleanup_publication_sources_v1", State: "queued", Stage: "queued", Attempt: 1, InputSnapshot: snapshot}
-		if err := repository.createOperationAndEnqueueTx(ctx, tx, operation, client, publicationSourceCleanupJobArgs{OperationID: operationID}, nil); err != nil {
-			return fmt.Errorf("admit publication source cleanup: enqueue operation: %w", err)
-		}
-		for _, candidate := range assessment.Candidates {
-			if err := insertCleanupOwner(ctx, tx, operation, request, epoch, candidate); err != nil {
-				return fmt.Errorf("admit publication source cleanup: create owner: %w", err)
-			}
-		}
-		result.OperationID = operationID
 		return nil
 	})
 	return result, err

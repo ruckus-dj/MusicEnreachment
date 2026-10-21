@@ -13,12 +13,17 @@ import (
 // stable, domain-specific values in the second. Do not use hashtext: its key
 // space can overlap unrelated advisory-lock users.
 const (
-	toolsCoordinationNamespace       int32 = 0x4d545256 // "MTRV"
-	toolsMoveGateKey                 int32 = 1
-	setupCompletionLockKey           int32 = 2
-	sourceFingerprintMutationGateKey int32 = 4
-	toolsPackageLockBase             int32 = 100
+	toolsCoordinationNamespace            int32 = 0x4d545256 // "MTRV"
+	toolsMoveGateKey                      int32 = 1
+	setupCompletionLockKey                int32 = 2
+	sourceFingerprintMutationGateKey      int32 = 4
+	publicationSourceCleanupPolicyGateKey int32 = 5
+	toolsPackageLockBase                  int32 = 100
 )
+
+func lockPublicationSourceCleanupPolicy(ctx context.Context, database bun.IDB, shared bool) error {
+	return advisoryXactLock(ctx, database, shared, toolsCoordinationNamespace, publicationSourceCleanupPolicyGateKey)
+}
 
 // lockSourceFingerprintMutations serializes transactions that can publish,
 // select, or retire digest-keyed fingerprint and metadata results. Acquire it before any

@@ -670,6 +670,9 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	if err := setRuntimeValuesSQL(ctx, tx, runtimeValues); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM publication_source_cleanup_request`); err != nil {
+		return fmt.Errorf("discard stale publication source cleanup requests: %w", err)
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE publication_namespace_state SET output_epoch=$1 WHERE singleton=true`, token)
 	if err != nil {
 		return fmt.Errorf("rotate publication output epoch: %w", err)
