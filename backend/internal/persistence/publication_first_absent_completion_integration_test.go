@@ -85,6 +85,14 @@ func TestSettleFirstAbsentPublicationCompletesCommittedFirstPublicationPostgreSQ
 	if !validFirstAbsentCleanupWitness(witness) {
 		t.Fatal("committed first-publication fixture did not provide a valid cleanup witness")
 	}
+	var currentBefore TrackPublication
+	if err := f.db.NewSelect().Model(&currentBefore).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var lyricsBefore PublicationInitialLyricsProjection
+	if err := decodeStrictJSON(currentBefore.InitialLyrics, &lyricsBefore); err != nil || !validPublicationInitialLyricsProjection(lyricsBefore, f.guard.CandidateGeneration) {
+		t.Fatalf("missing or invalid committed initial lyrics projection: %s, %v", currentBefore.InitialLyrics, err)
+	}
 
 	var namespaceClaimsBefore, reservationsBefore int
 	if err := f.db.NewRaw(`SELECT count(*) FROM publication_namespace_claim`).Scan(ctx, &namespaceClaimsBefore); err != nil {
@@ -121,6 +129,9 @@ func TestSettleFirstAbsentPublicationCompletesCommittedFirstPublicationPostgreSQ
 	}
 	if current.Generation != f.guard.CandidateGeneration {
 		t.Fatalf("current generation = %s, want committed candidate %s", current.Generation, f.guard.CandidateGeneration)
+	}
+	if !sameInitialLyricsProjectionJSON(current.InitialLyrics, &lyricsBefore) {
+		t.Fatalf("initial lyrics projection changed during settlement: before=%s after=%s", currentBefore.InitialLyrics, current.InitialLyrics)
 	}
 	var operationState, operationStage string
 	if err := f.db.NewRaw(`SELECT state,stage FROM operation WHERE id=?`, f.guard.OperationID).Scan(ctx, &operationState, &operationStage); err != nil {
