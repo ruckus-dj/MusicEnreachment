@@ -106,6 +106,29 @@
   Go-бинарник. Это обеспечивает единый app-артефакт без обязательного Nginx;
   hashed assets и HTML получают разные cache policies.
 
+### Owner-returned fence original-source cleanup
+
+Синхронный source remover вызывается последовательно owning service runner.
+Только этот runner после возврата remover записывает exact-delivery failure через
+`FailPublicationSourceCleanupDelivery`, переводя claim в `recovery_required`, и
+после этого не начинает следующий item. Retained recovery state в этом протоколе
+обозначает owner-returned и permanently fenced delivery, а не произвольное
+объявление watchdog. Загруженные из БД старые claim credentials не используются
+для повторного запуска удаления.
+
+Один PostgreSQL gate не доказывает выход из native callback: при потере соединения
+транзакционные locks могут освободиться раньше его возврата. River `completed`
+также не является самостоятельным attempt-scoped quiescence proof: completion в
+используемом River проверяет состояние job, но не номер попытки. Гарантия cleanup
+опирается на последовательность owning runner и единственный путь записи recovery
+failure; независимый writer потребует отдельного протокола. Crash до такой записи
+этим bounded recovery-путём не разрешается.
+
+Это технический fence, не новое продуктовое условие проверки файла. Критерий
+size/mtime и разрешение отсутствующего файла только при явном пользовательском
+повторе определены в `decisions.md`. Dormant adapter не означает регистрацию
+worker, включение автоматического cleanup или завершение recovery execution.
+
 ## Сборка и генерация API-типов
 
 Go собирает backend штатными командами Go. Node.js 24 LTS и npm используются

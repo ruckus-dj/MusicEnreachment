@@ -12,6 +12,10 @@ import (
 
 // FailPublicationSourceCleanupDelivery records an ambiguous cleanup failure.
 // It retains all cleanup evidence and never retries or performs filesystem work.
+// Only the owning sequential runner may call this after its synchronous remover
+// has returned, and that runner must not start another item afterward. Recovery
+// relies on this owner-returned fence; gate acquisition alone cannot prove callback
+// exit after a database connection loss. Watchdogs must not manufacture this state.
 func (repository *SetupManagerRepository) FailPublicationSourceCleanupDelivery(ctx context.Context, guard PublicationSourceCleanupDeliveryGuard, safeError string) (bool, error) {
 	if guard.OperationID == uuid.Nil || guard.ApplicationAttempt <= 0 || guard.RiverJobID <= 0 || guard.RiverAttempt <= 0 || guard.ClaimUUID == uuid.Nil || guard.BootUUID == uuid.Nil || guard.DeliveryToken == "" || guard.Epoch == uuid.Nil || guard.PositionID == uuid.Nil || strings.TrimSpace(safeError) == "" {
 		return false, fmt.Errorf("fail publication source cleanup delivery: valid guard and safe error are required")

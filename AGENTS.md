@@ -146,6 +146,9 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
   Use absolute paths for file edits and explicit `workdir` for every shell call;
   verify the target tree before writing. Resolve command paths relative to that
   explicit directory, not the repository root by habit.
+- `git -C <worktree>` changes only that Git invocation's directory. Never append
+  an unqualified `task verify` or commit to such a command expecting it to run in
+  the worktree; invoke the gate separately with its explicit target `workdir`.
 - Reused fixtures are not automatically eligible for a new lifecycle phase:
   explicitly establish required root availability, step intent, selected-source
   authority and valid operation snapshots. Do not weaken production checks to
