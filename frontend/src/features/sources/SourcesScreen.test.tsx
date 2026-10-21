@@ -167,7 +167,20 @@ describe("source root list", () => {
 
     expect(await screen.findByText("Входящие")).toBeVisible();
 
-    const inbox = screen.getByRole("row", { name: /Входящие/ });
+    // Resolve each row from its identifying cell, then check its accessible
+    // name once. Re-querying all row names for every fixture row is costly in
+    // the full parallel suite, while still being unnecessary to scope checks.
+    const rows = screen.getAllByRole("row");
+    const rowNamed = (name: string) => {
+      const row = rows.find((candidate) =>
+        within(candidate).queryByText(name, { exact: true }),
+      );
+      if (!row) throw new Error(`Missing source row labeled ${name}`);
+      expect(row).toHaveAccessibleName(new RegExp(name));
+      return row;
+    };
+
+    const inbox = rowNamed("Входящие");
     expect(within(inbox).getByText("/srv/inbox")).toBeVisible();
     expect(within(inbox).getByText("Доступен")).toBeVisible();
     expect(within(inbox).getByText("Включён")).toBeVisible();
@@ -178,12 +191,12 @@ describe("source root list", () => {
     ).toBeVisible();
     expect(within(inbox).getByText("12 файлов")).toBeVisible();
 
-    const fresh = screen.getByRole("row", { name: /Новый/ });
+    const fresh = rowNamed("Новый");
     expect(within(fresh).getByText("Не проверен")).toBeVisible();
     expect(within(fresh).getByText("Не сканировался")).toBeVisible();
     expect(within(fresh).getByText("Не выполнялось")).toBeVisible();
 
-    const empty = screen.getByRole("row", { name: /Пустой/ });
+    const empty = rowNamed("Пустой");
     expect(within(empty).getByText("0 файлов")).toBeVisible();
     expect(
       within(empty).getByText(
@@ -191,7 +204,7 @@ describe("source root list", () => {
       ),
     ).toBeVisible();
 
-    const moved = screen.getByRole("row", { name: /Переехавший/ });
+    const moved = rowNamed("Переехавший");
     expect(
       within(moved).getByText(
         "Инвентарь относится к прежнему пути /srv/old-home.",
@@ -199,7 +212,7 @@ describe("source root list", () => {
     ).toBeVisible();
     expect(within(moved).getByText("/srv/new-home")).toBeVisible();
 
-    const archive = screen.getByRole("row", { name: /Архив/ });
+    const archive = rowNamed("Архив");
     expect(within(archive).getByText("Недоступен")).toBeVisible();
     expect(
       within(archive).getByText(
@@ -210,7 +223,7 @@ describe("source root list", () => {
       within(archive).getByText("source directory is not readable"),
     ).toBeVisible();
 
-    const spare = screen.getByRole("row", { name: /Запасной/ });
+    const spare = rowNamed("Запасной");
     expect(within(spare).getByText("Выключен")).toBeVisible();
   });
 
