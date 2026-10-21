@@ -106,6 +106,27 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 
 ## COMMANDS
 
+### Owner-directed execution workflow
+
+- When implementing a plan, continue through its unfinished items without waiting
+  for a new user message after each slice, commit, hook result, or CI notification.
+  A progress report is not a completion boundary. Stop only for a genuine blocker,
+  an owner decision, or completion of the requested scope.
+- Make small coherent commits along the way, always with the normal hooks. At the
+  end of each plan item, push and check the complete GitHub CI result, then continue.
+  Never confuse a green prerequisite commit with completion of the whole plan.
+- Record recurring failures and their prevention in the relevant repository
+  documentation. In particular, integration tests using tagged fixture helpers
+  need the integration build tag; prove a valid baseline before testing rejection,
+  and explicitly create the ownership/job records that a fixture does not create.
+- Frozen publication inputs live in the publication attempt, not the operation's
+  summary snapshot. Test transactional enqueue rollback with an actual River job
+  inserted through the supplied transaction, not a fabricated job ID.
+- Do not let agents edit the working tree while a commit hook is running: even
+  unrelated edits can make pre-commit report "files were modified by this hook"
+  after a successful gate. Finish edits first, then run the hook against a stable
+  working tree; use an isolated worktree for genuinely concurrent commits.
+
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 
 ```bash
