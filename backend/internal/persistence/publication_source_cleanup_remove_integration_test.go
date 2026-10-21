@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
+	"github.com/uptrace/bun"
 )
 
 func setupStartedCleanupRemoval(t *testing.T) (context.Context, publicationExecutionFixture, *SetupManagerRepository, PublicationSourceCleanupDeliveryGuard, uuid.UUID, uuid.UUID, PublicationSourceCleanupRemovalRequest) {
@@ -81,12 +82,52 @@ func TestRemovePublicationSourceCleanupItemCommitsFrontierBeforeMutationAndRepla
 	if itemState != "claimed" || completed == nil {
 		t.Fatalf("completion state=%q completed=%v", itemState, completed)
 	}
+	var markers int
+	if err := f.db.NewRaw(`SELECT count(*) FROM source_cleanup_completion WHERE work_id=(SELECT work_id FROM source_cleanup_owner WHERE item_id=?)`, itemID).Scan(ctx, &markers); err != nil || markers != 1 {
+		t.Fatalf("native completion markers=%d, %v", markers, err)
+	}
+	// The public assessment remains advisory and unchanged; only the internal
+	// automatic-cleanup projection suppresses an exact handled identity.
+	publicAssessment, err := repo.ReadPublicationSourceCleanupAssessment(ctx, guard.PositionID)
+	if err != nil || len(publicAssessment.Candidates) != 1 {
+		t.Fatalf("public cleanup assessment candidates=%d, %v", len(publicAssessment.Candidates), err)
+	}
+	var filtered int
+	if err := f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		assessment := PublicationSourceCleanupAssessment{PositionID: guard.PositionID}
+		if err := readPublicationSourceCleanupAssessmentTx(ctx, tx, guard.PositionID, &assessment); err != nil {
+			return err
+		}
+		if err := filterHandledSourceCleanupAssessment(ctx, tx, &assessment); err != nil {
+			return err
+		}
+		filtered = len(assessment.Candidates)
+		return nil
+	}); err != nil || filtered != 0 {
+		t.Fatalf("internal cleanup projection candidates=%d, %v", filtered, err)
+	}
 	called = false
 	outcome, err = repo.RemovePublicationSourceCleanupItem(ctx, guard, itemID, remove)
 	if err != nil || outcome != PublicationSourceCleanupRemovalAlreadyCompleted || called {
 		t.Fatalf("replay = %v,%v called=%v", outcome, err, called)
 	}
 	assertCleanupRemovalRetained(t, ctx, f, operationID)
+	if settled, err := repo.SettlePublicationSourceCleanup(ctx, guard); err != nil || !settled {
+		t.Fatalf("settle completed cleanup = %t, %v", settled, err)
+	}
+	var settledOwners, settledItems, settledMarkers int
+	for query, target := range map[string]*int{
+		`SELECT count(*) FROM source_cleanup_owner WHERE operation_id=?`: &settledOwners,
+		`SELECT count(*) FROM source_cleanup_item WHERE operation_id=?`:  &settledItems,
+		`SELECT count(*) FROM source_cleanup_completion`:                 &settledMarkers,
+	} {
+		if err := f.db.NewRaw(query, operationID).Scan(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if settledOwners != 0 || settledItems != 0 || settledMarkers != 1 {
+		t.Fatalf("settled owners=%d items=%d durable markers=%d", settledOwners, settledItems, settledMarkers)
+	}
 }
 
 func TestRemovePublicationSourceCleanupItemFailureIsBlockedAndNotRetriedPostgreSQL(t *testing.T) {
@@ -106,6 +147,10 @@ func TestRemovePublicationSourceCleanupItemFailureIsBlockedAndNotRetriedPostgreS
 			}
 			if started == nil || completed != nil {
 				t.Fatalf("failure frontier started=%v completed=%v", started, completed)
+			}
+			var markers int
+			if err := f.db.NewRaw(`SELECT count(*) FROM source_cleanup_completion`).Scan(ctx, &markers); err != nil || markers != 0 {
+				t.Fatalf("failed unlink completion markers=%d, %v", markers, err)
 			}
 			outcome, err = repo.RemovePublicationSourceCleanupItem(ctx, guard, itemID, remove)
 			if outcome != PublicationSourceCleanupRemovalBlocked || err != nil || calls != 1 {
@@ -184,6 +229,10 @@ func TestRemovePublicationSourceCleanupItemDeferredCommitFailureDoesNotRetryPost
 	}
 	if started == nil || completed != nil {
 		t.Fatalf("commit rollback frontier started=%v completed=%v", started, completed)
+	}
+	var markers int
+	if err := f.db.NewRaw(`SELECT count(*) FROM source_cleanup_completion`).Scan(ctx, &markers); err != nil || markers != 0 {
+		t.Fatalf("rolled-back completion markers=%d, %v", markers, err)
 	}
 	if _, err := f.db.ExecContext(ctx, `DROP TRIGGER fail_cleanup_completion_commit ON source_cleanup_item; DROP FUNCTION fail_cleanup_completion_commit()`); err != nil {
 		t.Fatal(err)

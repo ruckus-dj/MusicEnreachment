@@ -67,6 +67,17 @@ func (repository *SetupManagerRepository) ResolvePublicationSourceCleanupRetryIt
 			if existing.CompletedAt == nil || existing.ResolutionKind == nil || proof.effectiveKind != "" && *existing.ResolutionKind != proof.effectiveKind || *existing.ResolutionKind == "original_native_completed" && !proof.originalDone || !publicationSourceCleanupRetryResolutionMatches(*existing, proof.grant.ID, itemID, guard) {
 				return nil
 			}
+			var frozen publicationSourceCleanupSnapshot
+			if err := decodeStrictJSON(proof.itemBinding.SourceSnapshot, &frozen); err != nil {
+				return fmt.Errorf("resolve explicit publication source cleanup retry item: decode acknowledged source: %w", err)
+			}
+			kind := *existing.ResolutionKind
+			if kind == "original_native_completed" {
+				kind = "native_removed"
+			}
+			if err := recordSourceCleanupCompletion(ctx, tx, frozen, kind); err != nil {
+				return err
+			}
 			ackOnly = true
 			return nil
 		}
@@ -117,13 +128,16 @@ func (repository *SetupManagerRepository) ResolvePublicationSourceCleanupRetryIt
 			return nil
 		}
 		var kind string
+		var frozen publicationSourceCleanupSnapshot
 		if originalDone {
 			kind = proof.effectiveKind
 			if kind == "" {
 				kind = "original_native_completed"
 			}
+			if err := decodeStrictJSON(proof.itemBinding.SourceSnapshot, &frozen); err != nil {
+				return fmt.Errorf("resolve explicit publication source cleanup retry item: decode completed source: %w", err)
+			}
 		} else {
-			var frozen publicationSourceCleanupSnapshot
 			if err := decodeStrictJSON(proof.itemBinding.SourceSnapshot, &frozen); err != nil {
 				return fmt.Errorf("resolve explicit publication source cleanup retry item: decode frozen source: %w", err)
 			}
@@ -156,6 +170,13 @@ func (repository *SetupManagerRepository) ResolvePublicationSourceCleanupRetryIt
 			return fmt.Errorf("resolve explicit publication source cleanup retry item: record completion: %w", err)
 		}
 		if err := requireRowsAffected(result, 1, "complete explicit publication source cleanup retry item resolution"); err != nil {
+			return err
+		}
+		markerKind := kind
+		if markerKind == "original_native_completed" {
+			markerKind = "native_removed"
+		}
+		if err := recordSourceCleanupCompletion(ctx, tx, frozen, markerKind); err != nil {
 			return err
 		}
 		completed = true

@@ -92,6 +92,7 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 		return false, fmt.Errorf("validate publication source cleanup inputs: discover items: %w", err)
 	}
 	var candidates []PublicationSourceCleanupCandidate
+	retainedIdentities := make(map[string]bool, len(preliminaryItems))
 	for _, item := range preliminaryItems {
 		var frozen publicationSourceCleanupSnapshot
 		if err := decodeStrictJSON(item.SourceSnapshot, &frozen); err != nil {
@@ -100,7 +101,9 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 		if frozen.Version != 1 {
 			return false, nil
 		}
-		candidates = append(candidates, PublicationSourceCleanupCandidate{WorkID: frozen.WorkID, SourceRootID: frozen.SourceRootID, SourceLocationID: frozen.SourceLocationID, MediaVariantID: frozen.MediaVariantID})
+		candidate := PublicationSourceCleanupCandidate{WorkID: frozen.WorkID, SourceRootID: frozen.SourceRootID, SourceLocationID: frozen.SourceLocationID, MediaVariantID: frozen.MediaVariantID}
+		candidates = append(candidates, candidate)
+		retainedIdentities[cleanupIdentityKey(candidate)] = true
 	}
 	initial := PublicationSourceCleanupAssessment{PositionID: guard.PositionID}
 	if err := readPublicationSourceCleanupAssessmentTx(ctx, tx, guard.PositionID, &initial); err != nil {
@@ -110,6 +113,11 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 		return false, fmt.Errorf("validate publication source cleanup inputs: discover current candidates: %w", err)
 	}
 	candidates = append(candidates, initial.Candidates...)
+	var err error
+	candidates, err = filterHandledSourceCleanupCandidatesExcept(ctx, tx, candidates, retainedIdentities)
+	if err != nil {
+		return false, err
+	}
 	if len(candidates) == 0 {
 		return false, nil
 	}
@@ -157,7 +165,7 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 		return false, nil
 	}
 	var setting string
-	err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='publication_remove_sources'`).Scan(ctx, &setting)
+	err = tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='publication_remove_sources'`).Scan(ctx, &setting)
 	switch err {
 	case nil:
 		enabled, parseErr := strconv.ParseBool(setting)
@@ -231,6 +239,10 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 	assessment.PositionID = guard.PositionID
 	if err := readPublicationSourceCleanupAssessmentTx(ctx, tx, guard.PositionID, &assessment); err != nil {
 		return false, fmt.Errorf("validate publication source cleanup inputs: read current publication: %w", err)
+	}
+	assessment.Candidates, err = filterHandledSourceCleanupCandidatesExcept(ctx, tx, assessment.Candidates, retainedIdentities)
+	if err != nil {
+		return false, err
 	}
 	if assessment.Epoch != guard.Epoch || assessment.Generation == uuid.Nil || assessment.ValidatedAt == nil || assessment.ValidatedAt.IsZero() {
 		return false, nil

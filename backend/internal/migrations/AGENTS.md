@@ -24,6 +24,10 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 - Forward migrations run at server startup (coupled to deploy, cannot run server against unmigrated DB without this path)
 - Rollback is manual CLI-only: `task migrate:rollback` (stop server first)
 - Every .tx.up.sql must have matching .tx.down.sql
+- When adding a migration, update `additiveMigrationNames` in
+  `migration_core_integration_test.go` and the application table count in
+  `baseline_river_integration_test.go` for any new tables, including transient
+  staging tables. Keep these assertions exact; do not remove them to pass a gate.
 - Transactional migrations (.tx prefix) ensure atomicity
 - Migration version = timestamp (YYYYMMDDHHMMSS)
 - Applied migrations tracked in bun_migrations table

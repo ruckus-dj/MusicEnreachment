@@ -113,6 +113,9 @@ func (repository *SetupManagerRepository) AdmitPublicationSourceCleanup(ctx cont
 		if err := readPublicationSourceCleanupAssessmentTx(ctx, tx, request.PositionID, &assessment); err != nil {
 			return fmt.Errorf("admit publication source cleanup: assess sources: %w", err)
 		}
+		if err := filterHandledSourceCleanupAssessment(ctx, tx, &assessment); err != nil {
+			return err
+		}
 		if len(assessment.Candidates) == 0 {
 			result.Blockers = uniquePublicationCleanupStrings(assessment.Blockers)
 			return nil
@@ -142,6 +145,9 @@ func (repository *SetupManagerRepository) AdmitPublicationSourceCleanup(ctx cont
 		assessment = PublicationSourceCleanupAssessment{PositionID: request.PositionID}
 		if err := readPublicationSourceCleanupAssessmentTx(ctx, tx, request.PositionID, &assessment); err != nil {
 			return fmt.Errorf("admit publication source cleanup: recheck sources: %w", err)
+		}
+		if err := filterHandledSourceCleanupAssessment(ctx, tx, &assessment); err != nil {
+			return err
 		}
 		if assessment.Epoch != epoch || assessment.Generation != request.ExpectedGeneration {
 			result.Blockers = []string{"current publication witness changed"}

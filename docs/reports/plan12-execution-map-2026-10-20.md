@@ -5,6 +5,29 @@
 Это рабочая карта выполнения, не новые требования и не итоговая приёмка.
 Источники решений — `docs/design/` и owner appendix A.1–A.17 плана.
 
+## Уточнение проверки текущего cleanup-среза
+
+`ac0ba96` (retry worker adapter) и `f0ed3ac` (интеграция service/worker)
+прошли полную CI-проверку: `39688518268` и `39688984334` — `success`.
+`63f5c7a` активирует dedicated explicit-retry POST и оба fenced worker;
+полный локальный gate и штатный hook прошли, CI `39690258580` отслеживается.
+Это не включает автоматический admission producer или cross-boot takeover.
+
+Незакоммиченный CURRENT completion-marker исключает повторный admission уже
+обработанного источника, но не даёт authority на unlink или принятие отсутствия.
+Production review не выявил подтверждённых дефектов; дополнительные admission,
+explicit-absence и scan-lifecycle regressions ещё проверяются. Последний полный
+gate этого рабочего дерева остановился на compile-дефекте нового admission-теста;
+исправление и оставшиеся regression cases выполняются до повторного gate.
+Повторный полный `task verify` рабочего marker-среза поверх `63f5c7a`
+завершился успешно. Проверены active multi-item retention, admission S+T,
+explicit absence/rollback и accepted/stale/unreadable/rollback scan lifecycle.
+Unreadable pruning не сохраняет inventory: marker переживает удаление work/location,
+а принятое повторное наблюдение root/path очищает его даже при новом location UUID.
+Независимое review этого исправления не выявило P1/P2; commit hook ещё предстоит.
+Durable opt-in scheduling, текущая warning/retry UI-проекция и реальная
+media/Navidrome-приёмка остаются незавершёнными.
+
 ## Исходная проверка
 
 До изменений полный локальный `task verify` завершился успешно: генерация,

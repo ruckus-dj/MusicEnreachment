@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(t *testing.T) {
@@ -334,6 +335,146 @@ func TestApplySourceEnumerationRejectsStaleDeliveryWithoutMutation(t *testing.T)
 		t.Fatalf("stale delivery mutated root inventory: %+v", stored)
 	}
 	assertCandidateCount(t, ctx, database, operation.ID, 1)
+}
+
+func TestApplySourceEnumerationInvalidatesExactCleanupMarkerPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database, ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t)
+	accepted := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, accepted.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(accepted, root, nil)); err != nil {
+		t.Fatalf("apply accepted unchanged-stat enumeration: %v", err)
+	}
+	var remaining int
+	if err := database.NewRaw(`SELECT count(*) FROM source_cleanup_completion WHERE source_root_id=?`, root.ID).Scan(ctx, &remaining); err != nil || remaining != 0 {
+		t.Fatalf("cleanup markers after accepted enumeration=%d err=%v; want invalidation even at same stats", remaining, err)
+	}
+}
+
+func TestApplySourceEnumerationStaleDeliveryPreservesCleanupMarkerPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database, ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t)
+	operation := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, operation.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
+		t.Fatal(err)
+	}
+	stale := enumerationApply(operation, root, nil)
+	stale.ExpectedJobID++
+	if err := inventory.ApplySourceEnumeration(ctx, stale); err == nil {
+		t.Fatal("stale enumeration delivery was accepted")
+	}
+	assertEnumerationCleanupMarker(t, ctx, database, root.ID, true)
+}
+
+func TestApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database, ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t)
+	oldLocation := readLocation(t, ctx, database, root.ID, "album/track.flac")
+	operation := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, operation.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(operation, root, []persistence.SourceEnumerationScope{{Kind: "subtree", RelativePath: "album"}})); err != nil {
+		t.Fatalf("apply enumeration with unreadable scope: %v", err)
+	}
+	assertEnumerationCleanupMarker(t, ctx, database, root.ID, true)
+	if _, err := readLocationResult(ctx, database, root.ID, "album/track.flac"); err == nil {
+		t.Fatal("unreadable location was retained in inventory")
+	}
+	setOperationState(t, ctx, database, operation.ID, "succeeded")
+
+	accepted := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, accepted.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(accepted, root, nil)); err != nil {
+		t.Fatalf("apply accepted re-observation: %v", err)
+	}
+	newLocation := readLocation(t, ctx, database, root.ID, "album/track.flac")
+	if newLocation.ID == oldLocation.ID {
+		t.Fatalf("re-observed location reused pruned identity %s", oldLocation.ID)
+	}
+	assertEnumerationCleanupMarker(t, ctx, database, root.ID, false)
+}
+
+func TestApplySourceEnumerationDeferredCommitFailurePreservesCleanupMarkerPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database, ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t)
+	if _, err := database.ExecContext(ctx, `CREATE FUNCTION reject_cleanup_marker_delete_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'injected cleanup marker delete commit failure'; END $$`); err != nil {
+		t.Fatal(err)
+	}
+	defer database.ExecContext(ctx, `DROP FUNCTION reject_cleanup_marker_delete_commit() CASCADE`)
+	if _, err := database.ExecContext(ctx, `CREATE CONSTRAINT TRIGGER reject_cleanup_marker_delete_commit
+		AFTER DELETE ON source_cleanup_completion DEFERRABLE INITIALLY DEFERRED
+		FOR EACH ROW EXECUTE FUNCTION reject_cleanup_marker_delete_commit()`); err != nil {
+		t.Fatal(err)
+	}
+	operation := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, operation.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(operation, root, nil)); err == nil {
+		t.Fatal("enumeration with deferred marker-delete failure committed")
+	}
+	assertEnumerationCleanupMarker(t, ctx, database, root.ID, true)
+}
+
+func newEnumerationCleanupMarkerFixture(t *testing.T) (*bun.DB, context.Context, *persistence.SourceInventoryRepository, *persistence.SourceRoot, time.Time) {
+	t.Helper()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-cleanup-marker")
+	mtime := probeMtime()
+	seed := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, seed.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(seed, root, nil)); err != nil {
+		t.Fatalf("apply baseline enumeration: %v", err)
+	}
+	setOperationState(t, ctx, database, seed.ID, "succeeded")
+	var workID, locationID uuid.UUID
+	if err := database.NewRaw(`SELECT w.id,l.id FROM source_analysis_work w JOIN source_location l ON l.id=w.current_location_id WHERE w.source_root_id=? AND w.relative_path='album/track.flac'`, root.ID).Scan(ctx, &workID, &locationID); err != nil {
+		t.Fatalf("read baseline work/location: %v", err)
+	}
+	variantID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes) VALUES (?,5)`, variantID); err != nil {
+		t.Fatalf("seed valid media variant: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE source_location SET media_variant_id=? WHERE id=?`, variantID, locationID); err != nil {
+		t.Fatalf("bind variant to location: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_work_variant_identity(work_id,media_variant_id) VALUES (?,?)`, workID, variantID); err != nil {
+		t.Fatalf("bind variant to work: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_cleanup_completion
+		(work_id,source_root_id,source_location_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime,kind)
+		SELECT w.id,w.source_root_id,l.id,l.media_variant_id,r.configured_path,r.inventory_path,w.relative_path,w.size_bytes,w.mtime,'native_removed'
+		FROM source_analysis_work w JOIN source_location l ON l.id=w.current_location_id
+		JOIN source_root r ON r.id=w.source_root_id WHERE w.source_root_id=?`, root.ID); err != nil {
+		t.Fatalf("seed exact cleanup marker: %v", err)
+	}
+	assertEnumerationCleanupMarker(t, ctx, database, root.ID, true)
+	return database, ctx, inventory, root, mtime
+}
+
+func assertEnumerationCleanupMarker(t *testing.T, ctx context.Context, database *bun.DB, rootID uuid.UUID, want bool) {
+	t.Helper()
+	var count int
+	if err := database.NewRaw(`SELECT count(*) FROM source_cleanup_completion WHERE source_root_id=?`, rootID).Scan(ctx, &count); err != nil {
+		t.Fatal(err)
+	}
+	wantCount := 0
+	if want {
+		wantCount = 1
+	}
+	if count != wantCount {
+		t.Fatalf("cleanup completion markers=%d; want %d", count, wantCount)
+	}
 }
 
 func enumerationCandidate(path string, size int64, mtime time.Time) persistence.SourceScanCandidateInput {

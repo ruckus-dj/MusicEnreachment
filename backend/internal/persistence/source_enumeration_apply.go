@@ -143,6 +143,9 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 			if err := tx.NewRaw(`SELECT id FROM source_location WHERE source_root_id=? AND relative_path=?`, root.ID, candidate.RelativePath).Scan(ctx, &locationID); err != nil {
 				return fmt.Errorf("apply source enumeration: resolve location %q: %w", candidate.RelativePath, err)
 			}
+			if _, err := tx.NewRaw(`DELETE FROM source_cleanup_completion WHERE source_root_id=? AND (relative_path=? OR source_location_id=?)`, root.ID, candidate.RelativePath, locationID).Exec(ctx); err != nil {
+				return fmt.Errorf("apply source enumeration: invalidate cleanup completion for %q: %w", candidate.RelativePath, err)
+			}
 			var existing SourceAnalysisWork
 			workErr := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE current_location_id=?`, locationID).Scan(ctx, &existing)
 			if workErr == nil && existing.SourceRootID == root.ID && existing.ConfiguredPath == root.ConfiguredPath && existing.InventoryPath == root.ConfiguredPath && existing.RelativePath == candidate.RelativePath && existing.SizeBytes == candidate.SizeBytes && sourceAnalysisMtime(existing.Mtime).Equal(sourceAnalysisMtime(candidate.Mtime)) {

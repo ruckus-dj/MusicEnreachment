@@ -56,6 +56,13 @@ func (repository *SetupManagerRepository) RemovePublicationSourceCleanupItem(ctx
 				return nil
 			}
 			if item.MutationCompletedAt != nil {
+				var frozen publicationSourceCleanupSnapshot
+				if err := decodeStrictJSON(item.SourceSnapshot, &frozen); err != nil {
+					return fmt.Errorf("remove publication source cleanup item: decode completed source: %w", err)
+				}
+				if err := recordSourceCleanupCompletion(ctx, tx, frozen, "native_removed"); err != nil {
+					return err
+				}
 				existingDone = true
 				return nil
 			}
@@ -112,6 +119,9 @@ func (repository *SetupManagerRepository) RemovePublicationSourceCleanupItem(ctx
 		request = PublicationSourceCleanupRemovalRequest{ConfiguredRootPath: frozen.ConfiguredPath, RelativePath: frozen.RelativePath, SizeBytes: frozen.SizeBytes, MTime: mtime}
 		if err := remove(ctx, request); err != nil {
 			return fmt.Errorf("remove publication source cleanup item: remove source: %w", err)
+		}
+		if err := recordSourceCleanupCompletion(ctx, tx, frozen, "native_removed"); err != nil {
+			return err
 		}
 		result, err := tx.NewRaw(`UPDATE source_cleanup_item SET mutation_completed_at=clock_timestamp()
 			WHERE id=? AND operation_id=? AND state='claimed' AND mutation_claim_uuid=? AND mutation_started_at=? AND mutation_completed_at IS NULL`, itemID, guard.OperationID, guard.ClaimUUID, start).Exec(ctx)

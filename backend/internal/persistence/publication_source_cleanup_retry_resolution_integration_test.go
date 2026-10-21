@@ -123,12 +123,66 @@ func TestResolvePublicationSourceCleanupRetryItemPersistsThreeResolutionKindsPos
 		if err := f.fixture.db.NewRaw(`SELECT resolution_kind FROM source_cleanup_explicit_retry_resolution WHERE item_id=?`, tc.itemID).Scan(f.ctx, &got); err != nil || got != tc.want {
 			t.Fatalf("resolution kind=%q err=%v; want %q", got, err, tc.want)
 		}
+		if tc.want == "absent_after_explicit_retry" {
+			var snapshotRaw []byte
+			if err := f.fixture.db.NewRaw(`SELECT source_snapshot FROM source_cleanup_item WHERE id=?`, tc.itemID).Scan(f.ctx, &snapshotRaw); err != nil {
+				t.Fatal(err)
+			}
+			var frozen publicationSourceCleanupSnapshot
+			if err := decodeStrictJSON(snapshotRaw, &frozen); err != nil {
+				t.Fatalf("decode frozen cleanup item: %v", err)
+			}
+			var markerKind string
+			var markerWorkID, markerLocationID uuid.UUID
+			if err := f.fixture.db.NewRaw(`SELECT kind,work_id,source_location_id FROM source_cleanup_completion WHERE work_id=?`, frozen.WorkID).Scan(f.ctx, &markerKind, &markerWorkID, &markerLocationID); err != nil || markerKind != tc.want || markerWorkID != frozen.WorkID || markerLocationID != frozen.SourceLocationID {
+				t.Fatalf("completion marker=(%q,%s,%s), err=%v; want absence for frozen work/location (%s,%s)", markerKind, markerWorkID, markerLocationID, err, frozen.WorkID, frozen.SourceLocationID)
+			}
+			var originalCompleted any
+			if err := f.fixture.db.NewRaw(`SELECT mutation_completed_at FROM source_cleanup_item WHERE id=?`, tc.itemID).Scan(f.ctx, &originalCompleted); err != nil || originalCompleted != nil {
+				t.Fatalf("original mutation completion=%v err=%v; explicit-retry absence must not complete the original mutation", originalCompleted, err)
+			}
+		}
 		if replay, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, tc.itemID, nil); err != nil || replay != PublicationSourceCleanupRetryResolutionAlreadyCompleted {
 			t.Fatalf("ack resolution replay=%s,%v", replay, err)
 		}
 	}
 	if got := cleanupRetryRetainedEvidence(t, f.ctx, f.fixture, f.originalID); got != before {
 		t.Fatalf("resolution mutated original cleanup evidence:\nbefore %s\nafter  %s", before, got)
+	}
+}
+
+func TestResolvePublicationSourceCleanupRetryAbsenceCompletionInsertFailureRollsBackMarkerPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newRetryResolutionFixture(t)
+	if _, err := f.fixture.db.ExecContext(f.ctx, `CREATE FUNCTION reject_absence_completion_marker() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN IF NEW.kind='absent_after_explicit_retry' THEN RAISE EXCEPTION 'injected absence marker failure'; END IF; RETURN NEW; END $$`); err != nil {
+		t.Fatal(err)
+	}
+	defer f.fixture.db.ExecContext(f.ctx, `DROP FUNCTION reject_absence_completion_marker() CASCADE`)
+	if _, err := f.fixture.db.ExecContext(f.ctx, `CREATE TRIGGER reject_absence_completion_marker BEFORE INSERT ON source_cleanup_completion FOR EACH ROW EXECUTE FUNCTION reject_absence_completion_marker()`); err != nil {
+		t.Fatal(err)
+	}
+	missing := func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
+		return PublicationSourceCleanupNativeMissingLeaf, fs.ErrNotExist
+	}
+	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[1], missing); outcome != PublicationSourceCleanupRetryResolutionBlocked || err == nil {
+		t.Fatalf("resolution with rejected completion marker=%s,%v; want blocked error", outcome, err)
+	}
+	var markers, completed int
+	if err := f.fixture.db.NewRaw(`SELECT count(*) FROM source_cleanup_completion WHERE work_id=(SELECT work_id FROM source_cleanup_owner WHERE item_id=?) AND kind='absent_after_explicit_retry'`, f.itemIDs[1]).Scan(f.ctx, &markers); err != nil || markers != 0 {
+		t.Fatalf("absence completion markers after rollback=%d err=%v; want none", markers, err)
+	}
+	if err := f.fixture.db.NewRaw(`SELECT count(*) FROM source_cleanup_item WHERE id=? AND mutation_completed_at IS NOT NULL`, f.itemIDs[1]).Scan(f.ctx, &completed); err != nil || completed != 0 {
+		t.Fatalf("original item completed after failed marker insert=%d err=%v; want zero", completed, err)
+	}
+	var startedAt any
+	var resolutionCompleted any
+	var resolutionKind any
+	if err := f.fixture.db.NewRaw(`SELECT started_at,completed_at,resolution_kind FROM source_cleanup_explicit_retry_resolution WHERE item_id=?`, f.itemIDs[1]).Scan(f.ctx, &startedAt, &resolutionCompleted, &resolutionKind); err != nil {
+		t.Fatal(err)
+	}
+	if startedAt == nil || resolutionCompleted != nil || resolutionKind != nil {
+		t.Fatalf("retry resolution frontier started=%v completed=%v kind=%v; want retained incomplete start after marker transaction rollback", startedAt, resolutionCompleted, resolutionKind)
 	}
 }
 
