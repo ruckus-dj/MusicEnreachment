@@ -189,6 +189,12 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
   Unix-only literals such as `/source` lack a volume on Windows. Use `t.TempDir()`
   and align root/work configured and inventory paths before capturing snapshots;
   never relax production path checks or rewrite frozen grants to fix fixtures.
+- Keep one effective trigger-function definition per new migration. A later
+  `CREATE OR REPLACE` can silently overwrite an earlier safety fix; inspect the
+  final definition and prove rejection through a real SQL bypass regression.
+- CURRENT-frontier tests distinguish incoming evidence from new resolution rows:
+  acquiring a successor creates no acknowledgements. Completed incoming items
+  must acknowledge with zero filesystem callbacks, including interrupted ACKs.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 

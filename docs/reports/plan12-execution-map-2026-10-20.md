@@ -544,3 +544,27 @@ CI `39671747568` для `fc05499` failed на Windows: fixture заморажи�
 это не timeout-проблема. Fixture исправляется до admission через `t.TempDir()` и
 согласование configured/inventory paths. Production path validation не ослаблена.
 Полный gate исправления выполняется отдельно от uncommitted dormant runner.
+
+Подтверждение: Windows fixture fix `a674e6a` прошёл штатный hook и отправлен;
+CI `39679025137` полностью `success`, включая Windows, матрицу и контейнер.
+Предыдущие `39673538792` и `39674185102` failed до исправления того же root fixture.
+Dormant explicit-retry loader/runner `b41ffce` прошёл полный `task verify`, review
+и штатный hook; отправлен, CI `39680000306` отслеживается. Runtime registration
+не добавлена. Repeated-retry CURRENT frontier/replacement пока не закоммичен:
+первичный аудит нашёл fold/locking/SQL-protection blockers; исправления и новые
+rollback/concurrency regressions готовятся к первому полному gate.
+
+CI `39680000306` для dormant runner `b41ffce` полностью завершился с `success`,
+включая платформенную матрицу и контейнер. Worker/API activation остаётся
+невыполненным scope, а не следствием green CI.
+
+CURRENT frontier/replacement сохранён как `954f26f` после повторного полного
+`task verify` и штатного hook, отправлен; CI `39686091429` отслеживается.
+Проверены два replacement подряд, сохранение native/authorized-absence completion
+при прерванном ACK без повторного filesystem callback, реальный enqueue rollback,
+конкурентный единственный successor, SQL rejection same-revision rewrite и полное
+удаление CURRENT/auxiliary/staging после settlement. Transaction-local staging
+proof не переживает commit и не является историей попыток. Последний review
+production fixes замечаний не имеет; тестовые assertions исправлены до green gate.
+Dedicated user retry service/selector реализуются отдельно; HTTP/worker activation,
+durable admission triggers и cross-boot recovery не объявляются завершёнными.
