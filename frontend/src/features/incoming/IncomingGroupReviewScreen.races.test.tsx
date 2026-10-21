@@ -130,7 +130,7 @@ beforeEach(() => {
 });
 
 describe("incoming review request races", () => {
-  it("ignores preview responses after switching groups or editing away and back", async () => {
+  it("ignores a preview response after switching groups", async () => {
     setup();
     await chooseCurrentRelease();
     const pending = deferred<Response>();
@@ -154,19 +154,16 @@ describe("incoming review request races", () => {
         name: "Предпросмотр полного назначения",
       }),
     ).not.toBeInTheDocument();
+  });
 
-    fireEvent.change(screen.getByLabelText("Входящая группа"), {
-      target: { value: groups[0] },
-    });
-    await awaitSavedEvaluation();
-    fireEvent.change(screen.getByLabelText("Издание (выбор вручную)"), {
-      target: { value: releases[0] },
-    });
-    const second = deferred<Response>();
+  it("ignores a preview response after editing away and back", async () => {
+    setup();
+    await chooseCurrentRelease();
+    const pending = deferred<Response>();
     server.use(
       http.post(
         "/api/incoming-groups/:groupId/matching/preview",
-        () => second.promise,
+        () => pending.promise,
       ),
     );
     fireEvent.click(
@@ -178,7 +175,7 @@ describe("incoming review request races", () => {
     fireEvent.change(screen.getByLabelText("Назначение"), {
       target: { value: "" },
     });
-    second.resolve(HttpResponse.json(previewBody));
+    pending.resolve(HttpResponse.json(previewBody));
     await Promise.resolve();
     expect(
       screen.queryByRole("heading", {
