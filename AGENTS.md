@@ -167,6 +167,10 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
   manually deleting operations can invalidate deferred step-history checks.
   Terminal normalized operations cannot retain work holds by schema: cover live
   terminal deliveries without holds separately from active admitted hold owners.
+- Rate-gate cancellation tests must not depend on real scheduler latency, including
+  an assumption that cancellation starts before a short reservation expires. Use
+  fake time and a blocked-wait handshake; assert unchanged reservation state after
+  cancellation and exactly one interval for the next successful dispatch.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 

@@ -418,26 +418,44 @@ func TestSharedSelfHostedRateGateWaitIsCancelable(t *testing.T) {
 }
 
 func TestSharedSelfHostedRateGateCanceledWaitDoesNotReserveSlot(t *testing.T) {
-	gate := new(SelfHostedRateGate)
-	gate.Configure(0.1)
-	if err := gate.Wait(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	for range 3 {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
-		err := gate.Wait(ctx)
-		cancel()
-		if err == nil {
-			t.Fatal("expected canceled wait")
+	synctest.Test(t, func(t *testing.T) {
+		const interval = 100 * time.Millisecond
+		gate := new(SelfHostedRateGate)
+		gate.Configure(interval.Seconds())
+		if err := gate.Wait(context.Background()); err != nil {
+			t.Fatal(err)
 		}
-	}
-	started := time.Now()
-	if err := gate.Wait(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if elapsed := time.Since(started); elapsed > 150*time.Millisecond {
-		t.Fatalf("successful request waited behind canceled reservations: %s", elapsed)
-	}
+		gate.mu.Lock()
+		lastDispatch := gate.lastDispatch
+		gate.mu.Unlock()
+
+		for range 3 {
+			ctx, cancel := context.WithCancel(context.Background())
+			result := make(chan error, 1)
+			go func() { result <- gate.Wait(ctx) }()
+			synctest.Wait() // The waiter is durably blocked on the gate timer.
+			cancel()
+			if err := <-result; err != context.Canceled {
+				t.Fatalf("canceled wait error = %v, want %v", err, context.Canceled)
+			}
+			gate.mu.Lock()
+			got := gate.lastDispatch
+			gate.mu.Unlock()
+			if !got.Equal(lastDispatch) {
+				t.Fatalf("canceled wait reserved a slot: last dispatch changed from %s to %s", lastDispatch, got)
+			}
+		}
+
+		if err := gate.Wait(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		gate.mu.Lock()
+		got := gate.lastDispatch
+		gate.mu.Unlock()
+		if want := lastDispatch.Add(interval); !got.Equal(want) {
+			t.Fatalf("successful wait reserved at %s, want exactly one interval later at %s", got, want)
+		}
+	})
 }
 
 func TestProviderConstructionDoesNotReconfigureSharedSelfHostedGate(t *testing.T) {

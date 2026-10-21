@@ -442,3 +442,40 @@ runs — проверка конкретных ревизий, не приёмк
 Уточнение после retirement hook: срез сохранён как `ce42e1b`, полный штатный
 hook пройден, коммит отправлен в `go-development`. Независимое финальное review
 не выявило correctness-регрессий. CI этой ревизии ещё не подтверждён.
+
+Следующее подтверждение: generic Retry guard `3a804e0` завершил CI
+`39649035481` полностью с `success`, включая платформенную матрицу, Compose
+smoke и контейнер. Dormant worker adapter сохранён в `0bba8e3` после полного
+изолированного `task verify` и штатного hook; CI `39651833323` отслеживается.
+Adapter не зарегистрирован в app. Его unit-тесты проверяют non-ACK для blocked
+duplicate и возврат ACK только после завершения executor, а не универсальную
+quiescence-гарантию River. Owner-returned sequencing regression и технический
+контракт проходят отдельный gate; explicit retry admission ещё не проверен.
+
+CI `39649720036` для frontend-оптимизации `0292c7a` также завершился полностью
+с `success`, включая матрицу и контейнер. Это не устанавливает исходную причину
+timeout в `39643787191` и не меняет failed-статус исторического run.
+
+CI `39650585372` для retirement `ce42e1b` полностью завершился с `success`
+(verify, матрица, Compose smoke и контейнер).
+
+CI `39651009094` для отчёта `f67369c`, attempt 1: failure до выполнения
+Linux amd64 tests — `apt-get update` получил HTTP 403 для Microsoft noble
+InRelease. Verify и остальные платформенные jobs прошли, контейнер пропущен.
+Запрошен rerun failed job как инфраструктурного сбоя; результат ещё не подтверждён.
+
+CI `39651009094`, attempt 2: failed Linux amd64 job успешно перезапущен,
+публикация контейнера также успешна; итоговый run полностью `success`.
+Первоначальный apt HTTP 403 остаётся отдельным свидетельством attempt 1.
+
+CI `39651833323` для worker adapter `0bba8e3`: failure в macOS x64,
+`TestSharedSelfHostedRateGateCanceledWaitDoesNotReserveSlot` — elapsed
+169.364301 мс превысил wall-clock threshold. Verify и остальные платформы прошли,
+контейнер пропущен. Диагностика и детерминизация cancellation-проверки выполняются
+отдельно; это падение теста не классифицируется как инфраструктурный apt-сбой.
+
+Rate-gate regression переведён на `testing/synctest`: cancellation выполняется
+после blocked-wait handshake; reservation остаётся неизменной, следующий dispatch
+занимает ровно один interval fake clock. Focused test прошёл. Промежуточный
+state-only вариант не отправлялся: review обнаружил оставшуюся зависимость от
+истечения реального interval. Полный hook окончательного исправления ещё предстоит.
