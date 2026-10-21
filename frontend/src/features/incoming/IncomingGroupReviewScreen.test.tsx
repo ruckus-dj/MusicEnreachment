@@ -416,11 +416,10 @@ describe("incoming manual group review", () => {
       screen.getByRole("button", { name: "Повторить подтверждение" }),
     ).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: `Переопределить название для Открытие (${ids.trackOne})`,
-      }),
+    const override = screen.getByLabelText(
+      `Переопределить название для Открытие (${ids.trackOne})`,
     );
+    fireEvent.click(override);
     expect(
       screen.queryByRole("button", { name: "Повторить подтверждение" }),
     ).not.toBeInTheDocument();
@@ -481,7 +480,7 @@ describe("incoming manual group review", () => {
     ).toBeInTheDocument();
   });
 
-  it("invalidates preview after edits and confirms partial receipt; network retry preserves request id and payload", async () => {
+  it("invalidates preview after assignment edits", async () => {
     setup();
     await chooseRelease();
     fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
@@ -525,6 +524,25 @@ describe("incoming manual group review", () => {
     fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
       target: { value: ids.trackOne },
     });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+    );
+    await screen.findByRole("heading", {
+      name: "Предпросмотр полного назначения",
+    });
+  });
+
+  it("confirms partial receipt; network retry preserves request id and payload", async () => {
+    setup();
+    await chooseRelease();
+    fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
+      target: { value: ids.trackOne },
+    });
+    server.use(
+      http.post("/api/incoming-groups/:groupId/matching/preview", () =>
+        HttpResponse.json(preview(1)),
+      ),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
     );
