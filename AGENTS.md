@@ -171,6 +171,16 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
   an assumption that cancellation starts before a short reservation expires. Use
   fake time and a blocked-wait handshake; assert unchanged reservation state after
   cancellation and exactly one interval for the next successful dispatch.
+- New migrations must update the inventory and explicit schema/table-count checks.
+  JSON contract tests compare semantic fields or JSONB values, not incidental JSON
+  text formatting. A rollback must refuse to discard retained recovery authority.
+- PostgreSQL CHECK accepts SQL NULL: authority JSON predicates must require their
+  keys and evaluate `IS TRUE`. Nullable composite authority identities need explicit
+  all-null/all-present checks (and `MATCH FULL` where applicable); test every
+  partial-null combination, missing keys, and malformed nested entries.
+  `MATCH FULL` covers the entire FK: it cannot accompany an always-present parent
+  ID plus an intentionally absent consumption suffix. Test valid unconsumed and
+  consumed baselines, and reject reset/rebinding of consumed authority.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 

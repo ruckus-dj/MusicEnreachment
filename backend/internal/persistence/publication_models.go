@@ -115,3 +115,33 @@ type SourceCleanupOwner struct {
 	SourceLocationID   uuid.UUID `bun:"source_location_id,type:uuid"`
 	WorkID             uuid.UUID `bun:"work_id,type:uuid"`
 }
+
+// SourceCleanupExplicitRetry is a durable, explicit retry grant. Its binding
+// snapshots retained evidence; it does not prove the prior worker has returned.
+type SourceCleanupExplicitRetry struct {
+	bun.BaseModel              `bun:"table:source_cleanup_explicit_retry"`
+	ID                         uuid.UUID       `bun:"id,pk,type:uuid"`
+	RecoveryOperationID        uuid.UUID       `bun:"recovery_operation_id,type:uuid"`
+	OriginalOperationID        uuid.UUID       `bun:"original_operation_id,type:uuid"`
+	OriginalApplicationAttempt int             `bun:"original_application_attempt"`
+	OriginalRiverJobID         int64           `bun:"original_river_job_id"`
+	OriginalClaimUUID          uuid.UUID       `bun:"original_claim_uuid,type:uuid"`
+	PositionID                 uuid.UUID       `bun:"position_id,type:uuid"`
+	Epoch                      uuid.UUID       `bun:"epoch,type:uuid"`
+	PublicationGeneration      uuid.UUID       `bun:"publication_generation,type:uuid"`
+	Binding                    json.RawMessage `bun:"binding,type:jsonb"`
+	CreatedAt                  time.Time       `bun:"created_at"`
+	ConsumedApplicationAttempt *int            `bun:"consumed_application_attempt,nullzero"`
+	ConsumedRiverJobID         *int64          `bun:"consumed_river_job_id,nullzero"`
+	ConsumedClaimUUID          *uuid.UUID      `bun:"consumed_claim_uuid,type:uuid,nullzero"`
+}
+
+// SourceCleanupExplicitRetryItem binds every grant to the precise retained
+// cleanup item and its original owner row.
+type SourceCleanupExplicitRetryItem struct {
+	bun.BaseModel       `bun:"table:source_cleanup_explicit_retry_item"`
+	RetryID             uuid.UUID `bun:"retry_id,pk,type:uuid"`
+	OriginalOperationID uuid.UUID `bun:"original_operation_id,type:uuid"`
+	ItemID              uuid.UUID `bun:"item_id,pk,type:uuid"`
+	OwnerUUID           uuid.UUID `bun:"owner_uuid,type:uuid"`
+}

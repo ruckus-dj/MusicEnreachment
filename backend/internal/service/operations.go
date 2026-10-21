@@ -356,12 +356,13 @@ func (s *Operations) Fail(ctx context.Context, id uuid.UUID, stage, safe string)
 // source cleanup. Its River delivery uses its own kind, so the generic
 // operation retry would hand the job to the install/move dispatcher.
 const publicationSourceCleanupOperationKind = "cleanup_publication_sources_v1"
+const publicationSourceCleanupRecoveryOperationKind = "retry_publication_sources_v1"
 
 // publicationSourceCleanupRetryError refuses a generic retry for publication
 // source cleanup work before any state, attempt, or River job mutation. Retries
 // of this kind are only admitted by the dedicated explicit recovery flow.
 func publicationSourceCleanupRetryError(kind string) error {
-	if kind != publicationSourceCleanupOperationKind {
+	if kind != publicationSourceCleanupOperationKind && kind != publicationSourceCleanupRecoveryOperationKind {
 		return nil
 	}
 	return fmt.Errorf("retry operation: publication source cleanup requires an explicit recovery")

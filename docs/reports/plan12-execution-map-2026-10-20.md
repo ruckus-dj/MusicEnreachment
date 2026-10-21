@@ -479,3 +479,22 @@ Rate-gate regression переведён на `testing/synctest`: cancellation в
 занимает ровно один interval fake clock. Focused test прошёл. Промежуточный
 state-only вариант не отправлялся: review обнаружил оставшуюся зависимость от
 истечения реального interval. Полный hook окончательного исправления ещё предстоит.
+
+Последующее подтверждение: `61f0f60` / CI `39652495413` полностью успешны.
+Окончательное fake-time исправление rate gate сохранено в `62dcac2` после
+полного штатного hook; CI `39655473032` полностью `success`, включая матрицу
+и контейнер. Промежуточный state-only commit не отправлялся.
+
+Explicit-retry schema/admission пока не закоммичены. Первый полный gate прошёл,
+но независимое review выявило SQL-NULL holes в authority CHECK, утечку operation
+ID при commit failure, ненужную зависимость от старой River row и пробелы mixed/
+concurrent coverage. Исправления и regressions готовятся к повторному полному gate.
+Это не готовый HTTP retry, consumption, absence-resolution или recovery execution.
+
+После исправлений повторный полный `task verify` explicit-retry admission прошёл.
+Проверены mixed completed/uncertain/unstarted frontiers, concurrent admission,
+реальный transactional River insert/commit rollback с нулевым returned operation
+ID при ошибке, admission после GC старой River row, partial-null consumption,
+malformed binding и запрет reset/rebind consumed grant. SQL и production fixes
+прошли повторное независимое review. Штатный commit hook ещё предстоит; runtime
+registration и endpoint по-прежнему отсутствуют.

@@ -67,6 +67,7 @@ type publicationSourceCleanupExecutionPhase uint8
 const (
 	publicationSourceCleanupQueuedPhase publicationSourceCleanupExecutionPhase = iota
 	publicationSourceCleanupRemovalPhase
+	publicationSourceCleanupExplicitRetryPhase
 )
 
 func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context, tx bun.Tx, guard PublicationSourceCleanupDeliveryGuard, phase publicationSourceCleanupExecutionPhase) (bool, error) {
@@ -141,12 +142,16 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 		return false, fmt.Errorf("validate publication source cleanup inputs: decode operation snapshot: %w", err)
 	}
 	wantOperationState, wantItemState := "queued", "queued"
-	if phase == publicationSourceCleanupRemovalPhase {
+	switch phase {
+	case publicationSourceCleanupRemovalPhase:
 		wantOperationState, wantItemState = "running", "claimed"
-	} else if phase != publicationSourceCleanupQueuedPhase {
+	case publicationSourceCleanupExplicitRetryPhase:
+		wantOperationState = "failed"
+	case publicationSourceCleanupQueuedPhase:
+	default:
 		return false, nil
 	}
-	if operation.Kind != "cleanup_publication_sources_v1" || operation.State != wantOperationState || operation.Attempt != guard.ApplicationAttempt || operation.RiverJobID == nil || *operation.RiverJobID != guard.RiverJobID || summary.Version != 1 || summary.PositionID != guard.PositionID || summary.OutputEpoch != guard.Epoch {
+	if operation.Kind != "cleanup_publication_sources_v1" || operation.State != wantOperationState || phase == publicationSourceCleanupExplicitRetryPhase && operation.Stage != "cleanup_recovery_required" || operation.Attempt != guard.ApplicationAttempt || operation.RiverJobID == nil || *operation.RiverJobID != guard.RiverJobID || summary.Version != 1 || summary.PositionID != guard.PositionID || summary.OutputEpoch != guard.Epoch {
 		return false, nil
 	}
 	var setting string
@@ -179,21 +184,23 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 	if len(owners) != len(items) {
 		return false, nil
 	}
-	var riverKind, riverState string
-	var riverAttempt int
-	var args json.RawMessage
-	if err := tx.NewRaw(`SELECT kind,state,attempt,args FROM river_job WHERE id=? FOR UPDATE`, guard.RiverJobID).Scan(ctx, &riverKind, &riverState, &riverAttempt, &args); err != nil {
-		if err == sql.ErrNoRows {
+	if phase != publicationSourceCleanupExplicitRetryPhase {
+		var riverKind, riverState string
+		var riverAttempt int
+		var args json.RawMessage
+		if err := tx.NewRaw(`SELECT kind,state,attempt,args FROM river_job WHERE id=? FOR UPDATE`, guard.RiverJobID).Scan(ctx, &riverKind, &riverState, &riverAttempt, &args); err != nil {
+			if err == sql.ErrNoRows {
+				return false, nil
+			}
+			return false, fmt.Errorf("validate publication source cleanup inputs: read River job: %w", err)
+		}
+		var jobArgs publicationSourceCleanupJobArgs
+		if err := decodeStrictJSON(args, &jobArgs); err != nil {
+			return false, fmt.Errorf("validate publication source cleanup inputs: decode River args: %w", err)
+		}
+		if riverKind != jobArgs.Kind() || riverState != "running" || riverAttempt != guard.RiverAttempt || jobArgs.OperationID != guard.OperationID || jobArgs.OperationID == uuid.Nil {
 			return false, nil
 		}
-		return false, fmt.Errorf("validate publication source cleanup inputs: read River job: %w", err)
-	}
-	var jobArgs publicationSourceCleanupJobArgs
-	if err := decodeStrictJSON(args, &jobArgs); err != nil {
-		return false, fmt.Errorf("validate publication source cleanup inputs: decode River args: %w", err)
-	}
-	if riverKind != jobArgs.Kind() || riverState != "running" || riverAttempt != guard.RiverAttempt || jobArgs.OperationID != guard.OperationID || jobArgs.OperationID == uuid.Nil {
-		return false, nil
 	}
 	var extraClaims []PublicationExecutionClaim
 	if err := tx.NewSelect().Model(&extraClaims).Where("operation_id=?", guard.OperationID).Order("application_attempt ASC").For("UPDATE").Scan(ctx); err != nil && err != sql.ErrNoRows {
@@ -209,7 +216,11 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 		}
 		return false, fmt.Errorf("validate publication source cleanup inputs: read execution claim: %w", err)
 	}
-	if !publicationSourceCleanupClaimMatches(claim, guard) || claim.State != "executing" || extraClaims[0].ApplicationAttempt != guard.ApplicationAttempt {
+	wantClaimState := "executing"
+	if phase == publicationSourceCleanupExplicitRetryPhase {
+		wantClaimState = "recovery_required"
+	}
+	if !publicationSourceCleanupClaimMatches(claim, guard) || claim.State != wantClaimState || extraClaims[0].ApplicationAttempt != guard.ApplicationAttempt {
 		return false, nil
 	}
 	var assessment PublicationSourceCleanupAssessment
@@ -231,13 +242,24 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 	seen := make(map[string]bool, len(items))
 	ownerUUIDs := make(map[string]uuid.UUID, len(items))
 	ownerItemIDs := make(map[string]uuid.UUID, len(items))
+	uncertainItems := 0
 	for i, item := range items {
 		frontierValid := item.MutationClaimUUID == nil && item.MutationStartedAt == nil && item.MutationCompletedAt == nil
-		if phase == publicationSourceCleanupRemovalPhase {
+		itemStateValid := item.State == wantItemState
+		switch phase {
+		case publicationSourceCleanupRemovalPhase:
 			frontierValid = item.MutationClaimUUID == nil && item.MutationStartedAt == nil && item.MutationCompletedAt == nil ||
 				item.MutationClaimUUID != nil && *item.MutationClaimUUID == guard.ClaimUUID && item.MutationStartedAt != nil && !item.MutationStartedAt.IsZero() && (item.MutationCompletedAt == nil || !item.MutationCompletedAt.Before(*item.MutationStartedAt))
+		case publicationSourceCleanupExplicitRetryPhase:
+			uncertain := item.State == "recovery_required" && item.MutationClaimUUID != nil && *item.MutationClaimUUID == guard.ClaimUUID && item.MutationStartedAt != nil && !item.MutationStartedAt.IsZero() && item.MutationCompletedAt == nil
+			completed := item.State == "claimed" && item.MutationClaimUUID != nil && *item.MutationClaimUUID == guard.ClaimUUID && item.MutationStartedAt != nil && !item.MutationStartedAt.IsZero() && item.MutationCompletedAt != nil && !item.MutationCompletedAt.Before(*item.MutationStartedAt)
+			unstarted := item.State == "claimed" && item.MutationClaimUUID == nil && item.MutationStartedAt == nil && item.MutationCompletedAt == nil
+			frontierValid, itemStateValid = uncertain || completed || unstarted, uncertain || completed || unstarted
+			if uncertain {
+				uncertainItems++
+			}
 		}
-		if item.PositionID != guard.PositionID || item.Epoch != guard.Epoch || item.PublicationGeneration != assessment.Generation || item.State != wantItemState || !frontierValid || len(item.SourceSnapshot) == 0 || item.BorrowerRevision == nil || *item.BorrowerRevision == uuid.Nil {
+		if item.PositionID != guard.PositionID || item.Epoch != guard.Epoch || item.PublicationGeneration != assessment.Generation || !itemStateValid || !frontierValid || len(item.SourceSnapshot) == 0 || item.BorrowerRevision == nil || *item.BorrowerRevision == uuid.Nil {
 			return false, nil
 		}
 		var frozen publicationSourceCleanupSnapshot
@@ -269,6 +291,9 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 		if !cleanupSnapshotEqual(frozen, fresh) {
 			return false, nil
 		}
+	}
+	if phase == publicationSourceCleanupExplicitRetryPhase && uncertainItems == 0 {
+		return false, nil
 	}
 	if len(seen) != len(currentSet) {
 		return false, nil
