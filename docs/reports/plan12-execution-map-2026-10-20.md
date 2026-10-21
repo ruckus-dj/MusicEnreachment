@@ -532,3 +532,15 @@ schema review замечаний не имеют. Штатный commit hook в�
 дереве. Settlement подготовлен: одной транзакцией обновить актуальный original
 cleanup status и удалить obsolete auxiliary records; дополнительная миграция для
 этого не требуется. Settlement ещё не реализован и не проверен.
+
+Последующие срезы: resolution `fc05499` и owner-returned retry failure fence
+`f498651` прошли штатные hooks и отправлены. Settlement `82ae849` также прошёл
+полный gate/hook и отправлен: исходное состояние обновляется до succeeded,
+obsolete recovery authority удаляется транзакционно, inventory/links неизменны.
+Runtime activation и повторный retry после consumed-grant failure не завершены.
+
+CI `39671747568` для `fc05499` failed на Windows: fixture замораживал `/source`,
+который не является native absolute Windows root. T2 корректно отказал до callback;
+это не timeout-проблема. Fixture исправляется до admission через `t.TempDir()` и
+согласование configured/inventory paths. Production path validation не ослаблена.
+Полный gate исправления выполняется отдельно от uncommitted dormant runner.

@@ -185,6 +185,10 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
   `MATCH FULL` covers the entire FK: it cannot accompany an always-present parent
   ID plus an intentionally absent consumption suffix. Test valid unconsumed and
   consumed baselines, and reject reset/rebinding of consumed authority.
+- Filesystem-execution fixtures must freeze native absolute roots before admission:
+  Unix-only literals such as `/source` lack a volume on Windows. Use `t.TempDir()`
+  and align root/work configured and inventory paths before capturing snapshots;
+  never relax production path checks or rewrite frozen grants to fix fixtures.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 
