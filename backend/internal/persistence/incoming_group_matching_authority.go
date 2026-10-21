@@ -174,7 +174,9 @@ func (repository *IncomingMatchCandidateRepository) UnlinkIncomingGroupMatching(
 		if err := lockIncomingGroupMatchingAuthoritySourceLinks(ctx, tx, canonicalIDs); err != nil {
 			return err
 		}
-		var removed []uuid.UUID
+		// Validate every target before deleting any association. The transaction
+		// would roll back partial deletes too, but doing this as a separate pass
+		// makes the all-or-nothing intent explicit and avoids needless writes.
 		for _, sourceID := range canonicalIDs {
 			var exists bool
 			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM track_source WHERE media_variant_id=? AND decision_method='manual')`, sourceID).Scan(ctx, &exists); err != nil {
@@ -183,6 +185,12 @@ func (repository *IncomingMatchCandidateRepository) UnlinkIncomingGroupMatching(
 			if !exists {
 				return ErrIncomingMatchConflict
 			}
+			if err := rejectCleanupOwnedSourceVariant(ctx, tx, sourceID); err != nil {
+				return fmt.Errorf("unlink matching: %w", err)
+			}
+		}
+		var removed []uuid.UUID
+		for _, sourceID := range canonicalIDs {
 			if _, err := tx.NewRaw(`DELETE FROM track_source WHERE media_variant_id=? AND decision_method='manual'`, sourceID).Exec(ctx); err != nil {
 				return fmt.Errorf("unlink matching: remove manual source association: %w", err)
 			}

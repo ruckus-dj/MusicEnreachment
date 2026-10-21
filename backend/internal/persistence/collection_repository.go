@@ -102,6 +102,9 @@ func (repository *CollectionRepository) RemoveTrackSourceDecision(ctx context.Co
 		if existing.DecisionMethod == "manual" && method != "manual" {
 			return fmt.Errorf("remove track source: automatic removal cannot remove manual decision")
 		}
+		if err := rejectCleanupOwnedSourceVariant(ctx, tx, mediaVariantID); err != nil {
+			return fmt.Errorf("remove track source: %w", err)
+		}
 		if _, err := tx.NewDelete().Model(&existing).Where("id = ?", existing.ID).Exec(ctx); err != nil {
 			return fmt.Errorf("remove track source: delete decision: %w", err)
 		}
