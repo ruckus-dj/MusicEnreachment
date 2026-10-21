@@ -410,3 +410,35 @@ runs — проверка конкретных ревизий, не приёмк
   stale token/River attempt и атомарный rollback при deferred commit failure.
 - Dormant runner/loader и их unit/PostgreSQL-тесты проходят изолированный полный
   `task verify` поверх этой ревизии; app/worker/enqueue wiring не добавлено.
+
+### Дополнение после runner, explicit-retry guard и frontend-проверок
+
+- `f9203c9`: CI `39633860649` полностью успешен, включая матрицу и контейнер.
+- Dormant runner/loader сохранён в `bbdd349` после полного локального gate и
+  штатного hook. CI `39643787191` завершился с failure: единственное падение
+  verify — 5-секундный timeout SourcesScreen-теста списка каталогов. Все
+  платформенные jobs прошли; публикация контейнера пропущена. Этот run остаётся
+  failed-свидетельством, а не заменяется последующим успешным run.
+- Решение владельца о допустимости отсутствующего файла только при явном
+  пользовательском повторе сохранено в `e42e489`; hook и CI `39644189780`
+  полностью успешны. Разрешённое отсутствие ещё не реализовано и не должно
+  записываться как native unlink completion.
+- `3a804e0` блокирует оба generic Retry пути original-source cleanup до mutation
+  или enqueue; штатный hook пройден, коммит отправлен. CI `39649035481`
+  отслеживается. Dedicated explicit-retry admission/execution пока отсутствуют.
+- `0292c7a` убирает повторные full-table accessibility scans в упавшем frontend
+  тесте, сохраняя role/name и все visibility assertions, без увеличения timeout.
+  Focused suite: 20/20; отдельный affected case — 193 мс до и 144 мс после.
+  Timeout локально не воспроизведён; эти измерения не устанавливают причину CI
+  падения. Штатный hook пройден, коммит отправлен; CI `39649720036` отслеживается.
+- Shared zero-frontier retirement и runner fallback поверх `0292c7a` прошли
+  полный `task verify`; штатный commit hook выполняется. OFF cancellation и
+  exact-claimed unstarted failure разделены закрытыми режимами. Любой mutation
+  frontier запрещает retirement. Проверены changed facts, queued/running proof,
+  completed/incomplete refusal, late callback exclusion и deferred rollback.
+- Runtime worker/automatic trigger, explicit recovery и реальная media/Navidrome
+  приёмка не выполнены. План №12 остаётся в `todo`; green CI не является приёмкой.
+
+Уточнение после retirement hook: срез сохранён как `ce42e1b`, полный штатный
+hook пройден, коммит отправлен в `go-development`. Независимое финальное review
+не выявило correctness-регрессий. CI этой ревизии ещё не подтверждён.
