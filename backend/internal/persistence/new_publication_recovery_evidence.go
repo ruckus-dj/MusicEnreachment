@@ -150,6 +150,28 @@ func AssessPublicationRecoveryEvidence(snapshot PublicationRecoverySnapshot) (Pu
 		return PublicationRecoveryAssessment{}, err
 	}
 	phase := a.Phase
+	guard := PublicationDeliveryGuard{OperationID: c.OperationID, ApplicationAttempt: c.ApplicationAttempt, RiverJobID: c.RiverJobID, RiverAttempt: c.RiverAttempt, ClaimUUID: c.ClaimUUID, BootUUID: c.BootUUID, DeliveryToken: c.DeliveryToken, Epoch: c.Epoch, CandidateGeneration: a.CandidateGeneration, ExpectedPositionID: a.PositionID}
+	if phase != "committed" && (phase == "preparing" && frontier == "prep_3" || phase == "staged" || phase == "validated" || phase == "exposing") {
+		input, inputErr := DecodePublicationInputs(a.FrozenInputs)
+		if inputErr != nil || input.IntentKind != "audio" || input.InitialLyrics == nil {
+			return PublicationRecoveryAssessment{}, errors.New("initial publication recovery requires frozen lyrics authority")
+		}
+		entries, journalErr := decodeJournal(a.MutationJournal)
+		if journalErr != nil {
+			return PublicationRecoveryAssessment{}, journalErr
+		}
+		if phase == "preparing" || phase == "staged" {
+			lyricsEvidence, evidenceErr := parseInitialLyricsPrefix(entries, guard, input)
+			if evidenceErr != nil {
+				return PublicationRecoveryAssessment{}, fmt.Errorf("initial publication recovery evidence is incomplete: %w", evidenceErr)
+			}
+			if phase == "preparing" && lyricsEvidence.stageCount != 0 || phase == "staged" && (lyricsEvidence.stageCount != 1 || lyricsEvidence.stagePhase != "staged") {
+				return PublicationRecoveryAssessment{}, errors.New("initial publication recovery stage evidence does not match phase")
+			}
+		} else if _, evidenceErr := firstPublicationInitialLyricsEvidence(entries, guard, input); evidenceErr != nil {
+			return PublicationRecoveryAssessment{}, fmt.Errorf("initial publication recovery evidence is incomplete: %w", evidenceErr)
+		}
+	}
 	if snapshot.Operation.Stage != phase || !publicationRecoveryPhaseMatches(phase, frontier) {
 		return PublicationRecoveryAssessment{}, errors.New("publication phase does not match journal frontier")
 	}
@@ -157,7 +179,6 @@ func AssessPublicationRecoveryEvidence(snapshot PublicationRecoverySnapshot) (Pu
 		if !snapshot.CurrentKnown || snapshot.Current == nil || len(a.FrozenInputs) != 0 {
 			return PublicationRecoveryAssessment{}, errors.New("committed attempt requires a current publication row")
 		}
-		guard := PublicationDeliveryGuard{OperationID: c.OperationID, ApplicationAttempt: c.ApplicationAttempt, RiverJobID: c.RiverJobID, RiverAttempt: c.RiverAttempt, ClaimUUID: c.ClaimUUID, BootUUID: c.BootUUID, DeliveryToken: c.DeliveryToken, Epoch: c.Epoch, CandidateGeneration: a.CandidateGeneration, ExpectedPositionID: a.PositionID}
 		if !committedWitnessMatches(a.MutationJournal, guard, &a, *snapshot.Current) {
 			return PublicationRecoveryAssessment{}, errors.New("committed attempt does not match its unique current witness")
 		}
@@ -184,6 +205,8 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 	var installed publicationCandidateInstalledJournalRecord
 	var commitCount int
 	var cleanupIntent *publicationPreparationCleanupRecord
+	var firstAbsentCleanup *PublicationFirstAbsentCleanupWitness
+	firstAbsentCleanupCount := 0
 	wantGuard := PublicationDeliveryGuard{OperationID: claim.OperationID, ApplicationAttempt: claim.ApplicationAttempt, RiverJobID: claim.RiverJobID, RiverAttempt: claim.RiverAttempt, ClaimUUID: claim.ClaimUUID, BootUUID: claim.BootUUID, DeliveryToken: claim.DeliveryToken, Epoch: claim.Epoch, CandidateGeneration: attempt.CandidateGeneration, ExpectedPositionID: attempt.PositionID}
 	for _, raw := range entries {
 		var h struct {
@@ -193,6 +216,21 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 			return "", errors.New("malformed publication journal")
 		}
 		switch h.Kind {
+		case PublicationInitialLyricsAcquisitionKind:
+			var record PublicationInitialLyricsAcquisitionRecord
+			if frontier != "prep_3" || decodeStrictJSON(raw, &record) != nil || record.Guard != wantGuard {
+				return "", errors.New("invalid initial lyrics acquisition journal")
+			}
+		case "publication_candidate_rebuild":
+			var record PublicationCandidateRebuildRecord
+			if frontier != "prep_3" || decodeStrictJSON(raw, &record) != nil || !validCandidateRebuildRecord(record, wantGuard) {
+				return "", errors.New("invalid initial lyrics rebuild journal")
+			}
+		case PublicationInitialLyricsOutcomeKind:
+			var record PublicationInitialLyricsOutcomeRecord
+			if frontier != "prep_3" || decodeStrictJSON(raw, &record) != nil || record.Guard != wantGuard {
+				return "", errors.New("invalid initial lyrics outcome journal")
+			}
 		case "publication_preparation":
 			var r PublicationPreparationRecord
 			steps := [...]string{"intent", "directory_created", "input_ready"}
@@ -264,8 +302,23 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 				return "", errors.New("invalid commit witness journal")
 			}
 			frontier = "committed"
+		case "publication_first_absent_cleanup":
+			var record publicationFirstAbsentCleanupRecord
+			if frontier != "committed" || commitCount != 1 || decodeStrictJSON(raw, &record) != nil || record.Version != publicationFirstAbsentCleanupVersion || record.Kind != h.Kind || record.Guard != wantGuard || !validFirstAbsentCleanupWitness(record.Witness) || !validFirstAbsentCleanupRecordResult(record) {
+				return "", errors.New("invalid first-absent cleanup journal")
+			}
+			if firstAbsentCleanup == nil {
+				witness := record.Witness
+				firstAbsentCleanup = &witness
+			}
+			firstAbsentCleanupCount++
 		default:
 			return "", fmt.Errorf("unsupported journal record kind %q", h.Kind)
+		}
+	}
+	if firstAbsentCleanupCount > 0 {
+		if firstAbsentCleanup == nil || !exactCleanupJournal(entries, wantGuard, *firstAbsentCleanup, firstAbsentCleanupCount) {
+			return "", errors.New("first-absent cleanup journal is incomplete")
 		}
 	}
 	return frontier, nil

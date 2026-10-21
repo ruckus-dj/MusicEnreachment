@@ -29,6 +29,7 @@ func executeGenericPublication(
 	preparer PublicationStagePreparer,
 	attempt *persistence.TrackPublicationAttempt,
 	platform tools.Platform,
+	lyrics *PublicationLyricsResolver,
 ) (result PublicationStageObservation, resultErr error) {
 	if scope == nil || repository == nil || attempt == nil || preparer.OutputParent == nil {
 		return result, errors.New("generic publication execution dependencies are unavailable")
@@ -136,6 +137,7 @@ func executeGenericPublication(
 	}
 	runner := PublicationStagingRunner{
 		Repository: repository, PinnedTools: pinned,
+		Lyrics:    lyrics,
 		Metadata:  metadata.Writer{},
 		Validator: &RealPublicationStageValidator{MetadataReader: metadata.Reader{}},
 	}

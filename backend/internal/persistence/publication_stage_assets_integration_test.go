@@ -34,9 +34,6 @@ func TestPublicationStageAssetsRequireCurrentInputEvidencePostgreSQL(t *testing.
 		t.Fatalf("claim = %q, %v", outcome, err)
 	}
 	base := newValidPublicationStageObservation()
-	if changed, err := repo.AdvancePublicationStage(ctx, f.guard, "preparing", base); err != nil || !changed {
-		t.Fatalf("preparing -> staged = %t, %v", changed, err)
-	}
 	validAssetsJSON, err := json.Marshal(PublicationAssetOutcomes{
 		Version: PublicationAssetOutcomesVersion,
 		Cover:   PublicationCoverOutcome{State: PublicationAssetAbsent},
@@ -47,9 +44,15 @@ func TestPublicationStageAssetsRequireCurrentInputEvidencePostgreSQL(t *testing.
 	}
 	validAssets := json.RawMessage(validAssetsJSON)
 	valid := base
-	valid.ActualMetadata = json.RawMessage(`{"version":1,"tags":{}}`)
+	valid.ActualMetadata = json.RawMessage(`{"version":1,"tags":{"title":["Track"],"comment":[]}}`)
 	valid.ActualAssets = validAssets
 	valid.QualityPolicyVersion = publication.QualityPolicyVersion
+	size, mtime := int64(10), int64(20)
+	valid.Ownership = ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime}
+	recordValidInitialLyricsOutcome(t, f, repo, valid)
+	if changed, err := repo.AdvancePublicationStage(ctx, f.guard, "preparing", valid); err != nil || !changed {
+		t.Fatalf("preparing -> staged = %t, %v", changed, err)
+	}
 	if changed, err := repo.AdvancePublicationStage(ctx, f.guard, "staged", valid); err != nil || !changed {
 		t.Fatalf("valid assets evidence = %t, %v", changed, err)
 	}
@@ -71,7 +74,8 @@ func TestPublicationStageAssetsRequireCurrentInputEvidencePostgreSQL(t *testing.
 			if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
 				t.Fatalf("claim = %q, %v", outcome, err)
 			}
-			if changed, err := repo.AdvancePublicationStage(ctx, f.guard, "preparing", base); err != nil || !changed {
+			recordValidInitialLyricsOutcome(t, f, repo, valid)
+			if changed, err := repo.AdvancePublicationStage(ctx, f.guard, "preparing", valid); err != nil || !changed {
 				t.Fatalf("stage = %t, %v", changed, err)
 			}
 			observation := valid
@@ -97,9 +101,6 @@ func TestPublicationStageVersion1AcceptsIndependentAssetEvidencePostgreSQL(t *te
 		t.Fatalf("claim = %q, %v", outcome, err)
 	}
 	base := newValidPublicationStageObservation()
-	if changed, err := repo.AdvancePublicationStage(ctx, f.guard, "preparing", base); err != nil || !changed {
-		t.Fatalf("preparing -> staged = %t, %v", changed, err)
-	}
 	assets, err := json.Marshal(PublicationAssetOutcomes{
 		Version: PublicationAssetOutcomesVersion,
 		Cover:   PublicationCoverOutcome{State: PublicationAssetAbsent},
@@ -109,8 +110,15 @@ func TestPublicationStageVersion1AcceptsIndependentAssetEvidencePostgreSQL(t *te
 		t.Fatal(err)
 	}
 	observation := base
-	observation.ActualMetadata = json.RawMessage(`{"version":1,"tags":{}}`)
+	observation.ActualMetadata = json.RawMessage(`{"version":1,"tags":{"title":["Track"],"comment":[]}}`)
 	observation.ActualAssets = assets
+	observation.QualityPolicyVersion = publication.QualityPolicyVersion
+	size, mtime := int64(10), int64(20)
+	observation.Ownership = ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime}
+	recordValidInitialLyricsOutcome(t, f, repo, observation)
+	if changed, err := repo.AdvancePublicationStage(ctx, f.guard, "preparing", observation); err != nil || !changed {
+		t.Fatalf("preparing -> staged = %t, %v", changed, err)
+	}
 	if changed, err := repo.AdvancePublicationStage(ctx, f.guard, "staged", observation); err != nil || !changed {
 		t.Fatalf("version 1 asset evidence = %t, %v", changed, err)
 	}

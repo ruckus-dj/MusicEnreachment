@@ -21,11 +21,12 @@ type LibraryPublicationOperation struct {
 }
 
 type LibraryPublicationCurrent struct {
-	Record    TrackPublication
-	Ownership PublicationCurrentOwnership
-	Audio     PublicationCurrentAudio
-	Metadata  PublicationCommitMetadata
-	Assets    PublicationAssetOutcomes
+	Record        TrackPublication
+	InitialLyrics *PublicationInitialLyricsProjection
+	Ownership     PublicationCurrentOwnership
+	Audio         PublicationCurrentAudio
+	Metadata      PublicationCommitMetadata
+	Assets        PublicationAssetOutcomes
 }
 
 type LibraryPublicationNamespaceNode struct {
@@ -96,6 +97,13 @@ func readLibraryPublicationContextTx(ctx context.Context, tx bun.IDB, releaseUUI
 			}
 			if err := strictMetadata(current.ActualMetadata, &decoded.Metadata); err != nil {
 				return fmt.Errorf("decode current publication metadata: %w", err)
+			}
+			if len(current.InitialLyrics) != 0 && string(current.InitialLyrics) != "null" {
+				var projection PublicationInitialLyricsProjection
+				if err := decodeStrictJSON(current.InitialLyrics, &projection); err != nil || !validPublicationInitialLyricsProjection(projection, current.Generation) {
+					return errors.New("decode current initial lyrics evidence: invalid generation-bound projection")
+				}
+				decoded.InitialLyrics = &projection
 			}
 			assets, err := DecodePublicationAssetOutcomes(current.ActualAssets)
 			if err != nil {

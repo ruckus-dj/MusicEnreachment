@@ -35,6 +35,7 @@ func commitManualLyricsReplacementTx(ctx context.Context, tx bun.Tx, guard Publi
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	projection := current
 	projection.Generation = attempt.CandidateGeneration
+	projection.InitialLyrics = nil
 	projection.Ownership = encodePublicationCommitJSON(PublicationCurrentOwnership{Version: 1, Identity: installed.Identity})
 	projection.ActualMetadata = append(json.RawMessage(nil), outcome.FinalObservation.ActualMetadata...)
 	projection.ActualAssets = append(json.RawMessage(nil), outcome.FinalObservation.ActualAssets...)
@@ -77,7 +78,7 @@ func commitManualLyricsReplacementTx(ctx context.Context, tx bun.Tx, guard Publi
 		}
 		return false, err
 	}
-	result, err := tx.NewRaw(`UPDATE track_publication SET generation=?, ownership=?::jsonb, actual_metadata=?::jsonb, actual_assets=?::jsonb, validated_at=? WHERE position_id=? AND epoch=? AND generation=? AND relative_path=? AND ownership=?::jsonb AND actual_audio=?::jsonb AND actual_metadata=?::jsonb AND actual_assets=?::jsonb AND quality_policy_version=? AND validated_at=?`,
+	result, err := tx.NewRaw(`UPDATE track_publication SET generation=?, ownership=?::jsonb, actual_metadata=?::jsonb, actual_assets=?::jsonb, initial_lyrics=NULL, validated_at=? WHERE position_id=? AND epoch=? AND generation=? AND relative_path=? AND ownership=?::jsonb AND actual_audio=?::jsonb AND actual_metadata=?::jsonb AND actual_assets=?::jsonb AND quality_policy_version=? AND validated_at=?`,
 		projection.Generation, string(projection.Ownership), string(projection.ActualMetadata), string(projection.ActualAssets), now,
 		current.PositionID, current.Epoch, current.Generation, current.RelativePath, string(current.Ownership), string(current.ActualAudio), string(current.ActualMetadata), string(current.ActualAssets), current.QualityPolicyVersion, current.ValidatedAt).Exec(ctx)
 	if err != nil {

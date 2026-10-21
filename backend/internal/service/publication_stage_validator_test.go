@@ -46,7 +46,7 @@ func TestRealPublicationStageValidatorCapturesCurrentAssetEvidence(t *testing.T)
 	validator := RealPublicationStageValidator{
 		Tools: publicationValidatorTools{}, MetadataReader: reader,
 		Probe: func(context.Context, string, sourcefs.RegularFile, publication.AudioContainer) ([]byte, error) {
-			return []byte(`{"format":{"format_name":"matroska,webm"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2,"bits_per_raw_sample":16}]}`), nil
+			return []byte(`{"format":{"format_name":"mp3"},"streams":[{"index":0,"codec_type":"audio","codec_name":"mp3","channels":2}]}`), nil
 		},
 	}
 	got, err := validator.Validate(context.Background(), stage, input)

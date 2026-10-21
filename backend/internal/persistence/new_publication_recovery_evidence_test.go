@@ -28,10 +28,10 @@ func TestAssessPublicationRecoveryEvidenceAcceptsRealJournalFrontiers(t *testing
 		{"preparation intent", 1, "preparing", "prep_1"},
 		{"directory created", 2, "preparing", "prep_2"},
 		{"input ready", 3, "preparing", "prep_3"},
-		{"staged", 4, "staged", "staged"},
-		{"validated", 5, "validated", "validated"},
-		{"exposing", 6, "exposing", "exposing"},
-		{"candidate installed", 7, "exposing", "candidate_installed"},
+		{"staged", 6, "staged", "staged"},
+		{"validated", 7, "validated", "validated"},
+		{"exposing", 8, "exposing", "exposing"},
+		{"candidate installed", 9, "exposing", "candidate_installed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			attempt, operation, guard := commitEvidenceFixture(t)
@@ -49,6 +49,105 @@ func TestAssessPublicationRecoveryEvidenceAcceptsRealJournalFrontiers(t *testing
 			}
 			if assessment.JournalFrontier != test.want || len(assessment.RequiredObservations) == 0 || assessment.RequiredObservations[0] != "old_execution_quiescence" {
 				t.Fatalf("assessment = %#v", assessment)
+			}
+		})
+	}
+}
+
+func TestAssessPublicationRecoveryEvidenceAcceptsPartialLyricsFrontiers(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		count int
+		phase string
+	}{
+		{"input ready", 3, "preparing"},
+		{"staged", 6, "staged"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attempt, operation, guard := commitEvidenceFixture(t)
+			entries, err := decodeJournal(attempt.MutationJournal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt.MutationJournal, _ = json.Marshal(entries[:test.count])
+			attempt.Phase, operation.Stage = test.phase, test.phase
+			snapshot := recoveryEvidenceFromFixture(attempt, operation, guard)
+			if _, err := AssessPublicationRecoveryEvidence(snapshot); err != nil {
+				t.Fatalf("partial initial-lyrics evidence rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestAssessPublicationRecoveryEvidenceRejectsLyricsPhaseEvidenceMismatch(t *testing.T) {
+	attempt, operation, guard := commitEvidenceFixture(t)
+	entries, err := decodeJournal(attempt.MutationJournal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A single staged acknowledgement cannot substantiate a validated phase.
+	attempt.MutationJournal, _ = json.Marshal(entries[:6])
+	attempt.Phase, operation.Stage = "validated", "validated"
+	if _, err := AssessPublicationRecoveryEvidence(recoveryEvidenceFromFixture(attempt, operation, guard)); err == nil {
+		t.Fatal("validated phase accepted only the staged acknowledgement")
+	}
+}
+
+func TestAssessPublicationRecoveryEvidenceRejectsMismatchedLyricsEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		count int
+		kind  string
+	}{
+		{"acquisition guard", 6, PublicationInitialLyricsAcquisitionKind},
+		{"outcome guard", 7, PublicationInitialLyricsOutcomeKind},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attempt, operation, guard := commitEvidenceFixture(t)
+			entries, err := decodeJournal(attempt.MutationJournal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutated := false
+			for index, raw := range entries[:test.count] {
+				var header struct {
+					Kind string `json:"kind"`
+				}
+				if err := json.Unmarshal(raw, &header); err != nil {
+					t.Fatal(err)
+				}
+				if header.Kind != test.kind {
+					continue
+				}
+				var record map[string]json.RawMessage
+				if err := json.Unmarshal(raw, &record); err != nil {
+					t.Fatal(err)
+				}
+				wrongGuard := guard
+				wrongGuard.DeliveryToken = "different-delivery"
+				encodedGuard, err := json.Marshal(wrongGuard)
+				if err != nil {
+					t.Fatal(err)
+				}
+				record["guard"] = encodedGuard
+				entries[index], err = json.Marshal(record)
+				if err != nil {
+					t.Fatal(err)
+				}
+				mutated = true
+				break
+			}
+			if !mutated {
+				t.Fatalf("fixture lacks %s record", test.kind)
+			}
+			attempt.MutationJournal, _ = json.Marshal(entries[:test.count])
+			phase := "staged"
+			if test.count == 7 {
+				phase = "validated"
+			}
+			attempt.Phase, operation.Stage = phase, phase
+			if _, err := AssessPublicationRecoveryEvidence(recoveryEvidenceFromFixture(attempt, operation, guard)); err == nil {
+				t.Fatal("mismatched lyrics evidence was accepted")
 			}
 		})
 	}
@@ -97,8 +196,8 @@ func TestPublicationRecoveryObservationPlanTracksRecordedPrefixes(t *testing.T) 
 		exposure bool
 	}{
 		{0, false, false, false}, {1, true, false, false}, {2, true, false, false},
-		{3, true, false, false}, {4, true, false, false}, {5, true, true, false},
-		{6, true, true, true}, {7, true, true, true},
+		{3, true, false, false}, {4, true, false, false}, {5, true, false, false},
+		{6, true, false, false}, {7, true, true, false}, {8, true, true, true}, {9, true, true, true},
 	} {
 		attempt, operation, guard := commitEvidenceFixture(t)
 		entries, err := decodeJournal(attempt.MutationJournal)
@@ -107,13 +206,13 @@ func TestPublicationRecoveryObservationPlanTracksRecordedPrefixes(t *testing.T) 
 		}
 		attempt.MutationJournal, _ = json.Marshal(entries[:test.count])
 		phase := "preparing"
-		if test.count == 4 {
+		if test.count == 6 {
 			phase = "staged"
 		}
-		if test.count >= 5 && test.count < 6 {
+		if test.count == 7 {
 			phase = "validated"
 		}
-		if test.count >= 6 {
+		if test.count >= 8 {
 			phase = "exposing"
 		}
 		attempt.Phase, operation.Stage = phase, phase
@@ -200,6 +299,16 @@ func TestAssessPublicationRecoveryEvidenceRequiresUniqueCommittedWitness(t *test
 	if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil {
 		t.Fatal(err)
 	}
+	acquisition, outcome, ok := committedInitialLyricsRecords(entries)
+	if !ok {
+		t.Fatal("fixture lacks committed initial-lyrics records")
+	}
+	initialLyrics, err := initialLyricsProjection(acquisition, outcome, attempt.CandidateGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	witness.InitialLyrics = initialLyrics
+	witness.InitialLyricsEvidenceSHA256 = committedInitialLyricsCommitDigest(entries, witness)
 	commit, err := json.Marshal(witness)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +325,8 @@ func TestAssessPublicationRecoveryEvidenceRequiresUniqueCommittedWitness(t *test
 		PositionID: attempt.PositionID, Epoch: attempt.Epoch, Generation: attempt.CandidateGeneration,
 		RelativePath: witness.RelativePath, Ownership: mustPublicationCommitJSON(t, witness.Ownership),
 		ActualAudio: mustPublicationCommitJSON(t, witness.Audio), ActualMetadata: mustPublicationCommitJSON(t, witness.Metadata),
-		ActualAssets: mustPublicationCommitJSON(t, witness.Assets), QualityPolicyVersion: witness.QualityPolicyVersion, ValidatedAt: validatedAt,
+		ActualAssets: mustPublicationCommitJSON(t, witness.Assets), InitialLyrics: mustPublicationCommitJSON(t, witness.InitialLyrics),
+		QualityPolicyVersion: witness.QualityPolicyVersion, ValidatedAt: validatedAt,
 	}
 	snapshot := recoveryEvidenceFromFixture(attempt, operation, guard)
 	snapshot.Current = &current

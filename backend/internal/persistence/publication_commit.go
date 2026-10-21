@@ -15,19 +15,21 @@ import (
 const firstPublicationCommitVersion = 1
 
 type firstPublicationCommitWitness struct {
-	Version              int                         `json:"version"`
-	Kind                 string                      `json:"kind"`
-	Guard                PublicationDeliveryGuard    `json:"guard"`
-	PositionID           uuid.UUID                   `json:"position_id"`
-	Epoch                uuid.UUID                   `json:"epoch"`
-	CandidateGeneration  uuid.UUID                   `json:"candidate_generation"`
-	RelativePath         string                      `json:"relative_path"`
-	Ownership            PublicationCurrentOwnership `json:"ownership"`
-	Audio                PublicationCurrentAudio     `json:"audio"`
-	Metadata             PublicationCommitMetadata   `json:"metadata"`
-	Assets               PublicationAssetOutcomes    `json:"assets"`
-	QualityPolicyVersion int                         `json:"quality_policy_version"`
-	ValidatedAt          time.Time                   `json:"validated_at"`
+	Version                     int                                 `json:"version"`
+	Kind                        string                              `json:"kind"`
+	Guard                       PublicationDeliveryGuard            `json:"guard"`
+	PositionID                  uuid.UUID                           `json:"position_id"`
+	Epoch                       uuid.UUID                           `json:"epoch"`
+	CandidateGeneration         uuid.UUID                           `json:"candidate_generation"`
+	RelativePath                string                              `json:"relative_path"`
+	Ownership                   PublicationCurrentOwnership         `json:"ownership"`
+	Audio                       PublicationCurrentAudio             `json:"audio"`
+	Metadata                    PublicationCommitMetadata           `json:"metadata"`
+	Assets                      PublicationAssetOutcomes            `json:"assets"`
+	InitialLyrics               *PublicationInitialLyricsProjection `json:"initial_lyrics,omitempty"`
+	InitialLyricsEvidenceSHA256 string                              `json:"initial_lyrics_evidence_sha256,omitempty"`
+	QualityPolicyVersion        int                                 `json:"quality_policy_version"`
+	ValidatedAt                 time.Time                           `json:"validated_at"`
 }
 
 // CommitFirstPublication atomically installs the durable current projection
@@ -106,7 +108,11 @@ func (repository *SetupManagerRepository) CommitFirstPublication(ctx context.Con
 		assetOutcomes := projection.ActualAssets.Clone()
 		assetsRaw, _ := json.Marshal(assetOutcomes)
 		ownershipRaw, _ := json.Marshal(ownership)
-		inserted, err := tx.NewRaw(`INSERT INTO track_publication (position_id, epoch, generation, relative_path, ownership, actual_audio, actual_metadata, actual_assets, quality_policy_version, validated_at) VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?) ON CONFLICT DO NOTHING`, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration, projection.TargetRelativePath, string(ownershipRaw), string(audioRaw), string(metadataRaw), string(assetsRaw), projection.QualityPolicyVersion, validatedAt).Exec(ctx)
+		initialLyricsRaw, err := json.Marshal(projection.InitialLyrics)
+		if err != nil {
+			return fmt.Errorf("commit first publication: encode initial lyrics projection: %w", err)
+		}
+		inserted, err := tx.NewRaw(`INSERT INTO track_publication (position_id, epoch, generation, relative_path, ownership, actual_audio, actual_metadata, actual_assets, initial_lyrics, quality_policy_version, validated_at) VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?) ON CONFLICT DO NOTHING`, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration, projection.TargetRelativePath, string(ownershipRaw), string(audioRaw), string(metadataRaw), string(assetsRaw), string(initialLyricsRaw), projection.QualityPolicyVersion, validatedAt).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("commit first publication: insert current row: %w", err)
 		}
@@ -114,7 +120,8 @@ func (repository *SetupManagerRepository) CommitFirstPublication(ctx context.Con
 		if err != nil || rows != 1 {
 			return nil
 		}
-		witness := firstPublicationCommitWitness{Version: firstPublicationCommitVersion, Kind: "publication_commit", Guard: guard, PositionID: attempt.PositionID, Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, RelativePath: projection.TargetRelativePath, Ownership: ownership, Audio: projection.CurrentAudio, Metadata: projection.Metadata, Assets: assetOutcomes, QualityPolicyVersion: projection.QualityPolicyVersion, ValidatedAt: validatedAt}
+		witness := firstPublicationCommitWitness{Version: firstPublicationCommitVersion, Kind: "publication_commit", Guard: guard, PositionID: attempt.PositionID, Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, RelativePath: projection.TargetRelativePath, Ownership: ownership, Audio: projection.CurrentAudio, Metadata: projection.Metadata, Assets: assetOutcomes, InitialLyrics: projection.InitialLyrics, QualityPolicyVersion: projection.QualityPolicyVersion, ValidatedAt: validatedAt}
+		witness.InitialLyricsEvidenceSHA256 = committedInitialLyricsCommitDigest(entries, witness)
 		journalRaw, err := appendJournalEntry(attempt.MutationJournal, witness)
 		if err != nil {
 			return err
@@ -146,6 +153,31 @@ func committedWitnessMatches(raw json.RawMessage, guard PublicationDeliveryGuard
 	if err != nil {
 		return false
 	}
+	commitIndex := -1
+	for index, entry := range entries {
+		var header struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(entry, &header) != nil {
+			return false
+		}
+		if header.Kind == "publication_commit" {
+			if commitIndex >= 0 {
+				return false
+			}
+			commitIndex = index
+		}
+	}
+	if commitIndex < 0 {
+		return false
+	}
+	if commitIndex != len(entries)-1 {
+		var cleanup publicationFirstAbsentCleanupRecord
+		if decodeStrictJSON(entries[commitIndex+1], &cleanup) != nil || !exactCleanupJournal(entries, guard, cleanup.Witness, len(entries)-commitIndex-1) {
+			return false
+		}
+		entries = entries[:commitIndex+1]
+	}
 	count := 0
 	for index, entry := range entries {
 		var header struct {
@@ -163,7 +195,49 @@ func committedWitnessMatches(raw json.RawMessage, guard PublicationDeliveryGuard
 			return false
 		}
 	}
-	return count == 1
+	if count != 1 {
+		return false
+	}
+	initialLyricsWitnesses := 0
+	initialLyricsEvidence := false
+	initialLyricsProjectionPresent := false
+	for _, entry := range entries {
+		var witness firstPublicationCommitWitness
+		if decodeStrictJSON(entry, &witness) == nil && witness.Kind == "publication_commit" {
+			initialLyricsWitnesses++
+			if witness.InitialLyrics == nil {
+				if len(current.InitialLyrics) != 0 && string(current.InitialLyrics) != "null" {
+					return false
+				}
+				continue
+			}
+			initialLyricsProjectionPresent = true
+			acquisition, outcome, ok := committedInitialLyricsRecords(entries)
+			if !ok {
+				return false
+			}
+			projection, projectionErr := initialLyricsProjection(acquisition, outcome, current.Generation)
+			digest := committedInitialLyricsCommitDigest(entries, witness)
+			if projectionErr != nil || !sameInitialLyricsProjectionJSON(encodePublicationCommitJSON(witness.InitialLyrics), projection) || !validSHA256(witness.InitialLyricsEvidenceSHA256) || digest != witness.InitialLyricsEvidenceSHA256 || witness.InitialLyrics.Generation != current.Generation {
+				return false
+			}
+		}
+		var header struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(entry, &header) != nil {
+			return false
+		}
+		if header.Kind == PublicationInitialLyricsAcquisitionKind || header.Kind == PublicationInitialLyricsOutcomeKind {
+			initialLyricsEvidence = true
+		}
+	}
+	return initialLyricsWitnesses == 1 && (!initialLyricsEvidence || initialLyricsProjectionPresent && committedInitialLyricsEvidencePresent(entries))
+}
+
+func committedInitialLyricsEvidencePresent(entries []json.RawMessage) bool {
+	_, _, ok := committedInitialLyricsRecords(entries)
+	return ok
 }
 
 func currentPublicationMatchesWitness(current TrackPublication, witness firstPublicationCommitWitness) bool {
@@ -172,6 +246,7 @@ func currentPublicationMatchesWitness(current TrackPublication, witness firstPub
 		sameJSONValue(current.ActualAudio, encodePublicationCommitJSON(witness.Audio)) &&
 		sameJSONValue(current.ActualMetadata, encodePublicationCommitJSON(witness.Metadata)) &&
 		sameJSONValue(current.ActualAssets, encodePublicationCommitJSON(witness.Assets)) &&
+		sameInitialLyricsProjectionJSON(current.InitialLyrics, witness.InitialLyrics) &&
 		current.QualityPolicyVersion == witness.QualityPolicyVersion
 }
 

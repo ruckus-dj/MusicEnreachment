@@ -28,6 +28,7 @@ type TrackPublication struct {
 	ActualAudio          json.RawMessage `bun:"actual_audio,type:jsonb"`
 	ActualMetadata       json.RawMessage `bun:"actual_metadata,type:jsonb"`
 	ActualAssets         json.RawMessage `bun:"actual_assets,type:jsonb"`
+	InitialLyrics        json.RawMessage `bun:"initial_lyrics,type:jsonb,nullzero"`
 	QualityPolicyVersion int             `bun:"quality_policy_version"`
 	ValidatedAt          time.Time       `bun:"validated_at"`
 }

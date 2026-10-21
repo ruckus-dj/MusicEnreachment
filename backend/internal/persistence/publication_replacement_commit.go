@@ -210,6 +210,7 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 		validatedAt := time.Now().UTC().Truncate(time.Microsecond)
 		projection := current
 		projection.Generation = attempt.CandidateGeneration
+		projection.InitialLyrics = nil
 		projection.Ownership = encodePublicationCommitJSON(PublicationCurrentOwnership{Version: 1, Identity: last.Identity})
 		projection.ActualAudio = encodePublicationCommitJSON(oldAudio)
 		projection.ActualMetadata = append(json.RawMessage(nil), exposure.Observation.ActualMetadata...)
@@ -219,7 +220,7 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 			return nil
 		}
 		witness := replacementPublicationCommitWitness{Version: replacementPublicationCommitVersion, Kind: "publication_replacement_commit", Guard: guard, PositionID: attempt.PositionID, Epoch: attempt.Epoch, ExpectedGeneration: *attempt.ExpectedGeneration, CandidateGeneration: attempt.CandidateGeneration, Projection: projection}
-		updated, err := tx.NewRaw(`UPDATE track_publication SET epoch=?, generation=?, relative_path=?, ownership=?::jsonb, actual_audio=?::jsonb, actual_metadata=?::jsonb, actual_assets=?::jsonb, quality_policy_version=?, validated_at=? WHERE position_id=? AND epoch=? AND generation=? AND relative_path=? AND ownership=?::jsonb AND actual_audio=?::jsonb AND actual_metadata=?::jsonb AND actual_assets=?::jsonb AND quality_policy_version=? AND validated_at=?`, projection.Epoch, projection.Generation, projection.RelativePath, string(projection.Ownership), string(projection.ActualAudio), string(projection.ActualMetadata), string(projection.ActualAssets), projection.QualityPolicyVersion, validatedAt, current.PositionID, current.Epoch, current.Generation, current.RelativePath, string(current.Ownership), string(current.ActualAudio), string(current.ActualMetadata), string(current.ActualAssets), current.QualityPolicyVersion, current.ValidatedAt).Exec(ctx)
+		updated, err := tx.NewRaw(`UPDATE track_publication SET epoch=?, generation=?, relative_path=?, ownership=?::jsonb, actual_audio=?::jsonb, actual_metadata=?::jsonb, actual_assets=?::jsonb, initial_lyrics=NULL, quality_policy_version=?, validated_at=? WHERE position_id=? AND epoch=? AND generation=? AND relative_path=? AND ownership=?::jsonb AND actual_audio=?::jsonb AND actual_metadata=?::jsonb AND actual_assets=?::jsonb AND quality_policy_version=? AND validated_at=?`, projection.Epoch, projection.Generation, projection.RelativePath, string(projection.Ownership), string(projection.ActualAudio), string(projection.ActualMetadata), string(projection.ActualAssets), projection.QualityPolicyVersion, validatedAt, current.PositionID, current.Epoch, current.Generation, current.RelativePath, string(current.Ownership), string(current.ActualAudio), string(current.ActualMetadata), string(current.ActualAssets), current.QualityPolicyVersion, current.ValidatedAt).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("commit replacement publication: update current row: %w", err)
 		}

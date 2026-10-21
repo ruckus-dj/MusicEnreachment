@@ -97,6 +97,16 @@ func (repository *SetupManagerRepository) AdvancePublicationStage(ctx context.Co
 			if !input.SupportsExecution() {
 				return errors.New("advance publication stage: frozen inputs do not support execution")
 			}
+			if attempt.IntentKind == "audio" && attempt.ExpectedGeneration == nil {
+				entries, journalErr := decodeJournal(attempt.MutationJournal)
+				if journalErr != nil {
+					return fmt.Errorf("advance publication stage: decode initial lyrics journal: %w", journalErr)
+				}
+				state, parseErr := parseInitialLyricsPrefix(entries, guard, input)
+				if parseErr != nil || state.outcome == nil || state.stageCount != map[bool]int{true: 1, false: 0}[expectedPhase == "staged"] || !samePublicationStageObservation(state.outcome.FinalObservation, observation) {
+					return errors.New("advance publication stage: initial lyrics outcome is missing or does not match observation")
+				}
+			}
 			if expectedPhase == "staged" && (len(observation.ActualAssets) == 0 || observation.QualityPolicyVersion != input.QualityPolicyVersion) {
 				return errors.New("advance publication stage: staged phase requires matching asset and quality-policy evidence")
 			}
@@ -104,6 +114,19 @@ func (repository *SetupManagerRepository) AdvancePublicationStage(ctx context.Co
 		journal, err := appendPublicationStageJournal(attempt.MutationJournal, expectedPhase, nextPhase, observation)
 		if err != nil {
 			return fmt.Errorf("advance publication stage: decode mutation journal: %w", err)
+		}
+		if attempt.IntentKind == "audio" && attempt.ExpectedGeneration == nil {
+			input, decodeErr := DecodePublicationInputs(attempt.FrozenInputs)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			entries, decodeErr := decodeJournal(journal)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if _, parseErr := parseInitialLyricsPrefix(entries, guard, input); parseErr != nil {
+				return fmt.Errorf("advance publication stage: proposed initial lyrics journal is invalid: %w", parseErr)
+			}
 		}
 		attemptResult, err := tx.NewRaw(`UPDATE track_publication_attempt SET phase=?, mutation_journal=?::jsonb WHERE operation_id=? AND phase=?`, nextPhase, string(journal), guard.OperationID, expectedPhase).Exec(ctx)
 		if err != nil {

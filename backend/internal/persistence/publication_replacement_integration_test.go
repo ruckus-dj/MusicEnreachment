@@ -282,12 +282,35 @@ func TestPublicationReplacementRejectsLostNamespaceReservationPostgreSQL(t *test
 }
 
 func updatePublicationAttemptToRewrite(ctx context.Context, f publicationExecutionFixture, generation uuid.UUID, frozenInputs json.RawMessage) error {
+	var rawJournal []byte
+	if err := f.db.NewRaw(`SELECT mutation_journal FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &rawJournal); err != nil {
+		return err
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(rawJournal, &entries); err != nil {
+		return err
+	}
+	retained := entries[:0]
+	for _, raw := range entries {
+		var header struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(raw, &header); err != nil {
+			return err
+		}
+		if header.Kind != PublicationInitialLyricsAcquisitionKind && header.Kind != PublicationInitialLyricsOutcomeKind {
+			retained = append(retained, raw)
+		}
+	}
 	tx, err := f.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `UPDATE track_publication_attempt SET expected_generation=?, intent_kind='rewrite', frozen_inputs=?::jsonb WHERE operation_id=?`, generation, string(frozenInputs), f.guard.OperationID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, string(mustJSON(retained)), f.guard.OperationID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE operation SET input_snapshot=jsonb_set(input_snapshot, '{intent_kind}', '"rewrite"'::jsonb) WHERE id=?`, f.guard.OperationID); err != nil {

@@ -18,25 +18,9 @@ import (
 func TestPublicationExposureRequiresDurablePreparationAndStagePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f := newPublicationExecutionFixture(t)
+	f, intent, observation := readyPublicationExposureFixture(t)
 	repo := NewSetupManagerRepository(f.db)
-	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
-		t.Fatalf("claim = %q, %v", outcome, err)
-	}
-	observation := newValidPublicationStageObservation()
-	if ok, err := repo.AdvancePublicationStage(ctx, f.guard, "preparing", observation); err != nil || !ok {
-		t.Fatalf("preparing = %t, %v", ok, err)
-	}
-	if ok, err := repo.AdvancePublicationStage(ctx, f.guard, "staged", observation); err != nil || !ok {
-		t.Fatalf("validated = %t, %v", ok, err)
-	}
-	intent := PublicationExposureIntent{
-		Version: PublicationExposureVersion, StagedPath: observation.RelativePath,
-		TargetCanonicalKey: "root/album/track.flac", TargetRelativePath: "root/album/track.flac",
-		Expectation: "absent", PrepOwner: uuid.New(),
-		OutputRootParent: PublicationDirectoryIdentity{Platform: "darwin", Volume: "volume", FileID: "root"},
-		TargetParent:     PublicationDirectoryIdentity{Platform: "darwin", Volume: "volume", FileID: "target"},
-	}
+	intent.PrepOwner = uuid.New()
 	if outcome, err := repo.BeginPublicationExposure(ctx, f.guard, intent, observation); err != nil || outcome != PublicationExposureStale {
 		t.Fatalf("exposure without preparation = %q, %v", outcome, err)
 	}
@@ -45,7 +29,7 @@ func TestPublicationExposureRequiresDurablePreparationAndStagePostgreSQL(t *test
 		t.Fatalf("attempt changed without preparation: phase=%q err=%v", attempt.Phase, err)
 	}
 	var journal []json.RawMessage
-	if err := json.Unmarshal(attempt.MutationJournal, &journal); err != nil || len(journal) != 2 {
+	if err := json.Unmarshal(attempt.MutationJournal, &journal); err != nil || len(journal) != 7 {
 		t.Fatalf("journal changed without preparation: entries=%d err=%v", len(journal), err)
 	}
 }
@@ -122,7 +106,8 @@ func readyPublicationExposureFixture(t *testing.T) (publicationExecutionFixture,
 	copiedSize, copiedMTime := int64(10), int64(40)
 	ready := base
 	ready.Step, ready.DirectoryIdentity, ready.InputSize, ready.InputMTime = "input_ready", &directory, &size, &mtime
-	ready.CopiedInput = &PublicationFileIdentity{SizeBytes: &copiedSize, MTime: &copiedMTime}
+	ready.CopiedInput = &PublicationFileIdentity{SizeBytes: &copiedSize, MTime: &copiedMTime,
+		SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	if outcome, err := repo.RecordPublicationPreparation(ctx, f.guard, ready); err != nil || outcome != PublicationPreparationRecorded {
 		t.Fatalf("preparation input_ready = %q, %v", outcome, err)
 	}
@@ -135,9 +120,27 @@ func readyPublicationExposureFixture(t *testing.T) (publicationExecutionFixture,
 	observation := PublicationStageObservation{
 		Version: 1, RelativePath: intent.StagedPath, Ownership: ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime},
 		PayloadSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		ActualAudio:   actualAudio, ActualMetadata: json.RawMessage(`{"version":1,"tags":{}}`),
+		ActualAudio:   actualAudio, ActualMetadata: json.RawMessage(`{"version":1,"tags":{"title":["Track"],"comment":[]}}`),
 		ActualAssets:         json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`),
 		QualityPolicyVersion: publication.QualityPolicyVersion,
+	}
+	acquisition := PublicationInitialLyricsAcquisitionRecord{
+		Version: PublicationInitialLyricsVersion, Kind: PublicationInitialLyricsAcquisitionKind,
+		Guard: f.guard, Authority: *input.InitialLyrics, Source: "none",
+	}
+	if outcome, err := repo.GuardedRecordPublicationInitialLyricsAcquisition(ctx, f.guard, acquisition); err != nil || outcome != PublicationOptionalLyricsRecorded {
+		t.Fatalf("initial lyrics acquisition = %q, %v", outcome, err)
+	}
+	identity := PublicationFileIdentity{SizeBytes: &copiedSize, MTime: &copiedMTime,
+		SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	outputIdentity := PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: observation.PayloadSHA256}
+	lyricsOutcome := PublicationInitialLyricsOutcomeRecord{
+		Version: PublicationInitialLyricsVersion, Kind: PublicationInitialLyricsOutcomeKind, Guard: f.guard,
+		Outcome: PublicationInitialLyricsNotRequested, Preparation: ready, InputIdentity: identity,
+		OutputIdentity: outputIdentity, FinalObservation: observation,
+	}
+	if outcome, err := repo.GuardedRecordPublicationInitialLyricsOutcome(ctx, f.guard, lyricsOutcome); err != nil || outcome != PublicationOptionalLyricsRecorded {
+		t.Fatalf("initial lyrics outcome = %q, %v", outcome, err)
 	}
 	for _, phase := range []string{"preparing", "staged"} {
 		if ok, err := repo.AdvancePublicationStage(ctx, f.guard, phase, observation); err != nil || !ok {
@@ -164,7 +167,7 @@ func TestPublicationExposureRecordsAndReplaysIdenticallyPostgreSQL(t *testing.T)
 		t.Fatalf("frozen publication inputs were not retained: intent=%q err=%v", frozen.IntentKind, err)
 	}
 	var journal []json.RawMessage
-	if err := json.Unmarshal(before.MutationJournal, &journal); err != nil || len(journal) != 6 {
+	if err := json.Unmarshal(before.MutationJournal, &journal); err != nil || len(journal) != 8 {
 		t.Fatalf("journal entries = %d, %v", len(journal), err)
 	}
 	var state, stage string
@@ -231,7 +234,7 @@ func assertPublicationExposureUnchanged(t *testing.T, ctx context.Context, f pub
 		t.Fatalf("attempt changed: phase=%q err=%v", attempt.Phase, err)
 	}
 	var entries []json.RawMessage
-	if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil || len(entries) != 5 {
+	if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil || len(entries) != 7 {
 		t.Fatalf("journal changed: entries=%d err=%v", len(entries), err)
 	}
 }

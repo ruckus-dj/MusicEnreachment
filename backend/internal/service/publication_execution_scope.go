@@ -312,7 +312,7 @@ func (scope *PublicationExecutionScope) beginInitialOutputCopy(reservation *publ
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unresolved != 0 || scope.initialCopy || scope.preInputCleanup != nil || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil {
+	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unresolved != 0 || scope.initialCopy || scope.preInputCleanup != nil || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.privateLyricsInstalled != nil {
 		return false
 	}
 	reservation.borrowed = true

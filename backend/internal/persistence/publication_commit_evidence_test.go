@@ -29,11 +29,16 @@ func commitEvidenceFixture(t *testing.T) (TrackPublicationAttempt, PublicationCo
 	inputMTime := int64(2)
 	ready.InputSize = &inputSize
 	ready.InputMTime = &inputMTime
+	inputDigest := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	ready.CopiedInput = &PublicationFileIdentity{SizeBytes: &inputSize, MTime: &inputMTime, SHA256: inputDigest}
 	n := int64(11)
 	m := int64(3)
-	stage := PublicationStageObservation{Version: 1, RelativePath: "private/stage", Ownership: ArtifactOwnership{ExpectedSize: &n, ExpectedMTime: &m}, PayloadSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ActualAudio: json.RawMessage(`{"version":1,"facts":{"stream_index":0,"codec":"flac","lossless":true,"container":"flac","supported_source_container":true,"alac_capabilities_verified":false}}`), ActualMetadata: json.RawMessage(`{"version":1,"tags":{"Artist/Album/track.flac":["kept"]}}`)}
+	stage := PublicationStageObservation{Version: 1, RelativePath: "private/stage", Ownership: ArtifactOwnership{ExpectedSize: &n, ExpectedMTime: &m}, PayloadSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ActualAudio: json.RawMessage(`{"version":1,"facts":{"stream_index":0,"codec":"flac","lossless":true,"container":"flac","supported_source_container":true,"alac_capabilities_verified":false}}`), ActualMetadata: json.RawMessage(`{"version":1,"tags":{"Artist/Album/track.flac":["kept"],"title":["Track"],"comment":[]}}`), ActualAssets: json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`), QualityPolicyVersion: input.QualityPolicyVersion}
 	intent := PublicationExposureIntent{Version: 1, StagedPath: stage.RelativePath, TargetCanonicalKey: "Artist/Album/track.flac", TargetRelativePath: "Artist/Album/track.flac", Expectation: "absent", PrepOwner: prep[0].OwnerToken, OutputRootParent: identity, TargetParent: identity}
-	entries := []any{prep[0], created, ready,
+	acquisition := PublicationInitialLyricsAcquisitionRecord{Version: PublicationInitialLyricsVersion, Kind: PublicationInitialLyricsAcquisitionKind, Guard: guard, Authority: *input.InitialLyrics, Source: "none"}
+	fileIdentity := PublicationFileIdentity{SizeBytes: &inputSize, MTime: &inputMTime, SHA256: inputDigest}
+	lyricsOutcome := PublicationInitialLyricsOutcomeRecord{Version: PublicationInitialLyricsVersion, Kind: PublicationInitialLyricsOutcomeKind, Guard: guard, Outcome: PublicationInitialLyricsNotRequested, Preparation: ready, InputIdentity: fileIdentity, OutputIdentity: PublicationFileIdentity{SizeBytes: &n, MTime: &m, SHA256: stage.PayloadSHA256}, FinalObservation: stage}
+	entries := []any{prep[0], created, ready, acquisition, lyricsOutcome,
 		struct {
 			Version     int                         `json:"version"`
 			Kind        string                      `json:"kind"`
@@ -76,7 +81,7 @@ func TestAssessFirstPublicationCommitReturnsPartialSourceFreeProjection(t *testi
 	if bytes.Contains([]byte(projectionJSON), []byte(attempt.FrozenInputs)) || bytes.Contains([]byte(projectionJSON), []byte(inputSourcePath(attempt))) {
 		t.Fatal("projection retained frozen/source input references")
 	}
-	if !reflect.DeepEqual(got.MissingRequirements, []string{"asset_outcomes", "quality_policy_provenance", "namespace_revalidation", "live_delivery_fence"}) {
+	if !reflect.DeepEqual(got.MissingRequirements, []string{"namespace_revalidation", "live_delivery_fence"}) {
 		t.Fatalf("unexpected requirements: %v", got.MissingRequirements)
 	}
 	if string(original) != string(mustPublicationCommitJSON(t, attempt)) {

@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func TestRecoveryStateOnlyClassifiesKnownFilesystemOutcomes(t *testing.T) {
@@ -162,11 +164,32 @@ func TestObservePublicationRecoveryDoesNotInspectPrivateChildrenOnIdentityMismat
 	owner := uuid.New()
 	inputSize := int64(len("source"))
 	inputMTime := int64(1)
+	lossless := true
+	installation := uuid.New()
+	input := persistence.PublicationInputs{
+		Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
+		IntentKind: "audio", InitialLyrics: &persistence.PublicationInitialLyricsInput{},
+		Format: publication.AudioFormatSource, DesiredTags: map[string][]string{},
+		Tools: []persistence.SourceAnalysisToolSelection{
+			{PackageKind: "ffmpeg", InstallationID: installation, Executable: "ffmpeg", RelativePath: "ffmpeg", Version: "1", VersionBanner: "ffmpeg 1"},
+			{PackageKind: "ffmpeg", InstallationID: installation, Executable: "ffprobe", RelativePath: "ffprobe", Version: "1", VersionBanner: "ffprobe 1"},
+		},
+		Audio: &persistence.PublicationAudioInput{
+			WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(),
+			ConfiguredRootPath: rootPath, InventoryRootPath: rootPath, RelativePath: "input.bin", SizeBytes: inputSize,
+			MTime: time.UnixMicro(inputMTime).UTC(), AnalysisPolicyVersion: 1, FFProbeVersion: "1",
+			AudioFacts: persistence.PersistedAudioFacts{Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true},
+		},
+	}
+	frozen, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
 	journal := make([]json.RawMessage, 0, 3)
 	for _, record := range []persistence.PublicationPreparationRecord{
 		{Version: persistence.PublicationPreparationVersion, Kind: "publication_preparation", Step: "intent", OperationID: op, ClaimUUID: claim, OwnerToken: owner, PrivateDirRel: "private", InputRel: "private/input.bin", OutputRel: "private/output.bin", ParentIdentity: rootID},
 		{Version: persistence.PublicationPreparationVersion, Kind: "publication_preparation", Step: "directory_created", OperationID: op, ClaimUUID: claim, OwnerToken: owner, PrivateDirRel: "private", InputRel: "private/input.bin", OutputRel: "private/output.bin", ParentIdentity: rootID, DirectoryIdentity: &wrongID},
-		{Version: persistence.PublicationPreparationVersion, Kind: "publication_preparation", Step: "input_ready", OperationID: op, ClaimUUID: claim, OwnerToken: owner, PrivateDirRel: "private", InputRel: "private/input.bin", OutputRel: "private/output.bin", ParentIdentity: rootID, DirectoryIdentity: &wrongID, InputSize: &inputSize, InputMTime: &inputMTime},
+		{Version: persistence.PublicationPreparationVersion, Kind: "publication_preparation", Step: "input_ready", OperationID: op, ClaimUUID: claim, OwnerToken: owner, PrivateDirRel: "private", InputRel: "private/input.bin", OutputRel: "private/output.bin", ParentIdentity: rootID, DirectoryIdentity: &wrongID, InputSize: &inputSize, InputMTime: &inputMTime, CopiedInput: &persistence.PublicationFileIdentity{SizeBytes: &inputSize, MTime: &inputMTime, SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},
 	} {
 		encoded, marshalErr := json.Marshal(record)
 		if marshalErr != nil {
@@ -179,7 +202,7 @@ func TestObservePublicationRecoveryDoesNotInspectPrivateChildrenOnIdentityMismat
 		t.Fatal(err)
 	}
 	snapshot := persistence.PublicationRecoverySnapshot{
-		Attempt:     persistence.TrackPublicationAttempt{OperationID: op, PositionID: position, Epoch: epoch, CandidateGeneration: generation, IntentKind: "audio", Phase: "preparing", MutationJournal: journalBytes},
+		Attempt:     persistence.TrackPublicationAttempt{OperationID: op, PositionID: position, Epoch: epoch, CandidateGeneration: generation, IntentKind: "audio", Phase: "preparing", MutationJournal: journalBytes, FrozenInputs: frozen},
 		Operation:   persistence.PublicationCommitOperationSnapshot{State: "failed", Stage: "preparing"},
 		Claim:       persistence.PublicationExecutionClaim{OperationID: op, ApplicationAttempt: 1, RiverJobID: 1, RiverAttempt: 1, ClaimUUID: claim, BootUUID: uuid.New(), DeliveryToken: "delivery", Epoch: epoch, State: "quiescent"},
 		OperationID: op, ApplicationAttempt: 1, RiverJobID: 1, CurrentEpoch: epoch, CurrentKnown: true,

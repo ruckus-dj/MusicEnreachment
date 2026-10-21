@@ -23,9 +23,59 @@ func newValidPublicationStageObservation() PublicationStageObservation {
 	return PublicationStageObservation{
 		Version: 1, RelativePath: "album/track.flac", PayloadSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		ActualAudio:          json.RawMessage(`{"version":1,"facts":{"stream_index":0,"codec":"flac","lossless":true,"container":"flac","supported_source_container":true}}`),
-		ActualMetadata:       json.RawMessage(`{"version":1,"tags":{"title":["track"]}}`),
+		ActualMetadata:       json.RawMessage(`{"version":1,"tags":{"title":["Track"],"comment":[]}}`),
 		ActualAssets:         json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`),
 		QualityPolicyVersion: publication.QualityPolicyVersion,
+	}
+}
+
+// recordValidInitialLyricsOutcome establishes the durable preparation and
+// outcome evidence required for first-publication stage transitions.
+func recordValidInitialLyricsOutcome(t *testing.T, f publicationExecutionFixture, repo *SetupManagerRepository, observation PublicationStageObservation) {
+	t.Helper()
+	ctx := context.Background()
+	input := publicationInputsFixture(t, "audio")
+	input.QualityPolicyVersion = publication.QualityPolicyVersion
+	directory := PublicationDirectoryIdentity{Platform: "darwin", Volume: "volume", FileID: "private-op"}
+	preparation := PublicationPreparationRecord{
+		Version: PublicationPreparationVersion, Kind: "publication_preparation", OperationID: f.guard.OperationID,
+		ClaimUUID: f.guard.ClaimUUID, OwnerToken: uuid.New(), PrivateDirRel: "album",
+		InputRel: "album/input.flac", OutputRel: observation.RelativePath,
+		ParentIdentity: PublicationDirectoryIdentity{Platform: "darwin", Volume: "volume", FileID: "root"},
+	}
+	for _, step := range []string{"intent", "directory_created"} {
+		record := preparation
+		record.Step = step
+		if step == "directory_created" {
+			record.DirectoryIdentity = &directory
+		}
+		if outcome, err := repo.RecordPublicationPreparation(ctx, f.guard, record); err != nil || outcome != PublicationPreparationRecorded {
+			t.Fatalf("preparation %s = %q, %v", step, outcome, err)
+		}
+	}
+	size, mtime, copiedSize, copiedMTime := int64(10), int64(20), int64(10), int64(40)
+	digest := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	preparation.Step, preparation.DirectoryIdentity, preparation.InputSize, preparation.InputMTime = "input_ready", &directory, &size, &mtime
+	preparation.CopiedInput = &PublicationFileIdentity{SizeBytes: &copiedSize, MTime: &copiedMTime, SHA256: digest}
+	if outcome, err := repo.RecordPublicationPreparation(ctx, f.guard, preparation); err != nil || outcome != PublicationPreparationRecorded {
+		t.Fatalf("preparation input_ready = %q, %v", outcome, err)
+	}
+	acquisition := PublicationInitialLyricsAcquisitionRecord{
+		Version: PublicationInitialLyricsVersion, Kind: PublicationInitialLyricsAcquisitionKind,
+		Guard: f.guard, Authority: *input.InitialLyrics, Source: "none",
+	}
+	if outcome, err := repo.GuardedRecordPublicationInitialLyricsAcquisition(ctx, f.guard, acquisition); err != nil || outcome != PublicationOptionalLyricsRecorded {
+		t.Fatalf("initial lyrics acquisition = %q, %v", outcome, err)
+	}
+	inputIdentity := PublicationFileIdentity{SizeBytes: &copiedSize, MTime: &copiedMTime, SHA256: digest}
+	outputIdentity := PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: observation.PayloadSHA256}
+	lyricsOutcome := PublicationInitialLyricsOutcomeRecord{
+		Version: PublicationInitialLyricsVersion, Kind: PublicationInitialLyricsOutcomeKind, Guard: f.guard,
+		Outcome: PublicationInitialLyricsNotRequested, Preparation: preparation, InputIdentity: inputIdentity,
+		OutputIdentity: outputIdentity, FinalObservation: observation,
+	}
+	if outcome, err := repo.GuardedRecordPublicationInitialLyricsOutcome(ctx, f.guard, lyricsOutcome); err != nil || outcome != PublicationOptionalLyricsRecorded {
+		t.Fatalf("initial lyrics outcome = %q, %v", outcome, err)
 	}
 }
 
@@ -241,6 +291,9 @@ func TestPublicationStageAdvancesWithTypedAppendOnlyJournalPostgreSQL(t *testing
 	}
 	frozenBefore := append(json.RawMessage(nil), before.FrozenInputs...)
 	observation := newValidPublicationStageObservation()
+	size, mtime := int64(10), int64(20)
+	observation.Ownership = ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime}
+	recordValidInitialLyricsOutcome(t, f, repo, observation)
 	if ok, err := repo.AdvancePublicationStage(context.Background(), f.guard, "staged", observation); err != nil || ok {
 		t.Fatalf("wrong-order stage = %t, %v", ok, err)
 	}
@@ -255,7 +308,7 @@ func TestPublicationStageAdvancesWithTypedAppendOnlyJournalPostgreSQL(t *testing
 		t.Fatalf("attempt = %+v, %v", attempt, err)
 	}
 	var entries []map[string]json.RawMessage
-	if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil || len(entries) != 2 {
+	if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil || len(entries) != 7 {
 		t.Fatalf("journal = %s, %v", attempt.MutationJournal, err)
 	}
 	if !sameJSONValue(attempt.FrozenInputs, frozenBefore) {
@@ -494,8 +547,15 @@ func TestPublicationPreparationRequiresPreparingPhasePostgreSQL(t *testing.T) {
 	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
 		t.Fatalf("claim = %q, %v", outcome, err)
 	}
-	if changed, err := repo.AdvancePublicationStage(context.Background(), f.guard, "preparing", newValidPublicationStageObservation()); err != nil || !changed {
+	observation := newValidPublicationStageObservation()
+	size, mtime := int64(10), int64(20)
+	observation.Ownership = ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime}
+	recordValidInitialLyricsOutcome(t, f, repo, observation)
+	if changed, err := repo.AdvancePublicationStage(context.Background(), f.guard, "preparing", observation); err != nil || !changed {
 		t.Fatalf("advance stage = %t, %v", changed, err)
+	}
+	if changed, err := repo.AdvancePublicationStage(context.Background(), f.guard, "staged", observation); err != nil || !changed {
+		t.Fatalf("advance staged phase = %t, %v", changed, err)
 	}
 	if outcome, err := repo.RecordPublicationPreparation(context.Background(), f.guard, publicationPreparationFixtureRecord(f.guard)); err != nil || outcome != PublicationPreparationStale {
 		t.Fatalf("post-preparing preparation = %q, %v", outcome, err)

@@ -57,6 +57,16 @@ func (repository *SetupManagerRepository) BeginPublicationExposure(ctx context.C
 		if decodeErr != nil || !decoded.SupportsExecution() {
 			return nil
 		}
+		initialLyrics := attempt.IntentKind == "audio" && attempt.ExpectedGeneration == nil
+		if initialLyrics {
+			entries, journalErr := decodeJournal(attempt.MutationJournal)
+			if journalErr != nil {
+				return journalErr
+			}
+			if _, evidenceErr := firstPublicationInitialLyricsEvidence(entries, guard, decoded); evidenceErr != nil {
+				return nil
+			}
+		}
 		if attempt.Phase == "exposing" {
 			if operation.Stage != "exposing" {
 				return nil
@@ -77,6 +87,16 @@ func (repository *SetupManagerRepository) BeginPublicationExposure(ctx context.C
 		if err := validateExposureNamespace(ctx, tx, attempt, intent); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
+			}
+			if initialLyrics {
+				entries, journalErr := decodeJournal(attempt.MutationJournal)
+				if journalErr != nil {
+					return journalErr
+				}
+				state, evidenceErr := firstPublicationInitialLyricsEvidence(entries, guard, input)
+				if evidenceErr != nil || !samePublicationStageObservation(state.outcome.FinalObservation, staged) {
+					return nil
+				}
 			}
 			return err
 		}

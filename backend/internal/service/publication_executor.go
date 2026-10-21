@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -22,6 +25,7 @@ type PublicationExecutor struct {
 	coordinator *publication.Coordinator
 	bootUUID    uuid.UUID
 	commands    PublicationCommandRunner
+	lyrics      *PublicationLyricsResolver
 }
 
 func NewPublicationExecutor(
@@ -32,9 +36,11 @@ func NewPublicationExecutor(
 	bootUUID uuid.UUID,
 	commands PublicationCommandRunner,
 ) *PublicationExecutor {
+	client, _ := lrclib.NewClient(&http.Client{Timeout: 10 * time.Second})
 	return &PublicationExecutor{
 		repository: repository, registry: registry, platform: platform,
 		coordinator: coordinator, bootUUID: bootUUID, commands: commands,
+		lyrics: NewPublicationLyricsResolver(registry, client),
 	}
 }
 
@@ -129,7 +135,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 			}
 			preparer.HoldUUID = hold
 		}
-		_, err := executeGenericPublication(ctx, scope, executor.repository, input, preparer, attempt, executor.platform)
+		_, err := executeGenericPublication(ctx, scope, executor.repository, input, preparer, attempt, executor.platform, executor.lyrics)
 		return err
 	}
 	prepared, err := preparer.prepareManualLyricsFLAC(ctx, guard, persistence.PublicationDeliveryAcquired, true)

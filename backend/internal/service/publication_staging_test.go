@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
@@ -124,6 +123,8 @@ func pubStageSetup(t *testing.T, repo *pubStageRepo, command pubStageCommand, va
 	events := []string{}
 	repo.events = &events
 	command.events = &events
+	rewrite := makeRewriteFixture(t)
+	t.Cleanup(func() { _ = rewrite.preparer.OutputParent.Close() })
 	dir := t.TempDir()
 	managedToolsRoot := filepath.Join(dir, "managed-tools")
 	inputPath := filepath.Join(dir, "input.flac")
@@ -142,7 +143,7 @@ func pubStageSetup(t *testing.T, repo *pubStageRepo, command pubStageCommand, va
 		t.Fatal(err)
 	}
 	runner := PublicationStagingRunner{Repository: repo, PinnedTools: pubStageTools{events: &events, root: managedToolsRoot}, Metadata: pubStageWriter{events: &events}, Validator: pubStageValidator{&events, validateErr}}
-	return runner, scope, persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", InitialLyrics: &persistence.PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}, Format: publication.AudioFormatMKA, DesiredTags: map[string][]string{"title": {"track"}}, Tools: []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7", VersionBanner: "ffmpeg version 7"}, {PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7", VersionBanner: "ffmpeg version 7"}}, Audio: &persistence.PublicationAudioInput{WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(), ConfiguredRootPath: dir, InventoryRootPath: dir, RelativePath: "input.flac", MTime: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), AnalysisPolicyVersion: 1, FFProbeVersion: "7", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: pubStageBool(true), Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}}}, stage, &events
+	return runner, scope, persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "rewrite", Format: publication.AudioFormatMKA, DesiredTags: map[string][]string{"title": {"track"}}, Tools: []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7", VersionBanner: "ffmpeg version 7"}, {PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7", VersionBanner: "ffmpeg version 7"}}, Rewrite: rewrite.repo.input.Rewrite}, stage, &events
 }
 func pubStageBool(v bool) *bool { return &v }
 
@@ -392,7 +393,7 @@ func TestPublicationStagingRejectsUnsupervisedRealValidatorPointer(t *testing.T)
 func TestPublicationStagingRejectsInvalidFrozenInputsBeforeMutation(t *testing.T) {
 	repo := &pubStageRepo{}
 	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
-	input.Audio.RelativePath = ""
+	input.Rewrite.RelativePath = ""
 	if _, err := runner.Run(context.Background(), scope, input, stage); err == nil {
 		t.Fatal("expected invalid frozen inputs")
 	}

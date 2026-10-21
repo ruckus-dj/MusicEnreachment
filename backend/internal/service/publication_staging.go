@@ -71,6 +71,7 @@ type PublicationStagingRunner struct {
 	PinnedTools PublicationPinnedTools
 	Metadata    PublicationMetadataWriter
 	Validator   PublicationStageValidator
+	Lyrics      *PublicationLyricsResolver
 }
 
 // Run executes only under a newly acquired scope bound to the same delivery.
@@ -200,6 +201,34 @@ func (runner PublicationStagingRunner) runWithValidatedStage(ctx context.Context
 			err = errors.New("pinned ffmpeg path is not absolute")
 		}
 		return result, fmt.Errorf("resolve pinned publication ffmpeg: %w", err)
+	}
+	if input.IntentKind == "audio" {
+		observed, err := runner.runInitialLyricsStage(ctx, scope, reservation, input, stage, func(ctx context.Context) error {
+			if err := check(); err != nil {
+				return err
+			}
+			_, err := scope.Run(ctx, ffmpeg, args...)
+			return err
+		}, check)
+		if err != nil {
+			return result, err
+		}
+		for _, phase := range []string{"preparing", "staged"} {
+			if err := check(); err != nil {
+				return result, err
+			}
+			if changed, err := runner.Repository.AdvancePublicationStage(ctx, guard, phase, observed.Clone()); err != nil || !changed {
+				return result, errors.Join(errors.New("initial publication stage transition was not accepted"), err)
+			}
+		}
+		result = PublicationStageObservation{Ownership: observed.Ownership, Audio: observed.ActualAudio, Metadata: observed.ActualMetadata,
+			SHA256: observed.PayloadSHA256, Assets: observed.ActualAssets, QualityPolicyVersion: observed.QualityPolicyVersion}
+		if continuation != nil {
+			if err := continuation(ctx, observed.Clone(), stage, reservation); err != nil {
+				return result, err
+			}
+		}
+		return result, nil
 	}
 	if _, err := scope.Run(ctx, ffmpeg, args...); err != nil {
 		return result, fmt.Errorf("prepare publication audio: %w", err)

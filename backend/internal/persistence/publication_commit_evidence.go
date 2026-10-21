@@ -25,19 +25,21 @@ type PublicationCommitMetadata struct {
 // FirstPublicationCommitProjection is consistency evidence only. It is not a
 // filesystem proof or authorization to commit.
 type FirstPublicationCommitProjection struct {
-	Version                int                         `json:"version"`
-	PositionID             uuid.UUID                   `json:"position_id"`
-	Epoch                  uuid.UUID                   `json:"epoch"`
-	CandidateGeneration    uuid.UUID                   `json:"candidate_generation"`
-	TargetRelativePath     string                      `json:"target_relative_path"`
-	CurrentAudio           PublicationCurrentAudio     `json:"current_audio"`
-	Ownership              PublicationCurrentOwnership `json:"ownership"`
-	Metadata               PublicationCommitMetadata   `json:"metadata"`
-	ActualAssets           PublicationAssetOutcomes    `json:"actual_assets"`
-	QualityPolicyVersion   int                         `json:"quality_policy_version"`
-	NamespaceManifest      []PublicationNamespaceNode  `json:"namespace_manifest"`
-	EvidenceClassification string                      `json:"evidence_classification"`
-	MissingRequirements    []string                    `json:"missing_requirements"`
+	Version                     int                                 `json:"version"`
+	PositionID                  uuid.UUID                           `json:"position_id"`
+	Epoch                       uuid.UUID                           `json:"epoch"`
+	CandidateGeneration         uuid.UUID                           `json:"candidate_generation"`
+	TargetRelativePath          string                              `json:"target_relative_path"`
+	CurrentAudio                PublicationCurrentAudio             `json:"current_audio"`
+	Ownership                   PublicationCurrentOwnership         `json:"ownership"`
+	Metadata                    PublicationCommitMetadata           `json:"metadata"`
+	ActualAssets                PublicationAssetOutcomes            `json:"actual_assets"`
+	InitialLyrics               *PublicationInitialLyricsProjection `json:"initial_lyrics,omitempty"`
+	InitialLyricsEvidenceSHA256 string                              `json:"initial_lyrics_evidence_sha256,omitempty"`
+	QualityPolicyVersion        int                                 `json:"quality_policy_version"`
+	NamespaceManifest           []PublicationNamespaceNode          `json:"namespace_manifest"`
+	EvidenceClassification      string                              `json:"evidence_classification"`
+	MissingRequirements         []string                            `json:"missing_requirements"`
 }
 
 // AssessFirstPublicationCommit is a pure classifier over supplied snapshots.
@@ -65,6 +67,14 @@ func AssessFirstPublicationCommit(attempt TrackPublicationAttempt, operation Pub
 	}
 	manifest := manifestEnvelope.Nodes
 	entries, err := decodeJournal(attempt.MutationJournal)
+	if err != nil {
+		return FirstPublicationCommitProjection{}, err
+	}
+	initialState, err := firstPublicationInitialLyricsEvidence(entries, guard, input)
+	if err != nil {
+		return FirstPublicationCommitProjection{}, err
+	}
+	lyricsProjection, err := initialLyricsProjection(*initialState.acquisition, *initialState.outcome, attempt.CandidateGeneration)
 	if err != nil {
 		return FirstPublicationCommitProjection{}, err
 	}
@@ -115,6 +125,21 @@ func AssessFirstPublicationCommit(attempt TrackPublicationAttempt, operation Pub
 				return FirstPublicationCommitProjection{}, errors.New("stage journal records are duplicated or out of order")
 			}
 			stageSteps = append(stageSteps, r.From+":"+r.To)
+		case PublicationInitialLyricsAcquisitionKind:
+			var r PublicationInitialLyricsAcquisitionRecord
+			if phase != 0 || decodeStrictJSON(raw, &r) != nil || !sameJSONValue(mustJSON(&r), mustJSON(initialState.acquisition)) {
+				return FirstPublicationCommitProjection{}, errors.New("initial lyrics acquisition does not match strict prefix")
+			}
+		case "publication_candidate_rebuild":
+			var r PublicationCandidateRebuildRecord
+			if phase != 0 || decodeStrictJSON(raw, &r) != nil {
+				return FirstPublicationCommitProjection{}, errors.New("initial lyrics rebuild does not match strict prefix")
+			}
+		case PublicationInitialLyricsOutcomeKind:
+			var r PublicationInitialLyricsOutcomeRecord
+			if phase != 0 || decodeStrictJSON(raw, &r) != nil || !sameJSONValue(mustJSON(&r), mustJSON(initialState.outcome)) {
+				return FirstPublicationCommitProjection{}, errors.New("initial lyrics outcome does not match strict prefix")
+			}
 		case "publication_exposure":
 			var r publicationExposureJournalRecord
 			if phase != 2 || decodeStrictJSON(raw, &r) != nil || r.Version != PublicationExposureVersion || r.Kind != h.Kind || r.From != "validated" || r.To != "exposing" || r.Guard != guard || r.PositionID != attempt.PositionID || r.Epoch != attempt.Epoch || r.CandidateGeneration != attempt.CandidateGeneration || r.ExpectedGeneration != nil || !validExposureIntent(r.Intent) || r.Intent.Expectation != "absent" || string(bytes.TrimSpace(r.Current)) != "null" {
@@ -186,7 +211,7 @@ func AssessFirstPublicationCommit(attempt TrackPublicationAttempt, operation Pub
 			missing = removeCommitRequirement(missing, "quality_policy_provenance")
 		}
 	}
-	return FirstPublicationCommitProjection{Version: 1, PositionID: attempt.PositionID, Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, TargetRelativePath: targetRelativePath, CurrentAudio: audio, Ownership: PublicationCurrentOwnership{Version: 1, Identity: installed.Identity}, Metadata: metadata, ActualAssets: assetOutcomes.Clone(), QualityPolicyVersion: input.QualityPolicyVersion, NamespaceManifest: append([]PublicationNamespaceNode(nil), manifest...), EvidenceClassification: "evidence_consistency_only_namespace_not_revalidated", MissingRequirements: missing}, nil
+	return FirstPublicationCommitProjection{Version: 1, PositionID: attempt.PositionID, Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, TargetRelativePath: targetRelativePath, CurrentAudio: audio, Ownership: PublicationCurrentOwnership{Version: 1, Identity: installed.Identity}, Metadata: metadata, ActualAssets: assetOutcomes.Clone(), InitialLyrics: lyricsProjection, InitialLyricsEvidenceSHA256: initialLyricsEvidenceDigest(*initialState.acquisition, *initialState.outcome), QualityPolicyVersion: input.QualityPolicyVersion, NamespaceManifest: append([]PublicationNamespaceNode(nil), manifest...), EvidenceClassification: "evidence_consistency_only_namespace_not_revalidated", MissingRequirements: missing}, nil
 }
 
 func removeCommitRequirement(requirements []string, target string) []string {

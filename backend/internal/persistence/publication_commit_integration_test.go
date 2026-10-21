@@ -127,6 +127,16 @@ func readyFirstPublicationCommitFixture(t *testing.T) (publicationExecutionFixtu
 			if err != nil {
 				t.Fatal(err)
 			}
+		} else if record.Kind == PublicationInitialLyricsOutcomeKind {
+			var outcome PublicationInitialLyricsOutcomeRecord
+			if err := json.Unmarshal(raw, &outcome); err != nil {
+				t.Fatal(err)
+			}
+			outcome.FinalObservation = staged
+			entries[i], err = json.Marshal(outcome)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	journal, err := json.Marshal(entries)
@@ -139,6 +149,7 @@ func readyFirstPublicationCommitFixture(t *testing.T) (publicationExecutionFixtu
 	}
 	input.Version = PublicationInputsVersion
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
+	input.DesiredTags = map[string][]string{"TITLE": {"Track"}}
 	frozen, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)

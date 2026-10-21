@@ -64,6 +64,20 @@ func (repository *SetupManagerRepository) RecordPublicationCandidateInstalled(ct
 		if attempt.Phase != "exposing" || operation.Stage != "exposing" || attempt.ExpectedGeneration != nil || intent.Expectation != "absent" {
 			return nil
 		}
+		if attempt.IntentKind == "audio" {
+			input, decodeErr := DecodePublicationInputs(attempt.FrozenInputs)
+			if decodeErr != nil || input.IntentKind != "audio" {
+				return nil
+			}
+			entries, journalErr := decodeJournal(attempt.MutationJournal)
+			if journalErr != nil {
+				return journalErr
+			}
+			state, evidenceErr := firstPublicationInitialLyricsEvidence(entries, guard, input)
+			if evidenceErr != nil || !samePublicationStageObservation(state.outcome.FinalObservation, validatedStage) {
+				return nil
+			}
+		}
 		var current TrackPublication
 		err = tx.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx)
 		if err == nil {
