@@ -371,6 +371,28 @@ func TestPublicationStagePreparerValidatesCopiedInputAndJournalsInOrder(t *testi
 	if want := []string{"intent", "directory_created", "input_ready"}; !reflect.DeepEqual(steps, want) {
 		t.Fatalf("journal steps = %v, want %v", steps, want)
 	}
+	ready := fixture.repo.records[2]
+	if ready.InputSize == nil || *ready.InputSize != fixture.repo.input.Audio.SizeBytes || ready.InputMTime == nil || *ready.InputMTime != fixture.repo.input.Audio.MTime.UnixMicro() {
+		t.Fatalf("input_ready source facts = size %v mtime %v, want size %d mtime %d", ready.InputSize, ready.InputMTime, fixture.repo.input.Audio.SizeBytes, fixture.repo.input.Audio.MTime.UnixMicro())
+	}
+	if ready.CopiedInput == nil || ready.CopiedInput.SizeBytes == nil || ready.CopiedInput.MTime == nil {
+		t.Fatalf("input_ready copied input facts = %#v, want copied size, mtime, and digest", ready.CopiedInput)
+	}
+	sourceBytes, err := os.ReadFile(fixture.source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(sourceBytes)
+	if ready.CopiedInput.SHA256 != hex.EncodeToString(digest[:]) {
+		t.Fatalf("copied input SHA-256 = %q, want digest of copied bytes %q", ready.CopiedInput.SHA256, hex.EncodeToString(digest[:]))
+	}
+	inputInfo, err := os.Stat(stage.Paths().InputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *ready.CopiedInput.SizeBytes != inputInfo.Size() || *ready.CopiedInput.MTime != inputInfo.ModTime().UnixMicro() {
+		t.Fatalf("copied input facts = size %d mtime %d, want staged file size %d mtime %d", *ready.CopiedInput.SizeBytes, *ready.CopiedInput.MTime, inputInfo.Size(), inputInfo.ModTime().UnixMicro())
+	}
 	parentIdentity, err := fixture.preparer.OutputParent.Identity(context.Background())
 	if err != nil {
 		t.Fatal(err)

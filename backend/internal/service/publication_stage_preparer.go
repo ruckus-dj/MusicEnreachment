@@ -347,6 +347,39 @@ func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard pers
 	}
 	inputInfo, inputStatErr := destination.Stat(ctx)
 	copyErr = errors.Join(copyErr, inputStatErr)
+	var copiedDigest [sha256.Size]byte
+	if copyErr == nil {
+		copyErr = destination.BorrowRead(ctx, func(file *os.File) error {
+			before, err := file.Stat()
+			if err != nil {
+				return err
+			}
+			if inputInfo == nil || !os.SameFile(inputInfo, before) || before.Size() != sourceSize {
+				return errors.New("copied publication input identity changed before hashing")
+			}
+			digest, err := hashBorrowedFile(ctx, file)
+			if err != nil {
+				return err
+			}
+			after, err := file.Stat()
+			if err != nil {
+				return err
+			}
+			if !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+				return errors.New("copied publication input changed while hashing")
+			}
+			copiedDigest = digest
+			return nil
+		})
+		if copyErr == nil {
+			afterHash, err := destination.Stat(ctx)
+			if err != nil {
+				copyErr = err
+			} else if afterHash == nil || !os.SameFile(inputInfo, afterHash) || inputInfo.Size() != afterHash.Size() || !inputInfo.ModTime().Equal(afterHash.ModTime()) {
+				copyErr = errors.New("copied publication input changed while hashing")
+			}
+		}
+	}
 	copyErr = errors.Join(copyErr, destination.Close())
 	destinationClosed = true
 	copyErr = errors.Join(copyErr, source.Close())
@@ -371,7 +404,7 @@ func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard pers
 	ready.Step = "input_ready"
 	ready.InputSize = &size
 	ready.InputMTime = &mtime
-	ready.CopiedInput = &persistence.PublicationFileIdentity{SizeBytes: &copiedSize, MTime: &copiedMTime}
+	ready.CopiedInput = &persistence.PublicationFileIdentity{SizeBytes: &copiedSize, MTime: &copiedMTime, SHA256: hex.EncodeToString(copiedDigest[:])}
 	outcome, err = preparer.Repository.RecordPublicationPreparation(ctx, guard, ready)
 	if err != nil {
 		return nil, err
