@@ -35,8 +35,9 @@ func TestCurrentSchemaRollbackPreservesRiverAndUnrelatedData(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The five baselines contain 85 tables; later publication, reconciliation,
-	// cleanup ownership, explicit retry, and per-item resolution add sixteen.
-	const currentApplicationTables = 85 + 16
+	// cleanup ownership, explicit retry, per-item resolution, and the current
+	// frontier add nineteen.
+	const currentApplicationTables = 85 + 19
 	if tableCount != currentApplicationTables {
 		t.Fatalf("current schema contains %d application tables, want %d", tableCount, currentApplicationTables)
 	}

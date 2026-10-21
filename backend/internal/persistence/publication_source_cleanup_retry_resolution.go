@@ -38,6 +38,7 @@ type publicationSourceCleanupRetryResolutionProof struct {
 	itemBinding       publicationSourceCleanupRetryItemBinding
 	originalDone      bool
 	originalUncertain bool
+	effectiveKind     string
 }
 
 // ResolvePublicationSourceCleanupRetryItem durably starts a one-shot item
@@ -63,7 +64,7 @@ func (repository *SetupManagerRepository) ResolvePublicationSourceCleanupRetryIt
 			return err
 		}
 		if existing != nil {
-			if existing.CompletedAt == nil || existing.ResolutionKind == nil || *existing.ResolutionKind == "original_native_completed" && !proof.originalDone || !publicationSourceCleanupRetryResolutionMatches(*existing, proof.grant.ID, itemID, guard) {
+			if existing.CompletedAt == nil || existing.ResolutionKind == nil || proof.effectiveKind != "" && *existing.ResolutionKind != proof.effectiveKind || *existing.ResolutionKind == "original_native_completed" && !proof.originalDone || !publicationSourceCleanupRetryResolutionMatches(*existing, proof.grant.ID, itemID, guard) {
 				return nil
 			}
 			ackOnly = true
@@ -117,7 +118,10 @@ func (repository *SetupManagerRepository) ResolvePublicationSourceCleanupRetryIt
 		}
 		var kind string
 		if originalDone {
-			kind = "original_native_completed"
+			kind = proof.effectiveKind
+			if kind == "" {
+				kind = "original_native_completed"
+			}
 		} else {
 			var frozen publicationSourceCleanupSnapshot
 			if err := decodeStrictJSON(proof.itemBinding.SourceSnapshot, &frozen); err != nil {
@@ -259,6 +263,25 @@ func (repository *SetupManagerRepository) lockPublicationSourceCleanupRetryResol
 	if grant.OriginalOperationID != proof.oldGuard.OperationID || grant.OriginalApplicationAttempt != proof.oldGuard.ApplicationAttempt || grant.OriginalRiverJobID != proof.oldGuard.RiverJobID || grant.OriginalClaimUUID != proof.oldGuard.ClaimUUID || grant.PositionID != guard.PositionID || grant.Epoch != guard.Epoch || grant.ConsumedApplicationAttempt == nil || *grant.ConsumedApplicationAttempt != guard.ApplicationAttempt || grant.ConsumedRiverJobID == nil || *grant.ConsumedRiverJobID != guard.RiverJobID || grant.ConsumedClaimUUID == nil || *grant.ConsumedClaimUUID != guard.ClaimUUID {
 		return proof, nil, false, nil
 	}
+	var frontierExists bool
+	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_cleanup_recovery_state WHERE original_operation_id=?)`, proof.oldGuard.OperationID).Scan(ctx, &frontierExists); err != nil {
+		return proof, nil, false, err
+	}
+	if grant.FrontierRevision == nil && frontierExists || grant.FrontierRevision != nil && !frontierExists {
+		return proof, nil, false, nil
+	}
+	if grant.FrontierRevision != nil {
+		var revision uuid.UUID
+		if err := tx.NewRaw(`SELECT revision FROM source_cleanup_recovery_state WHERE original_operation_id=?`, proof.oldGuard.OperationID).Scan(ctx, &revision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return proof, nil, false, nil
+			}
+			return proof, nil, false, fmt.Errorf("resolve explicit publication source cleanup retry item: read frontier revision: %w", err)
+		}
+		if revision != *grant.FrontierRevision {
+			return proof, nil, false, nil
+		}
+	}
 	freshBinding, err := readPublicationSourceCleanupRetryBinding(ctx, tx, proof.oldGuard, oldClaim, originalSummary)
 	if err != nil {
 		return proof, nil, false, fmt.Errorf("resolve explicit publication source cleanup retry item: reread retained binding: %w", err)
@@ -288,6 +311,23 @@ func (repository *SetupManagerRepository) lockPublicationSourceCleanupRetryResol
 	}
 	if proof.itemBinding.ItemID != itemID {
 		return proof, nil, false, nil
+	}
+	if grant.FrontierRevision != nil {
+		var frontier SourceCleanupRecoveryItem
+		if err := tx.NewSelect().Model(&frontier).Where("original_operation_id=? AND item_id=?", proof.oldGuard.OperationID, itemID).Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return proof, nil, false, nil
+			}
+			return proof, nil, false, fmt.Errorf("resolve explicit publication source cleanup retry item: read pinned frontier item: %w", err)
+		}
+		proof.originalDone = frontier.Kind == "native_removed" || frontier.Kind == "absent_after_explicit_retry" || frontier.Kind == "original_native_completed"
+		proof.originalUncertain = frontier.Kind == "uncertain"
+		if proof.originalDone {
+			proof.effectiveKind = frontier.Kind
+		}
+	}
+	if proof.originalDone && proof.effectiveKind == "" {
+		proof.effectiveKind = "original_native_completed"
 	}
 	var resolution SourceCleanupExplicitRetryResolution
 	err = tx.NewSelect().Model(&resolution).Where("retry_id=? AND item_id=?", grant.ID, itemID).For("UPDATE").Scan(ctx)

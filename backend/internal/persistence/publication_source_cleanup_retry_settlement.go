@@ -82,9 +82,45 @@ func (repository *SetupManagerRepository) SettlePublicationSourceCleanupExplicit
 		if len(resolutions) != len(items) {
 			return nil
 		}
+		frontierKinds := map[uuid.UUID]SourceCleanupRecoveryItem{}
+		if grant.FrontierRevision != nil {
+			var revision uuid.UUID
+			if err := tx.NewRaw(`SELECT revision FROM source_cleanup_recovery_state WHERE original_operation_id=? FOR UPDATE`, proof.oldGuard.OperationID).Scan(ctx, &revision); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("settle explicit publication source cleanup retry: read pinned frontier revision: %w", err)
+			}
+			if revision != *grant.FrontierRevision {
+				return nil
+			}
+			var current []SourceCleanupRecoveryItem
+			if err := tx.NewSelect().Model(&current).Where("original_operation_id=?", proof.oldGuard.OperationID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("settle explicit publication source cleanup retry: read current frontier items: %w", err)
+			}
+			for _, v := range current {
+				frontierKinds[v.ItemID] = v
+			}
+		}
 		for i, resolution := range resolutions {
 			item := items[i]
-			if resolution.ItemID != item.ItemID || !publicationSourceCleanupRetryResolutionMatches(resolution, grant.ID, item.ItemID, guard) || resolution.CompletedAt == nil || resolution.CompletedAt.IsZero() || resolution.ResolutionKind == nil || !validRetryResolutionKind(*resolution.ResolutionKind, item) {
+			validKind := false
+			if frontier, ok := frontierKinds[item.ItemID]; ok {
+				switch frontier.Kind {
+				case "never_started":
+					validKind = resolution.ResolutionKind != nil && *resolution.ResolutionKind == "native_removed"
+				case "uncertain":
+					validKind = resolution.ResolutionKind != nil && (*resolution.ResolutionKind == "native_removed" || *resolution.ResolutionKind == "absent_after_explicit_retry")
+				case "native_removed", "absent_after_explicit_retry", "original_native_completed":
+					validKind = resolution.ResolutionKind != nil && *resolution.ResolutionKind == frontier.Kind
+				}
+			} else {
+				validKind = resolution.ResolutionKind != nil && validRetryResolutionKind(*resolution.ResolutionKind, item)
+			}
+			if resolution.ItemID != item.ItemID || !publicationSourceCleanupRetryResolutionMatches(resolution, grant.ID, item.ItemID, guard) || resolution.CompletedAt == nil || resolution.CompletedAt.IsZero() || !validKind {
 				return nil
 			}
 		}
@@ -139,6 +175,12 @@ func retryMutationTime(value *string) (time.Time, bool) {
 }
 
 func terminalizeRetryAndDeleteEvidence(ctx context.Context, tx bun.Tx, guard, oldGuard PublicationSourceCleanupDeliveryGuard, grant SourceCleanupExplicitRetry, refs []SourceCleanupExplicitRetryItem, resolutions []SourceCleanupExplicitRetryResolution, original Operation) error {
+	var frontierItems int64
+	if grant.FrontierRevision != nil {
+		if err := tx.NewRaw(`SELECT count(*) FROM source_cleanup_recovery_item WHERE original_operation_id=?`, oldGuard.OperationID).Scan(ctx, &frontierItems); err != nil {
+			return fmt.Errorf("settle explicit publication source cleanup retry: count current frontier: %w", err)
+		}
+	}
 	update, err := tx.NewRaw(`UPDATE operation SET state='succeeded',stage='finished',finished_at=now(),updated_at=now(),safe_error=NULL WHERE id=? AND state='running' AND stage='cleanup_retry_running' AND attempt=? AND river_job_id=?`, guard.OperationID, guard.ApplicationAttempt, guard.RiverJobID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("settle explicit publication source cleanup retry: terminalize retry: %w", err)
@@ -154,13 +196,19 @@ func terminalizeRetryAndDeleteEvidence(ctx context.Context, tx bun.Tx, guard, ol
 		{`DELETE FROM source_cleanup_explicit_retry_item WHERE retry_id=? AND original_operation_id=?`, "delete retry item references", []any{grant.ID, oldGuard.OperationID}},
 		{`DELETE FROM source_cleanup_explicit_retry WHERE id=? AND recovery_operation_id=?`, "delete retry grant", []any{grant.ID, guard.OperationID}},
 		{`DELETE FROM source_cleanup_owner WHERE operation_id=?`, "delete original cleanup owners", []any{oldGuard.OperationID}},
+		{`DELETE FROM source_cleanup_recovery_item WHERE original_operation_id=?`, "delete current cleanup frontier items", []any{oldGuard.OperationID}},
+		{`DELETE FROM source_cleanup_recovery_state WHERE original_operation_id=?`, "delete current cleanup frontier", []any{oldGuard.OperationID}},
 		{`DELETE FROM source_cleanup_item WHERE operation_id=?`, "delete original cleanup items", []any{oldGuard.OperationID}},
 		{`DELETE FROM publication_execution_claim WHERE operation_id=? AND application_attempt=? AND river_job_id=? AND river_attempt=? AND claim_uuid=? AND boot_uuid=? AND delivery_token=? AND epoch=?`, "delete original execution claim", []any{oldGuard.OperationID, oldGuard.ApplicationAttempt, oldGuard.RiverJobID, oldGuard.RiverAttempt, oldGuard.ClaimUUID, oldGuard.BootUUID, oldGuard.DeliveryToken, oldGuard.Epoch}},
 		{`DELETE FROM publication_execution_claim WHERE operation_id=? AND application_attempt=? AND river_job_id=? AND river_attempt=? AND claim_uuid=? AND boot_uuid=? AND delivery_token=? AND epoch=?`, "delete retry execution claim", []any{guard.OperationID, guard.ApplicationAttempt, guard.RiverJobID, guard.RiverAttempt, guard.ClaimUUID, guard.BootUUID, guard.DeliveryToken, guard.Epoch}},
 		{`UPDATE operation SET state='succeeded',stage='finished',finished_at=now(),updated_at=now(),safe_error=NULL WHERE id=? AND kind='cleanup_publication_sources_v1' AND state='failed' AND stage='cleanup_recovery_required' AND attempt=? AND river_job_id=? AND input_snapshot=?`, "settle original cleanup operation", []any{original.ID, oldGuard.ApplicationAttempt, oldGuard.RiverJobID, original.InputSnapshot}},
 		{`DELETE FROM operation WHERE id=? AND kind='retry_publication_sources_v1' AND state='succeeded' AND stage='finished' AND attempt=? AND river_job_id=?`, "delete settled retry operation", []any{guard.OperationID, guard.ApplicationAttempt, guard.RiverJobID}},
 	}
-	expected := []int64{int64(len(resolutions)), int64(len(refs)), 1, int64(len(refs)), int64(len(refs)), 1, 1, 1, 1}
+	frontierStates := int64(0)
+	if grant.FrontierRevision != nil {
+		frontierStates = 1
+	}
+	expected := []int64{int64(len(resolutions)), int64(len(refs)), 1, int64(len(refs)), frontierItems, frontierStates, int64(len(refs)), 1, 1, 1, 1}
 	for i, statement := range deleteBy {
 		result, err := tx.NewRaw(statement.query, statement.args...).Exec(ctx)
 		if err != nil {

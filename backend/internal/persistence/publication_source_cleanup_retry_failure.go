@@ -55,6 +55,25 @@ func (repository *SetupManagerRepository) FailPublicationSourceCleanupExplicitRe
 		if grant.ConsumedApplicationAttempt == nil || *grant.ConsumedApplicationAttempt != guard.ApplicationAttempt || grant.ConsumedRiverJobID == nil || *grant.ConsumedRiverJobID != guard.RiverJobID || grant.ConsumedClaimUUID == nil || *grant.ConsumedClaimUUID != guard.ClaimUUID || grant.RecoveryOperationID != guard.OperationID || grant.PositionID != guard.PositionID || grant.Epoch != guard.Epoch || grant.OriginalOperationID != summary.OriginalOperationID || grant.OriginalClaimUUID != summary.OriginalClaimUUID {
 			return nil
 		}
+		var frontierExists bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_cleanup_recovery_state WHERE original_operation_id=?)`, grant.OriginalOperationID).Scan(ctx, &frontierExists); err != nil {
+			return fmt.Errorf("fail explicit publication source cleanup retry delivery: check current frontier: %w", err)
+		}
+		if grant.FrontierRevision == nil && frontierExists || grant.FrontierRevision != nil && !frontierExists {
+			return nil
+		}
+		if grant.FrontierRevision != nil {
+			var revision uuid.UUID
+			if err := tx.NewRaw(`SELECT revision FROM source_cleanup_recovery_state WHERE original_operation_id=? FOR UPDATE`, grant.OriginalOperationID).Scan(ctx, &revision); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("fail explicit publication source cleanup retry delivery: read pinned frontier revision: %w", err)
+			}
+			if revision != *grant.FrontierRevision {
+				return nil
+			}
+		}
 
 		var original Operation
 		if err := tx.NewSelect().Model(&original).Where("id=?", summary.OriginalOperationID).Scan(ctx); err != nil {

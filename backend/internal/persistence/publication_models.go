@@ -130,10 +130,35 @@ type SourceCleanupExplicitRetry struct {
 	Epoch                      uuid.UUID       `bun:"epoch,type:uuid"`
 	PublicationGeneration      uuid.UUID       `bun:"publication_generation,type:uuid"`
 	Binding                    json.RawMessage `bun:"binding,type:jsonb"`
+	FrontierRevision           *uuid.UUID      `bun:"frontier_revision,type:uuid,nullzero"`
 	CreatedAt                  time.Time       `bun:"created_at"`
 	ConsumedApplicationAttempt *int            `bun:"consumed_application_attempt,nullzero"`
 	ConsumedRiverJobID         *int64          `bun:"consumed_river_job_id,nullzero"`
 	ConsumedClaimUUID          *uuid.UUID      `bun:"consumed_claim_uuid,type:uuid,nullzero"`
+}
+
+// SourceCleanupRecoveryState is the mutable current frontier, not a history row.
+type SourceCleanupRecoveryState struct {
+	bun.BaseModel               `bun:"table:source_cleanup_recovery_state"`
+	OriginalOperationID         uuid.UUID       `bun:"original_operation_id,pk,type:uuid"`
+	Revision                    uuid.UUID       `bun:"revision,type:uuid"`
+	ReturnedRecoveryOperationID uuid.UUID       `bun:"returned_recovery_operation_id,type:uuid"`
+	ReturnedApplicationAttempt  int             `bun:"returned_application_attempt"`
+	ReturnedRiverJobID          int64           `bun:"returned_river_job_id"`
+	ReturnedRiverAttempt        int             `bun:"returned_river_attempt"`
+	ReturnedClaimUUID           uuid.UUID       `bun:"returned_claim_uuid,type:uuid"`
+	ReturnedBootUUID            uuid.UUID       `bun:"returned_boot_uuid,type:uuid"`
+	ReturnedDeliveryToken       string          `bun:"returned_delivery_token"`
+	Proof                       json.RawMessage `bun:"proof,type:jsonb"`
+}
+
+type SourceCleanupRecoveryItem struct {
+	bun.BaseModel       `bun:"table:source_cleanup_recovery_item"`
+	OriginalOperationID uuid.UUID  `bun:"original_operation_id,pk,type:uuid" json:"original_operation_id"`
+	ItemID              uuid.UUID  `bun:"item_id,pk,type:uuid" json:"item_id"`
+	Kind                string     `bun:"kind" json:"kind"`
+	StartedAt           *time.Time `bun:"started_at,nullzero" json:"started_at"`
+	CompletedAt         *time.Time `bun:"completed_at,nullzero" json:"completed_at"`
 }
 
 // SourceCleanupExplicitRetryItem binds every grant to the precise retained

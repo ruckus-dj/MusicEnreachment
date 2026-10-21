@@ -96,6 +96,25 @@ func (repository *SetupManagerRepository) ClaimPublicationSourceCleanupExplicitR
 		if grant.RecoveryOperationID != guard.OperationID || grant.OriginalOperationID != oldGuard.OperationID || grant.OriginalApplicationAttempt != oldGuard.ApplicationAttempt || grant.OriginalRiverJobID != oldGuard.RiverJobID || grant.OriginalClaimUUID != oldGuard.ClaimUUID || grant.PositionID != guard.PositionID || grant.Epoch != guard.Epoch {
 			return nil
 		}
+		var frontierExists bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_cleanup_recovery_state WHERE original_operation_id=?)`, oldGuard.OperationID).Scan(ctx, &frontierExists); err != nil {
+			return fmt.Errorf("claim explicit publication source cleanup retry: check current frontier: %w", err)
+		}
+		if grant.FrontierRevision == nil && frontierExists || grant.FrontierRevision != nil && !frontierExists {
+			return nil
+		}
+		if grant.FrontierRevision != nil {
+			var revision uuid.UUID
+			if err := tx.NewRaw(`SELECT revision FROM source_cleanup_recovery_state WHERE original_operation_id=? FOR UPDATE`, oldGuard.OperationID).Scan(ctx, &revision); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("claim explicit publication source cleanup retry: read pinned frontier revision: %w", err)
+			}
+			if revision != *grant.FrontierRevision {
+				return nil
+			}
+		}
 		freshBinding, err := readPublicationSourceCleanupRetryBinding(ctx, tx, oldGuard, oldClaim, originalSummary)
 		if err != nil {
 			return fmt.Errorf("claim explicit publication source cleanup retry: reread original binding: %w", err)

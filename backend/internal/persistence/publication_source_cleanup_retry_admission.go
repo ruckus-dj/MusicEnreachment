@@ -116,6 +116,16 @@ func (repository *SetupManagerRepository) AdmitPublicationSourceCleanupExplicitR
 			result.Blockers = []string{"original cleanup delivery is not owner-returned with unchanged current evidence"}
 			return nil
 		}
+		// A frontier is introduced only by returning a consumed recovery delivery.
+		// Never let a first admission overwrite or implicitly reset that authority.
+		var frontierExists bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_cleanup_recovery_state WHERE original_operation_id=?)`, originalOperationID).Scan(ctx, &frontierExists); err != nil {
+			return fmt.Errorf("admit explicit publication source cleanup retry: read current frontier: %w", err)
+		}
+		if frontierExists {
+			result.Blockers = []string{"original cleanup already has a current recovery frontier"}
+			return nil
+		}
 		var duplicate bool
 		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_cleanup_explicit_retry WHERE original_operation_id=? AND original_claim_uuid=?)`, originalOperationID, claim.ClaimUUID).Scan(ctx, &duplicate); err != nil {
 			return fmt.Errorf("admit explicit publication source cleanup retry: check existing grant: %w", err)
