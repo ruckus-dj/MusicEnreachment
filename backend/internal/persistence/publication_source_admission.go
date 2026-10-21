@@ -33,6 +33,16 @@ func validateAndLockPublicationSource(ctx context.Context, tx bun.IDB, position 
 	if location.RelativePath != frozen.RelativePath || location.SizeBytes != frozen.SizeBytes || !location.Mtime.Equal(frozen.MTime) || location.MediaVariantID == nil || *location.MediaVariantID != frozen.MediaVariantID {
 		return fmt.Errorf("admit publication: source location changed: %w", ErrPublicationAdmissionConflict)
 	}
+	// Cleanup owners pin source identities independently of operation state. This
+	// check follows the established output-gate -> fingerprint-gate -> source-row
+	// lock order, so cleanup admission and publication admission cannot race.
+	var cleanupOwned bool
+	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_cleanup_owner WHERE work_id=? OR source_location_id=?)`, source.WorkID, source.LocationID).Scan(ctx, &cleanupOwned); err != nil {
+		return fmt.Errorf("admit publication: check source cleanup owner: %w", err)
+	}
+	if cleanupOwned {
+		return fmt.Errorf("admit publication: source is owned by cleanup: %w", ErrPublicationAdmissionConflict)
+	}
 	var work SourceAnalysisWork
 	if err := tx.NewSelect().Model(&work).Where("id=?", source.WorkID).For("UPDATE").Scan(ctx); err != nil {
 		return fmt.Errorf("admit publication: lock source work: %w", err)
