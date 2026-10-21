@@ -285,31 +285,11 @@ func verifyCleanupCandidateFacts(ctx context.Context, tx bun.IDB, candidates []P
 }
 
 func insertCleanupOwner(ctx context.Context, tx bun.IDB, op *Operation, request PublicationSourceCleanupAdmission, epoch uuid.UUID, c PublicationSourceCleanupCandidate) error {
-	var root struct {
-		ConfiguredPath string `bun:"configured_path"`
-		InventoryPath  string `bun:"inventory_path"`
-	}
-	if err := tx.NewRaw(`SELECT configured_path,inventory_path FROM source_root WHERE id=?`, c.SourceRootID).Scan(ctx, &root); err != nil {
+	snapshot, err := capturePublicationSourceCleanupSnapshot(ctx, tx, c)
+	if err != nil {
 		return err
 	}
-	var facts struct {
-		Size  int64     `bun:"size_bytes"`
-		Mtime time.Time `bun:"mtime"`
-	}
-	if err := tx.NewRaw(`SELECT size_bytes,mtime FROM source_location WHERE id=?`, c.SourceLocationID).Scan(ctx, &facts); err != nil {
-		return err
-	}
-	var links []publicationSourceCleanupLink
-	if err := tx.NewRaw(`SELECT id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,updated_at FROM track_source WHERE media_variant_id=? ORDER BY track_id,id`, c.MediaVariantID).Scan(ctx, &links); err != nil {
-		return err
-	}
-	borrowers := make([]publicationSourceCleanupWitness, 0, len(c.Borrowers))
-	for _, b := range c.Borrowers {
-		borrowers = append(borrowers, publicationSourceCleanupWitness{PositionID: b.PositionID, ReleaseID: b.ReleaseID, TrackID: b.TrackID, Generation: *b.Generation, Epoch: *b.Epoch, ValidatedAt: *b.ValidatedAt})
-	}
-	// The source snapshot is a frozen fact set; its token is intentionally not a
-	// maintained borrower revision and must be revalidated by the executor.
-	encoded, err := json.Marshal(publicationSourceCleanupSnapshot{Version: 1, WorkID: c.WorkID, SourceRootID: c.SourceRootID, SourceLocationID: c.SourceLocationID, MediaVariantID: c.MediaVariantID, ConfiguredPath: root.ConfiguredPath, InventoryPath: root.InventoryPath, RelativePath: c.RelativePath, SizeBytes: facts.Size, Mtime: facts.Mtime.UTC().Format(time.RFC3339Nano), SourceLinks: links, Borrowers: borrowers})
+	encoded, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
 	}
@@ -322,6 +302,39 @@ func insertCleanupOwner(ctx context.Context, tx bun.IDB, op *Operation, request 
 	}
 	_, err = tx.NewRaw(`INSERT INTO source_cleanup_owner(item_id,operation_id,application_attempt,river_job_id,owner_uuid,source_root_id,source_location_id,work_id) VALUES (?,?,?,?,?,?,?,?)`, itemID, op.ID, op.Attempt, *op.RiverJobID, uuid.New(), c.SourceRootID, c.SourceLocationID, c.WorkID).Exec(ctx)
 	return err
+}
+
+func capturePublicationSourceCleanupSnapshot(ctx context.Context, tx bun.IDB, c PublicationSourceCleanupCandidate) (publicationSourceCleanupSnapshot, error) {
+	var snapshot publicationSourceCleanupSnapshot
+	var root struct {
+		ConfiguredPath string `bun:"configured_path"`
+		InventoryPath  string `bun:"inventory_path"`
+	}
+	if err := tx.NewRaw(`SELECT configured_path,inventory_path FROM source_root WHERE id=?`, c.SourceRootID).Scan(ctx, &root); err != nil {
+		return snapshot, err
+	}
+	var facts struct {
+		Size  int64     `bun:"size_bytes"`
+		Mtime time.Time `bun:"mtime"`
+	}
+	if err := tx.NewRaw(`SELECT size_bytes,mtime FROM source_location WHERE id=?`, c.SourceLocationID).Scan(ctx, &facts); err != nil {
+		return snapshot, err
+	}
+	var links []publicationSourceCleanupLink
+	if err := tx.NewRaw(`SELECT id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,updated_at FROM track_source WHERE media_variant_id=? ORDER BY track_id,id`, c.MediaVariantID).Scan(ctx, &links); err != nil {
+		return snapshot, err
+	}
+	borrowers := make([]publicationSourceCleanupWitness, 0, len(c.Borrowers))
+	for _, b := range c.Borrowers {
+		if b.Generation == nil || b.Epoch == nil || b.ValidatedAt == nil {
+			return snapshot, errCleanupCandidateConflict
+		}
+		borrowers = append(borrowers, publicationSourceCleanupWitness{PositionID: b.PositionID, ReleaseID: b.ReleaseID, TrackID: b.TrackID, Generation: *b.Generation, Epoch: *b.Epoch, ValidatedAt: *b.ValidatedAt})
+	}
+	// The source snapshot is a frozen fact set; its token is intentionally not a
+	// maintained borrower revision and must be revalidated by the executor.
+	snapshot = publicationSourceCleanupSnapshot{Version: 1, WorkID: c.WorkID, SourceRootID: c.SourceRootID, SourceLocationID: c.SourceLocationID, MediaVariantID: c.MediaVariantID, ConfiguredPath: root.ConfiguredPath, InventoryPath: root.InventoryPath, RelativePath: c.RelativePath, SizeBytes: facts.Size, Mtime: facts.Mtime.UTC().Format(time.RFC3339Nano), SourceLinks: links, Borrowers: borrowers}
+	return snapshot, nil
 }
 
 var _ river.JobArgs = publicationSourceCleanupJobArgs{}
