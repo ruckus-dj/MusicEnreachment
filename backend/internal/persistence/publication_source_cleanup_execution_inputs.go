@@ -313,11 +313,8 @@ func validatePublicationSourceCleanupExecutionInputsPhaseTx(ctx context.Context,
 		if held {
 			return false, nil
 		}
-		var activeConsumer bool
-		if err := tx.NewRaw(`SELECT EXISTS(
-			SELECT 1 FROM operation_source_work_hold h
-			WHERE h.work_id=?
-		)`, candidate.WorkID).Scan(ctx, &activeConsumer); err != nil {
+		activeConsumer, err := cleanupSourceConsumerExists(ctx, tx, candidate.WorkID)
+		if err != nil {
 			return false, fmt.Errorf("validate publication source cleanup inputs: read active source consumers: %w", err)
 		}
 		if activeConsumer {

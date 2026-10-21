@@ -120,6 +120,14 @@ func (repository *SetupManagerRepository) AdmitPublicationSourceCleanup(ctx cont
 		if err := lockCleanupCandidateRows(ctx, tx, assessment.Candidates); err != nil {
 			return fmt.Errorf("admit publication source cleanup: lock source identities: %w", err)
 		}
+		busy, err := hasExistingSourceAnalysisWorkHold(ctx, tx, assessment.Candidates)
+		if err != nil {
+			return fmt.Errorf("admit publication source cleanup: check source analysis work holds: %w", err)
+		}
+		if busy {
+			result.Blockers = []string{"source has an analysis work hold"}
+			return nil
+		}
 		var epoch uuid.UUID
 		if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &epoch); err != nil {
 			return fmt.Errorf("admit publication source cleanup: lock output epoch: %w", err)
@@ -176,6 +184,43 @@ func (repository *SetupManagerRepository) AdmitPublicationSourceCleanup(ctx cont
 		return nil
 	})
 	return result, err
+}
+
+func hasExistingSourceAnalysisWorkHold(ctx context.Context, tx bun.IDB, candidates []PublicationSourceCleanupCandidate) (bool, error) {
+	for _, candidate := range candidates {
+		exists, err := cleanupSourceConsumerExists(ctx, tx, candidate.WorkID)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// cleanupSourceConsumerExists preserves both retained input ownership and live
+// native deliveries. A generic terminal transition can clear work/step holds
+// before the River worker returns, so operation state alone is not quiescence.
+func cleanupSourceConsumerExists(ctx context.Context, tx bun.IDB, workID uuid.UUID) (bool, error) {
+	var exists bool
+	err := tx.NewRaw(`SELECT
+		EXISTS (SELECT 1 FROM operation_source_work_hold WHERE work_id=?)
+		OR EXISTS (SELECT 1 FROM source_analysis_step WHERE work_id=? AND execution_operation_id IS NOT NULL)
+		OR EXISTS (
+			SELECT 1 FROM operation o
+			JOIN river_job j ON j.id=o.river_job_id OR j.args->>'operation_id'=o.id::text
+			WHERE o.kind='analyze_source' AND j.kind='analyze_source_v1'
+			AND j.state IN ('available','pending','retryable','scheduled','running')
+			AND (
+				EXISTS (SELECT 1 FROM source_analysis_step s WHERE s.work_id=? AND (s.last_operation_id=o.id OR s.execution_operation_id=o.id))
+				OR (o.input_snapshot->'work_ids') @> jsonb_build_array(?::text)
+			)
+		)`, workID, workID, workID, workID).Scan(ctx, &exists)
+	if err != nil {
+		return false, fmt.Errorf("check source cleanup consumer liveness: %w", err)
+	}
+	return exists, nil
 }
 
 var errCleanupCandidateConflict = fmt.Errorf("cleanup candidate conflict")

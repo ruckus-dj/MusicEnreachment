@@ -141,6 +141,15 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 			}
 		}
 		for _, item := range selectedWorks {
+			var cleanupOwned bool
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_cleanup_owner WHERE work_id=? OR source_location_id=?)`, item.ID, item.LocationID).Scan(ctx, &cleanupOwned); err != nil {
+				return fmt.Errorf("admit source analysis: check cleanup owner: %w", err)
+			}
+			if cleanupOwned {
+				return fmt.Errorf("admit source analysis: %w", ErrSourceCleanupOwned)
+			}
+		}
+		for _, item := range selectedWorks {
 			location := new(SourceLocation)
 			if err := tx.NewRaw(`SELECT * FROM source_location WHERE id=? AND source_root_id=?`, item.LocationID, root.ID).Scan(ctx, location); err != nil {
 				return fmt.Errorf("admit source analysis: read locked selected location: %w", ErrSourceAnalysisStale)
