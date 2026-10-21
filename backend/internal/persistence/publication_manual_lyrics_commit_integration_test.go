@@ -136,6 +136,33 @@ func TestManualLyricsCommitWritesReceiptAndDoesNotRepairReplayPostgreSQL(t *test
 	if replayed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !replayed {
 		t.Fatalf("manual replay = %v, %v", replayed, err)
 	}
+	for _, generation := range []uuid.UUID{input.Rewrite.CurrentGeneration, f.guard.CandidateGeneration} {
+		projection := PublicationInitialLyricsProjection{
+			Version: PublicationInitialLyricsVersion, Generation: generation,
+			Source:  "none",
+			Outcome: PublicationInitialLyricsNotRequested, ResolutionWarningCode: "", OutcomeWarningCode: "",
+			AuthorityMetadataRevision: 7, AuthorityState: "absent", Authority: "automatic", AuthorityProvenance: "source_metadata",
+		}
+		if _, err := f.db.ExecContext(ctx, `UPDATE track_publication SET initial_lyrics=?::jsonb WHERE position_id=?`, string(mustJSON(projection)), f.guard.ExpectedPositionID); err != nil {
+			t.Fatal(err)
+		}
+		if replayed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || replayed {
+			t.Fatalf("replay accepted initial-lyrics projection for generation %s: %v, %v", generation, replayed, err)
+		}
+		var retained TrackPublication
+		if err := f.db.NewSelect().Model(&retained).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if !sameInitialLyricsProjectionJSON(retained.InitialLyrics, &projection) {
+			t.Fatal("replay repaired residual initial-lyrics evidence")
+		}
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE track_publication SET initial_lyrics=NULL WHERE position_id=?`, f.guard.ExpectedPositionID); err != nil {
+		t.Fatal(err)
+	}
+	if replayed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !replayed {
+		t.Fatalf("replay after restoring null initial lyrics = %v, %v", replayed, err)
+	}
 	if _, err := f.db.ExecContext(ctx, `DELETE FROM publication_manual_lyrics_receipt WHERE position_id=?`, f.guard.ExpectedPositionID); err != nil {
 		t.Fatal(err)
 	}

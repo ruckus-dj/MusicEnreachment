@@ -255,5 +255,9 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 }
 
 func currentPublicationMatchesReplacementWitness(current, expected TrackPublication) bool {
-	return current.PositionID == expected.PositionID && current.Epoch == expected.Epoch && current.Generation == expected.Generation && current.RelativePath == expected.RelativePath && current.ValidatedAt.Equal(expected.ValidatedAt) && current.QualityPolicyVersion == expected.QualityPolicyVersion && sameJSONValue(current.Ownership, expected.Ownership) && sameJSONValue(current.ActualAudio, expected.ActualAudio) && sameJSONValue(current.ActualMetadata, expected.ActualMetadata) && sameJSONValue(current.ActualAssets, expected.ActualAssets)
+	var expectedLyrics *PublicationInitialLyricsProjection
+	if len(expected.InitialLyrics) != 0 && decodeStrictJSON(expected.InitialLyrics, &expectedLyrics) != nil {
+		return false
+	}
+	return current.PositionID == expected.PositionID && current.Epoch == expected.Epoch && current.Generation == expected.Generation && current.RelativePath == expected.RelativePath && current.ValidatedAt.Equal(expected.ValidatedAt) && current.QualityPolicyVersion == expected.QualityPolicyVersion && sameJSONValue(current.Ownership, expected.Ownership) && sameJSONValue(current.ActualAudio, expected.ActualAudio) && sameJSONValue(current.ActualMetadata, expected.ActualMetadata) && sameJSONValue(current.ActualAssets, expected.ActualAssets) && sameInitialLyricsProjectionJSON(current.InitialLyrics, expectedLyrics)
 }
