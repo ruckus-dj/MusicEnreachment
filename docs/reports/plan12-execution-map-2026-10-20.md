@@ -245,3 +245,27 @@ warning projection ещё не завершена и не является пр�
 прогон, cover/replacement assets, source deletion и cross-process recovery
 остаются незавершёнными. CI активации ещё не подтверждён; Windows native
 directory sync сохраняет fail-closed поведение при unsupported операции.
+
+### Подтверждение CI и последующих регрессий 2026-10-21
+
+Позднейшие результаты уточняют статусы «ожидается» выше. Полностью успешны
+verify, платформенная матрица, Compose smoke и контейнер во всех следующих runs:
+
+| Ревизия | CI run |
+|---|---|
+| `fb5324b` | `39575910251` |
+| `dcb67a1` | `39576790923` |
+| `5066f90` | `39577422729` |
+| `f3a9539` | `39577841909` |
+| `a6c32bc` | `39578685798` |
+| `8a8988e` | `39579228676` |
+
+`a6c32bc` отдельно добавляет проверку residual initial-lyrics projection при
+replacement/manual replay: старая либо current-generation ненулевая projection
+не принимается вместо обязательного NULL; replay не исправляет строку.
+`8a8988e` отдельно проверяет сохранение валидной initial projection после
+settlement и удаления attempt. Этот тест не доказывает warning-bearing case.
+Оба коммита прошли штатные полные hooks и отправлены. Windows sharding прошёл
+CI, но ускорение не доказано: первый Windows job занял 31 минуту.
+
+План №12 остаётся незавершённым; зелёный CI не заменяет media/Navidrome acceptance.
