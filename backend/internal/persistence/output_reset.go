@@ -303,6 +303,23 @@ func checkResetAllowed(ctx context.Context, queryer interface {
 		) OR
 		EXISTS (SELECT 1 FROM source_cleanup_item WHERE state IN ('claimed','recovery_required')) OR
 		EXISTS (
+			SELECT 1 FROM source_cleanup_owner owner
+			WHERE NOT EXISTS (
+				SELECT 1 FROM source_cleanup_item item
+				JOIN operation operation ON operation.id=item.operation_id
+				JOIN river_job job ON job.id=operation.river_job_id
+				WHERE item.id=owner.item_id AND item.operation_id=owner.operation_id
+					AND item.state='queued' AND operation.kind='cleanup_publication_sources_v1'
+					AND operation.state='queued' AND operation.attempt=owner.application_attempt
+					AND operation.river_job_id=owner.river_job_id
+					AND job.kind='cleanup_publication_sources_v1'
+					AND job.args->>'operation_id'=operation.id::text
+					AND job.state IN ('available','pending','retryable','scheduled')
+					AND job.attempted_at IS NULL AND job.attempt=0
+					AND NOT EXISTS (SELECT 1 FROM source_cleanup_item sibling WHERE sibling.operation_id=operation.id AND sibling.state<>'queued')
+			)
+		) OR
+		EXISTS (
 			SELECT 1 FROM source_analysis_work_artifact_binding binding
 			JOIN source_analysis_work work ON work.id=binding.work_id
 			WHERE binding.borrower_operation_id IS NOT NULL
@@ -481,6 +498,10 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	if err := validateRuntimeUpdateSQL(ctx, tx, expectedToolsRoot, oldRoot, newRoot, runtimeValues); err != nil {
 		return fmt.Errorf("validate output reset runtime settings: %w", err)
 	}
+	cleanupOwners, err := lockProvenQueuedPublicationSourceCleanup(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("recheck queued publication source cleanup: %w", err)
+	}
 	// Claimed deliveries were refused by the reset gate. Cancel unclaimed work
 	// and its jobs before terminalizing operations or rotating the epoch.
 	if _, err := tx.ExecContext(ctx, `UPDATE publication_reconciliation_event SET state='cancelled',delivery_epoch=delivery_epoch+1,delivery_claimed=false,claim_token=NULL
@@ -513,8 +534,42 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	if _, err := tx.ExecContext(ctx, `DELETE FROM publication_namespace_claim`); err != nil {
 		return fmt.Errorf("clear publication namespace claims: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE source_cleanup_item SET state='cancelled',source_snapshot=NULL,borrower_revision=NULL,safe_error=NULL WHERE state IN ('queued','retry_pending')`); err != nil {
-		return fmt.Errorf("cancel pending source cleanup: %w", err)
+	if len(cleanupOwners) != 0 {
+		cancelledJobs := make(map[int64]bool)
+		for _, owner := range cleanupOwners {
+			if !cancelledJobs[owner.jobID] {
+				jobResult, err := tx.ExecContext(ctx, `UPDATE river_job SET state='cancelled',finalized_at=now() WHERE id=$1 AND state IN ('available','pending','retryable','scheduled') AND attempted_at IS NULL AND attempt=0`, owner.jobID)
+				if err != nil {
+					return fmt.Errorf("cancel queued publication source cleanup delivery: %w", err)
+				}
+				if err := requireRowsAffected(jobResult, 1, "cancel queued publication source cleanup delivery"); err != nil {
+					return err
+				}
+				cancelledJobs[owner.jobID] = true
+			}
+			ownerResult, err := tx.ExecContext(ctx, `DELETE FROM source_cleanup_owner WHERE item_id=$1`, owner.itemID)
+			if err != nil {
+				return fmt.Errorf("remove queued publication source cleanup owner: %w", err)
+			}
+			if err := requireRowsAffected(ownerResult, 1, "remove queued publication source cleanup owner"); err != nil {
+				return err
+			}
+			itemResult, err := tx.ExecContext(ctx, `UPDATE source_cleanup_item SET state='cancelled',source_snapshot=NULL,borrower_revision=NULL,safe_error=$2 WHERE id=$1 AND state='queued'`, owner.itemID, outputResetSafeError)
+			if err != nil {
+				return fmt.Errorf("cancel queued publication source cleanup item: %w", err)
+			}
+			if err := requireRowsAffected(itemResult, 1, "cancel queued publication source cleanup item"); err != nil {
+				return err
+			}
+		}
+	}
+	// Cleanup items without an owner have no delivery that can still remove
+	// their source data. Cancel the untouched queue states, but leave every
+	// owner-backed item to the proof-and-lock path above.
+	if _, err := tx.ExecContext(ctx, `UPDATE source_cleanup_item SET state='cancelled',source_snapshot=NULL,borrower_revision=NULL,safe_error=$1
+		WHERE state IN ('queued','retry_pending')
+		AND NOT EXISTS (SELECT 1 FROM source_cleanup_owner owner WHERE owner.item_id=source_cleanup_item.id)`, outputResetSafeError); err != nil {
+		return fmt.Errorf("cancel ownerless publication source cleanup items: %w", err)
 	}
 	// Release only holds whose deliveries are still eligible before changing
 	// the job state below. The reset admission gate keeps this eligibility
@@ -625,6 +680,124 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	}
 	if updated != 1 {
 		return errors.New("publication namespace state is missing")
+	}
+	return nil
+}
+
+type resetCleanupOwner struct {
+	itemID uuid.UUID
+	jobID  int64
+}
+
+// lockProvenQueuedPublicationSourceCleanup freezes and proves every owner before
+// reset mutates any publication state. The output gate excludes new admissions;
+// locking the River rows also excludes a worker claiming a job during Prepare.
+func lockProvenQueuedPublicationSourceCleanup(ctx context.Context, tx *sql.Tx) ([]resetCleanupOwner, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT owner.item_id, owner.operation_id, owner.river_job_id
+		FROM source_cleanup_owner owner ORDER BY owner.operation_id, owner.river_job_id, owner.item_id`)
+	if err != nil {
+		return nil, err
+	}
+	type owned struct {
+		itemID, operationID uuid.UUID
+		jobID               int64
+	}
+	var owners []owned
+	for rows.Next() {
+		var owner owned
+		if err := rows.Scan(&owner.itemID, &owner.operationID, &owner.jobID); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		owners = append(owners, owner)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if len(owners) == 0 {
+		return nil, nil
+	}
+	// Lock in a stable global order, consuming each result set before continuing.
+	for _, owner := range owners {
+		if err := lockResetRow(ctx, tx, `SELECT id FROM operation WHERE id=$1 FOR UPDATE`, owner.operationID); err != nil {
+			return nil, err
+		}
+	}
+	for _, owner := range owners {
+		if err := lockResetRow(ctx, tx, `SELECT id FROM river_job WHERE id=$1 FOR UPDATE`, owner.jobID); err != nil {
+			return nil, err
+		}
+	}
+	for _, owner := range owners {
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM source_cleanup_item WHERE operation_id=$1 ORDER BY id FOR UPDATE`, owner.operationID)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	for _, owner := range owners {
+		if err := lockResetRow(ctx, tx, `SELECT item_id FROM source_cleanup_owner WHERE item_id=$1 FOR UPDATE`, owner.itemID); err != nil {
+			return nil, err
+		}
+	}
+	var invalid bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM source_cleanup_owner owner
+		WHERE NOT EXISTS (
+			SELECT 1 FROM source_cleanup_item item JOIN operation operation ON operation.id=item.operation_id
+			JOIN river_job job ON job.id=operation.river_job_id
+			WHERE item.id=owner.item_id AND item.operation_id=owner.operation_id AND item.state='queued'
+			AND operation.kind='cleanup_publication_sources_v1' AND operation.state='queued'
+			AND operation.attempt=owner.application_attempt AND operation.river_job_id=owner.river_job_id
+			AND job.kind='cleanup_publication_sources_v1' AND job.args->>'operation_id'=operation.id::text
+			AND job.state IN ('available','pending','retryable','scheduled') AND job.attempted_at IS NULL AND job.attempt=0
+			AND NOT EXISTS (SELECT 1 FROM source_cleanup_item sibling WHERE sibling.operation_id=operation.id AND sibling.state<>'queued')
+		)
+	)`).Scan(&invalid); err != nil {
+		return nil, err
+	}
+	if invalid {
+		return nil, fmt.Errorf("publication source cleanup ownership is not provably unstarted")
+	}
+	result := make([]resetCleanupOwner, 0, len(owners))
+	for _, owner := range owners {
+		result = append(result, resetCleanupOwner{itemID: owner.itemID, jobID: owner.jobID})
+	}
+	return result, nil
+}
+
+func lockResetRow(ctx context.Context, tx *sql.Tx, query string, id any) error {
+	var ignored any
+	if err := tx.QueryRowContext(ctx, query, id).Scan(&ignored); err != nil {
+		return err
+	}
+	return nil
+}
+
+func requireRowsAffected(result sql.Result, expected int64, operation string) error {
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read %s count: %w", operation, err)
+	}
+	if count != expected {
+		return fmt.Errorf("%s affected %d rows, expected %d", operation, count, expected)
 	}
 	return nil
 }
