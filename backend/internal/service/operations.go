@@ -351,12 +351,33 @@ func (s *Operations) Fail(ctx context.Context, id uuid.UUID, stage, safe string)
 	}
 	return s.transition(ctx, id, "failed", stage, safe, nil)
 }
+
+// publicationSourceCleanupOperationKind is the stored kind of a publication
+// source cleanup. Its River delivery uses its own kind, so the generic
+// operation retry would hand the job to the install/move dispatcher.
+const publicationSourceCleanupOperationKind = "cleanup_publication_sources_v1"
+
+// publicationSourceCleanupRetryError refuses a generic retry for publication
+// source cleanup work before any state, attempt, or River job mutation. Retries
+// of this kind are only admitted by the dedicated explicit recovery flow.
+func publicationSourceCleanupRetryError(kind string) error {
+	if kind != publicationSourceCleanupOperationKind {
+		return nil
+	}
+	return fmt.Errorf("retry operation: publication source cleanup requires an explicit recovery")
+}
+
 func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Operation, error) {
 	if s.enqueuer != nil {
 		return s.retryEnqueued(ctx, id)
 	}
 	existing, err := s.Get(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	// Checked before the state gate so an incomplete cleanup operation gets the
+	// same rejection as a failed one.
+	if err := publicationSourceCleanupRetryError(existing.Kind); err != nil {
 		return nil, err
 	}
 	if existing.State != "failed" {
@@ -409,10 +430,14 @@ func (s *Operations) retryEnqueued(ctx context.Context, id uuid.UUID) (*persiste
 	return operation, nil
 }
 
-// enqueueRetry keeps the generic retry for every kind but a scan and an
-// analysis. A scan retry is a new complete traversal of its root; normalized
-// analysis retries are delegated to the source-analysis service.
+// enqueueRetry keeps the generic retry for every kind but a scan, an analysis,
+// and a publication source cleanup. A scan retry is a new complete traversal of
+// its root; normalized analysis retries are delegated to the source-analysis
+// service; cleanup retries require the dedicated explicit recovery flow.
 func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Operation) (*persistence.Operation, error) {
+	if err := publicationSourceCleanupRetryError(existing.Kind); err != nil {
+		return nil, err
+	}
 	switch existing.Kind {
 	case "matching_evaluation_v1":
 		matching, ok := s.enqueuer.(matchingRetryEnqueuer)

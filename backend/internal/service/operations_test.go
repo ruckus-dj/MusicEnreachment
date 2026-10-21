@@ -14,8 +14,9 @@ import (
 )
 
 type memoryOperations struct {
-	values  map[uuid.UUID]*persistence.Operation
-	updates int
+	values      map[uuid.UUID]*persistence.Operation
+	updates     int
+	transitions int
 }
 
 func TestMatchingRetryWithoutRiverPreservesOperation(t *testing.T) {
@@ -176,6 +177,7 @@ func (m *memoryOperations) UpdateOperation(_ context.Context, o *persistence.Ope
 	return nil
 }
 func (m *memoryOperations) TransitionOperation(_ context.Context, id uuid.UUID, transition func(*persistence.Operation) error) error {
+	m.transitions++
 	o, err := m.GetOperation(context.Background(), id)
 	if err != nil {
 		return err
