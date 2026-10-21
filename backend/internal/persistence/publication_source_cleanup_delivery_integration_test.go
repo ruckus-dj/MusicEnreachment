@@ -156,7 +156,11 @@ func TestClaimPublicationSourceCleanupDeliveryRejectsUnqualifiedRowsPostgreSQL(t
 				if err == nil {
 					t.Fatalf("claim = %q, nil; want decode error", got)
 				}
-			} else if err != nil || (got != PublicationDeliveryBlocked && !(tc.name == "malformed operation summary rejected by database" && got == PublicationDeliveryAcquired)) {
+			} else if tc.name == "malformed operation summary rejected by database" {
+				if err != nil || got != PublicationDeliveryAcquired {
+					t.Fatalf("claim after database rejected malformed summary = %q, %v; want acquired", got, err)
+				}
+			} else if err != nil || got != PublicationDeliveryBlocked {
 				t.Fatalf("claim = %q, %v; want blocked", got, err)
 			}
 			var claims int
