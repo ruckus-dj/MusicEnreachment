@@ -381,3 +381,32 @@ runs — проверка конкретных ревизий, не приёмк
   review; его штатный commit hook выполняется поверх `cf140e8`. Settlement
   подтверждает committed completion, не разрешает новое удаление и не меняет
   inventory/source links. Это ещё не recovery/retry и не runtime activation.
+
+Уточнение после коммитов settlement и документации:
+- CI `39618882354` для per-item removal `5735bc9` полностью завершился с `success`:
+  verify, платформенная матрица, Compose smoke и контейнер.
+- Settlement закоммичен как `7561808`, полный штатный hook пройден, коммит
+  отправлен; CI `39621112521` отслеживается.
+- Инструкции и предыдущее дополнение отчёта сохранены в `e6f0a7c`, также после
+  полного hook; CI `39621520324` отслеживается.
+- Uncertain-failure transition пока не закоммичен и проходит полный gate/review.
+  Он не разрешает replay unlink и не решает продуктовый контракт explicit retry.
+
+Последующее подтверждение:
+- `cf140e8` / CI `39620646512`, `7561808` / `39621112521` и `e6f0a7c` /
+  `39621520324` завершились полностью с `success` (включая матрицу и контейнер).
+- Uncertain-failure transition сохранён в `d140782`: полный штатный hook пройден,
+  коммит отправлен; CI `39622433657` также полностью `success`. Ошибки callback
+  и неопределённый completion commit сохраняют live recovery fences, а не
+  запускают повторный unlink.
+- Cancellation доказанно не начатого cleanup при OFF пока не закоммичен:
+  полный gate выявил compile/fixture-дефекты его новых тестов, исправления
+  проверяются. Dormant service runner реализуется отдельно без регистрации worker.
+
+Уточнение после cancellation gate:
+- Cancellation при OFF завершён как `f9203c9`, полный штатный hook пройден,
+  коммит отправлен; CI `39633860649` выполняется. Проверены unclaimed/claimed
+  queued и running-unstarted phases, отказ для started/completed frontiers,
+  stale token/River attempt и атомарный rollback при deferred commit failure.
+- Dormant runner/loader и их unit/PostgreSQL-тесты проходят изолированный полный
+  `task verify` поверх этой ревизии; app/worker/enqueue wiring не добавлено.
