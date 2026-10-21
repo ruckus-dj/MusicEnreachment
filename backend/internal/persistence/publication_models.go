@@ -97,3 +97,18 @@ type SourceCleanupItem struct {
 	BorrowerRevision      *uuid.UUID      `bun:"borrower_revision,type:uuid,nullzero"`
 	SafeError             *string         `bun:"safe_error,nullzero"`
 }
+
+// SourceCleanupOwner durably records the exact item, operation delivery, and
+// source identity admitted for a cleanup attempt. Source identity UUIDs are
+// intentionally snapshots, not foreign keys to mutable inventory rows.
+type SourceCleanupOwner struct {
+	bun.BaseModel      `bun:"table:source_cleanup_owner"`
+	ItemID             uuid.UUID `bun:"item_id,pk,type:uuid"`
+	OperationID        uuid.UUID `bun:"operation_id,type:uuid"`
+	ApplicationAttempt int       `bun:"application_attempt"`
+	RiverJobID         int64     `bun:"river_job_id"`
+	OwnerUUID          uuid.UUID `bun:"owner_uuid,type:uuid"`
+	SourceRootID       uuid.UUID `bun:"source_root_id,type:uuid"`
+	SourceLocationID   uuid.UUID `bun:"source_location_id,type:uuid"`
+	WorkID             uuid.UUID `bun:"work_id,type:uuid"`
+}

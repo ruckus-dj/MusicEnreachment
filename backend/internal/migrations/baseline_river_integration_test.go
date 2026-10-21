@@ -34,9 +34,9 @@ func TestCurrentSchemaRollbackPreservesRiverAndUnrelatedData(t *testing.T) {
 		WHERE n.nspname='public' AND c.relkind='r' AND c.relname NOT LIKE 'bun\_%' ESCAPE '\'`).Scan(ctx, &tableCount); err != nil {
 		t.Fatal(err)
 	}
-	// The five baselines contain 85 tables; publication state, source holds, and
-	// manual-lyrics receipts add nine.
-	const currentApplicationTables = 85 + 12
+	// The five baselines contain 85 tables; later publication, reconciliation,
+	// and cleanup ownership migrations add thirteen.
+	const currentApplicationTables = 85 + 13
 	if tableCount != currentApplicationTables {
 		t.Fatalf("current schema contains %d application tables, want %d", tableCount, currentApplicationTables)
 	}
