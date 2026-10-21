@@ -405,6 +405,20 @@ func materializeMatchingLocal(ctx context.Context, tx bun.Tx, preview MatchingLo
 			return uuid.Nil, fmt.Errorf("lock existing local matching tracks: %w", err)
 		}
 	}
+	seenSourceIDs := make(map[uuid.UUID]struct{})
+	for _, track := range tracks {
+		for _, memberID := range track.FileMemberIDs {
+			for _, sourceID := range previewSourceIDs(preview.Sources, memberID) {
+				if _, exists := seenSourceIDs[sourceID]; exists {
+					continue
+				}
+				seenSourceIDs[sourceID] = struct{}{}
+				if err := rejectCleanupOwnedSourceVariant(ctx, tx, sourceID); err != nil {
+					return uuid.Nil, fmt.Errorf("materialize local matching: %w", err)
+				}
+			}
+		}
+	}
 
 	releaseID := uuid.New()
 	if intent.LocalReleaseID != nil {
