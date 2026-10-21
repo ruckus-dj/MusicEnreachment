@@ -198,3 +198,50 @@ tools tests и production build. GitHub CI pending-изменений этим �
 
 Эти результаты не закрывают план №12 и не заменяют реальную media/Navidrome
 acceptance или оставшуюся lifecycle-интеграцию assets/source cleanup.
+
+### Дополнение по последующим проверкам 2026-10-21
+
+- CI `39503767661` для `8ade812` полностью зелёный: verify, вся платформенная
+  матрица, Compose smoke и контейнер, включая Windows fail-closed cleanup.
+- CI `39504288128` для отчёта `4b0487f` также полностью зелёный.
+- CI `39503971949` для `cda0527` упал по package-wide timeout persistence
+  на Windows (600 s). Полный goroutine dump показывает продолжающуюся работу
+  восьми test slots, CREATE DATABASE/connection churn и queued parallel tests;
+  application/fixture deadlock этим dump не выявлен. Остальные jobs прошли,
+  контейнер пропущен. Run не считается зелёным. Готовится отдельное CI-only
+  partitioning suite; ускорение DB provisioning не доказано.
+- `9eb593b` сохраняет position lyrics authority/revision в frozen audio inputs
+  и повторно сравнивает authoritative snapshot при admission. Это evidence,
+  не разрешение скрыто применить manual pending lyrics. Полный gate и hook
+  прошли; коммит отправлен, CI `39506052015` выполняется.
+
+Незакоммиченная интеграция initial lyrics journal/staging/commit/recovery и
+warning projection ещё не завершена и не является проверенным runtime result.
+
+### Последующий результат 2026-10-21: фиксация интеграции
+
+- CI `39506052015` для `9eb593b` завершился полностью успешно, включая
+  Windows, всю матрицу, Compose smoke и контейнер.
+- `fb5324b` — отдельный четырёхфайловый CI-only коммит: Windows persistence
+  suite разделён на две детерминированные части с проверкой полноты и
+  непересечения; остальные backend packages выполняются один раз.
+  Штатный полный hook прошёл, коммит отправлен; CI `39575910251` ещё ожидается.
+  Это разделение test budget, не доказанное ускорение PostgreSQL.
+- `dcb67a1` — отдельный двухфайловый коммит copied-input SHA-256: digest
+  вычисляется через owned read handle до `input_ready`; regression assertions
+  проверяют digest и отдельно source/copy size/mtime. Полный hook прошёл,
+  коммит отправлен; CI `39576790923` ещё ожидается.
+- `5066f90` — совместная активация initial lyrics writer и обязательных
+  acquisition/outcome guards, native single-use rebuild с повторным frozen
+  transform, commit/recovery binding и nullable current-generation projection.
+  Manual pending value/empty подавляет автоматическую подмену и не применяется
+  скрыто. Projection сохраняется после settlement; generation-changing writers
+  очищают initial projection до unknown.
+  Полный `task format && task verify` и отдельный штатный commit hook прошли;
+  коммит отправлен. Исправления partial recovery/fixtures независимо проверены;
+  последние High/Medium-регрессии в этом узком review не найдены.
+
+Эти проверки не являются полной acceptance плана: реальный media/Navidrome
+прогон, cover/replacement assets, source deletion и cross-process recovery
+остаются незавершёнными. CI активации ещё не подтверждён; Windows native
+directory sync сохраняет fail-closed поведение при unsupported операции.
