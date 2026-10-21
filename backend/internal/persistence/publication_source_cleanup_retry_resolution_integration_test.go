@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +34,19 @@ func newRetryResolutionFixture(t *testing.T) retryResolutionFixture {
 	if err := fixture.db.NewSelect().Model(&work).Where("id IN (SELECT work_id FROM source_work_variant_identity WHERE media_variant_id=?)", variantID).Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Freeze a native absolute root, including a volume on Windows. The shared
+	// read-only protection fixture's "/source" is not an executable Windows root.
+	root := t.TempDir()
+	if !filepath.IsAbs(root) {
+		t.Fatalf("retry source root is not native absolute: %q", root)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE source_root SET configured_path=?,inventory_path=? WHERE id=?`, root, root, work.SourceRootID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE source_analysis_work SET configured_path=?,inventory_path=? WHERE source_root_id=?`, root, root, work.SourceRootID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	work.ConfiguredPath, work.InventoryPath = root, root
 	addCleanupRetrySourceCopies(t, ctx, fixture, work, "retry-second.flac", "retry-third.flac")
 	oldGuard, originalID := admitAndClaimSourceCleanup(t, ctx, fixture, repository)
 	if started, err := repository.StartPublicationSourceCleanupExecution(ctx, oldGuard); err != nil || !started {
