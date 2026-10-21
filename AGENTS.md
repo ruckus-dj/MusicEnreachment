@@ -7,6 +7,10 @@
 ## OVERVIEW
 ### Product decisions — explicit owner approval required
 
+- Current state only: the owner explicitly rejects application history. Update or
+  delete obsolete attempts/results; do not preserve failed originals after a
+  successful recovery merely for audit/history. Retain unresolved execution
+  evidence only while it is needed for the current action or safe recovery.
 - Do not make new product decisions or change existing ones without the owner's explicit approval. This rule applies to the primary agent and all subagents, across code, documentation, and plans.
 - Preserve the meaning of approved requirements: do not make optional features mandatory, remove settings, choose defaults, or change user-facing behavior without separate approval.
 - A request to update documentation, write a plan, or implement a stage does not authorize revising product decisions. The owner's silence is not approval either.

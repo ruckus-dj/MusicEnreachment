@@ -498,3 +498,37 @@ ID при ошибке, admission после GC старой River row, partial-
 malformed binding и запрет reset/rebind consumed grant. SQL и production fixes
 прошли повторное независимое review. Штатный commit hook ещё предстоит; runtime
 registration и endpoint по-прежнему отсутствуют.
+
+Следующие сохранённые срезы (все после полного штатного hook, без обхода):
+- `bfd4e67`: explicit-retry admission и immutable grants отправлены;
+  CI `39660092403` отслеживается.
+- `25fbd4a`: одноразовый grant consumption в новую exact delivery claim отправлен;
+  полный изолированный `task verify` и review пройдены; CI `39662003660`
+  отслеживается. Старые operation/items/owners/claim не переписываются.
+- `8ea527c`: native outcome classification отправлена; полный `task verify` и
+  compatibility review пройдены; CI `39662596615` отслеживается. Обычный `Remove`
+  сохраняет прежний error contract, missing root/parent не классифицируются как
+  missing terminal leaf, а ошибочный unlink не становится native completion.
+- Per-item recovery resolution пока реализуется отдельно: отдельные records,
+  distinct native/authorized-absence/original-completion outcomes, без подделки
+  старых mutation timestamps. Это ещё не проверенный runtime recovery.
+
+Подтверждение CI: `bfd4e67` / `39660092403`, `25fbd4a` / `39662003660`
+и `8ea527c` / `39662596615` полностью успешны, включая матрицу и контейнер.
+
+Владелец повторно отклонил историю попыток: после полного successful recovery
+обновляется актуальное состояние очистки, warning снимается, obsolete auxiliary
+operations/grants/claims/resolutions удаляются. Предложение оставить исходный
+failed-результат ради истории было ошибочным и не реализуется. Необходимые данные
+неразрешённого выполнения удерживаются только как текущее recovery state.
+
+Per-item resolution-срез получил первый green gate, затем изменён terminal-delete
+trigger для удаления неактуальных records при settlement. Последняя версия
+проходит повторный полный gate и независимое review; commit ещё не выполнен.
+
+Повторный полный `task verify` последней версии resolution-среза успешен, включая
+исправленный buffered handshake и bounded waits concurrency-теста. Production и
+schema review замечаний не имеют. Штатный commit hook выполняется в изолированном
+дереве. Settlement подготовлен: одной транзакцией обновить актуальный original
+cleanup status и удалить obsolete auxiliary records; дополнительная миграция для
+этого не требуется. Settlement ещё не реализован и не проверен.
