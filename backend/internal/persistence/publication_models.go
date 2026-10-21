@@ -96,6 +96,9 @@ type SourceCleanupItem struct {
 	SourceSnapshot        json.RawMessage `bun:"source_snapshot,type:jsonb,nullzero"`
 	BorrowerRevision      *uuid.UUID      `bun:"borrower_revision,type:uuid,nullzero"`
 	SafeError             *string         `bun:"safe_error,nullzero"`
+	MutationClaimUUID     *uuid.UUID      `bun:"mutation_claim_uuid,type:uuid,nullzero"`
+	MutationStartedAt     *time.Time      `bun:"mutation_started_at,nullzero"`
+	MutationCompletedAt   *time.Time      `bun:"mutation_completed_at,nullzero"`
 }
 
 // SourceCleanupOwner durably records the exact item, operation delivery, and
