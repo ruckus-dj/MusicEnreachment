@@ -44,6 +44,9 @@ func (repository *CollectionRepository) UpsertTrackSourceDecision(ctx context.Co
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("upsert track source: lock source mutation gate: %w", err)
 		}
+		if err := rejectCleanupOwnedSourceVariant(ctx, tx, decision.MediaVariantID); err != nil {
+			return fmt.Errorf("upsert track source: %w", err)
+		}
 		var existing TrackSource
 		err := tx.NewSelect().Model(&existing).
 			Where("track_id = ? AND media_variant_id = ?", decision.TrackID, decision.MediaVariantID).

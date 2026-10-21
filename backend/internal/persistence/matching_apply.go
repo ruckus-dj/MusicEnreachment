@@ -28,6 +28,9 @@ func (repository *IncomingMatchCandidateRepository) ApplyCurrentMatchingEvaluati
 		return fmt.Errorf("apply matching evaluation: group and evaluation revision are required")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("apply matching evaluation: lock source mutation gate: %w", err)
+		}
 		return repository.applyCurrentMatchingEvaluationTx(ctx, tx, groupID, expectedEvaluationRevision)
 	})
 }
@@ -919,6 +922,9 @@ func attachAutomaticTrackSource(ctx context.Context, tx bun.Tx, trackID, variant
 }
 
 func attachTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.UUID, authority materializationAuthority) error {
+	if err := rejectCleanupOwnedSourceVariant(ctx, tx, variantID); err != nil {
+		return fmt.Errorf("apply matching evaluation: %w", err)
+	}
 	var existing []struct {
 		TrackID uuid.UUID `bun:"track_id"`
 		Method  string    `bun:"decision_method"`
