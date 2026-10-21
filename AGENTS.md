@@ -126,6 +126,18 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
   unrelated edits can make pre-commit report "files were modified by this hook"
   after a successful gate. Finish edits first, then run the hook against a stable
   working tree; use an isolated worktree for genuinely concurrent commits.
+- Association fixtures must supply object-valued JSON metadata (for example `{}`),
+  not a nil `json.RawMessage` that Bun can serialize as JSON `null`.
+- Cleanup reset tests must cover several owners sharing one operation/job: cancel
+  each distinct job once. Preserve legacy ownerless queued-item cancellation too.
+  Assert reset's existing outcomes (failed queued operations and removed current
+  publications), rather than inventing cancellation states or retained publications.
+- When pushing from a temporary worktree, name the intended destination explicitly
+  (`HEAD:go-development` for this development branch); do not infer it from the
+  temporary worktree's branch name.
+- For an isolated commit, keep its worktree free of unrelated untracked code as
+  well as tracked edits. Pre-commit stashes unstaged tracked files but leaves
+  untracked helpers/tests visible, producing an invalid mixed test/lint context.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 
