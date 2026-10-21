@@ -1633,6 +1633,14 @@ fences перед проектированием порядка. При reset с
 остаются unmanaged, active DB refs очищаются, local entities/source links,
 inventory/analysis сохраняются, автоматической republish нет.
 
+Уточнение владельца от 2026-10-21 для source removal: на любой поддерживаемой ОС
+достаточна последовательная проверка размера и `mtime` по БД непосредственно
+перед delete. Неатомарность и остаточная гонка внешней подмены принимаются;
+атомарный compare-and-unlink, quarantine и hash не являются обязательными
+условиями. Требование не удалять изменившийся/чужой путь ниже означает отказ
+при обнаруженном несовпадении в этой проверке, а не гарантию против подмены после
+неё. Остальные borrower/permission/hold gates сохраняются; см. `decisions.md`.
+
 Source removal opt-in OFF. Cleanup item и его operation/job должны быть связаны с
 output epoch, publication generation и source/borrower revisions. Включение
 настройки не запускает retroactive cleanup; точечный и bulk action — явные.
