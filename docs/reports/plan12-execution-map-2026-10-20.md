@@ -1,5 +1,21 @@
 # План 12 — сверка реализации 2026-10-20
 
+## Уточнение CI после `e5dd516`
+
+`a04f5a6` / `39815874265` завершился failure: Windows fallback assertions
+и macOS x64 persistence package deadline 600s. Полный macOS dump показывает
+четыре admin connections в DROP DATABASE и ещё четыре leaf tests в ожидании
+admin pool; business SQL и Go-level cycle не установлены. Это отдельный CI
+инцидент, не следствие параллельных локальных gates. Более медленные npm install
+и остальные Go packages подтверждают общую вариативность runner performance;
+server-side wait events не собраны, точная причина задержки DROP неизвестна.
+
+У `e5dd516` / `39816885054` macOS x64 persistence прошёл за 370.434s без
+изменений persistence/helper/workflow, но весь run остался failure из-за
+Windows fixture: runtime claim сравнивался с seed guard. Исправление привязки
+к persisted runtime claim и переносимый regression ещё проверяются.
+Timeouts, pools и gates не ослаблялись; obsolete CI ради green не перезапускался.
+
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
 **Позднейшее дополнение same-generation coverage:** поверх `ab73b2b` добавлены

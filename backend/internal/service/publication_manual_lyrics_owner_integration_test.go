@@ -1284,8 +1284,12 @@ func assertWindowsAutomaticRetryFallbackResetFrontier(t *testing.T, ctx context.
 			}
 		}
 	}
-	if rebuild.Step != "intent" || rebuild.Guard != guard || rebuild.Candidate == nil || rebuild.Input == nil || prep.Step != "input_ready" || prep.CopiedInput == nil || prep.DirectoryIdentity == nil || rebuild.PrivateDirRel != prep.PrivateDirRel || rebuild.InputRel != prep.InputRel || rebuild.OutputRel != prep.OutputRel || rebuild.DirectoryIdentity != *prep.DirectoryIdentity {
-		t.Fatalf("Windows fallback rebuild intent/preparation do not bind retained preparation: prep=%+v rebuild=%+v", prep, rebuild)
+	var claim persistence.PublicationExecutionClaim
+	if err := db.NewSelect().Model(&claim).Where("operation_id=?", guard.OperationID).Scan(ctx); err != nil {
+		t.Fatalf("read retained Windows fallback execution claim: %v", err)
+	}
+	if !retryFrontierBindingMatches(guard, claim, prep, rebuild) {
+		t.Fatalf("retained execution claim/preparation do not bind rebuild frontier: claim=%+v prep=%+v rebuild=%+v", claim, prep, rebuild)
 	}
 	privateDir := filepath.Join(outputRoot, filepath.FromSlash(prep.PrivateDirRel))
 	inputPath := filepath.Join(outputRoot, filepath.FromSlash(prep.InputRel))
@@ -1334,6 +1338,170 @@ func assertWindowsAutomaticRetryFallbackResetFrontier(t *testing.T, ctx context.
 			t.Errorf("Windows fallback %s = %d, %v; want zero", check.name, count, err)
 		}
 	}
+}
+
+func TestRetryFrontierBindingAcceptsJSONDecodedRuntimeClaimAndRejectsEveryDrift(t *testing.T) {
+	seed := persistence.PublicationDeliveryGuard{OperationID: uuid.New(), ApplicationAttempt: 1, RiverJobID: 42, RiverAttempt: 3, ClaimUUID: uuid.New(), BootUUID: uuid.New(), DeliveryToken: uuid.NewString(), Epoch: uuid.New(), CandidateGeneration: uuid.New(), ExpectedPositionID: uuid.New()}
+	runtimeGuard := seed
+	runtimeGuard.ClaimUUID, runtimeGuard.BootUUID, runtimeGuard.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	claim := persistence.PublicationExecutionClaim{OperationID: runtimeGuard.OperationID, ApplicationAttempt: runtimeGuard.ApplicationAttempt, RiverJobID: runtimeGuard.RiverJobID, RiverAttempt: runtimeGuard.RiverAttempt, ClaimUUID: runtimeGuard.ClaimUUID, BootUUID: runtimeGuard.BootUUID, DeliveryToken: runtimeGuard.DeliveryToken, Epoch: runtimeGuard.Epoch, State: "executing"}
+	size, mtime, directoryID := int64(1234), int64(5678), persistence.PublicationDirectoryIdentity{Platform: "darwin", Volume: "vol", FileID: "private-dir"}
+	identity := &persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	prep := persistence.PublicationPreparationRecord{Version: persistence.PublicationPreparationVersion, Kind: "publication_preparation", Step: "input_ready", OperationID: runtimeGuard.OperationID, ClaimUUID: runtimeGuard.ClaimUUID, OwnerToken: uuid.New(), PrivateDirRel: "private/op", InputRel: "private/op/input.flac", OutputRel: "private/op/output.flac", ParentIdentity: directoryID, DirectoryIdentity: &directoryID, CopiedInput: cloneRetryIdentity(identity)}
+	rebuild := persistence.PublicationCandidateRebuildRecord{Version: persistence.PublicationCandidateRebuildVersion, Kind: "publication_candidate_rebuild", Step: "intent", Guard: runtimeGuard, OwnerToken: prep.OwnerToken, PrivateDirRel: prep.PrivateDirRel, InputRel: prep.InputRel, OutputRel: prep.OutputRel, DirectoryIdentity: directoryID, Candidate: cloneRetryIdentity(identity), Input: cloneRetryIdentity(identity)}
+	prep, rebuild = jsonDecodeRetryRecords(t, prep, rebuild)
+	claimJSON, err := json.Marshal(claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(claimJSON, &claim); err != nil {
+		t.Fatal(err)
+	}
+	if !retryFrontierBindingMatches(seed, claim, prep, rebuild) {
+		t.Fatal("valid JSON-decoded frontier with fresh runtime claim IDs was rejected")
+	}
+	tests := []struct {
+		name   string
+		mutate func(*retryFrontierEvidence)
+	}{
+		{"seed operation", func(e *retryFrontierEvidence) { e.seed.OperationID = uuid.New() }},
+		{"seed application attempt", func(e *retryFrontierEvidence) { e.seed.ApplicationAttempt++ }},
+		{"seed River job", func(e *retryFrontierEvidence) { e.seed.RiverJobID++ }},
+		{"seed River attempt", func(e *retryFrontierEvidence) { e.seed.RiverAttempt++ }},
+		{"seed epoch", func(e *retryFrontierEvidence) { e.seed.Epoch = uuid.New() }},
+		{"seed candidate generation", func(e *retryFrontierEvidence) { e.seed.CandidateGeneration = uuid.New() }},
+		{"seed position", func(e *retryFrontierEvidence) { e.seed.ExpectedPositionID = uuid.New() }},
+		{"runtime claim state", func(e *retryFrontierEvidence) { e.claim.State = "quiescent" }},
+		{"runtime claim operation", func(e *retryFrontierEvidence) { e.claim.OperationID = uuid.New() }},
+		{"runtime claim application attempt", func(e *retryFrontierEvidence) { e.claim.ApplicationAttempt++ }},
+		{"runtime claim River job", func(e *retryFrontierEvidence) { e.claim.RiverJobID++ }},
+		{"runtime claim River attempt", func(e *retryFrontierEvidence) { e.claim.RiverAttempt++ }},
+		{"runtime claim UUID", func(e *retryFrontierEvidence) { e.claim.ClaimUUID = uuid.New() }},
+		{"runtime claim boot UUID", func(e *retryFrontierEvidence) { e.claim.BootUUID = uuid.New() }},
+		{"runtime claim delivery token", func(e *retryFrontierEvidence) { e.claim.DeliveryToken = uuid.NewString() }},
+		{"runtime claim epoch", func(e *retryFrontierEvidence) { e.claim.Epoch = uuid.New() }},
+		{"rebuild guard operation", func(e *retryFrontierEvidence) { e.rebuild.Guard.OperationID = uuid.New() }},
+		{"rebuild guard application attempt", func(e *retryFrontierEvidence) { e.rebuild.Guard.ApplicationAttempt++ }},
+		{"rebuild guard River job", func(e *retryFrontierEvidence) { e.rebuild.Guard.RiverJobID++ }},
+		{"rebuild guard River attempt", func(e *retryFrontierEvidence) { e.rebuild.Guard.RiverAttempt++ }},
+		{"rebuild guard epoch", func(e *retryFrontierEvidence) { e.rebuild.Guard.Epoch = uuid.New() }},
+		{"rebuild guard generation", func(e *retryFrontierEvidence) { e.rebuild.Guard.CandidateGeneration = uuid.New() }},
+		{"rebuild guard position", func(e *retryFrontierEvidence) { e.rebuild.Guard.ExpectedPositionID = uuid.New() }},
+		{"rebuild runtime claim UUID", func(e *retryFrontierEvidence) { e.rebuild.Guard.ClaimUUID = uuid.New() }},
+		{"rebuild runtime boot UUID", func(e *retryFrontierEvidence) { e.rebuild.Guard.BootUUID = uuid.New() }},
+		{"rebuild runtime delivery token", func(e *retryFrontierEvidence) { e.rebuild.Guard.DeliveryToken = uuid.NewString() }},
+		{"preparation operation", func(e *retryFrontierEvidence) { e.prep.OperationID = uuid.New() }},
+		{"preparation claim UUID", func(e *retryFrontierEvidence) { e.prep.ClaimUUID = uuid.New() }},
+		{"preparation owner token nil", func(e *retryFrontierEvidence) { e.prep.OwnerToken = uuid.Nil }},
+		{"owner token mismatch", func(e *retryFrontierEvidence) { e.rebuild.OwnerToken = uuid.New() }},
+		{"preparation kind", func(e *retryFrontierEvidence) { e.prep.Kind = "wrong" }},
+		{"preparation step", func(e *retryFrontierEvidence) { e.prep.Step = "directory_created" }},
+		{"rebuild kind", func(e *retryFrontierEvidence) { e.rebuild.Kind = "wrong" }},
+		{"rebuild step", func(e *retryFrontierEvidence) { e.rebuild.Step = "complete" }},
+		{"rebuild candidate identity absent", func(e *retryFrontierEvidence) { e.rebuild.Candidate = nil }},
+		{"private directory", func(e *retryFrontierEvidence) { e.rebuild.PrivateDirRel += "/other" }},
+		{"input path", func(e *retryFrontierEvidence) { e.prep.InputRel += ".other" }},
+		{"output path", func(e *retryFrontierEvidence) { e.rebuild.OutputRel += ".other" }},
+		{"directory identity", func(e *retryFrontierEvidence) { e.rebuild.DirectoryIdentity.FileID = "other" }},
+		{"directory identity absent", func(e *retryFrontierEvidence) { e.prep.DirectoryIdentity = nil }},
+		{"input identity absent", func(e *retryFrontierEvidence) { e.rebuild.Input = nil }},
+		{"copied input identity absent", func(e *retryFrontierEvidence) { e.prep.CopiedInput = nil }},
+		{"copied input size absent", func(e *retryFrontierEvidence) { e.prep.CopiedInput.SizeBytes = nil }},
+		{"rebuild input size absent", func(e *retryFrontierEvidence) { e.rebuild.Input.SizeBytes = nil }},
+		{"copied input mtime absent", func(e *retryFrontierEvidence) { e.prep.CopiedInput.MTime = nil }},
+		{"rebuild input mtime absent", func(e *retryFrontierEvidence) { e.rebuild.Input.MTime = nil }},
+		{"input size drift", func(e *retryFrontierEvidence) { *e.rebuild.Input.SizeBytes++ }},
+		{"copied input size drift", func(e *retryFrontierEvidence) { *e.prep.CopiedInput.SizeBytes++ }},
+		{"input mtime drift", func(e *retryFrontierEvidence) { *e.rebuild.Input.MTime++ }},
+		{"copied input mtime drift", func(e *retryFrontierEvidence) { *e.prep.CopiedInput.MTime++ }},
+		{"input digest drift", func(e *retryFrontierEvidence) { e.rebuild.Input.SHA256 = strings.Repeat("a", 64) }},
+		{"copied input digest drift", func(e *retryFrontierEvidence) { e.prep.CopiedInput.SHA256 = strings.Repeat("a", 64) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			changed := retryFrontierEvidence{seed: seed, claim: claim, prep: prep, rebuild: rebuild}
+			changed.prep.CopiedInput = cloneRetryIdentity(prep.CopiedInput)
+			changed.prep.DirectoryIdentity = cloneRetryDirectoryIdentity(prep.DirectoryIdentity)
+			changed.rebuild.Input = cloneRetryIdentity(rebuild.Input)
+			changed.rebuild.Candidate = cloneRetryIdentity(rebuild.Candidate)
+			test.mutate(&changed)
+			if retryFrontierBindingMatches(changed.seed, changed.claim, changed.prep, changed.rebuild) {
+				t.Fatal("drifted durable frontier binding was accepted")
+			}
+		})
+	}
+}
+
+func retryFrontierBindingMatches(seed persistence.PublicationDeliveryGuard, claim persistence.PublicationExecutionClaim, prep persistence.PublicationPreparationRecord, rebuild persistence.PublicationCandidateRebuildRecord) bool {
+	guard := rebuild.Guard
+	return prep.Version == persistence.PublicationPreparationVersion && prep.Kind == "publication_preparation" && rebuild.Version == persistence.PublicationCandidateRebuildVersion && rebuild.Kind == "publication_candidate_rebuild" && rebuild.Step == "intent" && rebuild.Candidate != nil && rebuild.Candidate.SizeBytes != nil && rebuild.Candidate.MTime != nil && *rebuild.Candidate.SizeBytes >= 0 && validReplacementDigest(rebuild.Candidate.SHA256) && sameRetryGuardIdentity(seed, guard) &&
+		claim.State == "executing" && claim.OperationID == guard.OperationID && claim.ApplicationAttempt == guard.ApplicationAttempt && claim.RiverJobID == guard.RiverJobID && claim.RiverAttempt == guard.RiverAttempt && claim.ClaimUUID == guard.ClaimUUID && claim.BootUUID == guard.BootUUID && claim.DeliveryToken == guard.DeliveryToken && claim.Epoch == guard.Epoch &&
+		prep.Step == "input_ready" && prep.OperationID == guard.OperationID && prep.ClaimUUID == guard.ClaimUUID && prep.OwnerToken != uuid.Nil && prep.OwnerToken == rebuild.OwnerToken &&
+		prep.PrivateDirRel == rebuild.PrivateDirRel && prep.InputRel == rebuild.InputRel && prep.OutputRel == rebuild.OutputRel && prep.DirectoryIdentity != nil && *prep.DirectoryIdentity == rebuild.DirectoryIdentity &&
+		sameRetryFileIdentity(prep.CopiedInput, rebuild.Input)
+}
+
+func sameRetryGuardIdentity(seed, runtime persistence.PublicationDeliveryGuard) bool {
+	return seed.OperationID == runtime.OperationID && seed.ApplicationAttempt == runtime.ApplicationAttempt && seed.RiverJobID == runtime.RiverJobID && seed.RiverAttempt == runtime.RiverAttempt && seed.Epoch == runtime.Epoch && seed.CandidateGeneration == runtime.CandidateGeneration && seed.ExpectedPositionID == runtime.ExpectedPositionID
+}
+
+func sameRetryFileIdentity(a, b *persistence.PublicationFileIdentity) bool {
+	if a == nil || b == nil || !validReplacementDigest(a.SHA256) || a.SHA256 != b.SHA256 || a.SizeBytes == nil || b.SizeBytes == nil || *a.SizeBytes < 0 || *a.SizeBytes != *b.SizeBytes || a.MTime == nil || b.MTime == nil {
+		return false
+	}
+	return *a.MTime == *b.MTime
+}
+
+type retryFrontierEvidence struct {
+	seed    persistence.PublicationDeliveryGuard
+	claim   persistence.PublicationExecutionClaim
+	prep    persistence.PublicationPreparationRecord
+	rebuild persistence.PublicationCandidateRebuildRecord
+}
+
+func cloneRetryIdentity(identity *persistence.PublicationFileIdentity) *persistence.PublicationFileIdentity {
+	if identity == nil {
+		return nil
+	}
+	clone := *identity
+	if identity.SizeBytes != nil {
+		value := *identity.SizeBytes
+		clone.SizeBytes = &value
+	}
+	if identity.MTime != nil {
+		value := *identity.MTime
+		clone.MTime = &value
+	}
+	return &clone
+}
+
+func cloneRetryDirectoryIdentity(identity *persistence.PublicationDirectoryIdentity) *persistence.PublicationDirectoryIdentity {
+	if identity == nil {
+		return nil
+	}
+	clone := *identity
+	return &clone
+}
+
+func jsonDecodeRetryRecords(t *testing.T, prep persistence.PublicationPreparationRecord, rebuild persistence.PublicationCandidateRebuildRecord) (persistence.PublicationPreparationRecord, persistence.PublicationCandidateRebuildRecord) {
+	t.Helper()
+	prepJSON, err := json.Marshal(prep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuildJSON, err := json.Marshal(rebuild)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decodedPrep persistence.PublicationPreparationRecord
+	var decodedRebuild persistence.PublicationCandidateRebuildRecord
+	if err := json.Unmarshal(prepJSON, &decodedPrep); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rebuildJSON, &decodedRebuild); err != nil {
+		t.Fatal(err)
+	}
+	return decodedPrep, decodedRebuild
 }
 
 var errInjectedReplacementCommit = errors.New("injected replacement commit failure")
