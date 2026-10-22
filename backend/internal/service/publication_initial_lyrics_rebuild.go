@@ -318,6 +318,25 @@ func nativeInitialLyricsCandidateEvidence(ctx context.Context, stage *preparedPu
 	return info, digest, errors.Join(statErr, file.Close())
 }
 
+// nativeInitialLyricsCandidateInfo retains native output identity without
+// reading the entire audio payload. Hashing is reserved for durable cleanup
+// witnesses and final validation evidence.
+func nativeInitialLyricsCandidateInfo(ctx context.Context, stage *preparedPublicationStage) (os.FileInfo, error) {
+	mutation, ok := stage.directory.(sourcefs.OutputMutation)
+	if !ok {
+		return nil, errors.New("native initial lyrics candidate read capability is unavailable")
+	}
+	file, err := mutation.OpenExistingRegular(ctx, initialLyricsCandidateName(stage))
+	if err != nil {
+		return nil, err
+	}
+	info, statErr := file.Stat(ctx)
+	if statErr == nil && (info == nil || !info.Mode().IsRegular()) {
+		statErr = errors.New("initial lyrics candidate is not a regular file")
+	}
+	return info, errors.Join(statErr, file.Close())
+}
+
 // verifyInitialLyricsPreparedAudioInput binds evidence to a current held audio
 // source and its native prepared copy. Preparation's copied-input record omits a
 // digest, so the copy and current source are independently hashed here.

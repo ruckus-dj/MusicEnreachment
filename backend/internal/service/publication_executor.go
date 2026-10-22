@@ -19,13 +19,14 @@ import (
 
 // PublicationExecutor owns the entry point for one River publication delivery.
 type PublicationExecutor struct {
-	repository  *persistence.SetupManagerRepository
-	registry    *settings.Registry
-	platform    tools.Platform
-	coordinator *publication.Coordinator
-	bootUUID    uuid.UUID
-	commands    PublicationCommandRunner
-	lyrics      *PublicationLyricsResolver
+	repository     *persistence.SetupManagerRepository
+	registry       *settings.Registry
+	platform       tools.Platform
+	coordinator    *publication.Coordinator
+	bootUUID       uuid.UUID
+	commands       PublicationCommandRunner
+	lyrics         *PublicationLyricsResolver
+	stageValidator PublicationStageValidator
 }
 
 func NewPublicationExecutor(
@@ -135,7 +136,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 			}
 			preparer.HoldUUID = hold
 		}
-		_, err := executeGenericPublication(ctx, scope, executor.repository, input, preparer, attempt, executor.platform, executor.lyrics)
+		_, err := executeGenericPublication(ctx, scope, executor.repository, input, preparer, attempt, executor.platform, executor.lyrics, executor.stageValidator)
 		return err
 	}
 	prepared, err := preparer.prepareManualLyricsFLAC(ctx, guard, persistence.PublicationDeliveryAcquired, true)

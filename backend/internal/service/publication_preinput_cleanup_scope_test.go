@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"testing"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
 func TestPublicationPreInputCleanupCapabilitySealsScopeUntilConsumed(t *testing.T) {
@@ -56,6 +58,32 @@ func TestPublicationPreInputCleanupCapabilitySealsScopeUntilConsumed(t *testing.
 	reservation := scope.reserveSynchronousWork()
 	if reservation == nil {
 		t.Fatal("scope did not become available after cleanup capability was consumed")
+	}
+	scope.releaseSynchronousWork(reservation)
+}
+
+func TestPublicationInitialOutputCleanupTransfersOnlySoleOriginalReservation(t *testing.T) {
+	scope := newScopeForTest(t, &scopeCommandFake{}, &scopeRepositoryFake{marked: true})
+	stage := &preparedPublicationStage{guard: scope.guard, preparationRecord: persistence.PublicationPreparationRecord{Step: "input_ready", CopiedInput: &persistence.PublicationFileIdentity{}, DirectoryIdentity: &persistence.PublicationDirectoryIdentity{}}}
+	reservation := scope.reserveSynchronousWork()
+	if reservation == nil {
+		t.Fatal("staging reservation unavailable")
+	}
+	capability := scope.beginInitialOutputCleanup(stage, reservation)
+	if capability == nil {
+		t.Fatal("original-owner cleanup capability unavailable")
+	}
+	if scope.CanExecute() || scope.reserveSynchronousWork() != nil {
+		t.Fatal("scope admitted work while output cleanup owned its reservation")
+	}
+	if !scope.finishInitialOutputCleanup(capability, false) {
+		t.Fatal("cleanup capability could not be returned after a failed ACK path")
+	}
+	if scope.beginInitialOutputCleanup(stage, reservation) != nil {
+		t.Fatal("consumed cleanup capability was replayed")
+	}
+	if !scope.CanExecute() {
+		t.Fatal("scope remained fenced after returning the capability")
 	}
 	scope.releaseSynchronousWork(reservation)
 }

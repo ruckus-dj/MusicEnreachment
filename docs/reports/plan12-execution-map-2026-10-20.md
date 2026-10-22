@@ -2,6 +2,34 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+### Следующий срез: original-owner validation failure cleanup
+
+В рабочее дерево перенесён отдельный post-input cleanup protocol для returned
+final-validator failure первой audio-публикации: native output identity
+фиксируется до validation, sole reservation передаётся в одноразовый cleanup
+fence, intent ACK предшествует удалению, completion ACK и settlement освобождают
+claims/holds только после удаления точных owned staging files/directory.
+Unknown execution, подмена файла, writer inode replacement и потерянный ACK
+остаются fail-closed; старые retained attempts и cross-boot authority не меняются.
+
+Первый изолированный gate выявил ошибки тестовых ожиданий. Исправлены hash в
+baseline witness, различение pending/settled prefixes, consistency-only recovery
+assessment и filesystem assertions по реально записанному validator path.
+Настоящий committed-but-lost completion ACK проверяется decorator поверх реальной
+repository записи, отдельно от SQL write rejection. Primary исправил fixture:
+guarded preparation inputs читаются после claim. Все четыре диагностических
+native/PG service tests и persistence prefix test прошли; повторное независимое
+review закрыло P1/P2. Полный integrated `task verify` прошёл (Go integration,
+337 frontend tests, generation/lint/build); commit/CI этого среза пока не
+подтверждены. Writer/transform errors и более общий recovery этим
+срезом не объявляются завершёнными.
+
+**CI-подтверждение:** полный run `39750832967` для `b7ac978` завершился
+`success`: verify, Windows x64, macOS x64/arm64, Linux amd64/arm64,
+Docker Compose smoke и publication container image.
+Automatic-matching producer закоммичен как `bf6dc87` со штатным hook,
+включая финальный rollback regression; отправлен, CI `39753708776` выполняется.
+
 ### Следующий срез: automatic matching producer
 
 В рабочем дереве поверх `b7ac978` оба automatic matching apply пути

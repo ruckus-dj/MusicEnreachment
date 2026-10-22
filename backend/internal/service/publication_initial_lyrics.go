@@ -34,10 +34,11 @@ type publicationInitialLyricsCallbacks struct {
 	ArmOwnedRebuildAfterAcknowledgedIntent func(context.Context, persistence.PublicationCandidateRebuildRecord) (func(context.Context) error, error)
 	// CaptureRebuildComplete must sync and identify the candidate after the
 	// transform and strict mandatory-only write, then return its completion record.
-	CaptureRebuildComplete func(context.Context) (persistence.PublicationCandidateRebuildRecord, error)
-	ValidateFinal          func(context.Context, map[string][]string) (persistence.PublicationStageObservation, persistence.PublicationFileIdentity, error)
-	CheckBoundary          func(context.Context) error
-	Quarantine             func()
+	CaptureRebuildComplete   func(context.Context) (persistence.PublicationCandidateRebuildRecord, error)
+	ValidateFinal            func(context.Context, map[string][]string) (persistence.PublicationStageObservation, persistence.PublicationFileIdentity, error)
+	CheckBoundary            func(context.Context) error
+	Quarantine               func()
+	ValidationFailureSettled func() bool
 }
 
 type publicationInitialLyricsResult struct {
@@ -65,7 +66,7 @@ func executeInitialPublicationLyrics(
 			callbacks.Quarantine()
 			panic(recovered)
 		}
-		if resultErr != nil {
+		if resultErr != nil && (callbacks.ValidationFailureSettled == nil || !callbacks.ValidationFailureSettled()) {
 			callbacks.Quarantine()
 		}
 	}()

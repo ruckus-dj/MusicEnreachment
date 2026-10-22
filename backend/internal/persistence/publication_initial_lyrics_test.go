@@ -126,6 +126,103 @@ func TestInitialLyricsJournalAcceptsStrictPreparationAcquisitionPrefix(t *testin
 	}
 }
 
+func TestInitialOutputCleanupEvidenceIsRetainedAndNotReplayable(t *testing.T) {
+	guard := PublicationDeliveryGuard{OperationID: uuid.New(), ClaimUUID: uuid.New()}
+	input := PublicationInputs{Version: PublicationInputsVersion, IntentKind: "audio", InitialLyrics: &PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}}
+	size, mtime, outSize, outMtime := int64(5), int64(10), int64(12), int64(20)
+	parent := PublicationDirectoryIdentity{Platform: "darwin", Volume: "vol", FileID: "parent"}
+	directory := PublicationDirectoryIdentity{Platform: "darwin", Volume: "vol", FileID: "directory"}
+	prep := PublicationPreparationRecord{Version: PublicationPreparationVersion, Kind: "publication_preparation", Step: "input_ready", OperationID: guard.OperationID, ClaimUUID: guard.ClaimUUID, OwnerToken: uuid.New(), PrivateDirRel: "private", InputRel: "private/input.flac", OutputRel: "private/output.flac", ParentIdentity: parent, DirectoryIdentity: &directory, InputSize: &size, InputMTime: &mtime, CopiedInput: &PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	intent := prep
+	intent.Step, intent.DirectoryIdentity, intent.InputSize, intent.InputMTime, intent.CopiedInput = "intent", nil, nil, nil, nil
+	created := prep
+	created.Step, created.InputSize, created.InputMTime, created.CopiedInput = "directory_created", nil, nil, nil
+	acquisition := PublicationInitialLyricsAcquisitionRecord{Version: PublicationInitialLyricsVersion, Kind: PublicationInitialLyricsAcquisitionKind, Guard: guard, Authority: *input.InitialLyrics, Source: "none"}
+	witness := PublicationInitialOutputCleanupWitness{Preparation: prep, Input: PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, Output: PublicationFileIdentity{SizeBytes: &outSize, MTime: &outMtime, SHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, OutputRel: prep.OutputRel}
+	entries := make([]json.RawMessage, 0, 6)
+	for _, record := range []any{intent, created, prep, acquisition} {
+		raw, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, raw)
+	}
+	if !validInitialOutputCleanupWitness(guard, witness) {
+		t.Fatal("valid native cleanup witness rejected")
+	}
+	cleanupIntent := publicationInitialOutputCleanupRecord{Version: initialOutputCleanupVersion, Kind: "publication_initial_output_cleanup", Step: "intent", Guard: guard, Witness: witness}
+	raw, _ := json.Marshal(cleanupIntent)
+	withIntent := append(append([]json.RawMessage(nil), entries...), raw)
+	if !exactInitialOutputCleanupPrefix(withIntent, guard, input, witness, 1) {
+		t.Fatal("valid pending cleanup intent rejected")
+	}
+	if exactInitialOutputCleanupPrefix(withIntent, guard, input, witness, 2) {
+		t.Fatal("retained cleanup intent was treated as settled")
+	}
+	if _, err := parseInitialLyricsPrefix(withIntent, guard, input); err == nil {
+		t.Fatal("recovery parser accepted retained cleanup intent")
+	}
+	cleanupComplete := cleanupIntent
+	cleanupComplete.Step, cleanupComplete.Result = "complete", "removed"
+	raw, _ = json.Marshal(cleanupComplete)
+	withComplete := append(withIntent, raw)
+	if !exactInitialOutputCleanupPrefix(withComplete, guard, input, witness, 2) {
+		t.Fatal("exact completed cleanup evidence rejected")
+	}
+	cleanupComplete.Witness.Output.SHA256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	raw, _ = json.Marshal(cleanupComplete)
+	withComplete[5] = raw
+	if exactInitialOutputCleanupPrefix(withComplete, guard, input, witness, 2) {
+		t.Fatal("cleanup completion with changed output authority accepted")
+	}
+}
+
+func TestPublicationRecoveryFrontierRetainsInitialOutputCleanupWitness(t *testing.T) {
+	guard := PublicationDeliveryGuard{OperationID: uuid.New(), ApplicationAttempt: 2, RiverJobID: 9, RiverAttempt: 1, ClaimUUID: uuid.New(), BootUUID: uuid.New(), DeliveryToken: "delivery", Epoch: uuid.New(), CandidateGeneration: uuid.New(), ExpectedPositionID: uuid.New()}
+	input := publicationInputsFixture(t, "audio")
+	inputRaw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size, sourceMTime, copiedMTime, outputSize, outputMTime := int64(12), int64(21), int64(25), int64(30), int64(40)
+	parent := PublicationDirectoryIdentity{Platform: "darwin", Volume: "disk", FileID: "parent"}
+	directory := PublicationDirectoryIdentity{Platform: "darwin", Volume: "disk", FileID: "directory"}
+	base := PublicationPreparationRecord{Version: PublicationPreparationVersion, Kind: "publication_preparation", OperationID: guard.OperationID, ClaimUUID: guard.ClaimUUID, OwnerToken: uuid.New(), PrivateDirRel: "private", InputRel: "private/input.flac", OutputRel: "private/output.flac", ParentIdentity: parent}
+	intent := base
+	intent.Step = "intent"
+	created := base
+	created.Step, created.DirectoryIdentity = "directory_created", &directory
+	ready := created
+	ready.Step, ready.InputSize, ready.InputMTime = "input_ready", &size, &sourceMTime
+	ready.CopiedInput = &PublicationFileIdentity{SizeBytes: &size, MTime: &copiedMTime, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	acquisition := PublicationInitialLyricsAcquisitionRecord{Version: PublicationInitialLyricsVersion, Kind: PublicationInitialLyricsAcquisitionKind, Guard: guard, Authority: *input.InitialLyrics, Source: "none"}
+	witness := PublicationInitialOutputCleanupWitness{Preparation: ready, Input: *ready.CopiedInput, Output: PublicationFileIdentity{SizeBytes: &outputSize, MTime: &outputMTime, SHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, OutputRel: ready.OutputRel}
+	intentRecord := publicationInitialOutputCleanupRecord{Version: initialOutputCleanupVersion, Kind: "publication_initial_output_cleanup", Step: "intent", Guard: guard, Witness: witness}
+	completeRecord := intentRecord
+	completeRecord.Step, completeRecord.Result = "complete", "removed"
+	entries := make([]json.RawMessage, 0, 6)
+	for _, record := range []any{intent, created, ready, acquisition, intentRecord, completeRecord} {
+		raw, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, raw)
+	}
+	journal, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := TrackPublicationAttempt{OperationID: guard.OperationID, PositionID: guard.ExpectedPositionID, Epoch: guard.Epoch, CandidateGeneration: guard.CandidateGeneration, IntentKind: "audio", Phase: "preparing", FrozenInputs: inputRaw, MutationJournal: journal}
+	claim := PublicationExecutionClaim{OperationID: guard.OperationID, ApplicationAttempt: guard.ApplicationAttempt, RiverJobID: guard.RiverJobID, RiverAttempt: guard.RiverAttempt, ClaimUUID: guard.ClaimUUID, BootUUID: guard.BootUUID, DeliveryToken: guard.DeliveryToken, Epoch: guard.Epoch, State: "recovery_required"}
+	frontier, err := publicationRecoveryJournalFrontier(attempt, claim)
+	if err != nil || frontier != "initial_output_cleanup_retained" {
+		t.Fatalf("recovery frontier = %q, %v", frontier, err)
+	}
+	if _, err := parseInitialLyricsPrefix(entries, guard, input); err == nil {
+		t.Fatal("initial lyrics parser permitted recovery to replay retained cleanup evidence")
+	}
+}
+
 func TestInitialLyricsOutcomeRequiresExactDurablePreparedInput(t *testing.T) {
 	makeReady := func() (PublicationPreparationRecord, PublicationFileIdentity) {
 		guard := PublicationDeliveryGuard{OperationID: uuid.New(), ClaimUUID: uuid.New()}

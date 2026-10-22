@@ -32,6 +32,15 @@ All services depend on persistence layer repos (persistence.SetupManagerReposito
 
 **Error handling**: `fmt.Errorf("context: %w", err)` with lowercase messages; no custom error types.
 
+**Publication fault tests**: Claim the delivery before reading guarded preparation
+inputs. Record the actual staged output path before validation; a settled attempt
+has already deleted its journal, and checking an unrelated empty technical
+directory proves nothing. A SQL trigger that rejects completion tests rollback,
+not a lost ACK: cover committed-but-lost acknowledgements with a repository
+decorator that performs the real write before returning the injected error.
+Consistency-only recovery assessment may accept retained evidence without granting
+replay; assert the frontier and execution rejection separately.
+
 ## ANTI-PATTERNS
 - Empty safe error messages in Operations.Fail (enforced at runtime)
 - Passing full operation inputs in River job args (args = ID only, reload from snapshot)

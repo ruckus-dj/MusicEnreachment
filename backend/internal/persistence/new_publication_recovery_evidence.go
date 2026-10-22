@@ -205,6 +205,9 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 	var installed publicationCandidateInstalledJournalRecord
 	var commitCount int
 	var cleanupIntent *publicationPreparationCleanupRecord
+	var initialOutputCleanup *publicationInitialOutputCleanupRecord
+	initialOutputCleanupCount := 0
+	initialLyricsAcquired := false
 	var firstAbsentCleanup *PublicationFirstAbsentCleanupWitness
 	firstAbsentCleanupCount := 0
 	wantGuard := PublicationDeliveryGuard{OperationID: claim.OperationID, ApplicationAttempt: claim.ApplicationAttempt, RiverJobID: claim.RiverJobID, RiverAttempt: claim.RiverAttempt, ClaimUUID: claim.ClaimUUID, BootUUID: claim.BootUUID, DeliveryToken: claim.DeliveryToken, Epoch: claim.Epoch, CandidateGeneration: attempt.CandidateGeneration, ExpectedPositionID: attempt.PositionID}
@@ -221,6 +224,7 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 			if frontier != "prep_3" || decodeStrictJSON(raw, &record) != nil || record.Guard != wantGuard {
 				return "", errors.New("invalid initial lyrics acquisition journal")
 			}
+			initialLyricsAcquired = true
 		case "publication_candidate_rebuild":
 			var record PublicationCandidateRebuildRecord
 			if frontier != "prep_3" || decodeStrictJSON(raw, &record) != nil || !validCandidateRebuildRecord(record, wantGuard) {
@@ -279,6 +283,22 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 				}
 			}
 			frontier = "preparation_cleanup_retained"
+		case "publication_initial_output_cleanup":
+			var record publicationInitialOutputCleanupRecord
+			if frontier != "prep_3" && frontier != "initial_output_cleanup_retained" || !initialLyricsAcquired || decodeStrictJSON(raw, &record) != nil || record.Version != initialOutputCleanupVersion || record.Kind != h.Kind || record.Guard != wantGuard || !validInitialOutputCleanupWitness(wantGuard, record.Witness) || !samePreparationRecord(record.Witness.Preparation, prior) {
+				return "", errors.New("invalid initial publication output cleanup journal")
+			}
+			if initialOutputCleanup == nil {
+				if record.Step != "intent" || record.Result != "" {
+					return "", errors.New("initial publication output cleanup completion has no intent")
+				}
+				copy := record
+				initialOutputCleanup = &copy
+			} else if record.Step != "complete" || record.Result != "removed" || !reflect.DeepEqual(record.Witness, initialOutputCleanup.Witness) {
+				return "", errors.New("invalid initial publication output cleanup completion")
+			}
+			initialOutputCleanupCount++
+			frontier = "initial_output_cleanup_retained"
 		case "publication_exposure":
 			if frontier != "validated" || decodeStrictJSON(raw, &exposure) != nil || exposure.Version != PublicationExposureVersion || exposure.Kind != "publication_exposure" || exposure.From != "validated" || exposure.To != "exposing" || validatePublicationDeliveryGuard(exposure.Guard) != nil || exposure.Guard != wantGuard || exposure.PositionID != attempt.PositionID || exposure.Epoch != attempt.Epoch || exposure.CandidateGeneration != attempt.CandidateGeneration || exposure.ExpectedGeneration != nil || exposure.Intent.Expectation != "absent" || exposure.Current == nil || string(exposure.Current) != "null" || !validExposureIntent(exposure.Intent) || !validPublicationStageObservation(exposure.Observation) || !samePublicationStageObservation(exposure.Observation, validated) || !stageMatchesIntent(validated, exposure.Intent) || !preparationOwnsIntent(attempt.MutationJournal, exposure.Guard, exposure.Intent, validated) {
 				return "", errors.New("invalid publication exposure journal")
@@ -321,6 +341,9 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 			return "", errors.New("first-absent cleanup journal is incomplete")
 		}
 	}
+	if initialOutputCleanupCount > 0 && (initialOutputCleanupCount > 2 || initialOutputCleanup == nil) {
+		return "", errors.New("initial publication output cleanup journal is incomplete")
+	}
 	return frontier, nil
 }
 
@@ -354,7 +377,7 @@ func publicationRecoveryIdentityMatchesInstalled(a, b PublicationFileIdentity) b
 func publicationRecoveryPhaseMatches(phase, frontier string) bool {
 	switch phase {
 	case "preparing":
-		return frontier == "empty" || strings.HasPrefix(frontier, "prep_") || frontier == "preparation_cleanup_retained"
+		return frontier == "empty" || strings.HasPrefix(frontier, "prep_") || frontier == "preparation_cleanup_retained" || frontier == "initial_output_cleanup_retained"
 	case "staged":
 		return frontier == "staged"
 	case "validated":

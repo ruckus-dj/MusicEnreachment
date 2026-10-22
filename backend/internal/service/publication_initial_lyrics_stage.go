@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
@@ -58,6 +60,8 @@ func (runner PublicationStagingRunner) runInitialLyricsStage(
 	}
 	var rebuildIntent persistence.PublicationCandidateRebuildRecord
 	var rebuildCapability *initialLyricsRebuildCapability
+	var transformedOutputInfo os.FileInfo
+	var validationCleanupSettled bool
 
 	callbacks := publicationInitialLyricsCallbacks{
 		CheckBoundary: func(boundaryCtx context.Context) error {
@@ -76,7 +80,8 @@ func (runner PublicationStagingRunner) runInitialLyricsStage(
 			}
 			return check()
 		},
-		Quarantine: scope.quarantineUncertain,
+		Quarantine:               scope.quarantineUncertain,
+		ValidationFailureSettled: func() bool { return validationCleanupSettled && scope.failureSettled() },
 		CapturePreparedInput: func(captureCtx context.Context) (metadata.Capture, persistence.PublicationPreparationRecord, persistence.PublicationFileIdentity, error) {
 			if err := check(); err != nil {
 				return metadata.Capture{}, persistence.PublicationPreparationRecord{}, persistence.PublicationFileIdentity{}, err
@@ -92,6 +97,11 @@ func (runner PublicationStagingRunner) runInitialLyricsStage(
 			if err := transform(transformCtx); err != nil {
 				return err
 			}
+			info, err := nativeInitialLyricsCandidateInfo(transformCtx, stage)
+			if err != nil {
+				return fmt.Errorf("retain transformed initial publication output identity: %w", err)
+			}
+			transformedOutputInfo = info
 			return check()
 		},
 		WriteMandatory: func(writeCtx context.Context, tags map[string][]string) (metadata.WriteResult, error) {
@@ -106,6 +116,9 @@ func (runner PublicationStagingRunner) runInitialLyricsStage(
 			if err != nil {
 				return result, err
 			}
+			if err := stage.verifyInitialLyricsWriterRetainedOutput(writeCtx, transformedOutputInfo); err != nil {
+				return result, err
+			}
 			return result, check()
 		},
 		WriteOptional: func(writeCtx context.Context, tags map[string][]string) (metadata.OptionalLyricsWriteResult, error) {
@@ -118,6 +131,9 @@ func (runner PublicationStagingRunner) runInitialLyricsStage(
 			}
 			result, err := writer.WriteWithOptionalLyrics(writeCtx, paths.OutputPath, tags, nil)
 			if err != nil {
+				return result, err
+			}
+			if err := stage.verifyInitialLyricsWriterRetainedOutput(writeCtx, transformedOutputInfo); err != nil {
 				return result, err
 			}
 			return result, check()
@@ -161,6 +177,15 @@ func (runner PublicationStagingRunner) runInitialLyricsStage(
 			finalInput.DesiredTags = cloneTagMap(desiredTags)
 			observed, err := runner.Validator.Validate(validateCtx, paths.OutputPath, finalInput)
 			if err != nil {
+				outputInfo, outputDigest, identityErr := nativeInitialLyricsCandidateEvidence(validateCtx, stage)
+				if identityErr != nil || transformedOutputInfo == nil || !os.SameFile(transformedOutputInfo, outputInfo) {
+					return persistence.PublicationStageObservation{}, persistence.PublicationFileIdentity{}, errors.Join(err, identityErr, errors.New("initial publication validation failure has no retained output ownership"))
+				}
+				outputIdentity := publicationFileIdentity(outputInfo, outputDigest)
+				if cleanupErr := stage.cleanupInitialLyricsReturnedValidationFailure(validateCtx, scope, reservation, inputIdentity, outputInfo, outputIdentity); cleanupErr != nil {
+					return persistence.PublicationStageObservation{}, persistence.PublicationFileIdentity{}, errors.Join(err, cleanupErr)
+				}
+				validationCleanupSettled = true
 				return persistence.PublicationStageObservation{}, persistence.PublicationFileIdentity{}, err
 			}
 			if err := check(); err != nil {

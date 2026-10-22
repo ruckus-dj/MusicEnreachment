@@ -30,6 +30,7 @@ func executeGenericPublication(
 	attempt *persistence.TrackPublicationAttempt,
 	platform tools.Platform,
 	lyrics *PublicationLyricsResolver,
+	stageValidator PublicationStageValidator,
 ) (result PublicationStageObservation, resultErr error) {
 	if scope == nil || repository == nil || attempt == nil || preparer.OutputParent == nil {
 		return result, errors.New("generic publication execution dependencies are unavailable")
@@ -135,11 +136,14 @@ func executeGenericPublication(
 	if err != nil {
 		return result, errors.Join(err, stage.Close())
 	}
+	if stageValidator == nil {
+		stageValidator = &RealPublicationStageValidator{MetadataReader: metadata.Reader{}}
+	}
 	runner := PublicationStagingRunner{
 		Repository: repository, PinnedTools: pinned,
 		Lyrics:    lyrics,
 		Metadata:  metadata.Writer{},
-		Validator: &RealPublicationStageValidator{MetadataReader: metadata.Reader{}},
+		Validator: stageValidator,
 	}
 	if input.IntentKind == "rewrite" {
 		return runner.RunReplacementPublication(ctx, scope, input, stage, repository, intent, expectedGeneration, preparer.OutputParent, prepared.directory, targetParent, filepath.Base(paths.OutputPath), path.Base(targetRelative))

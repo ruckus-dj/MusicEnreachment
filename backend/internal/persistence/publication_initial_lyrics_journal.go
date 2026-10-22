@@ -124,6 +124,17 @@ func parseInitialLyricsPrefix(entries []json.RawMessage, guard PublicationDelive
 			}
 			state.outcome = &record
 			phase = "after_outcome"
+		case "publication_initial_output_cleanup":
+			var record publicationInitialOutputCleanupRecord
+			if state.preparation == nil || state.preparation.Step != "input_ready" || state.acquisition == nil || state.outcome != nil || state.stageCount != 0 ||
+				decodeStrictJSON(raw, &record) != nil || record.Version != initialOutputCleanupVersion || record.Kind != header.Kind || record.Guard != guard ||
+				!validInitialOutputCleanupWitness(guard, record.Witness) || !samePreparationRecord(*state.preparation, record.Witness.Preparation) {
+				return state, errors.New("initial publication output cleanup evidence is invalid")
+			}
+			if record.Step == "intent" && record.Result == "" {
+				return state, errors.New("initial publication output cleanup intent is retained and cannot be replayed")
+			}
+			return state, errors.New("initial publication output cleanup completion is retained and cannot be replayed")
 		case "stage_observation":
 			if phase != "after_outcome" || state.outcome == nil {
 				return state, errors.New("initial lyrics stage observation precedes outcome")

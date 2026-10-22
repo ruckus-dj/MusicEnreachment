@@ -352,7 +352,142 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			}
 		}
 		executor := NewPublicationExecutor(manager, registry, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), audioDeliveryTestCommands{})
-		err = executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
+		for _, option := range confirmation {
+			if validator, ok := option.(PublicationStageValidator); ok {
+				executor.stageValidator = validator
+			}
+			if beforeRun, ok := option.(func(*bun.DB, uuid.UUID) error); ok {
+				if err := beforeRun(db, operationID); err != nil {
+					t.Fatalf("prepare execution fault: %v", err)
+				}
+			}
+		}
+		var validationOutputPath string
+		var originalValidator PublicationStageValidator
+		for _, option := range confirmation {
+			if validator, ok := option.(PublicationStageValidator); ok {
+				originalValidator = validator
+				executor.stageValidator = recordingStageValidator{delegate: validator, outputPath: &validationOutputPath}
+			}
+		}
+		_, committedLostAck := func() (PublicationStageValidator, bool) {
+			for _, option := range confirmation {
+				if validator, ok := option.(committedCleanupCompletionAckFailure); ok {
+					return validator, true
+				}
+			}
+			return nil, false
+		}()
+		var lostAckScope *PublicationExecutionScope
+		if committedLostAck {
+			err, lostAckScope = executeWithCommittedCleanupAckFailure(ctx, manager, executor, operationID, riverJobID, 1, output, &validationOutputPath)
+		} else {
+			err = executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
+		}
+		if executor.stageValidator != nil {
+			if runtime.GOOS == "windows" {
+				t.Skip("native output-directory sync is unavailable on Windows")
+			}
+			_, substituted := originalValidator.(substitutingValidationFailure)
+			_, completionWriteRejected := originalValidator.(returnedValidationFailureWithCompletionWriteRejection)
+			if substituted || committedLostAck || completionWriteRejected {
+				if err == nil {
+					t.Fatal("uncertain validation cleanup unexpectedly succeeded")
+				}
+				if committedLostAck && (lostAckScope == nil || lostAckScope.failureSettled() || lostAckScope.CanExecute()) {
+					t.Fatal("lost completion ACK unexpectedly settled or unfenced execution")
+				}
+				attempt, readErr := manager.ReadPublicationAttempt(ctx, operationID)
+				if readErr != nil || attempt == nil {
+					t.Fatalf("fail-closed validation evidence was not retained: %v", readErr)
+				}
+				var claimCount int
+				if readErr := db.NewRaw(`SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`, operationID).Scan(ctx, &claimCount); readErr != nil || claimCount != 1 {
+					t.Fatalf("original claim was released or recreated: count=%d err=%v", claimCount, readErr)
+				}
+				var cleanupIntents, cleanupCompletions int
+				if readErr := db.NewRaw(`SELECT count(*) FILTER (WHERE entry->>'step'='intent'),count(*) FILTER (WHERE entry->>'step'='complete') FROM track_publication_attempt a CROSS JOIN LATERAL jsonb_array_elements(a.mutation_journal) entry WHERE a.operation_id=? AND entry->>'kind'='publication_initial_output_cleanup'`, operationID).Scan(ctx, &cleanupIntents, &cleanupCompletions); readErr != nil {
+					t.Fatal(readErr)
+				}
+				if committedLostAck && (cleanupIntents != 1 || cleanupCompletions != 1) {
+					t.Fatalf("lost completion ACK journal = intent %d complete %d", cleanupIntents, cleanupCompletions)
+				}
+				if completionWriteRejected && (cleanupIntents != 1 || cleanupCompletions != 0) {
+					t.Fatalf("rejected completion journal = intent %d complete %d", cleanupIntents, cleanupCompletions)
+				}
+				if committedLostAck {
+					var claim persistence.PublicationExecutionClaim
+					if readErr := db.NewSelect().Model(&claim).Where("operation_id=?", operationID).Scan(ctx); readErr != nil {
+						t.Fatal(readErr)
+					}
+					operation, readErr := manager.GetOperation(ctx, operationID)
+					if readErr != nil || operation == nil {
+						t.Fatalf("read operation for retained recovery classification: %v", readErr)
+					}
+					assessment, recoveryErr := persistence.AssessPublicationRecoveryEvidence(persistence.PublicationRecoverySnapshot{
+						Attempt: *attempt, Operation: persistence.PublicationCommitOperationSnapshot{State: operation.State, Stage: operation.Stage}, Claim: claim,
+						OperationID: operationID, ApplicationAttempt: claim.ApplicationAttempt, RiverJobID: claim.RiverJobID,
+						CurrentEpoch: attempt.Epoch, CurrentKnown: true,
+					})
+					if recoveryErr != nil || assessment.JournalFrontier != "initial_output_cleanup_retained" {
+						t.Fatalf("recovery assessment = %+v, %v", assessment, recoveryErr)
+					}
+					replayGuard := persistence.PublicationDeliveryGuard{OperationID: claim.OperationID, ApplicationAttempt: claim.ApplicationAttempt, RiverJobID: claim.RiverJobID, RiverAttempt: claim.RiverAttempt, ClaimUUID: claim.ClaimUUID, BootUUID: claim.BootUUID, DeliveryToken: claim.DeliveryToken, Epoch: claim.Epoch, CandidateGeneration: attempt.CandidateGeneration, ExpectedPositionID: attempt.PositionID}
+					if got, replayErr := manager.BeginPublicationInitialOutputCleanup(ctx, replayGuard, cleanupWitnessFromJournal(t, attempt.MutationJournal)); got == persistence.PublicationInitialOutputCleanupRecorded {
+						t.Fatalf("retained cleanup intent was replayable: %q %v", got, replayErr)
+					}
+				}
+				if substituted && (cleanupIntents != 0 || cleanupCompletions != 0) {
+					t.Fatalf("substituted output acquired cleanup authority: intent %d complete %d", cleanupIntents, cleanupCompletions)
+				}
+				if validationOutputPath == "" {
+					t.Fatal("validator did not record stage output path")
+				}
+				if substituted {
+					if _, statErr := os.Stat(filepath.Dir(validationOutputPath)); statErr != nil {
+						t.Fatalf("substituted stage directory was not retained: %v", statErr)
+					}
+					contents, readErr := os.ReadFile(validationOutputPath)
+					if readErr != nil || string(contents) != "substituted output" {
+						t.Fatalf("substituted output = %q, %v", contents, readErr)
+					}
+				}
+				if committedLostAck || completionWriteRejected {
+					if _, statErr := os.Stat(filepath.Dir(validationOutputPath)); !errors.Is(statErr, os.ErrNotExist) {
+						t.Fatalf("removed staging directory status = %v", statErr)
+					}
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "independent validator test failure") {
+				t.Fatalf("validation failure result = %v", err)
+			}
+			failed, readErr := manager.GetOperation(ctx, operationID)
+			if readErr != nil || failed == nil || failed.State != "failed" || failed.SafeError == nil || *failed.SafeError == "" {
+				t.Fatalf("settled validation failure = %+v, %v", failed, readErr)
+			}
+			for _, table := range []string{"track_publication_attempt", "publication_execution_claim", "publication_source_hold", "operation_tool_read_hold"} {
+				var count int
+				if readErr := db.NewRaw(`SELECT count(*) FROM `+table+` WHERE operation_id=?`, operationID).Scan(ctx, &count); readErr != nil || count != 0 {
+					t.Fatalf("retained %s after validation failure = %d, %v", table, count, readErr)
+				}
+			}
+			var current int
+			if readErr := db.NewRaw(`SELECT count(*) FROM track_publication WHERE position_id=?`, positionID).Scan(ctx, &current); readErr != nil || current != 0 {
+				t.Fatalf("current publication after failed first publication = %d, %v", current, readErr)
+			}
+			if validationOutputPath == "" {
+				t.Fatal("validator did not record stage output path")
+			}
+			if _, statErr := os.Stat(filepath.Dir(validationOutputPath)); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("private staging directory status = %v", statErr)
+			}
+			actualSource, readErr := os.ReadFile(sourceFile)
+			if readErr != nil || !bytes.Equal(actualSource, sourceBytes) {
+				t.Fatalf("source changed during failed validation cleanup: %v", readErr)
+			}
+			return
+		}
 		// Newly created ancestors require directory sync, unsupported on Windows.
 		// Root-level first-absent installation has its own native success contract.
 		if runtime.GOOS == "windows" && strings.Contains(target, "/") {
@@ -456,6 +591,156 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 	if _, err := inventory.GetSourceRoot(ctx, rootID); err != nil {
 		t.Fatalf("read seeded source root through inventory repository: %v", err)
 	}
+}
+
+func cleanupWitnessFromJournal(t *testing.T, raw []byte) persistence.PublicationInitialOutputCleanupWitness {
+	t.Helper()
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		var record struct {
+			Kind    string                                             `json:"kind"`
+			Witness persistence.PublicationInitialOutputCleanupWitness `json:"witness"`
+		}
+		if err := json.Unmarshal(entry, &record); err != nil {
+			t.Fatal(err)
+		}
+		if record.Kind == "publication_initial_output_cleanup" {
+			return record.Witness
+		}
+	}
+	t.Fatal("cleanup witness is missing")
+	return persistence.PublicationInitialOutputCleanupWitness{}
+}
+
+type returnedValidationFailure struct{}
+
+func (returnedValidationFailure) Validate(context.Context, string, persistence.PublicationInputs) (PublicationStageObservation, error) {
+	return PublicationStageObservation{}, errors.New("independent validator test failure")
+}
+
+type substitutingValidationFailure struct{}
+
+func (substitutingValidationFailure) Validate(_ context.Context, path string, _ persistence.PublicationInputs) (PublicationStageObservation, error) {
+	if err := os.Rename(path, path+".retained"); err != nil {
+		return PublicationStageObservation{}, err
+	}
+	if err := os.WriteFile(path, []byte("substituted output"), 0o600); err != nil {
+		return PublicationStageObservation{}, err
+	}
+	return PublicationStageObservation{}, errors.New("independent validator test failure")
+}
+
+type returnedValidationFailureWithCompletionWriteRejection struct{}
+
+func (returnedValidationFailureWithCompletionWriteRejection) Validate(context.Context, string, persistence.PublicationInputs) (PublicationStageObservation, error) {
+	return PublicationStageObservation{}, errors.New("independent validator test failure")
+}
+
+type committedCleanupCompletionAckFailure struct{}
+
+func (committedCleanupCompletionAckFailure) Validate(context.Context, string, persistence.PublicationInputs) (PublicationStageObservation, error) {
+	return PublicationStageObservation{}, errors.New("independent validator test failure")
+}
+
+type recordingStageValidator struct {
+	delegate   PublicationStageValidator
+	outputPath *string
+}
+
+func (validator recordingStageValidator) Validate(ctx context.Context, path string, input persistence.PublicationInputs) (PublicationStageObservation, error) {
+	*validator.outputPath = path
+	return validator.delegate.Validate(ctx, path, input)
+}
+
+type committedCleanupCompletionRepository struct {
+	*persistence.SetupManagerRepository
+}
+
+func (repository committedCleanupCompletionRepository) RecordPublicationInitialOutputCleanupResult(ctx context.Context, guard persistence.PublicationDeliveryGuard, witness persistence.PublicationInitialOutputCleanupWitness) (persistence.PublicationInitialOutputCleanupOutcome, error) {
+	outcome, err := repository.SetupManagerRepository.RecordPublicationInitialOutputCleanupResult(ctx, guard, witness)
+	if err != nil {
+		return outcome, err
+	}
+	return outcome, errors.New("injected lost completion ACK after committed write")
+}
+
+func executeWithCommittedCleanupAckFailure(ctx context.Context, repository *persistence.SetupManagerRepository, executor *PublicationExecutor, operationID uuid.UUID, riverJobID int64, riverAttempt int, outputPath string, recordedOutputPath *string) (error, *PublicationExecutionScope) {
+	operation, err := repository.GetOperation(ctx, operationID)
+	if err != nil || operation == nil {
+		return errors.Join(errors.New("read publication operation"), err), nil
+	}
+	attempt, err := repository.ReadPublicationAttempt(ctx, operationID)
+	if err != nil || attempt == nil {
+		return errors.Join(errors.New("read publication attempt"), err), nil
+	}
+	guard := persistence.PublicationDeliveryGuard{OperationID: operationID, ApplicationAttempt: operation.Attempt, RiverJobID: riverJobID, RiverAttempt: riverAttempt, ClaimUUID: uuid.New(), BootUUID: executor.bootUUID, DeliveryToken: uuid.NewString(), Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, ExpectedPositionID: attempt.PositionID}
+	input, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
+	if err != nil {
+		return err, nil
+	}
+	root, err := sourcefs.NewOutputOpener().OpenRoot(ctx, outputPath)
+	if err != nil {
+		return err, nil
+	}
+	defer root.Close()
+	resources := []publication.ResourceLock{{Key: "publication-output:" + filepath.Clean(outputPath), Mode: publication.Exclusive}, {Key: "publication-position:" + attempt.PositionID.String(), Mode: publication.Exclusive}}
+	if input.Audio != nil {
+		resources = append(resources, publication.ResourceLock{Key: "source-root:" + input.Audio.RootID.String(), Mode: publication.Shared})
+	}
+	scope, err := NewPublicationExecutionScope(ctx, executor.coordinator, resources, guard, repository.ClaimPublicationDelivery, executor.commands, repository)
+	if err != nil {
+		return err, nil
+	}
+	input, live, err := repository.PublicationPreparationInputs(ctx, guard)
+	if err != nil || !live {
+		scope.quarantineUncertain()
+		return errors.Join(errors.New("load claimed frozen publication inputs"), err), scope
+	}
+	if input.Audio == nil {
+		scope.quarantineUncertain()
+		return errors.New("lost completion ACK fixture requires audio input"), scope
+	}
+	hold, found, err := repository.PublicationSourceHoldForDelivery(ctx, guard)
+	if err != nil || !found {
+		scope.quarantineUncertain()
+		return errors.Join(errors.New("read publication source hold"), err), scope
+	}
+	preparer := PublicationStagePreparer{Repository: committedCleanupCompletionRepository{repository}, SourceOpener: sourcefs.NewOpener(), OutputParent: root, ParentPath: outputPath, HoldUUID: hold}
+	validator := recordingStageValidator{delegate: returnedValidationFailure{}, outputPath: recordedOutputPath}
+	_, err = executeGenericPublication(ctx, scope, repository, input, preparer, attempt, executor.platform, executor.lyrics, validator)
+	return err, scope
+}
+
+func TestInitialPublicationReturnedValidationFailureCleansNativeStagePostgreSQL(t *testing.T) {
+	testPublicationSourceExecution(t, "Track.flac", true, false, returnedValidationFailure{})
+}
+
+func TestInitialPublicationSubstitutedOutputFailsClosedPostgreSQL(t *testing.T) {
+	testPublicationSourceExecution(t, "Track.flac", true, false, substitutingValidationFailure{})
+}
+
+func TestInitialPublicationCleanupCompletionWriteRejectedFailsClosedPostgreSQL(t *testing.T) {
+	installFailure := func(db *bun.DB, _ uuid.UUID) error {
+		if _, err := db.ExecContext(context.Background(), `CREATE FUNCTION reject_initial_output_cleanup_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.mutation_journal) AS entry WHERE entry->>'kind'='publication_initial_output_cleanup' AND entry->>'step'='complete') THEN
+				RAISE EXCEPTION 'simulated lost completion acknowledgement';
+			END IF;
+			RETURN NEW;
+		END $$;`); err != nil {
+			return err
+		}
+		_, err := db.ExecContext(context.Background(), `CREATE TRIGGER reject_initial_output_cleanup_completion BEFORE UPDATE OF mutation_journal ON track_publication_attempt FOR EACH ROW EXECUTE FUNCTION reject_initial_output_cleanup_completion()`)
+		return err
+	}
+	testPublicationSourceExecution(t, "Track.flac", true, false, returnedValidationFailureWithCompletionWriteRejection{}, installFailure)
+}
+
+func TestInitialPublicationCommittedCleanupCompletionLostAckFailsClosedPostgreSQL(t *testing.T) {
+	testPublicationSourceExecution(t, "Track.flac", true, false, committedCleanupCompletionAckFailure{})
 }
 
 func preparationBoolPointer(value bool) *bool { return &value }

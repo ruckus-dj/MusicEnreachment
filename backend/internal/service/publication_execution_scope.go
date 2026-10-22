@@ -73,6 +73,57 @@ type PublicationExecutionScope struct {
 	privateLyricsInstalled  *privateManualLyricsReplacementInstalled
 	initialCopy             bool
 	preInputCleanup         *publicationPreInputCleanupCapability
+	initialOutputCleanup    *publicationInitialOutputCleanupCapability
+}
+
+// publicationInitialOutputCleanupCapability transfers the sole original-owner
+// reservation to cleanup after a known returned final-validation error.
+type publicationInitialOutputCleanupCapability struct {
+	scope       *PublicationExecutionScope
+	stage       *preparedPublicationStage
+	reservation *publicationSyncReservation
+	active      bool
+}
+
+func (scope *PublicationExecutionScope) beginInitialOutputCleanup(stage *preparedPublicationStage, reservation *publicationSyncReservation) *publicationInitialOutputCleanupCapability {
+	if scope == nil || stage == nil || reservation == nil {
+		return nil
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if scope.guard != stage.guard || stage.privatePrepMode || stage.rewrite || stage.preparationRecord.Step != "input_ready" || stage.preparationRecord.CopiedInput == nil || stage.preparationRecord.DirectoryIdentity == nil || reservation.owner != scope || !reservation.active || reservation.borrowed || reservation.borrow != nil || scope.syncWork != 1 || scope.unresolved != 0 || scope.unknown || scope.finalized || scope.finalizing || scope.preInputCleanup != nil || scope.initialOutputCleanup != nil || scope.initialCopy || scope.privateManualLyricsWork != nil || scope.privateLyricsInstalled != nil {
+		return nil
+	}
+	capability := &publicationInitialOutputCleanupCapability{scope: scope, stage: stage, reservation: reservation, active: true}
+	reservation.borrowed = true
+	scope.initialOutputCleanup = capability
+	return capability
+}
+
+func (scope *PublicationExecutionScope) finishInitialOutputCleanup(capability *publicationInitialOutputCleanupCapability, settled bool) bool {
+	if scope == nil || capability == nil {
+		return false
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	reservation := capability.reservation
+	if capability.scope != scope || scope.initialOutputCleanup != capability || !capability.active || reservation == nil || reservation.owner != scope || !reservation.active || !reservation.borrowed || scope.syncWork != 1 || scope.unknown || scope.finalized || scope.finalizing || scope.unresolved != 0 {
+		return false
+	}
+	capability.active = false
+	scope.initialOutputCleanup = nil
+	reservation.active = false
+	reservation.borrowed = false
+	scope.syncWork--
+	if settled {
+		scope.finalized = true
+		scope.closed = true
+		if scope.release != nil {
+			scope.release()
+			scope.release = nil
+		}
+	}
+	return true
 }
 
 type publicationPreInputCleanupCapability struct {
@@ -188,7 +239,7 @@ func NewPublicationExecutionScope(
 
 func (scope *PublicationExecutionScope) Run(ctx context.Context, path string, args ...string) (PublicationCommandResult, error) {
 	return scope.runAuthorized(ctx, path, args, func() bool {
-		return !scope.finalized && !scope.finalizing && !scope.unknown && !scope.initialCopy && scope.preInputCleanup == nil && scope.privateManualLyricsWork == nil
+		return !scope.finalized && !scope.finalizing && !scope.unknown && !scope.initialCopy && scope.preInputCleanup == nil && scope.initialOutputCleanup == nil && scope.privateManualLyricsWork == nil
 	})
 }
 
@@ -237,7 +288,7 @@ func (scope *PublicationExecutionScope) runAuthorized(ctx context.Context, path 
 // original source descriptor is never passed to the command backend.
 func (scope *PublicationExecutionScope) RunFile(ctx context.Context, executable string, args []string, input sourcefs.RegularFile) (PublicationCommandResult, error) {
 	return scope.runFileAuthorized(ctx, executable, args, input, func() bool {
-		return !scope.finalized && !scope.finalizing && !scope.unknown && !scope.initialCopy && scope.preInputCleanup == nil && scope.privateManualLyricsWork == nil
+		return !scope.finalized && !scope.finalizing && !scope.unknown && !scope.initialCopy && scope.preInputCleanup == nil && scope.initialOutputCleanup == nil && scope.privateManualLyricsWork == nil
 	})
 }
 
@@ -324,7 +375,7 @@ func (scope *PublicationExecutionScope) beginInitialOutputCopy(reservation *publ
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unresolved != 0 || scope.initialCopy || scope.preInputCleanup != nil || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.privateLyricsInstalled != nil {
+	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unresolved != 0 || scope.initialCopy || scope.preInputCleanup != nil || scope.initialOutputCleanup != nil || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.privateLyricsInstalled != nil {
 		return false
 	}
 	reservation.borrowed = true
@@ -370,7 +421,7 @@ func (scope *PublicationExecutionScope) CanExecute() bool {
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	return scope.commands != nil && !scope.finalized && !scope.finalizing && !scope.unknown && !scope.initialCopy && scope.preInputCleanup == nil
+	return scope.commands != nil && !scope.finalized && !scope.finalizing && !scope.unknown && !scope.initialCopy && scope.preInputCleanup == nil && scope.initialOutputCleanup == nil
 }
 
 // reserveSynchronousWork protects non-command staging work from concurrent
@@ -382,7 +433,7 @@ func (scope *PublicationExecutionScope) reserveSynchronousWork() *publicationSyn
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.initialCopy || scope.preInputCleanup != nil {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.initialCopy || scope.preInputCleanup != nil || scope.initialOutputCleanup != nil {
 		return nil
 	}
 	scope.syncWork++
@@ -398,7 +449,7 @@ func (scope *PublicationExecutionScope) reserveReplacementWork(outer *publicatio
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.initialCopy || scope.preInputCleanup != nil {
+	if scope.finalized || scope.finalizing || scope.unknown || scope.commands == nil || scope.initialCopy || scope.preInputCleanup != nil || scope.initialOutputCleanup != nil {
 		return nil, false
 	}
 	if outer != nil {
@@ -447,7 +498,7 @@ func (scope *PublicationExecutionScope) borrowOptionalLyricsWork(reservation *pu
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.initialCopy || scope.preInputCleanup != nil {
+	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.initialCopy || scope.preInputCleanup != nil || scope.initialOutputCleanup != nil {
 		return nil
 	}
 	borrow := &publicationOptionalLyricsBorrow{scope: scope, reservation: reservation}
@@ -482,7 +533,7 @@ func (scope *PublicationExecutionScope) acquirePrivateManualLyricsWork(
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unresolved != 0 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.initialCopy || scope.preInputCleanup != nil {
+	if reservation.owner != scope || !reservation.active || reservation.borrowed || scope.syncWork != 1 || scope.unresolved != 0 || scope.unknown || scope.finalized || scope.finalizing || scope.optionalLyrics != nil || scope.privateManualLyricsWork != nil || scope.initialCopy || scope.preInputCleanup != nil || scope.initialOutputCleanup != nil {
 		return nil
 	}
 	borrow := &publicationOptionalLyricsBorrow{scope: scope, reservation: reservation}
@@ -702,7 +753,7 @@ func (scope *PublicationExecutionScope) Finalize(ctx context.Context, closeStage
 		scope.mu.Unlock()
 		return nil
 	}
-	if scope.replacement != nil || scope.firstAbsent || scope.initialCopy || scope.preInputCleanup != nil || scope.privateManualLyricsWork != nil || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 {
+	if scope.replacement != nil || scope.firstAbsent || scope.initialCopy || scope.preInputCleanup != nil || scope.initialOutputCleanup != nil || scope.privateManualLyricsWork != nil || scope.unknown || scope.unresolved != 0 || scope.syncWork != 0 {
 		if scope.unknown {
 			scope.quarantineLocked()
 		}
