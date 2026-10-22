@@ -163,7 +163,13 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 		return uuid.Nil, fmt.Errorf("admit publication: tool selections require tools-read admission")
 	}
 	if request.Source != nil {
-		if err := validateAndLockPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio); err != nil {
+		var err error
+		if request.firstAdmission != nil && request.firstAdmission.sourceSelection != nil {
+			err = validateAndLockPublicationSourceIdentity(ctx, tx, *request.Source, *input.Audio)
+		} else {
+			err = validateAndLockPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio)
+		}
+		if err != nil {
 			return uuid.Nil, err
 		}
 	}
@@ -193,6 +199,14 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 			return uuid.Nil, err
 		}
 		request.NamespaceManifest = manifest
+		if request.firstAdmission.sourceSelection != nil {
+			if err := repository.applyFirstPublicationSourceSelection(ctx, tx, request.PositionID, epoch, *request.Source, *input.Audio, *request.firstAdmission.sourceSelection); err != nil {
+				return uuid.Nil, err
+			}
+			if err := validateAndLockPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio); err != nil {
+				return uuid.Nil, err
+			}
+		}
 	}
 	var position, releaseID uuid.UUID
 	if err := tx.NewRaw(`SELECT id,release_id FROM release_track WHERE id=? FOR UPDATE`, request.PositionID).Scan(ctx, &position, &releaseID); err != nil {

@@ -22,8 +22,8 @@ func TestAutomaticFirstSourceChoiceUsesOnlySuitableSingleAudioCandidates(t *test
 	channels := 2
 	lossless := false
 	snapshot := &persistence.LibraryFirstPublicationContext{Sources: []persistence.FirstPublicationSource{
-		{Selection: persistence.PublicationSourceSelection{LocationID: firstLocation, MediaVariantID: firstVariant}, Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "aac", Lossless: &lossless, Channels: &channels}, ChannelLayout: "stereo", AudioStreamCount: 1},
-		{Selection: persistence.PublicationSourceSelection{LocationID: secondLocation, MediaVariantID: secondVariant}, Quality: persistence.PersistedAudioFacts{StreamIndex: 1, Codec: "aac", Lossless: &lossless, Channels: &channels}, ChannelLayout: "stereo", AudioStreamCount: 2, RequiresExplicitStreamSelection: true},
+		{Selection: persistence.PublicationSourceSelection{LocationID: firstLocation, MediaVariantID: firstVariant}, Selected: true, Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "aac", Lossless: &lossless, Channels: &channels}, ChannelLayout: "stereo", AudioStreamCount: 1},
+		{Selection: persistence.PublicationSourceSelection{LocationID: secondLocation, MediaVariantID: secondVariant}, Selected: true, Quality: persistence.PersistedAudioFacts{StreamIndex: 1, Codec: "aac", Lossless: &lossless, Channels: &channels}, ChannelLayout: "stereo", AudioStreamCount: 2, RequiresExplicitStreamSelection: true},
 	}}
 	choice, err := automaticFirstSourceChoice(snapshot, publication.AudioFormatMKA)
 	if err != nil {
@@ -31,6 +31,28 @@ func TestAutomaticFirstSourceChoiceUsesOnlySuitableSingleAudioCandidates(t *test
 	}
 	if choice.LocationID != firstLocation || choice.MediaVariantID != firstVariant || choice.StreamIndex != 0 {
 		t.Fatalf("selected %#v, want the sole suitable single-stream candidate", choice)
+	}
+}
+
+func TestAutomaticFirstSourceChoiceIgnoresEligibleUnselectedSources(t *testing.T) {
+	channels := 2
+	lossless := false
+	selected := persistence.FirstPublicationSource{
+		Selected: true, Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()},
+		Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "aac", Lossless: &lossless, Channels: &channels}, AudioStreamCount: 1,
+	}
+	unselected := selected
+	unselected.Selected = false
+	unselected.Selection.LocationID, unselected.Selection.MediaVariantID = uuid.New(), uuid.New()
+	unselected.Quality.Codec = "flac"
+	snapshot := &persistence.LibraryFirstPublicationContext{Sources: []persistence.FirstPublicationSource{selected, unselected}, DefaultSourceBlockers: []string{"selected source root unavailable"}}
+	if _, err := automaticFirstSourceChoice(snapshot, publication.AudioFormatMKA); err == nil {
+		t.Fatal("automatic choice ignored a persisted-selected source failure")
+	}
+	snapshot.DefaultSourceBlockers = nil
+	choice, err := automaticFirstSourceChoice(snapshot, publication.AudioFormatMKA)
+	if err != nil || choice.LocationID != selected.Selection.LocationID || choice.MediaVariantID != selected.Selection.MediaVariantID {
+		t.Fatalf("automatic choice = %#v, %v; want persisted selected source", choice, err)
 	}
 }
 
@@ -42,10 +64,12 @@ type automaticAdmissionServiceRepository struct {
 	automaticCalls int
 	manualCalls    int
 	prepareErr     error
+	lastFirst      *persistence.FirstPublicationAdmission
 }
 
 func (repository *automaticAdmissionServiceRepository) AdmitAutomaticFirstPublicationFromPreview(_ context.Context, first persistence.FirstPublicationAdmission, guard persistence.PublicationReconciliationDeliveryGuard, _ persistence.RiverInserter) (uuid.UUID, error) {
 	repository.automaticCalls++
+	repository.lastFirst = &first
 	if guard.PositionID != first.PositionID || guard.OutputEpoch != first.ExpectedEpoch {
 		return uuid.Nil, fmt.Errorf("mismatched guard")
 	}
@@ -61,6 +85,7 @@ func (repository *automaticAdmissionServiceRepository) AdmitAutomaticFirstPublic
 
 func (repository *automaticAdmissionServiceRepository) AdmitFirstPublicationFromPreview(_ context.Context, first persistence.FirstPublicationAdmission, _ persistence.RiverInserter) (uuid.UUID, error) {
 	repository.manualCalls++
+	repository.lastFirst = &first
 	_, err := first.PrepareFirst(context.Background(), persistence.FirstPublicationAdmissionSnapshot{
 		Context: repository.authoritative, Settings: repository.settings,
 		Installations: []persistence.ToolInstallation{*repository.installation},
@@ -86,6 +111,7 @@ func automaticAdmissionFixture(t *testing.T) (*automaticAdmissionServiceReposito
 		source := persistence.FirstPublicationSource{
 			Selection: persistence.PublicationSourceSelection{RootID: root, LocationID: location, WorkID: work, MediaVariantID: variant,
 				ConfiguredPath: sourceRoot, InventoryPath: sourceRoot, RelativePath: "track.flac", SizeBytes: 10, MTime: mtime},
+			AssociationID: uuid.New(), Selected: true,
 			Input: persistence.PublicationAudioInput{RootID: root, LocationID: location, WorkID: work, MediaVariantID: variant,
 				ProbeResultID: uuid.New(), ConfiguredRootPath: sourceRoot, InventoryRootPath: sourceRoot, RelativePath: "track.flac", SizeBytes: 10,
 				MTime: mtime, AnalysisPolicyVersion: 1, FFProbeVersion: "7.0.0"},
@@ -100,12 +126,19 @@ func automaticAdmissionFixture(t *testing.T) (*automaticAdmissionServiceReposito
 	first := makeSource(uuid.New(), uuid.New(), "flac", true, 1)
 	second := makeSource(uuid.New(), uuid.New(), "aac", false, 1)
 	makeSnapshot := func(sources []persistence.FirstPublicationSource) *persistence.LibraryFirstPublicationContext {
+		associations := make([]persistence.PublicationSourceAssociation, 0, len(sources))
+		for _, source := range sources {
+			associations = append(associations, persistence.PublicationSourceAssociation{
+				ID: source.AssociationID, TrackID: uuid.New(), MediaVariantID: source.Selection.MediaVariantID,
+				Selected: source.Selected, Compatible: true, DecisionMethod: "manual", Metadata: json.RawMessage(`{}`), UpdatedAt: time.Unix(3, 0).UTC(),
+			})
+		}
 		return &persistence.LibraryFirstPublicationContext{
 			Library:        &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: epoch},
 			TemplateTokens: map[string]string{"ALBUM_PRIMARY_ARTIST": "Artist", "TRACK_NAME": "Track"},
 			Tags: publication.TagProjectionInput{Release: publication.ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistID: uuid.NewString(), ArtistName: "Artist"}}},
 				Position: publication.PositionTags{Title: "Track", Artist: []librarymetadata.ArtistCredit{{ArtistID: uuid.NewString(), ArtistName: "Artist"}}}},
-			ReleasePrimaryCredits: []librarymetadata.ArtistCredit{{ArtistID: uuid.NewString(), ArtistName: "Artist"}}, Sources: sources,
+			ReleasePrimaryCredits: []librarymetadata.ArtistCredit{{ArtistID: uuid.NewString(), ArtistName: "Artist"}}, Sources: sources, SourceAssociations: associations,
 		}
 	}
 	base := makeSnapshot([]persistence.FirstPublicationSource{first, second})
@@ -133,6 +166,9 @@ func TestAdmitAutomaticFirstPublicationUsesFinalizedBindingAndAuthoritativeWinne
 		}
 		if repository.automaticCalls != 1 || repository.manualCalls != 0 {
 			t.Fatalf("automatic/manual calls = %d/%d", repository.automaticCalls, repository.manualCalls)
+		}
+		if repository.lastFirst == nil || repository.lastFirst.SourceSelection != nil {
+			t.Fatal("automatic admission carried manual source-selection intent")
 		}
 	})
 	t.Run("authoritative settings change winner", func(t *testing.T) {
@@ -175,13 +211,16 @@ func TestManualFirstAdmissionRemainsOnPublicConfirmationPath(t *testing.T) {
 	if repository.manualCalls != 1 || repository.automaticCalls != 0 {
 		t.Fatalf("manual/automatic calls = %d/%d", repository.manualCalls, repository.automaticCalls)
 	}
+	if repository.lastFirst == nil || repository.lastFirst.SourceSelection == nil || repository.lastFirst.SourceSelection.AssociationID != preview.SelectedSource.AssociationID {
+		t.Fatalf("explicit manual source intent = %#v", repository.lastFirst)
+	}
 }
 
 func TestAutomaticFirstSourceChoiceRequiresUnambiguousQualityWinner(t *testing.T) {
 	makeSource := func(channelCount int) persistence.FirstPublicationSource {
 		channels := channelCount
 		lossless := false
-		return persistence.FirstPublicationSource{Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()}, Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "aac", Lossless: &lossless, Channels: &channels}, ChannelLayout: "stereo", AudioStreamCount: 1}
+		return persistence.FirstPublicationSource{Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()}, Selected: true, Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "aac", Lossless: &lossless, Channels: &channels}, ChannelLayout: "stereo", AudioStreamCount: 1}
 	}
 	snapshot := &persistence.LibraryFirstPublicationContext{Sources: []persistence.FirstPublicationSource{makeSource(2), makeSource(6)}}
 	if _, err := automaticFirstSourceChoice(snapshot, publication.AudioFormatMKA); err == nil {

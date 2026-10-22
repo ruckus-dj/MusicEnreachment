@@ -20,6 +20,8 @@ import (
 // proven by its successful probe. It contains no filesystem-derived values.
 type FirstPublicationSource struct {
 	Selection                       PublicationSourceSelection
+	AssociationID                   uuid.UUID
+	Selected                        bool
 	Input                           PublicationAudioInput
 	Quality                         PersistedAudioFacts
 	ChannelLayout                   string
@@ -36,10 +38,12 @@ type FirstPublicationSource struct {
 type LibraryFirstPublicationContext struct {
 	Library                         *LibraryPublicationContext
 	Sources                         []FirstPublicationSource
+	SourceAssociations              []PublicationSourceAssociation
 	Tags                            publication.TagProjectionInput
 	TemplateTokens                  map[string]string
 	Metadata                        FirstPublicationMetadata
 	Blockers                        []string
+	DefaultSourceBlockers           []string
 	ReleasePrimaryCredits           []librarymetadata.ArtistCredit
 	PositionPrimaryCredits          []librarymetadata.ArtistCredit
 	SelectedReleasePrimaryArtistID  *uuid.UUID
@@ -73,7 +77,7 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 	if err := readLibraryPublicationContextTx(ctx, tx, releaseID, positionID, &library); err != nil {
 		return err
 	}
-	result := &LibraryFirstPublicationContext{Library: library, Sources: []FirstPublicationSource{}, TemplateTokens: map[string]string{}, Blockers: []string{}}
+	result := &LibraryFirstPublicationContext{Library: library, Sources: []FirstPublicationSource{}, SourceAssociations: []PublicationSourceAssociation{}, TemplateTokens: map[string]string{}, Blockers: []string{}, DefaultSourceBlockers: []string{}}
 	result.NamespaceClaims = make([]PublicationNamespaceClaim, 0)
 	if library.ActiveEpoch != uuid.Nil {
 		if err := tx.NewSelect().Model(&result.NamespaceClaims).Where("epoch = ?", library.ActiveEpoch).Scan(ctx); err != nil && err != sql.ErrNoRows {
@@ -144,10 +148,10 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 	result.TemplateTokens["POSITION_ID"] = positionID.String()
 	result.TemplateTokens["ALBUM_ID"] = releaseID.String()
 	result.TemplateTokens["TRACK_NUMBER"] = position.Number
-	result.TemplateTokens["DISC_NUMBER"] = strconv.Itoa(position.Medium)
+	result.TemplateTokens["DISC_NUMBER"] = strconv.Itoa(position.Medium + 1)
 	result.Tags = publication.TagProjectionInput{
 		Release:  publication.ReleaseTags{Title: releaseTitle, Desired: releaseEnv},
-		Position: publication.PositionTags{Title: track.Title, Desired: positionTagsEnvelope, DiscNumber: firstPublicationIntPointer(position.Medium)},
+		Position: publication.PositionTags{Title: track.Title, Desired: positionTagsEnvelope, DiscNumber: firstPublicationIntPointer(position.Medium + 1)},
 	}
 	result.Tags.Release.Artist, err = firstPublicationCredits(ctx, tx, "release_artist", "release_id", releaseID)
 	if err != nil {
@@ -202,7 +206,7 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 	if err := resolveFirstPublicationOptionalFields(result); err != nil {
 		return err
 	}
-	if err := readFirstPublicationSources(ctx, tx, position.TrackID, &result.Sources, &result.Blockers); err != nil {
+	if err := readFirstPublicationSources(ctx, tx, position.TrackID, &result.Sources, &result.SourceAssociations, &result.DefaultSourceBlockers); err != nil {
 		return err
 	}
 	*out = result
@@ -457,21 +461,30 @@ func firstPublicationCredits(ctx context.Context, tx bun.IDB, relation, parentCo
 	return credits, nil
 }
 
-func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.UUID, result *[]FirstPublicationSource, blockers *[]string) error {
-	// Candidate selection is only the persisted selected track_source link. The
-	// source work must still point at the inventory location and have a successful
-	// probe step attached to that exact current variant.
+func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.UUID, result *[]FirstPublicationSource, resultAssociations *[]PublicationSourceAssociation, blockers *[]string) error {
+	// Capture every persisted association as an admission witness, including
+	// associations which are not eligible to become source candidates.
+	var associations []PublicationSourceAssociation
+	if err := tx.NewRaw(`SELECT id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,metadata,updated_at
+		FROM track_source WHERE track_id=? ORDER BY id ASC`, trackID).Scan(ctx, &associations); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("read first publication source associations: %w", err)
+	}
+	*resultAssociations = append(*resultAssociations, associations...)
+	// Candidate sources must still point at inventory's current location and
+	// have successful probe provenance for that exact variant.
 	var rows []struct {
-		RootID     uuid.UUID          `bun:"root_id,type:uuid"`
-		LocationID uuid.UUID          `bun:"location_id,type:uuid"`
-		WorkID     uuid.UUID          `bun:"work_id,type:uuid"`
-		VariantID  uuid.UUID          `bun:"variant_id,type:uuid"`
-		Configured string             `bun:"configured_path"`
-		Inventory  string             `bun:"inventory_path"`
-		Relative   string             `bun:"relative_path"`
-		Size       int64              `bun:"size_bytes"`
-		MTime      time.Time          `bun:"mtime"`
-		Variant    SourceMediaVariant `bun:"embed:variant__"`
+		AssociationID uuid.UUID          `bun:"association_id,type:uuid"`
+		Selected      bool               `bun:"selected"`
+		RootID        uuid.UUID          `bun:"root_id,type:uuid"`
+		LocationID    uuid.UUID          `bun:"location_id,type:uuid"`
+		WorkID        uuid.UUID          `bun:"work_id,type:uuid"`
+		VariantID     uuid.UUID          `bun:"variant_id,type:uuid"`
+		Configured    string             `bun:"configured_path"`
+		Inventory     string             `bun:"inventory_path"`
+		Relative      string             `bun:"relative_path"`
+		Size          int64              `bun:"size_bytes"`
+		MTime         time.Time          `bun:"mtime"`
+		Variant       SourceMediaVariant `bun:"embed:variant__"`
 	}
 	var rejected struct {
 		UnavailableRoots int `bun:"unavailable_roots"`
@@ -500,7 +513,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 	if rejected.Unprobed > 0 {
 		*blockers = append(*blockers, "one or more selected sources lack a fresh successful probe")
 	}
-	err := tx.NewRaw(`SELECT r.id AS root_id, l.id AS location_id, w.id AS work_id, v.id AS variant_id,
+	err := tx.NewRaw(`SELECT ts.id AS association_id, ts.selected, r.id AS root_id, l.id AS location_id, w.id AS work_id, v.id AS variant_id,
 		w.configured_path, w.inventory_path, w.relative_path, l.size_bytes, l.mtime,
 		v.id AS "variant__id", v.size_bytes AS "variant__size_bytes", v.analysis_policy_version AS "variant__analysis_policy_version",
 		v.ffprobe_version AS "variant__ffprobe_version", v.ffprobe_json AS "variant__ffprobe_json", v.observed_tags AS "variant__observed_tags",
@@ -510,7 +523,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		JOIN source_location l ON l.id=w.current_location_id AND l.id=w.location_id AND l.source_root_id=w.source_root_id
 		JOIN source_root r ON r.id=w.source_root_id
 		JOIN source_analysis_step p ON p.work_id=w.id AND p.step='probe' AND p.state='succeeded' AND p.success_probe_variant_id=v.id
-		WHERE ts.track_id=? AND ts.selected AND r.enabled AND r.status='available' AND r.inventory_path=w.inventory_path
+		WHERE ts.track_id=? AND ts.compatible AND r.enabled AND r.status='available' AND r.inventory_path=w.inventory_path
 		AND r.configured_path=w.configured_path AND l.probe_status='audio' AND v.size_bytes=w.size_bytes
 		AND v.analysis_policy_version IS NOT NULL AND v.ffprobe_version IS NOT NULL AND v.inspected_at IS NOT NULL
 		AND v.applied_operation_id IS NOT NULL AND v.audio_stream_count IS NOT NULL
@@ -522,9 +535,14 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 	}
 	for _, row := range rows {
 		row.MTime = row.MTime.UTC()
+		blocker := func(message string) {
+			if row.Selected {
+				*blockers = append(*blockers, message)
+			}
+		}
 		streams, streamErr := publicationAudioStreams(row.Variant.FFProbeJSON)
 		if streamErr != nil || len(streams) == 0 {
-			*blockers = append(*blockers, fmt.Sprintf("selected source %s has no usable audio streams", row.LocationID))
+			blocker(fmt.Sprintf("selected source %s has no usable audio streams", row.LocationID))
 			continue
 		}
 		selection := PublicationSourceSelection{RootID: row.RootID, LocationID: row.LocationID, WorkID: row.WorkID, MediaVariantID: row.VariantID, ConfiguredPath: row.Configured, InventoryPath: row.Inventory, RelativePath: row.Relative, SizeBytes: row.Size, MTime: row.MTime}
@@ -540,7 +558,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 			input.FFProbeVersion = *row.Variant.FFProbeVersion
 		}
 		if row.Variant.AnalysisPolicyVersion == nil || row.Variant.FFProbeVersion == nil || row.Variant.InspectedAt == nil || row.Variant.AppliedOperationID == nil || row.Variant.SizeBytes != row.Size {
-			*blockers = append(*blockers, fmt.Sprintf("selected source %s has stale or incomplete probe provenance", row.LocationID))
+			blocker(fmt.Sprintf("selected source %s has stale or incomplete probe provenance", row.LocationID))
 			continue
 		}
 		added := 0
@@ -555,14 +573,14 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 			streamInput := input
 			streamInput.AudioFacts = facts
 			*result = append(*result, FirstPublicationSource{
-				Selection: selection, Input: streamInput, Quality: facts, StreamTitle: stream.Title, StreamLanguage: stream.Language,
+				Selection: selection, AssociationID: row.AssociationID, Selected: row.Selected, Input: streamInput, Quality: facts, StreamTitle: stream.Title, StreamLanguage: stream.Language,
 				ChannelLayout:                   stream.ChannelLayout,
 				RequiresExplicitStreamSelection: len(streams) > 1, AudioStreamCount: len(streams),
 			})
 			added++
 		}
 		if added == 0 {
-			*blockers = append(*blockers, fmt.Sprintf("selected source %s has unusable probe facts", row.LocationID))
+			blocker(fmt.Sprintf("selected source %s has unusable probe facts", row.LocationID))
 		}
 		for i := resultStart; i < len(*result); i++ {
 			(*result)[i].UnsupportedAudioStreamCount = unsupported

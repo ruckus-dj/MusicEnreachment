@@ -19,6 +19,16 @@ import (
 // validateAndLockPublicationSource takes source rows only after the global
 // fingerprint mutation gate and before tools installation/epoch row locks.
 func validateAndLockPublicationSource(ctx context.Context, tx bun.IDB, position uuid.UUID, source PublicationSourceSelection, frozen PublicationAudioInput) error {
+	if err := validateAndLockPublicationSourceIdentity(ctx, tx, source, frozen); err != nil {
+		return err
+	}
+	if err := validateSelectedPublicationSource(ctx, tx, position, source.WorkID, frozen.MediaVariantID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateAndLockPublicationSourceIdentity(ctx context.Context, tx bun.IDB, source PublicationSourceSelection, frozen PublicationAudioInput) error {
 	var root SourceRoot
 	if err := tx.NewSelect().Model(&root).Where("id=?", source.RootID).For("UPDATE").Scan(ctx); err != nil {
 		return fmt.Errorf("admit publication: lock source root: %w", err)
@@ -57,13 +67,21 @@ func validateAndLockPublicationSource(ctx context.Context, tx bun.IDB, position 
 	if canonical != frozen.MediaVariantID {
 		return fmt.Errorf("admit publication: canonical source variant changed")
 	}
+	return validateSelectedPublicationProbe(ctx, tx, source, frozen)
+}
+
+func validateSelectedPublicationSource(ctx context.Context, tx bun.IDB, position, workID, variantID uuid.UUID) error {
 	var authorized bool
-	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM release_track position JOIN track_source association ON association.track_id=position.track_id JOIN source_work_variant_identity identity ON identity.media_variant_id=association.media_variant_id WHERE position.id=? AND identity.work_id=? AND association.media_variant_id=? AND association.selected=true)`, position, source.WorkID, canonical).Scan(ctx, &authorized); err != nil {
+	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM release_track position JOIN track_source association ON association.track_id=position.track_id JOIN source_work_variant_identity identity ON identity.media_variant_id=association.media_variant_id WHERE position.id=? AND identity.work_id=? AND association.media_variant_id=? AND association.selected=true)`, position, workID, variantID).Scan(ctx, &authorized); err != nil {
 		return fmt.Errorf("admit publication: verify track source association: %w", err)
 	}
 	if !authorized {
 		return fmt.Errorf("admit publication: source variant is not selected for this position")
 	}
+	return nil
+}
+
+func validateSelectedPublicationProbe(ctx context.Context, tx bun.IDB, source PublicationSourceSelection, frozen PublicationAudioInput) error {
 	var selectedProbe *uuid.UUID
 	if err := tx.NewRaw(`SELECT success_probe_variant_id FROM source_analysis_step WHERE work_id=? AND step='probe' AND state='succeeded'`, source.WorkID).Scan(ctx, &selectedProbe); err != nil {
 		return fmt.Errorf("admit publication: read selected successful probe: %w", err)

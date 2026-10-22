@@ -61,8 +61,8 @@ func TestFirstPublicationDefaultPathUsesUnbracketedEightCharacterMBIDParts(t *te
 			Position: publication.PositionTags{Title: "Трек", Artist: []librarymetadata.ArtistCredit{credit}},
 		},
 		Sources: []persistence.FirstPublicationSource{{
-			Selection: persistence.PublicationSourceSelection{RootID: uuid.New(), LocationID: uuid.New(), WorkID: uuid.New(), MediaVariantID: uuid.New()},
-			Quality:   persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},
+			Selection: persistence.PublicationSourceSelection{RootID: uuid.New(), LocationID: uuid.New(), WorkID: uuid.New(), MediaVariantID: uuid.New()}, Selected: true,
+			Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},
 		}},
 	}
 	preview, err := buildFirstPublicationPreview(snapshot, settings.RuntimeSettings{

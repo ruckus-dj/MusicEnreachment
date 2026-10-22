@@ -241,8 +241,13 @@ export function FirstPublicationPreview({
 
   const candidates = sourceCandidates;
   const needsExplicitChoice =
+    (candidates.length > 0 && !preview?.selected_source) ||
     candidates.length > 1 ||
-    candidates.some((candidate) => candidate.audio_stream_count > 1);
+    candidates.some(
+      (candidate) =>
+        candidate.requires_explicit_stream_selection ||
+        candidate.audio_stream_count !== 1,
+    );
   const choiceMatchesPreview = Boolean(
     selectedChoice &&
       preview?.selected_source &&

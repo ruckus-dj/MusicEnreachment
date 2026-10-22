@@ -11,7 +11,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
-func TestReadLibraryFirstPublicationContextUsesCurrentSelectedSourcePostgreSQL(t *testing.T) {
+func TestReadLibraryFirstPublicationContextUsesCurrentCompatibleAssociatedSourcePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := testpostgres.OpenMigrated(t)
@@ -54,7 +54,12 @@ func TestReadLibraryFirstPublicationContextUsesCurrentSelectedSourcePostgreSQL(t
 	if _, err := db.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id,step,state,success_probe_variant_id,success_reuse_origin) VALUES (?,'probe','succeeded',?,'executed')`, workID, variantID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, uuid.New(), trackID, variantID); err != nil {
+	associationID := uuid.New()
+	secondAssociationID, secondVariantID := uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes) VALUES (?,?)`, secondVariantID, sizeBytes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,metadata) VALUES (?,?,?,false,true,'automatic','policy-v1','{}'::jsonb),(?,?,?,false,true,'automatic','policy-v1','{}'::jsonb)`, associationID, trackID, variantID, secondAssociationID, trackID, secondVariantID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,7 +70,26 @@ func TestReadLibraryFirstPublicationContextUsesCurrentSelectedSourcePostgreSQL(t
 	if len(got.Sources) != 1 || len(got.Blockers) != 0 {
 		t.Fatalf("source context = sources %d, blockers %v", len(got.Sources), got.Blockers)
 	}
+	if len(got.SourceAssociations) != 2 || got.SourceAssociations[0].ID.String() >= got.SourceAssociations[1].ID.String() {
+		t.Fatalf("source associations were not fully captured in deterministic order: %+v", got.SourceAssociations)
+	}
+	associationIDs := map[uuid.UUID]struct{}{associationID: {}, secondAssociationID: {}}
+	for _, association := range got.SourceAssociations {
+		if _, exists := associationIDs[association.ID]; !exists {
+			t.Fatalf("unexpected association in witness: %+v", association)
+		}
+		if association.TrackID != trackID || association.Selected || !association.Compatible || association.DecisionMethod != "automatic" ||
+			association.PolicyVersion == nil || *association.PolicyVersion != "policy-v1" || string(association.Metadata) != `{}` || association.UpdatedAt.IsZero() {
+			t.Fatalf("source association witness = %+v", association)
+		}
+	}
+	if len(got.Sources) != 1 {
+		t.Fatalf("eligible sources = %+v", got.Sources)
+	}
 	source := got.Sources[0]
+	if source.AssociationID != associationID || source.Selected {
+		t.Fatalf("candidate association = %s selected=%v", source.AssociationID, source.Selected)
+	}
 	if source.Selection.RootID != rootID || source.Selection.LocationID != locationID || source.Selection.WorkID != workID || source.Selection.MediaVariantID != variantID ||
 		source.Selection.ConfiguredPath != configuredPath || source.Selection.InventoryPath != configuredPath || source.Selection.RelativePath != relativePath ||
 		source.Selection.SizeBytes != sizeBytes || !source.Selection.MTime.Equal(mtime) {
@@ -82,7 +106,7 @@ func TestReadLibraryFirstPublicationContextUsesCurrentSelectedSourcePostgreSQL(t
 	if err != nil {
 		t.Fatalf("read context after inventory location changed: %v", err)
 	}
-	if len(got.Sources) != 0 || len(got.Blockers) != 1 || got.Blockers[0] != "one or more selected source inventory locations are stale" {
-		t.Fatalf("changed location context = sources %+v, blockers %v", got.Sources, got.Blockers)
+	if len(got.Sources) != 0 || len(got.DefaultSourceBlockers) != 1 || got.DefaultSourceBlockers[0] != "no selected source has a current inventory identity and successful probe" {
+		t.Fatalf("changed location context = sources %+v, default source blockers %v", got.Sources, got.DefaultSourceBlockers)
 	}
 }

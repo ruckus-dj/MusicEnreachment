@@ -581,3 +581,172 @@ it("requires explicit selection for a sole eligible stream when audio facts incl
   );
   expect(posts).toBe(0);
 });
+
+it("requires an explicit radio choice for a sole supported stream when the backend marks it explicit", async () => {
+  const getQueries: URLSearchParams[] = [];
+  let posts = 0;
+  const soleExplicit = {
+    ...candidates[0],
+    audio_stream_count: 1,
+    unsupported_audio_stream_count: 0,
+    requires_explicit_stream_selection: true,
+  };
+  server.use(
+    http.get(
+      "*/api/library/releases/release-explicit/positions/position-explicit/publication/preview",
+      ({ request }) => {
+        const query = new URL(request.url).searchParams;
+        getQueries.push(query);
+        const selected =
+          query.get("location_id") === soleExplicit.location_id &&
+          query.get("media_variant_id") === soleExplicit.media_variant_id &&
+          query.get("stream_index") === String(soleExplicit.stream_index);
+        return HttpResponse.json({
+          ...preview("release-explicit", "position-explicit"),
+          selected_source: selected ? soleExplicit : undefined,
+          blockers: selected
+            ? []
+            : ["explicit source and audio stream selection is required"],
+          source_candidates: [soleExplicit],
+        });
+      },
+    ),
+    http.post(
+      "*/api/library/releases/release-explicit/positions/position-explicit/publication",
+      () => {
+        posts += 1;
+        return HttpResponse.json({ id: "explicit-operation" }, { status: 202 });
+      },
+    ),
+  );
+  renderPreview("release-explicit", "position-explicit");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Опубликовать" }),
+  ).toBeDisabled();
+  expect(screen.getByLabelText("Источник не выбран")).toBeChecked();
+  expect(getQueries).toHaveLength(1);
+  expect(getQueries[0]?.size).toBe(0);
+  expect(posts).toBe(0);
+
+  fireEvent.click(screen.getByLabelText(/Основной звук · flac, поток 0/));
+  await waitFor(() => expect(getQueries).toHaveLength(2));
+  expect(getQueries[1]?.get("location_id")).toBe("location-a");
+  expect(getQueries[1]?.get("media_variant_id")).toBe("variant-a");
+  expect(getQueries[1]?.get("stream_index")).toBe("0");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Опубликовать" })).toBeEnabled(),
+  );
+  expect(posts).toBe(0);
+});
+
+it("clears the chosen stream and preview when the position changes without requesting a preview on mount", async () => {
+  let gets = 0;
+  const admitted = vi.fn();
+  server.use(
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/publication/preview",
+      ({ request, params }) => {
+        gets += 1;
+        const releaseId = String(params.releaseId);
+        const positionId = String(params.positionId);
+        const selected = new URL(request.url).searchParams.has("location_id")
+          ? candidates[0]
+          : undefined;
+        return HttpResponse.json({
+          ...preview(releaseId, positionId),
+          selected_source:
+            selected ?? preview(releaseId, positionId).selected_source,
+          source_candidates: [candidates[0]],
+        });
+      },
+    ),
+  );
+  const view = renderPreview("release-switch", "position-switch", admitted);
+  expect(gets).toBe(0);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  await screen.findByText("План первой публикации");
+  fireEvent.click(screen.getByLabelText(/Основной звук · flac, поток 0/));
+  await waitFor(() => expect(gets).toBe(2));
+  expect(screen.getByLabelText(/Основной звук · flac, поток 0/)).toBeChecked();
+
+  view.rerender(
+    <FirstPublicationPreview
+      releaseId="release-other"
+      positionId="position-other"
+      onAdmitted={admitted}
+      onRefresh={vi.fn()}
+    />,
+  );
+  expect(screen.queryByText("План первой публикации")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Источник не выбран")).not.toBeInTheDocument();
+  expect(
+    screen.queryByLabelText(/Основной звук · flac, поток 0/),
+  ).not.toBeInTheDocument();
+  expect(gets).toBe(2);
+});
+
+it("shows the source picker when the default preview has no selected source for one ordinary stream", async () => {
+  const getQueries: URLSearchParams[] = [];
+  let posts = 0;
+  const sole = {
+    ...candidates[0],
+    audio_stream_count: 1,
+    unsupported_audio_stream_count: 0,
+    requires_explicit_stream_selection: false,
+  };
+  server.use(
+    http.get(
+      "*/api/library/releases/release-default/positions/position-default/publication/preview",
+      ({ request }) => {
+        const query = new URL(request.url).searchParams;
+        getQueries.push(query);
+        const selected =
+          query.get("location_id") === sole.location_id &&
+          query.get("media_variant_id") === sole.media_variant_id &&
+          query.get("stream_index") === String(sole.stream_index);
+        return HttpResponse.json({
+          ...preview("release-default", "position-default"),
+          selected_source: selected ? sole : undefined,
+          blockers: selected ? [] : ["choose explicit source"],
+          source_candidates: [sole],
+        });
+      },
+    ),
+    http.post(
+      "*/api/library/releases/release-default/positions/position-default/publication",
+      () => {
+        posts += 1;
+        return HttpResponse.json({ id: "default-operation" }, { status: 202 });
+      },
+    ),
+  );
+  renderPreview("release-default", "position-default");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр публикации" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Опубликовать" }),
+  ).toBeDisabled();
+  const unselected = screen.getByLabelText("Источник не выбран");
+  expect(unselected).toBeInTheDocument();
+  expect(unselected).toBeChecked();
+  expect(screen.getByText(/choose explicit source/)).toBeInTheDocument();
+  expect(getQueries).toHaveLength(1);
+  expect(getQueries[0]?.size).toBe(0);
+  expect(posts).toBe(0);
+
+  fireEvent.click(screen.getByLabelText(/Основной звук · flac, поток 0/));
+  await waitFor(() => expect(getQueries).toHaveLength(2));
+  expect(getQueries[1]?.get("location_id")).toBe("location-a");
+  expect(getQueries[1]?.get("media_variant_id")).toBe("variant-a");
+  expect(getQueries[1]?.get("stream_index")).toBe("0");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Опубликовать" })).toBeEnabled(),
+  );
+  expect(posts).toBe(0);
+});

@@ -7,6 +7,23 @@
 
 ## Уточнение проверки текущего cleanup-среза
 
+Реальный API-прогон на `a881890` прошёл setup, managed tool download/verification,
+MusicBrainz connectivity, scan/analysis двух временных MKA-копий и local-only
+materialization. Preview выявил integration gap: matching оставляет association
+unselected, а publication context читал только selected. Также обнаружен вывод
+нулевого номера диска из zero-based stored medium. Publication/import приёмка
+на этой ревизии поэтому не объявляется успешной.
+
+Исправление поверх `a881890` добавляет eligible candidates и transaction-bound
+explicit selection после проверки preselection preview/frozen inputs. Ordinary,
+automatic и worker selected-source authority сохранены. Смена selected flags,
+borrower reconciliation, reservations, River job и holds атомарны; при ошибке
+всё откатывается. Проверены реальный public Preview→Admit и rollback после
+настоящего River insert, ABA witness, cleanup owner на deselected alternative,
+default/automatic selection и UI picker. Полный `task verify` прошёл
+(335 frontend tests и Go integration/lint/generation/build); review P1/P2 не нашло.
+Это ещё не commit/CI и не повторная runtime publication/import приёмка.
+
 CI scheduling `1d8f6d4` (`39695916061`) завершился с `success`.
 Warning/retry projection и UI поверх этой ревизии прошли полный `task verify`
 (332 frontend tests, Go integration, generation/lint/build). Проверены retained

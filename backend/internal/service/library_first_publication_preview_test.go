@@ -77,8 +77,8 @@ func TestPreviewFirstPlansExactSourceAndRussianPath(t *testing.T) {
 		},
 		ReleasePrimaryCredits: []librarymetadata.ArtistCredit{{ArtistID: artistID.String(), ArtistName: "Звери"}},
 		Sources: []persistence.FirstPublicationSource{{
-			Selection: persistence.PublicationSourceSelection{RootID: rootID, LocationID: locationID, WorkID: workID, MediaVariantID: variantID},
-			Quality:   persistence.PersistedAudioFacts{StreamIndex: 2, Codec: "flac", Lossless: &lossless, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},
+			Selection: persistence.PublicationSourceSelection{RootID: rootID, LocationID: locationID, WorkID: workID, MediaVariantID: variantID}, Selected: true,
+			Quality: persistence.PersistedAudioFacts{StreamIndex: 2, Codec: "flac", Lossless: &lossless, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},
 		}},
 	}
 	settingsReadCount := 0
@@ -134,8 +134,8 @@ func TestPreviewFirstBlocksAmbiguousQualityAndExistingCurrent(t *testing.T) {
 	snapshot := &persistence.LibraryFirstPublicationContext{
 		Library: &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: epoch, Current: &persistence.LibraryPublicationCurrent{}},
 		Sources: []persistence.FirstPublicationSource{
-			{Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()}, Quality: persistence.PersistedAudioFacts{Codec: "flac", StreamIndex: 0, Lossless: &known}},
-			{Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()}, Quality: persistence.PersistedAudioFacts{Codec: "flac", StreamIndex: 0, Lossless: &known}},
+			{Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()}, Selected: true, Quality: persistence.PersistedAudioFacts{Codec: "flac", StreamIndex: 0, Lossless: &known}},
+			{Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()}, Selected: true, Quality: persistence.PersistedAudioFacts{Codec: "flac", StreamIndex: 0, Lossless: &known}},
 		},
 	}
 	service := newLibraryPublications(firstPreviewRepository{snapshot: snapshot}, firstPreviewSettings{format: "mka", template: "Artist/Track", caseSensitive: true}, nil, tools.Platform{})
@@ -162,7 +162,7 @@ func TestPreviewFirstRequiresAndBindsExplicitSourceStreamChoice(t *testing.T) {
 		}}, settings, nil, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
 	}
 	stream := func(location, variant uuid.UUID, index int, title string) persistence.FirstPublicationSource {
-		return persistence.FirstPublicationSource{Selection: persistence.PublicationSourceSelection{LocationID: location, MediaVariantID: variant},
+		return persistence.FirstPublicationSource{Selection: persistence.PublicationSourceSelection{LocationID: location, MediaVariantID: variant}, Selected: true,
 			Quality: persistence.PersistedAudioFacts{Codec: "flac", StreamIndex: index, Lossless: &known, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}, StreamTitle: title, StreamLanguage: "eng"}
 	}
 	// Multiple verified source files are never selected without an explicit choice.
@@ -225,6 +225,42 @@ func TestPreviewFirstRequiresAndBindsExplicitSourceStreamChoice(t *testing.T) {
 	explicitSupported, err := unsupportedService.PreviewFirstSelected(context.Background(), releaseID, positionID, &FirstPublicationSourceChoice{LocationID: location1, MediaVariantID: variant1, StreamIndex: 2})
 	if err != nil || explicitSupported.SelectedSource == nil || explicitSupported.SelectedSource.StreamIndex != 2 {
 		t.Fatalf("explicit supported stream choice = %#v, %v", explicitSupported.SelectedSource, err)
+	}
+}
+
+func TestPreviewFirstDoesNotDefaultToAnUnselectedAssociation(t *testing.T) {
+	releaseID, positionID, locationID, variantID, associationID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	known := true
+	source := persistence.FirstPublicationSource{
+		Selection:        persistence.PublicationSourceSelection{LocationID: locationID, MediaVariantID: variantID},
+		AssociationID:    associationID,
+		AudioStreamCount: 1,
+		Quality:          persistence.PersistedAudioFacts{Codec: "flac", StreamIndex: 0, Lossless: &known, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},
+	}
+	snapshot := &persistence.LibraryFirstPublicationContext{
+		Library: &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: uuid.New()},
+		Tags: publication.TagProjectionInput{
+			Release:  publication.ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistID: uuid.NewString(), ArtistName: "Artist"}}},
+			Position: publication.PositionTags{Title: "Track", Artist: []librarymetadata.ArtistCredit{{ArtistID: uuid.NewString(), ArtistName: "Artist"}}},
+		},
+		Sources:               []persistence.FirstPublicationSource{source},
+		DefaultSourceBlockers: []string{"one or more selected source roots are unavailable or changed"},
+	}
+	service := newLibraryPublications(firstPreviewRepository{snapshot: snapshot}, firstPreviewSettings{format: "mka", template: "Track.{EXT}", caseSensitive: true, ffmpeg: uuid.NewString()}, nil, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
+	preview, err := service.PreviewFirst(context.Background(), releaseID, positionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.SelectedSource != nil || len(preview.SourceCandidates) != 1 || preview.SourceCandidates[0].AssociationID != associationID || preview.SourceCandidates[0].Selected {
+		t.Fatalf("unselected association default/candidate state = %#v", preview)
+	}
+	if len(preview.Blockers) == 0 || preview.Blockers[0] != snapshot.DefaultSourceBlockers[0] {
+		t.Fatalf("default source failure was not retained: %#v", preview.Blockers)
+	}
+	choice := &FirstPublicationSourceChoice{LocationID: locationID, MediaVariantID: variantID, StreamIndex: 0}
+	explicit, err := service.PreviewFirstSelected(context.Background(), releaseID, positionID, choice)
+	if err != nil || explicit.SelectedSource == nil || explicit.SelectedSource.AssociationID != associationID || len(explicit.Blockers) != 0 {
+		t.Fatalf("explicit eligible association choice = %#v, blockers=%v, %v", explicit.SelectedSource, explicit.Blockers, err)
 	}
 }
 

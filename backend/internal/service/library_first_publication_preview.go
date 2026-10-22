@@ -49,6 +49,8 @@ type FirstPublicationPreviewSource struct {
 	RootID                          uuid.UUID                       `json:"root_id"`
 	LocationID                      uuid.UUID                       `json:"location_id"`
 	WorkID                          uuid.UUID                       `json:"work_id"`
+	AssociationID                   uuid.UUID                       `json:"-"`
+	Selected                        bool                            `json:"-"`
 	MediaVariantID                  uuid.UUID                       `json:"media_variant_id"`
 	StreamIndex                     int                             `json:"stream_index"`
 	Codec                           string                          `json:"codec"`
@@ -140,6 +142,9 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 		Warnings: []string{}, Blockers: append([]string(nil), contextSnapshot.Blockers...),
 		NativeStatus: "native verification required",
 	}
+	if choice == nil {
+		preview.Blockers = append(preview.Blockers, contextSnapshot.DefaultSourceBlockers...)
+	}
 	if library.Current != nil {
 		preview.Blockers = append(preview.Blockers, "a current publication exists; this preview is only for first publication")
 	}
@@ -153,6 +158,7 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 	for _, source := range contextSnapshot.Sources {
 		preview.SourceCandidates = append(preview.SourceCandidates, FirstPublicationPreviewSource{
 			RootID: source.Selection.RootID, LocationID: source.Selection.LocationID, WorkID: source.Selection.WorkID,
+			AssociationID: source.AssociationID, Selected: source.Selected,
 			MediaVariantID: source.Selection.MediaVariantID, StreamIndex: source.Quality.StreamIndex,
 			Codec: source.Quality.Codec, Quality: source.Quality, Title: source.StreamTitle, Language: source.StreamLanguage,
 			RequiresExplicitStreamSelection: source.RequiresExplicitStreamSelection,
@@ -171,8 +177,16 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 		if source == nil {
 			return FirstPublicationPreview{}, persistence.ErrPublicationAdmissionConflict
 		}
-	} else if len(contextSnapshot.Sources) == 1 && !contextSnapshot.Sources[0].RequiresExplicitStreamSelection {
-		source = &contextSnapshot.Sources[0]
+	} else {
+		selectedSources := make([]*persistence.FirstPublicationSource, 0, len(contextSnapshot.Sources))
+		for i := range contextSnapshot.Sources {
+			if contextSnapshot.Sources[i].Selected {
+				selectedSources = append(selectedSources, &contextSnapshot.Sources[i])
+			}
+		}
+		if len(selectedSources) == 1 && !selectedSources[0].RequiresExplicitStreamSelection {
+			source = selectedSources[0]
+		}
 	}
 	if source == nil {
 		preview.Blockers = append(preview.Blockers, "explicit source and audio stream selection is required")
@@ -180,6 +194,7 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 		preview.SelectedSource = &FirstPublicationPreviewSource{
 			RootID: source.Selection.RootID, LocationID: source.Selection.LocationID,
 			WorkID: source.Selection.WorkID, MediaVariantID: source.Selection.MediaVariantID,
+			AssociationID: source.AssociationID, Selected: source.Selected,
 			StreamIndex: source.Quality.StreamIndex, Codec: source.Quality.Codec, Quality: source.Quality,
 			Title: source.StreamTitle, Language: source.StreamLanguage,
 			RequiresExplicitStreamSelection: source.RequiresExplicitStreamSelection,

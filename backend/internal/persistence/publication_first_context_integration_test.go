@@ -49,8 +49,8 @@ func TestReadLibraryFirstPublicationContextPostgreSQL(t *testing.T) {
 	if got.TemplateTokens["ALBUM_NAME"] != "Desired Album" {
 		t.Fatalf("album token = %q", got.TemplateTokens["ALBUM_NAME"])
 	}
-	if len(got.Blockers) != 1 || got.Blockers[0] != "no selected source has a current inventory identity and successful probe" || len(got.Sources) != 0 {
-		t.Fatalf("unexpected source state: sources=%+v blockers=%v", got.Sources, got.Blockers)
+	if len(got.DefaultSourceBlockers) != 1 || got.DefaultSourceBlockers[0] != "no selected source has a current inventory identity and successful probe" || len(got.Sources) != 0 {
+		t.Fatalf("unexpected source state: sources=%+v default blockers=%v", got.Sources, got.DefaultSourceBlockers)
 	}
 	if _, err := repo.ReadLibraryFirstPublicationContext(ctx, uuid.New(), f.guard.ExpectedPositionID); err == nil {
 		t.Fatal("wrong release membership accepted")

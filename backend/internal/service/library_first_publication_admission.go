@@ -95,9 +95,15 @@ func automaticFirstSourceChoiceWithReason(snapshot *persistence.LibraryFirstPubl
 	if snapshot == nil {
 		return FirstPublicationSourceChoice{}, "", persistence.ErrPublicationAdmissionConflict
 	}
+	if len(snapshot.DefaultSourceBlockers) != 0 {
+		return FirstPublicationSourceChoice{}, "", persistence.ErrPublicationAdmissionConflict
+	}
 	candidates := make([]publication.QualityCandidate, 0, len(snapshot.Sources))
 	hasExplicitStream := false
 	for _, source := range snapshot.Sources {
+		if !source.Selected {
+			continue
+		}
 		// Automatic admission does not make a stream choice inside a multi-audio file.
 		requiresExplicitStream := source.RequiresExplicitStreamSelection || source.AudioStreamCount != 1
 		if _, err := publication.PlanAudioTransform(format, source.Quality.AudioSourceFacts()); err != nil {
@@ -126,7 +132,7 @@ func automaticFirstSourceChoiceWithReason(snapshot *persistence.LibraryFirstPubl
 		return FirstPublicationSourceChoice{}, "", persistence.ErrPublicationAdmissionConflict
 	}
 	for _, source := range snapshot.Sources {
-		if source.Selection.MediaVariantID.String() == selection.Candidate.VariantUUID && source.Selection.LocationID.String() == selection.Candidate.LocationUUID && source.Quality.StreamIndex == selection.Candidate.StreamIndex {
+		if source.Selected && source.Selection.MediaVariantID.String() == selection.Candidate.VariantUUID && source.Selection.LocationID.String() == selection.Candidate.LocationUUID && source.Quality.StreamIndex == selection.Candidate.StreamIndex {
 			return FirstPublicationSourceChoice{LocationID: source.Selection.LocationID, MediaVariantID: source.Selection.MediaVariantID, StreamIndex: source.Quality.StreamIndex}, "", nil
 		}
 	}
@@ -216,8 +222,18 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 		Source: &sourceSelection, FrozenInputs: rawFrozen,
 		NamespaceManifest: initialManifest,
 	}
+	var associationIntent *persistence.FirstPublicationSourceSelection
+	if sourceChoice != nil && guard == nil {
+		if selected.AssociationID == uuid.Nil || len(snapshot.SourceAssociations) == 0 {
+			return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+		}
+		associationIntent = &persistence.FirstPublicationSourceSelection{
+			AssociationID: selected.AssociationID,
+			Associations:  append([]persistence.PublicationSourceAssociation(nil), snapshot.SourceAssociations...),
+		}
+	}
 	first := persistence.FirstPublicationAdmission{
-		PublicationAdmission: request, PreviewDigest: previewDigest,
+		PublicationAdmission: request, PreviewDigest: previewDigest, SourceSelection: associationIntent,
 		PrepareFirst: func(ctx context.Context, authoritative persistence.FirstPublicationAdmissionSnapshot, actual persistence.PublicationAdmission) ([]persistence.PublicationNamespaceNode, error) {
 			if authoritative.Context == nil || authoritative.Context.Library == nil ||
 				authoritative.Context.Library.ActiveEpoch != expectedEpoch ||
@@ -255,6 +271,17 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 				transactionPreview.SelectedSource == nil || transactionPreview.Transform == nil || !reflect.DeepEqual(transactionTools, actual.Tools) {
 				return nil, persistence.ErrPublicationAdmissionConflict
 			}
+			var transactionSource *persistence.FirstPublicationSource
+			for i := range authoritative.Context.Sources {
+				candidate := &authoritative.Context.Sources[i]
+				if candidate.Selection.LocationID == transactionPreview.SelectedSource.LocationID && candidate.Selection.MediaVariantID == transactionPreview.SelectedSource.MediaVariantID && candidate.Quality.StreamIndex == transactionPreview.SelectedSource.StreamIndex {
+					transactionSource = candidate
+					break
+				}
+			}
+			if transactionSource == nil {
+				return nil, persistence.ErrPublicationAdmissionConflict
+			}
 			transactionManifest, err := finalizeFirstPublicationNamespace(ctx, authoritative.Context, transactionSettings.OutputDirectory, transactionSettings.PublicationPathTemplate, &transactionPreview)
 			if err != nil || transactionPreview.ContextDigest != previewDigest {
 				if ctx.Err() != nil {
@@ -265,7 +292,20 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 			if !reflect.DeepEqual(transactionPreview.DesiredTags.Tags, frozen.DesiredTags) ||
 				transactionPreview.SelectedSource.RootID != actual.Source.RootID || transactionPreview.SelectedSource.LocationID != actual.Source.LocationID ||
 				transactionPreview.SelectedSource.MediaVariantID != actual.Source.MediaVariantID ||
-				transactionPreview.SelectedSource.StreamIndex != selected.Quality.StreamIndex {
+				transactionPreview.SelectedSource.StreamIndex != transactionSource.Quality.StreamIndex {
+				return nil, persistence.ErrPublicationAdmissionConflict
+			}
+			var actualFrozen persistence.PublicationInputs
+			if err := json.Unmarshal(actual.FrozenInputs, &actualFrozen); err != nil {
+				return nil, persistence.ErrPublicationAdmissionConflict
+			}
+			expectedFrozen := persistence.PublicationInputs{
+				Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
+				IntentKind: "audio", Format: publication.AudioPublicationFormat(transactionSettings.PublicationFormat),
+				Audio: audioInputCopy(&transactionSource.Input), DesiredTags: cloneDesiredPublicationTags(transactionPreview.DesiredTags.Tags),
+				InitialLyrics: initialLyricsAuthorityInput(authoritative.Context), Tools: append([]persistence.SourceAnalysisToolSelection(nil), transactionTools...),
+			}
+			if !reflect.DeepEqual(actualFrozen, expectedFrozen) {
 				return nil, persistence.ErrPublicationAdmissionConflict
 			}
 			return transactionManifest, nil
