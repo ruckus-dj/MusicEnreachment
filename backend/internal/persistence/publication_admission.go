@@ -94,6 +94,9 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	if input.IntentKind != request.IntentKind || !samePublicationTools(request.Tools, input.Tools) {
 		return uuid.Nil, fmt.Errorf("admit publication: request conflicts with frozen publication inputs")
 	}
+	if request.firstAdmission == nil && input.SourceAuthorityMode != "" {
+		return uuid.Nil, fmt.Errorf("admit publication: source authority requires first-publication intent: %w", ErrPublicationAdmissionConflict)
+	}
 	if input.ManualLyrics != nil && (!request.validatedManualLyrics || request.manualLyrics == nil) || request.validatedManualLyrics && input.ManualLyrics == nil {
 		return uuid.Nil, fmt.Errorf("admit publication: manual lyrics inputs require validated admission")
 	}

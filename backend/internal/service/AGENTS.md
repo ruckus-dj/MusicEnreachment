@@ -43,6 +43,10 @@ replay; assert the frontier and execution rejection separately.
 For lifecycle fixtures, use named scenario configuration rather than extending a
 positional boolean list. Assert the intended frozen input kind and observed
 provider calls: a green test name alone does not prove that its branch ran.
+When injecting metadata races through Bun SQL, pass marshalled JSON as a string
+to `?::jsonb`, not a plain `[]byte` (which becomes a bytea/hex literal). Assert
+the mutation affected the intended row and revision before claiming rejection:
+an error returned from a lookup stub may become a nonfatal provider warning.
 
 ## ANTI-PATTERNS
 - Empty safe error messages in Operations.Fail (enforced at runtime)

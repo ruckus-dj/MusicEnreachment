@@ -2,6 +2,24 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+### Следующий срез: position source authority и current quality facts
+
+В рабочее дерево перенесена migration `20261029000002` и current position-scoped
+source authority: mode/revision связываются с фактическими epoch/generation,
+explicit first source choice фиксирует manual, automatic/default admission —
+automatic. Legacy frozen inputs без mode остаются исполнимыми без фабрикации
+authority. Shared local track не объединяет authority разных позиций.
+Измеренный channel layout сохраняется в audio facts; legacy unknown не выводится
+из channel count. Upgrade admission/execution или return-to-auto UI не добавлены.
+
+Review выявленные reset/republication conflict и потеря mode при rewrite закрыты:
+reset удаляет authority в той же транзакции, ordinary и manual-lyrics commits
+переносят generation-matched authority общим helper. PG success/rollback,
+reset/re-establishment и first explicit-selected regressions прошли.
+Изолированный и integrated полные `task verify` прошли; финальное review без
+P1/P2. Migration inventory/table count сведены с уже принятой cover authority.
+Commit/CI данного среза пока не подтверждены.
+
 ### Следующий срез: current release cover authority
 
 В рабочее дерево перенесены standalone release cover authority, migration

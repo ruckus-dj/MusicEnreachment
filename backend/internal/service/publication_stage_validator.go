@@ -202,7 +202,7 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	if actual.Index == nil || *actual.Index < 0 || int64(int(*actual.Index)) != *actual.Index {
 		return PublicationStageObservation{}, errors.New("publication stage audio stream index is missing or out of range")
 	}
-	actualAudioFacts, err := persistedPublicationStageAudioFacts(int(*actual.Index), actualCodec, lossless, actual.Channels, actual.BitRate, actual.BitsPerSample, actual.SampleRateHz, plan.OutputContainer)
+	actualAudioFacts, err := persistedPublicationStageAudioFacts(int(*actual.Index), actualCodec, lossless, actual.Channels, actual.ChannelLayout, actual.BitRate, actual.BitsPerSample, actual.SampleRateHz, plan.OutputContainer)
 	if err != nil {
 		return PublicationStageObservation{}, err
 	}
@@ -297,7 +297,7 @@ func inputAudioFacts(input persistence.PublicationInputs) persistence.PersistedA
 	return input.Rewrite.AudioFacts
 }
 
-func persistedPublicationStageAudioFacts(index int, codec string, lossless bool, channels, bitrate, bitDepth, sampleRate *int64, container publication.AudioContainer) (persistence.PersistedAudioFacts, error) {
+func persistedPublicationStageAudioFacts(index int, codec string, lossless bool, channels *int64, channelLayout *string, bitrate, bitDepth, sampleRate *int64, container publication.AudioContainer) (persistence.PersistedAudioFacts, error) {
 	toInt := func(value *int64) (*int, error) {
 		if value == nil {
 			return nil, nil
@@ -325,9 +325,13 @@ func persistedPublicationStageAudioFacts(index int, codec string, lossless bool,
 		return persistence.PersistedAudioFacts{}, err
 	}
 	losslessValue := lossless
+	layout := ""
+	if channelLayout != nil {
+		layout = *channelLayout
+	}
 	return persistence.PersistedAudioFacts{
 		StreamIndex: index, Codec: codec, Lossless: &losslessValue,
-		Channels: channelsValue, Bitrate: bitrateValue, BitDepth: bitDepthValue, SampleRate: sampleRateValue,
+		Channels: channelsValue, ChannelLayout: layout, Bitrate: bitrateValue, BitDepth: bitDepthValue, SampleRate: sampleRateValue,
 		Container: container, SupportedSourceContainer: publicationSourceFactsSupported(container, codec),
 	}, nil
 }

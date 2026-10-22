@@ -62,7 +62,7 @@ func TestFirstPublicationExplicitAudioStreamAdmissionPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if inputs.Audio == nil || inputs.Audio.LocationID != locationID || inputs.Audio.MediaVariantID != variantID || inputs.Audio.AudioFacts.StreamIndex != 5 || inputs.Audio.AudioFacts.SampleRate == nil || *inputs.Audio.AudioFacts.SampleRate != 96000 {
+		if inputs.Audio == nil || inputs.Audio.LocationID != locationID || inputs.Audio.MediaVariantID != variantID || inputs.Audio.AudioFacts.StreamIndex != 5 || inputs.Audio.AudioFacts.SampleRate == nil || *inputs.Audio.AudioFacts.SampleRate != 96000 || inputs.SourceAuthorityMode != "manual" {
 			t.Fatalf("frozen selected stream = %+v", inputs.Audio)
 		}
 	})

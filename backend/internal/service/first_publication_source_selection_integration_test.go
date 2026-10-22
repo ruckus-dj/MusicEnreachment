@@ -118,7 +118,7 @@ func TestFirstPublicationExplicitUnselectedSourceAdmissionPostgreSQL(t *testing.
 					t.Fatalf("read admitted attempt=%+v,%v", attempt, err)
 				}
 				inputs, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
-				if err != nil || inputs.Audio == nil || inputs.Audio.LocationID != choice.LocationID || inputs.Audio.MediaVariantID != choice.MediaVariantID {
+				if err != nil || inputs.Audio == nil || inputs.Audio.LocationID != choice.LocationID || inputs.Audio.MediaVariantID != choice.MediaVariantID || inputs.SourceAuthorityMode != "manual" {
 					t.Fatalf("frozen source=%+v,%v", inputs.Audio, err)
 				}
 				var jobs, holds int

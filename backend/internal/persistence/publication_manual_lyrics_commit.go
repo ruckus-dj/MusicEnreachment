@@ -87,6 +87,9 @@ func commitManualLyricsReplacementTx(ctx context.Context, tx bun.Tx, guard Publi
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return false, errors.New("commit manual lyrics replacement: current projection changed")
 	}
+	if err := carryPositionSourceAuthorityTx(ctx, tx, current, projection); err != nil {
+		return false, fmt.Errorf("commit manual lyrics replacement: carry source authority: %w", err)
+	}
 	if _, err := tx.NewRaw(`INSERT INTO publication_manual_lyrics_receipt(position_id,epoch,desired_revision,confirmed_generation,published_generation,desired_state,desired_sha256,warning_code,recorded_at)
 		VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(position_id) DO UPDATE SET epoch=EXCLUDED.epoch, desired_revision=EXCLUDED.desired_revision, confirmed_generation=EXCLUDED.confirmed_generation, published_generation=EXCLUDED.published_generation, desired_state=EXCLUDED.desired_state, desired_sha256=EXCLUDED.desired_sha256, warning_code=EXCLUDED.warning_code, recorded_at=EXCLUDED.recorded_at`,
 		receipt.PositionID, receipt.Epoch, receipt.DesiredRevision, receipt.ConfirmedGeneration, receipt.PubGeneration, receipt.DesiredState, receipt.DesiredSHA256, receipt.WarningCode, receipt.RecordedAt).Exec(ctx); err != nil {

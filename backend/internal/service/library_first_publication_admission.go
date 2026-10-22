@@ -200,10 +200,13 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 
 	frozen := persistence.PublicationInputs{
 		Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
-		IntentKind: "audio", Format: publication.AudioPublicationFormat(runtimeSettings.PublicationFormat),
+		IntentKind: "audio", SourceAuthorityMode: "automatic", Format: publication.AudioPublicationFormat(runtimeSettings.PublicationFormat),
 		Audio: audioInputCopy(&selected.Input), DesiredTags: cloneDesiredPublicationTags(preview.DesiredTags.Tags),
 		InitialLyrics: initialLyricsAuthorityInput(snapshot),
 		Tools:         append([]persistence.SourceAnalysisToolSelection(nil), selectedTools...),
+	}
+	if sourceChoice != nil && guard == nil {
+		frozen.SourceAuthorityMode = "manual"
 	}
 	if err := frozen.Validate(); err != nil {
 		return uuid.Nil, fmt.Errorf("validate first publication inputs: %w", err)
@@ -301,7 +304,7 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 			}
 			expectedFrozen := persistence.PublicationInputs{
 				Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
-				IntentKind: "audio", Format: publication.AudioPublicationFormat(transactionSettings.PublicationFormat),
+				IntentKind: "audio", SourceAuthorityMode: frozen.SourceAuthorityMode, Format: publication.AudioPublicationFormat(transactionSettings.PublicationFormat),
 				Audio: audioInputCopy(&transactionSource.Input), DesiredTags: cloneDesiredPublicationTags(transactionPreview.DesiredTags.Tags),
 				InitialLyrics: initialLyricsAuthorityInput(authoritative.Context), Tools: append([]persistence.SourceAnalysisToolSelection(nil), transactionTools...),
 			}

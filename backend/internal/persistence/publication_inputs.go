@@ -26,6 +26,7 @@ type PublicationInputs struct {
 	Version              int                                `json:"version"`
 	QualityPolicyVersion int                                `json:"quality_policy_version,omitempty"`
 	IntentKind           string                             `json:"intent_kind"`
+	SourceAuthorityMode  string                             `json:"source_authority_mode,omitempty"`
 	Audio                *PublicationAudioInput             `json:"audio,omitempty"`
 	Rewrite              *PublicationRewriteInput           `json:"rewrite,omitempty"`
 	ManualLyrics         *PublicationManualLyricsInput      `json:"manual_lyrics,omitempty"`
@@ -107,6 +108,7 @@ type PersistedAudioFacts struct {
 	Codec                    string                     `json:"codec"`
 	Lossless                 *bool                      `json:"lossless"`
 	Channels                 *int                       `json:"channels,omitempty"`
+	ChannelLayout            string                     `json:"channel_layout,omitempty"`
 	Bitrate                  *int                       `json:"bitrate,omitempty"`
 	BitDepth                 *int                       `json:"bit_depth,omitempty"`
 	SampleRate               *int                       `json:"sample_rate,omitempty"`
@@ -146,6 +148,12 @@ func (input PublicationInputs) Validate() error {
 	}
 	if input.QualityPolicyVersion != publication.QualityPolicyVersion {
 		return fmt.Errorf("unsupported publication quality policy version %d", input.QualityPolicyVersion)
+	}
+	if input.SourceAuthorityMode != "" && input.SourceAuthorityMode != "manual" && input.SourceAuthorityMode != "automatic" {
+		return errors.New("unsupported source authority mode")
+	}
+	if input.SourceAuthorityMode != "" && (input.IntentKind != "audio" || input.Audio == nil) {
+		return errors.New("source authority requires initial audio inputs")
 	}
 	if input.ManualLyrics != nil {
 		if input.IntentKind != "rewrite" || input.Rewrite == nil || input.Audio != nil {

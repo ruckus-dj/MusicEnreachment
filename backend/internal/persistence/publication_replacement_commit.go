@@ -237,6 +237,9 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 		if err != nil || n != 1 {
 			return nil
 		}
+		if err := carryPositionSourceAuthorityTx(ctx, tx, current, projection); err != nil {
+			return fmt.Errorf("commit replacement publication: carry source authority: %w", err)
+		}
 		journal, err := appendJournalEntry(attempt.MutationJournal, witness)
 		if err != nil {
 			return err

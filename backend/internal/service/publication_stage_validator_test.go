@@ -193,12 +193,16 @@ func TestValidatedPublicationAudioFactsCanPlanSourceCopy(t *testing.T) {
 	lossless := false
 	channels := int64(2)
 	bitrate := int64(192000)
-	facts, err := persistedPublicationStageAudioFacts(0, "mp3", lossless, &channels, &bitrate, nil, nil, publication.AudioContainerMP3)
+	layout := "stereo"
+	facts, err := persistedPublicationStageAudioFacts(0, "mp3", lossless, &channels, &layout, &bitrate, nil, nil, publication.AudioContainerMP3)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !facts.SupportedSourceContainer {
 		t.Fatal("validated MP3 output was not marked as source-copy supported")
+	}
+	if facts.ChannelLayout != "stereo" {
+		t.Fatalf("persisted channel layout = %q", facts.ChannelLayout)
 	}
 	plan, err := publication.PlanAudioTransform(publication.AudioFormatSource, facts.AudioSourceFacts())
 	if err != nil {
@@ -230,12 +234,15 @@ func TestPublicationStageSampleRateEvidence(t *testing.T) {
 			}
 		})
 	}
-	observed, err := persistedPublicationStageAudioFacts(0, "aac", false, nil, nil, nil, &equal, publication.AudioContainerM4A)
+	observed, err := persistedPublicationStageAudioFacts(0, "aac", false, nil, nil, nil, nil, &equal, publication.AudioContainerM4A)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if observed.SampleRate == nil || *observed.SampleRate != 44100 {
 		t.Fatalf("persisted observed sample rate = %v, want 44100", observed.SampleRate)
+	}
+	if observed.ChannelLayout != "" {
+		t.Fatalf("missing channel layout was inferred as %q", observed.ChannelLayout)
 	}
 }
 

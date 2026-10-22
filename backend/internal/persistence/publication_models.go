@@ -33,6 +33,20 @@ type TrackPublication struct {
 	ValidatedAt          time.Time       `bun:"validated_at"`
 }
 
+// PositionSourceAuthority is current authority evidence; nil means unknown,
+// including for publications predating this model.
+type PositionSourceAuthority struct {
+	bun.BaseModel         `bun:"table:position_source_authority"`
+	PositionID            uuid.UUID `bun:"position_id,pk,type:uuid"`
+	Mode                  string    `bun:"mode"`
+	Revision              uuid.UUID `bun:"revision,type:uuid"`
+	PublicationEpoch      uuid.UUID `bun:"publication_epoch,type:uuid"`
+	PublicationGeneration uuid.UUID `bun:"publication_generation,type:uuid"`
+	SourceLocationID      uuid.UUID `bun:"source_location_id,type:uuid"`
+	MediaVariantID        uuid.UUID `bun:"media_variant_id,type:uuid"`
+	UpdatedAt             time.Time `bun:"updated_at"`
+}
+
 // TrackPublicationAttempt is the single unfinished publication attempt for a
 // position. Frozen inputs and journals are durable recovery state, not history.
 type TrackPublicationAttempt struct {

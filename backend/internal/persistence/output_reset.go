@@ -525,6 +525,9 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	if _, err := tx.ExecContext(ctx, `DELETE FROM publication_reconciliation_request`); err != nil {
 		return fmt.Errorf("clear old-epoch publication reconciliation requests: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM position_source_authority`); err != nil {
+		return fmt.Errorf("reset output: remove current position source authority: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM track_publication`); err != nil {
 		return fmt.Errorf("clear current track publications: %w", err)
 	}

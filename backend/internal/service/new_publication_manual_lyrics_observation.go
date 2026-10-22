@@ -430,6 +430,7 @@ func observedManualLyricsMKAAudioFacts(raw []byte, analysis SourceTechnicalAnaly
 	actual := analysis.Streams[0]
 	if actual.Index == nil || *actual.Index != int64(frozen.StreamIndex) || actual.CodecName == nil || *actual.CodecName != frozen.Codec ||
 		!publicationContainerMatches(*analysis.Container.Name, frozen.Container) ||
+		(frozen.ChannelLayout != "" && (actual.ChannelLayout == nil || *actual.ChannelLayout != frozen.ChannelLayout)) ||
 		(frozen.Channels != nil && (actual.Channels == nil || *actual.Channels != int64(*frozen.Channels))) ||
 		!publicationStageSampleRateMatches(frozen.SampleRate, actual.SampleRateHz) ||
 		(frozen.Bitrate != nil && (actual.BitRate == nil || *actual.BitRate != int64(*frozen.Bitrate))) ||
@@ -440,7 +441,16 @@ func observedManualLyricsMKAAudioFacts(raw []byte, analysis SourceTechnicalAnaly
 	if !known {
 		return persistence.PersistedAudioFacts{}, errors.New("manual lyrics output codec losslessness is unknown")
 	}
-	return persistedPublicationStageAudioFacts(int(*actual.Index), *actual.CodecName, lossless, actual.Channels, actual.BitRate, actual.BitsPerSample, actual.SampleRateHz, frozen.Container)
+	observed, err := persistedPublicationStageAudioFacts(int(*actual.Index), *actual.CodecName, lossless, actual.Channels, actual.ChannelLayout, actual.BitRate, actual.BitsPerSample, actual.SampleRateHz, frozen.Container)
+	if err != nil {
+		return persistence.PersistedAudioFacts{}, err
+	}
+	// A current publication with an unknown layout stays unknown; probing during
+	// a lyrics-only rewrite must not retroactively establish audio authority.
+	if frozen.ChannelLayout == "" || observed.ChannelLayout != frozen.ChannelLayout {
+		observed.ChannelLayout = frozen.ChannelLayout
+	}
+	return observed, nil
 }
 
 // validateManualLyricsApprovedCover permits only absence or the exact single

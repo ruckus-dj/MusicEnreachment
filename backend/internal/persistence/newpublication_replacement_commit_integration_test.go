@@ -79,6 +79,10 @@ func TestCommitReplacementPublicationPostgreSQL(t *testing.T) {
 	if _, err := f.db.NewRaw(`INSERT INTO track_publication (position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?::jsonb,1,now())`, f.guard.ExpectedPositionID, f.guard.Epoch, currentGeneration, intent.TargetRelativePath, string(ownership), string(audio), string(oldMetadata), string(oldAssets)).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
+	authority := PositionSourceAuthority{PositionID: f.guard.ExpectedPositionID, Mode: "manual", Revision: uuid.New(), PublicationEpoch: f.guard.Epoch, PublicationGeneration: currentGeneration, SourceLocationID: uuid.New(), MediaVariantID: uuid.New()}
+	if _, err := f.db.NewInsert().Model(&authority).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
 	intent.Expectation = "expected_current"
 	if outcome, err := repo.BeginPublicationExposure(ctx, f.guard, intent, staged); err != nil || outcome != PublicationExposureRecorded {
 		t.Fatalf("exposure = %q, %v", outcome, err)
@@ -256,6 +260,10 @@ func TestCommitReplacementPublicationPostgreSQL(t *testing.T) {
 			t.Fatalf("commit with %s = %t, %v; want reject", name, committed, err)
 		}
 	}
+	unchangedAuthority, err := repo.ReadPositionSourceAuthority(ctx, f.guard.ExpectedPositionID)
+	if err != nil || unchangedAuthority == nil || unchangedAuthority.Revision != authority.Revision || unchangedAuthority.PublicationGeneration != currentGeneration {
+		t.Fatalf("rejected replacement changed source authority: %+v, %v", unchangedAuthority, err)
+	}
 	if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, string(mustJSON(canonicalJournal)), f.guard.OperationID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -272,6 +280,10 @@ func TestCommitReplacementPublicationPostgreSQL(t *testing.T) {
 	}
 	if current.Generation != f.guard.CandidateGeneration || current.RelativePath != intent.TargetRelativePath || current.QualityPolicyVersion != 1 || !sameJSONValue(current.ActualAudio, audio) || !sameJSONValue(current.ActualMetadata, staged.ActualMetadata) || !sameJSONValue(current.ActualAssets, staged.ActualAssets) {
 		t.Fatalf("committed replacement projection incorrect: %#v", current)
+	}
+	carried, err := repo.ReadPositionSourceAuthority(ctx, f.guard.ExpectedPositionID)
+	if err != nil || carried == nil || carried.Mode != "manual" || carried.Revision != authority.Revision || carried.PublicationGeneration != current.Generation || carried.SourceLocationID != authority.SourceLocationID {
+		t.Fatalf("replacement did not carry current manual source authority: %+v, %v", carried, err)
 	}
 	if !sameJSONValue(current.Ownership, mustJSON(PublicationCurrentOwnership{Version: 1, Identity: evidence.Identity})) {
 		t.Fatal("replacement ownership does not describe installed audio")

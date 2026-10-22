@@ -576,6 +576,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 				unsupported++
 				continue
 			}
+			facts.ChannelLayout = stream.ChannelLayout
 			streamInput := input
 			streamInput.AudioFacts = facts
 			*result = append(*result, FirstPublicationSource{

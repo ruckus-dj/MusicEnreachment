@@ -51,6 +51,13 @@ func TestFirstPublicationPreviewConfirmationDeliveryPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestFirstPublicationExplicitAlreadySelectedSourceAuthorityCommitPostgreSQL(t *testing.T) {
+	t.Parallel()
+	testPublicationSourceExecution(t, "Track.flac", true, explicitFirstPublicationAuthority{})
+}
+
+type explicitFirstPublicationAuthority struct{}
+
 func testPublicationSourceExecution(t *testing.T, target string, confirmation ...any) {
 	t.Helper()
 	ctx := context.Background()
@@ -150,6 +157,7 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		t.Fatal(err)
 	}
 	operationID, candidateID, holdID := uuid.New(), uuid.New(), uuid.New()
+	expectedAuthorityMode := ""
 	var riverJobID int64
 	if err := db.NewRaw(`INSERT INTO river_job(kind,args,state,attempt) VALUES ('publish_track_v1','{}','running',1) RETURNING id`).Scan(ctx, &riverJobID); err != nil {
 		t.Fatal(err)
@@ -262,6 +270,7 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			t.Fatal(err)
 		}
 		if len(confirmation) > 0 && confirmation[0] == true {
+			expectedAuthorityMode = "automatic"
 			// Remove only this fixture's synthetic admission. The source graph and
 			// verified installation remain the exact inputs consumed by PreviewFirst.
 			cleanup, err := db.BeginTx(ctx, nil)
@@ -326,13 +335,25 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil {
 				t.Fatalf("first publication preview = %+v, %v", preview, err)
 			}
+			var sourceChoice *FirstPublicationSourceChoice
+			for _, option := range confirmation {
+				if _, explicit := option.(explicitFirstPublicationAuthority); explicit {
+					choice := FirstPublicationSourceChoice{LocationID: preview.SelectedSource.LocationID, MediaVariantID: preview.SelectedSource.MediaVariantID, StreamIndex: preview.SelectedSource.StreamIndex}
+					sourceChoice = &choice
+					preview, err = publications.PreviewFirstSelected(ctx, releaseID, positionID, sourceChoice)
+					if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil {
+						t.Fatalf("explicit already-selected preview = %+v, %v", preview, err)
+					}
+					expectedAuthorityMode = "manual"
+				}
+			}
 			if len(confirmation) > 1 && confirmation[1] == true {
 				if len(preview.PathComponents) != 4 {
 					t.Fatalf("default-layout preview components = %#v, want 4", preview.PathComponents)
 				}
 				target = strings.Join(preview.PathComponents, "/")
 			}
-			admittedID, err := publications.AdmitFirst(ctx, releaseID, positionID, FirstPublicationConfirmation{PreviewDigest: preview.ContextDigest, ExpectedEpoch: epoch})
+			admittedID, err := publications.AdmitFirst(ctx, releaseID, positionID, FirstPublicationConfirmation{PreviewDigest: preview.ContextDigest, ExpectedEpoch: epoch, SourceChoice: sourceChoice})
 			if err != nil {
 				t.Fatalf("confirm first publication: %v", err)
 			}
@@ -476,6 +497,10 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			if readErr := db.NewRaw(`SELECT count(*) FROM track_publication WHERE position_id=?`, positionID).Scan(ctx, &current); readErr != nil || current != 0 {
 				t.Fatalf("current publication after failed first publication = %d, %v", current, readErr)
 			}
+			var authorityCount int
+			if readErr := db.NewRaw(`SELECT count(*) FROM position_source_authority WHERE position_id=?`, positionID).Scan(ctx, &authorityCount); readErr != nil || authorityCount != 0 {
+				t.Fatalf("source authority after failed first publication = %d, %v", authorityCount, readErr)
+			}
 			if validationOutputPath == "" {
 				t.Fatal("validator did not record stage output path")
 			}
@@ -509,6 +534,12 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		var current persistence.TrackPublication
 		if err := db.NewSelect().Model(&current).Where("position_id=?", positionID).Scan(ctx); err != nil || current.Generation != candidateID {
 			t.Fatalf("current generation: %v", err)
+		}
+		if expectedAuthorityMode != "" {
+			authority, authorityErr := manager.ReadPositionSourceAuthority(ctx, positionID)
+			if authorityErr != nil || authority == nil || authority.Mode != expectedAuthorityMode || authority.PublicationGeneration != current.Generation || authority.PublicationEpoch != current.Epoch {
+				t.Fatalf("committed %s source authority = %+v, %v", expectedAuthorityMode, authority, authorityErr)
+			}
 		}
 		for _, table := range []string{"track_publication_attempt", "publication_execution_claim", "publication_source_hold", "operation_tool_read_hold"} {
 			var count int

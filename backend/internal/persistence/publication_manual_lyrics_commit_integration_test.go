@@ -77,6 +77,9 @@ func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture
 	if _, err := f.db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?::jsonb,1,now())`, f.guard.ExpectedPositionID, f.guard.Epoch, oldGeneration, intent.TargetRelativePath, string(mustJSON(PublicationCurrentOwnership{Version: 1, Identity: oldIdentity})), string(oldAudio), string(oldMetadata), string(oldAssets)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO position_source_authority(position_id,mode,revision,publication_epoch,publication_generation,source_location_id,media_variant_id) VALUES (?,'manual',?,?,?,?,?)`, f.guard.ExpectedPositionID, uuid.New(), f.guard.Epoch, oldGeneration, uuid.New(), uuid.New()); err != nil {
+		t.Fatal(err)
+	}
 	intent.Expectation = "expected_current"
 	if result, err := repo.BeginPublicationExposure(ctx, f.guard, intent, staged); err != nil || result != PublicationExposureRecorded {
 		t.Fatalf("fixture exposure = %q, %v", result, err)
@@ -122,6 +125,10 @@ func TestManualLyricsCommitWritesReceiptAndDoesNotRepairReplayPostgreSQL(t *test
 	}
 	if committed, err := repo.CommitReplacementPublication(ctx, f.guard); err != nil || !committed {
 		t.Fatalf("manual commit = %v, %v", committed, err)
+	}
+	currentAuthority, err := repo.ReadPositionSourceAuthority(ctx, f.guard.ExpectedPositionID)
+	if err != nil || currentAuthority == nil || currentAuthority.Mode != "manual" || currentAuthority.PublicationGeneration != f.guard.CandidateGeneration {
+		t.Fatalf("manual lyrics commit did not carry current source authority: %+v, %v", currentAuthority, err)
 	}
 	assertReplacementCleanupRequest(t, ctx, f)
 	var receipt PublicationManualLyricsReceipt
@@ -341,6 +348,13 @@ func assertManualLyricsCommitUnchanged(t *testing.T, ctx context.Context, f publ
 	}
 	if attempt.ExpectedGeneration == nil || current.Generation != *attempt.ExpectedGeneration {
 		t.Fatalf("current generation after rollback = %s, want %v", current.Generation, attempt.ExpectedGeneration)
+	}
+	var authority PositionSourceAuthority
+	if err := f.db.NewSelect().Model(&authority).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if attempt.ExpectedGeneration == nil || authority.PublicationGeneration != *attempt.ExpectedGeneration || authority.PublicationEpoch != current.Epoch {
+		t.Fatalf("authority after rolled-back lyrics commit = %+v", authority)
 	}
 	var count int
 	if err := f.db.NewSelect().Table("publication_manual_lyrics_receipt").ColumnExpr("count(*)").Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx, &count); err != nil {

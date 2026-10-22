@@ -126,6 +126,19 @@ func (repository *SetupManagerRepository) CommitFirstPublication(ctx context.Con
 		if err != nil || rows != 1 {
 			return nil
 		}
+		if input.SourceAuthorityMode != "" {
+			if input.SourceAuthorityMode != "manual" && input.SourceAuthorityMode != "automatic" || input.Audio == nil {
+				return errors.New("commit first publication: invalid source authority snapshot")
+			}
+			created, err := compareAndSetPositionSourceAuthorityTx(ctx, tx, nil, PositionSourceAuthority{
+				PositionID: attempt.PositionID, Mode: input.SourceAuthorityMode, Revision: uuid.New(),
+				PublicationEpoch: attempt.Epoch, PublicationGeneration: attempt.CandidateGeneration, SourceLocationID: input.Audio.LocationID,
+				MediaVariantID: input.Audio.MediaVariantID,
+			})
+			if err != nil || !created {
+				return fmt.Errorf("commit first publication: source authority revision changed: %w", ErrPublicationAdmissionConflict)
+			}
+		}
 		witness := firstPublicationCommitWitness{Version: firstPublicationCommitVersion, Kind: "publication_commit", Guard: guard, PositionID: attempt.PositionID, Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, RelativePath: projection.TargetRelativePath, Ownership: ownership, Audio: projection.CurrentAudio, Metadata: projection.Metadata, Assets: assetOutcomes, InitialLyrics: projection.InitialLyrics, QualityPolicyVersion: projection.QualityPolicyVersion, ValidatedAt: validatedAt}
 		witness.InitialLyricsEvidenceSHA256 = committedInitialLyricsCommitDigest(entries, witness)
 		journalRaw, err := appendJournalEntry(attempt.MutationJournal, witness)
