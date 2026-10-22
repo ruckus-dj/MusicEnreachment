@@ -23,6 +23,12 @@ HTTP API layer: Huma v2 on chi router via humachi adapter. Health endpoints, mid
 
 **Error responses**: Huma standard error format, service layer provides safe error messages.
 
+**Metadata PATCH fixtures**: use the field registry's actual scope and canonical
+name (`synced_lyrics` belongs to a position). Requests carry only `state`/`value`;
+manual authority/provenance are server-owned response fields. Serialize request
+bodies with `json.Marshal`, especially lyrics containing CR/LF, and verify the
+real handler/service/repository path rather than relying only on MSW fixtures.
+
 **Health endpoints**: /health/live (liveness, always 200 if running) and /health/ready (readiness, checks DB connection).
 
 ## STRUCTURE

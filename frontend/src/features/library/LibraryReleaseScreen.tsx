@@ -144,7 +144,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         throw new Error(errorMessage(metadata.data, metadata.status));
       if (publication.status !== 200)
         throw new Error(errorMessage(publication.data, publication.status));
-      const field = metadata.data.envelope.desired.lyrics;
+      const field = metadata.data.envelope.desired.synced_lyrics;
       const warningIDs = new Set(
         (publication.data.source_cleanup_warnings ?? []).map(
           (warning) => warning.original_operation_id,
@@ -609,14 +609,8 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
     }));
     try {
       const field = explicitEmpty
-        ? {
-            authority: "manual",
-            provenance: { kind: "manual" },
-            state: "explicit_empty",
-          }
+        ? { state: "explicit_empty" }
         : {
-            authority: "manual",
-            provenance: { kind: "manual" },
             state: "value",
             value: position.lyrics,
           };
@@ -625,7 +619,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         positionId,
         {
           expected_revision: position.metadata.revision,
-          changes: { lyrics: field },
+          changes: { synced_lyrics: field },
         },
       );
       if (response.status !== 200)
@@ -637,7 +631,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         positionId,
         (positionReadGenerations.current.get(positionId) ?? 0) + 1,
       );
-      const savedField = response.data.envelope.desired.lyrics;
+      const savedField = response.data.envelope.desired.synced_lyrics;
       setPositions((current) => ({
         ...current,
         [positionId]: {
@@ -720,7 +714,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
       if (fresh[1].status !== 200)
         throw new Error(errorMessage(fresh[1].data, fresh[1].status));
       publication = fresh[1].data;
-      const freshField = fresh[0].data.envelope.desired.lyrics;
+      const freshField = fresh[0].data.envelope.desired.synced_lyrics;
       if (
         freshField?.authority !== "manual" ||
         !["value", "explicit_empty"].includes(freshField.state) ||
@@ -1108,7 +1102,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         const renderScope = scope.current;
         const position = positions[track.id];
         const publication = position?.publication;
-        const lyricsField = position?.metadata?.envelope.desired.lyrics;
+        const lyricsField = position?.metadata?.envelope.desired.synced_lyrics;
         const hasManualLyrics =
           lyricsField?.authority === "manual" &&
           ["value", "explicit_empty"].includes(lyricsField.state);

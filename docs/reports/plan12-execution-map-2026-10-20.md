@@ -7,6 +7,36 @@
 
 ## Уточнение проверки текущего cleanup-среза
 
+### Real-media happy path с transport-fix `3c7b6bb`
+
+Полный локальный gate и штатный hook прошли; commit отправлен, CI `39710615271`
+отслеживается. На новом disposable stand весь flow выполнен через API:
+managed tools → setup → scan/analysis → local matching → explicit preview/admission.
+Publication `3f8610fb-f5fa-4283-9751-8f30c20ebcc8` завершилась `succeeded/finished`.
+Приложение создало current MKA с MP3 stereo 44,1 kHz; decoded-audio SHA-256
+совпал с source. Пользовательские оригиналы и source-копии не изменились.
+
+Navidrome 0.64.2 завершил full scan и импортировал album/title/artist Unicode,
+track 1 и disc 1. Raw stream 6 577 362 bytes совпал с опубликованным файлом
+побайтно. После graceful restart MeloTrove current generation/path/ownership,
+audio/metadata/assets и validation остались неизменными. Это подтверждает один
+реальный happy path, а не cover/lyrics, replacement, failure recovery или весь план.
+Исходный failed attempt в прежнем stand не восстановлен.
+
+Следующая real manual-lyrics проверка получила HTTP 400 на metadata PATCH
+в формате текущего UI; причина исследуется. Успешный import выше не считается
+проверкой lyrics editing/apply.
+
+Причина HTTP 400 устранена в UI: canonical PATCH использует `synced_lyrics` и
+только `state/value`, server-owned provenance больше не отправляется клиентом.
+Read/save/conflict и explicit-empty fixtures согласованы с реальным контрактом.
+HTTP→service→PostgreSQL regression проверяет position scope, точные CR/LF bytes,
+server authority/provenance, explicit-empty и отсутствие мутаций при rejection.
+Полный `task verify` прошёл (337 frontend tests); повторное review без P1/P2.
+Реальный canonical value и explicit-empty PATCH/GET прошли: файл и generation
+не меняются при save, pending сохраняется. MKA apply пока недоступен из-за
+FLAC-only execution slice; это ещё не runtime-приёмка lyrics apply.
+
 ### Текущая runtime-проверка `6f56094`
 
 Source-choice исправление закоммичено со штатным hook и отправлено. Повторный

@@ -607,7 +607,15 @@ it("saves explicit manual lyrics before applying with the current publication re
           envelope: {
             scope: "position",
             version: 1,
-            desired: savedLyrics ? { lyrics: savedLyrics } : {},
+            desired: savedLyrics
+              ? {
+                  synced_lyrics: {
+                    ...savedLyrics,
+                    authority: "manual",
+                    provenance: { kind: "manual" },
+                  },
+                }
+              : {},
           },
         }),
     ),
@@ -629,11 +637,25 @@ it("saves explicit manual lyrics before applying with the current publication re
     http.patch(
       "*/api/library/releases/release-1/positions/position-1/metadata",
       async ({ request }) => {
-        patchBodies.push(await request.json());
-        const body = patchBodies.at(-1) as {
-          changes: { lyrics: Record<string, unknown> };
+        const submitted = (await request.json()) as {
+          changes: Record<string, Record<string, unknown>>;
         };
-        savedLyrics = body.changes.lyrics;
+        const field = submitted.changes.synced_lyrics;
+        if (
+          Object.keys(submitted.changes).join() !== "synced_lyrics" ||
+          Object.keys(field ?? {}).some((key) =>
+            ["authority", "provenance"].includes(key),
+          )
+        )
+          return HttpResponse.json(
+            { detail: "invalid metadata changes" },
+            { status: 400 },
+          );
+        patchBodies.push(submitted);
+        const body = patchBodies.at(-1) as {
+          changes: { synced_lyrics: Record<string, unknown> };
+        };
+        savedLyrics = body.changes.synced_lyrics;
         metadataRevision += 1;
         return HttpResponse.json({
           revision: metadataRevision,
@@ -641,7 +663,13 @@ it("saves explicit manual lyrics before applying with the current publication re
           envelope: {
             scope: "position",
             version: 1,
-            desired: { lyrics: savedLyrics },
+            desired: {
+              synced_lyrics: {
+                ...savedLyrics,
+                authority: "manual",
+                provenance: { kind: "manual" },
+              },
+            },
           },
         });
       },
@@ -669,19 +697,19 @@ it("saves explicit manual lyrics before applying with the current publication re
 
   render(<LibraryReleaseScreen releaseId="release-1" />);
   const editor = await screen.findByLabelText("Сохранённый текст песни");
-  fireEvent.change(editor, { target: { value: "Words of the song" } });
+  const lyrics = "[00:01.00]Привет, мир 🎵";
+  fireEvent.change(editor, { target: { value: lyrics } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить текст" }));
   await screen.findByText(
     "Текст сохранён. Примените его отдельно к текущей публикации.",
   );
+  expect(editor).toHaveValue(lyrics);
   expect(patchBodies[0]).toEqual({
     expected_revision: 4,
     changes: {
-      lyrics: {
-        authority: "manual",
-        provenance: { kind: "manual" },
+      synced_lyrics: {
         state: "value",
-        value: "Words of the song",
+        value: lyrics,
       },
     },
   });
@@ -699,6 +727,188 @@ it("saves explicit manual lyrics before applying with the current publication re
     expected_generation: "generation-1",
     expected_metadata_revision: 5,
   });
+});
+
+it("stores explicit-empty synced lyrics without applying them automatically", async () => {
+  stubEventSource();
+  const patchBodies: unknown[] = [];
+  let applyRequests = 0;
+  let saved = false;
+  server.use(
+    http.get("*/api/library/releases/empty-lyrics", () =>
+      HttpResponse.json({
+        id: "empty-lyrics",
+        title: "Album",
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        primary_artist: {},
+        artists: [],
+        tracks: [
+          {
+            id: "empty-position",
+            title: "Song",
+            displayed_number: "1",
+            primary_artist: {},
+            artists: [],
+            sources: [],
+          },
+        ],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/empty-lyrics/positions/empty-position/metadata",
+      () =>
+        HttpResponse.json({
+          revision: 2,
+          publication_applied: false,
+          envelope: {
+            scope: "position",
+            version: 1,
+            desired: saved
+              ? {
+                  synced_lyrics: {
+                    state: "explicit_empty",
+                    authority: "manual",
+                    provenance: { kind: "manual" },
+                  },
+                }
+              : {},
+          },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/empty-lyrics/positions/empty-position/publication",
+      () =>
+        HttpResponse.json({
+          release_id: "empty-lyrics",
+          position_id: "empty-position",
+          active_epoch: "epoch",
+          current_epoch: "epoch",
+          current_generation: "generation",
+          metadata_revision: 2,
+          can_apply_manual_lyrics: true,
+        }),
+    ),
+    http.patch(
+      "*/api/library/releases/empty-lyrics/positions/empty-position/metadata",
+      async ({ request }) => {
+        patchBodies.push(await request.json());
+        saved = true;
+        return HttpResponse.json({
+          revision: 3,
+          publication_applied: false,
+          envelope: {
+            scope: "position",
+            version: 1,
+            desired: {
+              synced_lyrics: {
+                state: "explicit_empty",
+                authority: "manual",
+                provenance: { kind: "manual" },
+              },
+            },
+          },
+        });
+      },
+    ),
+    http.post(
+      "*/api/library/releases/empty-lyrics/positions/empty-position/publication/manual-lyrics",
+      () => {
+        applyRequests += 1;
+        return HttpResponse.json({ id: "empty-op" }, { status: 202 });
+      },
+    ),
+  );
+  render(<LibraryReleaseScreen releaseId="empty-lyrics" />);
+  await screen.findByLabelText("Сохранённый текст песни");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Сохранить как явно пустой" }),
+  );
+  await screen.findByText(
+    "Текст сохранён. Примените его отдельно к текущей публикации.",
+  );
+  expect(patchBodies[0]).toEqual({
+    expected_revision: 2,
+    changes: { synced_lyrics: { state: "explicit_empty" } },
+  });
+  expect(applyRequests).toBe(0);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Применить сохранённый текст" }),
+  );
+  await waitFor(() => expect(applyRequests).toBe(1));
+});
+
+it("retains the lyrics draft when saving receives a stale-revision conflict", async () => {
+  server.use(
+    http.get("*/api/library/releases/lyrics-conflict", () =>
+      HttpResponse.json({
+        id: "lyrics-conflict",
+        title: "Album",
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        primary_artist: {},
+        artists: [],
+        tracks: [
+          {
+            id: "conflict-position",
+            title: "Song",
+            displayed_number: "1",
+            primary_artist: {},
+            artists: [],
+            sources: [],
+          },
+        ],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/lyrics-conflict/positions/conflict-position/metadata",
+      () =>
+        HttpResponse.json({
+          revision: 4,
+          publication_applied: false,
+          envelope: {
+            scope: "position",
+            version: 1,
+            desired: {
+              synced_lyrics: {
+                state: "value",
+                value: "[00:01.00]Existing",
+                authority: "manual",
+                provenance: { kind: "manual" },
+              },
+            },
+          },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/lyrics-conflict/positions/conflict-position/publication",
+      () =>
+        HttpResponse.json({
+          release_id: "lyrics-conflict",
+          position_id: "conflict-position",
+          can_apply_manual_lyrics: false,
+        }),
+    ),
+    http.patch(
+      "*/api/library/releases/lyrics-conflict/positions/conflict-position/metadata",
+      () =>
+        HttpResponse.json(
+          { detail: "library metadata revision is stale" },
+          { status: 409 },
+        ),
+    ),
+  );
+  render(<LibraryReleaseScreen releaseId="lyrics-conflict" />);
+  const editor = await screen.findByLabelText("Сохранённый текст песни");
+  expect(editor).toHaveValue("[00:01.00]Existing");
+  fireEvent.change(editor, { target: { value: "[00:02.00]Unsaved draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить текст" }));
+  expect(
+    await screen.findByText("library metadata revision is stale"),
+  ).toBeInTheDocument();
+  expect(editor).toHaveValue("[00:02.00]Unsaved draft");
 });
 
 it("preserves lyrics edited while the save request is pending", async () => {
@@ -770,7 +980,9 @@ it("preserves lyrics edited while the save request is pending", async () => {
 
   render(<LibraryReleaseScreen releaseId="release-edit" />);
   const editor = await screen.findByLabelText("Сохранённый текст песни");
-  fireEvent.change(editor, { target: { value: "Submitted version" } });
+  fireEvent.change(editor, {
+    target: { value: "[00:01.00]Submitted version" },
+  });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить текст" }));
   await started;
   fireEvent.change(editor, { target: { value: "Newer unsaved edit" } });
@@ -784,11 +996,11 @@ it("preserves lyrics edited while the save request is pending", async () => {
         scope: "position",
         version: 1,
         desired: {
-          lyrics: {
+          synced_lyrics: {
             authority: "manual",
             provenance: { kind: "manual" },
             state: "value",
-            value: "Submitted version",
+            value: "[00:01.00]Submitted version",
           },
         },
       },
@@ -852,11 +1064,11 @@ it("ignores a pre-save publication read that returns after the successful PATCH 
               scope: "position",
               version: 1,
               desired: {
-                lyrics: {
+                synced_lyrics: {
                   authority: "provider",
                   provenance: { kind: "provider" },
                   state: "value",
-                  value: "Stale old value",
+                  value: "[00:01.00]Stale old value",
                 },
               },
             },
@@ -868,7 +1080,15 @@ it("ignores a pre-save publication read that returns after the successful PATCH 
           envelope: {
             scope: "position",
             version: 1,
-            desired: savedLyrics ? { lyrics: savedLyrics } : {},
+            desired: savedLyrics
+              ? {
+                  synced_lyrics: {
+                    ...savedLyrics,
+                    authority: "manual",
+                    provenance: { kind: "manual" },
+                  },
+                }
+              : {},
           },
         });
       },
@@ -904,16 +1124,22 @@ it("ignores a pre-save publication read that returns after the successful PATCH 
       "*/api/library/releases/release-race/positions/position-race/metadata",
       async ({ request }) => {
         const body = (await request.json()) as {
-          changes: { lyrics: Record<string, unknown> };
+          changes: { synced_lyrics: Record<string, unknown> };
         };
-        savedLyrics = body.changes.lyrics;
+        savedLyrics = body.changes.synced_lyrics;
         return HttpResponse.json({
           revision: 2,
           publication_applied: false,
           envelope: {
             scope: "position",
             version: 1,
-            desired: { lyrics: savedLyrics },
+            desired: {
+              synced_lyrics: {
+                ...savedLyrics,
+                authority: "manual",
+                provenance: { kind: "manual" },
+              },
+            },
           },
         });
       },
@@ -926,7 +1152,9 @@ it("ignores a pre-save publication read that returns after the successful PATCH 
   await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
   FakeEventSource.instances[0].emit("open");
   await waitFor(() => expect(metadataReads).toBe(2));
-  fireEvent.change(editor, { target: { value: "Saved current value" } });
+  fireEvent.change(editor, {
+    target: { value: "[00:01.00]Saved current value" },
+  });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить текст" }));
   await screen.findByText(
     "Текст сохранён. Примените его отдельно к текущей публикации.",
@@ -936,7 +1164,7 @@ it("ignores a pre-save publication read that returns after the successful PATCH 
   releaseRead();
   await waitFor(() => expect(metadataReads).toBeGreaterThan(2));
   expect(screen.getByLabelText("Сохранённый текст песни")).toHaveValue(
-    "Saved current value",
+    "[00:01.00]Saved current value",
   );
 });
 
@@ -1076,7 +1304,7 @@ it("recovers a failed publication refresh with a read-only refresh action", asyn
                 authority: "manual",
                 provenance: { kind: "manual" },
                 state: "value",
-                value: "Saved",
+                value: "[00:01.00]Saved",
               },
             },
           },
