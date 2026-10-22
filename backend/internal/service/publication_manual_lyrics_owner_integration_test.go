@@ -514,6 +514,10 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 			return
 		}
 		if runtime.GOOS == "windows" {
+			if automaticRetry && scenario.retryLyricsMismatch {
+				assertWindowsAutomaticRetryFallbackResetFrontier(t, ctx, db, repository, guard, input, fixture.output, currentPath, original, originalDigest, err, retryLookup, executor.metadata)
+				return
+			}
 			if !errors.Is(err, sourcefs.ErrUnsupported) {
 				t.Fatalf("manual lyrics executor error = %v, want sourcefs.ErrUnsupported", err)
 			}
@@ -1229,6 +1233,107 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 		t.Fatalf("invalid validated journal: %s, %v", advanced.MutationJournal, err)
 	}
 	scope.releaseSynchronousWork(reservation)
+}
+
+func assertWindowsAutomaticRetryFallbackResetFrontier(t *testing.T, ctx context.Context, db *bun.DB, repository *persistence.SetupManagerRepository, guard persistence.PublicationDeliveryGuard, input persistence.PublicationInputs, outputRoot, currentPath string, original []byte, originalDigest [32]byte, deliveryErr error, lookup *automaticRetryLookup, writer PublicationMetadataWriter) {
+	t.Helper()
+	if !errors.Is(deliveryErr, sourcefs.ErrUnsupported) || !strings.Contains(deliveryErr.Error(), "reset acknowledged retry candidate") {
+		t.Fatalf("Windows fallback delivery error = %v, want reset acknowledged retry candidate wrapping sourcefs.ErrUnsupported", deliveryErr)
+	}
+	if lookup == nil || len(lookup.requests) != 1 || lookup.requests[0].Duration <= 0 || lookup.requests[0].Duration == math.Trunc(lookup.requests[0].Duration) {
+		t.Fatalf("Windows retry lookup requests = %+v, want one fractional-duration lookup", lookup)
+	}
+	fallbackWriter, ok := writer.(*automaticRetryMissingLyricsWriter)
+	if !ok || fallbackWriter.calls != 1 {
+		t.Fatalf("Windows fallback metadata writes = %#v, want exactly the initial write before reset failure", writer)
+	}
+	attempt, err := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+	if err != nil || attempt == nil || attempt.Phase != "preparing" || attempt.IntentKind != "rewrite" {
+		t.Fatalf("Windows fallback attempt = %#v, %v; want retained preparing rewrite", attempt, err)
+	}
+	decoded, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
+	if err != nil || !reflect.DeepEqual(decoded, input) {
+		t.Fatalf("Windows fallback frozen input changed: equal=%t err=%v", reflect.DeepEqual(decoded, input), err)
+	}
+	var journal []json.RawMessage
+	if err := json.Unmarshal(attempt.MutationJournal, &journal); err != nil || len(journal) != 5 {
+		t.Fatalf("Windows fallback journal entries = %d, %v; want exact five-record frontier", len(journal), err)
+	}
+	wantKinds := []string{"publication_preparation", "publication_preparation", "publication_preparation", "publication_automatic_lyrics_retry_acquisition", "publication_candidate_rebuild"}
+	var prep persistence.PublicationPreparationRecord
+	var rebuild persistence.PublicationCandidateRebuildRecord
+	for i, raw := range journal {
+		var header struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &header) != nil || header.Kind != wantKinds[i] {
+			t.Fatalf("Windows fallback journal[%d] kind = %q, want %q", i, header.Kind, wantKinds[i])
+		}
+		if header.Kind == "publication_preparation" {
+			if err := json.Unmarshal(raw, &prep); err != nil {
+				t.Fatal(err)
+			}
+			wantSteps := []string{"intent", "directory_created", "input_ready"}
+			if prep.Step != wantSteps[i] {
+				t.Fatalf("Windows fallback preparation journal[%d] step = %q", i, prep.Step)
+			}
+		}
+		if header.Kind == "publication_candidate_rebuild" {
+			if err := json.Unmarshal(raw, &rebuild); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if rebuild.Step != "intent" || rebuild.Guard != guard || rebuild.Candidate == nil || rebuild.Input == nil || prep.Step != "input_ready" || prep.CopiedInput == nil || prep.DirectoryIdentity == nil || rebuild.PrivateDirRel != prep.PrivateDirRel || rebuild.InputRel != prep.InputRel || rebuild.OutputRel != prep.OutputRel || rebuild.DirectoryIdentity != *prep.DirectoryIdentity {
+		t.Fatalf("Windows fallback rebuild intent/preparation do not bind retained preparation: prep=%+v rebuild=%+v", prep, rebuild)
+	}
+	privateDir := filepath.Join(outputRoot, filepath.FromSlash(prep.PrivateDirRel))
+	inputPath := filepath.Join(outputRoot, filepath.FromSlash(prep.InputRel))
+	candidatePath := filepath.Join(outputRoot, filepath.FromSlash(prep.OutputRel))
+	if prep.CopiedInput.SizeBytes == nil || prep.CopiedInput.MTime == nil || rebuild.Input.SizeBytes == nil || rebuild.Input.MTime == nil {
+		t.Fatalf("retained retry preparation/input identity is incomplete: prep=%+v rebuild=%+v", prep.CopiedInput, rebuild.Input)
+	}
+	if info, err := os.Stat(privateDir); err != nil || !info.IsDir() {
+		t.Fatalf("retained retry private directory %q: info=%v err=%v", privateDir, info, err)
+	}
+	inputBytes, err := os.ReadFile(inputPath)
+	inputInfo, statErr := os.Stat(inputPath)
+	if err != nil || statErr != nil {
+		t.Fatalf("read retained retry input %q: read=%v stat=%v", inputPath, err, statErr)
+	}
+	inputDigest := sha256.Sum256(inputBytes)
+	if inputInfo.Size() != *prep.CopiedInput.SizeBytes || inputInfo.ModTime().UnixMicro() != *prep.CopiedInput.MTime || fmt.Sprintf("%x", inputDigest) != prep.CopiedInput.SHA256 || !reflect.DeepEqual(rebuild.Input, prep.CopiedInput) {
+		t.Fatalf("retained retry input identity changed: identity=%+v rebuild=%+v size=%d mtime=%d digest=%x read=%v stat=%v", prep.CopiedInput, rebuild.Input, inputInfo.Size(), inputInfo.ModTime().UnixMicro(), inputDigest, err, statErr)
+	}
+	if _, err := os.Stat(candidatePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("acknowledged retry candidate still exists at reset failure: %q, %v", candidatePath, err)
+	}
+	if rebuild.Candidate.SizeBytes == nil || rebuild.Candidate.MTime == nil || *rebuild.Candidate.SizeBytes < 0 || !validReplacementDigest(rebuild.Candidate.SHA256) {
+		t.Fatalf("durable retry intent lacks exact candidate identity: %+v", rebuild)
+	}
+	got, err := os.ReadFile(currentPath)
+	gotDigest := sha256.Sum256(got)
+	if err != nil || !bytes.Equal(got, original) || gotDigest != originalDigest {
+		t.Fatalf("Windows fallback reset changed G0: baseline=%x current=%x err=%v", originalDigest, gotDigest, err)
+	}
+	var generation uuid.UUID
+	if err := db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, guard.ExpectedPositionID).Scan(ctx, &generation); err != nil || generation != input.Rewrite.CurrentGeneration {
+		t.Fatalf("Windows fallback reset changed current generation: %s, %v", generation, err)
+	}
+	assertReplacementDBCounts(t, ctx, db, guard.OperationID, guard.ExpectedPositionID, 1, 1, 0, 1, 0)
+	for _, check := range []struct {
+		name  string
+		query string
+		arg   uuid.UUID
+	}{
+		{"manual lyrics receipts", `SELECT count(*) FROM publication_manual_lyrics_receipt WHERE position_id=?`, guard.ExpectedPositionID},
+		{"source holds", `SELECT count(*) FROM publication_source_hold WHERE operation_id=?`, guard.OperationID},
+	} {
+		var count int
+		if err := db.NewRaw(check.query, check.arg).Scan(ctx, &count); err != nil || count != 0 {
+			t.Errorf("Windows fallback %s = %d, %v; want zero", check.name, count, err)
+		}
+	}
 }
 
 var errInjectedReplacementCommit = errors.New("injected replacement commit failure")
