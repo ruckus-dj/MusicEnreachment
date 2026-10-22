@@ -61,6 +61,11 @@ func runPlatformJobCommand(ctx context.Context, request JobCommandRequest) (resu
 	if request.Input == nil {
 		command.Stdin = nil
 	}
+	if request.FileInput != nil {
+		if err := configureFileCommandTransport(command, request.FileInput); err != nil {
+			return result, fmt.Errorf("configure job command file input: %w", err)
+		}
+	}
 	stdout := &unixJobOutputWriter{writer: request.Stdout}
 	if stdout.writer == nil {
 		stdout.writer = io.Discard

@@ -7,6 +7,35 @@
 
 ## Уточнение проверки текущего cleanup-среза
 
+### Текущая runtime-проверка `6f56094`
+
+Source-choice исправление закоммичено со штатным hook и отправлено. Повторный
+реальный API-прогон подтвердил eligible candidate, explicit preview без blockers,
+`DISCNUMBER=1` и admission `202`. Operation
+`ebe93135-ce40-47a0-af86-e7a0877927c6` не завершилась: обязательный stage probe
+использует Unix descriptor 3, а contained job backend передал файл только в stdin.
+River сохранил ошибку `fd:: Bad file descriptor`; отдельно воспроизведено, что тот
+же output/tool успешно читается через descriptor 0. Transport-fix ещё проверяется.
+
+Transport-fix разделяет borrowed stdin и file input: Unix file transport наследует
+fd 3, Windows использует существующий stdin-handle transport. Полный `task verify`
+прошёл; real-subprocess regression проверяет `RunFile`→fd 3, отдельные tests
+сохраняют stdin compatibility и запрет двух input transports. Независимое review
+не выявило P1/P2. Повторный real API-прогон нового stand запущен, результат пока
+не объявляется успешным; native Windows verification остаётся в CI.
+
+Attempt остаётся `running/preparing` с retained claim и evidence; claims и journal
+не сбрасывались. Unconditional quarantine при ошибке initial-lyrics/validation
+также выявила незавершённый owner-returned post-input failure settlement.
+До успешной validation нет durable output creation identity; существующий
+pre-input cleanup здесь неприменим. Дизайн capture/settlement — предложение,
+не реализованное восстановление старого attempt.
+
+Для повторного acceptance подготовлен отдельный disposable stand
+`plan12-acceptance-transport.rtir3s08`: новая пустая БД, отдельный output и Navidrome
+с read-only music mount. Старый stand и исходные пользовательские media сохранены.
+Реальные publication/exposure/settlement и Navidrome import ещё не приняты.
+
 Реальный API-прогон на `a881890` прошёл setup, managed tool download/verification,
 MusicBrainz connectivity, scan/analysis двух временных MKA-копий и local-only
 materialization. Preview выявил integration gap: matching оставляет association

@@ -43,7 +43,7 @@ func (commands *PublicationJobCommands) RunFile(ctx context.Context, request too
 	return commands.runCommand(ctx, tools.JobCommandRequest{
 		Executable: request.Executable,
 		Args:       append([]string(nil), request.Args...),
-		Input:      request.Input,
+		FileInput:  request.Input,
 	})
 }
 

@@ -114,6 +114,8 @@ func runPlatformJobCommand(ctx context.Context, request JobCommandRequest) (resu
 	inputSource := windows.Handle(windows.Stdin)
 	if request.Input != nil {
 		inputSource = windows.Handle(request.Input.Fd())
+	} else if request.FileInput != nil {
+		inputSource = windows.Handle(request.FileInput.Fd())
 	} else {
 		nul, openErr := windows.CreateFile(syscall.StringToUTF16Ptr(`NUL`), windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
 		if openErr != nil {

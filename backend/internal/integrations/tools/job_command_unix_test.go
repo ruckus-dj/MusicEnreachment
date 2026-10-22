@@ -29,6 +29,12 @@ func TestRunJobCommandUnixHelper(t *testing.T) {
 	case "success":
 		_, _ = io.Copy(os.Stdout, os.Stdin)
 		_, _ = io.WriteString(os.Stderr, "stderr")
+	case "file-input":
+		file := os.NewFile(3, "file-input")
+		if file == nil {
+			os.Exit(11)
+		}
+		_, _ = io.Copy(os.Stdout, file)
 	case "output":
 		_, _ = io.WriteString(os.Stdout, "output")
 	case "nonzero":
@@ -99,6 +105,49 @@ func TestRunJobCommandUnixStreamsInputAndReportsExit(t *testing.T) {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || !result.QuiescenceEstablished || result.ExitCode != 7 {
 		t.Fatalf("nonzero command = (%+v, %v), want completed exit 7", result, err)
+	}
+}
+
+func TestRunJobCommandUnixTransportsFileInputOnDescriptorThree(t *testing.T) {
+	input, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = input.Close() }()
+	if _, err := input.WriteString("file-input-sentinel"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	fileRequest := BuildTechnicalFileCommandRequest("/unused", input)
+	request := unixJobCommand(t, "file-input")
+	request.FileInput = fileRequest.Input
+	var stdout bytes.Buffer
+	request.Stdout = &stdout
+	result, err := runUnixJobHelper(t, "file-input", request)
+	if err != nil || !result.QuiescenceEstablished || result.ExitCode != 0 {
+		t.Fatalf("file-input command = (%+v, %v), want completed exit 0", result, err)
+	}
+	if stdout.String() != "file-input-sentinel" {
+		t.Fatalf("stdout = %q, want file contents", stdout.String())
+	}
+	if _, err := input.Seek(0, io.SeekCurrent); err != nil {
+		t.Fatalf("borrowed file input was closed: %v", err)
+	}
+}
+
+func TestRunJobCommandRejectsBothInputTransportsBeforeLaunch(t *testing.T) {
+	input, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = input.Close() }()
+	request := unixJobCommand(t, "success")
+	request.Input, request.FileInput = input, input
+	result, err := RunJobCommand(context.Background(), request)
+	if err == nil || !result.QuiescenceEstablished || !strings.Contains(err.Error(), "both stdin and file input") {
+		t.Fatalf("RunJobCommand() = (%+v, %v), want prelaunch input conflict", result, err)
 	}
 }
 

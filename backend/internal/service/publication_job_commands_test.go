@@ -103,8 +103,8 @@ func TestPublicationJobCommandsRunFileBorrowsInputAndClonesArgs(t *testing.T) {
 	args := []string{"one", "two"}
 	commands, _ := newPublicationJobCommands(8, 8, func(_ context.Context, request tools.JobCommandRequest) (tools.JobCommandResult, error) {
 		request.Args[0] = "changed"
-		if request.Input != input {
-			t.Fatal("input descriptor changed")
+		if request.Input != nil || request.FileInput != input {
+			t.Fatal("file input was not forwarded through the file transport")
 		}
 		_, _ = request.Stdout.Write([]byte("ok"))
 		return tools.JobCommandResult{QuiescenceEstablished: true}, nil
