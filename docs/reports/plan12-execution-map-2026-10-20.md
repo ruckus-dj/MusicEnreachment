@@ -2,6 +2,26 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+### Последующее уточнение: typed optional-assets metadata writer
+
+Поверх retry core `a5dbb9d` перенесён `WriteWithOptionalAssets` с независимыми
+типизированными результатами lyrics/cover; прежние writer APIs не изменены.
+Normally-returned isolated cover write/readback failure допускает optional
+status, но mandatory corruption, opaque errors, panic и cancellation остаются
+fatal. После image mutation mandatory tags и lyrics читаются заново.
+
+Изолированный `task verify` и независимое review прошли. Native TagLib тесты
+FLAC/MP3/M4A/MKA сравнивают audio payload hashes, дополнительно audio properties
+и corruption controls. MP3 extractor исключает declared ID3v2 и trailing tags,
+требует contiguous frames; adversarial metadata headers не считаются audio.
+Integrated `task verify` прошёл. Publication wiring и bounded asset-rebuild journal
+пока не добавлены: это не завершённая публикация обложек.
+
+Retry core `a5dbb9d` прошёл обычный hook и отправлен; CI `39805993808`
+отслеживается. Source-authority run `39800593673` после повторов показывает
+успешные verify, всю platform matrix и Docker smoke; container job API пока
+возвращает `in_progress`, поэтому полный результат отдельно не подтверждён.
+
 ### Последующее уточнение: интеграция source-free lyrics retry core
 
 Поверх `d1a0ca1` интегрирован ранее изолированный retry core. Полный integrated
