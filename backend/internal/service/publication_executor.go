@@ -73,8 +73,8 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		return fmt.Errorf("decode frozen publication inputs: %w", err)
 	}
 	if input.ManualLyrics != nil {
-		if attempt.IntentKind != "rewrite" || input.IntentKind != "rewrite" || input.Rewrite == nil || input.Format != publication.AudioFormatSource || input.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC || input.Rewrite.AudioFacts.Codec != "flac" {
-			return errors.New("manual lyrics publication requires a FLAC rewrite")
+		if attempt.IntentKind != "rewrite" || input.IntentKind != "rewrite" || input.Rewrite == nil || input.Format != publication.AudioFormatSource || !manualLyricsAudioSupported(input.Rewrite.AudioFacts) {
+			return errors.New("manual lyrics publication requires a supported current-container rewrite")
 		}
 	}
 	outputPath, configured, err := executor.registry.GetOutputDirectory(ctx)
@@ -145,6 +145,16 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	stage, ok := prepared.(*preparedPublicationStage)
 	if !ok {
 		return errors.New("publication preparation did not return a native stage")
+	}
+	pinnedTools, err := NewScopeBoundPublicationPinnedTools(executor.repository, scope, guard, executor.platform)
+	if err != nil {
+		return err
+	}
+	if input.Rewrite.AudioFacts.Container == publication.AudioContainerMKA {
+		stage.manualProbe, err = NewScopeBoundPublicationStageProbe(scope, pinnedTools, input.Tools)
+		if err != nil {
+			return err
+		}
 	}
 	reservation := scope.reserveSynchronousWork()
 	if reservation == nil {

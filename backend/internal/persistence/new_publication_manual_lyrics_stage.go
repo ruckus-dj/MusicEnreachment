@@ -43,8 +43,8 @@ func (repository *SetupManagerRepository) GuardedAdvanceManualLyricsStage(ctx co
 		if err != nil {
 			return fmt.Errorf("advance manual lyrics stage: decode frozen inputs: %w", err)
 		}
-		if err := input.Validate(); err != nil || !validManualLyricsFLACRewrite(input) {
-			return errors.New("advance manual lyrics stage: frozen inputs are not a valid manual lyrics FLAC rewrite")
+		if err := input.Validate(); err != nil || !validManualLyricsRewrite(input) {
+			return errors.New("advance manual lyrics stage: frozen inputs are not a valid manual lyrics rewrite")
 		}
 		if from == "staged" && (len(observation.ActualAssets) == 0 || observation.QualityPolicyVersion != input.QualityPolicyVersion) {
 			return errors.New("advance manual lyrics stage: validated phase requires matching asset and quality-policy evidence")
@@ -56,7 +56,7 @@ func (repository *SetupManagerRepository) GuardedAdvanceManualLyricsStage(ctx co
 			}
 			return fmt.Errorf("advance manual lyrics stage: read current publication: %w", err)
 		}
-		if !publicationRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) {
+		if !manualLyricsRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) {
 			return nil
 		}
 		if err := validatePublicationRewriteNamespace(ctx, tx, attempt, input.Rewrite.RelativePath); err != nil {

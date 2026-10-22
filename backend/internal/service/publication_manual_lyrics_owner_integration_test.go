@@ -92,10 +92,30 @@ func TestPreparedManualLyricsReplacementCleanupIntentFailurePostgreSQL(t *testin
 }
 
 func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continuous bool, options ...bool) {
+	testPreparedManualLyricsOwner(t, false, withCover, removal, continuous, options...)
+}
+
+func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, continuous bool, options ...bool) {
 	ctx := context.Background()
 	fixture, fakeStage, _ := preparedManualLyricsFLACStage(t)
 	t.Cleanup(func() { _ = fakeStage.Close() })
 	currentPath := filepath.Join(fixture.output, "current.flac")
+	if mka {
+		if withCover {
+			t.Fatal("MKA fixture does not authorize artwork")
+		}
+		currentPath = filepath.Join(fixture.output, "current.mka")
+		contents, err := os.ReadFile("testdata/manual-lyrics-mp3.mka")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(currentPath, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := (metadata.Writer{}).Write(ctx, currentPath, map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 	throughAdmission := len(options) > 0 && options[0]
 	nestedPath := len(options) > 1 && options[1]
 	dbReplacement := len(options) > 2 && options[2]
@@ -147,6 +167,13 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "1", VersionBanner: "ffmpeg version 1"},
 		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "1", VersionBanner: "ffprobe version 1"},
 	}
+	var mkaPinned *pinnedToolRepo
+	if mka {
+		_, input.Tools, mkaPinned = pinnedToolFixture(t, true)
+		lossless, channels, bitrate, sampleRate := false, 2, 128000, 44100
+		input.Rewrite.RelativePath = "current.mka"
+		input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "mp3", Container: publication.AudioContainerMKA, Lossless: &lossless, Channels: &channels, Bitrate: &bitrate, SampleRate: &sampleRate, SupportedSourceContainer: true}
+	}
 	input.ManualLyrics.State = "value"
 	input.ManualLyrics.Value = "[00:01.00]native PostgreSQL lyrics\r\n"
 	if removal {
@@ -166,9 +193,26 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	if err != nil {
 		t.Fatal(err)
 	}
-	baselineArtwork, err := metadata.SnapshotFlacArtwork(ctx, currentPath)
-	if err != nil {
-		t.Fatal(err)
+	var baselineArtwork metadata.FlacArtworkSnapshot
+	var verifyAudioArtwork func(context.Context, string) error
+	if mka {
+		baselineFrames := manualLyricsMP3Frames(t, original)
+		verifyAudioArtwork = func(_ context.Context, path string) error {
+			contents, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(baselineFrames, manualLyricsMP3Frames(t, contents)) {
+				return errors.New("MKA rewrite changed encoded MP3 frames")
+			}
+			return nil
+		}
+	} else {
+		baselineArtwork, err = metadata.SnapshotFlacArtwork(ctx, currentPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifyAudioArtwork = baselineArtwork.VerifyEquivalent
 	}
 	actualAssets, err := ObservePublicationAssets(capture)
 	if err != nil {
@@ -339,6 +383,22 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	} else {
 		scope.repository = repository
 	}
+	if mka {
+		raw, err := os.ReadFile("testdata/manual-lyrics-mp3.probe.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		commands := &manualLyricsMKACommands{raw: raw}
+		scope.commands = commands
+		pinned, err := NewScopeBoundPublicationPinnedTools(mkaPinned, scope, guard, tools.Platform{GOOS: "linux", GOARCH: "amd64"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stage.manualProbe, err = NewScopeBoundPublicationStageProbe(scope, pinned, input.Tools)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	release := scope.release
 	releaseCount := 0
 	scope.release = func() {
@@ -495,7 +555,7 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 			if readErr != nil || !reflect.DeepEqual(finalCapture.Tags["LYRICS"], []string{input.ManualLyrics.Value}) {
 				t.Fatalf("failed commit candidate lyrics = %#v, %v", finalCapture.Tags["LYRICS"], readErr)
 			}
-			if err := baselineArtwork.VerifyEquivalent(ctx, currentPath); err != nil {
+			if err := verifyAudioArtwork(ctx, currentPath); err != nil {
 				t.Fatalf("failed commit changed native artwork/audio: %v", err)
 			}
 			if _, err := os.Stat(filepath.Dir(stage.paths.InputPath)); err != nil {
@@ -520,25 +580,32 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 			t.Fatalf("private stage still exists after replacement: %v", err)
 		}
 		projection, err := repository.ReadManualLyricsReceiptProjection(ctx, guard.ExpectedPositionID)
-		if err != nil || projection.Pending || projection.Receipt == nil || projection.CurrentGeneration == nil || *projection.CurrentGeneration != guard.CandidateGeneration || projection.Receipt.ConfirmedGeneration != input.Rewrite.CurrentGeneration || projection.Receipt.PublishedGeneration != guard.CandidateGeneration || projection.Receipt.DesiredSHA256 == nil {
+		if err != nil || projection.Pending || projection.Receipt == nil || projection.CurrentGeneration == nil || *projection.CurrentGeneration != guard.CandidateGeneration || projection.Receipt.ConfirmedGeneration != input.Rewrite.CurrentGeneration || projection.Receipt.PublishedGeneration != guard.CandidateGeneration {
 			t.Fatalf("replacement receipt/current projection = %+v, %v", projection, err)
 		}
 		desiredDigest := sha256.Sum256([]byte(input.ManualLyrics.Value))
-		if projection.Receipt.DesiredRevision != input.ManualLyrics.ExpectedMetadataRevision || projection.Receipt.DesiredState != persistence.ManualLyricsValue || *projection.Receipt.DesiredSHA256 != fmt.Sprintf("%x", desiredDigest) {
+		if projection.Receipt.DesiredRevision != input.ManualLyrics.ExpectedMetadataRevision {
 			t.Fatalf("replacement receipt does not bind requested lyrics revision/value: %+v", projection.Receipt)
+		}
+		if removal {
+			if projection.Receipt.DesiredState != persistence.ManualLyricsExplicitEmpty || projection.Receipt.DesiredSHA256 != nil {
+				t.Fatalf("replacement receipt does not bind explicit removal: %+v", projection.Receipt)
+			}
+		} else if projection.Receipt.DesiredState != persistence.ManualLyricsValue || projection.Receipt.DesiredSHA256 == nil || *projection.Receipt.DesiredSHA256 != fmt.Sprintf("%x", desiredDigest) {
+			t.Fatalf("replacement receipt does not bind requested lyrics value: %+v", projection.Receipt)
 		}
 		finalCapture, err := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true})
 		if err != nil {
 			t.Fatalf("read installed target: %v", err)
 		}
-		if got := finalCapture.Tags["LYRICS"]; len(got) != 1 || got[0] != input.ManualLyrics.Value {
+		if got, present := finalCapture.Tags["LYRICS"]; removal && present || !removal && (len(got) != 1 || got[0] != input.ManualLyrics.Value) {
 			t.Fatalf("installed target lyrics = %#v", got)
 		}
 		installedBytes, err := os.ReadFile(currentPath)
 		if err != nil || bytes.Equal(installedBytes, original) {
 			t.Fatalf("replacement did not change current file bytes: %v", err)
 		}
-		if err := baselineArtwork.VerifyEquivalent(ctx, currentPath); err != nil {
+		if err := verifyAudioArtwork(ctx, currentPath); err != nil {
 			t.Fatalf("installed replacement changed native artwork/audio: %v", err)
 		}
 		scope.mu.Lock()
@@ -614,7 +681,7 @@ func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continu
 	} else if got := finalMetadata.Tags["LYRICS"]; len(got) != 1 || got[0] != input.ManualLyrics.Value {
 		t.Fatalf("final lyrics = %#v", got)
 	}
-	if err := baselineArtwork.VerifyEquivalent(ctx, stage.paths.OutputPath); err != nil {
+	if err := verifyAudioArtwork(ctx, stage.paths.OutputPath); err != nil {
 		t.Fatalf("private final output changed native FLAC picture/audio: %v", err)
 	}
 	wantPhase, wantRecords := "preparing", 4

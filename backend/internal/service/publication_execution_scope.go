@@ -187,11 +187,17 @@ func NewPublicationExecutionScope(
 }
 
 func (scope *PublicationExecutionScope) Run(ctx context.Context, path string, args ...string) (PublicationCommandResult, error) {
+	return scope.runAuthorized(ctx, path, args, func() bool {
+		return !scope.finalized && !scope.finalizing && !scope.unknown && !scope.initialCopy && scope.preInputCleanup == nil && scope.privateManualLyricsWork == nil
+	})
+}
+
+func (scope *PublicationExecutionScope) runAuthorized(ctx context.Context, path string, args []string, authorize func() bool) (PublicationCommandResult, error) {
 	if scope == nil {
 		return unavailablePublicationCommand()
 	}
 	scope.mu.Lock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.initialCopy || scope.preInputCleanup != nil || scope.privateManualLyricsWork != nil {
+	if authorize == nil || !authorize() {
 		scope.mu.Unlock()
 		return PublicationCommandResult{}, errors.New("publication execution scope is not launchable")
 	}
@@ -230,11 +236,17 @@ func (scope *PublicationExecutionScope) Run(ctx context.Context, path string, ar
 // RunFile runs with a descriptor duplicated during a synchronous borrow. The
 // original source descriptor is never passed to the command backend.
 func (scope *PublicationExecutionScope) RunFile(ctx context.Context, executable string, args []string, input sourcefs.RegularFile) (PublicationCommandResult, error) {
+	return scope.runFileAuthorized(ctx, executable, args, input, func() bool {
+		return !scope.finalized && !scope.finalizing && !scope.unknown && !scope.initialCopy && scope.preInputCleanup == nil && scope.privateManualLyricsWork == nil
+	})
+}
+
+func (scope *PublicationExecutionScope) runFileAuthorized(ctx context.Context, executable string, args []string, input sourcefs.RegularFile, authorize func() bool) (PublicationCommandResult, error) {
 	if scope == nil {
 		return unavailablePublicationCommand()
 	}
 	scope.mu.Lock()
-	if scope.finalized || scope.finalizing || scope.unknown || scope.initialCopy || scope.preInputCleanup != nil || scope.privateManualLyricsWork != nil {
+	if authorize == nil || !authorize() {
 		scope.mu.Unlock()
 		return PublicationCommandResult{}, errors.New("publication execution scope is not launchable")
 	}
@@ -527,6 +539,15 @@ func (scope *PublicationExecutionScope) validPrivateManualLyricsWorkLocked(work 
 	}
 	r := work.reservation
 	return work.borrow.scope == scope && work.borrow.reservation == r && r != nil && r.owner == scope && r.active && r.borrowed && r.borrow == work.borrow && scope.optionalLyrics == work.borrow && scope.syncWork == 1 && scope.unresolved == 0 && !scope.unknown && !scope.finalized && !scope.finalizing
+}
+
+func (scope *PublicationExecutionScope) validPrivateManualLyricsLaunch(work *privateManualLyricsWork, stage *preparedPublicationStage) bool {
+	if scope == nil || work == nil {
+		return false
+	}
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	return scope.validPrivateManualLyricsWorkLocked(work, stage) && !scope.initialCopy && scope.preInputCleanup == nil
 }
 
 // recordPrivateManualLyricsReplacementInstalled binds the replacer's installed

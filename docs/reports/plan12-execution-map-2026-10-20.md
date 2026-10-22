@@ -1,5 +1,20 @@
 # План 12 — сверка реализации 2026-10-20
 
+## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
+
+Дерево на базе `42da98d` со staged MKA manual-lyrics срезом повторно прошло
+полный `task verify`: Go integration, 337 frontend tests, generation, lint и build.
+Независимые review среза не оставили P1/P2. Native MKA integration fixtures
+используют реальный TagLib/файлы/PostgreSQL, но controlled captured ffprobe JSON;
+это не заменяет real-media runtime acceptance применения текста.
+
+Real Chrome на предыдущем UI-срезе подтвердил canonical value save/reload и
+explicit-empty с очищением textarea, без автоматического apply/retry и runtime
+exceptions. Generation и опубликованные bytes не изменились при сохранении.
+Evidence находится в disposable stand `plan12-acceptance-transport.rtir3s08`:
+`browser-acceptance.json` и `browser-publication-verification.json`.
+MKA-срез пока не закоммичен; новый CI и runtime apply ещё не подтверждены.
+
 Исходная ревизия: `38c57e63df7bc5854597b8e592f290534ec38f55`.
 Сверка проведена по коду и плану `docs/plans/todo/12-file-publication.md`.
 Это рабочая карта выполнения, не новые требования и не итоговая приёмка.

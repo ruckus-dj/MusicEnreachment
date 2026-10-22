@@ -27,7 +27,7 @@ func (repository *SetupManagerRepository) BeginManualLyricsExposure(ctx context.
 			return err
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || !validManualLyricsFLACRewrite(input) || attempt.IntentKind != "rewrite" ||
+		if err != nil || !validManualLyricsRewrite(input) || attempt.IntentKind != "rewrite" ||
 			input.IntentKind != "rewrite" || input.Rewrite == nil || attempt.ExpectedGeneration == nil ||
 			input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration || intent.Expectation != "expected_current" ||
 			intent.TargetRelativePath != input.Rewrite.RelativePath ||
@@ -51,7 +51,7 @@ func (repository *SetupManagerRepository) BeginManualLyricsExposure(ctx context.
 				}
 				return fmt.Errorf("begin manual lyrics exposure: read current publication: %w", err)
 			}
-			if !publicationRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) || current.Generation != *attempt.ExpectedGeneration || current.RelativePath != intent.TargetRelativePath {
+			if !manualLyricsRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) || current.Generation != *attempt.ExpectedGeneration || current.RelativePath != intent.TargetRelativePath {
 				return nil
 			}
 			currentSnapshot, err := json.Marshal(current)
@@ -93,7 +93,7 @@ func (repository *SetupManagerRepository) BeginManualLyricsExposure(ctx context.
 			}
 			return fmt.Errorf("begin manual lyrics exposure: read current publication: %w", err)
 		}
-		if !publicationRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) || current.Generation != *attempt.ExpectedGeneration || current.RelativePath != intent.TargetRelativePath {
+		if !manualLyricsRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) || current.Generation != *attempt.ExpectedGeneration || current.RelativePath != intent.TargetRelativePath {
 			return nil
 		}
 		currentSnapshot, err := json.Marshal(current)
@@ -150,7 +150,7 @@ func manualLyricsExposureReplay(attempt *TrackPublicationAttempt, guard Publicat
 		!samePublicationStageObservation(record.Observation, observation) || !stageMatchesIntent(observation, intent) ||
 		!preparationOwnsIntent(attempt.MutationJournal, guard, intent, observation) ||
 		!sameJSONValue(record.Current, currentSnapshot) ||
-		record.Current == nil || !validManualLyricsFLACRewrite(input) || attempt.ExpectedGeneration == nil ||
+		record.Current == nil || !validManualLyricsRewrite(input) || attempt.ExpectedGeneration == nil ||
 		input.Rewrite == nil || input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration || intent.Expectation != "expected_current" ||
 		intent.TargetRelativePath != input.Rewrite.RelativePath {
 		return PublicationExposureStale, false

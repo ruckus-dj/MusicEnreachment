@@ -226,11 +226,13 @@ func applyPreparedManualLyricsFLAC(
 	}()
 
 	mandatory := withoutLyrics(input.DesiredTags)
-	artwork := authority.artwork
-	writer := preparedManualLyricsFLACWriter{authority: authority}
+	var writer PublicationMetadataWriter = preparedManualLyricsNativeWriter{authority: authority}
+	if input.Rewrite.AudioFacts.Container == "flac" {
+		writer = preparedManualLyricsFLACWriter{authority: authority}
+	}
 	reader := metadata.Reader{}
 	validate := func(ctx context.Context, path string) error {
-		if err := artwork.VerifyEquivalent(ctx, path); err != nil {
+		if err := authority.verifyArtwork(ctx, path); err != nil {
 			return err
 		}
 		capture, err := reader.Read(ctx, path, metadata.ReadRequest{CoverInspection: true})
@@ -240,20 +242,20 @@ func applyPreparedManualLyricsFLAC(
 		if !equalTags(withoutLyrics(capture.Tags), mandatory) {
 			return errors.New("required publication metadata did not round-trip")
 		}
-		if err := validateManualLyricsApprovedCover(artwork.ApprovedCoverFacts(), capture); err != nil {
+		if err := authority.validateArtworkCapture(capture); err != nil {
 			return err
 		}
 		return nil
 	}
 	requirements := publicationOptionalLyricsRequirements{validateAudioAndAssets: validate, restoreRequiredAssets: func(ctx context.Context, path string, _ map[string][]string) error {
-		if err := artwork.VerifyEquivalent(ctx, path); err != nil {
+		if err := authority.verifyArtwork(ctx, path); err != nil {
 			return err
 		}
 		capture, err := reader.Read(ctx, path, metadata.ReadRequest{CoverInspection: true})
 		if err != nil {
 			return err
 		}
-		if err := validateManualLyricsApprovedCover(artwork.ApprovedCoverFacts(), capture); err != nil {
+		if err := authority.validateArtworkCapture(capture); err != nil {
 			return err
 		}
 		return nil
@@ -585,25 +587,49 @@ type preparedManualLyricsFLACWriter struct {
 	authority *publicationManualLyricsObservationAuthority
 }
 
+type preparedManualLyricsNativeWriter struct {
+	authority *publicationManualLyricsObservationAuthority
+}
+
+func (writer preparedManualLyricsNativeWriter) Write(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.WriteResult, error) {
+	if cover != nil || writer.authority == nil || writer.authority.stage == nil || path != writer.authority.stage.paths.OutputPath {
+		return metadata.WriteResult{}, errors.New("manual lyrics writer requires its owned native path and no new cover")
+	}
+	if err := writer.authority.verifyArtwork(ctx, path); err != nil {
+		return metadata.WriteResult{}, err
+	}
+	if lyrics := tags["LYRICS"]; len(lyrics) != 1 || lyrics[0] == "" {
+		return (metadata.Writer{}).Write(ctx, path, tags, nil)
+	}
+	optional, err := (metadata.Writer{}).WriteWithOptionalLyrics(ctx, path, tags, nil)
+	if err != nil {
+		return metadata.WriteResult{}, err
+	}
+	if err := writer.authority.verifyArtwork(ctx, path); err != nil {
+		return metadata.WriteResult{}, err
+	}
+	return metadata.WriteResult{Tags: optional.Tags}, nil
+}
+
 func (writer preparedManualLyricsFLACWriter) Write(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.WriteResult, error) {
 	if cover != nil || writer.authority == nil || writer.authority.stage == nil || path != writer.authority.stage.paths.OutputPath {
 		return metadata.WriteResult{}, errors.New("manual lyrics FLAC writer requires its owned path and no cover")
 	}
-	if err := writer.authority.artwork.VerifyEquivalent(ctx, path); err != nil {
+	if err := writer.authority.verifyArtwork(ctx, path); err != nil {
 		return metadata.WriteResult{}, err
 	}
 	before, err := metadata.SnapshotFlacArtwork(ctx, path)
 	if err != nil {
 		return metadata.WriteResult{}, err
 	}
-	if err := writer.authority.artwork.VerifyEquivalent(ctx, path); err != nil {
+	if err := writer.authority.verifyArtwork(ctx, path); err != nil {
 		return metadata.WriteResult{}, err
 	}
 	result, err := metadata.WriteFlacTagsPreservingArtwork(ctx, path, tags, before)
 	if err != nil {
 		return metadata.WriteResult{}, err
 	}
-	if err := writer.authority.artwork.VerifyEquivalent(ctx, path); err != nil {
+	if err := writer.authority.verifyArtwork(ctx, path); err != nil {
 		return metadata.WriteResult{}, err
 	}
 	return result, nil

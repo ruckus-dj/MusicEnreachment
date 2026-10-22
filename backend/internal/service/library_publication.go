@@ -311,14 +311,31 @@ func desiredManualLyrics(field librarymetadata.FieldValue) (string, string, erro
 func manualLyricsCurrentSupported(current *persistence.LibraryPublicationCurrent) bool {
 	if current == nil || current.Record.Generation == uuid.Nil || current.Record.Epoch == uuid.Nil ||
 		current.Record.QualityPolicyVersion != publication.QualityPolicyVersion ||
-		current.Audio.Facts.Container != publication.AudioContainerFLAC || current.Audio.Facts.Codec != "flac" || !current.Audio.Facts.SupportedSourceContainer {
+		!manualLyricsAudioSupported(current.Audio.Facts) {
 		return false
 	}
 	identity := current.Ownership.Identity
 	if identity.SHA256 == "" || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(identity.SHA256) {
 		return false
 	}
+	if current.Audio.Facts.Container == publication.AudioContainerMKA && current.Assets.Cover.State != persistence.PublicationAssetAbsent {
+		return false
+	}
 	return true
+}
+
+func manualLyricsAudioSupported(facts persistence.PersistedAudioFacts) bool {
+	if !facts.SupportedSourceContainer {
+		return false
+	}
+	switch {
+	case facts.Container == publication.AudioContainerFLAC && facts.Codec == "flac":
+		return true
+	case facts.Container == publication.AudioContainerMKA:
+		return facts.Codec == "mp3"
+	default:
+		return false
+	}
 }
 
 func buildManualLyricsPublicationInputs(projection *persistence.LibraryPublicationContext, value, state string, tools []persistence.SourceAnalysisToolSelection) persistence.PublicationInputs {

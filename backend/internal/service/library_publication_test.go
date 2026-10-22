@@ -115,6 +115,28 @@ func TestLibraryPublicationsApplyManualLyrics(t *testing.T) {
 	}
 }
 
+func TestManualLyricsAudioSupportIsBoundedToNativeRewriteContainers(t *testing.T) {
+	for _, test := range []struct {
+		container publication.AudioContainer
+		codec     string
+		supported bool
+		want      bool
+	}{
+		{publication.AudioContainerFLAC, "flac", true, true},
+		{publication.AudioContainerMP3, "mp3", true, false},
+		{publication.AudioContainerMKA, "opus", true, false},
+		{publication.AudioContainerMKA, "mp3", true, true},
+		{publication.AudioContainerMKA, "pcm_s16le", true, false},
+		{publication.AudioContainerM4A, "aac", true, false},
+		{publication.AudioContainerMKA, "opus", false, false},
+	} {
+		got := manualLyricsAudioSupported(persistence.PersistedAudioFacts{Container: test.container, Codec: test.codec, SupportedSourceContainer: test.supported})
+		if got != test.want {
+			t.Errorf("manualLyricsAudioSupported(%s/%s, supported=%t) = %t, want %t", test.container, test.codec, test.supported, got, test.want)
+		}
+	}
+}
+
 func TestLibraryPublicationsApplyManualLyricsRefusesStaleOrIneligibleState(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -129,6 +151,11 @@ func TestLibraryPublicationsApplyManualLyricsRefusesStaleOrIneligibleState(t *te
 		{name: "not pending", mutate: func(p *persistence.LibraryPublicationContext) { p.ManualLyrics.Pending = false }, want: ErrLibraryPublicationConflict},
 		{name: "unsupported audio", mutate: func(p *persistence.LibraryPublicationContext) {
 			p.Current.Audio.Facts.Container = publication.AudioContainerMP3
+		}, want: ErrLibraryPublicationUnavailable},
+		{name: "MKA artwork", mutate: func(p *persistence.LibraryPublicationContext) {
+			p.Current.Audio.Facts.Container = publication.AudioContainerMKA
+			p.Current.Audio.Facts.Codec = "mp3"
+			p.Current.Assets.Cover.State = persistence.PublicationAssetEmbedded
 		}, want: ErrLibraryPublicationUnavailable},
 		{name: "missing digest", mutate: func(p *persistence.LibraryPublicationContext) { p.Current.Ownership.Identity.SHA256 = "" }, want: ErrLibraryPublicationUnavailable},
 		{name: "not manual provenance", mutate: func(p *persistence.LibraryPublicationContext) {

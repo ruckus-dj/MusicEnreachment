@@ -164,7 +164,7 @@ func (repository *SetupManagerRepository) GuardedRecordManualLyricsReplacement(c
 			return err
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || !validManualLyricsFLACRewrite(input) || input.Version != PublicationInputsVersion || input.Rewrite == nil ||
+		if err != nil || !validManualLyricsRewrite(input) || input.Version != PublicationInputsVersion || input.Rewrite == nil ||
 			input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration || evidence.Intent.Expectation != "expected_current" || evidence.Intent.TargetRelativePath != input.Rewrite.RelativePath {
 			return nil
 		}
@@ -199,7 +199,7 @@ func (repository *SetupManagerRepository) GuardedRecordManualLyricsReplacement(c
 			return fmt.Errorf("record manual lyrics replacement: encode current publication: %w", err)
 		}
 		if current.Generation != *attempt.ExpectedGeneration || current.Epoch != attempt.Epoch || current.RelativePath != evidence.Intent.TargetRelativePath ||
-			!publicationRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) || !sameJSONValue(currentJSON, exposure.Current) {
+			!manualLyricsRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) || !sameJSONValue(currentJSON, exposure.Current) {
 			return nil
 		}
 		prior := []PublicationReplacementEvidence{}

@@ -106,8 +106,8 @@ func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard pers
 	if input.ManualLyrics != nil && !manualLyricsFLAC {
 		return nil, errors.New("manual lyrics publication inputs require the private preparation path")
 	}
-	if manualLyricsFLAC && (input.Version != persistence.PublicationInputsVersion || input.QualityPolicyVersion != publication.QualityPolicyVersion || input.IntentKind != "rewrite" || input.Rewrite == nil || input.ManualLyrics == nil || input.Format != publication.AudioFormatSource || input.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC) {
-		return nil, errors.New("private manual lyrics preparation requires a current FLAC rewrite")
+	if manualLyricsFLAC && (input.Version != persistence.PublicationInputsVersion || input.QualityPolicyVersion != publication.QualityPolicyVersion || input.IntentKind != "rewrite" || input.Rewrite == nil || input.ManualLyrics == nil || input.Format != publication.AudioFormatSource || !manualLyricsAudioSupported(input.Rewrite.AudioFacts)) {
+		return nil, errors.New("private manual lyrics preparation requires a supported current-container rewrite")
 	}
 	var sourceRootPath, sourceRelativePath string
 	var sourceSize int64
@@ -525,6 +525,7 @@ type preparedPublicationStage struct {
 	privatePrepMode    bool
 	privateInputs      persistence.PublicationInputs
 	outputName         string
+	manualProbe        *ScopeBoundPublicationStageProbe
 }
 
 func (stage *preparedPublicationStage) Paths() PublicationStagePaths { return stage.paths }

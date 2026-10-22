@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/uptrace/bun"
 )
@@ -38,7 +39,7 @@ func (repository *SetupManagerRepository) PublicationManualLyricsCurrentInputs(c
 		if err != nil {
 			return fmt.Errorf("read current manual lyrics publication inputs: decode frozen inputs: %w", err)
 		}
-		if !validManualLyricsFLACRewrite(decoded) || attempt.IntentKind != "rewrite" || attempt.Epoch != guard.Epoch || attempt.CandidateGeneration != guard.CandidateGeneration || attempt.PositionID != guard.ExpectedPositionID {
+		if !validManualLyricsRewrite(decoded) || attempt.IntentKind != "rewrite" || attempt.Epoch != guard.Epoch || attempt.CandidateGeneration != guard.CandidateGeneration || attempt.PositionID != guard.ExpectedPositionID {
 			return nil
 		}
 		var current TrackPublication
@@ -48,7 +49,7 @@ func (repository *SetupManagerRepository) PublicationManualLyricsCurrentInputs(c
 			}
 			return fmt.Errorf("read current manual lyrics publication inputs: read current publication: %w", err)
 		}
-		if !publicationRewriteMatchesCurrent(current, guard.Epoch, *decoded.Rewrite) {
+		if !manualLyricsRewriteMatchesCurrent(current, guard.Epoch, *decoded.Rewrite) {
 			return nil
 		}
 		if err := validatePublicationRewriteNamespace(ctx, tx, attempt, decoded.Rewrite.RelativePath); err != nil {
@@ -84,11 +85,11 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 		if err != nil {
 			return fmt.Errorf("read publication preparation inputs: decode frozen inputs: %w", err)
 		}
-		if !decoded.SupportsExecution() && (!manualLyricsFLAC || !validManualLyricsFLACRewrite(decoded)) {
+		if !decoded.SupportsExecution() && (!manualLyricsFLAC || !validManualLyricsRewrite(decoded)) {
 			return fmt.Errorf("read publication preparation inputs: frozen publication contract is admitted but not executable")
 		}
 		if manualLyricsFLAC {
-			if !validManualLyricsFLACRewrite(decoded) || attempt.IntentKind != "rewrite" || attempt.Epoch != guard.Epoch || attempt.CandidateGeneration != guard.CandidateGeneration || attempt.PositionID != guard.ExpectedPositionID {
+			if !validManualLyricsRewrite(decoded) || attempt.IntentKind != "rewrite" || attempt.Epoch != guard.Epoch || attempt.CandidateGeneration != guard.CandidateGeneration || attempt.PositionID != guard.ExpectedPositionID {
 				return nil
 			}
 			var current TrackPublication
@@ -98,7 +99,7 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 				}
 				return fmt.Errorf("read publication preparation inputs: read current publication: %w", err)
 			}
-			if !publicationRewriteMatchesCurrent(current, guard.Epoch, *decoded.Rewrite) {
+			if !manualLyricsRewriteMatchesCurrent(current, guard.Epoch, *decoded.Rewrite) {
 				return nil
 			}
 			if err := validatePublicationRewriteNamespace(ctx, tx, attempt, decoded.Rewrite.RelativePath); err != nil {
@@ -123,11 +124,27 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 	return input.Clone(), true, nil
 }
 
-func validManualLyricsFLACRewrite(input PublicationInputs) bool {
+func validManualLyricsRewrite(input PublicationInputs) bool {
+	if input.Rewrite == nil {
+		return false
+	}
+	facts := input.Rewrite.AudioFacts
+	containerCodec := facts.Container == publication.AudioContainerFLAC && facts.Codec == "flac" ||
+		facts.Container == publication.AudioContainerMKA && facts.Codec == "mp3"
 	return input.Version == PublicationInputsVersion && input.QualityPolicyVersion == publication.QualityPolicyVersion &&
 		input.IntentKind == "rewrite" && input.Rewrite != nil && input.ManualLyrics != nil && input.Audio == nil &&
-		input.Format == publication.AudioFormatSource && input.Rewrite.AudioFacts.Container == publication.AudioContainerFLAC &&
-		input.Rewrite.AudioFacts.Codec == "flac" && input.Rewrite.AudioFacts.SupportedSourceContainer && input.Rewrite.Ownership.SHA256 != ""
+		input.Format == publication.AudioFormatSource && containerCodec && facts.SupportedSourceContainer && input.Rewrite.Ownership.SHA256 != ""
+}
+
+func manualLyricsRewriteMatchesCurrent(current TrackPublication, epoch uuid.UUID, rewrite PublicationRewriteInput) bool {
+	if !publicationRewriteMatchesCurrent(current, epoch, rewrite) {
+		return false
+	}
+	if rewrite.AudioFacts.Container != publication.AudioContainerMKA {
+		return true
+	}
+	assets, err := DecodePublicationAssetOutcomes(current.ActualAssets)
+	return err == nil && assets.Cover.State == PublicationAssetAbsent
 }
 
 // PublicationRewritePreparationFacts are the persisted facts which authorize
