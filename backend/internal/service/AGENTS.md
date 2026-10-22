@@ -40,6 +40,9 @@ not a lost ACK: cover committed-but-lost acknowledgements with a repository
 decorator that performs the real write before returning the injected error.
 Consistency-only recovery assessment may accept retained evidence without granting
 replay; assert the frontier and execution rejection separately.
+For lifecycle fixtures, use named scenario configuration rather than extending a
+positional boolean list. Assert the intended frozen input kind and observed
+provider calls: a green test name alone does not prove that its branch ran.
 
 ## ANTI-PATTERNS
 - Empty safe error messages in Operations.Fail (enforced at runtime)

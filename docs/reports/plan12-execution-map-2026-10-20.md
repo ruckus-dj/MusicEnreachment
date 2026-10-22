@@ -2,6 +2,26 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+### Следующий срез: current release cover authority
+
+В рабочее дерево перенесены standalone release cover authority, migration
+`20261029000001` и persistence CAS: отдельные effective/pending manual image
+tuples, mode/revision, единственный acquisition owner, finish/fail и explicit
+return-to-automatic. Это не API, acquisition worker или publication wiring.
+PNG/JPEG bytes декодируются и сверяются с MIME; SQL требует непустые generation,
+точный SHA-256 и полные tuples, manual mode исключает active automatic owner.
+PG regressions проверяют partial-null bypasses, stale revisions, manual pin и
+late finish/fail; rollback не отбрасывает effective/retained authority.
+Изолированный полный gate прошёл, повторное review закрыло исходные три P2.
+Primary дополнительно исправил obsolete acquisition warning: pending manual
+оставляет warning текущего effective состояния, успешный explicit apply очищает
+его атомарно, late owner не восстанавливает warning. Добавлен PG regression.
+Integrated `task verify` прошёл; финальные warning regression и изменения
+документации повторно проверяются штатным commit hook. Commit/CI этого среза
+пока не подтверждены.
+
+**Canonical/probe CI:** `f8e02dc`, run `39789822359`, завершился полным `success`.
+
 ### Следующий срез: canonical source identity и успешный probe
 
 Publication context больше не требует совпадения canonical media variant и

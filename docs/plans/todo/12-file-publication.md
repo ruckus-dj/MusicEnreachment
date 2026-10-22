@@ -1,5 +1,26 @@
 # План 12 — файловая публикация
 
+## Краткий текущий статус
+
+План **не завершён**. First-publication happy path и manual lyrics MKA/MP3
+проверены на реальном стенде с Navidrome. Automatic matching wake и
+original-owner cleanup после returned validation failure прошли полный CI.
+Разделение canonical source/probe реализовано в `f8e02dc`; его CI отслеживается.
+
+Оставшийся scope сгруппирован так:
+
+1. Source-free lyrics retry: настоящий executable lifecycle, explicit API/UI,
+   исходник не требуется; завершение format/artwork preservation coverage.
+2. Cover: current release authority, acquisition/embedding, manual pending/apply
+   и retry; одна обложка на релиз, без sidecars.
+3. Automatic updates: независимая source authority, доказанное quality improvement,
+   new-source replacement, остальные invalidation producers и безопасные wakes.
+4. Recovery/crash matrix и итоговая приёмка всех перечисленных сценариев.
+
+Частичные изолированные реализации и их промежуточные green gates не означают
+готовность этих пунктов. Детальные требования и датированные свидетельства ниже
+сохранены; актуальные результаты — в [карте выполнения](../../reports/plan12-execution-map-2026-10-20.md).
+
 **Уточнение владельца от 2026-10-22:** повторный поиск текста использует metadata
 и длительность текущей публикации, а применение — текущий опубликованный файл.
 Исходник не требуется; его удаление очисткой не блокирует эти действия.
