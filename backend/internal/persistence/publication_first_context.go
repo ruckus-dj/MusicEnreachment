@@ -475,6 +475,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 	var rows []struct {
 		AssociationID uuid.UUID          `bun:"association_id,type:uuid"`
 		Selected      bool               `bun:"selected"`
+		ProbeResultID uuid.UUID          `bun:"probe_result_id,type:uuid"`
 		RootID        uuid.UUID          `bun:"root_id,type:uuid"`
 		LocationID    uuid.UUID          `bun:"location_id,type:uuid"`
 		WorkID        uuid.UUID          `bun:"work_id,type:uuid"`
@@ -494,50 +495,55 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 	if err := tx.NewRaw(`SELECT
 		count(*) FILTER (WHERE root.id IS NULL OR NOT root.enabled OR root.status<>'available' OR root.inventory_path IS DISTINCT FROM work.inventory_path OR root.configured_path IS DISTINCT FROM work.configured_path) AS unavailable_roots,
 			count(*) FILTER (WHERE location.id IS NULL OR work.current_location_id IS DISTINCT FROM location.id OR location.media_variant_id IS DISTINCT FROM identity.media_variant_id OR location.relative_path IS DISTINCT FROM work.relative_path OR location.size_bytes<>work.size_bytes OR location.mtime<>work.mtime OR location.probe_status<>'audio') AS stale_locations,
-		count(*) FILTER (WHERE probe.work_id IS NULL OR probe.state<>'succeeded' OR probe.success_probe_variant_id IS DISTINCT FROM identity.media_variant_id) AS unprobed
+		count(*) FILTER (WHERE probe.work_id IS NULL OR probe.state<>'succeeded' OR probe.success_probe_variant_id IS NULL OR probeResult.id IS NULL) AS unprobed
 		FROM track_source selected
 		LEFT JOIN source_work_variant_identity identity ON identity.media_variant_id=selected.media_variant_id
 		LEFT JOIN source_analysis_work work ON work.id=identity.work_id
 		LEFT JOIN source_root root ON root.id=work.source_root_id
 		LEFT JOIN source_location location ON location.id=work.current_location_id
 		LEFT JOIN source_analysis_step probe ON probe.work_id=work.id AND probe.step='probe'
+		LEFT JOIN media_variant probeResult ON probeResult.id=probe.success_probe_variant_id
 		WHERE selected.track_id=? AND selected.selected`, trackID).Scan(ctx, &rejected); err != nil {
 		return fmt.Errorf("read first publication source blockers: %w", err)
 	}
+	selectedBlockers := make([]string, 0, 3)
 	if rejected.UnavailableRoots > 0 {
-		*blockers = append(*blockers, "one or more selected source roots are unavailable or changed")
+		selectedBlockers = append(selectedBlockers, "one or more selected source roots are unavailable or changed")
 	}
 	if rejected.StaleLocations > 0 {
-		*blockers = append(*blockers, "one or more selected source inventory locations are stale")
+		selectedBlockers = append(selectedBlockers, "one or more selected source inventory locations are stale")
 	}
 	if rejected.Unprobed > 0 {
-		*blockers = append(*blockers, "one or more selected sources lack a fresh successful probe")
+		selectedBlockers = append(selectedBlockers, "one or more selected sources lack a fresh successful probe")
 	}
-	err := tx.NewRaw(`SELECT ts.id AS association_id, ts.selected, r.id AS root_id, l.id AS location_id, w.id AS work_id, v.id AS variant_id,
+	err := tx.NewRaw(`SELECT ts.id AS association_id, ts.selected, p.success_probe_variant_id AS probe_result_id,
+		r.id AS root_id, l.id AS location_id, w.id AS work_id, i.media_variant_id AS variant_id,
 		w.configured_path, w.inventory_path, w.relative_path, l.size_bytes, l.mtime,
 		v.id AS "variant__id", v.size_bytes AS "variant__size_bytes", v.analysis_policy_version AS "variant__analysis_policy_version",
 		v.ffprobe_version AS "variant__ffprobe_version", v.ffprobe_json AS "variant__ffprobe_json", v.observed_tags AS "variant__observed_tags",
 		v.inspected_at AS "variant__inspected_at", v.applied_operation_id AS "variant__applied_operation_id", v.audio_stream_count AS "variant__audio_stream_count"
-		FROM track_source ts JOIN media_variant v ON v.id=ts.media_variant_id
-		JOIN source_work_variant_identity i ON i.media_variant_id=v.id JOIN source_analysis_work w ON w.id=i.work_id
+		FROM track_source ts JOIN media_variant identity_variant ON identity_variant.id=ts.media_variant_id
+		JOIN source_work_variant_identity i ON i.media_variant_id=identity_variant.id JOIN source_analysis_work w ON w.id=i.work_id
 		JOIN source_location l ON l.id=w.current_location_id AND l.id=w.location_id AND l.source_root_id=w.source_root_id
 		JOIN source_root r ON r.id=w.source_root_id
-		JOIN source_analysis_step p ON p.work_id=w.id AND p.step='probe' AND p.state='succeeded' AND p.success_probe_variant_id=v.id
+		JOIN source_analysis_step p ON p.work_id=w.id AND p.step='probe' AND p.state='succeeded' AND p.success_probe_variant_id IS NOT NULL
+		JOIN media_variant v ON v.id=p.success_probe_variant_id
 		WHERE ts.track_id=? AND ts.compatible AND r.enabled AND r.status='available' AND r.inventory_path=w.inventory_path
 		AND r.configured_path=w.configured_path AND l.probe_status='audio' AND v.size_bytes=w.size_bytes
 		AND v.analysis_policy_version IS NOT NULL AND v.ffprobe_version IS NOT NULL AND v.inspected_at IS NOT NULL
 		AND v.applied_operation_id IS NOT NULL AND v.audio_stream_count IS NOT NULL
-		AND l.media_variant_id=v.id AND l.size_bytes=w.size_bytes AND l.mtime=w.mtime
+		AND l.media_variant_id=i.media_variant_id AND l.size_bytes=w.size_bytes AND l.mtime=w.mtime
 		AND w.relative_path=l.relative_path
 		ORDER BY ts.created_at, ts.id`, trackID).Scan(ctx, &rows)
 	if err != nil {
 		return fmt.Errorf("read first publication source candidates: %w", err)
 	}
+	hasEligibleCandidate := false
 	for _, row := range rows {
 		row.MTime = row.MTime.UTC()
 		blocker := func(message string) {
 			if row.Selected {
-				*blockers = append(*blockers, message)
+				selectedBlockers = append(selectedBlockers, message)
 			}
 		}
 		streams, streamErr := publicationAudioStreams(row.Variant.FFProbeJSON)
@@ -548,7 +554,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		selection := PublicationSourceSelection{RootID: row.RootID, LocationID: row.LocationID, WorkID: row.WorkID, MediaVariantID: row.VariantID, ConfiguredPath: row.Configured, InventoryPath: row.Inventory, RelativePath: row.Relative, SizeBytes: row.Size, MTime: row.MTime}
 		input := PublicationAudioInput{
 			RootID: row.RootID, LocationID: row.LocationID, WorkID: row.WorkID, MediaVariantID: row.VariantID,
-			ProbeResultID: row.VariantID, ConfiguredRootPath: row.Configured, InventoryRootPath: row.Inventory,
+			ProbeResultID: row.ProbeResultID, ConfiguredRootPath: row.Configured, InventoryRootPath: row.Inventory,
 			RelativePath: row.Relative, SizeBytes: row.Size, MTime: row.MTime,
 		}
 		if row.Variant.AnalysisPolicyVersion != nil {
@@ -581,10 +587,15 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		}
 		if added == 0 {
 			blocker(fmt.Sprintf("selected source %s has unusable probe facts", row.LocationID))
+		} else {
+			hasEligibleCandidate = true
 		}
 		for i := resultStart; i < len(*result); i++ {
 			(*result)[i].UnsupportedAudioStreamCount = unsupported
 		}
+	}
+	if !hasEligibleCandidate {
+		*blockers = append(*blockers, selectedBlockers...)
 	}
 	if len(*result) == 0 && len(*blockers) == 0 {
 		*blockers = append(*blockers, "no selected source has a current inventory identity and successful probe")

@@ -2,6 +2,24 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+### Следующий срез: canonical source identity и успешный probe
+
+Publication context больше не требует совпадения canonical media variant и
+`success_probe_variant_id`: canonical association остаётся source authority,
+а технические факты и `ProbeResultID` берутся из успешного probe step.
+PG regressions покрывают digestless canonical anchor с отдельным cached probe
+и пригодный unselected candidate рядом с stale/failed selected sibling.
+Candidate-local blockers не скрывают пригодную альтернативу; автоматическое
+переключение source или audio upgrade этим не добавляются. Изолированный и
+integrated `task verify` прошли; independent review не выявило P1/P2.
+Commit/CI данного среза пока не подтверждены.
+
+**Последующее подтверждение:** automatic-matching `bf6dc87`, CI `39753708776`,
+и original-owner validation cleanup `1526478`, CI `39784298930`, завершились
+полным `success`, включая platform matrix, Docker smoke и container image.
+Оба коммита прошли штатные hooks и отправлены в `go-development`. Это не
+подтверждает незавершённые retry, cover, automatic audio replacement или весь план.
+
 ### Следующий срез: original-owner validation failure cleanup
 
 В рабочее дерево перенесён отдельный post-input cleanup protocol для returned
