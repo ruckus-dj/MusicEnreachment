@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
@@ -114,6 +115,37 @@ func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(
 		if err != nil || applied.State != "succeeded" || applied.Stage != "applied" {
 			t.Fatalf("frozen apply child=%+v err=%v; want succeeded/applied", applied, err)
 		}
+		var reconciliationEpoch uuid.UUID
+		if err := database.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &reconciliationEpoch); err != nil {
+			t.Fatal(err)
+		}
+		var reconciliationPositions []uuid.UUID
+		if err := database.NewRaw(`SELECT position.id FROM release_track position
+			JOIN provider_local_release mapping ON mapping.local_release_id=position.release_id
+			WHERE mapping.provider_id=? AND mapping.provider_release_id=? ORDER BY position.id`,
+			fixture.Source.ProviderID, fixture.InputSnapshot.Selected.ProviderReleaseID).Scan(ctx, &reconciliationPositions); err != nil {
+			t.Fatal(err)
+		}
+		var requestedPositions []uuid.UUID
+		if err := database.NewRaw(`SELECT position_id FROM publication_reconciliation_request WHERE output_epoch=? ORDER BY position_id`, reconciliationEpoch).Scan(ctx, &requestedPositions); err != nil {
+			t.Fatal(err)
+		}
+		if len(reconciliationPositions) == 0 || len(requestedPositions) != len(reconciliationPositions) {
+			t.Fatalf("frozen apply reconciliation positions=%v materialized positions=%v", requestedPositions, reconciliationPositions)
+		}
+		for index := range reconciliationPositions {
+			if reconciliationPositions[index] != requestedPositions[index] {
+				t.Fatalf("frozen apply reconciliation positions=%v, want %v", requestedPositions, reconciliationPositions)
+			}
+		}
+		var initialGeneration int64
+		if err := database.NewRaw(`SELECT sum(requested_generation) FROM publication_reconciliation_request WHERE output_epoch=?`, reconciliationEpoch).Scan(ctx, &initialGeneration); err != nil {
+			t.Fatal(err)
+		}
+		var reconciliationScopes int
+		if err := database.NewRaw(`SELECT count(*) FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND scope='automatic_matching'`, reconciliationEpoch).Scan(ctx, &reconciliationScopes); err != nil || reconciliationScopes != len(reconciliationPositions) {
+			t.Fatalf("frozen apply automatic_matching scopes=%d want=%d err=%v", reconciliationScopes, len(reconciliationPositions), err)
+		}
 
 		// The apply materializes A from its immutable child snapshot, without
 		// replacing the accepted B cache projection.
@@ -181,6 +213,10 @@ func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(
 		}
 		if replayReceiptCount != receiptCount || replayChildCount != childCount {
 			t.Fatalf("worker replay added materialization work: receipts=%d children=%d", replayReceiptCount, replayChildCount)
+		}
+		var replayGeneration int64
+		if err := database.NewRaw(`SELECT sum(requested_generation) FROM publication_reconciliation_request WHERE output_epoch=?`, reconciliationEpoch).Scan(ctx, &replayGeneration); err != nil || replayGeneration != initialGeneration {
+			t.Fatalf("frozen apply replay changed reconciliation generation: %d -> %d err=%v", initialGeneration, replayGeneration, err)
 		}
 		currentAfter, err := cache.GetMusicBrainzMatchingSnapshot(ctx, fixture.Source.Endpoint, fixture.Source.ConfigurationIdentity,
 			[]string{fixture.InputSnapshot.Selected.ProviderKey}, []string{fixture.InputSnapshot.Selected.Lookup.CacheKey})

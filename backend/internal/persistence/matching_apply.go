@@ -28,6 +28,11 @@ func (repository *IncomingMatchCandidateRepository) ApplyCurrentMatchingEvaluati
 		return fmt.Errorf("apply matching evaluation: group and evaluation revision are required")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		// Publication reconciliation intents are written by this transaction, so
+		// the output admission gate precedes every domain lock.
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("apply matching evaluation: lock output admission gate: %w", err)
+		}
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("apply matching evaluation: lock source mutation gate: %w", err)
 		}
@@ -118,7 +123,11 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	if currentRevision != expectedEvaluationRevision {
 		return ErrIncomingMatchConflict
 	}
-	return applyPersistedMatchingDecision(ctx, tx, group, decision, fence, header.PolicyVersion)
+	positions, err := applyPersistedMatchingDecision(ctx, tx, group, decision, fence, header.PolicyVersion)
+	if err != nil {
+		return err
+	}
+	return requestMatchingApplyPublicationReconciliation(ctx, repository.db, tx, positions)
 }
 
 // rejectManualOnlyMatchingEvaluation protects the automatic apply entry point
@@ -385,9 +394,11 @@ func decodePersistedMatchingDecision(evidence json.RawMessage) (persistedMatchin
 	return decision, nil
 }
 
-func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingMatchGroupEvaluation, decision persistedMatchingDecision, fence IncomingMatchProviderFence, policy string) error {
+// applyPersistedMatchingDecision materializes one persisted unique decision and
+// returns the release positions whose publication inputs it changed.
+func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingMatchGroupEvaluation, decision persistedMatchingDecision, fence IncomingMatchProviderFence, policy string) ([]uuid.UUID, error) {
 	if len(decision.Assignments) != len(group.Members) {
-		return fmt.Errorf("apply matching evaluation: assignments do not cover every group member")
+		return nil, fmt.Errorf("apply matching evaluation: assignments do not cover every group member")
 	}
 	selectedReleaseEvaluated := false
 	for _, key := range fence.ReleaseKeys {
@@ -397,7 +408,7 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 		}
 	}
 	if !selectedReleaseEvaluated {
-		return ErrIncomingMatchConflict
+		return nil, ErrIncomingMatchConflict
 	}
 	var releaseTitle, releaseKey string
 	var releaseFields, releaseEvidence string
@@ -405,40 +416,41 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 	if err := tx.NewRaw(`SELECT e.name, r.id, r.provider_key, e.fields, e.field_evidence FROM provider_release r JOIN provider_source_entity e ON e.provider_id=r.provider_id AND e.provider_key=r.provider_key
 		WHERE r.provider_id=? AND r.id=? AND e.provider_source_id=? AND e.entity_kind='release' AND e.complete=true`, fence.ProviderID, decision.SelectedRelease.ProviderReleaseID, fence.ProviderSourceID).Scan(ctx, &releaseTitle, &releaseID, &releaseKey, &releaseFields, &releaseEvidence); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrIncomingMatchConflict
+			return nil, ErrIncomingMatchConflict
 		}
-		return fmt.Errorf("apply matching evaluation: read selected release: %w", err)
+		return nil, fmt.Errorf("apply matching evaluation: read selected release: %w", err)
 	}
 	if releaseID != decision.SelectedRelease.ProviderReleaseID {
-		return ErrIncomingMatchConflict
+		return nil, ErrIncomingMatchConflict
 	}
 	if releaseKey != decision.SelectedRelease.ProviderReleaseKey {
-		return ErrIncomingMatchConflict
+		return nil, ErrIncomingMatchConflict
 	}
 	localReleaseID, releaseCreated, err := ensureAutomaticLocalRelease(ctx, tx, fence.ProviderID, releaseID, releaseTitle, policy)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if releaseCreated {
 		if err := writeAutomaticMetadata(ctx, tx, "local_release", localReleaseID, "title", releaseKey, fence.ProviderSourceID, fence.ProviderID, fence.AcceptedProjectionRevision, json.RawMessage(releaseEvidence)); err != nil {
-			return err
+			return nil, err
 		}
 		credits, err := acceptedReleaseArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, releaseID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localReleaseID, "release_artist", credits, policy, fence.AcceptedProjectionRevision); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	memberByID := make(map[uuid.UUID]IncomingMatchMemberFence, len(group.Members))
 	for _, member := range group.Members {
 		memberByID[member.FileMemberID] = member
 	}
+	localTrackIDs := make([]uuid.UUID, 0, len(decision.Assignments))
 	for _, assignment := range decision.Assignments {
 		member, ok := memberByID[assignment.FileMemberID]
 		if !ok {
-			return fmt.Errorf("apply matching evaluation: assignment references a non-member")
+			return nil, fmt.Errorf("apply matching evaluation: assignment references a non-member")
 		}
 		var providerTrack, providerRecording uuid.UUID
 		var medium, position int
@@ -449,27 +461,28 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 			LEFT JOIN provider_source_entity e ON e.provider_source_id=st.provider_source_id AND e.provider_id=t.provider_id AND e.entity_kind='recording' AND e.provider_key=(SELECT provider_key FROM provider_recording WHERE id=t.recording_id AND provider_id=t.provider_id)
 				WHERE t.id=? AND t.provider_id=? AND st.release_id=? AND st.present=true AND st.provider_source_id=?`, assignment.ProviderTrackID, fence.ProviderID, releaseID, fence.ProviderSourceID).Scan(ctx, &providerTrack, &providerRecording, &medium, &position, &recordingTitle, &recordingEvidence); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return ErrIncomingMatchConflict
+				return nil, ErrIncomingMatchConflict
 			}
-			return fmt.Errorf("apply matching evaluation: read assigned track: %w", err)
+			return nil, fmt.Errorf("apply matching evaluation: read assigned track: %w", err)
 		}
 		if medium+1 != assignment.Medium || position+1 != assignment.Position {
-			return ErrIncomingMatchConflict
+			return nil, ErrIncomingMatchConflict
 		}
 		localTrackID, localRecordingID, recordingCreated, trackCreated, err := ensureAutomaticLocalTrack(ctx, tx, fence.ProviderID, providerTrack, providerRecording, localReleaseID, medium, position, recordingTitle, policy)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		localTrackIDs = append(localTrackIDs, localTrackID)
 		if recordingCreated {
 			credits, err := acceptedRecordingArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, providerRecording)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if err := writeAutomaticMetadata(ctx, tx, "local_recording", localRecordingID, "title", recordingProviderKey(ctx, tx, fence.ProviderID, providerRecording), fence.ProviderSourceID, fence.ProviderID, fence.AcceptedProjectionRevision, json.RawMessage(recordingEvidence)); err != nil {
-				return err
+				return nil, err
 			}
 			if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localRecordingID, "recording_artist", credits, policy, fence.AcceptedProjectionRevision); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if trackCreated {
@@ -478,37 +491,80 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 			titleEvidence := json.RawMessage(recordingEvidence)
 			if title := acceptedTrackTitle(json.RawMessage(releaseFields), medium, position, recordingKey); title != "" {
 				if _, err := tx.NewRaw(`UPDATE local_track SET title=? WHERE id=?`, title, localTrackID).Exec(ctx); err != nil {
-					return err
+					return nil, err
 				}
 				titleField, titleKey = "normalized_tracks", releaseKey
 				titleEvidence = json.RawMessage(releaseEvidence)
 			}
 			if err := writeAutomaticMetadata(ctx, tx, "local_track", localTrackID, titleField, titleKey, fence.ProviderSourceID, fence.ProviderID, fence.AcceptedProjectionRevision, titleEvidence); err != nil {
-				return err
+				return nil, err
 			}
 			credits, err := acceptedTrackArtistCredits(json.RawMessage(releaseFields), json.RawMessage(releaseEvidence), medium, position, recordingKey, releaseKey)
 			if credits == nil {
 				credits, err = acceptedRecordingArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, providerRecording)
 			}
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localTrackID, "track_artist", credits, policy, fence.AcceptedProjectionRevision); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		var variants []uuid.UUID
 		if err := tx.NewRaw(`SELECT DISTINCT media_variant_id FROM source_work_variant_identity WHERE work_id=? ORDER BY media_variant_id`, member.WorkID).Scan(ctx, &variants); err != nil {
-			return fmt.Errorf("apply matching evaluation: read source work identity: %w", err)
+			return nil, fmt.Errorf("apply matching evaluation: read source work identity: %w", err)
 		}
 		if len(variants) == 0 {
-			return ErrIncomingMatchConflict
+			return nil, ErrIncomingMatchConflict
 		}
 		for _, variantID := range variants {
 			if err := attachAutomaticTrackSource(ctx, tx, localTrackID, variantID, policy); err != nil {
-				return err
+				return nil, err
 			}
 		}
+	}
+	positions, err := matchingApplyPublicationPositions(ctx, tx, localReleaseID, localTrackIDs)
+	if err != nil {
+		return nil, err
+	}
+	return positions, nil
+}
+
+// matchingApplyPublicationPositions lists the release positions whose
+// publication inputs one automatic materialization changed: every position of
+// the mapped release plus any other release position of a shared local track.
+func matchingApplyPublicationPositions(ctx context.Context, tx bun.Tx, releaseID uuid.UUID, trackIDs []uuid.UUID) ([]uuid.UUID, error) {
+	query := `SELECT DISTINCT affected.id
+		FROM release_track affected
+		WHERE affected.release_id=?`
+	args := []any{releaseID}
+	if len(trackIDs) > 0 {
+		query += ` OR affected.track_id IN (?)`
+		args = append(args, bun.List(trackIDs))
+	}
+	query += ` ORDER BY affected.id`
+	var positions []uuid.UUID
+	if err := tx.NewRaw(query, args...).Scan(ctx, &positions); err != nil {
+		return nil, fmt.Errorf("apply matching evaluation: read publication positions: %w", err)
+	}
+	return positions, nil
+}
+
+// requestMatchingApplyPublicationReconciliation records the reconciliation
+// obligation of one automatic materialization. Callers hold the output admission
+// gate and invoke this inside the materialization savepoint, so a conflicted
+// apply leaves no intent behind. Replayed receipts never reach materialization
+// and therefore never request a new generation.
+func requestMatchingApplyPublicationReconciliation(ctx context.Context, database *bun.DB, tx bun.Tx, positions []uuid.UUID) error {
+	if len(positions) == 0 {
+		return nil
+	}
+	var outputEpoch uuid.UUID
+	if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &outputEpoch); err != nil {
+		return fmt.Errorf("apply matching evaluation: read output epoch: %w", err)
+	}
+	if err := NewSetupManagerRepository(database).RequestPublicationReconciliationWith(ctx, tx, outputEpoch, positions, []string{"automatic_matching"}); err != nil {
+		return fmt.Errorf("apply matching evaluation: request publication reconciliation: %w", err)
 	}
 	return nil
 }
@@ -1095,6 +1151,13 @@ func (repository *SetupManagerRepository) applyFrozenMatchingOperationTx(
 	if materializeErr != nil {
 		return false, materializeErr
 	}
+	positions, err := frozenMatchingApplyPublicationPositions(ctx, tx, snapshot)
+	if err != nil {
+		return false, err
+	}
+	if err := requestMatchingApplyPublicationReconciliation(ctx, repository.db, tx, positions); err != nil {
+		return false, err
+	}
 	if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); err != nil {
 		return false, err
 	}
@@ -1303,6 +1366,26 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 		}
 	}
 	return nil
+}
+
+// frozenMatchingApplyPublicationPositions resolves the local release and tracks
+// that materializeFrozenMatchingApply mapped from the immutable snapshot.
+func frozenMatchingApplyPublicationPositions(ctx context.Context, tx bun.Tx, snapshot MatchingApplyInputSnapshotV2) ([]uuid.UUID, error) {
+	var localReleaseID uuid.UUID
+	if err := tx.NewRaw(`SELECT local_release_id FROM provider_local_release WHERE provider_id=? AND provider_release_id=?`,
+		snapshot.Source.ProviderID, snapshot.Selected.ProviderReleaseID).Scan(ctx, &localReleaseID); err != nil {
+		return nil, fmt.Errorf("apply matching operation: read materialized local release: %w", err)
+	}
+	trackIDs := make([]uuid.UUID, 0, len(snapshot.Assignments))
+	for _, assignment := range snapshot.Assignments {
+		var localTrackID uuid.UUID
+		if err := tx.NewRaw(`SELECT local_track_id FROM provider_local_track WHERE provider_id=? AND provider_track_id=?`,
+			snapshot.Source.ProviderID, assignment.ProviderTrackID).Scan(ctx, &localTrackID); err != nil {
+			return nil, fmt.Errorf("apply matching operation: read materialized local track: %w", err)
+		}
+		trackIDs = append(trackIDs, localTrackID)
+	}
+	return matchingApplyPublicationPositions(ctx, tx, localReleaseID, trackIDs)
 }
 
 func ensureManualLocalRecording(ctx context.Context, tx bun.Tx, providerID, providerRecordingID uuid.UUID, title string) (uuid.UUID, bool, error) {

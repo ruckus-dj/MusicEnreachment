@@ -2,6 +2,34 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+### Следующий срез: automatic matching producer
+
+В рабочем дереве поверх `b7ac978` оба automatic matching apply пути
+(schema-1 и frozen schema-2) записывают `automatic_matching` reconciliation
+внутри materialization transaction/savepoint. Direct entry получает output gate
+до domain locks; worker receipt replay не создаёт новый wake. Добавлены PG
+regressions создания/coalescing, review/manual rejection, schema-2 replay и
+rollback. Review замечание о vacuous rollback устранено: ошибка внедряется
+только для receipt `applied`, затем без trigger тот же worker обязан успешно
+завершиться и создать reconciliation. Повторное review подтвердило исправление.
+Полный gate/commit/CI этого среза ещё не подтверждены; automatic upgrades и
+остальные invalidation producers этим не объявляются готовыми.
+
+**Последующая runtime-проверка `b7ac978`:** штатный commit hook прошёл,
+срез отправлен; CI `39750832967` ещё выполняется. На disposable stand с
+проверенной сборкой explicit-empty apply `10262286-98a0-475f-bc06-ef6d08190243`
+и последующий value apply `1eb6c5d1-194b-42e0-b656-e4be095d9720` завершились
+`succeeded`. После restart revision 10 и generation
+`3042649c-4405-4b78-8539-bdd487e29ef0` сохранились, pending отсутствует.
+ffprobe прочитал точный embedded LRC; encoded audio packet и decoded audio
+SHA-256 совпали с сохранённым pre-apply `navidrome-stream.mka`.
+Navidrome после scan вернул synced строки через `getLyricsBySongId` и текст
+через `getLyrics`. Active attempt rows отсутствуют, проверенные technical
+directories пусты; current receipt заменил предыдущий, не сохраняя историю.
+Сводка: `runtime-acceptance-summary.json` в том же stand. Независимого TagLib
+readback не было; readback обеспечили ffprobe и Navidrome. Это приёмка данного
+MKA/MP3 без artwork среза, а не всех форматов, cover или recovery плана.
+
 Дерево на базе `42da98d` со staged MKA manual-lyrics срезом повторно прошло
 полный `task verify`: Go integration, 337 frontend tests, generation, lint и build.
 Независимые review среза не оставили P1/P2. Native MKA integration fixtures
