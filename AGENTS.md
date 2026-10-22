@@ -81,6 +81,12 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 
 **Build interface**: Taskfile only (`task build/test/verify/generate/run`); no shell scripts as build commands; pre-commit runs full `task verify` (intentional).
 
+**CI Task version**: Pin `go-task/setup-task` to the locally verified Task version
+(currently `3.54.0`), not `3.x`. Range resolution adds a GitHub releases-list API
+request that can fail opaquely with `unable to get latest version` before tests.
+For infrastructure-only failures, inspect the failed step and rerun failed jobs;
+never remove gates or mistake an incomplete platform matrix for full success.
+
 **Lint**: Go 1.27 gofmt + golangci-lint default linters; Biome (not ESLint/Prettier) for frontend; zero `nolint` usage.
 
 **Migrations**: Bun with embedded `//go:embed *.sql`, versioned .tx.up/.down pairs, applied at server startup before River and HTTP.
