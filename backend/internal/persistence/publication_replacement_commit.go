@@ -65,6 +65,17 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 		if attempt.Phase == "committed" {
 			if attempt.FrozenInputs == nil && claim.State == "executing" && operation.Stage == "committed" && currentErr == nil {
 				if entries, err := decodeJournal(attempt.MutationJournal); err == nil {
+					if retryCommitReplayMatches(entries, guard, attempt, current) {
+						if prefix, _, ok := canonicalAutomaticLyricsRetryCompletionPrefix(entries, guard, attempt); ok {
+							err = validateExposureNamespace(ctx, tx, attempt, prefix.exposure.Intent)
+							if errors.Is(err, sql.ErrNoRows) {
+								err = nil
+							} else if err == nil {
+								committed = true
+							}
+						}
+						return err
+					}
 					if prefix, valid := parseCanonicalManualLyricsCommitPrefix(entries, guard, attempt); valid {
 						if !currentPublicationMatchesReplacementWitness(current, prefix.Commit.Projection) {
 							return nil
@@ -101,6 +112,13 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
 		if err == nil && input.ManualLyrics != nil {
 			committed, err = commitManualLyricsReplacementTx(ctx, tx, guard, attempt, current, input)
+			if err == nil && committed {
+				err = repository.requestSourceCleanupTx(ctx, tx, guard.OperationID, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration)
+			}
+			return err
+		}
+		if err == nil && input.AutomaticLyricsRetry != nil {
+			committed, err = commitAutomaticLyricsRetryReplacementTx(ctx, tx, repository, guard, attempt, current, input)
 			if err == nil && committed {
 				err = repository.requestSourceCleanupTx(ctx, tx, guard.OperationID, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration)
 			}
@@ -267,6 +285,103 @@ func (repository *SetupManagerRepository) CommitReplacementPublication(ctx conte
 		return nil
 	})
 	return committed, err
+}
+
+func commitAutomaticLyricsRetryReplacementTx(ctx context.Context, tx bun.Tx, repository *SetupManagerRepository, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt, current TrackPublication, input PublicationInputs) (bool, error) {
+	if input.IntentKind != "rewrite" || input.Rewrite == nil || input.AutomaticLyricsRetry == nil || attempt.ExpectedGeneration == nil || input.Rewrite.CurrentGeneration != *attempt.ExpectedGeneration || current.Generation != *attempt.ExpectedGeneration {
+		return false, nil
+	}
+	entries, err := decodeJournal(attempt.MutationJournal)
+	if err != nil {
+		return false, nil
+	}
+	state, err := parseAutomaticLyricsRetryPrefix(entries, guard, input)
+	if err != nil || state.acquisition == nil || state.outcome == nil || state.stageCount != 2 || state.exposure == nil || len(state.replacement) != 4 || state.commit != nil {
+		return false, nil
+	}
+	exposure := *state.exposure
+	if exposure.PositionID != attempt.PositionID || exposure.Epoch != attempt.Epoch || exposure.CandidateGeneration != attempt.CandidateGeneration || !sameOptionalUUID(exposure.ExpectedGeneration, attempt.ExpectedGeneration) || !sameJSONValue(exposure.Current, encodePublicationCommitJSON(current)) || current.RelativePath != exposure.Intent.TargetRelativePath || !publicationRewriteMatchesCurrent(current, attempt.Epoch, *input.Rewrite) {
+		return false, nil
+	}
+	if err := validateExposureNamespace(ctx, tx, attempt, exposure.Intent); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	last := state.replacement[3]
+	if last.To != "installed" || last.Identity.SizeBytes == nil || last.Staged.Ownership.ExpectedSize == nil || *last.Identity.SizeBytes != *last.Staged.Ownership.ExpectedSize || last.Identity.SHA256 != last.Staged.PayloadSHA256 {
+		return false, nil
+	}
+	var oldAudio PublicationCurrentAudio
+	if decodePublicationCurrentContract(current.ActualAudio, &oldAudio) != nil || oldAudio.Version != 1 || oldAudio.Facts.Validate() != nil || current.QualityPolicyVersion != input.QualityPolicyVersion {
+		return false, nil
+	}
+	lyricsProjection, err := automaticLyricsRetryProjection(*state.acquisition, *state.outcome, attempt.CandidateGeneration)
+	if err != nil {
+		return false, err
+	}
+	validatedAt := time.Now().UTC().Truncate(time.Microsecond)
+	projection := current
+	projection.Generation = attempt.CandidateGeneration
+	projection.Ownership = encodePublicationCommitJSON(PublicationCurrentOwnership{Version: PublicationCurrentOwnershipVersion, Identity: last.Identity})
+	projection.ActualAudio = encodePublicationCommitJSON(oldAudio)
+	projection.ActualMetadata = append(json.RawMessage(nil), state.outcome.FinalObservation.ActualMetadata...)
+	projection.ActualAssets = append(json.RawMessage(nil), state.outcome.FinalObservation.ActualAssets...)
+	projection.InitialLyrics = encodePublicationCommitJSON(lyricsProjection)
+	projection.ValidatedAt = validatedAt
+	witness := replacementPublicationCommitWitness{Version: replacementPublicationCommitVersion, Kind: "publication_replacement_commit", Guard: guard, PositionID: attempt.PositionID, Epoch: attempt.Epoch, ExpectedGeneration: *attempt.ExpectedGeneration, CandidateGeneration: attempt.CandidateGeneration, Projection: projection}
+	if !validAutomaticLyricsRetryCommit(witness, state, guard, input) {
+		return false, errors.New("commit automatic lyrics retry: invalid replacement witness")
+	}
+	updated, err := tx.NewRaw(`UPDATE track_publication SET generation=?, ownership=?::jsonb, actual_audio=?::jsonb, actual_metadata=?::jsonb, actual_assets=?::jsonb, initial_lyrics=?::jsonb, validated_at=? WHERE position_id=? AND epoch=? AND generation=? AND relative_path=? AND ownership=?::jsonb AND actual_audio=?::jsonb AND actual_metadata=?::jsonb AND actual_assets=?::jsonb AND quality_policy_version=? AND validated_at=?`, projection.Generation, string(projection.Ownership), string(projection.ActualAudio), string(projection.ActualMetadata), string(projection.ActualAssets), string(projection.InitialLyrics), validatedAt, current.PositionID, current.Epoch, current.Generation, current.RelativePath, string(current.Ownership), string(current.ActualAudio), string(current.ActualMetadata), string(current.ActualAssets), current.QualityPolicyVersion, current.ValidatedAt).Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("commit automatic lyrics retry: update current projection: %w", err)
+	}
+	rows, err := updated.RowsAffected()
+	if err != nil || rows != 1 {
+		return false, nil
+	}
+	if err := carryPositionSourceAuthorityTx(ctx, tx, current, projection); err != nil {
+		return false, fmt.Errorf("commit automatic lyrics retry: carry source authority: %w", err)
+	}
+	journal, err := appendJournalEntry(attempt.MutationJournal, witness)
+	if err != nil {
+		return false, err
+	}
+	result, err := tx.NewRaw(`UPDATE track_publication_attempt SET phase='committed', frozen_inputs=NULL, mutation_journal=?::jsonb WHERE operation_id=? AND phase='exposing'`, string(journal), guard.OperationID).Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("commit automatic lyrics retry: settle attempt: %w", err)
+	}
+	rows, err = result.RowsAffected()
+	if err != nil || rows != 1 {
+		return false, errors.New("commit automatic lyrics retry: attempt changed concurrently")
+	}
+	result, err = tx.NewRaw(`UPDATE operation SET stage='committed', updated_at=? WHERE id=? AND state='running' AND stage='exposing'`, validatedAt, guard.OperationID).Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("commit automatic lyrics retry: update operation: %w", err)
+	}
+	rows, err = result.RowsAffected()
+	if err != nil || rows != 1 {
+		return false, errors.New("commit automatic lyrics retry: operation changed concurrently")
+	}
+	return true, nil
+}
+
+func retryCommitReplayMatches(entries []json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt, current TrackPublication) bool {
+	prefix, boundary, ok := canonicalAutomaticLyricsRetryCompletionPrefix(entries, guard, attempt)
+	if !ok || boundary > len(entries) || !currentIsCandidate(current, attempt) || !currentPublicationMatchesReplacementWitness(current, prefix.commit.Projection) {
+		return false
+	}
+	if boundary == len(entries) {
+		return true
+	}
+	prep, installed := prefix.preparation[2], prefix.replacement[3]
+	if prep.DirectoryIdentity == nil {
+		return false
+	}
+	witness := PublicationReplacementCleanupWitness{PrivateDirRel: prep.PrivateDirRel, BackupRel: prep.InputRel, Directory: *prep.DirectoryIdentity, Parent: prep.ParentIdentity, Backup: installed.BackupIdentity}
+	return sameCleanupWitnessForPrefix(witness, prefix) && replacementCleanupPrefixMatches(entries, guard, attempt, current, witness, boundary)
 }
 
 func currentPublicationMatchesReplacementWitness(current, expected TrackPublication) bool {

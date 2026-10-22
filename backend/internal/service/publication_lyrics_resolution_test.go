@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 )
 
 type publicationLyricsSettingsFixture struct {
@@ -70,6 +71,24 @@ func TestPublicationLyricsResolverUsesOnlyExactLookupAndRereadsSettings(t *testi
 	result, err = resolver.Resolve(context.Background(), request)
 	if err != nil || result.Source != "none" || result.Lyrics != "" || result.WarningCode != "" || settings.reads != 2 || len(lookup.metadata) != 1 {
 		t.Fatalf("disabled lookup reused stale settings: %+v, %v", result, err)
+	}
+}
+
+func TestAutomaticLyricsRetryUsesFractionalProbeDurationAndNeverCurrentLyrics(t *testing.T) {
+	settings := &publicationLyricsSettingsFixture{enabled: true}
+	lookup := &publicationLyricsLookupFixture{result: lrclib.LookupResult{Found: true, Lyrics: "[00:01.00]replacement"}}
+	resolver := NewPublicationLyricsResolver(settings, lookup)
+	capture := metadata.Capture{Tags: map[string][]string{
+		"ARTIST": {"Artist"}, "TITLE": {"Title"}, "ALBUM": {"Album"}, "LYRICS": {"old current lyrics"},
+	}}
+	tags, exact := automaticLyricsRetryLookupInputs(capture, 123.456789)
+	if _, present := tags["LYRICS"]; present {
+		t.Fatal("current publication lyrics leaked into retry source tags")
+	}
+	result, err := resolver.Resolve(context.Background(), PublicationLyricsResolutionRequest{SelectedSourceTags: tags, Metadata: exact})
+	want := lrclib.Metadata{Artist: "Artist", Title: "Title", Album: "Album", Duration: 123.456789}
+	if err != nil || result.Source != "lrclib" || len(lookup.metadata) != 1 || lookup.metadata[0] != want {
+		t.Fatalf("retry lookup request = %#v, result=%#v err=%v", lookup.metadata, result, err)
 	}
 }
 

@@ -175,6 +175,20 @@ func committedWitnessMatches(raw json.RawMessage, guard PublicationDeliveryGuard
 	if err != nil {
 		return false
 	}
+	if prefix, boundary, ok := canonicalAutomaticLyricsRetryCompletionPrefix(entries, guard, attempt); ok {
+		if boundary > len(entries) || !currentIsCandidate(current, attempt) || !currentPublicationMatchesReplacementWitness(current, prefix.commit.Projection) {
+			return false
+		}
+		if boundary == len(entries) {
+			return true
+		}
+		prep, installed := prefix.preparation[2], prefix.replacement[3]
+		if prep.DirectoryIdentity == nil {
+			return false
+		}
+		witness := PublicationReplacementCleanupWitness{PrivateDirRel: prep.PrivateDirRel, BackupRel: prep.InputRel, Directory: *prep.DirectoryIdentity, Parent: prep.ParentIdentity, Backup: installed.BackupIdentity}
+		return sameCleanupWitnessForPrefix(witness, prefix) && replacementCleanupPrefixMatches(entries, guard, attempt, current, witness, boundary)
+	}
 	commitIndex := -1
 	for index, entry := range entries {
 		var header struct {

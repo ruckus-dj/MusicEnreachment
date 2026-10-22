@@ -20,10 +20,13 @@ const (
 	PublicationInitialLyricsAcquisitionKind = "publication_initial_lyrics_acquisition"
 	PublicationInitialLyricsOutcomeKind     = "publication_initial_lyrics_outcome"
 	PublicationInitialLyricsNotRequested    = "not_requested"
+	PublicationAutomaticLyricsRetryNoResult = "automatic_retry_no_result"
 )
 
 // PublicationInitialLyricsProjection is the retained, source-free current-row
-// summary. It deliberately excludes lyric text and source paths.
+// summary of optional automatic lyrics resolution for this generation. It
+// deliberately excludes lyric text and source paths; retry no-result has its
+// own outcome so it cannot be confused with never-requested initial lyrics.
 type PublicationInitialLyricsProjection struct {
 	Version                    int       `json:"version"`
 	Generation                 uuid.UUID `json:"generation"`
@@ -59,7 +62,7 @@ func initialLyricsProjection(acquisition PublicationInitialLyricsAcquisitionReco
 	}
 	if (projection.Source == "none" && projection.SHA256 != "") ||
 		(projection.Source != "none" && !validSHA256(projection.SHA256)) ||
-		projection.Outcome != PublicationInitialLyricsNotRequested && projection.Outcome != PublicationOptionalLyricsExactRoundTrip && projection.Outcome != PublicationOptionalLyricsRebuiltWithoutLyrics {
+		projection.Outcome != PublicationInitialLyricsNotRequested && projection.Outcome != PublicationAutomaticLyricsRetryNoResult && projection.Outcome != PublicationOptionalLyricsExactRoundTrip && projection.Outcome != PublicationOptionalLyricsRebuiltWithoutLyrics {
 		return nil, errors.New("invalid initial lyrics projection evidence")
 	}
 	return projection, nil
@@ -83,7 +86,7 @@ func sameInitialLyricsProjectionJSON(raw json.RawMessage, expected *PublicationI
 func validPublicationInitialLyricsProjection(projection PublicationInitialLyricsProjection, generation uuid.UUID) bool {
 	return projection.Version == PublicationInitialLyricsVersion && projection.Generation == generation &&
 		(projection.Source == "none" && projection.SHA256 == "" || (projection.Source == "source" || projection.Source == "lrclib") && validSHA256(projection.SHA256)) &&
-		(projection.Outcome == PublicationInitialLyricsNotRequested || projection.Outcome == PublicationOptionalLyricsExactRoundTrip || projection.Outcome == PublicationOptionalLyricsRebuiltWithoutLyrics) &&
+		(projection.Outcome == PublicationInitialLyricsNotRequested || projection.Outcome == PublicationAutomaticLyricsRetryNoResult || projection.Outcome == PublicationOptionalLyricsExactRoundTrip || projection.Outcome == PublicationOptionalLyricsRebuiltWithoutLyrics) &&
 		projection.AuthorityMetadataRevision >= 0 && validInitialLyricsWarning(projection.ResolutionWarningCode) &&
 		(projection.OutcomeWarningCode == "" || projection.Outcome == PublicationOptionalLyricsRebuiltWithoutLyrics && projection.OutcomeWarningCode == "readback_mismatch")
 }

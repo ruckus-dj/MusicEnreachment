@@ -20,6 +20,7 @@ type replacementPublicationRepository interface {
 	BeginPublicationReplacementDirectoryCleanup(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationReplacementCleanupWitness) (persistence.PublicationReplacementCleanupOutcome, error)
 	RecordPublicationReplacementCleanupResult(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationReplacementCleanupWitness, string, string) (persistence.PublicationReplacementCleanupOutcome, error)
 	SettleReplacementPublication(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationReplacementCleanupWitness, bool) (bool, error)
+	BeginPublicationExposure(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationExposureIntent, persistence.PublicationStageObservation) (persistence.PublicationExposureOutcome, error)
 }
 
 // RunReplacementPublication stages and rewrites one same-path publication.
@@ -53,6 +54,12 @@ func (runner PublicationStagingRunner) RunReplacementPublication(
 				callbackErr = fmt.Errorf("replacement completion panicked: %v", recovered)
 			}
 		}()
+		if input.AutomaticLyricsRetry != nil {
+			exposureOutcome, exposureErr := repository.BeginPublicationExposure(context.WithoutCancel(ctx), scope.guard, intent, validated)
+			if exposureErr != nil || exposureOutcome != persistence.PublicationExposureRecorded {
+				return errors.Join(exposureErr, errors.New("replacement exposure intent was not newly acknowledged"))
+			}
+		}
 		replacer := &newPublicationManagedTargetReplacer{
 			scope: scope, repository: repository, guard: scope.guard, intent: intent,
 			validated: validated.Clone(), expectedGeneration: expectedGeneration,

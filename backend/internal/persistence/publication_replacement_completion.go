@@ -310,6 +310,11 @@ func replacementCommittedState(a *TrackPublicationAttempt, o *Operation, c *Publ
 func replacementCleanupPrefixMatches(entries []json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt, current TrackPublication, w PublicationReplacementCleanupWitness, boundary int) bool {
 	prefix, ok := validateCanonicalReplacementPrefixRaw(entries, guard, attempt)
 	if !ok {
+		if retry, end, valid := canonicalAutomaticLyricsRetryCompletionPrefix(entries, guard, attempt); valid && end == boundary {
+			prefix, ok = retry, true
+		}
+	}
+	if !ok {
 		manual, valid := parseCanonicalManualLyricsCommitPrefix(entries, guard, attempt)
 		if !valid || manual.PrefixEnd != boundary {
 			return false
@@ -345,11 +350,80 @@ func canonicalReplacementCompletionPrefix(raw json.RawMessage, guard Publication
 	if err != nil {
 		return canonicalReplacementPrefix{}, 0, nil, false
 	}
+	if prefix, boundary, ok := canonicalAutomaticLyricsRetryCompletionPrefix(entries, guard, attempt); ok {
+		return prefix, boundary, nil, true
+	}
 	p, ok := parseCanonicalManualLyricsCommitPrefix(entries, guard, attempt)
 	if !ok {
 		return canonicalReplacementPrefix{}, 0, nil, false
 	}
 	return canonicalReplacementPrefix{preparation: p.Preparation, exposure: p.Exposure, replacement: p.Replacement, commit: p.Commit}, p.PrefixEnd, p.Commit.ManualLyricsReceipt, true
+}
+
+func canonicalAutomaticLyricsRetryCompletionPrefix(entries []json.RawMessage, guard PublicationDeliveryGuard, attempt *TrackPublicationAttempt) (canonicalReplacementPrefix, int, bool) {
+	if attempt == nil || attempt.ExpectedGeneration == nil || len(entries) < 13 {
+		return canonicalReplacementPrefix{}, 0, false
+	}
+	var acquisition PublicationAutomaticLyricsRetryAcquisition
+	if decodeStrictJSON(entries[3], &acquisition) != nil || acquisition.Kind != automaticLyricsRetryAcquisitionKind {
+		return canonicalReplacementPrefix{}, 0, false
+	}
+	index := 4
+	for index < len(entries) {
+		var header struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(entries[index], &header) != nil || header.Kind != "publication_candidate_rebuild" {
+			break
+		}
+		index++
+	}
+	if index != 4 && index != 6 {
+		return canonicalReplacementPrefix{}, 0, false
+	}
+	outcomeIndex := index
+	stageIndex := outcomeIndex + 1
+	exposureIndex := stageIndex + 2
+	boundary := exposureIndex + 1 + 4 + 1
+	if len(entries) < boundary || len(entries) > boundary+4 {
+		return canonicalReplacementPrefix{}, 0, false
+	}
+	var outcome PublicationAutomaticLyricsRetryOutcome
+	var exposure publicationExposureJournalRecord
+	if decodeStrictJSON(entries[outcomeIndex], &outcome) != nil || decodeStrictJSON(entries[exposureIndex], &exposure) != nil {
+		return canonicalReplacementPrefix{}, 0, false
+	}
+	var old TrackPublication
+	var oldMetadata PublicationCommitMetadata
+	if json.Unmarshal(exposure.Current, &old) != nil || strictMetadata(old.ActualMetadata, &oldMetadata) != nil {
+		return canonicalReplacementPrefix{}, 0, false
+	}
+	input := PublicationInputs{Version: PublicationInputsVersion, QualityPolicyVersion: outcome.FinalObservation.QualityPolicyVersion, IntentKind: "rewrite", Rewrite: &PublicationRewriteInput{CurrentGeneration: *attempt.ExpectedGeneration}, AutomaticLyricsRetry: &acquisition.Authority, DesiredTags: withoutAutomaticLyricsTag(oldMetadata.Tags)}
+	state, err := parseAutomaticLyricsRetryPrefix(entries[:boundary], guard, input)
+	if err != nil || state.commit == nil || state.prefixEnd != boundary {
+		return canonicalReplacementPrefix{}, 0, false
+	}
+	base := make([]json.RawMessage, 0, 10)
+	base = append(base, entries[:3]...)
+	base = append(base, entries[stageIndex:stageIndex+2]...)
+	base = append(base, entries[exposureIndex])
+	base = append(base, entries[exposureIndex+1:exposureIndex+5]...)
+	prefix, ok := validateCanonicalReplacementPrefixSharedRaw(base, guard, attempt)
+	if !ok {
+		return canonicalReplacementPrefix{}, 0, false
+	}
+	prefix.commit = *state.commit
+	return prefix, boundary, true
+}
+
+func withoutAutomaticLyricsTag(tags map[string][]string) map[string][]string {
+	result := make(map[string][]string, len(tags))
+	for name, values := range tags {
+		if !strings.EqualFold(strings.TrimSpace(name), "LYRICS") {
+			result[name] = append([]string(nil), values...)
+		}
+	}
+	return result
 }
 
 type canonicalReplacementPrefix struct {

@@ -22,7 +22,7 @@ func TestPreparedManualLyricsMKANativeReplacementPostgreSQL(t *testing.T) {
 			name = "explicit_empty"
 		}
 		t.Run(name, func(t *testing.T) {
-			testPreparedManualLyricsOwner(t, true, false, removal, true, true, false, false, true)
+			testPreparedManualLyricsOwner(t, manualLyricsScenario{mka: true, removal: removal, continuous: true, throughAdmission: true, nativeReplacement: true})
 		})
 	}
 }

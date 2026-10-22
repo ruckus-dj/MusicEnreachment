@@ -58,6 +58,27 @@ func (repository *SetupManagerRepository) BeginPublicationExposure(ctx context.C
 			return nil
 		}
 		initialLyrics := attempt.IntentKind == "audio" && attempt.ExpectedGeneration == nil
+		automaticLyricsRetry := decoded.AutomaticLyricsRetry != nil
+		if automaticLyricsRetry {
+			authorityMatches, authorityErr := validateAutomaticLyricsRetryCurrentAuthority(ctx, tx, attempt.PositionID, *decoded.AutomaticLyricsRetry)
+			if authorityErr != nil {
+				return authorityErr
+			}
+			if !authorityMatches {
+				return nil
+			}
+			entries, journalErr := decodeJournal(attempt.MutationJournal)
+			if journalErr != nil {
+				return journalErr
+			}
+			state, evidenceErr := parseAutomaticLyricsRetryPrefix(entries, guard, decoded)
+			if evidenceErr != nil || state.outcome == nil || state.stageCount != 2 || !samePublicationStageObservation(state.outcome.FinalObservation, staged) {
+				return nil
+			}
+			if attempt.Phase == "exposing" && (state.exposure == nil || !samePublicationExposureJSON(state.exposure.Intent, intent)) {
+				return nil
+			}
+		}
 		if initialLyrics {
 			entries, journalErr := decodeJournal(attempt.MutationJournal)
 			if journalErr != nil {
@@ -75,7 +96,7 @@ func (repository *SetupManagerRepository) BeginPublicationExposure(ctx context.C
 			result = out
 			return err
 		}
-		if attempt.Phase != "validated" || (attempt.IntentKind != "audio" && attempt.IntentKind != "rewrite") {
+		if attempt.Phase != "validated" || (attempt.IntentKind != "audio" && attempt.IntentKind != "rewrite") || automaticLyricsRetry && attempt.Phase == "exposing" {
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)

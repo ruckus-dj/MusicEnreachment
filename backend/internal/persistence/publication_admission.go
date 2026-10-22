@@ -38,22 +38,23 @@ type PublicationNamespaceNode struct {
 }
 
 type PublicationAdmission struct {
-	PositionID            uuid.UUID
-	ExpectedReleaseID     uuid.UUID
-	ExpectedEpoch         uuid.UUID
-	ExpectedGeneration    *uuid.UUID
-	CandidateGeneration   uuid.UUID
-	IntentKind            string
-	ToolsReadRequired     bool
-	Tools                 []SourceAnalysisToolSelection
-	Source                *PublicationSourceSelection
-	FrozenInputs          json.RawMessage
-	NamespaceManifest     []PublicationNamespaceNode
-	manualLyrics          *PublicationManualLyricsInput
-	validatedManualLyrics bool
-	metadataRevision      int64
-	firstAdmission        *firstPublicationAdmissionHook
-	reconciliationGuard   *PublicationReconciliationDeliveryGuard
+	PositionID                    uuid.UUID
+	ExpectedReleaseID             uuid.UUID
+	ExpectedEpoch                 uuid.UUID
+	ExpectedGeneration            *uuid.UUID
+	CandidateGeneration           uuid.UUID
+	IntentKind                    string
+	ToolsReadRequired             bool
+	Tools                         []SourceAnalysisToolSelection
+	Source                        *PublicationSourceSelection
+	FrozenInputs                  json.RawMessage
+	NamespaceManifest             []PublicationNamespaceNode
+	manualLyrics                  *PublicationManualLyricsInput
+	validatedManualLyrics         bool
+	validatedAutomaticLyricsRetry bool
+	metadataRevision              int64
+	firstAdmission                *firstPublicationAdmissionHook
+	reconciliationGuard           *PublicationReconciliationDeliveryGuard
 }
 
 // PublicationSourceSelection is the caller's exact inventory selector. The
@@ -99,6 +100,9 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	}
 	if input.ManualLyrics != nil && (!request.validatedManualLyrics || request.manualLyrics == nil) || request.validatedManualLyrics && input.ManualLyrics == nil {
 		return uuid.Nil, fmt.Errorf("admit publication: manual lyrics inputs require validated admission")
+	}
+	if input.AutomaticLyricsRetry != nil && !request.validatedAutomaticLyricsRetry || request.validatedAutomaticLyricsRetry && input.AutomaticLyricsRetry == nil {
+		return uuid.Nil, fmt.Errorf("admit publication: automatic lyrics retry inputs require validated admission")
 	}
 	if request.IntentKind == "audio" {
 		if request.Source == nil || !publicationSourceMatchesInput(*request.Source, *input.Audio) {
@@ -245,6 +249,11 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 				return uuid.Nil, err
 			}
 		}
+		if request.validatedAutomaticLyricsRetry {
+			if err := validateAutomaticLyricsRetryAdmission(ctx, tx, request, &input, current); err != nil {
+				return uuid.Nil, err
+			}
+		}
 	}
 	var active uuid.UUID
 	if err := tx.NewRaw(`SELECT operation_id FROM track_publication_attempt WHERE position_id=?`, request.PositionID).Scan(ctx, &active); err == nil {
@@ -257,7 +266,7 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	}
 	snapshot, _ := json.Marshal(map[string]any{"version": 1, "position_id": request.PositionID.String(), "output_epoch": epoch.String(), "intent_kind": request.IntentKind})
 	frozenInputs := append(json.RawMessage(nil), request.FrozenInputs...)
-	if request.manualLyrics != nil {
+	if request.manualLyrics != nil || request.validatedAutomaticLyricsRetry {
 		frozenInputs, err = json.Marshal(input)
 		if err != nil {
 			return uuid.Nil, fmt.Errorf("admit publication: encode frozen manual lyrics input: %w", err)

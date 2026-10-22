@@ -42,6 +42,17 @@ func (validator RealPublicationStageValidator) validateSupervised(scope *Publica
 }
 
 func (validator RealPublicationStageValidator) Validate(ctx context.Context, stagePath string, input persistence.PublicationInputs) (result PublicationStageObservation, resultErr error) {
+	return validator.validate(ctx, stagePath, input, nil)
+}
+
+func (validator RealPublicationStageValidator) ValidateAutomaticLyricsRetry(ctx context.Context, stagePath string, input persistence.PublicationInputs, lyrics string) (PublicationStageObservation, error) {
+	if input.AutomaticLyricsRetry == nil || input.ManualLyrics != nil {
+		return PublicationStageObservation{}, errors.New("automatic retry validation requires retry authority")
+	}
+	return validator.validate(ctx, stagePath, input, &lyrics)
+}
+
+func (validator RealPublicationStageValidator) validate(ctx context.Context, stagePath string, input persistence.PublicationInputs, retryLyrics *string) (result PublicationStageObservation, resultErr error) {
 	if !input.SupportsExecution() {
 		return PublicationStageObservation{}, fmt.Errorf("publication inputs version %d does not support execution", input.Version)
 	}
@@ -113,7 +124,11 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("parse publication stage probe: %w", err)
 	}
-	if err := validatePublicationTopology(raw); err != nil {
+	if retryLyrics == nil {
+		if err := validatePublicationTopology(raw); err != nil {
+			return PublicationStageObservation{}, err
+		}
+	} else if err := validateAutomaticLyricsRetryTopology(raw, input.AutomaticLyricsRetry.CurrentAssets.Cover); err != nil {
 		return PublicationStageObservation{}, err
 	}
 	facts := inputAudioFacts(input)
@@ -159,7 +174,14 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("read publication stage metadata: %w", err)
 	}
-	if !equalTags(capture.Tags, input.DesiredTags) {
+	expectedTags := input.DesiredTags
+	if retryLyrics != nil {
+		expectedTags = cloneTagMap(input.DesiredTags)
+		if *retryLyrics != "" {
+			expectedTags["LYRICS"] = []string{*retryLyrics}
+		}
+	}
+	if !equalTags(capture.Tags, expectedTags) {
 		return PublicationStageObservation{}, errors.New("publication stage metadata does not match requested tags")
 	}
 	if err := ctx.Err(); err != nil {
@@ -220,12 +242,19 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("observe publication stage assets: %w", err)
 	}
+	if retryLyrics != nil && (assets.Cover.State != input.AutomaticLyricsRetry.CurrentAssets.Cover.State || assets.Cover.SHA256 != input.AutomaticLyricsRetry.CurrentAssets.Cover.SHA256 || assets.Cover.MIME != input.AutomaticLyricsRetry.CurrentAssets.Cover.MIME || !sameOptionalPublicationSize(assets.Cover.SizeBytes, input.AutomaticLyricsRetry.CurrentAssets.Cover.SizeBytes)) {
+		return PublicationStageObservation{}, errors.New("automatic retry changed the verified current cover")
+	}
 	result.Assets, err = json.Marshal(assets)
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("encode publication stage assets: %w", err)
 	}
 	result.QualityPolicyVersion = input.QualityPolicyVersion
 	return result, nil
+}
+
+func sameOptionalPublicationSize(left, right *int64) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
 func publicationStageSampleRateMatches(expected *int, actual *int64) bool {
@@ -407,6 +436,53 @@ func validatePublicationTopology(raw []byte) error {
 	}
 	if count != 1 || len(response.Chapters) != 0 {
 		return errors.New("publication stage has unexpected stream topology or chapters")
+	}
+	return nil
+}
+
+func validateAutomaticLyricsRetryTopology(raw []byte, expected persistence.PublicationCoverOutcome) error {
+	var response struct {
+		Streams []struct {
+			Type        string `json:"codec_type"`
+			Codec       string `json:"codec_name"`
+			Index       int    `json:"index"`
+			Disposition struct {
+				AttachedPicture int `json:"attached_pic"`
+			} `json:"disposition"`
+		} `json:"streams"`
+		Chapters []json.RawMessage `json:"chapters"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return fmt.Errorf("decode automatic retry topology: %w", err)
+	}
+	audioCount, pictureCount := 0, 0
+	lastIndex := -1
+	for _, stream := range response.Streams {
+		if stream.Index < 0 || stream.Index == lastIndex {
+			return errors.New("automatic retry has an invalid or duplicate stream index")
+		}
+		lastIndex = stream.Index
+		if stream.Type == "audio" {
+			audioCount++
+			continue
+		}
+		if stream.Type != "video" || stream.Disposition.AttachedPicture != 1 || expected.State != persistence.PublicationAssetEmbedded {
+			return errors.New("automatic retry contains an unauthorized non-audio stream")
+		}
+		switch {
+		case expected.MIME == "image/jpeg" && (stream.Codec == "mjpeg" || stream.Codec == "jpeg"):
+		case expected.MIME == "image/png" && stream.Codec == "png":
+		default:
+			return errors.New("automatic retry attached picture does not match frozen cover format")
+		}
+		pictureCount++
+	}
+	wantPictures := 0
+	if expected.State == persistence.PublicationAssetEmbedded {
+		wantPictures = 1
+	}
+	if audioCount != 1 || pictureCount != wantPictures || len(response.Chapters) != 0 {
+		return errors.New("automatic retry has unexpected audio, cover, or chapter topology")
 	}
 	return nil
 }

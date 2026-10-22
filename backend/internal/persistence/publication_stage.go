@@ -107,6 +107,17 @@ func (repository *SetupManagerRepository) AdvancePublicationStage(ctx context.Co
 					return errors.New("advance publication stage: initial lyrics outcome is missing or does not match observation")
 				}
 			}
+			if attempt.IntentKind == "rewrite" && input.AutomaticLyricsRetry != nil {
+				entries, journalErr := decodeJournal(attempt.MutationJournal)
+				if journalErr != nil {
+					return fmt.Errorf("advance publication stage: decode automatic lyrics retry journal: %w", journalErr)
+				}
+				state, parseErr := parseAutomaticLyricsRetryPrefix(entries, guard, input)
+				wantStages := map[bool]int{true: 1, false: 0}[expectedPhase == "staged"]
+				if parseErr != nil || state.outcome == nil || state.stageCount != wantStages || !samePublicationStageObservation(state.outcome.FinalObservation, observation) {
+					return errors.New("advance publication stage: automatic lyrics retry outcome is missing or does not match observation")
+				}
+			}
 			if expectedPhase == "staged" && (len(observation.ActualAssets) == 0 || observation.QualityPolicyVersion != input.QualityPolicyVersion) {
 				return errors.New("advance publication stage: staged phase requires matching asset and quality-policy evidence")
 			}
@@ -126,6 +137,21 @@ func (repository *SetupManagerRepository) AdvancePublicationStage(ctx context.Co
 			}
 			if _, parseErr := parseInitialLyricsPrefix(entries, guard, input); parseErr != nil {
 				return fmt.Errorf("advance publication stage: proposed initial lyrics journal is invalid: %w", parseErr)
+			}
+		}
+		if attempt.IntentKind == "rewrite" {
+			input, decodeErr := DecodePublicationInputs(attempt.FrozenInputs)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if input.AutomaticLyricsRetry != nil {
+				entries, decodeErr := decodeJournal(journal)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				if _, parseErr := parseAutomaticLyricsRetryPrefix(entries, guard, input); parseErr != nil {
+					return fmt.Errorf("advance publication stage: proposed automatic lyrics retry journal is invalid: %w", parseErr)
+				}
 			}
 		}
 		attemptResult, err := tx.NewRaw(`UPDATE track_publication_attempt SET phase=?, mutation_journal=?::jsonb WHERE operation_id=? AND phase=?`, nextPhase, string(journal), guard.OperationID, expectedPhase).Exec(ctx)

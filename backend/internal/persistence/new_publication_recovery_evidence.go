@@ -124,7 +124,19 @@ func clonePublicationPreparationRecord(record PublicationPreparationRecord) Publ
 func AssessPublicationRecoveryEvidence(snapshot PublicationRecoverySnapshot) (PublicationRecoveryAssessment, error) {
 	a := snapshot.Attempt
 	c := snapshot.Claim
-	if a.IntentKind != "audio" || a.ExpectedGeneration != nil || a.OperationID == uuid.Nil || a.PositionID == uuid.Nil || a.Epoch == uuid.Nil || a.CandidateGeneration == uuid.Nil {
+	retryAttempt := false
+	if a.IntentKind == "rewrite" && a.ExpectedGeneration != nil && len(a.FrozenInputs) != 0 {
+		if input, err := DecodePublicationInputs(a.FrozenInputs); err == nil && input.AutomaticLyricsRetry != nil && input.Rewrite != nil && input.Rewrite.CurrentGeneration == *a.ExpectedGeneration {
+			retryAttempt = true
+		}
+	}
+	if !retryAttempt && a.IntentKind == "rewrite" && a.ExpectedGeneration != nil && a.Phase == "committed" {
+		if entries, err := decodeJournal(a.MutationJournal); err == nil {
+			guard := PublicationDeliveryGuard{OperationID: a.OperationID, ApplicationAttempt: c.ApplicationAttempt, RiverJobID: c.RiverJobID, RiverAttempt: c.RiverAttempt, ClaimUUID: c.ClaimUUID, BootUUID: c.BootUUID, DeliveryToken: c.DeliveryToken, Epoch: a.Epoch, CandidateGeneration: a.CandidateGeneration, ExpectedPositionID: a.PositionID}
+			_, _, retryAttempt = canonicalAutomaticLyricsRetryCompletionPrefix(entries, guard, &a)
+		}
+	}
+	if (!retryAttempt && (a.IntentKind != "audio" || a.ExpectedGeneration != nil)) || a.OperationID == uuid.Nil || a.PositionID == uuid.Nil || a.Epoch == uuid.Nil || a.CandidateGeneration == uuid.Nil {
 		return PublicationRecoveryAssessment{}, errors.New("publication recovery requires a valid first-audio attempt")
 	}
 	if c.OperationID != a.OperationID || c.Epoch != a.Epoch || c.ClaimUUID == uuid.Nil || c.BootUUID == uuid.Nil || c.DeliveryToken == "" || c.ApplicationAttempt <= 0 || c.RiverJobID <= 0 || c.RiverAttempt <= 0 {
@@ -145,13 +157,30 @@ func AssessPublicationRecoveryEvidence(snapshot PublicationRecoverySnapshot) (Pu
 	if snapshot.Current != nil && snapshot.Current.PositionID != a.PositionID {
 		return PublicationRecoveryAssessment{}, errors.New("current publication position does not match attempt")
 	}
+	if retryAttempt && a.Phase != "committed" && (snapshot.Current == nil || snapshot.Current.Generation != *a.ExpectedGeneration || snapshot.Current.Epoch != a.Epoch) {
+		return PublicationRecoveryAssessment{}, errors.New("automatic lyrics retry recovery requires the confirmed current generation")
+	}
 	frontier, err := publicationRecoveryJournalFrontier(a, c)
 	if err != nil {
 		return PublicationRecoveryAssessment{}, err
 	}
 	phase := a.Phase
 	guard := PublicationDeliveryGuard{OperationID: c.OperationID, ApplicationAttempt: c.ApplicationAttempt, RiverJobID: c.RiverJobID, RiverAttempt: c.RiverAttempt, ClaimUUID: c.ClaimUUID, BootUUID: c.BootUUID, DeliveryToken: c.DeliveryToken, Epoch: c.Epoch, CandidateGeneration: a.CandidateGeneration, ExpectedPositionID: a.PositionID}
-	if phase != "committed" && (phase == "preparing" && frontier == "prep_3" || phase == "staged" || phase == "validated" || phase == "exposing") {
+	if retryAttempt && phase != "committed" {
+		input, inputErr := DecodePublicationInputs(a.FrozenInputs)
+		entries, journalErr := decodeJournal(a.MutationJournal)
+		if inputErr != nil || journalErr != nil {
+			return PublicationRecoveryAssessment{}, errors.New("automatic lyrics retry recovery requires valid frozen inputs and journal")
+		}
+		state, parseErr := parseAutomaticLyricsRetryPrefix(entries, guard, input)
+		if parseErr != nil {
+			return PublicationRecoveryAssessment{}, fmt.Errorf("automatic lyrics retry recovery evidence is incomplete: %w", parseErr)
+		}
+		if state.commit != nil || phase == "preparing" && state.stageCount != 0 || phase == "staged" && state.stageCount != 1 || phase == "validated" && state.stageCount != 2 || phase == "exposing" && (state.stageCount != 2 || state.exposure == nil) {
+			return PublicationRecoveryAssessment{}, errors.New("automatic lyrics retry recovery frontier does not match attempt phase")
+		}
+	}
+	if !retryAttempt && phase != "committed" && (phase == "preparing" && frontier == "prep_3" || phase == "staged" || phase == "validated" || phase == "exposing") {
 		input, inputErr := DecodePublicationInputs(a.FrozenInputs)
 		if inputErr != nil || input.IntentKind != "audio" || input.InitialLyrics == nil {
 			return PublicationRecoveryAssessment{}, errors.New("initial publication recovery requires frozen lyrics authority")
@@ -183,11 +212,11 @@ func AssessPublicationRecoveryEvidence(snapshot PublicationRecoverySnapshot) (Pu
 			return PublicationRecoveryAssessment{}, errors.New("committed attempt does not match its unique current witness")
 		}
 	}
-	if phase != "committed" && snapshot.Current != nil {
+	if phase != "committed" && !retryAttempt && snapshot.Current != nil {
 		return PublicationRecoveryAssessment{}, errors.New("first publication has a current row before committed witness")
 	}
 	return PublicationRecoveryAssessment{
-		Classification: "evidence_consistency_only", Phase: phase, JournalFrontier: frontier,
+		Classification: map[bool]string{true: "automatic_lyrics_retry_evidence_consistency_only_no_replay", false: "evidence_consistency_only"}[retryAttempt], Phase: phase, JournalFrontier: frontier,
 		RequiredObservations: []string{"old_execution_quiescence", "anchored_parent_identity", "private_directory_ownership", "input_identity", "staged_file_identity", "target_namespace_identity", "cleanup_ownership"},
 	}, nil
 }
@@ -196,6 +225,48 @@ func publicationRecoveryJournalFrontier(attempt TrackPublicationAttempt, claim P
 	entries, err := decodeJournal(attempt.MutationJournal)
 	if err != nil {
 		return "", err
+	}
+	if attempt.IntentKind == "rewrite" {
+		wantGuard := PublicationDeliveryGuard{OperationID: claim.OperationID, ApplicationAttempt: claim.ApplicationAttempt, RiverJobID: claim.RiverJobID, RiverAttempt: claim.RiverAttempt, ClaimUUID: claim.ClaimUUID, BootUUID: claim.BootUUID, DeliveryToken: claim.DeliveryToken, Epoch: claim.Epoch, CandidateGeneration: attempt.CandidateGeneration, ExpectedPositionID: attempt.PositionID}
+		if attempt.Phase == "committed" {
+			if prefix, _, ok := canonicalAutomaticLyricsRetryCompletionPrefix(entries, wantGuard, &attempt); ok && retryCommitReplayMatches(entries, wantGuard, &attempt, prefix.commit.Projection) {
+				return "committed", nil
+			}
+		} else if len(attempt.FrozenInputs) != 0 {
+			input, inputErr := DecodePublicationInputs(attempt.FrozenInputs)
+			if inputErr == nil && input.AutomaticLyricsRetry != nil && input.Rewrite != nil {
+				state, parseErr := parseAutomaticLyricsRetryPrefix(entries, wantGuard, input)
+				if parseErr != nil {
+					return "", parseErr
+				}
+				if state.commit != nil {
+					return "", errors.New("uncommitted automatic lyrics retry contains a commit witness")
+				}
+				if state.exposure != nil {
+					return "exposing", nil
+				}
+				if state.stageCount == 2 {
+					return "validated", nil
+				}
+				if state.stageCount == 1 {
+					return "staged", nil
+				}
+				preparations := 0
+				for _, raw := range entries {
+					var h struct {
+						Kind string `json:"kind"`
+					}
+					_ = json.Unmarshal(raw, &h)
+					if h.Kind == "publication_preparation" {
+						preparations++
+					}
+				}
+				if preparations > 0 {
+					return fmt.Sprintf("prep_%d", preparations), nil
+				}
+				return "empty", nil
+			}
+		}
 	}
 	frontier := "empty"
 	prep := []string{}

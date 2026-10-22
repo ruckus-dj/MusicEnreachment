@@ -23,7 +23,33 @@ type publicationInitialOutputCopy struct {
 // Any error after entering the helper is conservatively quarantined because
 // CreateExclusive may have mutated the stage before returning that error.
 func (stage *preparedPublicationStage) initialOutputCopy(ctx context.Context, scope *PublicationExecutionScope, reservation *publicationSyncReservation) (result *publicationInitialOutputCopy, resultErr error) {
-	if stage == nil || !stage.privatePrepMode || stage.outputName == "" || !stage.rewrite || !stage.rewriteIdentityHasSHA() || scope == nil || scope.guard != stage.guard {
+	if stage == nil || !stage.privatePrepMode {
+		return nil, errors.New("initial output copy requires the private prepared FLAC stage")
+	}
+	if _, err := stage.copyFrozenNativeInput(ctx, scope, reservation, publicationNativeCopyInitial); err != nil {
+		return nil, err
+	}
+	return &publicationInitialOutputCopy{stage: stage}, nil
+}
+
+type publicationNativeCopyPurpose uint8
+
+const (
+	publicationNativeCopyInitial publicationNativeCopyPurpose = iota + 1
+	publicationNativeCopyAutomaticLyricsRetry
+)
+
+func (stage *preparedPublicationStage) automaticLyricsRetryNativeCopy(ctx context.Context, scope *PublicationExecutionScope, reservation *publicationSyncReservation) error {
+	if stage == nil || !stage.automaticLyricsRetry || stage.privatePrepMode {
+		return errors.New("native retry copy requires the owned automatic lyrics retry stage")
+	}
+	_, err := stage.copyFrozenNativeInput(ctx, scope, reservation, publicationNativeCopyAutomaticLyricsRetry)
+	return err
+}
+
+func (stage *preparedPublicationStage) copyFrozenNativeInput(ctx context.Context, scope *PublicationExecutionScope, reservation *publicationSyncReservation, purpose publicationNativeCopyPurpose) (_ *publicationInitialOutputCopy, resultErr error) {
+	validPurpose := purpose == publicationNativeCopyInitial && stage != nil && stage.privatePrepMode || purpose == publicationNativeCopyAutomaticLyricsRetry && stage != nil && stage.automaticLyricsRetry && !stage.privatePrepMode
+	if !validPurpose || stage.outputName == "" || !stage.rewrite || !stage.rewriteIdentityHasSHA() || scope == nil || scope.guard != stage.guard {
 		return nil, errors.New("initial output copy requires the private prepared FLAC stage")
 	}
 	if !scope.beginInitialOutputCopy(reservation) {
@@ -133,7 +159,10 @@ func (stage *preparedPublicationStage) initialOutputCopy(ctx context.Context, sc
 	if err := stage.verifyInitialOutputEntry(ctx, outputInfo); err != nil {
 		return nil, err
 	}
-	return &publicationInitialOutputCopy{stage: stage}, nil
+	if purpose == publicationNativeCopyInitial {
+		return &publicationInitialOutputCopy{stage: stage}, nil
+	}
+	return nil, nil
 }
 
 // verifyInitialOutputEntry performs a bounded final namespace check by reopening

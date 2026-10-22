@@ -416,10 +416,12 @@ func (preparer PublicationStagePreparer) prepare(ctx context.Context, guard pers
 	if input.Rewrite != nil {
 		rewriteIdentity = clonePublicationIdentity(input.Rewrite.Ownership)
 	}
-	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(preparer.ParentPath, privateName, inputName), OutputPath: filepath.Join(preparer.ParentPath, privateName, outputName), RelativePath: record.OutputRel}, parent: preparer.OutputParent, directory: dir, directoryName: privateName, identity: dirID, parentIdentity: parentIdentity, repository: preparer.Repository, opener: preparer.SourceOpener, sourceRootPath: sourceRootPath, sourceRelativePath: sourceRelativePath, sourceSize: sourceSize, sourceMTime: sourceMTime, sourceFileInfo: inputInfo, inputPath: filepath.Join(preparer.ParentPath, privateName), inputName: inputName, guard: guard, hold: hold, rewrite: isRewrite, rewriteIdentity: rewriteIdentity, preparationRecord: ready}
+	stage := &preparedPublicationStage{paths: PublicationStagePaths{InputPath: filepath.Join(preparer.ParentPath, privateName, inputName), OutputPath: filepath.Join(preparer.ParentPath, privateName, outputName), RelativePath: record.OutputRel}, parent: preparer.OutputParent, directory: dir, directoryName: privateName, identity: dirID, parentIdentity: parentIdentity, repository: preparer.Repository, opener: preparer.SourceOpener, sourceRootPath: sourceRootPath, sourceRelativePath: sourceRelativePath, sourceSize: sourceSize, sourceMTime: sourceMTime, sourceFileInfo: inputInfo, inputPath: filepath.Join(preparer.ParentPath, privateName), inputName: inputName, guard: guard, hold: hold, rewrite: isRewrite, automaticLyricsRetry: input.AutomaticLyricsRetry != nil, rewriteIdentity: rewriteIdentity, preparationRecord: ready}
 	if manualLyricsFLAC {
 		stage.privatePrepMode = true
 		stage.privateInputs = input.Clone()
+	}
+	if manualLyricsFLAC || input.AutomaticLyricsRetry != nil {
 		stage.outputName = outputName
 	}
 	// Transfer directory ownership only after all preparation observations have been journaled.
@@ -501,31 +503,32 @@ func publicationOutputStageExtension(input persistence.PublicationInputs) string
 }
 
 type preparedPublicationStage struct {
-	paths              PublicationStagePaths
-	parent, directory  sourcefs.OutputDirectory
-	directoryName      string
-	identity           persistence.PublicationDirectoryIdentity
-	parentIdentity     sourcefs.DirectoryIdentity
-	repository         PublicationStagePreparationRepository
-	opener             sourcefs.Opener
-	sourceRootPath     string
-	sourceRelativePath string
-	sourceSize         int64
-	sourceMTime        time.Time
-	sourceFileInfo     os.FileInfo
-	rewriteIdentity    persistence.PublicationFileIdentity
-	preparationRecord  persistence.PublicationPreparationRecord
-	inputPath          string
-	inputName          string
-	guard              persistence.PublicationDeliveryGuard
-	hold               uuid.UUID
-	rewrite            bool
-	mu                 sync.Mutex
-	closed             bool
-	privatePrepMode    bool
-	privateInputs      persistence.PublicationInputs
-	outputName         string
-	manualProbe        *ScopeBoundPublicationStageProbe
+	paths                PublicationStagePaths
+	parent, directory    sourcefs.OutputDirectory
+	directoryName        string
+	identity             persistence.PublicationDirectoryIdentity
+	parentIdentity       sourcefs.DirectoryIdentity
+	repository           PublicationStagePreparationRepository
+	opener               sourcefs.Opener
+	sourceRootPath       string
+	sourceRelativePath   string
+	sourceSize           int64
+	sourceMTime          time.Time
+	sourceFileInfo       os.FileInfo
+	rewriteIdentity      persistence.PublicationFileIdentity
+	preparationRecord    persistence.PublicationPreparationRecord
+	inputPath            string
+	inputName            string
+	guard                persistence.PublicationDeliveryGuard
+	hold                 uuid.UUID
+	rewrite              bool
+	automaticLyricsRetry bool
+	mu                   sync.Mutex
+	closed               bool
+	privatePrepMode      bool
+	privateInputs        persistence.PublicationInputs
+	outputName           string
+	manualProbe          *ScopeBoundPublicationStageProbe
 }
 
 func (stage *preparedPublicationStage) Paths() PublicationStagePaths { return stage.paths }

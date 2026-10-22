@@ -741,7 +741,7 @@ func executeWithCommittedCleanupAckFailure(ctx context.Context, repository *pers
 	}
 	preparer := PublicationStagePreparer{Repository: committedCleanupCompletionRepository{repository}, SourceOpener: sourcefs.NewOpener(), OutputParent: root, ParentPath: outputPath, HoldUUID: hold}
 	validator := recordingStageValidator{delegate: returnedValidationFailure{}, outputPath: recordedOutputPath}
-	_, err = executeGenericPublication(ctx, scope, repository, input, preparer, attempt, executor.platform, executor.lyrics, validator)
+	_, err = executeGenericPublication(ctx, scope, repository, input, preparer, attempt, executor.platform, executor.lyrics, validator, nil)
 	return err, scope
 }
 

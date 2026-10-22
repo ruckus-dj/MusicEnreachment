@@ -13,7 +13,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
-func preparedManualLyricsFLACStage(t *testing.T) (publicationStageFixture, *preparedPublicationStage, []byte) {
+func preparedManualLyricsFLACStage(t *testing.T, automaticRetry ...bool) (publicationStageFixture, *preparedPublicationStage, []byte) {
 	t.Helper()
 	fixture := makeRewriteFixture(t)
 	if err := os.Remove(filepath.Join(fixture.output, "current.mp3")); err != nil {
@@ -52,9 +52,27 @@ func preparedManualLyricsFLACStage(t *testing.T) (publicationStageFixture, *prep
 	lossless := true
 	fixture.repo.input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true}
 	fixture.repo.input.ManualLyrics = &persistence.PublicationManualLyricsInput{State: "explicit_empty", ConfirmedCurrentGeneration: fixture.repo.input.Rewrite.CurrentGeneration}
+	retry := len(automaticRetry) == 1 && automaticRetry[0]
+	if retry {
+		capture, err := (metadata.Reader{}).Read(context.Background(), current, metadata.ReadRequest{CoverInspection: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assets, err := ObservePublicationAssets(capture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixture.repo.input.ManualLyrics = nil
+		fixture.repo.input.AutomaticLyricsRetry = &persistence.PublicationAutomaticLyricsRetryInput{ExpectedMetadataRevision: 7, ConfirmedCurrentGeneration: fixture.repo.input.Rewrite.CurrentGeneration, CurrentAssets: assets}
+	}
 	repository := &optionalLyricsV3Repository{stagePreparationRepository: fixture.repo}
 	fixture.preparer.Repository = repository
-	stageValue, err := fixture.preparer.prepareManualLyricsFLAC(context.Background(), fixture.guard, persistence.PublicationDeliveryAcquired, true)
+	var stageValue PreparedPublicationStage
+	if retry {
+		stageValue, err = fixture.preparer.prepare(context.Background(), fixture.guard, persistence.PublicationDeliveryAcquired, true, false, nil)
+	} else {
+		stageValue, err = fixture.preparer.prepareManualLyricsFLAC(context.Background(), fixture.guard, persistence.PublicationDeliveryAcquired, true)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

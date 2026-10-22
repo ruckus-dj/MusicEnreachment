@@ -82,7 +82,14 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 		if err != nil {
 			return err
 		}
-		if !replacementJournalFrontier(entries) {
+		automaticRetry := input.AutomaticLyricsRetry != nil
+		var retryState automaticLyricsRetryJournalState
+		if automaticRetry {
+			retryState, err = validateAutomaticLyricsRetryReplacementAppend(entries, guard, input, evidence)
+			if err != nil {
+				return nil
+			}
+		} else if !replacementJournalFrontier(entries) {
 			return nil
 		}
 		var exposure publicationExposureJournalRecord
@@ -131,6 +138,16 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 		if err != nil {
 			return err
 		}
+		if automaticRetry {
+			proposed, parseErr := decodeJournal(journal)
+			if parseErr != nil {
+				return parseErr
+			}
+			updatedState, parseErr := parseAutomaticLyricsRetryPrefix(proposed, guard, input)
+			if parseErr != nil || len(updatedState.replacement) != len(retryState.replacement)+1 || updatedState.commit != nil || !sameJSONValue(mustJSON(updatedState.replacement[len(updatedState.replacement)-1]), mustJSON(evidence)) {
+				return errors.New("automatic lyrics retry replacement journal transition is invalid")
+			}
+		}
 		updated, err := tx.NewRaw(`UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=? AND phase='exposing'`, string(journal), guard.OperationID).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("record publication replacement: %w", err)
@@ -146,6 +163,25 @@ func (repository *SetupManagerRepository) RecordPublicationReplacement(ctx conte
 		return PublicationReplacementStale, err
 	}
 	return result, nil
+}
+
+func validateAutomaticLyricsRetryReplacementAppend(entries []json.RawMessage, guard PublicationDeliveryGuard, input PublicationInputs, evidence PublicationReplacementEvidence) (automaticLyricsRetryJournalState, error) {
+	state, err := parseAutomaticLyricsRetryPrefix(entries, guard, input)
+	if err != nil {
+		return state, err
+	}
+	if state.exposure == nil || state.stageCount != 2 || state.commit != nil || len(state.replacement) >= 4 || state.exposure.Intent != evidence.Intent || !samePublicationStageObservation(state.exposure.Observation, evidence.Staged) {
+		return state, errors.New("automatic lyrics retry replacement is outside its journal frontier")
+	}
+	var prior *PublicationReplacementEvidence
+	if len(state.replacement) > 0 {
+		previous := state.replacement[len(state.replacement)-1]
+		prior = &previous
+	}
+	if evidence.Guard != guard || !validReplacementSuccessor(prior, &evidence) {
+		return state, errors.New("automatic lyrics retry replacement append is invalid")
+	}
+	return state, nil
 }
 
 // GuardedRecordManualLyricsReplacement appends one V3 manual-lyrics

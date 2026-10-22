@@ -23,17 +23,18 @@ const PublicationInputsVersion = 1
 // PublicationInputs is the versioned, immutable execution contract retained by
 // a publication attempt. Intent-specific data is deliberately disjoint.
 type PublicationInputs struct {
-	Version              int                                `json:"version"`
-	QualityPolicyVersion int                                `json:"quality_policy_version,omitempty"`
-	IntentKind           string                             `json:"intent_kind"`
-	SourceAuthorityMode  string                             `json:"source_authority_mode,omitempty"`
-	Audio                *PublicationAudioInput             `json:"audio,omitempty"`
-	Rewrite              *PublicationRewriteInput           `json:"rewrite,omitempty"`
-	ManualLyrics         *PublicationManualLyricsInput      `json:"manual_lyrics,omitempty"`
-	InitialLyrics        *PublicationInitialLyricsInput     `json:"initial_lyrics,omitempty"`
-	Format               publication.AudioPublicationFormat `json:"format"`
-	DesiredTags          map[string][]string                `json:"desired_tags"`
-	Tools                []SourceAnalysisToolSelection      `json:"tools"`
+	Version              int                                   `json:"version"`
+	QualityPolicyVersion int                                   `json:"quality_policy_version,omitempty"`
+	IntentKind           string                                `json:"intent_kind"`
+	SourceAuthorityMode  string                                `json:"source_authority_mode,omitempty"`
+	Audio                *PublicationAudioInput                `json:"audio,omitempty"`
+	Rewrite              *PublicationRewriteInput              `json:"rewrite,omitempty"`
+	ManualLyrics         *PublicationManualLyricsInput         `json:"manual_lyrics,omitempty"`
+	AutomaticLyricsRetry *PublicationAutomaticLyricsRetryInput `json:"automatic_lyrics_retry,omitempty"`
+	InitialLyrics        *PublicationInitialLyricsInput        `json:"initial_lyrics,omitempty"`
+	Format               publication.AudioPublicationFormat    `json:"format"`
+	DesiredTags          map[string][]string                   `json:"desired_tags"`
+	Tools                []SourceAnalysisToolSelection         `json:"tools"`
 }
 
 // PublicationInitialLyricsInput freezes the position's synced-lyrics authority
@@ -52,6 +53,16 @@ type PublicationManualLyricsInput struct {
 	ConfirmedCurrentGeneration uuid.UUID `json:"confirmed_current_generation"`
 	State                      string    `json:"state"`
 	Value                      string    `json:"value,omitempty"`
+}
+
+// PublicationAutomaticLyricsRetryInput freezes only authority needed to
+// perform an explicit exact lookup against the current publication. It never
+// carries lyric text or original-source identity.
+type PublicationAutomaticLyricsRetryInput struct {
+	ExpectedMetadataRevision   int64                       `json:"expected_metadata_revision"`
+	ConfirmedCurrentGeneration uuid.UUID                   `json:"confirmed_current_generation"`
+	Desired                    *librarymetadata.FieldValue `json:"desired,omitempty"`
+	CurrentAssets              PublicationAssetOutcomes    `json:"current_assets"`
 }
 
 // PublicationAudioInput identifies the source file and verified audio result
@@ -176,6 +187,30 @@ func (input PublicationInputs) Validate() error {
 			return errors.New("manual lyrics rewrite requires value or explicit_empty")
 		}
 	}
+	if retry := input.AutomaticLyricsRetry; retry != nil {
+		if input.IntentKind != "rewrite" || input.Rewrite == nil || input.Audio != nil || input.ManualLyrics != nil || input.InitialLyrics != nil || input.Format != publication.AudioFormatSource {
+			return errors.New("automatic lyrics retry requires an exclusive source-free rewrite")
+		}
+		if retry.ExpectedMetadataRevision < 0 || retry.ConfirmedCurrentGeneration == uuid.Nil || retry.ConfirmedCurrentGeneration != input.Rewrite.CurrentGeneration {
+			return errors.New("automatic lyrics retry requires a metadata revision and confirmed current generation")
+		}
+		if retry.Desired != nil {
+			envelope := librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition, Desired: map[string]librarymetadata.FieldValue{"synced_lyrics": *retry.Desired}}
+			if err := envelope.Validate(); err != nil {
+				return fmt.Errorf("invalid automatic lyrics retry authority: %w", err)
+			}
+			if retry.Desired.State != librarymetadata.StateAbsent && (retry.Desired.Authority == librarymetadata.AuthorityManual || retry.Desired.State == librarymetadata.StateExplicitEmpty) {
+				return errors.New("automatic lyrics retry conflicts with protected manual lyrics authority")
+			}
+		}
+		assets, err := json.Marshal(retry.CurrentAssets)
+		if err != nil {
+			return fmt.Errorf("encode automatic lyrics retry assets: %w", err)
+		}
+		if _, err := DecodePublicationAssetOutcomes(assets); err != nil {
+			return fmt.Errorf("invalid automatic lyrics retry assets: %w", err)
+		}
+	}
 	if input.IntentKind == "audio" {
 		if input.InitialLyrics == nil || input.InitialLyrics.ExpectedMetadataRevision < 0 {
 			return errors.New("initial audio publication requires a lyrics authority snapshot and metadata revision")
@@ -206,8 +241,8 @@ func (input PublicationInputs) Validate() error {
 		if strings.TrimSpace(name) == "" || values == nil {
 			return fmt.Errorf("publication desired tags must contain named, non-nil value lists")
 		}
-		if input.ManualLyrics != nil && strings.EqualFold(strings.TrimSpace(name), "LYRICS") {
-			return errors.New("manual lyrics must not be encoded in mandatory desired tags")
+		if (input.ManualLyrics != nil || input.AutomaticLyricsRetry != nil) && strings.EqualFold(strings.TrimSpace(name), "LYRICS") {
+			return errors.New("optional lyrics must not be encoded in mandatory desired tags")
 		}
 	}
 	if err := validateFrozenPublicationTools(input.Tools); err != nil {
@@ -229,7 +264,7 @@ func (input PublicationInputs) Validate() error {
 // SupportsExecution reports whether this frozen contract is executable by the
 // generic publication path. Private manual-lyrics execution is separate.
 func (input PublicationInputs) SupportsExecution() bool {
-	return input.Version == PublicationInputsVersion && input.QualityPolicyVersion == publication.QualityPolicyVersion && input.ManualLyrics == nil
+	return input.Version == PublicationInputsVersion && input.QualityPolicyVersion == publication.QualityPolicyVersion && input.ManualLyrics == nil && (input.AutomaticLyricsRetry == nil || input.IntentKind == "rewrite" && input.Rewrite != nil)
 }
 
 func (input PublicationAudioInput) Validate() error {
@@ -350,6 +385,16 @@ func (input PublicationInputs) Clone() PublicationInputs {
 			initial.Desired = &field
 		}
 		clone.InitialLyrics = &initial
+	}
+	if input.AutomaticLyricsRetry != nil {
+		retry := *input.AutomaticLyricsRetry
+		retry.CurrentAssets = input.AutomaticLyricsRetry.CurrentAssets.Clone()
+		if input.AutomaticLyricsRetry.Desired != nil {
+			field := *input.AutomaticLyricsRetry.Desired
+			field.Value = clonePublicationJSONValue(field.Value)
+			retry.Desired = &field
+		}
+		clone.AutomaticLyricsRetry = &retry
 	}
 	return clone
 }

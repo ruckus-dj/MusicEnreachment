@@ -27,6 +27,7 @@ type PublicationExecutor struct {
 	commands       PublicationCommandRunner
 	lyrics         *PublicationLyricsResolver
 	stageValidator PublicationStageValidator
+	metadata       PublicationMetadataWriter
 }
 
 func NewPublicationExecutor(
@@ -136,7 +137,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 			}
 			preparer.HoldUUID = hold
 		}
-		_, err := executeGenericPublication(ctx, scope, executor.repository, input, preparer, attempt, executor.platform, executor.lyrics, executor.stageValidator)
+		_, err := executeGenericPublication(ctx, scope, executor.repository, input, preparer, attempt, executor.platform, executor.lyrics, executor.stageValidator, executor.metadata)
 		return err
 	}
 	prepared, err := preparer.prepareManualLyricsFLAC(ctx, guard, persistence.PublicationDeliveryAcquired, true)

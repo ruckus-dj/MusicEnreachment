@@ -160,7 +160,7 @@ func (repository *SetupManagerRepository) CheckPublicationRewriteForDelivery(ctx
 	valid := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		attempt, operation, _, ok, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "check publication rewrite")
-		if err != nil || !ok || (attempt.Phase != "preparing" && attempt.Phase != "staged") || operation.Stage != attempt.Phase {
+		if err != nil || !ok || (attempt.Phase != "preparing" && attempt.Phase != "staged" && attempt.Phase != "exposing") || operation.Stage != attempt.Phase {
 			return err
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)

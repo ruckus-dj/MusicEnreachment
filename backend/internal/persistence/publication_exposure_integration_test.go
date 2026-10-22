@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -155,6 +157,11 @@ func TestPublicationExposureRecordsAndReplaysIdenticallyPostgreSQL(t *testing.T)
 	ctx := context.Background()
 	f, intent, observation := readyPublicationExposureFixture(t)
 	repo := NewSetupManagerRepository(f.db)
+	filesystemTarget := filepath.Join(t.TempDir(), "currently-published.flac")
+	filesystemBaseline := []byte("native current artifact before exposure admission")
+	if err := os.WriteFile(filesystemTarget, filesystemBaseline, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if outcome, err := repo.BeginPublicationExposure(ctx, f.guard, intent, observation); err != nil || outcome != PublicationExposureRecorded {
 		t.Fatalf("exposure = %q, %v", outcome, err)
 	}
@@ -181,6 +188,9 @@ func TestPublicationExposureRecordsAndReplaysIdenticallyPostgreSQL(t *testing.T)
 	if outcome, err := repo.BeginPublicationExposure(ctx, f.guard, intent, observation); err != nil || outcome != PublicationExposureAlreadyRecorded {
 		t.Fatalf("replay = %q, %v", outcome, err)
 	}
+	if actual, err := os.ReadFile(filesystemTarget); err != nil || string(actual) != string(filesystemBaseline) {
+		t.Fatalf("exposure replay mutated filesystem target: %v", err)
+	}
 	after, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
 	if err != nil || string(after.MutationJournal) != string(before.MutationJournal) {
 		t.Fatalf("replay changed journal: %v", err)
@@ -192,11 +202,19 @@ func TestPublicationExposureRejectsChangedRequestWithoutMutationPostgreSQL(t *te
 	ctx := context.Background()
 	f, intent, observation := readyPublicationExposureFixture(t)
 	repo := NewSetupManagerRepository(f.db)
+	filesystemTarget := filepath.Join(t.TempDir(), "currently-published.flac")
+	filesystemBaseline := []byte("native current artifact before denied exposure")
+	if err := os.WriteFile(filesystemTarget, filesystemBaseline, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	observation.PayloadSHA256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 	if outcome, err := repo.BeginPublicationExposure(ctx, f.guard, intent, observation); err != nil || outcome != PublicationExposureStale {
 		t.Fatalf("changed exposure = %q, %v", outcome, err)
 	}
 	assertPublicationExposureUnchanged(t, ctx, f)
+	if actual, err := os.ReadFile(filesystemTarget); err != nil || string(actual) != string(filesystemBaseline) {
+		t.Fatalf("denied exposure mutated filesystem target: %v", err)
+	}
 }
 
 func TestPublicationExposureRejectsOperationStageMismatchPostgreSQL(t *testing.T) {

@@ -44,7 +44,7 @@ func (stage *preparedPublicationStage) prepareInitialLyricsRebuild(ctx context.C
 	if err := stage.Validate(ctx); err != nil {
 		return persistence.PublicationCandidateRebuildRecord{}, nil, err
 	}
-	inputIdentity, err := stage.verifyInitialLyricsPreparedAudioInput(ctx)
+	inputIdentity, err := stage.verifyLyricsRebuildInput(ctx)
 	if err != nil {
 		return persistence.PublicationCandidateRebuildRecord{}, nil, err
 	}
@@ -86,7 +86,7 @@ func (stage *preparedPublicationStage) acknowledgeInitialLyricsRebuildIntent(ctx
 			stage.endInitialLyricsRebuildFence(capability, true)
 		}
 	}()
-	inputIdentity, err := stage.verifyInitialLyricsPreparedAudioInput(ctx)
+	inputIdentity, err := stage.verifyLyricsRebuildInput(ctx)
 	if err != nil {
 		return err
 	}
@@ -97,16 +97,18 @@ func (stage *preparedPublicationStage) acknowledgeInitialLyricsRebuildIntent(ctx
 	if intent.Candidate == nil || intent.Input == nil || intent.OwnerToken != stage.preparationRecord.OwnerToken || intent.PrivateDirRel != stage.directoryName || intent.InputRel != stage.preparationRecord.InputRel || intent.OutputRel != stage.preparationRecord.OutputRel || intent.DirectoryIdentity != stage.identity || !sameRebuildIdentity(*intent.Candidate, publicationFileIdentity(currentInfo, currentHash)) || !sameRebuildIdentity(*intent.Input, inputIdentity) {
 		return errors.New("initial lyrics rebuild intent does not match current prepared evidence")
 	}
-	journal, ok := stage.repository.(publicationInitialLyricsJournal)
-	if !ok {
-		return errors.New("initial lyrics rebuild journal is unavailable")
-	}
-	outcome, err := journal.GuardedRecordPublicationInitialLyricsRebuild(ctx, stage.guard, intent)
-	if err != nil {
-		return fmt.Errorf("acknowledge initial lyrics rebuild intent: %w", err)
-	}
-	if outcome != persistence.PublicationOptionalLyricsRecorded {
-		return errors.New("initial lyrics rebuild intent was not newly acknowledged")
+	if !stage.automaticLyricsRetry {
+		journal, ok := stage.repository.(publicationInitialLyricsJournal)
+		if !ok {
+			return errors.New("initial lyrics rebuild journal is unavailable")
+		}
+		outcome, err := journal.GuardedRecordPublicationInitialLyricsRebuild(ctx, stage.guard, intent)
+		if err != nil {
+			return fmt.Errorf("acknowledge initial lyrics rebuild intent: %w", err)
+		}
+		if outcome != persistence.PublicationOptionalLyricsRecorded {
+			return errors.New("initial lyrics rebuild intent was not newly acknowledged")
+		}
 	}
 	info, digest, err := nativeInitialLyricsCandidateEvidence(ctx, stage)
 	if err != nil {
@@ -124,6 +126,44 @@ func (stage *preparedPublicationStage) acknowledgeInitialLyricsRebuildIntent(ctx
 	return nil
 }
 
+func (stage *preparedPublicationStage) acknowledgeAutomaticRetryRebuildIntent(ctx context.Context, journal automaticLyricsRetryJournal, capability *initialLyricsRebuildCapability) error {
+	if journal == nil || !stage.beginInitialLyricsCapabilityACK(capability) {
+		return errors.New("automatic retry rebuild intent is not owned by this publication stage")
+	}
+	ackOK := false
+	defer func() {
+		if !ackOK {
+			stage.endInitialLyricsRebuildFence(capability, true)
+		}
+	}()
+	inputIdentity, err := stage.verifyLyricsRebuildInput(ctx)
+	if err != nil {
+		return err
+	}
+	currentInfo, currentHash, err := nativeInitialLyricsCandidateEvidence(ctx, stage)
+	if err != nil {
+		return err
+	}
+	intent := capability.intent
+	if intent.Candidate == nil || intent.Input == nil || intent.OwnerToken != stage.preparationRecord.OwnerToken || intent.PrivateDirRel != stage.directoryName || intent.InputRel != stage.preparationRecord.InputRel || intent.OutputRel != stage.preparationRecord.OutputRel || intent.DirectoryIdentity != stage.identity || !sameRebuildIdentity(*intent.Candidate, publicationFileIdentity(currentInfo, currentHash)) || !sameRebuildIdentity(*intent.Input, inputIdentity) {
+		return errors.New("automatic retry rebuild intent does not match current prepared evidence")
+	}
+	outcome, err := journal.GuardedRecordAutomaticLyricsRetryRebuild(ctx, stage.guard, intent)
+	if err != nil || outcome != persistence.PublicationOptionalLyricsRecorded {
+		return errors.Join(errors.New("automatic retry rebuild intent was not newly acknowledged"), err)
+	}
+	info, digest, err := nativeInitialLyricsCandidateEvidence(ctx, stage)
+	if err != nil || intent.Candidate == nil || !sameRebuildIdentity(*intent.Candidate, publicationFileIdentity(info, digest)) {
+		capability.scope.quarantineUncertain()
+		return errors.Join(errors.New("automatic retry candidate changed before rebuild intent acknowledgement"), err)
+	}
+	capability.scope.mu.Lock()
+	capability.acknowledged = true
+	capability.scope.mu.Unlock()
+	ackOK = true
+	return nil
+}
+
 // resetInitialLyricsCandidate replaces only the exact acknowledged candidate
 // with an exclusively created, synced empty output. It never copies or transforms.
 func (stage *preparedPublicationStage) resetInitialLyricsCandidate(ctx context.Context, scope *PublicationExecutionScope, capability *initialLyricsRebuildCapability) error {
@@ -135,7 +175,7 @@ func (stage *preparedPublicationStage) resetInitialLyricsCandidate(ctx context.C
 	if err := stage.Validate(ctx); err != nil {
 		return err
 	}
-	if _, err := stage.verifyInitialLyricsPreparedAudioInput(ctx); err != nil {
+	if _, err := stage.verifyLyricsRebuildInput(ctx); err != nil {
 		return err
 	}
 	if err := stage.verifyOutputDirectory(ctx); err != nil {
@@ -154,6 +194,15 @@ func (stage *preparedPublicationStage) resetInitialLyricsCandidate(ctx context.C
 	}
 	if err := cleanup.RemoveOwnedRegular(ctx, initialLyricsCandidateName(stage), sourcefs.DirectoryIdentity{Platform: stage.identity.Platform, Volume: stage.identity.Volume, FileID: stage.identity.FileID}, currentInfo); err != nil {
 		return err
+	}
+	if stage.automaticLyricsRetry {
+		if syncer, ok := stage.directory.(sourcefs.OutputDirectorySync); ok {
+			if err := syncer.SyncDirectory(ctx); err != nil {
+				return err
+			}
+		}
+		uncertain = false
+		return nil
 	}
 	output, err := stage.directory.CreateExclusive(ctx, initialLyricsCandidateName(stage))
 	if err != nil {
@@ -187,7 +236,7 @@ func (stage *preparedPublicationStage) finishInitialLyricsRebuild(ctx context.Co
 	if err := stage.Validate(ctx); err != nil {
 		return persistence.PublicationCandidateRebuildRecord{}, err
 	}
-	inputIdentity, err := stage.verifyInitialLyricsPreparedAudioInput(ctx)
+	inputIdentity, err := stage.verifyLyricsRebuildInput(ctx)
 	if err != nil {
 		return persistence.PublicationCandidateRebuildRecord{}, err
 	}
@@ -279,12 +328,50 @@ func (stage *preparedPublicationStage) endInitialLyricsRebuildFence(capability *
 }
 
 func (stage *preparedPublicationStage) validInitialLyricsRebuildOwner(scope *PublicationExecutionScope, reservation *publicationSyncReservation) bool {
-	if stage == nil || stage.privatePrepMode || stage.rewrite || stage.hold == uuid.Nil || stage.preparationRecord.Step != "input_ready" || stage.preparationRecord.OperationID != stage.guard.OperationID || stage.preparationRecord.ClaimUUID != stage.guard.ClaimUUID || stage.preparationRecord.PrivateDirRel != stage.directoryName || stage.preparationRecord.CopiedInput == nil || stage.preparationRecord.CopiedInput.SizeBytes == nil || stage.preparationRecord.CopiedInput.MTime == nil || scope == nil || scope.guard != stage.guard || reservation == nil {
+	if stage == nil || stage.privatePrepMode || (!stage.automaticLyricsRetry && (stage.rewrite || stage.hold == uuid.Nil)) || stage.preparationRecord.Step != "input_ready" || stage.preparationRecord.OperationID != stage.guard.OperationID || stage.preparationRecord.ClaimUUID != stage.guard.ClaimUUID || stage.preparationRecord.PrivateDirRel != stage.directoryName || stage.preparationRecord.CopiedInput == nil || stage.preparationRecord.CopiedInput.SizeBytes == nil || stage.preparationRecord.CopiedInput.MTime == nil || scope == nil || scope.guard != stage.guard || reservation == nil {
 		return false
 	}
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
 	return reservation.owner == scope && reservation.active && !reservation.borrowed && scope.syncWork == 1 && !scope.unknown && !scope.finalized && !scope.finalizing && scope.preInputCleanup == nil && scope.unresolved == 0
+}
+
+func (stage *preparedPublicationStage) verifyLyricsRebuildInput(ctx context.Context) (persistence.PublicationFileIdentity, error) {
+	if stage == nil || !stage.automaticLyricsRetry {
+		return stage.verifyInitialLyricsPreparedAudioInput(ctx)
+	}
+	if stage.preparationRecord.Step != "input_ready" || stage.preparationRecord.CopiedInput == nil || stage.preparationRecord.CopiedInput.SizeBytes == nil || stage.preparationRecord.CopiedInput.MTime == nil {
+		return persistence.PublicationFileIdentity{}, errors.New("automatic lyrics retry rebuild input evidence is unavailable")
+	}
+	if err := stage.Validate(ctx); err != nil {
+		return persistence.PublicationFileIdentity{}, err
+	}
+	mutation, ok := stage.directory.(sourcefs.OutputMutation)
+	if !ok {
+		return persistence.PublicationFileIdentity{}, errors.New("automatic lyrics retry input reader is unavailable")
+	}
+	file, err := mutation.OpenExistingRegular(ctx, stage.inputName)
+	if err != nil {
+		return persistence.PublicationFileIdentity{}, err
+	}
+	info, statErr := file.Stat(ctx)
+	var digest [32]byte
+	if statErr == nil {
+		statErr = file.Borrow(ctx, func(native *os.File) error {
+			var hashErr error
+			digest, hashErr = hashBorrowedFile(ctx, native)
+			return hashErr
+		})
+	}
+	statErr = errors.Join(statErr, file.Close())
+	if statErr != nil {
+		return persistence.PublicationFileIdentity{}, statErr
+	}
+	identity := publicationFileIdentity(info, digest)
+	if identity.SizeBytes == nil || identity.MTime == nil || !sameRebuildIdentity(*stage.preparationRecord.CopiedInput, identity) {
+		return persistence.PublicationFileIdentity{}, errors.New("automatic lyrics retry prepared input differs from acknowledged preparation")
+	}
+	return identity, nil
 }
 
 func initialLyricsCandidateName(stage *preparedPublicationStage) string {

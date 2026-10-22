@@ -149,6 +149,49 @@ func TestManagedTargetReplacerNativeReplacement(t *testing.T) {
 	}
 }
 
+func TestManagedTargetReplacerRejectsSameGenerationCurrentDriftBeforeFilesystemMutation(t *testing.T) {
+	for _, mutation := range []string{"ownership", "audio"} {
+		t.Run(mutation, func(t *testing.T) {
+			fixture := makeRewriteFixture(t)
+			t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
+			prepared, err := fixture.prepare(t)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stage := prepared.(*preparedPublicationStage)
+			t.Cleanup(func() { _ = stage.Close() })
+			currentPath := filepath.Join(fixture.output, "current.mp3")
+			before, err := os.ReadFile(currentPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frozenGeneration := fixture.repo.input.Rewrite.CurrentGeneration
+			switch mutation {
+			case "ownership":
+				changed := fixture.repo.input.Rewrite.Ownership
+				changed.SHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+				fixture.repo.input.Rewrite.Ownership = changed
+			case "audio":
+				fixture.repo.input.Rewrite.AudioFacts.Codec = "changed-codec"
+			}
+			if fixture.repo.input.Rewrite.CurrentGeneration != frozenGeneration {
+				t.Fatal("fixture did not preserve the publication generation while changing current authority")
+			}
+			// The repository's rewrite guard reports both same-generation ownership
+			// and audio drift as stale; stage.Validate must remain the strong guard
+			// immediately before the replacer's first filesystem mutation.
+			fixture.repo.rewriteValid = false
+			if err := stage.Validate(context.Background()); err == nil {
+				t.Fatal("stage validation accepted same-generation current authority drift")
+			}
+			after, err := os.ReadFile(currentPath)
+			if err != nil || !reflect.DeepEqual(after, before) {
+				t.Fatalf("rejected current authority drift mutated target: %v", err)
+			}
+		})
+	}
+}
+
 func TestVerifyManagedTargetParentUsesReadOnlyTraversal(t *testing.T) {
 	ctx := context.Background()
 	rootPath := t.TempDir()

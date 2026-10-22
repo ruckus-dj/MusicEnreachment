@@ -15,7 +15,7 @@ func TestValidatedPreparedManualLyricsFLACPostgreSQL(t *testing.T) {
 		{name: "cover_removal", cover: true, removal: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			testPreparedManualLyricsFLACOwner(t, test.cover, test.removal, true)
+			testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{withCover: test.cover, removal: test.removal, continuous: true})
 		})
 	}
 }

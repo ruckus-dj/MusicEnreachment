@@ -13,10 +13,12 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -45,7 +48,9 @@ func TestPreparedManualLyricsFLACOwnerPostgreSQL(t *testing.T) {
 		{name: "cover_value", cover: true},
 		{name: "cover_explicit_empty", cover: true, removal: true},
 	} {
-		t.Run(test.name, func(t *testing.T) { testPreparedManualLyricsFLACOwner(t, test.cover, test.removal, false, false) })
+		t.Run(test.name, func(t *testing.T) {
+			testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{withCover: test.cover, removal: test.removal})
+		})
 	}
 }
 
@@ -59,46 +64,61 @@ func TestAdmittedPreparedManualLyricsFLACPostgreSQL(t *testing.T) {
 		{name: "cover_value", cover: true},
 		{name: "cover_explicit_empty", cover: true, removal: true},
 	} {
-		t.Run(test.name, func(t *testing.T) { testPreparedManualLyricsFLACOwner(t, test.cover, test.removal, true, true) })
+		t.Run(test.name, func(t *testing.T) {
+			testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{withCover: test.cover, removal: test.removal, continuous: true, throughAdmission: true})
+		})
 	}
 }
 
 func TestAdmittedPreparedManualLyricsFLACNestedPathPostgreSQL(t *testing.T) {
-	testPreparedManualLyricsFLACOwner(t, true, false, true, true, true)
+	testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{withCover: true, continuous: true, throughAdmission: true, nestedPath: true})
 }
 
 func TestAdmittedManualLyricsReplacementJournalPostgreSQL(t *testing.T) {
-	testPreparedManualLyricsFLACOwner(t, false, false, true, true, false, true)
+	testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{continuous: true, throughAdmission: true, dbReplacement: true})
 }
 
 func TestPreparedManualLyricsFLACNativeReplacementPostgreSQL(t *testing.T) {
-	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true)
+	testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{withCover: true, continuous: true, throughAdmission: true, nativeReplacement: true})
 }
 
 func TestPublicationExecutorManualLyricsDeliveryPostgreSQL(t *testing.T) {
-	testPreparedManualLyricsFLACOwner(t, true, false, false, false, false, false, false, false, true)
+	testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{withCover: true, delivery: true})
 }
 
 func TestPreparedManualLyricsReplacementCommitFailurePostgreSQL(t *testing.T) {
-	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true, true)
+	testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{withCover: true, continuous: true, throughAdmission: true, nativeReplacement: true, commitFailure: true})
 }
 
 func TestPreparedManualLyricsReplacementInstalledAckLostPostgreSQL(t *testing.T) {
-	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true, false, true)
+	testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{withCover: true, continuous: true, throughAdmission: true, nativeReplacement: true, installedAckLost: true})
 }
 
 func TestPreparedManualLyricsReplacementCleanupIntentFailurePostgreSQL(t *testing.T) {
-	testPreparedManualLyricsFLACOwner(t, true, false, true, true, false, false, true, false, false, true)
+	testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{withCover: true, continuous: true, throughAdmission: true, nativeReplacement: true, cleanupIntentFailure: true})
 }
 
-func testPreparedManualLyricsFLACOwner(t *testing.T, withCover, removal, continuous bool, options ...bool) {
-	testPreparedManualLyricsOwner(t, false, withCover, removal, continuous, options...)
+type manualLyricsScenario struct {
+	mka, withCover, removal, continuous                bool
+	throughAdmission, nestedPath, dbReplacement        bool
+	nativeReplacement, commitFailure, installedAckLost bool
+	cleanupIntentFailure, delivery, automaticRetry     bool
+	editManualAuthorityDuringLookup                    bool
+	retryLyricsMismatch                                bool
 }
 
-func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, continuous bool, options ...bool) {
+func testPreparedManualLyricsFLACOwner(t *testing.T, scenario manualLyricsScenario) {
+	testPreparedManualLyricsOwner(t, scenario)
+}
+
+func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) {
 	ctx := context.Background()
-	fixture, fakeStage, _ := preparedManualLyricsFLACStage(t)
+	if scenario.automaticRetry && (!scenario.delivery || scenario.nativeReplacement || scenario.commitFailure || scenario.installedAckLost || scenario.cleanupIntentFailure || scenario.throughAdmission || scenario.continuous || scenario.removal) {
+		t.Fatal("automatic retry scenario must exercise a successful full delivery only")
+	}
+	fixture, fakeStage, _ := preparedManualLyricsFLACStage(t, scenario.automaticRetry)
 	t.Cleanup(func() { _ = fakeStage.Close() })
+	mka, withCover, removal, continuous := scenario.mka, scenario.withCover, scenario.removal, scenario.continuous
 	currentPath := filepath.Join(fixture.output, "current.flac")
 	if mka {
 		if withCover {
@@ -116,14 +136,15 @@ func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, contin
 			t.Fatal(err)
 		}
 	}
-	throughAdmission := len(options) > 0 && options[0]
-	nestedPath := len(options) > 1 && options[1]
-	dbReplacement := len(options) > 2 && options[2]
-	nativeReplacement := len(options) > 3 && options[3]
-	commitFailure := len(options) > 4 && options[4]
-	installedAckLost := len(options) > 5 && options[5]
-	cleanupIntentFailure := len(options) > 6 && options[6]
-	delivery := len(options) > 7 && options[7]
+	throughAdmission := scenario.throughAdmission
+	nestedPath := scenario.nestedPath
+	dbReplacement := scenario.dbReplacement
+	nativeReplacement := scenario.nativeReplacement
+	commitFailure := scenario.commitFailure
+	installedAckLost := scenario.installedAckLost
+	cleanupIntentFailure := scenario.cleanupIntentFailure
+	delivery := scenario.delivery
+	automaticRetry := scenario.automaticRetry
 	if nestedPath {
 		currentPath = filepath.Join(fixture.output, "Artist", "Album", "Current.FLAC")
 		if err := os.MkdirAll(filepath.Dir(currentPath), 0o700); err != nil {
@@ -157,15 +178,39 @@ func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, contin
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Capture the exact target baseline only after all native metadata, cover,
+	// path, and timestamp fixture mutations are complete.
+	originalDigest := sha256.Sum256(original)
 	input := fixture.repo.input.Clone()
 	if nestedPath {
 		input.Rewrite.RelativePath = "Artist/Album/Current.FLAC"
 	}
 	input.DesiredTags = map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}
 	installationID := uuid.New()
+	var automaticToolRoot string
+	toolRelative := filepath.ToSlash(filepath.Join("ffmpeg", "7.0"))
 	input.Tools = []persistence.SourceAnalysisToolSelection{
 		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "1", VersionBanner: "ffmpeg version 1"},
 		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "1", VersionBanner: "ffprobe version 1"},
+	}
+	if automaticRetry {
+		input.Tools = []persistence.SourceAnalysisToolSelection{
+			{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: toolRelative, Executable: "ffmpeg", Version: "7.0", VersionBanner: "ffmpeg version 7.0 build"},
+			{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: toolRelative, Executable: "ffprobe", Version: "7.0", VersionBanner: "ffprobe version 7.0 build"},
+		}
+		automaticToolRoot = t.TempDir()
+		packageDir := filepath.Join(automaticToolRoot, filepath.FromSlash(toolRelative))
+		if err := os.MkdirAll(packageDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"ffmpeg", "ffprobe"} {
+			if runtime.GOOS == "windows" {
+				name += ".exe"
+			}
+			if err := os.WriteFile(filepath.Join(packageDir, name), []byte("controlled integration command transport"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	var mkaPinned *pinnedToolRepo
 	if mka {
@@ -174,13 +219,15 @@ func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, contin
 		input.Rewrite.RelativePath = "current.mka"
 		input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "mp3", Container: publication.AudioContainerMKA, Lossless: &lossless, Channels: &channels, Bitrate: &bitrate, SampleRate: &sampleRate, SupportedSourceContainer: true}
 	}
-	input.ManualLyrics.State = "value"
-	input.ManualLyrics.Value = "[00:01.00]native PostgreSQL lyrics\r\n"
-	if removal {
-		input.ManualLyrics.State = "explicit_empty"
-		input.ManualLyrics.Value = ""
+	if !automaticRetry {
+		input.ManualLyrics = &persistence.PublicationManualLyricsInput{ExpectedMetadataRevision: 7, ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration, State: "value", Value: "[00:01.00]native PostgreSQL lyrics\r\n"}
+		if removal {
+			input.ManualLyrics.State = "explicit_empty"
+			input.ManualLyrics.Value = ""
+		}
+	} else {
+		input.ManualLyrics = nil
 	}
-	input.ManualLyrics.ExpectedMetadataRevision = 7
 	info, err := os.Stat(currentPath)
 	if err != nil {
 		t.Fatal(err)
@@ -224,6 +271,13 @@ func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, contin
 	if removal && (len(capture.Tags["LYRICS"]) != 1 || actualAssets.Lyrics.State != persistence.PublicationAssetEmbedded) {
 		t.Fatal("removal fixture must contain actual current lyrics")
 	}
+	if automaticRetry {
+		input.AutomaticLyricsRetry = &persistence.PublicationAutomaticLyricsRetryInput{ExpectedMetadataRevision: 7, ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration, CurrentAssets: actualAssets}
+		fixture.repo.input = input.Clone()
+		if input.AutomaticLyricsRetry == nil || input.ManualLyrics != nil || input.Audio != nil {
+			t.Fatal("retry fixture did not freeze exclusive automatic retry authority")
+		}
+	}
 	if err := input.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +320,13 @@ func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, contin
 	}
 	exec(`INSERT INTO local_release(id,title) VALUES (?,'native lyrics')`, releaseID)
 	exec(`INSERT INTO local_track(id,title) VALUES (?,'native lyrics')`, trackID)
-	exec(`INSERT INTO release_track(id,release_id,track_id,position,metadata_revision) VALUES (?,?,?,0,?)`, guard.ExpectedPositionID, releaseID, trackID, input.ManualLyrics.ExpectedMetadataRevision)
+	metadataRevision := int64(7)
+	if automaticRetry {
+		metadataRevision = input.AutomaticLyricsRetry.ExpectedMetadataRevision
+	} else {
+		metadataRevision = input.ManualLyrics.ExpectedMetadataRevision
+	}
+	exec(`INSERT INTO release_track(id,release_id,track_id,position,metadata_revision) VALUES (?,?,?,0,?)`, guard.ExpectedPositionID, releaseID, trackID, metadataRevision)
 	if err := tx.QueryRowContext(ctx, `INSERT INTO river_job(kind,args,state,attempt) VALUES ('publish_track_v1','{}','running',1) RETURNING id`).Scan(&guard.RiverJobID); err != nil {
 		t.Fatal(err)
 	}
@@ -308,9 +368,53 @@ func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, contin
 		t.Fatal(err)
 	}
 	repository := persistence.NewSetupManagerRepository(db)
+	if automaticRetry {
+		if err := persistence.NewSettingsRepository(db).Set(ctx, settings.ToolsDirectoryKey, automaticToolRoot); err != nil {
+			t.Fatalf("seed managed tools root: %v", err)
+		}
+		versions := map[string]string{}
+		for _, executable := range tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS) {
+			versions[executable] = strings.TrimSuffix(executable, ".exe") + " version 7.0 build"
+		}
+		versionJSON, err := json.Marshal(versions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verified := time.Now().UTC()
+		if err := repository.CreateInstallation(ctx, &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "integration fixture", ReleaseIdentity: "7.0", RelativePath: filepath.FromSlash(toolRelative), State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVersions: versionJSON}); err != nil {
+			t.Fatalf("seed verified managed ffmpeg installation: %v", err)
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO operation_tool_read_hold(operation_id,installation_id) VALUES (?,?)`, guard.OperationID, installationID); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE operation SET tools_read_required=true WHERE id=?`, guard.OperationID); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if delivery {
-		registry := settings.New(persistence.NewSettingsRepository(db), nil)
-		if err := registry.SetOutputDirectory(ctx, fixture.output, ""); err != nil {
+		store := persistence.NewSettingsRepository(db)
+		registry := settings.New(store, nil)
+		// This fixture restores an already populated publication root, not a new
+		// setup directory. Observe its native semantics before seeding settings.
+		semantics, err := settings.ProbeOutputDirectory(fixture.output, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		settingsValues := map[string]string{
+			settings.OutputDirectoryKey:            fixture.output,
+			settings.OutputCaseSensitiveKey:        fmt.Sprint(semantics.CaseSensitive),
+			settings.OutputUnicodeNormalizationKey: semantics.UnicodeNormalization,
+		}
+		if err := store.SetMany(ctx, settingsValues); err != nil {
 			t.Fatal(err)
 		}
 		commands, err := NewPublicationJobCommands(1<<20, 64<<10)
@@ -318,7 +422,87 @@ func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, contin
 			t.Fatal(err)
 		}
 		executor := NewPublicationExecutor(repository, registry, tools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), commands)
+		var retryLookup *automaticRetryLookup
+		if automaticRetry {
+			retryLookup = &automaticRetryLookup{}
+			if scenario.retryLyricsMismatch {
+				executor.metadata = &automaticRetryMissingLyricsWriter{}
+			}
+			executor.commands = &automaticRetryCommands{probeJSON: automaticRetryProbeFixture(t)}
+			if scenario.editManualAuthorityDuringLookup {
+				retryLookup.onLookup = func() error {
+					envelope := librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition, Desired: map[string]librarymetadata.FieldValue{
+						"synced_lyrics": librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
+					}}
+					rawEnvelope, err := json.Marshal(envelope)
+					if err != nil {
+						return err
+					}
+					result, err := db.ExecContext(ctx, `UPDATE release_track SET metadata=jsonb_set(COALESCE(metadata,'{}'::jsonb),'{local_metadata}',?::jsonb,true),metadata_revision=metadata_revision+1 WHERE id=?`, string(rawEnvelope), guard.ExpectedPositionID)
+					if err != nil {
+						return err
+					}
+					rows, err := result.RowsAffected()
+					if err != nil {
+						return err
+					}
+					if rows != 1 {
+						return fmt.Errorf("changed manual authority rows affected = %d, want 1", rows)
+					}
+					return nil
+				}
+			}
+			executor.lyrics = NewPublicationLyricsResolver(automaticRetryEnabled{}, retryLookup)
+		}
 		err = executor.ExecutePublicationDelivery(ctx, guard.OperationID, guard.RiverJobID, guard.RiverAttempt)
+		if automaticRetry && scenario.editManualAuthorityDuringLookup {
+			if len(retryLookup.requests) != 1 || retryLookup.requests[0].Duration <= 0 || retryLookup.requests[0].Duration == math.Trunc(retryLookup.requests[0].Duration) {
+				t.Fatalf("authority conflict did not follow exact fractional lookup: %+v", retryLookup.requests)
+			}
+			if err == nil {
+				t.Fatal("retry exposed output after manual lyrics authority changed")
+			}
+			var revision int64
+			var metadataRaw []byte
+			if readErr := db.NewRaw(`SELECT metadata_revision,metadata FROM release_track WHERE id=?`, guard.ExpectedPositionID).Scan(ctx, &revision, &metadataRaw); readErr != nil || revision != 8 {
+				t.Fatalf("manual authority callback did not persist revision 8: revision=%d err=%v", revision, readErr)
+			}
+			var metadataRoot map[string]json.RawMessage
+			if json.Unmarshal(metadataRaw, &metadataRoot) != nil {
+				t.Fatalf("decode changed authority metadata: %s", metadataRaw)
+			}
+			envelope, envelopeErr := librarymetadata.DecodeEnvelope(metadataRoot["local_metadata"])
+			if envelopeErr != nil || envelope.Desired["synced_lyrics"].State != librarymetadata.StateExplicitEmpty {
+				t.Fatalf("manual authority callback did not persist explicit-empty lyrics authority: metadata=%s", metadataRaw)
+			}
+			attempt, readErr := repository.ReadPublicationAttempt(ctx, guard.OperationID)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			var journal []json.RawMessage
+			if json.Unmarshal(attempt.MutationJournal, &journal) != nil {
+				t.Fatal("decode retry journal after authority denial")
+			}
+			for _, raw := range journal {
+				var header struct {
+					Kind string `json:"kind"`
+				}
+				if json.Unmarshal(raw, &header) != nil || header.Kind == "publication_exposure" || header.Kind == "publication_replacement" {
+					t.Fatalf("authority denial retained exposure/replacement evidence: %s", raw)
+				}
+			}
+			got, readErr := os.ReadFile(currentPath)
+			gotDigest := sha256.Sum256(got)
+			if readErr != nil || !bytes.Equal(got, original) || gotDigest != originalDigest {
+				t.Fatalf("authority conflict changed current artifact: baseline=%x current=%x err=%v", originalDigest, gotDigest, readErr)
+			}
+			var generation uuid.UUID
+			if readErr := db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, guard.ExpectedPositionID).Scan(ctx, &generation); readErr != nil || generation != input.Rewrite.CurrentGeneration {
+				t.Fatalf("authority conflict changed current generation: %s %v", generation, readErr)
+			}
+			assertReplacementDBCounts(t, ctx, db, guard.OperationID, guard.ExpectedPositionID, 1, 1, 0, 1, 0)
+			return
+		}
 		if runtime.GOOS == "windows" {
 			if !errors.Is(err, sourcefs.ErrUnsupported) {
 				t.Fatalf("manual lyrics executor error = %v, want sourcefs.ErrUnsupported", err)
@@ -333,17 +517,42 @@ func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, contin
 			t.Fatalf("published target unavailable: %v", err)
 		}
 		finalCapture, err := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true})
-		if err != nil || !reflect.DeepEqual(finalCapture.Tags["LYRICS"], []string{input.ManualLyrics.Value}) {
+		wantLyrics := "[00:01.00]native PostgreSQL lyrics\r\n"
+		if automaticRetry {
+			wantLyrics = automaticRetryLyrics
+			if len(retryLookup.requests) != 1 || retryLookup.requests[0].Duration <= 0 || retryLookup.requests[0].Duration == math.Trunc(retryLookup.requests[0].Duration) {
+				t.Fatalf("retry exact lookup requests = %+v", retryLookup.requests)
+			}
+		} else {
+			wantLyrics = input.ManualLyrics.Value
+		}
+		wantLyricValues := []string{wantLyrics}
+		if scenario.retryLyricsMismatch {
+			wantLyricValues = nil
+			writer := executor.metadata.(*automaticRetryMissingLyricsWriter)
+			if writer.calls != 2 {
+				t.Fatalf("fallback native metadata writes=%d, want initial plus one rebuild", writer.calls)
+			}
+		}
+		if err != nil || !reflect.DeepEqual(finalCapture.Tags["LYRICS"], wantLyricValues) {
 			t.Fatalf("executor-installed lyrics = %#v, %v", finalCapture.Tags["LYRICS"], err)
+		}
+		if automaticRetry && (!reflect.DeepEqual(finalCapture.Tags["TITLE"], []string{"Track"}) || !reflect.DeepEqual(finalCapture.Tags["ARTIST"], []string{"Artist"})) {
+			t.Fatalf("retry changed mandatory tags: %#v", finalCapture.Tags)
+		}
+		if automaticRetry {
+			assertAutomaticRetrySettledInDB(t, ctx, db, guard, input, scenario.retryLyricsMismatch)
 		}
 		if err := baselineArtwork.VerifyEquivalent(ctx, currentPath); err != nil {
 			t.Fatalf("executor replacement changed native artwork/audio: %v", err)
 		}
-		projection, err := repository.ReadManualLyricsReceiptProjection(ctx, guard.ExpectedPositionID)
-		if err != nil || projection.Pending || projection.Receipt == nil || projection.CurrentGeneration == nil || *projection.CurrentGeneration != guard.CandidateGeneration {
-			t.Fatalf("executor receipt/current projection = %+v, %v", projection, err)
+		if !automaticRetry {
+			projection, err := repository.ReadManualLyricsReceiptProjection(ctx, guard.ExpectedPositionID)
+			if err != nil || projection.Pending || projection.Receipt == nil || projection.CurrentGeneration == nil || *projection.CurrentGeneration != guard.CandidateGeneration {
+				t.Fatalf("executor receipt/current projection = %+v, %v", projection, err)
+			}
+			assertReplacementSettledInDB(t, ctx, db, repository, guard, input)
 		}
-		assertReplacementSettledInDB(t, ctx, db, repository, guard, input)
 		return
 	}
 	commitRepository := &manualLyricsReplacementCommitFailureRepository{SetupManagerRepository: repository}
@@ -405,6 +614,9 @@ func testPreparedManualLyricsOwner(t *testing.T, mka, withCover, removal, contin
 		releaseCount++
 		if nativeReplacement && !commitFailure && runtime.GOOS != "windows" {
 			assertReplacementSettledInDB(t, ctx, db, repository, guard, input)
+		}
+		if automaticRetry && runtime.GOOS != "windows" {
+			assertAutomaticRetrySettledInDB(t, ctx, db, guard, input, scenario.retryLyricsMismatch)
 		}
 		release()
 	}
@@ -1064,6 +1276,45 @@ func assertReplacementSettledInDB(t *testing.T, ctx context.Context, db *bun.DB,
 			if record.OperationID == guard.OperationID {
 				t.Errorf("settled operation remains in startup snapshot: %+v", record)
 			}
+		}
+	}
+}
+
+func assertAutomaticRetrySettledInDB(t *testing.T, ctx context.Context, db *bun.DB, guard persistence.PublicationDeliveryGuard, input persistence.PublicationInputs, fallback bool) {
+	t.Helper()
+	if input.AutomaticLyricsRetry == nil || input.ManualLyrics != nil {
+		t.Errorf("settled retry input mixed automatic and manual authority")
+		return
+	}
+	var generation uuid.UUID
+	var raw []byte
+	if err := db.NewRaw(`SELECT generation,initial_lyrics FROM track_publication WHERE position_id=?`, guard.ExpectedPositionID).Scan(ctx, &generation, &raw); err != nil {
+		t.Errorf("read settled automatic retry projection: %v", err)
+		return
+	}
+	var projection persistence.PublicationInitialLyricsProjection
+	digest := sha256.Sum256([]byte(automaticRetryLyrics))
+	wantOutcome, wantWarning := persistence.PublicationOptionalLyricsExactRoundTrip, ""
+	if fallback {
+		wantOutcome, wantWarning = persistence.PublicationOptionalLyricsRebuiltWithoutLyrics, "readback_mismatch"
+	}
+	if err := json.Unmarshal(raw, &projection); err != nil || generation != guard.CandidateGeneration || projection.Version != 1 || projection.Generation != guard.CandidateGeneration || projection.Source != "lrclib" || projection.SHA256 != fmt.Sprintf("%x", digest) || projection.Outcome != wantOutcome || projection.OutcomeWarningCode != wantWarning || projection.AuthorityMetadataRevision != input.AutomaticLyricsRetry.ExpectedMetadataRevision || projection.Authority != "automatic" {
+		t.Errorf("settled retry projection = %+v generation=%s err=%v", projection, generation, err)
+	}
+	for _, check := range []struct {
+		name  string
+		query string
+	}{
+		{name: "manual lyrics receipts", query: `SELECT count(*) FROM publication_manual_lyrics_receipt WHERE position_id=?`},
+		{name: "source holds", query: `SELECT count(*) FROM publication_source_hold WHERE operation_id=?`},
+	} {
+		argument := any(guard.OperationID)
+		if check.name == "manual lyrics receipts" {
+			argument = guard.ExpectedPositionID
+		}
+		var count int
+		if err := db.NewRaw(check.query, argument).Scan(ctx, &count); err != nil || count != 0 {
+			t.Errorf("automatic retry %s count = %d, %v; want zero", check.name, count, err)
 		}
 	}
 }

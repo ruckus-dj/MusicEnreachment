@@ -43,6 +43,12 @@ type PublicationMetadataWriter interface {
 	Write(context.Context, string, map[string][]string, *metadata.Cover) (metadata.WriteResult, error)
 }
 
+// publicationFlacArtworkMetadataWriter preserves the snapshot-bound native
+// FLAC write path while allowing tests to control its real taglib operation.
+type publicationFlacArtworkMetadataWriter interface {
+	WriteFlacTagsPreservingArtwork(context.Context, string, map[string][]string, metadata.FlacArtworkSnapshot) (metadata.WriteResult, error)
+}
+
 // PublicationPinnedTools resolves only the executables admitted in the frozen
 // contract; implementations must not consult mutable active-tool settings.
 type PublicationPinnedTools interface {
@@ -201,6 +207,40 @@ func (runner PublicationStagingRunner) runWithValidatedStage(ctx context.Context
 			err = errors.New("pinned ffmpeg path is not absolute")
 		}
 		return result, fmt.Errorf("resolve pinned publication ffmpeg: %w", err)
+	}
+	if input.AutomaticLyricsRetry != nil {
+		observed, err := runner.runAutomaticLyricsRetryStage(ctx, scope, reservation, input, stage, func(ctx context.Context) error {
+			if err := check(); err != nil {
+				return err
+			}
+			if input.Rewrite.AudioFacts.Container == publication.AudioContainerFLAC {
+				prepared, ok := stage.(*preparedPublicationStage)
+				if !ok {
+					return errors.New("FLAC lyrics retry requires its owned prepared stage")
+				}
+				return prepared.automaticLyricsRetryNativeCopy(ctx, scope, reservation)
+			}
+			_, err := scope.Run(ctx, ffmpeg, args...)
+			return err
+		}, check)
+		if err != nil {
+			return result, err
+		}
+		for _, phase := range []string{"preparing", "staged"} {
+			if err := check(); err != nil {
+				return result, err
+			}
+			if changed, err := runner.Repository.AdvancePublicationStage(ctx, guard, phase, observed.Clone()); err != nil || !changed {
+				return result, errors.Join(errors.New("automatic lyrics retry stage transition was not accepted"), err)
+			}
+		}
+		result = PublicationStageObservation{Ownership: observed.Ownership, Audio: observed.ActualAudio, Metadata: observed.ActualMetadata, SHA256: observed.PayloadSHA256, Assets: observed.ActualAssets, QualityPolicyVersion: observed.QualityPolicyVersion}
+		if continuation != nil {
+			if err := continuation(ctx, observed.Clone(), stage, reservation); err != nil {
+				return result, err
+			}
+		}
+		return result, nil
 	}
 	if input.IntentKind == "audio" {
 		observed, err := runner.runInitialLyricsStage(ctx, scope, reservation, input, stage, func(ctx context.Context) error {

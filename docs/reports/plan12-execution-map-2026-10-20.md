@@ -2,6 +2,30 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+### Последующее уточнение: интеграция source-free lyrics retry core
+
+Поверх `d1a0ca1` интегрирован ранее изолированный retry core. Полный integrated
+`task verify` прошёл; финальное integration review не выявило P1/P2. Commit/CI
+ещё не подтверждены. Public admission/API/UI остаются выключенными.
+
+Native FLAC + PostgreSQL сценарии действительно исполняют automatic retry без
+исходника и manual receipt: fractional-duration lookup, сохранение mandatory
+tags, encoded audio и полного PICTURE, replacement и settlement. Процессы probe
+управляются тестовым transport; TagLib, filesystem и PostgreSQL настоящие.
+Readback mismatch проходит один durable-ACK rebuild и завершает settlement.
+Отдельный committed-fallback тест проверяет boundary 15, cleanup suffixes,
+replay/recovery и отбрасывание подменённого rebuilt candidate.
+
+При интеграции сохранены новые stage-validator dependencies, source mode и
+channel layout. Retry commit переносит source authority транзакционно до
+планирования cleanup. Same-generation drift пока проверен fake-repository
+сценарием, не отдельным real-PG regression; runtime acceptance retry не выполнен.
+
+CI `a768a26` attempt 2 не прошёл: Windows остановился на разрешении версии Task,
+Docker smoke — на HTTP 500 Docker Hub при скачивании PostgreSQL до старта app.
+Failed jobs перезапущены. `d1a0ca1` фиксирует локально проверенный Task 3.54.0;
+его полный CI пока не подтверждён. Это не свидетельство завершения плана.
+
 ### Следующий срез: immutable attempt-owned effective cover receipt
 
 В рабочее дерево перенесена migration `20261029000003` с отдельным frozen
