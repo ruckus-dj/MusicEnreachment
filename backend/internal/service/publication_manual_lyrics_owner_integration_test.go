@@ -105,6 +105,7 @@ type manualLyricsScenario struct {
 	cleanupIntentFailure, delivery, automaticRetry     bool
 	editManualAuthorityDuringLookup                    bool
 	retryLyricsMismatch                                bool
+	sourceAuthorityMode                                string
 }
 
 func testPreparedManualLyricsFLACOwner(t *testing.T, scenario manualLyricsScenario) {
@@ -348,6 +349,15 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 		encode(persistence.PublicationCurrentAudio{Version: 1, Facts: input.Rewrite.AudioFacts}),
 		encode(persistence.PublicationCommitMetadata{Version: 1, Tags: capture.Tags}),
 		encode(actualAssets))
+	var seededSourceAuthority *persistence.PositionSourceAuthority
+	if scenario.sourceAuthorityMode != "" {
+		if scenario.sourceAuthorityMode != "manual" && scenario.sourceAuthorityMode != "automatic" {
+			t.Fatalf("unsupported fixture source authority mode %q", scenario.sourceAuthorityMode)
+		}
+		authority := persistence.PositionSourceAuthority{PositionID: guard.ExpectedPositionID, Mode: scenario.sourceAuthorityMode, Revision: uuid.New(), PublicationEpoch: epoch, PublicationGeneration: input.Rewrite.CurrentGeneration, SourceLocationID: uuid.New(), MediaVariantID: uuid.New()}
+		exec(`INSERT INTO position_source_authority(position_id,mode,revision,publication_epoch,publication_generation,source_location_id,media_variant_id) VALUES (?,?,?,?,?,?,?)`, authority.PositionID, authority.Mode, authority.Revision, authority.PublicationEpoch, authority.PublicationGeneration, authority.SourceLocationID, authority.MediaVariantID)
+		seededSourceAuthority = &authority
+	}
 	for _, node := range nodes {
 		claimID := uuid.New()
 		namespaceDigest := sha256.Sum256([]byte(node.CanonicalKey))
@@ -507,6 +517,27 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 			if !errors.Is(err, sourcefs.ErrUnsupported) {
 				t.Fatalf("manual lyrics executor error = %v, want sourcefs.ErrUnsupported", err)
 			}
+			t.Logf("native replacement failed closed before exposure on Windows: %v", err)
+			got, readErr := os.ReadFile(currentPath)
+			gotDigest := sha256.Sum256(got)
+			if readErr != nil || !bytes.Equal(got, original) || gotDigest != originalDigest {
+				t.Fatalf("unsupported native replacement changed G0: baseline=%x current=%x err=%v", originalDigest, gotDigest, readErr)
+			}
+			var generation uuid.UUID
+			if readErr := db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, guard.ExpectedPositionID).Scan(ctx, &generation); readErr != nil || generation != input.Rewrite.CurrentGeneration {
+				t.Fatalf("unsupported native replacement changed current generation: %s %v", generation, readErr)
+			}
+			if automaticRetry {
+				if len(retryLookup.requests) != 1 || retryLookup.requests[0].Duration <= 0 || retryLookup.requests[0].Duration == math.Trunc(retryLookup.requests[0].Duration) {
+					t.Fatalf("Windows retry exact lookup requests = %+v, want one fractional-duration lookup", retryLookup.requests)
+				}
+				if scenario.retryLyricsMismatch {
+					writer, ok := executor.metadata.(*automaticRetryMissingLyricsWriter)
+					if !ok || writer.calls != 2 {
+						t.Fatalf("Windows fallback native metadata writes = %v, want initial plus one rebuild", executor.metadata)
+					}
+				}
+			}
 			assertReplacementStillExposed(t, ctx, db, repository, guard, input)
 			return
 		}
@@ -542,6 +573,7 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 		}
 		if automaticRetry {
 			assertAutomaticRetrySettledInDB(t, ctx, db, guard, input, scenario.retryLyricsMismatch)
+			assertRetrySourceAuthorityPreserved(t, ctx, repository, guard.ExpectedPositionID, seededSourceAuthority, guard.CandidateGeneration)
 		}
 		if err := baselineArtwork.VerifyEquivalent(ctx, currentPath); err != nil {
 			t.Fatalf("executor replacement changed native artwork/audio: %v", err)
@@ -1258,7 +1290,11 @@ func assertReplacementStillExposed(t *testing.T, ctx context.Context, db *bun.DB
 	if err != nil || projection.CurrentGeneration == nil || *projection.CurrentGeneration != input.Rewrite.CurrentGeneration || projection.Receipt != nil {
 		t.Fatalf("unsupported replacement changed G0 or created a receipt: %+v, %v", projection, err)
 	}
-	assertReplacementDBCounts(t, ctx, db, guard.OperationID, guard.ExpectedPositionID, 1, 1, 0, 0, 0)
+	wantToolHolds := 0
+	if input.AutomaticLyricsRetry != nil {
+		wantToolHolds = 1
+	}
+	assertReplacementDBCounts(t, ctx, db, guard.OperationID, guard.ExpectedPositionID, 1, 1, 0, wantToolHolds, 0)
 }
 
 func assertReplacementSettledInDB(t *testing.T, ctx context.Context, db *bun.DB, repository *persistence.SetupManagerRepository, guard persistence.PublicationDeliveryGuard, input persistence.PublicationInputs) {
@@ -1316,6 +1352,23 @@ func assertAutomaticRetrySettledInDB(t *testing.T, ctx context.Context, db *bun.
 		if err := db.NewRaw(check.query, argument).Scan(ctx, &count); err != nil || count != 0 {
 			t.Errorf("automatic retry %s count = %d, %v; want zero", check.name, count, err)
 		}
+	}
+}
+
+func assertRetrySourceAuthorityPreserved(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, positionID uuid.UUID, before *persistence.PositionSourceAuthority, candidateGeneration uuid.UUID) {
+	t.Helper()
+	after, err := repository.ReadPositionSourceAuthority(ctx, positionID)
+	if err != nil {
+		t.Fatalf("read retry source authority: %v", err)
+	}
+	if before == nil {
+		if after != nil {
+			t.Errorf("legacy unknown source authority became known after retry: %+v", after)
+		}
+		return
+	}
+	if after == nil || after.Mode != before.Mode || after.Revision != before.Revision || after.SourceLocationID != before.SourceLocationID || after.MediaVariantID != before.MediaVariantID || after.PublicationEpoch != before.PublicationEpoch || after.PublicationGeneration != candidateGeneration {
+		t.Errorf("retry source authority = %+v, want mode/revision/source identities preserved and generation %s", after, candidateGeneration)
 	}
 }
 

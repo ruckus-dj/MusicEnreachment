@@ -135,9 +135,17 @@ func TestAutomaticLyricsRetryRejectsChangedManualAuthorityBeforeExposurePostgreS
 }
 
 func TestAutomaticLyricsRetryReplacesOwnedNativeCurrentArtifactPostgreSQL(t *testing.T) {
-	testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{
-		withCover: true, delivery: true, automaticRetry: true,
-	})
+	for _, mode := range []string{"manual", "automatic", ""} {
+		name := mode
+		if name == "" {
+			name = "legacy_unknown"
+		}
+		t.Run(name, func(t *testing.T) {
+			testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{
+				withCover: true, delivery: true, automaticRetry: true, sourceAuthorityMode: mode,
+			})
+		})
+	}
 }
 
 type automaticRetryMissingLyricsWriter struct {
@@ -155,9 +163,17 @@ func (writer *automaticRetryMissingLyricsWriter) WriteFlacTagsPreservingArtwork(
 }
 
 func TestAutomaticLyricsRetryMismatchRebuildSettlesNativeReplacementPostgreSQL(t *testing.T) {
-	testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{
-		withCover: true, delivery: true, automaticRetry: true, retryLyricsMismatch: true,
-	})
+	for _, mode := range []string{"manual", "automatic", ""} {
+		name := mode
+		if name == "" {
+			name = "legacy_unknown"
+		}
+		t.Run(name, func(t *testing.T) {
+			testPreparedManualLyricsFLACOwner(t, manualLyricsScenario{
+				withCover: true, delivery: true, automaticRetry: true, retryLyricsMismatch: true, sourceAuthorityMode: mode,
+			})
+		})
+	}
 }
 
 func TestAutomaticLyricsRetryTopologyAllowsOnlyFrozenAttachedCover(t *testing.T) {

@@ -2,6 +2,38 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+### Последующее исправление Windows fixture и source-authority coverage
+
+Поверх `3ee2a2c` исправлен именно общий `assertReplacementStillExposed`:
+automatic retry сохраняет один tool hold, manual path — ноль. Windows branch
+по-прежнему требует точный `ErrUnsupported`, сохраняет G0 bytes/digest/generation
+и unresolved attempt/claim, проверяет один fractional lookup и две native записи
+при fallback. Guards не ослаблены, Windows не пропускается. Повторный local
+`task verify` после исправления прошёл; Windows-подтверждение ожидается от CI.
+
+Native happy/fallback PG tests дополнительно проходят manual/automatic/legacy
+unknown source authority: mode, revision и source identities сохраняются при
+переходе generation; legacy unknown не фабрикуется. Source authority manual не
+создаёт manual-lyrics receipt или source holds. Финальное review подтвердило
+закрытие P2 и не выявило новых P1/P2 в проверенном scope.
+
+**Позднейшее CI-подтверждение:** `a768a26` / `39801637539` после повторов
+прошёл полностью, включая Windows, Docker smoke и container image (проверены
+статусы всех jobs через API). `d1a0ca1` / `39803940188` также полностью успешен.
+Однако retry core `a5dbb9d` / `39805993808` выявил отдельный Windows test failure:
+happy/fallback delivery оставляет tool hold, а assertion скрывает исходный
+executor error. Это не infrastructure-only failure; причина расследуется,
+автоматический rerun вместо исправления не выполнялся.
+
+**Уточнение диагноза Windows:** read-only анализ установил ошибку fixture:
+Windows-ветка уже проверяет `sourcefs.ErrUnsupported` до assertion, но общий
+helper ожидает ноль tool holds от manual сценария. Automatic retry создаёт один
+hold и обязан сохранить его при unresolved exposed attempt. Исправляется
+ожидание и усиливаются проверки неизменности G0 и точного fallback frontier.
+Это не доказательство успешной Windows publication: существующая native
+durability boundary отказывает до atomic replacement. Platform capability
+остаётся явным ограничением проверки, а не разрешением ослабить guards.
+
 ### Последующее уточнение: typed optional-assets metadata writer
 
 Поверх retry core `a5dbb9d` перенесён `WriteWithOptionalAssets` с независимыми
