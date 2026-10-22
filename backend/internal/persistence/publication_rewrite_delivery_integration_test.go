@@ -77,6 +77,55 @@ func TestCheckPublicationRewriteForDeliveryTracksCurrentArtifactAndClaimStatePos
 		}
 	}
 	check(true)
+	for _, test := range []struct {
+		name   string
+		column string
+		value  func() (string, error)
+	}{
+		{
+			name:   "ownership identity drift at same generation",
+			column: "ownership",
+			value: func() (string, error) {
+				changed := identity
+				changed.SHA256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+				raw, err := json.Marshal(PublicationCurrentOwnership{Version: 1, Identity: changed})
+				return string(raw), err
+			},
+		},
+		{
+			name:   "audio facts drift at same generation",
+			column: "actual_audio",
+			value: func() (string, error) {
+				changed := facts
+				changed.StreamIndex = 1
+				raw, err := json.Marshal(PublicationCurrentAudio{Version: 1, Facts: changed})
+				return string(raw), err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed, err := test.value()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.db.NewRaw(`UPDATE track_publication SET `+test.column+`=?::jsonb WHERE position_id=? AND epoch=? AND generation=?`, changed, f.guard.ExpectedPositionID, f.guard.Epoch, currentGeneration).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var generation uuid.UUID
+			if err := f.db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &generation); err != nil || generation != currentGeneration {
+				t.Fatalf("drift fixture changed generation: %s, %v", generation, err)
+			}
+			check(false)
+			baseline := string(ownership)
+			if test.column == "actual_audio" {
+				baseline = string(actualAudio)
+			}
+			if _, err := f.db.NewRaw(`UPDATE track_publication SET `+test.column+`=?::jsonb WHERE position_id=? AND epoch=? AND generation=?`, baseline, f.guard.ExpectedPositionID, f.guard.Epoch, currentGeneration).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+			check(true)
+		})
+	}
 	if ok, err := repo.AdvancePublicationStage(ctx, f.guard, "preparing", newValidPublicationStageObservation()); err != nil || !ok {
 		t.Fatalf("stage = %t, %v", ok, err)
 	}

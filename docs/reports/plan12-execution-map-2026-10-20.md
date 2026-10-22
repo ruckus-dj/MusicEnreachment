@@ -2,6 +2,15 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+**Позднейшее дополнение same-generation coverage:** поверх `ab73b2b` добавлены
+real-PG ownership/audio drift cases в
+`TestCheckPublicationRewriteForDeliveryTracksCurrentArtifactAndClaimStatePostgreSQL`.
+Они меняют фактический current JSON при прежних epoch/generation, требуют отказа
+rewrite guard и подтверждают повторный успех после восстановления baseline.
+Полный `task verify` прошёл. Это доказывает DB-guard detection, а не отдельный
+native filesystem race delivery; прежнее замечание о fake-only проверке
+усилено именно в указанной границе. Финальное review не выявило замечаний.
+
 ### Последующее исправление Windows fixture и source-authority coverage
 
 Поверх `3ee2a2c` исправлен именно общий `assertReplacementStillExposed`:

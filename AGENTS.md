@@ -204,6 +204,12 @@ never remove gates or mistake an incomplete platform matrix for full success.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 
+Coordinate local full gates across all agent worktrees: run only one `task verify`
+or commit hook at a time. Parallel code work does not authorize concurrent full
+PostgreSQL integration suites. If a gate times out, inspect active tests and DB
+waits before attributing it to contention; do not raise timeouts, skip tests, or
+weaken normal hooks to obtain a pass.
+
 ```bash
 # Prerequisites: Go 1.27, Node 24 LTS, Task 3, golangci-lint 2.14, Docker Compose, pre-commit
 
