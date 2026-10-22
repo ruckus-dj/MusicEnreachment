@@ -491,6 +491,13 @@ export interface PublicationOwnershipResponse {
   size_bytes?: number;
 }
 
+export interface LibraryPublicationSourceCleanupWarning {
+  active_retry_operation_id?: string;
+  can_retry: boolean;
+  original_operation_id: string;
+  safe_error: string;
+}
+
 export interface LibraryPublicationResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -513,6 +520,8 @@ export interface LibraryPublicationResponse {
   metadata_revision: number;
   position_id: string;
   release_id: string;
+  /** @nullable */
+  source_cleanup_warnings?: LibraryPublicationSourceCleanupWarning[] | null;
 }
 
 export interface LibrarySourceLocationResponse {

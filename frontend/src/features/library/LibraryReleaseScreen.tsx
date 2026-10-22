@@ -6,6 +6,7 @@ import {
   getLibraryPublication,
   getLibraryRelease,
   patchLibraryPositionMetadata,
+  retryPublicationSourceCleanup,
   setLibraryPositionPrimaryArtist,
   setLibraryReleasePrimaryArtist,
 } from "../../api/generated/client";
@@ -27,6 +28,8 @@ type PositionData = {
   applying?: boolean;
   applyOperationID?: string;
   firstPublicationOperationID?: string;
+  cleanupRetryOperationIDs?: Record<string, string>;
+  cleanupRetryPendingIDs?: string[];
   notice?: string;
   primaryArtistSaving?: boolean;
   writePending?: boolean;
@@ -64,7 +67,15 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
   const currentReleaseID = useRef(releaseId);
   currentReleaseID.current = releaseId;
   const monitors = useRef(
-    new Map<string, { stop: () => void; positions: Set<string> }>(),
+    new Map<
+      string,
+      {
+        stop: () => void;
+        positions: Set<string>;
+        cleanupWarnings: Map<string, Set<string>>;
+        publicationPositions: Set<string>;
+      }
+    >(),
   );
   const finishedOperations = useRef(new Set<string>());
   const positionReadGenerations = useRef(new Map<string, number>());
@@ -74,6 +85,9 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
     new Map<string, { scope: typeof scope.current; token: number }>(),
   );
   const writeToken = useRef(0);
+  const cleanupRetryLocks = useRef(
+    new Map<string, { scope: typeof scope.current; token: number }>(),
+  );
 
   function acquirePositionWrite(positionId: string) {
     if (positionWriteLocks.current.get(positionId)?.scope === scope.current)
@@ -125,18 +139,31 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         scope.current !== requestScope ||
         positionReadGenerations.current.get(positionId) !== readGeneration
       )
-        return;
+        return undefined;
       if (metadata.status !== 200)
         throw new Error(errorMessage(metadata.data, metadata.status));
       if (publication.status !== 200)
         throw new Error(errorMessage(publication.data, publication.status));
       const field = metadata.data.envelope.desired.lyrics;
+      const warningIDs = new Set(
+        (publication.data.source_cleanup_warnings ?? []).map(
+          (warning) => warning.original_operation_id,
+        ),
+      );
       setPositions((current) => ({
         ...current,
         [positionId]: {
           ...current[positionId],
           metadata: metadata.data,
           publication: publication.data,
+          cleanupRetryOperationIDs: Object.fromEntries(
+            Object.entries(
+              current[positionId]?.cleanupRetryOperationIDs ?? {},
+            ).filter(([warningID]) => warningIDs.has(warningID)),
+          ),
+          cleanupRetryPendingIDs: (
+            current[positionId]?.cleanupRetryPendingIDs ?? []
+          ).filter((warningID) => warningIDs.has(warningID)),
           lyrics: current[positionId]?.draftDirty
             ? (current[positionId]?.lyrics ?? "")
             : field?.state === "value" && typeof field.value === "string"
@@ -146,6 +173,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
           readError: undefined,
         },
       }));
+      return publication.data;
     },
     [releaseId],
   );
@@ -204,17 +232,60 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
   useEffect(() => {
     const requestScope = scope.current;
     const byOperation = new Map<string, Set<string>>();
+    const cleanupByOperation = new Map<string, Map<string, Set<string>>>();
+    const publicationByOperation = new Map<string, Set<string>>();
+    const associate = (operationID: string | undefined, positionID: string) => {
+      if (!operationID || finishedOperations.current.has(operationID)) return;
+      const associated = byOperation.get(operationID) ?? new Set<string>();
+      associated.add(positionID);
+      byOperation.set(operationID, associated);
+    };
+    const associateCleanup = (
+      operationID: string | undefined,
+      positionID: string,
+      originalID: string,
+    ) => {
+      associate(operationID, positionID);
+      if (!operationID || finishedOperations.current.has(operationID)) return;
+      const byPosition = cleanupByOperation.get(operationID) ?? new Map();
+      const warningIDs = byPosition.get(positionID) ?? new Set<string>();
+      warningIDs.add(originalID);
+      byPosition.set(positionID, warningIDs);
+      cleanupByOperation.set(operationID, byPosition);
+    };
+    const associatePublication = (
+      operationID: string | undefined,
+      positionID: string,
+    ) => {
+      associate(operationID, positionID);
+      if (!operationID || finishedOperations.current.has(operationID)) return;
+      const associated =
+        publicationByOperation.get(operationID) ?? new Set<string>();
+      associated.add(positionID);
+      publicationByOperation.set(operationID, associated);
+    };
     for (const [positionId, position] of Object.entries(
       loadedReleaseID === releaseId ? positions : {},
     )) {
-      const operationID =
-        position.applyOperationID ??
-        position.firstPublicationOperationID ??
-        position.publication?.active_attempt?.id;
-      if (!operationID || finishedOperations.current.has(operationID)) continue;
-      const associated = byOperation.get(operationID) ?? new Set<string>();
-      associated.add(positionId);
-      byOperation.set(operationID, associated);
+      associatePublication(position.applyOperationID, positionId);
+      associatePublication(position.firstPublicationOperationID, positionId);
+      associatePublication(
+        position.publication?.active_attempt?.id,
+        positionId,
+      );
+      for (const warning of position.publication?.source_cleanup_warnings ??
+        []) {
+        associateCleanup(
+          warning.active_retry_operation_id,
+          positionId,
+          warning.original_operation_id,
+        );
+        associateCleanup(
+          position.cleanupRetryOperationIDs?.[warning.original_operation_id],
+          positionId,
+          warning.original_operation_id,
+        );
+      }
     }
     for (const [operationID, monitor] of monitors.current) {
       const nextPositions = byOperation.get(operationID);
@@ -223,11 +294,112 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         monitors.current.delete(operationID);
       } else {
         monitor.positions = nextPositions;
+        monitor.cleanupWarnings =
+          cleanupByOperation.get(operationID) ?? new Map();
+        monitor.publicationPositions =
+          publicationByOperation.get(operationID) ?? new Set();
       }
     }
     for (const [operationID, positionIDs] of byOperation) {
       if (monitors.current.has(operationID)) continue;
-      const entry = { stop: () => {}, positions: positionIDs };
+      const entry = {
+        stop: () => {},
+        positions: positionIDs,
+        cleanupWarnings: cleanupByOperation.get(operationID) ?? new Map(),
+        publicationPositions:
+          publicationByOperation.get(operationID) ?? new Set(),
+      };
+      const reconcileCleanup = async (
+        positionID: string,
+        operationID: string,
+        originalIDs: Set<string>,
+        diagnostic?: string,
+      ) => {
+        const readGeneration =
+          (positionReadGenerations.current.get(positionID) ?? 0) + 1;
+        positionReadGenerations.current.set(positionID, readGeneration);
+        try {
+          const response = await getLibraryPublication(releaseId, positionID, {
+            cache: "no-store",
+          });
+          if (
+            !mounted.current ||
+            currentReleaseID.current !== releaseId ||
+            scope.current !== requestScope ||
+            positionReadGenerations.current.get(positionID) !== readGeneration
+          )
+            return;
+          if (response.status !== 200)
+            throw new Error(errorMessage(response.data, response.status));
+          const publication = response.data;
+          finishedOperations.current.add(operationID);
+          const remaining = new Set(
+            (publication.source_cleanup_warnings ?? []).map(
+              (warning) => warning.original_operation_id,
+            ),
+          );
+          setPositions((current) => {
+            if (
+              !mounted.current ||
+              scope.current !== requestScope ||
+              positionReadGenerations.current.get(positionID) !== readGeneration
+            )
+              return current;
+            const previous = current[positionID];
+            const retryIDs = { ...previous?.cleanupRetryOperationIDs };
+            for (const [originalID, retryID] of Object.entries(retryIDs))
+              if (retryID === operationID) delete retryIDs[originalID];
+            const pending = (previous?.cleanupRetryPendingIDs ?? []).filter(
+              (originalID) => !originalIDs.has(originalID),
+            );
+            const stillWarned = [...originalIDs].some((id) =>
+              remaining.has(id),
+            );
+            return {
+              ...current,
+              [positionID]: {
+                ...previous,
+                publication,
+                cleanupRetryOperationIDs: retryIDs,
+                cleanupRetryPendingIDs: pending,
+                error: stillWarned
+                  ? (diagnostic ?? previous?.error)
+                  : undefined,
+              },
+            };
+          });
+        } catch {
+          if (
+            !mounted.current ||
+            scope.current !== requestScope ||
+            positionReadGenerations.current.get(positionID) !== readGeneration
+          )
+            return;
+          setPositions((current) => {
+            if (
+              !mounted.current ||
+              scope.current !== requestScope ||
+              positionReadGenerations.current.get(positionID) !== readGeneration
+            )
+              return current;
+            return {
+              ...current,
+              [positionID]: {
+                ...current[positionID],
+                cleanupRetryPendingIDs: (
+                  current[positionID]?.cleanupRetryPendingIDs ?? []
+                ).filter((originalID) => !originalIDs.has(originalID)),
+                error:
+                  diagnostic ??
+                  "Не удалось проверить очистку источников. Обновите данные публикации.",
+                readError:
+                  diagnostic ??
+                  "Не удалось проверить очистку источников. Обновите данные публикации.",
+              },
+            };
+          });
+        }
+      };
       const stop = subscribeToOperation(
         operationID,
         (snapshot) => {
@@ -238,6 +410,42 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
           )
             return;
           for (const positionID of entry.positions) {
+            const cleanupIDs = entry.cleanupWarnings.get(positionID);
+            const isTerminal = ["succeeded", "failed", "cancelled"].includes(
+              snapshot.state,
+            );
+            if (cleanupIDs?.size && isTerminal) {
+              finishedOperations.current.add(operationID);
+              if (!entry.publicationPositions.has(positionID))
+                void reconcileCleanup(
+                  positionID,
+                  operationID,
+                  cleanupIDs,
+                  "Повтор очистки завершён, предупреждение источника остаётся актуальным.",
+                );
+            }
+            if (!entry.publicationPositions.has(positionID)) {
+              if (cleanupIDs?.size && !isTerminal)
+                void refreshPosition(positionID).catch((reason: unknown) => {
+                  if (!mounted.current || scope.current !== requestScope)
+                    return;
+                  setPositions((current) => ({
+                    ...current,
+                    ...(mounted.current && scope.current === requestScope
+                      ? {
+                          [positionID]: {
+                            ...current[positionID],
+                            readError:
+                              reason instanceof Error
+                                ? reason.message
+                                : "Не удалось обновить публикацию.",
+                          },
+                        }
+                      : {}),
+                  }));
+                });
+              continue;
+            }
             void refreshPosition(positionID)
               .then(() => {
                 if (
@@ -261,8 +469,14 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                       ...current,
                       [positionID]: {
                         ...current[positionID],
-                        applying: false,
-                        applyOperationID: undefined,
+                        applying:
+                          current[positionID]?.applyOperationID === operationID
+                            ? false
+                            : current[positionID]?.applying,
+                        applyOperationID:
+                          current[positionID]?.applyOperationID === operationID
+                            ? undefined
+                            : current[positionID]?.applyOperationID,
                         firstPublicationOperationID:
                           current[positionID]?.firstPublicationOperationID ===
                           operationID
@@ -275,6 +489,14 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                       },
                     };
                   });
+                  const cleanupIDs = entry.cleanupWarnings.get(positionID);
+                  if (cleanupIDs?.size)
+                    void reconcileCleanup(
+                      positionID,
+                      operationID,
+                      cleanupIDs,
+                      "Повтор очистки завершён, предупреждение источника остаётся актуальным.",
+                    );
                 }
               })
               .catch((reason: unknown) => {
@@ -284,6 +506,16 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                   scope.current !== requestScope
                 )
                   return;
+                const cleanupIDs = entry.cleanupWarnings.get(positionID);
+                if (cleanupIDs?.size && isTerminal) {
+                  void reconcileCleanup(
+                    positionID,
+                    operationID,
+                    cleanupIDs,
+                    "Повтор очистки завершён, предупреждение источника остаётся актуальным.",
+                  );
+                  return;
+                }
                 setPositions((current) => {
                   if (
                     !mounted.current ||
@@ -295,7 +527,6 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                     ...current,
                     [positionID]: {
                       ...current[positionID],
-                      applying: false,
                       readError:
                         reason instanceof Error
                           ? reason.message
@@ -306,10 +537,24 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
               });
           }
         },
-        () => {
+        (operationError) => {
           // The event stream is only a wake-up/error channel. Re-read both views;
           // on reconnect, its subsequent snapshot callback does the same.
+          const missingOperation = /snapshot request failed \(404\)/i.test(
+            operationError.message,
+          );
+          if (missingOperation) finishedOperations.current.add(operationID);
           for (const positionID of entry.positions) {
+            const cleanupIDs = entry.cleanupWarnings.get(positionID);
+            if (missingOperation && cleanupIDs?.size) {
+              void reconcileCleanup(
+                positionID,
+                operationID,
+                cleanupIDs,
+                "Повтор очистки больше недоступен. Предупреждение источника остаётся актуальным.",
+              );
+              continue;
+            }
             void refreshPosition(positionID).catch((reason: unknown) => {
               if (
                 mounted.current &&
@@ -327,7 +572,6 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                     ...current,
                     [positionID]: {
                       ...current[positionID],
-                      applying: false,
                       readError:
                         reason instanceof Error
                           ? reason.message
@@ -523,6 +767,157 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
               : "Не удалось проверить публикацию.",
         },
       }));
+    }
+  }
+
+  async function retryCleanup(positionId: string, originalOperationID: string) {
+    const position = positions[positionId];
+    if (
+      !position?.publication?.source_cleanup_warnings?.some(
+        (warning) =>
+          warning.original_operation_id === originalOperationID &&
+          warning.can_retry,
+      ) ||
+      position.cleanupRetryPendingIDs?.includes(originalOperationID) ||
+      cleanupRetryLocks.current.has(originalOperationID)
+    )
+      return;
+    const requestScope = scope.current;
+    const retryToken = { scope: requestScope, token: ++writeToken.current };
+    cleanupRetryLocks.current.set(originalOperationID, retryToken);
+    setPositions((current) => ({
+      ...current,
+      [positionId]: {
+        ...current[positionId],
+        cleanupRetryPendingIDs: Array.from(
+          new Set([
+            ...(current[positionId]?.cleanupRetryPendingIDs ?? []),
+            originalOperationID,
+          ]),
+        ),
+        error: undefined,
+      },
+    }));
+    try {
+      const response = await retryPublicationSourceCleanup(originalOperationID);
+      if (response.status !== 202)
+        throw new Error(errorMessage(response.data, response.status));
+      if (!mounted.current || scope.current !== requestScope) return;
+      setPositions((current) => ({
+        ...current,
+        [positionId]: {
+          ...current[positionId],
+          cleanupRetryOperationIDs: {
+            ...current[positionId]?.cleanupRetryOperationIDs,
+            [originalOperationID]: response.data.id,
+          },
+        },
+      }));
+      await refreshPosition(positionId);
+    } catch (reason) {
+      if (!mounted.current || scope.current !== requestScope) return;
+      let warningGone = false;
+      let projectionReadFailed = false;
+      const readGeneration =
+        (positionReadGenerations.current.get(positionId) ?? 0) + 1;
+      positionReadGenerations.current.set(positionId, readGeneration);
+      try {
+        const refreshed = await getLibraryPublication(releaseId, positionId, {
+          cache: "no-store",
+        });
+        if (
+          !mounted.current ||
+          scope.current !== requestScope ||
+          cleanupRetryLocks.current.get(originalOperationID) !== retryToken ||
+          positionReadGenerations.current.get(positionId) !== readGeneration
+        )
+          return;
+        if (refreshed.status === 200) {
+          warningGone = !refreshed.data.source_cleanup_warnings?.some(
+            (warning) => warning.original_operation_id === originalOperationID,
+          );
+          setPositions((current) => {
+            if (
+              !mounted.current ||
+              scope.current !== requestScope ||
+              positionReadGenerations.current.get(positionId) !== readGeneration
+            )
+              return current;
+            return {
+              ...current,
+              [positionId]: {
+                ...current[positionId],
+                publication: refreshed.data,
+                ...(warningGone
+                  ? {
+                      cleanupRetryOperationIDs: Object.fromEntries(
+                        Object.entries(
+                          current[positionId]?.cleanupRetryOperationIDs ?? {},
+                        ).filter(
+                          ([warningID]) => warningID !== originalOperationID,
+                        ),
+                      ),
+                    }
+                  : {}),
+                cleanupRetryPendingIDs: (
+                  current[positionId]?.cleanupRetryPendingIDs ?? []
+                ).filter((id) => id !== originalOperationID),
+                ...(warningGone ? { error: undefined } : {}),
+              },
+            };
+          });
+        } else {
+          projectionReadFailed = true;
+        }
+      } catch {
+        // A failed read cannot prove that the warning has disappeared.
+        if (
+          !mounted.current ||
+          scope.current !== requestScope ||
+          cleanupRetryLocks.current.get(originalOperationID) !== retryToken ||
+          positionReadGenerations.current.get(positionId) !== readGeneration
+        )
+          return;
+        projectionReadFailed = true;
+      }
+      if (
+        !mounted.current ||
+        scope.current !== requestScope ||
+        cleanupRetryLocks.current.get(originalOperationID) !== retryToken ||
+        positionReadGenerations.current.get(positionId) !== readGeneration
+      )
+        return;
+      if (warningGone) return;
+      setPositions((current) => {
+        if (
+          !mounted.current ||
+          scope.current !== requestScope ||
+          positionReadGenerations.current.get(positionId) !== readGeneration
+        )
+          return current;
+        return {
+          ...current,
+          [positionId]: {
+            ...current[positionId],
+            cleanupRetryPendingIDs: (
+              current[positionId]?.cleanupRetryPendingIDs ?? []
+            ).filter((id) => id !== originalOperationID),
+            error:
+              reason instanceof Error
+                ? reason.message
+                : "Не удалось повторить очистку источников.",
+            ...(projectionReadFailed
+              ? {
+                  readError:
+                    "Не удалось проверить публикацию. Обновите данные перед повторной попыткой.",
+                }
+              : {}),
+          },
+        };
+      });
+    } finally {
+      if (cleanupRetryLocks.current.get(originalOperationID) === retryToken)
+        cleanupRetryLocks.current.delete(originalOperationID);
     }
   }
 
@@ -844,6 +1239,38 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                 ? ` · поколение ${publication.current_generation}`
                 : ""}
             </p>
+            {publication?.source_cleanup_warnings?.map((warning) => (
+              <div key={warning.original_operation_id} role="alert">
+                <p>{warning.safe_error}</p>
+                {warning.can_retry && (
+                  <button
+                    type="button"
+                    disabled={
+                      position?.cleanupRetryPendingIDs?.includes(
+                        warning.original_operation_id,
+                      ) ||
+                      cleanupRetryLocks.current.has(
+                        warning.original_operation_id,
+                      ) ||
+                      Boolean(position?.readError)
+                    }
+                    onClick={() =>
+                      void retryCleanup(track.id, warning.original_operation_id)
+                    }
+                  >
+                    {position?.cleanupRetryPendingIDs?.includes(
+                      warning.original_operation_id,
+                    )
+                      ? "Повтор выполняется…"
+                      : "Повторить очистку источников"}
+                  </button>
+                )}
+                {warning.active_retry_operation_id &&
+                  !finishedOperations.current.has(
+                    warning.active_retry_operation_id,
+                  ) && <p role="status">Повторная очистка выполняется.</p>}
+              </div>
+            ))}
             {!publication?.current_path &&
               !publication?.current_generation &&
               !publication?.active_attempt &&

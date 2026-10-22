@@ -349,6 +349,220 @@ function stubEventSource() {
   vi.stubGlobal("EventSource", FakeEventSource);
 }
 
+type CleanupWarningFixture = {
+  original_operation_id: string;
+  safe_error: string;
+  can_retry: boolean;
+  active_retry_operation_id?: string;
+};
+
+function setupCleanupWarningView(warnings: () => CleanupWarningFixture[]) {
+  server.use(
+    http.get("*/api/library/releases/cleanup-view", () =>
+      HttpResponse.json({
+        id: "cleanup-view",
+        title: "Cleanup album",
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        primary_artist: {},
+        artists: [],
+        tracks: [
+          {
+            id: "cleanup-position",
+            local_track_id: "cleanup-track",
+            title: "Song",
+            displayed_number: "1",
+            medium: 1,
+            position: 1,
+            metadata: {},
+            metadata_revision: 1,
+            metadata_version: 1,
+            track_metadata_revision: 1,
+            primary_artist: {},
+            artists: [],
+            sources: [],
+          },
+        ],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/cleanup-view/positions/cleanup-position/metadata",
+      () =>
+        HttpResponse.json({
+          revision: 1,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/cleanup-view/positions/cleanup-position/publication",
+      () =>
+        HttpResponse.json({
+          release_id: "cleanup-view",
+          position_id: "cleanup-position",
+          active_epoch: "cleanup-epoch",
+          current_epoch: "cleanup-epoch",
+          current_generation: "cleanup-generation",
+          current_path: "song.flac",
+          metadata_revision: 1,
+          can_apply_manual_lyrics: false,
+          source_cleanup_warnings: warnings(),
+        }),
+    ),
+  );
+  stubEventSource();
+}
+
+const cleanupWarningFixture: CleanupWarningFixture = {
+  original_operation_id: "cleanup-original",
+  safe_error: "Source removal needs explicit retry",
+  can_retry: true,
+};
+
+it("starts source cleanup only explicitly and excludes duplicate pending clicks", async () => {
+  setupCleanupWarningView(() => [cleanupWarningFixture]);
+  let posts = 0;
+  let finish: (() => void) | undefined;
+  server.use(
+    http.post(
+      "*/api/operations/cleanup-original/source-cleanup/retry",
+      async () => {
+        posts += 1;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return HttpResponse.json({ id: "cleanup-recovery" }, { status: 202 });
+      },
+    ),
+    http.get("*/api/operations/cleanup-recovery", () =>
+      HttpResponse.json({
+        id: "cleanup-recovery",
+        kind: "retry_publication_sources_v1",
+        state: "running",
+        stage: "removing",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      }),
+    ),
+  );
+  render(<LibraryReleaseScreen releaseId="cleanup-view" />);
+  const button = await screen.findByRole("button", {
+    name: "Повторить очистку источников",
+  });
+  expect(posts).toBe(0);
+  fireEvent.click(button);
+  fireEvent.click(button);
+  await waitFor(() => expect(posts).toBe(1));
+  expect(
+    screen.getByRole("button", { name: "Повтор выполняется…" }),
+  ).toBeDisabled();
+  await act(async () => {
+    finish?.();
+  });
+  await waitFor(() =>
+    expect(
+      FakeEventSource.instances.some((entry) =>
+        entry.url.includes("cleanup-recovery"),
+      ),
+    ).toBe(true),
+  );
+  expect(posts).toBe(1);
+});
+
+it.each([
+  false,
+  true,
+])("reconciles rejected cleanup retry with warningGone=%s after releasing its lock", async (warningGone) => {
+  let warnings = [cleanupWarningFixture];
+  setupCleanupWarningView(() => warnings);
+  let finish: (() => void) | undefined;
+  server.use(
+    http.post(
+      "*/api/operations/cleanup-original/source-cleanup/retry",
+      async () => {
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        if (warningGone) warnings = [];
+        return HttpResponse.json(
+          { detail: "cleanup retry rejected" },
+          { status: 409 },
+        );
+      },
+    ),
+  );
+  render(<LibraryReleaseScreen releaseId="cleanup-view" />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Повторить очистку источников" }),
+  );
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  await act(async () => {
+    finish?.();
+  });
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Повтор выполняется…" }),
+    ).toBeNull(),
+  );
+  if (warningGone) {
+    await waitFor(() =>
+      expect(screen.queryByText(cleanupWarningFixture.safe_error)).toBeNull(),
+    );
+    expect(screen.queryByText("cleanup retry rejected")).toBeNull();
+  } else {
+    expect(await screen.findByText("cleanup retry rejected")).toBeTruthy();
+    expect(screen.getByText(cleanupWarningFixture.safe_error)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Повторить очистку источников" }),
+    ).toBeEnabled();
+  }
+});
+
+it("retires a missing cleanup watcher without hiding its retained warning", async () => {
+  let active: string | undefined = "cleanup-recovery";
+  let reads = 0;
+  setupCleanupWarningView(() => [
+    { ...cleanupWarningFixture, active_retry_operation_id: active },
+  ]);
+  server.use(
+    http.get("*/api/operations/cleanup-recovery", () => {
+      reads += 1;
+      active = undefined;
+      return HttpResponse.json(
+        { detail: "operation no longer exists" },
+        { status: 404 },
+      );
+    }),
+  );
+  render(<LibraryReleaseScreen releaseId="cleanup-view" />);
+  expect(
+    await screen.findByText(cleanupWarningFixture.safe_error),
+  ).toBeTruthy();
+  await waitFor(() =>
+    expect(
+      FakeEventSource.instances.some((entry) =>
+        entry.url.includes("cleanup-recovery"),
+      ),
+    ).toBe(true),
+  );
+  act(() => {
+    for (const entry of FakeEventSource.instances)
+      if (entry.url.includes("cleanup-recovery")) entry.emit("open");
+  });
+  await waitFor(() => {
+    expect(reads).toBeGreaterThan(0);
+    expect(FakeEventSource.instances.length).toBeGreaterThan(0);
+    expect(FakeEventSource.instances.every((entry) => entry.closed)).toBe(true);
+  });
+  expect(screen.getByText(cleanupWarningFixture.safe_error)).toBeTruthy();
+  const completedReads = reads;
+  act(() => {
+    for (const entry of FakeEventSource.instances) entry.emit("error");
+  });
+  expect(reads).toBe(completedReads);
+});
+
 it("saves explicit manual lyrics before applying with the current publication revisions", async () => {
   const patchBodies: unknown[] = [];
   const applyBodies: unknown[] = [];

@@ -22,25 +22,26 @@ type LibraryPublicationOutput struct {
 }
 
 type LibraryPublicationResponse struct {
-	ReleaseID                   uuid.UUID                                      `json:"release_id"`
-	PositionID                  uuid.UUID                                      `json:"position_id"`
-	ActiveEpoch                 uuid.UUID                                      `json:"active_epoch"`
-	MetadataRevision            int64                                          `json:"metadata_revision"`
-	CurrentGeneration           *uuid.UUID                                     `json:"current_generation,omitempty"`
-	CurrentEpoch                *uuid.UUID                                     `json:"current_epoch,omitempty"`
-	CurrentPath                 string                                         `json:"current_path,omitempty"`
-	CurrentOwnership            *publicationOwnershipResponse                  `json:"current_ownership,omitempty"`
-	CurrentAudio                *publicationAudioResponse                      `json:"current_audio,omitempty"`
-	CurrentMetadata             *publicationMetadataResponse                   `json:"current_metadata,omitempty"`
-	CurrentAssets               *publicationAssetsResponse                     `json:"current_assets,omitempty"`
-	CurrentQualityPolicyVersion *int                                           `json:"current_quality_policy_version,omitempty"`
-	CurrentValidatedAt          *time.Time                                     `json:"current_validated_at,omitempty"`
-	ActiveAttempt               *publicationAttemptResponse                    `json:"active_attempt,omitempty"`
-	ActiveAttemptCandidate      *uuid.UUID                                     `json:"active_attempt_candidate,omitempty"`
-	ActiveAttemptPhase          *string                                        `json:"active_attempt_phase,omitempty"`
-	ManualLyrics                *service.LibraryPublicationManualLyrics        `json:"manual_lyrics,omitempty"`
-	ManualLyricsReceipt         *service.LibraryPublicationManualLyricsReceipt `json:"manual_lyrics_receipt,omitempty"`
-	CanApplyManualLyrics        bool                                           `json:"can_apply_manual_lyrics"`
+	ReleaseID                   uuid.UUID                                        `json:"release_id"`
+	PositionID                  uuid.UUID                                        `json:"position_id"`
+	ActiveEpoch                 uuid.UUID                                        `json:"active_epoch"`
+	MetadataRevision            int64                                            `json:"metadata_revision"`
+	CurrentGeneration           *uuid.UUID                                       `json:"current_generation,omitempty"`
+	CurrentEpoch                *uuid.UUID                                       `json:"current_epoch,omitempty"`
+	CurrentPath                 string                                           `json:"current_path,omitempty"`
+	CurrentOwnership            *publicationOwnershipResponse                    `json:"current_ownership,omitempty"`
+	CurrentAudio                *publicationAudioResponse                        `json:"current_audio,omitempty"`
+	CurrentMetadata             *publicationMetadataResponse                     `json:"current_metadata,omitempty"`
+	CurrentAssets               *publicationAssetsResponse                       `json:"current_assets,omitempty"`
+	CurrentQualityPolicyVersion *int                                             `json:"current_quality_policy_version,omitempty"`
+	CurrentValidatedAt          *time.Time                                       `json:"current_validated_at,omitempty"`
+	ActiveAttempt               *publicationAttemptResponse                      `json:"active_attempt,omitempty"`
+	ActiveAttemptCandidate      *uuid.UUID                                       `json:"active_attempt_candidate,omitempty"`
+	ActiveAttemptPhase          *string                                          `json:"active_attempt_phase,omitempty"`
+	ManualLyrics                *service.LibraryPublicationManualLyrics          `json:"manual_lyrics,omitempty"`
+	ManualLyricsReceipt         *service.LibraryPublicationManualLyricsReceipt   `json:"manual_lyrics_receipt,omitempty"`
+	CanApplyManualLyrics        bool                                             `json:"can_apply_manual_lyrics"`
+	SourceCleanupWarnings       []service.LibraryPublicationSourceCleanupWarning `json:"source_cleanup_warnings,omitempty"`
 }
 
 type publicationMetadataResponse struct {
@@ -159,7 +160,8 @@ func libraryPublicationResponse(view service.LibraryPublicationView) LibraryPubl
 		CurrentQualityPolicyVersion: view.CurrentQualityPolicyVersion, CurrentValidatedAt: view.CurrentValidatedAt,
 		ActiveAttemptCandidate: view.ActiveAttemptCandidate, ActiveAttemptPhase: view.ActiveAttemptPhase,
 		ManualLyrics: view.ManualLyrics, CanApplyManualLyrics: view.CanApplyManualLyrics,
-		ManualLyricsReceipt: view.ManualLyricsReceipt,
+		ManualLyricsReceipt:   view.ManualLyricsReceipt,
+		SourceCleanupWarnings: view.SourceCleanupWarnings,
 	}
 	if metadata := view.CurrentMetadata; metadata != nil {
 		tags := make(map[string][]string, len(metadata.Tags))

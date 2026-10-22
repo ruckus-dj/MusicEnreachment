@@ -76,6 +76,14 @@ type LibraryPublicationView struct {
 	ManualLyrics                *LibraryPublicationManualLyrics          `json:"manual_lyrics,omitempty"`
 	ManualLyricsReceipt         *LibraryPublicationManualLyricsReceipt   `json:"manual_lyrics_receipt,omitempty"`
 	CanApplyManualLyrics        bool                                     `json:"can_apply_manual_lyrics"`
+	SourceCleanupWarnings       []LibraryPublicationSourceCleanupWarning `json:"source_cleanup_warnings,omitempty"`
+}
+
+type LibraryPublicationSourceCleanupWarning struct {
+	OriginalOperationID    uuid.UUID  `json:"original_operation_id"`
+	SafeError              string     `json:"safe_error"`
+	CanRetry               bool       `json:"can_retry"`
+	ActiveRetryOperationID *uuid.UUID `json:"active_retry_operation_id,omitempty"`
 }
 
 type LibraryPublicationApplyManualLyricsRequest struct {
@@ -114,6 +122,9 @@ func (service *LibraryPublications) Read(ctx context.Context, releaseID, positio
 		return LibraryPublicationView{}, fmt.Errorf("read library publication: %w", err)
 	}
 	view, _, _ := libraryPublicationView(projection)
+	for _, warning := range projection.SourceCleanupWarnings {
+		view.SourceCleanupWarnings = append(view.SourceCleanupWarnings, LibraryPublicationSourceCleanupWarning{OriginalOperationID: warning.OriginalOperationID, SafeError: warning.SafeError, CanRetry: warning.CanRetry, ActiveRetryOperationID: warning.ActiveRetryOperationID})
+	}
 	return view, nil
 }
 

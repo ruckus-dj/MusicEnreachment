@@ -7,6 +7,29 @@
 
 ## Уточнение проверки текущего cleanup-среза
 
+CI scheduling `1d8f6d4` (`39695916061`) завершился с `success`.
+Warning/retry projection и UI поверх этой ревизии прошли полный `task verify`
+(332 frontend tests, Go integration, generation/lint/build). Проверены retained
+warning, queued/returned retry, первый и CURRENT-backed replacement, OFF и
+исчезновение warning после settlement; UI — explicit-only/double-click pending,
+rejected retry reconciliation и отсутствующая auxiliary operation. Исправления
+retained authority/routing и monitoring прошли независимое review. Это ещё
+незакоммиченный срез; hook/CI и реальная media/Navidrome-приёмка предстоят.
+
+Последующее подтверждение: CI activation `63f5c7a` (`39690258580`) и
+completion-marker `d5f8c22` (`39691714291`) завершились с `success`.
+Durable opt-in scheduling `1d8f6d4` прошёл полный локальный gate и штатный hook,
+отправлен; CI `39695916061` отслеживается. В этом срезе request создаётся атомарно
+с первым/replacement/manual-lyrics commit только при ON; bounded dispatcher
+атомарно admits/enqueues и потребляет request. OFF удаляет pending requests;
+ON не сканирует старые публикации. Проверены реальный enqueue rollback,
+fairness после 32 blocked requests, продолжение после отдельной ошибки и
+producer ON/OFF/replay; добавлены reset/retention guards. Это не cross-boot takeover.
+Warning/retry read model и UI остаются незакоммиченными и проходят проверку.
+Navidrome 0.64.2 запущен из pinned official image в disposable workspace;
+initial setup прошёл по localhost, music mount read-only. Это только подготовка:
+реальная publication/import acceptance ещё не выполнялась.
+
 `ac0ba96` (retry worker adapter) и `f0ed3ac` (интеграция service/worker)
 прошли полную CI-проверку: `39688518268` и `39688984334` — `success`.
 `63f5c7a` активирует dedicated explicit-retry POST и оба fenced worker;

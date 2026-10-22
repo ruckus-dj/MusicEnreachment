@@ -36,16 +36,24 @@ type LibraryPublicationNamespaceNode struct {
 }
 
 type LibraryPublicationContext struct {
-	ReleaseID         uuid.UUID
-	PositionID        uuid.UUID
-	ActiveEpoch       uuid.UUID
-	Metadata          LibraryMetadata
-	Current           *LibraryPublicationCurrent
-	ActiveAttempt     *LibraryPublicationOperation
-	AttemptCandidate  *uuid.UUID
-	AttemptPhase      *string
-	NamespaceManifest []LibraryPublicationNamespaceNode
-	ManualLyrics      ManualLyricsReceiptProjection
+	ReleaseID             uuid.UUID
+	PositionID            uuid.UUID
+	ActiveEpoch           uuid.UUID
+	Metadata              LibraryMetadata
+	Current               *LibraryPublicationCurrent
+	ActiveAttempt         *LibraryPublicationOperation
+	AttemptCandidate      *uuid.UUID
+	AttemptPhase          *string
+	NamespaceManifest     []LibraryPublicationNamespaceNode
+	ManualLyrics          ManualLyricsReceiptProjection
+	SourceCleanupWarnings []LibraryPublicationSourceCleanupWarning
+}
+
+type LibraryPublicationSourceCleanupWarning struct {
+	OriginalOperationID    uuid.UUID
+	SafeError              string
+	CanRetry               bool
+	ActiveRetryOperationID *uuid.UUID
 }
 
 // ReadLibraryPublicationContext returns an atomic, read-only view used by publication
@@ -164,6 +172,13 @@ func readLibraryPublicationContextTx(ctx context.Context, tx bun.IDB, releaseUUI
 		(*result).ManualLyrics, err = readManualLyricsReceiptProjection(ctx, tx, positionUUID)
 		if err != nil {
 			return fmt.Errorf("read manual lyrics receipt: %w", err)
+		}
+		if (*result).Current != nil {
+			warnings, err := readLibraryPublicationSourceCleanupWarningsTx(ctx, tx, positionUUID, (*result).Current.Record.Generation, (*result).Current.Record.Epoch)
+			if err != nil {
+				return fmt.Errorf("read current source cleanup warnings: %w", err)
+			}
+			(*result).SourceCleanupWarnings = warnings
 		}
 		return nil
 	}

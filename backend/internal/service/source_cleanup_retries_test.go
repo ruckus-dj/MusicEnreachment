@@ -53,6 +53,20 @@ func validCleanupRetryState(id uuid.UUID) persistence.PublicationSourceCleanupEx
 	return persistence.PublicationSourceCleanupExplicitRetryState{OperationID: id, Kind: "cleanup_publication_sources_v1", State: "failed", Stage: "cleanup_recovery_required", SnapshotValid: true}
 }
 
+func validReturnedCleanupRetryState(id, recovery uuid.UUID) persistence.PublicationSourceCleanupExplicitRetryState {
+	jobID := int64(17)
+	state := validCleanupRetryState(id)
+	state.CurrentGrant, state.RecoveryOperationID = true, recovery
+	state.RecoveryKind, state.RecoveryState, state.RecoveryStage = "retry_publication_sources_v1", "failed", "cleanup_retry_recovery_required"
+	state.RecoverySnapshotValid, state.RecoveryGrantValid = true, true
+	state.RecoveryClaimState, state.RecoveryClaimValid = "recovery_required", true
+	state.RecoveryFrontier, state.RecoveryFrontierValid = true, true
+	revision := uuid.New()
+	state.RecoveryGrantFrontierRevision = &revision
+	state.RecoveryAttempt, state.RecoveryRiverJobID = 1, &jobID
+	return state
+}
+
 func TestSourceCleanupRetriesChoosesInitialAdmissionWithoutCurrentGrant(t *testing.T) {
 	id := uuid.New()
 	fake, inserter := &cleanupRetryServiceFake{state: validCleanupRetryState(id), admitResult: persistence.PublicationSourceCleanupExplicitRetryResult{OperationID: uuid.New()}}, cleanupRetryRiverFake{}
@@ -64,10 +78,7 @@ func TestSourceCleanupRetriesChoosesInitialAdmissionWithoutCurrentGrant(t *testi
 
 func TestSourceCleanupRetriesReplacesOnlyObservedFailedRecovery(t *testing.T) {
 	id, recovery := uuid.New(), uuid.New()
-	state := validCleanupRetryState(id)
-	state.CurrentGrant, state.RecoveryOperationID = true, recovery
-	state.RecoveryKind, state.RecoveryState, state.RecoveryStage = "retry_publication_sources_v1", "failed", "cleanup_retry_recovery_required"
-	state.RecoverySnapshotValid, state.RecoveryGrantValid, state.RecoveryClaimState, state.RecoveryFrontier = true, true, "recovery_required", true
+	state := validReturnedCleanupRetryState(id, recovery)
 	fake, inserter := &cleanupRetryServiceFake{state: state, replaceResult: persistence.PublicationSourceCleanupExplicitRetryResult{OperationID: uuid.New()}}, cleanupRetryRiverFake{}
 	result, err := NewSourceCleanupRetries(fake, inserter).Retry(context.Background(), id)
 	if err != nil || result.OperationID != fake.replaceResult.OperationID || fake.admits != 0 || fake.replaces != 1 || fake.gotOriginal != id || fake.gotRecovery != recovery || fake.gotRiver != inserter {
@@ -77,10 +88,7 @@ func TestSourceCleanupRetriesReplacesOnlyObservedFailedRecovery(t *testing.T) {
 
 func TestSourceCleanupRetriesPropagatesReplacementErrorWithoutInitialFallback(t *testing.T) {
 	id, recovery, failure := uuid.New(), uuid.New(), errors.New("replacement unavailable")
-	state := validCleanupRetryState(id)
-	state.CurrentGrant, state.RecoveryOperationID = true, recovery
-	state.RecoveryKind, state.RecoveryState, state.RecoveryStage = "retry_publication_sources_v1", "failed", "cleanup_retry_recovery_required"
-	state.RecoverySnapshotValid, state.RecoveryGrantValid, state.RecoveryClaimState, state.RecoveryFrontier = true, true, "recovery_required", true
+	state := validReturnedCleanupRetryState(id, recovery)
 	fake := &cleanupRetryServiceFake{state: state, replaceErr: failure, admitResult: persistence.PublicationSourceCleanupExplicitRetryResult{OperationID: uuid.New()}}
 	_, err := NewSourceCleanupRetries(fake, cleanupRetryRiverFake{}).Retry(context.Background(), id)
 	if !errors.Is(err, failure) || fake.replaces != 1 || fake.admits != 0 || fake.gotOriginal != id || fake.gotRecovery != recovery {
@@ -90,10 +98,7 @@ func TestSourceCleanupRetriesPropagatesReplacementErrorWithoutInitialFallback(t 
 
 func TestSourceCleanupRetriesPreservesReplacementBlockersWithoutInitialFallback(t *testing.T) {
 	id, recovery := uuid.New(), uuid.New()
-	state := validCleanupRetryState(id)
-	state.CurrentGrant, state.RecoveryOperationID = true, recovery
-	state.RecoveryKind, state.RecoveryState, state.RecoveryStage = "retry_publication_sources_v1", "failed", "cleanup_retry_recovery_required"
-	state.RecoverySnapshotValid, state.RecoveryGrantValid, state.RecoveryClaimState, state.RecoveryFrontier = true, true, "recovery_required", true
+	state := validReturnedCleanupRetryState(id, recovery)
 	blockers := []string{"current cleanup evidence changed"}
 	fake := &cleanupRetryServiceFake{state: state, replaceResult: persistence.PublicationSourceCleanupExplicitRetryResult{Blockers: blockers}}
 	result, err := NewSourceCleanupRetries(fake, cleanupRetryRiverFake{}).Retry(context.Background(), id)
@@ -120,6 +125,18 @@ func TestSourceCleanupRetriesBlocksInvalidOrActiveState(t *testing.T) {
 			s.RecoveryFrontier = true
 		}},
 		{"frontier without grant", func(s *persistence.PublicationSourceCleanupExplicitRetryState) { s.RecoveryFrontier = true }},
+		{"invalid returned claim", func(s *persistence.PublicationSourceCleanupExplicitRetryState) {
+			s.CurrentGrant, s.RecoveryOperationID = true, uuid.New()
+			s.RecoveryKind, s.RecoveryState, s.RecoveryStage = "retry_publication_sources_v1", "failed", "cleanup_retry_recovery_required"
+			s.RecoveryGrantValid, s.RecoverySnapshotValid, s.RecoveryFrontier = true, true, true
+			s.RecoveryClaimState, s.RecoveryClaimValid, s.RecoveryFrontierValid = "recovery_required", false, true
+		}},
+		{"invalid returned frontier proof", func(s *persistence.PublicationSourceCleanupExplicitRetryState) {
+			s.CurrentGrant, s.RecoveryOperationID = true, uuid.New()
+			s.RecoveryKind, s.RecoveryState, s.RecoveryStage = "retry_publication_sources_v1", "failed", "cleanup_retry_recovery_required"
+			s.RecoveryGrantValid, s.RecoverySnapshotValid, s.RecoveryFrontier = true, true, true
+			s.RecoveryClaimState, s.RecoveryClaimValid, s.RecoveryFrontierValid = "recovery_required", true, false
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			state := validCleanupRetryState(id)

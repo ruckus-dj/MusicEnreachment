@@ -37,31 +37,24 @@ func (service *SourceCleanupRetries) Retry(ctx context.Context, originalOperatio
 	if err != nil {
 		return persistence.PublicationSourceCleanupExplicitRetryResult{}, fmt.Errorf("retry publication source cleanup: read retry state: %w", err)
 	}
-	if state.OperationID != originalOperationID || state.Kind != "cleanup_publication_sources_v1" {
+	if state.OperationID != originalOperationID {
 		return persistence.PublicationSourceCleanupExplicitRetryResult{Blockers: []string{"original operation is not a publication source cleanup"}}, nil
 	}
-	if state.State != "failed" || state.Stage != "cleanup_recovery_required" || !state.SnapshotValid {
+	switch persistence.PublicationSourceCleanupRetryRouteFor(state) {
+	case persistence.PublicationSourceCleanupRetryBlocked:
 		return persistence.PublicationSourceCleanupExplicitRetryResult{Blockers: []string{"original cleanup is not in a valid recovery-required state"}}, nil
-	}
-	if state.CurrentGrant {
-		if state.RecoveryOperationID == uuid.Nil || state.RecoveryKind != "retry_publication_sources_v1" || !state.RecoverySnapshotValid || !state.RecoveryGrantValid {
-			return persistence.PublicationSourceCleanupExplicitRetryResult{Blockers: []string{"current cleanup retry grant is incomplete"}}, nil
-		}
-		if state.RecoveryState != "failed" || state.RecoveryStage != "cleanup_retry_recovery_required" || state.RecoveryClaimState != "recovery_required" || !state.RecoveryFrontier {
-			return persistence.PublicationSourceCleanupExplicitRetryResult{Blockers: []string{"current cleanup retry is still active or has not returned for recovery"}}, nil
-		}
+	case persistence.PublicationSourceCleanupRetryReplacement:
 		result, err := service.repository.ReplacePublicationSourceCleanupExplicitRetry(ctx, originalOperationID, state.RecoveryOperationID, service.river)
 		if err != nil {
 			return persistence.PublicationSourceCleanupExplicitRetryResult{}, fmt.Errorf("replace publication source cleanup retry: %w", err)
 		}
 		return result, nil
+	case persistence.PublicationSourceCleanupRetryInitial:
+		result, err := service.repository.AdmitPublicationSourceCleanupExplicitRetry(ctx, originalOperationID, service.river)
+		if err != nil {
+			return persistence.PublicationSourceCleanupExplicitRetryResult{}, fmt.Errorf("admit publication source cleanup retry: %w", err)
+		}
+		return result, nil
 	}
-	if state.RecoveryFrontier {
-		return persistence.PublicationSourceCleanupExplicitRetryResult{Blockers: []string{"cleanup recovery frontier exists without a current retry grant"}}, nil
-	}
-	result, err := service.repository.AdmitPublicationSourceCleanupExplicitRetry(ctx, originalOperationID, service.river)
-	if err != nil {
-		return persistence.PublicationSourceCleanupExplicitRetryResult{}, fmt.Errorf("admit publication source cleanup retry: %w", err)
-	}
-	return result, nil
+	return persistence.PublicationSourceCleanupExplicitRetryResult{Blockers: []string{"original cleanup retry route is invalid"}}, nil
 }
