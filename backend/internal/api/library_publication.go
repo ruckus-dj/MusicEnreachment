@@ -33,6 +33,7 @@ type LibraryPublicationResponse struct {
 	CurrentAudio                *publicationAudioResponse                        `json:"current_audio,omitempty"`
 	CurrentMetadata             *publicationMetadataResponse                     `json:"current_metadata,omitempty"`
 	CurrentAssets               *publicationAssetsResponse                       `json:"current_assets,omitempty"`
+	InitialLyrics               *initialLyricsResponse                           `json:"initial_lyrics,omitempty"`
 	CurrentQualityPolicyVersion *int                                             `json:"current_quality_policy_version,omitempty"`
 	CurrentValidatedAt          *time.Time                                       `json:"current_validated_at,omitempty"`
 	ActiveAttempt               *publicationAttemptResponse                      `json:"active_attempt,omitempty"`
@@ -42,6 +43,13 @@ type LibraryPublicationResponse struct {
 	ManualLyricsReceipt         *service.LibraryPublicationManualLyricsReceipt   `json:"manual_lyrics_receipt,omitempty"`
 	CanApplyManualLyrics        bool                                             `json:"can_apply_manual_lyrics"`
 	SourceCleanupWarnings       []service.LibraryPublicationSourceCleanupWarning `json:"source_cleanup_warnings,omitempty"`
+}
+
+type initialLyricsResponse struct {
+	Source                string `json:"source"`
+	Outcome               string `json:"outcome"`
+	ResolutionWarningCode string `json:"resolution_warning_code,omitempty"`
+	OutcomeWarningCode    string `json:"outcome_warning_code,omitempty"`
 }
 
 type publicationMetadataResponse struct {
@@ -162,6 +170,13 @@ func libraryPublicationResponse(view service.LibraryPublicationView) LibraryPubl
 		ManualLyrics: view.ManualLyrics, CanApplyManualLyrics: view.CanApplyManualLyrics,
 		ManualLyricsReceipt:   view.ManualLyricsReceipt,
 		SourceCleanupWarnings: view.SourceCleanupWarnings,
+	}
+	if initialLyrics := view.CurrentInitialLyrics; initialLyrics != nil {
+		response.InitialLyrics = &initialLyricsResponse{
+			Source: initialLyrics.Source, Outcome: initialLyrics.Outcome,
+			ResolutionWarningCode: initialLyrics.ResolutionWarningCode,
+			OutcomeWarningCode:    initialLyrics.OutcomeWarningCode,
+		}
 	}
 	if metadata := view.CurrentMetadata; metadata != nil {
 		tags := make(map[string][]string, len(metadata.Tags))

@@ -17,6 +17,29 @@ import type {
 } from "../../api/generated/client.schemas";
 import { FirstPublicationPreview } from "./FirstPublicationPreview";
 
+const initialLyricsSourceLabels: Record<string, string> = {
+  none: "источник не выбран",
+  source: "источник медиатеки",
+  lrclib: "LRCLIB",
+};
+
+const initialLyricsOutcomeLabels: Record<string, string> = {
+  not_requested: "текст не запрашивался",
+  exact_round_trip: "текст включён и проверен",
+  rebuilt_without_lyrics: "публикация пересоздана без текста",
+};
+
+const initialLyricsWarningLabels: Record<string, string> = {
+  lyrics_source_selection_required: "необходимо выбрать источник текста",
+  lyrics_settings_unavailable: "настройки поиска текста недоступны",
+  lyrics_lookup_metadata_incomplete:
+    "недостаточно метаданных для поиска текста",
+  lyrics_provider_unavailable: "провайдер текста недоступен",
+  lyrics_lookup_failed: "не удалось найти текст",
+  lyrics_lookup_invalid_synced_text: "найденный текст не прошёл проверку",
+  readback_mismatch: "текст не прошёл проверку после записи",
+};
+
 type PositionData = {
   metadata?: LibraryMetadataResponse;
   publication?: LibraryPublicationResponse;
@@ -637,7 +660,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         [positionId]: {
           ...current[positionId],
           metadata: response.data,
-          ...(lyricsEditGenerations.current.get(positionId) ===
+          ...((lyricsEditGenerations.current.get(positionId) ?? 0) ===
           submittedEditGeneration
             ? {
                 lyrics:
@@ -1233,6 +1256,33 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                 ? ` · поколение ${publication.current_generation}`
                 : ""}
             </p>
+            {publication?.initial_lyrics && (
+              <fieldset aria-label="Результат текста песни для текущей публикации">
+                <p>
+                  Текст песни в текущей публикации:{" "}
+                  {initialLyricsOutcomeLabels[
+                    publication.initial_lyrics.outcome
+                  ] ?? publication.initial_lyrics.outcome}
+                  {` · источник: ${initialLyricsSourceLabels[publication.initial_lyrics.source] ?? publication.initial_lyrics.source}`}
+                </p>
+                {publication.initial_lyrics.resolution_warning_code && (
+                  <p>
+                    Предупреждение поиска:{" "}
+                    {initialLyricsWarningLabels[
+                      publication.initial_lyrics.resolution_warning_code
+                    ] ?? publication.initial_lyrics.resolution_warning_code}
+                  </p>
+                )}
+                {publication.initial_lyrics.outcome_warning_code && (
+                  <p>
+                    Предупреждение публикации:{" "}
+                    {initialLyricsWarningLabels[
+                      publication.initial_lyrics.outcome_warning_code
+                    ] ?? publication.initial_lyrics.outcome_warning_code}
+                  </p>
+                )}
+              </fieldset>
+            )}
             {publication?.source_cleanup_warnings?.map((warning) => (
               <div key={warning.original_operation_id} role="alert">
                 <p>{warning.safe_error}</p>

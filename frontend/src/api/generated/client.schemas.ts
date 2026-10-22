@@ -265,6 +265,13 @@ export interface IncomingGroupsBody {
   revision: string;
 }
 
+export interface InitialLyricsResponse {
+  outcome: string;
+  outcome_warning_code?: string;
+  resolution_warning_code?: string;
+  source: string;
+}
+
 export interface InstallPreflightBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -515,6 +522,7 @@ export interface LibraryPublicationResponse {
   current_path?: string;
   current_quality_policy_version?: number;
   current_validated_at?: string;
+  initial_lyrics?: InitialLyricsResponse;
   manual_lyrics?: LibraryPublicationManualLyrics;
   manual_lyrics_receipt?: LibraryPublicationManualLyricsReceipt;
   metadata_revision: number;

@@ -170,6 +170,38 @@ func TestLibraryPublicationsReadManualLyricsPendingWithoutDesiredValue(t *testin
 	}
 }
 
+func TestLibraryPublicationsReadCurrentInitialLyricsStatus(t *testing.T) {
+	releaseID, positionID, epoch, generation := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	projection := publicationTestContext(releaseID, positionID, epoch, generation, "value", "[00:01.00]line\n")
+	projection.Current.InitialLyrics = &persistence.PublicationInitialLyricsProjection{
+		Version: persistence.PublicationInitialLyricsVersion, Generation: generation,
+		Source: "none", Outcome: persistence.PublicationInitialLyricsNotRequested,
+		ResolutionWarningCode:     "lyrics_lookup_metadata_incomplete",
+		AuthorityMetadataRevision: 7, AuthorityState: "absent", Authority: "automatic", AuthorityProvenance: "source_metadata",
+	}
+	repository, runtime := publicationTestDependencies(t, projection)
+	publications := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
+	view, err := publications.Read(context.Background(), releaseID, positionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := view.CurrentInitialLyrics, (&LibraryPublicationInitialLyrics{
+		Source: "none", Outcome: persistence.PublicationInitialLyricsNotRequested,
+		ResolutionWarningCode: "lyrics_lookup_metadata_incomplete",
+	}); got == nil || *got != *want {
+		t.Fatalf("initial lyrics status = %+v, want %+v", got, want)
+	}
+
+	projection.Current.InitialLyrics.Generation = uuid.New()
+	view, err = publications.Read(context.Background(), releaseID, positionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.CurrentInitialLyrics != nil {
+		t.Fatalf("stale-generation initial lyrics status = %+v", view.CurrentInitialLyrics)
+	}
+}
+
 func publicationTestContext(releaseID, positionID, epoch, generation uuid.UUID, state, value string) *persistence.LibraryPublicationContext {
 	lyricsField := librarymetadata.ManualFieldValue(librarymetadata.StateValue, value, true)
 	if state == "explicit_empty" {

@@ -94,7 +94,11 @@ func TestLibraryPublicationHTTPReadAndApply(t *testing.T) {
 	fake := &libraryPublicationHTTPFake{
 		view: service.LibraryPublicationView{
 			ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: epoch, MetadataRevision: 11,
-			CurrentGeneration:           &generation,
+			CurrentGeneration: &generation,
+			CurrentInitialLyrics: &service.LibraryPublicationInitialLyrics{
+				Source: "lrclib", Outcome: persistence.PublicationOptionalLyricsRebuiltWithoutLyrics,
+				ResolutionWarningCode: "lyrics_lookup_failed", OutcomeWarningCode: "readback_mismatch",
+			},
 			CurrentMetadata:             &persistence.PublicationCommitMetadata{Version: 2, Tags: map[string][]string{"TITLE": {"Example"}}},
 			CurrentAssets:               &persistence.PublicationAssetOutcomes{},
 			CurrentQualityPolicyVersion: &qualityPolicyVersion, CurrentValidatedAt: &validatedAt,
@@ -131,6 +135,18 @@ func TestLibraryPublicationHTTPReadAndApply(t *testing.T) {
 	for _, projected := range []string{"manual_lyrics", "manual_lyrics_receipt", "current_metadata", "current_assets", "current_quality_policy_version", "current_validated_at", "active_attempt_candidate", "active_attempt_phase"} {
 		if body[projected] == nil {
 			t.Errorf("GET omitted bounded projection %q: %#v", projected, body)
+		}
+	}
+	initialLyrics, ok := body["initial_lyrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("GET initial lyrics projection = %#v", body["initial_lyrics"])
+	}
+	if len(initialLyrics) != 4 || initialLyrics["source"] != "lrclib" || initialLyrics["outcome"] != string(persistence.PublicationOptionalLyricsRebuiltWithoutLyrics) || initialLyrics["resolution_warning_code"] != "lyrics_lookup_failed" || initialLyrics["outcome_warning_code"] != "readback_mismatch" {
+		t.Errorf("GET initial lyrics projection = %#v", body["initial_lyrics"])
+	}
+	for _, forbidden := range []string{"sha256", "authority", "lyrics", "provider_error", "path"} {
+		if _, leaked := initialLyrics[forbidden]; leaked {
+			t.Errorf("initial lyrics leaked %q: %#v", forbidden, initialLyrics)
 		}
 	}
 	for _, forbidden := range []string{"internal_namespace", "frozen_tools", "journal", "source_path"} {
@@ -178,6 +194,20 @@ func TestLibraryPublicationHTTPReadAndApply(t *testing.T) {
 	}
 	if fake.applyCalls != 1 || fake.applyReleaseID != releaseID || fake.applyPositionID != positionID || fake.applyRequest.ExpectedMetadataRevision != 11 || fake.applyRequest.ExpectedGeneration != generation || fake.applyRequest.ExpectedEpoch != epoch {
 		t.Fatalf("ApplyManualLyrics captured unexpected request: %+v", fake)
+	}
+}
+
+func TestLibraryPublicationResponseOmitsAbsentInitialLyrics(t *testing.T) {
+	raw, err := json.Marshal(libraryPublicationResponse(service.LibraryPublicationView{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := response["initial_lyrics"]; exists {
+		t.Fatalf("absent initial lyrics was serialized: %s", raw)
 	}
 }
 

@@ -55,6 +55,15 @@ type LibraryPublicationManualLyricsReceipt struct {
 	RecordedAt          time.Time `json:"recorded_at"`
 }
 
+// LibraryPublicationInitialLyrics is the bounded status of optional lyrics
+// resolved for the current publication generation.
+type LibraryPublicationInitialLyrics struct {
+	Source                string `json:"source"`
+	Outcome               string `json:"outcome"`
+	ResolutionWarningCode string `json:"resolution_warning_code,omitempty"`
+	OutcomeWarningCode    string `json:"outcome_warning_code,omitempty"`
+}
+
 // LibraryPublicationView is a bounded read projection for a library position.
 type LibraryPublicationView struct {
 	ReleaseID                   uuid.UUID                                `json:"release_id"`
@@ -68,6 +77,7 @@ type LibraryPublicationView struct {
 	CurrentAudio                *persistence.PersistedAudioFacts         `json:"current_audio,omitempty"`
 	CurrentMetadata             *persistence.PublicationCommitMetadata   `json:"current_metadata,omitempty"`
 	CurrentAssets               *persistence.PublicationAssetOutcomes    `json:"current_assets,omitempty"`
+	CurrentInitialLyrics        *LibraryPublicationInitialLyrics         `json:"initial_lyrics,omitempty"`
 	CurrentQualityPolicyVersion *int                                     `json:"current_quality_policy_version,omitempty"`
 	CurrentValidatedAt          *time.Time                               `json:"current_validated_at,omitempty"`
 	ActiveAttempt               *persistence.LibraryPublicationOperation `json:"active_attempt,omitempty"`
@@ -224,6 +234,13 @@ func libraryPublicationView(projection *persistence.LibraryPublicationContext) (
 		view.CurrentMetadata = &metadata
 		assets := current.Assets.Clone()
 		view.CurrentAssets = &assets
+		if initialLyrics := current.InitialLyrics; initialLyrics != nil && initialLyrics.Generation == current.Record.Generation {
+			view.CurrentInitialLyrics = &LibraryPublicationInitialLyrics{
+				Source: initialLyrics.Source, Outcome: initialLyrics.Outcome,
+				ResolutionWarningCode: initialLyrics.ResolutionWarningCode,
+				OutcomeWarningCode:    initialLyrics.OutcomeWarningCode,
+			}
+		}
 		qualityPolicyVersion, validatedAt := current.Record.QualityPolicyVersion, current.Record.ValidatedAt
 		view.CurrentQualityPolicyVersion = &qualityPolicyVersion
 		view.CurrentValidatedAt = &validatedAt

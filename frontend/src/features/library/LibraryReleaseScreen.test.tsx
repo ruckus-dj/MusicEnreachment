@@ -83,6 +83,12 @@ it("shows read-back tags and submits revision-fenced primary artist selections",
             version: 1,
             tags: { ARTIST: ["Read back artist"], TITLE: ["Read back song"] },
           },
+          initial_lyrics: {
+            source: "lrclib",
+            outcome: "rebuilt_without_lyrics",
+            resolution_warning_code: "lyrics_lookup_failed",
+            outcome_warning_code: "readback_mismatch",
+          },
         }),
     ),
     http.put(
@@ -112,6 +118,19 @@ it("shows read-back tags and submits revision-fenced primary artist selections",
   );
   render(<LibraryReleaseScreen releaseId="credits" />);
   expect(await screen.findByText(/ARTIST: Read back artist/)).toBeTruthy();
+  expect(
+    screen.getByText(
+      /Текст песни в текущей публикации: публикация пересоздана без текста · источник: LRCLIB/,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText("Предупреждение поиска: не удалось найти текст"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "Предупреждение публикации: текст не прошёл проверку после записи",
+    ),
+  ).toBeInTheDocument();
   const positionSelect = screen.getByLabelText(
     "Основной исполнитель композиции 1",
   );
@@ -773,7 +792,14 @@ it("stores explicit-empty synced lyrics without applying them automatically", as
                     provenance: { kind: "manual" },
                   },
                 }
-              : {},
+              : {
+                  synced_lyrics: {
+                    state: "value",
+                    value: "[00:01.00] Existing saved lyrics",
+                    authority: "manual",
+                    provenance: { kind: "manual" },
+                  },
+                },
           },
         }),
     ),
@@ -821,7 +847,8 @@ it("stores explicit-empty synced lyrics without applying them automatically", as
     ),
   );
   render(<LibraryReleaseScreen releaseId="empty-lyrics" />);
-  await screen.findByLabelText("Сохранённый текст песни");
+  const lyricsInput = await screen.findByLabelText("Сохранённый текст песни");
+  expect(lyricsInput).toHaveValue("[00:01.00] Existing saved lyrics");
   fireEvent.click(
     screen.getByRole("button", { name: "Сохранить как явно пустой" }),
   );
@@ -833,6 +860,7 @@ it("stores explicit-empty synced lyrics without applying them automatically", as
     changes: { synced_lyrics: { state: "explicit_empty" } },
   });
   expect(applyRequests).toBe(0);
+  expect(lyricsInput).toHaveValue("");
   fireEvent.click(
     screen.getByRole("button", { name: "Применить сохранённый текст" }),
   );

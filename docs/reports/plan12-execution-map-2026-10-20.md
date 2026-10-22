@@ -7,6 +7,20 @@
 
 ## Уточнение проверки текущего cleanup-среза
 
+Current initial-lyrics projection добавлена в service/API/UI: только source,
+outcome и два отдельных warning codes, без lyrics text/digest/provider errors.
+Она привязана к current generation; отсутствующий результат не отображается.
+Никакой retry authority или автоматического retry этот read-only срез не добавляет.
+Независимое review не выявило P1/P2; полный `task verify` прошёл (337 frontend tests).
+
+Real Chrome подтвердил render, canonical lyrics value save и reload. Explicit-empty
+после reload обнаружил UI edit-generation mismatch (`undefined` против `0`): сервер
+сохранял explicit-empty, а textarea оставалась прежней. Исправлено default-zero
+сравнение; regression проверяет очистку заранее сохранённого текста без нового
+редактирования. Повторный полный gate прошёл, полный browser rerun ещё предстоит.
+CI `6f56094` (`39709633686`) и `3c7b6bb` (`39710615271`) завершились с `success`.
+`8eafbec` отправлен; CI `39711694644` отслеживается.
+
 ### Real-media happy path с transport-fix `3c7b6bb`
 
 Полный локальный gate и штатный hook прошли; commit отправлен, CI `39710615271`
