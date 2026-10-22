@@ -2,6 +2,26 @@
 
 ## Контрольная точка 2026-10-22: MKA manual lyrics и Chrome
 
+### Следующий срез: immutable attempt-owned effective cover receipt
+
+В рабочее дерево перенесена migration `20261029000003` с отдельным frozen
+cover receipt на unfinished attempt. Preview/admission фиксируют effective
+revision/mode/state/generation; pending image bytes не попадают в receipt.
+Authority lock, detached byte snapshot, attempt и реальный River insert находятся
+в одной admission transaction. Callback получает глубокую копию receipt.
+Guarded read использует exact executing delivery, а не mutable release selection.
+Receipt живёт до settlement/reset; update/rebind/direct delete при живом attempt
+запрещены, parent-attempt cascade разрешён, down не теряет retained authority.
+
+PG regressions покрывают stale preview, pending isolation, frozen bytes после
+изменения release authority, callback mutation, actual enqueue rollback и SQL
+tuple/ownership/immutability bypasses. Изолированный и integrated полные gates,
+а также финальное review прошли. Metadata cover writing ещё выключен;
+provider acquisition и optional-asset lifecycle этим срезом не добавлены.
+
+**Source authority:** `933b368` прошёл штатный hook и отправлен в `go-development`;
+полный CI этого коммита ещё не подтверждён.
+
 ### Следующий срез: position source authority и current quality facts
 
 В рабочее дерево перенесена migration `20261029000002` и current position-scoped

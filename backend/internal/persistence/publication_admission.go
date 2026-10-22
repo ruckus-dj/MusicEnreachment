@@ -282,6 +282,17 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	if _, err := tx.NewInsert().Model(attempt).Exec(ctx); err != nil {
 		return uuid.Nil, fmt.Errorf("admit publication: create attempt: %w", err)
 	}
+	if request.firstAdmission != nil {
+		coverInput := request.firstAdmission.coverInput
+		if coverInput == nil {
+			return uuid.Nil, fmt.Errorf("admit publication: first publication cover receipt is unavailable")
+		}
+		coverInput.OperationID = operationID
+		coverInput.PositionID = request.PositionID
+		if err := insertPublicationAttemptCoverInput(ctx, tx, *coverInput); err != nil {
+			return uuid.Nil, fmt.Errorf("admit publication: create attempt cover receipt: %w", err)
+		}
+	}
 	if pinnedInstallation != nil {
 		if _, err := tx.NewRaw(`INSERT INTO operation_tool_read_hold(operation_id, installation_id) VALUES (?, ?)`, operationID, pinnedInstallation.ID).Exec(ctx); err != nil {
 			return uuid.Nil, fmt.Errorf("admit publication: hold pinned ffmpeg installation: %w", err)

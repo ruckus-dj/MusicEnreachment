@@ -21,9 +21,10 @@ import (
 )
 
 type publicationAdmissionInserter struct {
-	fail bool
-	id   int64
-	args river.JobArgs
+	fail            bool
+	failAfterInsert bool
+	id              int64
+	args            river.JobArgs
 }
 
 func (i *publicationAdmissionInserter) InsertTx(ctx context.Context, tx *sql.Tx, args river.JobArgs, _ *river.InsertOpts) (*rivertype.JobInsertResult, error) {
@@ -37,6 +38,9 @@ func (i *publicationAdmissionInserter) InsertTx(ctx context.Context, tx *sql.Tx,
 		return nil, err
 	}
 	i.id = id
+	if i.failAfterInsert {
+		return nil, errors.New("injected failure after River row insertion")
+	}
 	return &rivertype.JobInsertResult{Job: &rivertype.JobRow{ID: id}}, nil
 }
 

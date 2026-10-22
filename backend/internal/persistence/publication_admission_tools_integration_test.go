@@ -183,6 +183,7 @@ func assertNoAdmissionArtifacts(t *testing.T, ctx context.Context, db *bun.DB, r
 	}{
 		{"operation", `SELECT count(*) FROM operation WHERE kind='publish_track_v1' AND input_snapshot->>'position_id'=?`, []any{request.PositionID.String()}},
 		{"attempt", `SELECT count(*) FROM track_publication_attempt WHERE position_id=?`, []any{request.PositionID}},
+		{"cover receipt", `SELECT count(*) FROM publication_attempt_cover_input WHERE position_id=?`, []any{request.PositionID}},
 		{"reservation", `SELECT count(*) FROM publication_namespace_reservation WHERE position_id=? AND generation=?`, []any{request.PositionID, request.CandidateGeneration}},
 	}
 	if operationID != nil {

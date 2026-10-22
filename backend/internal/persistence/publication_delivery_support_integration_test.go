@@ -70,6 +70,35 @@ func TestPublicationDeliverySupportReturnsExistingHoldForLiveGuardPostgreSQL(t *
 	}
 }
 
+func TestPublicationAttemptCoverInputReadRequiresLiveClaimedDeliveryPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	ctx := context.Background()
+	var releaseID uuid.UUID
+	if err := f.db.NewRaw(`SELECT release_id FROM release_track WHERE id=?`, f.guard.ExpectedPositionID).Scan(ctx, &releaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO publication_attempt_cover_input(operation_id,position_id,release_id,authority_revision,authority_mode,state) VALUES (?,?,?,1,'automatic','absent')`, f.guard.OperationID, f.guard.ExpectedPositionID, releaseID); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewSetupManagerRepository(f.db)
+	if _, found, err := repo.PublicationAttemptCoverInputForDelivery(ctx, f.guard); err != nil || found {
+		t.Fatalf("unclaimed receipt read = found %t, %v", found, err)
+	}
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim = %q, %v", outcome, err)
+	}
+	input, found, err := repo.PublicationAttemptCoverInputForDelivery(ctx, f.guard)
+	if err != nil || !found || input.State != "absent" || input.OperationID != f.guard.OperationID {
+		t.Fatalf("claimed receipt read = %+v, %t, %v", input, found, err)
+	}
+	stale := f.guard
+	stale.DeliveryToken = uuid.NewString()
+	if _, found, err := repo.PublicationAttemptCoverInputForDelivery(ctx, stale); err != nil || found {
+		t.Fatalf("stale receipt read = found %t, %v", found, err)
+	}
+}
+
 func TestGuardedPublicationDeliveryDiagnosticOnlyUpdatesSafeErrorPostgreSQL(t *testing.T) {
 	t.Parallel()
 	f := newPublicationExecutionFixture(t)

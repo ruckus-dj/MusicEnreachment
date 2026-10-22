@@ -42,6 +42,7 @@ type LibraryFirstPublicationContext struct {
 	Tags                            publication.TagProjectionInput
 	TemplateTokens                  map[string]string
 	Metadata                        FirstPublicationMetadata
+	EffectiveCover                  EffectiveReleaseCoverSummary
 	Blockers                        []string
 	DefaultSourceBlockers           []string
 	ReleasePrimaryCredits           []librarymetadata.ArtistCredit
@@ -50,6 +51,15 @@ type LibraryFirstPublicationContext struct {
 	SelectedPositionPrimaryArtistID *uuid.UUID
 	ResolvedOptionalFields          map[string]librarymetadata.ResolvedField
 	NamespaceClaims                 []PublicationNamespaceClaim `json:"-"`
+}
+
+// EffectiveReleaseCoverSummary participates in preview freshness but contains
+// no image bytes and never reflects a pending manual choice.
+type EffectiveReleaseCoverSummary struct {
+	Revision   int64      `json:"revision"`
+	Mode       string     `json:"mode"`
+	State      string     `json:"state"`
+	Generation *uuid.UUID `json:"generation,omitempty"`
 }
 
 type FirstPublicationMetadata struct {
@@ -91,6 +101,11 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 		Metadata        json.RawMessage `bun:"metadata,type:jsonb"`
 		Revision        int64           `bun:"metadata_revision"`
 	}
+	cover, err := readEffectiveReleaseCoverSummary(ctx, tx, releaseID)
+	if err != nil {
+		return fmt.Errorf("read first publication effective cover: %w", err)
+	}
+	result.EffectiveCover = cover
 	if err := tx.NewRaw(`SELECT id,primary_artist_id,title,metadata,metadata_revision FROM local_release WHERE id=?`, releaseID).Scan(ctx, &release); err != nil {
 		return fmt.Errorf("read first publication release metadata: %w", err)
 	}

@@ -3,9 +3,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,6 +140,67 @@ func TestFirstPublicationRejectsChangedNativeDestinationPostgreSQL(t *testing.T)
 	})
 	if !ran {
 		t.Fatal("native destination fixture callback did not run")
+	}
+}
+
+func TestFirstPublicationCoverAuthorityInvalidatesPreviewPostgreSQL(t *testing.T) {
+	ran := false
+	testPublicationSourceExecution(t, "Track.flac", true, false, func(db *bun.DB, releaseID, positionID, _ uuid.UUID, epoch uuid.UUID, publications *LibraryPublications) {
+		ran = true
+		ctx := context.Background()
+		if _, err := db.ExecContext(ctx, `DELETE FROM publication_namespace_claim WHERE epoch=?`, epoch); err != nil {
+			t.Fatal(err)
+		}
+		var data bytes.Buffer
+		if err := png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+			t.Fatal(err)
+		}
+		covers := persistence.NewLibraryRepository(db)
+		initial, err := covers.ReadReleaseCover(ctx, releaseID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, err := covers.SetPendingReleaseCover(ctx, releaseID, initial.Revision, uuid.New(), data.Bytes(), "image/png")
+		if err != nil {
+			t.Fatal(err)
+		}
+		preview, err := publications.PreviewFirst(ctx, releaseID, positionID)
+		if err != nil || len(preview.Blockers) != 0 {
+			t.Fatalf("preview = %+v, %v", preview, err)
+		}
+		alternate := image.NewRGBA(image.Rect(0, 0, 1, 1))
+		alternate.Set(0, 0, color.White)
+		var alternateData bytes.Buffer
+		if err := png.Encode(&alternateData, alternate); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(alternateData.Bytes())
+		if _, err := db.ExecContext(ctx, `UPDATE release_publication_cover SET pending_bytes=?,pending_sha256=?,pending_size=? WHERE release_id=?`, alternateData.Bytes(), digest[:], alternateData.Len(), releaseID); err != nil {
+			t.Fatal(err)
+		}
+		pendingOnly, err := publications.PreviewFirst(ctx, releaseID, positionID)
+		if err != nil || pendingOnly.ContextDigest != preview.ContextDigest {
+			t.Fatalf("pending bytes changed preview freshness: %q != %q, %v", pendingOnly.ContextDigest, preview.ContextDigest, err)
+		}
+		beforeJobs, beforeOps, beforeClaims := integrationPublicationArtifacts(t, db)
+		if _, err := covers.ApplyPendingReleaseCover(ctx, releaseID, pending.Revision, *pending.PendingGeneration); err != nil {
+			t.Fatal(err)
+		}
+		_, err = publications.AdmitFirst(ctx, releaseID, positionID, FirstPublicationConfirmation{PreviewDigest: preview.ContextDigest, ExpectedEpoch: epoch})
+		if !errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+			t.Fatalf("stale cover preview admission error = %v", err)
+		}
+		afterJobs, afterOps, afterClaims := integrationPublicationArtifacts(t, db)
+		if beforeJobs != afterJobs || beforeOps != afterOps || beforeClaims != afterClaims {
+			t.Fatal("stale cover preview created admission artifacts")
+		}
+		fresh, err := publications.PreviewFirst(ctx, releaseID, positionID)
+		if err != nil || fresh.ContextDigest == preview.ContextDigest {
+			t.Fatalf("cover authority change did not refresh preview digest: %q -> %q (%v)", preview.ContextDigest, fresh.ContextDigest, err)
+		}
+	})
+	if !ran {
+		t.Fatal("cover preview fixture callback did not run")
 	}
 }
 

@@ -46,6 +46,7 @@ var additiveMigrationNames = []string{
 	"20261028000001",
 	"20261029000001",
 	"20261029000002",
+	"20261029000003",
 }
 
 var currentMigrationNames = append(append([]string(nil), baselineMigrationNames...), additiveMigrationNames...)

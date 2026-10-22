@@ -3,9 +3,12 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -18,7 +21,7 @@ import (
 
 func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"success", "callback error", "stale source", "enqueue rollback", "detached callback input"} {
+	for _, scenario := range []string{"success", "callback error", "stale source", "enqueue rollback", "detached callback input", "pending cover", "selected cover"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
@@ -34,6 +37,27 @@ func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
 				t.Fatal(err)
+			}
+			var selectedCover []byte
+			var selectedGeneration uuid.UUID
+			if scenario == "pending cover" || scenario == "selected cover" {
+				selectedCover = publicationAdmissionPNG(t)
+				coverRepo := NewLibraryRepository(db)
+				cover, err := coverRepo.ReadReleaseCover(ctx, releaseID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				pending, err := coverRepo.SetPendingReleaseCover(ctx, releaseID, cover.Revision, uuid.New(), selectedCover, "image/png")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if scenario == "selected cover" {
+					applied, err := coverRepo.ApplyPendingReleaseCover(ctx, releaseID, pending.Revision, *pending.PendingGeneration)
+					if err != nil {
+						t.Fatal(err)
+					}
+					selectedGeneration = *applied.SelectedGeneration
+				}
 			}
 			var epoch uuid.UUID
 			if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {
@@ -105,7 +129,7 @@ func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 			source := &PublicationSourceSelection{RootID: rootID, LocationID: locationID, WorkID: workID, MediaVariantID: variantID, ConfiguredPath: rootPath, InventoryPath: rootPath, RelativePath: relative, SizeBytes: 42, MTime: now, HoldUUID: uuid.New()}
 			request := PublicationAdmission{PositionID: positionID, ExpectedReleaseID: releaseID, ExpectedEpoch: epoch, CandidateGeneration: uuid.New(), IntentKind: "audio", ToolsReadRequired: true, Tools: selections, Source: source, FrozenInputs: frozen, NamespaceManifest: []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/provisional.flac", RelativePath: "root/provisional.flac", NodeKind: "file"}}}
 			callbackErr := errors.New("planner rejected preview")
-			inserter := &publicationAdmissionInserter{fail: scenario == "enqueue rollback"}
+			inserter := &publicationAdmissionInserter{failAfterInsert: scenario == "enqueue rollback"}
 			called := false
 			first := FirstPublicationAdmission{PublicationAdmission: request, PreviewDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PrepareFirst: func(_ context.Context, snap FirstPublicationAdmissionSnapshot, got PublicationAdmission) ([]PublicationNamespaceNode, error) {
 				called = true
@@ -114,6 +138,17 @@ func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 				}
 				if snap.Context == nil || snap.Context.Library == nil || snap.Context.Library.ActiveEpoch != epoch || len(snap.Context.Sources) != 1 || snap.Context.Sources[0].Selection.LocationID != locationID {
 					t.Errorf("authoritative context %+v", snap.Context)
+				}
+				if scenario == "pending cover" && (snap.Context.EffectiveCover.State != "absent" || snap.CoverInput.State != "absent") {
+					t.Errorf("pending cover leaked into effective receipt: summary=%+v receipt=%+v", snap.Context.EffectiveCover, snap.CoverInput)
+				}
+				if scenario == "selected cover" && (snap.Context.EffectiveCover.State != "value" || snap.CoverInput.State != "value" || !bytes.Equal(snap.CoverInput.Bytes, selectedCover)) {
+					t.Errorf("selected cover was not captured: summary=%+v receipt=%+v", snap.Context.EffectiveCover, snap.CoverInput)
+				}
+				if scenario == "selected cover" {
+					*snap.CoverInput.Generation = uuid.New()
+					snap.CoverInput.Bytes[0] ^= 0xff
+					*snap.CoverInput.MIME = "image/jpeg"
 				}
 				if len(snap.Installations) != 1 || len(snap.Settings) == 0 { /* settings are deployment-dependent */
 					if len(snap.Installations) != 1 {
@@ -157,6 +192,44 @@ func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			receipt, err := scanPublicationAttemptCoverInput(ctx, db, op)
+			if err != nil {
+				t.Fatalf("read inserted cover receipt: %v", err)
+			}
+			if scenario == "selected cover" {
+				if receipt.State != "value" || receipt.Generation == nil || *receipt.Generation != selectedGeneration || !bytes.Equal(receipt.Bytes, selectedCover) || receipt.MIME == nil || *receipt.MIME != "image/png" {
+					t.Fatalf("receipt did not freeze effective bytes: %+v", receipt)
+				}
+				for _, column := range []string{"generation", "image_bytes", "image_mime", "image_sha256", "image_size"} {
+					if _, err := db.ExecContext(ctx, "UPDATE publication_attempt_cover_input SET "+column+"=NULL WHERE operation_id=?", op); err == nil {
+						t.Errorf("receipt tuple with %s omitted was accepted", column)
+					}
+				}
+				if _, err := db.ExecContext(ctx, `UPDATE publication_attempt_cover_input SET generation=? WHERE operation_id=?`, uuid.Nil, op); err == nil {
+					t.Error("zero receipt generation was accepted")
+				}
+				if _, err := db.ExecContext(ctx, `UPDATE publication_attempt_cover_input SET image_sha256=? WHERE operation_id=?`, bytes.Repeat([]byte{0x7f}, 32), op); err == nil {
+					t.Error("incorrect same-length receipt digest was accepted")
+				}
+				otherRelease := uuid.New()
+				if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'other')`, otherRelease); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.ExecContext(ctx, `UPDATE publication_attempt_cover_input SET release_id=? WHERE operation_id=?`, otherRelease, op); err == nil {
+					t.Error("receipt release inconsistent with attempt position was accepted")
+				}
+				if _, err := NewLibraryRepository(db).ReturnReleaseCoverToAutomatic(ctx, releaseID, receipt.Revision); err != nil {
+					t.Fatal(err)
+				}
+				frozen, err := scanPublicationAttemptCoverInput(ctx, db, op)
+				if err != nil || !bytes.Equal(frozen.Bytes, selectedCover) {
+					t.Fatalf("authority change altered attempt receipt: %+v, %v", frozen, err)
+				}
+			} else if scenario == "pending cover" && receipt.State != "absent" {
+				t.Fatalf("pending manual bytes entered receipt: %+v", receipt)
+			} else if scenario != "selected cover" && scenario != "pending cover" && receipt.State != "absent" {
+				t.Fatalf("absent authority receipt = %+v", receipt)
+			}
 			if scenario == "detached callback input" {
 				original, err := DecodePublicationInputs(request.FrozenInputs)
 				if err != nil || original.Tools[0].Version != "7.0" {
@@ -178,6 +251,15 @@ func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func publicationAdmissionPNG(t *testing.T) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	if err := png.Encode(&output, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
 }
 
 var _ RiverInserter = (*publicationAdmissionInserter)(nil)

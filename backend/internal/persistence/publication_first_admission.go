@@ -21,6 +21,7 @@ type FirstPublicationAdmissionSnapshot struct {
 	Installations []ToolInstallation
 	Claims        []PublicationNamespaceClaim
 	PreviewDigest string
+	CoverInput    PublicationAttemptCoverInput
 }
 
 // PrepareFirstPublicationAdmission plans the final native namespace from the
@@ -60,6 +61,7 @@ type firstPublicationAdmissionHook struct {
 	digest          string
 	prepare         PrepareFirstPublicationAdmission
 	sourceSelection *FirstPublicationSourceSelection
+	coverInput      *PublicationAttemptCoverInput
 }
 
 // AdmitFirstPublicationFromPreview binds native namespace planning to this same
@@ -204,7 +206,7 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 		return nil, fmt.Errorf("admit first publication: missing planner")
 	}
 	tables := []string{
-		"app_setting", "local_artist", "local_recording", "local_release", "local_track", "media_variant",
+		"app_setting", "local_artist", "local_recording", "local_release", "local_track", "media_variant", "release_publication_cover",
 		"provider", "provider_artist", "provider_local_artist", "publication_namespace_claim", "publication_namespace_reservation", "release_artist", "release_track",
 		"source_analysis_step", "source_analysis_work", "source_location", "source_root", "source_work_variant_identity",
 		"tool_installation", "track_artist", "track_source",
@@ -242,6 +244,12 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 		return nil, fmt.Errorf("admit first publication: read namespace claims: %w", err)
 	}
 	snapshot.PreviewDigest = hook.digest
+	authoritativeCoverInput, err := readEffectiveReleaseCoverInput(ctx, tx, request.ExpectedReleaseID, snapshot.Context.EffectiveCover)
+	if err != nil {
+		return nil, fmt.Errorf("admit first publication: read effective cover receipt: %w", err)
+	}
+	authoritativeCoverInput.PositionID = request.PositionID
+	snapshot.CoverInput = clonePublicationAttemptCoverInput(authoritativeCoverInput)
 	// Detach every mutable request component before handing it to service code.
 	plannerRequest := request
 	plannerRequest.firstAdmission = nil
@@ -264,6 +272,8 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 	if err := validatePublicationManifest(manifest); err != nil {
 		return nil, err
 	}
+	coverInput := authoritativeCoverInput
+	hook.coverInput = &coverInput
 	return manifest, nil
 }
 
