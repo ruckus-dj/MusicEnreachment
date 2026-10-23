@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
@@ -26,6 +27,23 @@ type OutputReset struct {
 	filesystem   *settings.ResetFilesystem
 	logicalAreas []string
 	registry     *settings.Registry
+	coordinator  *publication.Coordinator
+}
+
+func (s *OutputReset) WithPublicationCoordinator(coordinator *publication.Coordinator) *OutputReset {
+	s.coordinator = coordinator
+	return s
+}
+
+func (s *OutputReset) acquirePublicationMutation(ctx context.Context) (func(), error) {
+	if s.coordinator == nil {
+		return func() {}, nil
+	}
+	release, err := s.coordinator.Acquire(ctx, []publication.ResourceLock{{Key: GlobalPublicationMutationResource, Mode: publication.Exclusive}})
+	if err != nil {
+		return nil, fmt.Errorf("acquire output reset publication resource: %w", err)
+	}
+	return release, nil
 }
 
 func NewOutputReset(repository outputResetRepository, filesystem *settings.ResetFilesystem, logicalAreas []string) *OutputReset {
@@ -42,6 +60,11 @@ func (s *OutputReset) Reset(ctx context.Context, expectedCurrent, candidate stri
 	if s.repository == nil {
 		return uuid.Nil, fmt.Errorf("output reset repository is required")
 	}
+	release, err := s.acquirePublicationMutation(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer release()
 	oldRoot := expectedCurrent
 	if expectedCurrent != "" {
 		normalizedOldRoot, err := settings.NormalizePath(expectedCurrent)
@@ -105,6 +128,11 @@ func (s *OutputReset) ResetRuntime(ctx context.Context, expectedTools, expectedO
 	if s.repository == nil {
 		return uuid.Nil, fmt.Errorf("output reset repository is required")
 	}
+	release, err := s.acquirePublicationMutation(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer release()
 	newRoot, err := settings.NormalizePath(candidate)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("normalize candidate output directory: %w", err)

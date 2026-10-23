@@ -37,9 +37,11 @@ const (
 
 var errInvalidPublicationDeliveryGuard = errors.New("invalid publication delivery guard")
 
-// ClaimPublicationDelivery durably claims a queued publication delivery. It
-// never reclaims stale, terminal, or quiescent claims; AlreadyOwned is an
-// identity result, not authorization to begin another mutator.
+// ClaimPublicationDelivery durably claims a queued delivery or a River retry
+// of the same still-live operation. A retry or redelivery gets a new delivery
+// identity while retaining the attempt's frozen inputs and other admission
+// state. A fresh identity replaces a claim from the same or an older River
+// attempt, but never a newer one.
 func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.Context, guard PublicationDeliveryGuard) (PublicationDeliveryClaimOutcome, error) {
 	if err := validatePublicationDeliveryGuard(guard); err != nil {
 		return PublicationDeliveryBlocked, err
@@ -114,12 +116,35 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 			return fmt.Errorf("claim publication delivery: read existing claim: %w", err)
 		}
 		if len(existing) > 0 {
-			for _, claim := range existing {
-				if publicationClaimMatches(claim, guard) {
-					outcome = PublicationDeliveryAlreadyOwned
-					break
-				}
+			claim := existing[0]
+			if publicationClaimMatches(claim, guard) && claim.State == "executing" {
+				outcome = PublicationDeliveryAlreadyOwned
+				return nil
 			}
+			// A running delivery of this exact operation and application attempt may
+			// replace its prior delivery identity regardless of that claim's state.
+			// River returns interrupted jobs at the same attempt after shutdown, so
+			// an equal attempt is a legitimate redelivery; only an older attempt is
+			// stale. The River row was locked and matched to guard above.
+			if op.State != "running" || attempt.Phase == "committed" || attempt.Phase == "cleaning" || attempt.Phase == "cleanup_pending" ||
+				claim.ApplicationAttempt != guard.ApplicationAttempt ||
+				claim.RiverJobID != guard.RiverJobID || claim.RiverAttempt > guard.RiverAttempt || claim.Epoch != guard.Epoch ||
+				len(attempt.FrozenInputs) == 0 {
+				return nil
+			}
+			if _, err := tx.NewRaw(`UPDATE publication_execution_claim
+					SET river_attempt=?, claim_uuid=?, boot_uuid=?, delivery_token=?, state='executing'
+					WHERE operation_id=? AND application_attempt=?`, guard.RiverAttempt, guard.ClaimUUID, guard.BootUUID,
+				guard.DeliveryToken, guard.OperationID, guard.ApplicationAttempt).Exec(ctx); err != nil {
+				return fmt.Errorf("claim publication delivery: replace prior delivery: %w", err)
+			}
+			if _, err := tx.NewRaw(`UPDATE operation SET stage='preparing', updated_at=now() WHERE id=? AND state='running'`, guard.OperationID).Exec(ctx); err != nil {
+				return fmt.Errorf("claim publication delivery: restart operation preparation: %w", err)
+			}
+			if _, err := tx.NewRaw(`UPDATE track_publication_attempt SET phase='preparing' WHERE operation_id=?`, guard.OperationID).Exec(ctx); err != nil {
+				return fmt.Errorf("claim publication delivery: restart attempt preparation: %w", err)
+			}
+			outcome = PublicationDeliveryAcquired
 			return nil
 		}
 		// A running operation without its durable claim cannot safely be borrowed.
@@ -151,7 +176,8 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 }
 
 // MarkPublicationQuiescent records that this exact delivery has stopped. It
-// intentionally retains the durable claim and does not authorize a successor.
+// intentionally retains the durable claim; only a fresh delivery identity with
+// a live matching River row can replace it.
 func (repository *SetupManagerRepository) MarkPublicationQuiescent(ctx context.Context, guard PublicationDeliveryGuard) (bool, error) {
 	if err := validatePublicationDeliveryGuard(guard); err != nil {
 		return false, err

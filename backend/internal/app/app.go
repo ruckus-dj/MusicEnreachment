@@ -178,9 +178,6 @@ func Run(ctx context.Context, config Config) error {
 	}
 	logger.InfoContext(ctx, "application migrations complete")
 	setupManagerRepository := persistence.NewSetupManagerRepository(db)
-	if err := service.NewPublicationStartup(setupManagerRepository).CheckPublicationStartup(ctx); err != nil {
-		return err
-	}
 	settingsRepository := persistence.NewSettingsRepository(db)
 	registry := settings.New(settingsRepository, level)
 	platform, err := registry.InitializePlatform(ctx, settings.CurrentPlatform())
@@ -190,7 +187,8 @@ func Run(ctx context.Context, config Config) error {
 	if err := registry.LoadLogLevel(ctx); err != nil {
 		return fmt.Errorf("load runtime log level: %w", err)
 	}
-	outputReset := service.NewOutputReset(setupManagerRepository, settings.NewResetFilesystem(), []string{"analysis", "publication", "checks", "media"})
+	publicationCoordinator := publication.NewCoordinator()
+	outputReset := service.NewOutputReset(setupManagerRepository, settings.NewResetFilesystem(), []string{"analysis", "publication", "checks", "media"}).WithPublicationCoordinator(publicationCoordinator)
 	musicBrainzGate := musicbrainz.NewPublicRateGate()
 	governedHTTPClient := musicbrainz.NewGovernedHTTPClient(musicBrainzGate)
 	connectivityChecker := musicbrainz.NewClientWithHTTPClient(governedHTTPClient)
@@ -235,7 +233,7 @@ func Run(ctx context.Context, config Config) error {
 	libraryRepository := persistence.NewLibraryRepository(db)
 	libraryReleaseDetails := service.NewLibraryReleaseDetails(libraryRepository)
 	libraryPrimaryArtists := service.NewLibraryPrimaryArtists(libraryRepository)
-	libraryMetadata := service.NewLibraryMetadataService(libraryRepository)
+	libraryMetadata := service.NewLibraryMetadataService(libraryRepository).WithPublicationCoordinator(publicationCoordinator)
 	libraryPublications := service.NewLibraryPublications(setupManagerRepository, registry, riverSlot, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	})
@@ -256,7 +254,7 @@ func Run(ctx context.Context, config Config) error {
 	publicationExecutor := service.NewPublicationExecutor(
 		setupManagerRepository, registry,
 		tools.Platform{GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH},
-		publication.NewCoordinator(), publicationBootUUID, publicationCommands,
+		publicationCoordinator, publicationBootUUID, publicationCommands,
 	)
 	publicationWorker := jobs.NewPublicationWorker(publicationExecutor)
 	publicationReconciliationWorker := jobs.NewPublicationReconciliationWorker(setupManagerRepository, libraryPublications, operationService)

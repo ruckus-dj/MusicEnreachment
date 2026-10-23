@@ -30,6 +30,10 @@ type PublicationExecutor struct {
 	metadata       PublicationMetadataWriter
 }
 
+// GlobalPublicationMutationResource serializes publication execution with
+// process-local mutations to publication metadata and the output namespace.
+const GlobalPublicationMutationResource = "publication-global-mutation"
+
 func NewPublicationExecutor(
 	repository *persistence.SetupManagerRepository,
 	registry *settings.Registry,
@@ -56,18 +60,32 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	if operationID == uuid.Nil || riverJobID <= 0 || riverAttempt <= 0 {
 		return errors.New("publication delivery identity is invalid")
 	}
+	releaseMutation, err := executor.coordinator.Acquire(ctx, []publication.ResourceLock{{Key: GlobalPublicationMutationResource, Mode: publication.Exclusive}})
+	if err != nil {
+		return err
+	}
+	defer releaseMutation()
 	operation, err := executor.repository.GetOperation(ctx, operationID)
 	if err != nil {
 		return fmt.Errorf("read publication operation: %w", err)
 	}
-	if operation == nil || operation.Kind != "publish_track_v1" || operation.State != "queued" || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID || operation.Attempt <= 0 {
+	if operation == nil || operation.Kind != "publish_track_v1" || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID {
+		return errors.New("publication River job does not match the running operation")
+	}
+	// River may redeliver after the database transaction committed but before
+	// River recorded the successful return. The attempt is intentionally gone at
+	// this point; the operation is the durable completion receipt.
+	if operation.State == "succeeded" {
+		return nil
+	}
+	if (operation.State != "queued" && operation.State != "running") || operation.Attempt <= 0 {
 		return errors.New("publication River job does not match the running operation")
 	}
 	attempt, err := executor.repository.ReadPublicationAttempt(ctx, operationID)
 	if err != nil {
 		return fmt.Errorf("read publication attempt: %w", err)
 	}
-	if attempt == nil || attempt.Phase != "queued" {
+	if attempt == nil || attempt.Phase != "queued" && attempt.Phase != "preparing" {
 		return errors.New("publication attempt is unavailable")
 	}
 	input, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
@@ -103,18 +121,18 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	if input.Audio != nil {
 		resources = append(resources, publication.ResourceLock{Key: "source-root:" + input.Audio.RootID.String(), Mode: publication.Shared})
 	}
-	scope, err := NewPublicationExecutionScope(ctx, executor.coordinator, resources, guard, executor.repository.ClaimPublicationDelivery, executor.commands, executor.repository)
+	release, err := executor.coordinator.Acquire(ctx, resources)
 	if err != nil {
 		return err
+	}
+	defer release()
+	claim, err := executor.repository.ClaimPublicationDelivery(ctx, guard)
+	if err != nil || claim != persistence.PublicationDeliveryAcquired {
+		return errors.Join(err, errors.New("publication delivery claim was not acquired"))
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			resultErr = fmt.Errorf("publication execution panicked: %v", recovered)
-		}
-		if resultErr != nil && !scope.failureSettled() {
-			scope.quarantineUncertain()
-			_, diagnosticErr := executor.repository.GuardedPublicationDeliveryDiagnostic(context.WithoutCancel(ctx), guard, "Publication could not finish; its retained state requires reconciliation.")
-			resultErr = errors.Join(resultErr, diagnosticErr)
 		}
 	}()
 	var guarded persistence.PublicationInputs
@@ -128,44 +146,5 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		return errors.Join(errors.New("publication frozen inputs are unavailable for this delivery"), err)
 	}
 	input = guarded
-	preparer := PublicationStagePreparer{Repository: executor.repository, SourceOpener: sourcefs.NewOpener(), OutputParent: root, ParentPath: outputPath}
-	if input.ManualLyrics == nil {
-		if input.Audio != nil {
-			hold, found, holdErr := executor.repository.PublicationSourceHoldForDelivery(ctx, guard)
-			if holdErr != nil || !found {
-				return errors.Join(errors.New("publication source hold is unavailable"), holdErr)
-			}
-			preparer.HoldUUID = hold
-		}
-		_, err := executeGenericPublication(ctx, scope, executor.repository, input, preparer, attempt, executor.platform, executor.lyrics, executor.stageValidator, executor.metadata)
-		return err
-	}
-	prepared, err := preparer.prepareManualLyricsFLAC(ctx, guard, persistence.PublicationDeliveryAcquired, true)
-	if err != nil {
-		return err
-	}
-	stage, ok := prepared.(*preparedPublicationStage)
-	if !ok {
-		return errors.New("publication preparation did not return a native stage")
-	}
-	pinnedTools, err := NewScopeBoundPublicationPinnedTools(executor.repository, scope, guard, executor.platform)
-	if err != nil {
-		return err
-	}
-	if input.Rewrite.AudioFacts.Container == publication.AudioContainerMKA {
-		stage.manualProbe, err = NewScopeBoundPublicationStageProbe(scope, pinnedTools, input.Tools)
-		if err != nil {
-			return err
-		}
-	}
-	reservation := scope.reserveSynchronousWork()
-	if reservation == nil {
-		return errors.New("publication synchronous work reservation is unavailable")
-	}
-	proof, err := stage.initialOutputCopy(ctx, scope, reservation)
-	if err != nil {
-		return err
-	}
-	_, err = replacePreparedManualLyricsFLAC(ctx, scope, reservation, proof, input)
-	return err
+	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root)
 }

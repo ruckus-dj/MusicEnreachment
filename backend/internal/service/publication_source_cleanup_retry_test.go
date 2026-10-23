@@ -80,19 +80,18 @@ func TestPublicationSourceCleanupRetryIsRejectedBeforeMutation(t *testing.T) {
 	}
 }
 
-// TestGenericPublicationRetryStillDelegates keeps the ordinary publication
-// retry on the generic enqueue path.
-func TestGenericPublicationRetryStillDelegates(t *testing.T) {
+// Publication retries must never fall back to the unrelated operation worker.
+func TestPublicationRetryRejectsMissingDedicatedRepository(t *testing.T) {
 	existing := &persistence.Operation{ID: uuid.New(), Kind: "publish_track_v1", State: "failed", Stage: "failed", Attempt: 2}
 	repository := &riverMemoryOperations{memoryOperations: &memoryOperations{
 		values: map[uuid.UUID]*persistence.Operation{existing.ID: existing},
 	}}
 	operations := NewOperationsWithRiver(repository, &countingRetryInserter{})
 
-	if _, err := operations.Retry(context.Background(), existing.ID); err != nil {
-		t.Fatalf("publication retry: %v", err)
+	if _, err := operations.Retry(context.Background(), existing.ID); err == nil || !strings.Contains(err.Error(), "publication retry repository is unavailable") {
+		t.Fatalf("publication retry without dedicated repository: %v", err)
 	}
-	if repository.genericRetries != 1 {
-		t.Fatalf("generic retry count = %d, want 1", repository.genericRetries)
+	if repository.genericRetries != 0 {
+		t.Fatalf("publication reached generic retry %d times", repository.genericRetries)
 	}
 }

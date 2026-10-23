@@ -181,67 +181,224 @@ func TestPublicationDeliveryInvalidGuardDoesNotTransitionPostgreSQL(t *testing.T
 	}
 }
 
-func TestPublicationDeliveryClaimBlocksDifferentIdentityAndStaleFencesPostgreSQL(t *testing.T) {
+func TestPublicationDeliveryClaimBlocksStaleFencesButReplacesSameAttemptIdentityPostgreSQL(t *testing.T) {
 	t.Parallel()
 	f := newPublicationExecutionFixture(t)
+	ctx := context.Background()
 	repo := NewSetupManagerRepository(f.db)
-	if got, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || got != PublicationDeliveryAcquired {
+	if got, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || got != PublicationDeliveryAcquired {
 		t.Fatalf("initial claim = %q, %v", got, err)
 	}
-	variants := []struct {
+	stale := []struct {
 		name   string
 		change func(*PublicationDeliveryGuard)
 	}{
-		{"boot", func(g *PublicationDeliveryGuard) { g.BootUUID = uuid.New() }},
-		{"token", func(g *PublicationDeliveryGuard) { g.DeliveryToken += "-other" }},
-		{"claim", func(g *PublicationDeliveryGuard) { g.ClaimUUID = uuid.New() }},
 		{"job attempt", func(g *PublicationDeliveryGuard) { g.RiverAttempt++ }},
 		{"application attempt", func(g *PublicationDeliveryGuard) { g.ApplicationAttempt++ }},
 		{"epoch", func(g *PublicationDeliveryGuard) { g.Epoch = uuid.New() }},
 		{"candidate", func(g *PublicationDeliveryGuard) { g.CandidateGeneration = uuid.New() }},
 		{"position", func(g *PublicationDeliveryGuard) { g.ExpectedPositionID = uuid.New() }},
 	}
-	for _, variant := range variants {
+	for _, variant := range stale {
 		t.Run(variant.name, func(t *testing.T) {
 			guard := f.guard
 			variant.change(&guard)
-			outcome, err := repo.ClaimPublicationDelivery(context.Background(), guard)
+			outcome, err := repo.ClaimPublicationDelivery(ctx, guard)
 			if err != nil || outcome != PublicationDeliveryBlocked {
 				t.Fatalf("stale claim = %q, %v", outcome, err)
 			}
 		})
 	}
+	// A fresh delivery identity at the same River attempt is a legitimate
+	// redelivery and replaces the executing claim. In-process coordination, not
+	// the database claim, decides which delivery may actually mutate.
+	fresh := f.guard
+	fresh.ClaimUUID, fresh.BootUUID, fresh.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, fresh); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("same-attempt replacement = %q, %v", outcome, err)
+	}
+	var claim PublicationExecutionClaim
+	if err := f.db.NewSelect().Model(&claim).Where("operation_id=?", f.guard.OperationID).Scan(ctx, &claim); err != nil {
+		t.Fatal(err)
+	}
+	if claim.ClaimUUID != fresh.ClaimUUID || claim.BootUUID != fresh.BootUUID || claim.DeliveryToken != fresh.DeliveryToken || claim.State != "executing" {
+		t.Fatalf("replacement claim = %+v", claim)
+	}
+	if ok, err := repo.ProgressPublicationDelivery(ctx, f.guard, 1, nil); err != nil || ok {
+		t.Fatalf("stale guard progress = %t, %v", ok, err)
+	}
+	if ok, err := repo.ProgressPublicationDelivery(ctx, fresh, 1, nil); err != nil || !ok {
+		t.Fatalf("replacement guard progress = %t, %v", ok, err)
+	}
 }
 
-func TestPublicationDeliveryQuiescenceDoesNotPermitTakeoverPostgreSQL(t *testing.T) {
+func TestPublicationDeliveryQuiescenceRetainsClaimUntilRedeliveryPostgreSQL(t *testing.T) {
 	t.Parallel()
 	f := newPublicationExecutionFixture(t)
+	ctx := context.Background()
 	repo := NewSetupManagerRepository(f.db)
-	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
 		t.Fatalf("initial claim = %q, %v", outcome, err)
 	}
-	if ok, err := repo.MarkPublicationQuiescent(context.Background(), f.guard); err != nil || !ok {
+	if ok, err := repo.MarkPublicationQuiescent(ctx, f.guard); err != nil || !ok {
 		t.Fatalf("mark quiescent = %t, %v", ok, err)
 	}
 	var state string
-	if err := f.db.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=?`, f.guard.OperationID).Scan(context.Background(), &state); err != nil || state != "quiescent" {
+	if err := f.db.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &state); err != nil || state != "quiescent" {
 		t.Fatalf("claim state = %q, %v", state, err)
 	}
+	// Quiescence alone does not grant the stopped delivery live ownership.
+	if ok, err := repo.ProgressPublicationDelivery(ctx, f.guard, 1, nil); err != nil || ok {
+		t.Fatalf("quiescent progress = %t, %v", ok, err)
+	}
+	// River returns the interrupted job at the same attempt, so a fresh
+	// delivery identity replaces the retained claim and revives the operation.
 	newDelivery := f.guard
 	newDelivery.ClaimUUID = uuid.New()
 	newDelivery.DeliveryToken = uuid.NewString()
 	newDelivery.BootUUID = uuid.New()
-	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), newDelivery); err != nil || outcome != PublicationDeliveryBlocked {
-		t.Fatalf("takeover = %q, %v", outcome, err)
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, newDelivery); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("same-attempt redelivery = %q, %v", outcome, err)
 	}
-	if ok, err := repo.MarkPublicationQuiescent(context.Background(), newDelivery); err != nil || ok {
-		t.Fatalf("different guard quiescence = %t, %v", ok, err)
+	if ok, err := repo.ProgressPublicationDelivery(ctx, f.guard, 2, nil); err != nil || ok {
+		t.Fatalf("superseded delivery progress = %t, %v", ok, err)
+	}
+	if ok, err := repo.ProgressPublicationDelivery(ctx, newDelivery, 2, nil); err != nil || !ok {
+		t.Fatalf("redelivered progress = %t, %v", ok, err)
+	}
+	if ok, err := repo.MarkPublicationQuiescent(ctx, f.guard); err != nil || ok {
+		t.Fatalf("superseded guard quiescence = %t, %v", ok, err)
 	}
 }
 
-func TestPublicationDeliveryConcurrentClaimsHaveOneWinnerPostgreSQL(t *testing.T) {
+func TestPublicationDeliveryReclaimsEqualRiverAttemptWithRunningJobPostgreSQL(t *testing.T) {
 	t.Parallel()
 	f := newPublicationExecutionFixture(t)
+	ctx := context.Background()
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("initial claim = %q, %v", outcome, err)
+	}
+	redelivery := f.guard
+	redelivery.ClaimUUID, redelivery.BootUUID, redelivery.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	// The equal attempt is only valid while the River row itself is running.
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='available' WHERE id=?`, f.guard.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, redelivery); err != nil || outcome != PublicationDeliveryBlocked {
+		t.Fatalf("claim with returned River job = %q, %v", outcome, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='running' WHERE id=?`, f.guard.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, redelivery); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("same-attempt reclaim = %q, %v", outcome, err)
+	}
+	var claim PublicationExecutionClaim
+	if err := f.db.NewSelect().Model(&claim).Where("operation_id=?", f.guard.OperationID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if claim.ClaimUUID != redelivery.ClaimUUID || claim.BootUUID != redelivery.BootUUID || claim.DeliveryToken != redelivery.DeliveryToken ||
+		claim.RiverAttempt != redelivery.RiverAttempt || claim.State != "executing" {
+		t.Fatalf("reclaimed claim = %+v", claim)
+	}
+	var operationState, stage, phase string
+	if err := f.db.NewRaw(`SELECT state, stage FROM operation WHERE id=?`, f.guard.OperationID).Scan(ctx, &operationState, &stage); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT phase FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &phase); err != nil {
+		t.Fatal(err)
+	}
+	if operationState != "running" || stage != "preparing" || phase != "preparing" {
+		t.Fatalf("reclaimed state = operation:%s/%s attempt:%s", operationState, stage, phase)
+	}
+	// The prior delivery identity no longer authorizes live mutations.
+	if ok, err := repo.ProgressPublicationDelivery(ctx, f.guard, 3, nil); err != nil || ok {
+		t.Fatalf("superseded delivery progress = %t, %v", ok, err)
+	}
+	if ok, err := repo.ProgressPublicationDelivery(ctx, redelivery, 3, nil); err != nil || !ok {
+		t.Fatalf("reclaimed delivery progress = %t, %v", ok, err)
+	}
+}
+
+func TestPublicationDeliveryRetryReplacesExecutingClaimAndRestartsPreparationPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	ctx := context.Background()
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("initial claim = %q, %v", outcome, err)
+	}
+	var previousClaimState string
+	if err := f.db.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &previousClaimState); err != nil {
+		t.Fatal(err)
+	}
+	if previousClaimState != "executing" {
+		t.Fatalf("prior claim state = %q, want executing", previousClaimState)
+	}
+	var frozenInputs, manifest, journal string
+	if err := f.db.NewRaw(`SELECT frozen_inputs, namespace_manifest, mutation_journal FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).
+		Scan(ctx, &frozenInputs, &manifest, &journal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE operation SET stage='validated' WHERE id=?`, f.guard.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE track_publication_attempt SET phase='validated' WHERE operation_id=?`, f.guard.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET attempt=2, state='running' WHERE id=?`, f.guard.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	retry := f.guard
+	retry.RiverAttempt = 2
+	retry.ClaimUUID, retry.BootUUID, retry.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	fabricated := retry
+	fabricated.RiverAttempt = 3
+	fabricated.ClaimUUID, fabricated.BootUUID, fabricated.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, fabricated); err != nil || outcome != PublicationDeliveryBlocked {
+		t.Fatalf("fabricated future River attempt = %q, %v", outcome, err)
+	}
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, retry); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("retry claim = %q, %v", outcome, err)
+	}
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryBlocked {
+		t.Fatalf("old River delivery after replacement = %q, %v", outcome, err)
+	}
+	var operationState, stage, phase, claimState string
+	var riverAttempt int
+	if err := f.db.NewRaw(`SELECT state, stage FROM operation WHERE id=?`, retry.OperationID).Scan(ctx, &operationState, &stage); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT phase FROM track_publication_attempt WHERE operation_id=?`, retry.OperationID).Scan(ctx, &phase); err != nil {
+		t.Fatal(err)
+	}
+	var claim PublicationExecutionClaim
+	if err := f.db.NewSelect().Model(&claim).Where("operation_id=?", retry.OperationID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT attempt FROM river_job WHERE id=?`, retry.RiverJobID).Scan(ctx, &riverAttempt); err != nil {
+		t.Fatal(err)
+	}
+	claimState = claim.State
+	if operationState != "running" || stage != "preparing" || phase != "preparing" || claimState != "executing" ||
+		claim.RiverAttempt != retry.RiverAttempt || claim.ClaimUUID != retry.ClaimUUID || riverAttempt != retry.RiverAttempt {
+		t.Fatalf("retry state = operation:%s/%s attempt:%s claim:%+v river-attempt:%d", operationState, stage, phase, claim, riverAttempt)
+	}
+	var afterInputs, afterManifest, afterJournal string
+	if err := f.db.NewRaw(`SELECT frozen_inputs, namespace_manifest, mutation_journal FROM track_publication_attempt WHERE operation_id=?`, retry.OperationID).
+		Scan(ctx, &afterInputs, &afterManifest, &afterJournal); err != nil {
+		t.Fatal(err)
+	}
+	if string(afterInputs) != string(frozenInputs) || string(afterManifest) != string(manifest) || string(afterJournal) != string(journal) {
+		t.Fatal("retry changed frozen inputs, namespace manifest, or mutation journal")
+	}
+}
+
+func TestPublicationDeliveryConcurrentEqualAttemptClaimsSerializeToOneLiveGuardPostgreSQL(t *testing.T) {
+	t.Parallel()
+	f := newPublicationExecutionFixture(t)
+	ctx := context.Background()
 	repo := NewSetupManagerRepository(f.db)
 	guards := []PublicationDeliveryGuard{f.guard, f.guard}
 	guards[1].ClaimUUID, guards[1].BootUUID, guards[1].DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
@@ -254,27 +411,43 @@ func TestPublicationDeliveryConcurrentClaimsHaveOneWinnerPostgreSQL(t *testing.T
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			results[i], errs[i] = repo.ClaimPublicationDelivery(context.Background(), guards[i])
+			results[i], errs[i] = repo.ClaimPublicationDelivery(ctx, guards[i])
 		}(i)
 	}
 	close(start)
 	wg.Wait()
-	winners, blocked := 0, 0
+	// The two fresh identities share an equal River attempt. The locked attempt
+	// and operation rows serialize them, and equal-attempt replacement lets both
+	// acquire; exactly one durable claim row keeps the identity that committed
+	// last. In-process coordination, not this claim, prevents two live mutators.
+	var claims []PublicationExecutionClaim
+	if err := f.db.NewSelect().Model(&claims).Where("operation_id=?", f.guard.OperationID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(claims) != 1 {
+		t.Fatalf("claims = %d, want exactly one row", len(claims))
+	}
+	live := 0
 	for i := range results {
 		if errs[i] != nil {
 			t.Fatalf("concurrent claim %d: %v", i, errs[i])
 		}
-		switch results[i] {
-		case PublicationDeliveryAcquired:
-			winners++
-		case PublicationDeliveryBlocked:
-			blocked++
-		default:
-			t.Fatalf("unexpected concurrent claim %d outcome %q", i, results[i])
+		if results[i] != PublicationDeliveryAcquired {
+			t.Fatalf("concurrent claim %d outcome = %q, want acquired", i, results[i])
+		}
+		mutable, err := repo.ProgressPublicationDelivery(ctx, guards[i], int64(i+1), nil)
+		if err != nil {
+			t.Fatalf("progress for claim %d: %v", i, err)
+		}
+		if mutable {
+			live++
+			if claims[0].ClaimUUID != guards[i].ClaimUUID || claims[0].BootUUID != guards[i].BootUUID || claims[0].DeliveryToken != guards[i].DeliveryToken {
+				t.Fatalf("mutable guard %d does not match the durable claim %+v", i, claims[0])
+			}
 		}
 	}
-	if winners != 1 || blocked != 1 {
-		t.Fatalf("concurrent results = %q/%q, want one acquired and one blocked", results[0], results[1])
+	if live != 1 {
+		t.Fatalf("live guards = %d, want exactly one of %+v", live, results)
 	}
 }
 

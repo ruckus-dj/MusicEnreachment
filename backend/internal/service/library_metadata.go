@@ -12,6 +12,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 type LibraryMetadataResult struct {
@@ -30,10 +31,18 @@ type libraryMetadataRepository interface {
 	UpdateMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID, int64, librarymetadata.Envelope) (persistence.LibraryMetadata, error)
 }
 
-type LibraryMetadataService struct{ repository libraryMetadataRepository }
+type LibraryMetadataService struct {
+	repository  libraryMetadataRepository
+	coordinator *publication.Coordinator
+}
 
 func NewLibraryMetadataService(repository libraryMetadataRepository) *LibraryMetadataService {
 	return &LibraryMetadataService{repository: repository}
+}
+
+func (service *LibraryMetadataService) WithPublicationCoordinator(coordinator *publication.Coordinator) *LibraryMetadataService {
+	service.coordinator = coordinator
+	return service
 }
 
 func (service *LibraryMetadataService) Read(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID) (LibraryMetadataResult, error) {
@@ -53,6 +62,13 @@ func (service *LibraryMetadataService) Read(ctx context.Context, scope libraryme
 func (service *LibraryMetadataService) Update(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, changes map[string]json.RawMessage) (LibraryMetadataResult, error) {
 	if service == nil || service.repository == nil {
 		return LibraryMetadataResult{}, errors.New("library metadata is unavailable")
+	}
+	if service.coordinator != nil {
+		release, err := service.coordinator.Acquire(ctx, []publication.ResourceLock{{Key: GlobalPublicationMutationResource, Mode: publication.Exclusive}})
+		if err != nil {
+			return LibraryMetadataResult{}, fmt.Errorf("acquire library metadata mutation resource: %w", err)
+		}
+		defer release()
 	}
 	if expected < 1 || len(changes) == 0 {
 		return LibraryMetadataResult{}, ErrLibraryMetadataInvalidRequest

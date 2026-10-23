@@ -91,6 +91,27 @@ func (commands *automaticRetryCommands) Run(_ context.Context, executable string
 		}
 		return PublicationCommandResult{Output: []byte("ffmpeg version 7.0 build"), QuiescenceEstablished: true}, nil
 	}
+	if strings.Contains(filepath.Base(executable), "ffprobe") && containsArg(args, "format=duration") {
+		var probe struct {
+			Format struct {
+				Duration string `json:"duration"`
+			} `json:"format"`
+		}
+		if err := json.Unmarshal(commands.probeJSON, &probe); err != nil {
+			return PublicationCommandResult{QuiescenceEstablished: true}, err
+		}
+		if probe.Format.Duration == "" {
+			return PublicationCommandResult{QuiescenceEstablished: true}, errors.New("controlled ffprobe fixture has no measured duration")
+		}
+		output, err := json.Marshal(struct {
+			Format struct {
+				Duration string `json:"duration"`
+			} `json:"format"`
+		}{Format: struct {
+			Duration string `json:"duration"`
+		}{Duration: probe.Format.Duration}})
+		return PublicationCommandResult{Output: output, QuiescenceEstablished: true}, err
+	}
 	input := ""
 	for index := 0; index+1 < len(args); index++ {
 		if args[index] == "-i" {
@@ -115,7 +136,19 @@ func (commands *automaticRetryCommands) RunFile(_ context.Context, request tools
 	if request.Input == nil || !strings.Contains(filepath.Base(request.Executable), "ffprobe") {
 		return PublicationCommandResult{QuiescenceEstablished: true}, errors.New("controlled ffprobe transport requires the borrowed current FLAC")
 	}
+	if containsArg(request.Args, "format=duration") {
+		return commands.Run(context.Background(), request.Executable, "-v", "error", "-show_entries", "format=duration", "-of", "json", "borrowed-current-flac")
+	}
 	return PublicationCommandResult{Output: append([]byte(nil), commands.probeJSON...), QuiescenceEstablished: true}, nil
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (lookup *automaticRetryLookup) Lookup(_ context.Context, request lrclib.Metadata) (lrclib.LookupResult, error) {

@@ -1348,6 +1348,14 @@ func (repository *SetupManagerRepository) ListActiveOperationConflictsForUpdate(
 		Where("(kind = 'move_tools_root' OR target_installation_id = ? OR EXISTS (SELECT 1 FROM operation_tool_read_hold hold WHERE hold.operation_id=operation.id AND hold.installation_id=?))", targetInstallationID, targetInstallationID).For("UPDATE").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("list active operation conflicts: %w", err)
 	}
+	retainedPublications := make([]Operation, 0)
+	if err := tx.NewSelect().Model(&retainedPublications).
+		Where("state='failed' AND kind='publish_track_v1'").
+		Where("EXISTS (SELECT 1 FROM operation_tool_read_hold hold WHERE hold.operation_id=operation.id AND hold.installation_id=?)", targetInstallationID).
+		For("UPDATE").Scan(ctx); err != nil {
+		return nil, fmt.Errorf("list retained publication installation conflicts: %w", err)
+	}
+	operations = append(operations, retainedPublications...)
 	return operations, nil
 }
 

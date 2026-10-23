@@ -84,6 +84,10 @@ type matchingApplyRetryEnqueuer interface {
 	RequeueMatchingApplyOperation(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts, bool) (*persistence.Operation, error)
 }
 
+type publicationRetryEnqueuer interface {
+	RetryPublicationOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter) (*persistence.Operation, error)
+}
+
 // sourceAnalysisRetryer recreates a normalized single-step retry through the
 // source-analysis service, which owns current-work validation and atomic admission.
 type sourceAnalysisRetryer interface {
@@ -381,6 +385,9 @@ func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Oper
 	if err := publicationSourceCleanupRetryError(existing.Kind); err != nil {
 		return nil, err
 	}
+	if existing.Kind == "publish_track_v1" {
+		return nil, fmt.Errorf("retry operation: publication retry requires a River client")
+	}
 	if existing.State != "failed" {
 		return nil, fmt.Errorf("only failed operations can be retried")
 	}
@@ -452,6 +459,12 @@ func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Ope
 			return nil, fmt.Errorf("retry operation: matching apply repository is unavailable")
 		}
 		return apply.RequeueMatchingApplyOperation(ctx, existing.ID, s.river, persistence.MatchingApplyOperationArgs{OperationID: existing.ID}, nil, false)
+	case "publish_track_v1":
+		publication, ok := s.enqueuer.(publicationRetryEnqueuer)
+		if !ok || s.river == nil {
+			return nil, fmt.Errorf("retry operation: publication retry repository is unavailable")
+		}
+		return publication.RetryPublicationOperationAndEnqueue(ctx, existing.ID, s.river)
 	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search", "provider_artist_search", "provider_artist_release_browse", "provider_acoustid_lookup":
 		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, ProviderFetchOperationArgs{OperationID: existing.ID}, nil)
 	case SourceScanOperationKind:

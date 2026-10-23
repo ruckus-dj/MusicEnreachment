@@ -124,12 +124,10 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("parse publication stage probe: %w", err)
 	}
-	if retryLyrics == nil {
-		if err := validatePublicationTopology(raw); err != nil {
+	if retryLyrics != nil {
+		if err := validateAutomaticLyricsRetryTopology(raw, input.AutomaticLyricsRetry.CurrentAssets.Cover); err != nil {
 			return PublicationStageObservation{}, err
 		}
-	} else if err := validateAutomaticLyricsRetryTopology(raw, input.AutomaticLyricsRetry.CurrentAssets.Cover); err != nil {
-		return PublicationStageObservation{}, err
 	}
 	facts := inputAudioFacts(input)
 	if len(audio.Streams) != 1 {
@@ -173,6 +171,19 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	capture, err := validator.MetadataReader.Read(ctx, stagePath, request)
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("read publication stage metadata: %w", err)
+	}
+	if retryLyrics == nil {
+		if input.IntentKind == "rewrite" && input.Format == publication.AudioFormatSource {
+			assets, assetErr := ObservePublicationAssets(capture)
+			if assetErr != nil {
+				return PublicationStageObservation{}, fmt.Errorf("observe publication stage assets: %w", assetErr)
+			}
+			if err := validateNativeRewriteTopology(raw, assets.Cover); err != nil {
+				return PublicationStageObservation{}, err
+			}
+		} else if err := validatePublicationTopology(raw); err != nil {
+			return PublicationStageObservation{}, err
+		}
 	}
 	expectedTags := input.DesiredTags
 	if retryLyrics != nil {
@@ -436,6 +447,57 @@ func validatePublicationTopology(raw []byte) error {
 	}
 	if count != 1 || len(response.Chapters) != 0 {
 		return errors.New("publication stage has unexpected stream topology or chapters")
+	}
+	return nil
+}
+
+// validateNativeRewriteTopology allows only the one native picture stream that
+// corresponds to the cover read back from the rewritten file. All other
+// non-audio streams remain forbidden; generic publication topology stays strict.
+func validateNativeRewriteTopology(raw []byte, cover persistence.PublicationCoverOutcome) error {
+	var response struct {
+		Streams []struct {
+			Type        string `json:"codec_type"`
+			Codec       string `json:"codec_name"`
+			Disposition struct {
+				AttachedPicture int `json:"attached_pic"`
+			} `json:"disposition"`
+		} `json:"streams"`
+		Chapters []json.RawMessage `json:"chapters"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return fmt.Errorf("decode native rewrite topology: %w", err)
+	}
+	audioCount, pictureCount := 0, 0
+	for _, stream := range response.Streams {
+		switch stream.Type {
+		case "audio":
+			audioCount++
+		case "video":
+			if stream.Disposition.AttachedPicture != 1 || cover.State != persistence.PublicationAssetEmbedded {
+				return errors.New("native rewrite contains an unauthorized non-audio stream")
+			}
+			mime := ""
+			switch stream.Codec {
+			case "mjpeg", "jpeg":
+				mime = "image/jpeg"
+			case "png":
+				mime = "image/png"
+			}
+			if mime == "" || mime != cover.MIME {
+				return errors.New("native rewrite attached picture does not match read-back cover format")
+			}
+			pictureCount++
+		default:
+			return errors.New("native rewrite contains an unauthorized non-audio stream")
+		}
+	}
+	wantPictures := 0
+	if cover.State == persistence.PublicationAssetEmbedded {
+		wantPictures = 1
+	}
+	if audioCount != 1 || pictureCount != wantPictures || len(response.Chapters) != 0 {
+		return errors.New("native rewrite has unexpected audio, cover, or chapter topology")
 	}
 	return nil
 }

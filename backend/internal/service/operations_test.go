@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -9,9 +10,48 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
+
+type publicationRetryMemoryOperations struct {
+	*riverMemoryOperations
+	calls int
+}
+
+func (repository *publicationRetryMemoryOperations) RetryPublicationOperationAndEnqueue(_ context.Context, id uuid.UUID, _ persistence.RiverInserter) (*persistence.Operation, error) {
+	repository.calls++
+	return repository.values[id], nil
+}
+
+type noOpRiverInserter struct{}
+
+func (noOpRiverInserter) InsertTx(context.Context, *sql.Tx, river.JobArgs, *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	return nil, nil
+}
+
+func TestPublicationRetryUsesPublicationEnqueuer(t *testing.T) {
+	existing := &persistence.Operation{ID: uuid.New(), Kind: "publish_track_v1", State: "failed"}
+	base := &riverMemoryOperations{memoryOperations: &memoryOperations{values: map[uuid.UUID]*persistence.Operation{existing.ID: existing}}}
+	repository := &publicationRetryMemoryOperations{riverMemoryOperations: base}
+	operations := NewOperationsWithRiver(repository, noOpRiverInserter{})
+	got, err := operations.Retry(context.Background(), existing.ID)
+	if err != nil || got != existing || repository.calls != 1 || base.genericRetries != 0 {
+		t.Fatalf("publication retry = (%v, %v), publication calls=%d generic calls=%d", got, err, repository.calls, base.genericRetries)
+	}
+}
+
+func TestPublicationRetryWithoutRiverRejectsWithoutMutation(t *testing.T) {
+	existing := &persistence.Operation{ID: uuid.New(), Kind: "publish_track_v1", State: "failed", Stage: "failed", Attempt: 4}
+	repository := &memoryOperations{values: map[uuid.UUID]*persistence.Operation{existing.ID: existing}}
+	if _, err := NewOperations(repository).Retry(context.Background(), existing.ID); err == nil {
+		t.Fatal("publication retry without River unexpectedly succeeded")
+	}
+	if repository.updates != 0 || existing.State != "failed" || existing.Attempt != 4 {
+		t.Fatalf("publication retry mutated operation: %+v, updates=%d", existing, repository.updates)
+	}
+}
 
 type memoryOperations struct {
 	values      map[uuid.UUID]*persistence.Operation

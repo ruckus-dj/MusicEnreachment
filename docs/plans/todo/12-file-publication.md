@@ -1,6 +1,60 @@
 # План 12 — файловая публикация
 
+## Упрощение по прямому решению владельца — 2026-10-23
+
+Этот раздел фиксирует действующий контракт исполнения; при противоречии ему
+технические варианты ниже не являются требованиями. Durable River job (только ID
+операции) запускает полную свежую подготовку целого результата во временном файле
+в приватной области рядом с фактическим destination на той же файловой системе.
+Результат валидируется/readback-проверяется, затем native atomic replace меняет
+destination. После этого одна DB-транзакция записывает actual projection и успех
+операции, освобождает holds и потребляет attempt; только после подтверждения этого
+commit допустима отдельная opt-in source cleanup.
+
+Сбой до DB commit повторяет подготовку целиком и допускает повторную замену уже
+заменённого target. Exactly-once filesystem effect, пошаговые journal/ACK,
+backup/rollback, resume и boot recovery не требуются и не должны достраиваться.
+SQL-транзакция не охватывает ffmpeg. Общий coordinator сериализует публикацию с
+конкурентным сохранением/изменением результата (включая reset/delete), а также
+не допускает stale manual selection или перезапись target другим owner.
+Source-free rewrite читает текущий destination; lyrics и иные metadata updates
+не должны lossy-reencode audio или терять artwork.
+
+Atomic replace поддерживается только native-операцией на той же FS; delete-then-copy
+fallback запрещён. Универсальная power-loss durability не обещается, а directory
+sync не является условием атомарности replace. При смене пути или расширения
+артефакта в пределах текущего output сначала фиксируется новый DB result; в той же
+транзакции результата при необходимости создаётся durable cleanup intent/job, а
+фактическое удаление прежнего managed файла выполняется после commit отдельно, со
+свежими проверками и без post-commit enqueue gap. Ошибка cleanup — обычное
+предупреждение, не source cleanup. Смена или сброс output root сюда не входят:
+старые физические файлы не удаляются. Source cleanup по умолчанию выключен: перед
+началом перечитывается opt-in и проверяются consumers; завершённая job при повторной
+delivery не делает файловую работу даже при отсутствующем source. Cancellation и
+исчерпание retry дают видимую ошибку/ручной retry, не вечный running и не ранний
+cleanup. Достаточно ожидать основной процесс и собственные callbacks, без
+доказательства остановки дерева процессов. Идентичность байтов whole-file при
+повторной подготовке не требуется; временное file/DB расхождение после сбоя до
+commit и повторная работа допустимы. Внутренняя dev-совместимость V1/V2/V3 не
+требуется. Неоднозначные продуктовые вопросы задаются владельцу.
+
+Датированные записи прогресса ниже — свидетельства о прежних конкретных срезах,
+а не описание текущего контракта или критерии приёмки; их исторические факты не
+переписываются. Противоречащие текущему контракту технические требования ниже
+заменены в D07/D08, срезах и проверочной матрице.
+
 ## Краткий текущий статус
+
+**2026-10-23, упрощённое исполнение:** рабочее дерево на базе `c2e3ce1`
+прошло полный `task verify` (generate, lint, backend integration, frontend/tools,
+build). Живой executor использует whole-job preparation и прямую транзакцию
+результата. Проверены повтор после replace/SQL rollback, redelivery после успеха
+без исходника, same-attempt River redelivery, общий process-local coordinator
+с metadata save/output reset, terminal settlement и отдельный publication retry
+с транзакционной передачей source hold. Это локальная проверка среза, не итоговая
+приёмка плана; CI этой новой ревизии и runtime acceptance ещё не подтверждены.
+Frozen cover receipt пока не подключён к embedding в простом executor; scope
+cover, automatic updates и окончательная приёмка ниже остаются незавершёнными.
 
 План **не завершён**. First-publication happy path и manual lyrics MKA/MP3
 проверены на реальном стенде с Navidrome. Automatic matching wake и
@@ -15,7 +69,7 @@ original-owner cleanup после returned validation failure прошли по�
    и retry; одна обложка на релиз, без sidecars.
 3. Automatic updates: независимая source authority, доказанное quality improvement,
    new-source replacement, остальные invalidation producers и безопасные wakes.
-4. Recovery/crash matrix и итоговая приёмка всех перечисленных сценариев.
+4. Whole-job retry/crash matrix и итоговая приёмка всех перечисленных сценариев.
 
 Частичные изолированные реализации и их промежуточные green gates не означают
 готовность этих пунктов. Детальные требования и датированные свидетельства ниже
@@ -612,10 +666,11 @@ root и fences: migrations могут быть обновлены независ
   версии, явно запускаемая замена или сохранение старого output? При ошибке
   остаётся старый корректный файл или допустимо состояние без опубликованной
   копии? Что означает delete/reorganize и кто инициирует его?
-- Если разрешено удаление source после публикации: триггер только успешный
-  физический commit или также успешная проверка/readback; поведение при shared
-  variant/location и нескольких tracks; источник остаётся read-only без
-  отдельной явной настройки.
+- Source cleanup после подтверждённого DB-результата выполняется только при
+  актуальном opt-in; перед началом проверяются связанные публикации/validation и
+  queued/running consumers. Уже завершённая job при redelivery не делает
+  файловую работу. Остальные правила source cleanup зафиксированы отдельно в
+  решениях владельца и не меняются этим упрощением.
 - Удаление source root/location не должно стирать локальную сущность или
   source bytes. Нужно определить effect на активную публикацию и retry; не
   расширять утверждённый output reset до удаления физических старых файлов.
@@ -642,26 +697,32 @@ artwork/lyrics сущностями. Уточнить уникальные кл�
 readback опубликованного файла, а какие являются только намерением/metadata
 snapshot.
 
-### D07 — operation, fences, recovery, replacement
+### D07 — operation, fences и replacement
 
-Предложить конечный набор transient states и durable transitions; claim/lease и
-delivery fencing; transaction boundary для записи intent и `River.InsertTx`;
-идемпотентное восстановление после crash до/после подготовки и exposure; защита
-от повторной публикации одной позиции; lock ordering с output reset, source
-processing, настройками, claim и сущностями. Спроектировать механизм реализации
-уже утверждённого результата «замена как одно целое» так, чтобы читатель не увидел
-незавершённый output и ошибка новой попытки не уничтожала прежнюю опубликованную
-копию до согласованного commit. Это технический вариант для review, а не
-утверждение об уже выбранном filesystem protocol.
+Durable River job несёт только operation ID; enqueue атомарен с admission через
+`River.InsertTx`, worker всегда перечитывает полный актуальный input. Общий
+coordinator сериализует destination/позицию и конкурирующие операции сохранения,
+reset и delete, без удержания SQL transaction во время подготовки/ffmpeg.
+Проверяются актуальность ручного выбора и право владения target. Полный кандидат
+подготавливается приватно на той же FS рядом с destination, валидируется/readback
+проверяется и публикуется одной native atomic replace. Затем одна DB transaction
+фиксирует actual projection, успешную operation, освобождение holds и consumed
+attempt. При сбое до commit подготовка повторяется полностью; повторный replace
+допустим. Нет requirement на exactly-once, шаговые journal/ACK, backup/rollback,
+resume или boot recovery. Retryable error возвращается River для повторной
+доставки и не блокирует job на первой ошибке; terminal failure или исчерпание
+retry дают видимую ошибку и ручной retry, а не вечный running. Отмена ожидает
+основной процесс и собственные callbacks, но не требует process-tree proof.
 
 ### D08 — output namespace и staging
 
-Предложить разделение managed artifacts и временных файлов, containment,
-ownership evidence, collision/readback strategy, cleanup и restart recovery.
-Существующие логические области `analysis`, `publication`, `checks`, `media` не
-задают закреплённые физические имена/иерархию. Выбранный physical layout требует
-отдельного технического обоснования; он не должен случайно стать настройкой или
-пользовательским контрактом. Не вводить произвольную quota/лимит размера.
+Private temporary candidate располагается рядом с фактическим destination на той
+же файловой системе и заменяет его native atomic replace. Delete-then-copy fallback
+запрещён; универсальная power-loss durability не обещается, directory sync не
+является условием атомарности. Существующие логические области `analysis`,
+`publication`, `checks`, `media` не задают закреплённые физические имена/иерархию.
+Технический private layout не становится настройкой или пользовательским
+контрактом. Не вводить произвольную quota/лимит размера.
 
 ### D09 — реальные tools и tag writer
 
@@ -695,12 +756,12 @@ UI показывает выбранную позицию/source/формат и
 | P01 — контракт и минимальный read model | Закреплённые D01–D05; диаграмма данных/lifecycle; API shapes и ошибки; технические D06–D10; migration/reset plan. Минимальное чтение выбранного локального релиза и его позиций, без требования строить полный экран медиатеки. | Все нужные owner decisions записаны; независимое review дизайна завершено; подтверждены реальные schema names и отсутствие существующей publication реализации. |
 | P02 — схема и repository | Additive migration для текущего publication state, незавершённой попытки/intent и owned artifact refs согласно P01; persistence чтение/запись в транзакциях; down migration безопасна для применённого прототипа. | P01. Constraints проверяют уникальность активной публикации, согласованность состояния и ссылок; cascade не удаляет filesystem artifact. Чистая migration up/down integration coverage. |
 | P03 — безопасный ручной planner/preview | Чистое планирование preview из локальных release/track/source links/overrides и согласованного формата; до старта показывает конкретные позиции, source/segment, metadata outcome, target collision/validation. Planner versioned или имеет эквивалентную freshness guard по согласованному контракту. | P01–P02. Preview не меняет исходники, DB publication state или output files; stale preview не принимает молча новые inputs; empty/unknown/conflicting values и collision имеют проверенные outcomes. |
-| P04 — интеграция writer и локальный staged output | Извлечь/подготовить согласованный audio stream/segment; скопировать stream или преобразовать только согласно D02/D03; записать agreed tags; сформировать temporary artifact под managed ownership и проверить его реальным readback. | P01, P03, D09. Source не меняется; существующая копия остаётся видимой при failure; source size/mtime проверяется продуктовым freshness rule; покрыть неподдерживаемый stream/format и ошибку инструмента. |
-| P05 — atomic exposure/replacement и reset | Durable state machine, staging/recovery/idempotence, collision handling, replacement/cleanup по D01/D05. Publication admission и running/claimed fence участвуют в output reset; reset queued work и publication DB refs транзакционно, старые файлы оставляет unmanaged, entities/source links сохраняет, auto-republish не выполняет. | P02–P04 и D07–D08. Нельзя сбрасывать/переносить output во время publication claim; recovery не удаляет чужой/текущий файл; prior publication сохраняется при fail before commit. |
+| P04 — интеграция writer и локальный staged output | Извлечь/подготовить согласованный audio stream/segment; скопировать stream или преобразовать только согласно D02/D03; записать agreed tags; сформировать temporary artifact под managed ownership и проверить его реальным readback. | P01, P03, D09. Source не меняется; до atomic replace существующий output остаётся нетронутым; после replace сбой до DB commit разрешается полным повтором. Source size/mtime проверяется продуктовым freshness rule; покрыть неподдерживаемый stream/format и ошибку инструмента. |
+| P05 — atomic replace, результат и reset | Fresh whole-file prepare/readback, native same-FS atomic replace, затем одна DB result transaction и terminal operation. Общий coordinator/fences охватывают конкурирующие save/reset/delete; enqueue атомарен через `River.InsertTx`. Failure до DB commit повторяет подготовку целиком; recovery journal/protocol не добавляется. | P02–P04 и D07–D08. Target ownership/stale manual selection проверены; no delete-copy fallback. Reset не пересекает active publication, queued work и DB refs сбрасываются транзакционно, физические старые файлы остаются unmanaged. |
 | P06 — ручной API и truthful UI | Показ release/track/source summary, preview, explicit start, operation snapshot, retry допустимой ошибки и реальный readback состояния. Частичные outcomes отражены согласно D05. | P03–P05 и D10. Huma/OpenAPI → `task generate`; UI без фиктивных значений, с доступными validation/error states; действие оператора явное; no hidden auto publish. |
 | P07 — assets и их prerequisites | Спроектировать и реализовать отсутствующие persistence/acquisition/selection для artwork/lyrics в согласованном D05 объёме, затем resolve, staging, publication status и failure reporting; при надобности отдельные asset jobs/refs. | D05 и P05; отсутствие опционального asset не маскируется под успешное обязательное включение. Вынос assets в отдельную поставку требует явного согласования scope. |
 | P08 — automatic quality policy и запуск | Чистый, версионированный selector для candidate sources; automatic flow полного уверенного релиза на согласованном trigger/scope. | Согласована формула D04, P01–P06. Тесты доказывают согласованное tie/unknown behavior, запрет автоматической замены равным/худшим качеством и дубликатов. Не выбирать winner произвольно. |
-| P09 — regression/integration acceptance | PostgreSQL/River real integration, migration tests, managed filesystem, реальный ffmpeg/writer, restart/recovery/crash matrix, output reset interleavings, UI/API scenarios. | Реализационные slices завершены. Изолированные runtime tests подтверждают фактический файл, не только DB snapshots. |
+| P09 — regression/integration acceptance | PostgreSQL/River integration, migration tests, managed filesystem, writer/readback, crash boundaries, reset/save/delete interleavings, UI/API scenarios и native atomic-replace matrix. | Реализационные slices завершены. Изолированные runtime tests подтверждают фактический файл, не только DB snapshots. |
 | P10 — independent review и завершение | Review всего контракта/реализации, исправление замечаний, runtime evidence, актуализация статуса и перенос плана в `done/` после принятой проверки. | P01–P09 по принятому scope. Полный `task verify`; ручные evidence с revision/platform/limitations. Не утверждать реализацию по одному green unit suite. |
 
 Порядок P04/P05 может уточниться после D07/D09, но P06 не должен обходить
@@ -742,12 +803,29 @@ provider-linked релиз, допустимые пустые ручные overr
   collision case/Unicode normalization; неожиданная directory/file; недостаток
   прав; ENOSPC; отмена и недоступный/удалённый source; ffmpeg/writer missing,
   stale version или ненулевой exit; некорректный/неполный staged output.
-- Ошибка до exposure сохраняет prior publication. Повтор не создаёт вторую
-  управляемую копию и не удаляет чужие файлы. Cleanup failure видим и повторяем,
-  не подменяет состояние успешного audio commit без явного D05 решения.
-- Crash/restart до начала, после intent, при staging, после validation, вокруг
-  exposure и при commit; recovery делает однозначный исход и не публикует
-  частично записанный результат.
+- Failure-before-DB-commit, включая crash после atomic replace и до DB commit:
+  повторная delivery полностью заново готовит/проверяет и заменяет target; нет
+  требования откатить файл, продолжить шаг или доказать exactly-once. Crash после
+  DB commit и до завершения River job приводит к redelivery без повторной файловой
+  работы.
+- При lyrics/source-free rewrite повторное применение в соответствии с действием
+  устанавливает, обновляет или удаляет lyrics, сохраняя audio bytes и artwork и
+  не выполняя lossy re-encode; проверить add/update/removal и readback для
+  каждого действия.
+- Сериализация конкурентных writes и stale manual selection относительно save,
+  reset и delete; другой owner не перезаписывает target. SQL transaction не
+  удерживается во время ffmpeg.
+- Отмена и terminal retry exhaustion дают видимую ошибку/ручной retry и не
+  запускают cleanup; проверяется ожидание основного процесса и callbacks, не
+  process-tree containment.
+- Source cleanup выключен по умолчанию: opt-in выключен к моменту исполнения,
+  consumer protection, и redelivery после успешного DB результата при уже
+  отсутствующем source не делает файловой работы. Cross-path cleanup старого
+  managed output после нового DB результата отдельно проверяется как обычный
+  warning при ошибке.
+- Native atomic replace проверяется на поддерживаемых платформах; private temp
+  должен быть на той же FS, delete-copy fallback отсутствует. Не требовать
+  directory-sync gate или универсальной power-loss durability.
 - Две параллельные попытки одной позиции и конфликт разных tracks на target;
   проигравший не перезаписывает победителя и не оставляет неконсистентные refs.
 
@@ -760,8 +838,9 @@ provider-linked релиз, допустимые пустые ручные overr
 - Reset сохраняет local entities, source links, inventory и analyses, не
   ставит автоматическую публикацию; root/location deletion и matching changes не
   удаляют source bytes и не симулируют publication success.
-- DB failure/rollback не оставляет UI green state или broken active ref. API/UI
-  operation snapshot и перечитанный файл согласованы по agreed semantics;
+- DB failure/rollback не оставляет UI green state или broken active ref; отдельно
+  покрыть crash после replace до DB commit и после DB commit до River completion.
+  API/UI operation snapshot и перечитанный файл согласованы по agreed semantics;
   SSE wakeup не является data source.
 - Повторная публикация сохраняет ровно один активный экземпляр на track;
   asset error, partial release и manual replacement отображают раздельно то, что
@@ -1265,18 +1344,22 @@ LRCLIB не гарантирует совпадение таймингов ко�
 Уже опубликованные файлы, их metadata и quality при последующем удалении
 источника сохраняются согласно ранее согласованным правилам.
 
+**Уточнение от 2026-10-23:** требование retained protection после сбоя не
+создаёт publication recovery/quarantine protocol и не отменяет terminal visible
+error/manual retry из текущего контракта выше. Оно не разрешает source cleanup до
+подтверждённого DB-результата; актуальное opt-in и consumer protection проверяются
+перед cleanup. Историческая формулировка A.17 не расширяет execution guarantee.
+
 <a id="publication-technical-design"></a>
 
 ## Технический дизайн файловой публикации
 
-> **Исторический технический snapshot от 2026-10-18; не текущий статус реализации.**
-> Этот раздел объединяет технический документ, подготовленный после независимого
-> review от 2026-10-17. Описанные в нём состояния и гейты — датированные
-> свидетельства на момент соответствующих записей, а не описание текущего
-> состояния кода. Для текущего статуса и прогресса приоритетны начало этого плана
-> и датированные progress notes выше; owner contract A.1–A.17 остаётся источником
-> утверждённых продуктовых решений. Исторические формулировки ниже намеренно не
-> переписаны под текущее состояние.
+> **Технический snapshot подготовлен 2026-10-18; не текущий статус реализации.**
+> Исторические сведения о коде и dated review evidence ниже не переписываются.
+> По прямому решению владельца 2026-10-23 требования execution в разделах 6, 7,
+> 10 и 11 обновлены: эти разделы теперь описывают текущий технический контракт,
+> а не протоколы recovery прежнего snapshot. Остальные owner decisions A.1–A.17
+> сохраняются; текущий статус реализации указан в начале плана.
 
 ### Историческая отметка статуса технического дизайна
 
@@ -1350,8 +1433,8 @@ durable coordinator. Эти факты требуют перепроверки �
 
 Слои: API (Huma) → service → persistence; только persistence обращается к Bun/DB.
 `backend/internal/publication/` предлагается как владелец filesystem planner,
-staging, journal, extraction/writer orchestration и readback. Jobs владеют River
-delivery/recovery и вызывают service. UI — только через API; клиент генерируется
+private staging, extraction/writer orchestration и readback. Jobs владеют River
+delivery и вызывают service. UI — только через API; клиент генерируется
 Orval. Не добавлять env vars, auth, файловые записи в API/persistence или ручные
 правки generated client.
 
@@ -1382,7 +1465,7 @@ UUID — техническая идентичность; шаблонные п�
 | --- | --- |
 | `release_publication` | Одна запись на local release: текущий шаблон/формат и активная конфигурация, cover resolution/authority, dirty/pending summary. Не дублировать весь release metadata. |
 | `track_publication` | Одна запись на position UUID: source/stream selection и authority; текущий audio target/artifact identity; фактический readback, quality characteristics/policy version, состояние; отдельная lyrics selection/authority/status; metadata snapshot только в объёме, нужном для актуальной публикации и pending. **Не** хранит завершённую source provenance/history. |
-| `track_publication_attempt` | Только незавершённая попытка: operation ID, attempt/fence identity, stage, frozen inputs, journal/artifact refs, warnings/errors, recovery intent. Удаляется после settle; не становится историческим журналом. |
+| `track_publication_attempt` | Только незавершённая попытка: operation ID, attempt/fence identity, stage, current execution inputs, warnings/errors. После settle потребляется/удаляется; не становится историческим журналом и не хранит journal/recovery authority. |
 | `publication_namespace_claim` | Уникальное занятие вычисленного target по реальной FS equivalence semantics, владельцу position UUID и epoch. Отдельно представляет конфликт с чужим файлом/каталогом и подтверждённую замену. |
 | `publication_asset_cache` (предложение) | Управляемый кеш provider/local cover или synced lyrics для повторного использования/retry; отделён от актуальных embedded bytes и очищается только ownership-verified путём. Не вводить без доказанной необходимости конкретной схемы. |
 | `source_cleanup_item` | Незавершённая opt-in cleanup цель после валидации: candidate identity/size/mtime snapshot, список требуемых позиций/публикаций, состояние и retry warning. Нет FK на источник, который уже удалён; lifetime допускает cleanup retry после удаления link/root. |
@@ -1530,135 +1613,67 @@ Namespace claim резервирует вычисленные destinations и pa
 и на реальной FS. Файловая проверка на этапе exposure повторяется. Нет удаления
 неизвестных файлов и «исправления» коллизии через overwrite.
 
-### 6. Durable operation, fencing, exposure и recovery
+### 6. Durable operation, fencing и atomic replace
 
-#### Admission и execution identity
+#### Admission, coordinator и execution
 
-Одна транзакция Bun: проверить settings/output epoch, захватить position и
-namespace claims, заморозить допустимые execution inputs/attempt, создать
-operation и enqueue River через `River.InsertTx`; River args содержат только
-operation ID. Не создавать отдельный transactional gap между DB intent и job.
-Delivery обязана перепроверять все claim/fence components до DB mutation и
-каждого необратимого filesystem step:
+Admission и `River.InsertTx` выполняются одной Bun-транзакцией; River args
+содержат только operation ID. Worker заново загружает полный актуальный input.
+Общий coordinator сериализует writes одного destination/позиции, ручные
+изменения, reset и delete; stale manual selection и чужой target owner не
+допускаются. Это не требует SQL-транзакции во время подготовки или ffmpeg.
+Необходимые claims/fences защищают фактическую работу; после подтверждённого DB
+result достаточно дождаться завершения собственных live callbacks и освободить
+обычные locks результата. Не вводить бесконечный recovery fence, второй recovery
+coordinator, durable handoff или startup recovery protocol.
 
-`operation ID + operation attempt + River job ID + output epoch + claim/borrower
-identity`.
-
-**Позднее уточнение владельца:** обязательное доказательство завершения всего
-дерева дочерних процессов ниже больше не является production gate. Допустимо
-считать подтверждённое завершение основного процесса завершением команды;
-см. `docs/design/decisions.md`, раздел об исполнении инструментов. Остальные
-проверки DB uncertainty, generation/claim и конкурирующих mutators сохраняются.
-Существующий текст о более сильном containment описывает прежнюю техническую
-границу, а не дополнительное обязательное продуктовое требование.
-
-Stale delivery не может продолжить после смены attempt/epoch/claim. Exclusion
-состоит из единого process-local resource coordinator и durable execution claims.
-PostgreSQL session advisory locks дают дополнительную координацию, но теряются
-при разрыве соединения и сами не ограждают filesystem mutation.
-
-Coordinator разделяется workers, recovery, source cleanup и reset; блокировки
-позиции, FS-equivalent namespace и общих source resources удерживаются от
-claim/revalidation до завершения tool/FS callbacks, всех mutating goroutines,
-остановки дочерних процессов и settlement либо durable recovery handoff.
-Разные operation IDs не обходят блокировку общего ресурса. Локальные locks
-берутся до DB row locks; порядок ресурсов детерминирован и сверяется с текущими
-flows. Recovery использует те же locks.
-
-Claim хранит boot UUID, delivery token, attempt/job/output epoch/generation и
-состояние executing/recovery_required/quiescent. Lease timeout, River rescue,
-terminal operation state и исчезновение advisory lock не разрешают takeover.
-При DB uncertainty прекратить новые шаги, отменить/убить и дождаться tools и
-mutating callbacks; не освобождать local resources раньше их завершения.
-Неподтверждённый settlement оставляет durable claim, блокирующий competitors
-и reset. Tools пишут только в attempt-private staging; shared-target exposure
-и unlink делает приложение после остановки writer и validation.
-
-Startup recovery предшествует consumers и mutating endpoints. Для существующей
-single-process архитектуры замена процесса должна установить завершение прежнего
-server и mutating children; отсутствие DB lock или проверка PID этого не
-доказывают. Если quiescence не установлена, takeover запрещён. Перекрывающиеся
-запуски требуют отдельно проверенных interprocess exclusion и child containment;
-обычный parent-only OS lock проблему orphan child не решает. Это технический
-gate перед exposure, а не заявленная готовность текущего launcher. Неизвестное
-private staging остаётся quarantined, не переиспользуется и не выставляется.
-
-Обязательный regression interleaving: старая delivery теряет DB connection,
-новая уже получила advisory lock, но отмена старого mutator ещё не завершилась.
-Новая мутация, claim takeover, reset и shared-source unlink должны оставаться
-запрещёнными. Проверять барьерами, не sleeps, включая recovery/uncertain commit.
-Внешние filesystem writers не участвуют в coordinator; ownership/readback
-обнаруживает конфликт, но не обещает fence от враждебного процесса.
-
-#### Предложенный lifecycle
+#### Whole-result lifecycle
 
 ```text
-queued → preparing → staged → validated → exposing → committed → cleaning → settled
-                       ↘ failed/retryable (old publication remains)
-committed/cleaning → cleanup_pending → settled
+queued → preparing (fresh full candidate) → validated/readback → atomic replace
+        → one DB result transaction → operation succeeded
+failure before DB commit → visible failure/retry; next delivery prepares whole result
 ```
 
-Attempt state не является пользовательской историей. `validated` означает, что
-audio/metadata/required checks прошли и readback получен. Cover/lyrics error,
-source cleanup error — отдельные warnings согласно A11–A16, не выдуманный
-audio success failure. Partial release выводится из состояний позиций.
+Кандидат готовится приватно рядом с фактическим destination на той же FS. После
+валидации native atomic replace публикует целый файл. Одна DB-транзакция фиксирует
+actual projection и успешную operation, освобождает holds и потребляет attempt.
+Никакой SQL transaction не удерживается во время ffmpeg. Сбой до DB commit
+повторяет полную подготовку, включая случай, когда предыдущая delivery уже
+заменила target; откат, точное продолжение шага и exactly-once не требуются.
+Неизвестность до подтверждения DB commit не считается успехом.
 
-Старый валидный output остаётся активным до validated replacement. Разделить
-intent на audio-source replacement и metadata/assets rewrite. Новый audio source
-проходит audio planner, comparator и extraction/transcode policy. При изменении
-только tags/cover/lyrics использовать текущий owned artifact после повторной
-проверки ownership, generation и фактического audio readback; не требовать
-наличия исходников (включая уже удалённые cleanup) и не прогонять audio через
-lossy re-encode. Сохранять audio stream без потерь при rewrite; если writer/container
-не позволяет это доказать, остановить rewrite с видимой ошибкой, не ухудшать
-audio молча. Quality comparator применяется только при смене audio source/stream:
-равный audio не запрещает metadata/assets update.
+Rewrite без source строится чтением текущего destination. Metadata/lyrics
+changes должны сохранять audio bytes и artwork, не выполнять lossy re-encode;
+проверять actual output readback. При смене пути или расширения артефакта в
+пределах текущего output новый DB result и durable cleanup intent создаются в
+одной транзакции, а удаление прежнего managed файла выполняется после commit
+отдельно со свежими проверками; cleanup failure — обычный warning, не
+source-cleanup recovery state. Смена или сброс output root сюда не входят, старые
+физические файлы не удаляются.
 
-Для same-path replacement сначала создать durable journal и verified recovery
-backup старой версии, пока старая публикация остаётся доступной по target; только
-после проверки backup выполнить exposure кандидата поверх target. Не перемещать
-старый target заранее и не оставлять промежуток без файла. При DB failure
-восстановить backup только если DB всё ещё указывает на ожидаемую старую
-generation, а target доказуемо принадлежит новой generation этой попытки; иначе
-conflict без blind overwrite/unlink. При crash recovery сопоставить journal, DB
-generation, target и backup и детерминированно завершить commit либо
-ownership-checked rollback. Для другого output path новую версию поставить
-отдельно и переключить DB до старого cleanup; пока старый не удалён UI показывает
-`cleanup_pending`/неполную замену. Нет гарантии кросс-путевой FS+DB атомарности.
+Atomic replace допустим только поддерживаемой native-операцией на той же FS.
+Delete-then-copy запрещён. Универсальная power-loss durability не обещается;
+directory sync не является условием atomic replace. Нет требования byte-identical
+whole-file результата между повторами. Никакой V1/V2/V3 compatibility path не
+требуется. Завершённая River operation при redelivery не выполняет файловую работу.
 
-Для каждого rename/unlink journal содержит expected source/target, old/new
-publication generation, ownership evidence (identity/digest если он реально
-выбран как technical witness), operation/fence и шаг; fsync/atomicity обещать
-только после платформенной проверки. Recovery сверяет actual FS state и journal.
-Шаги preparation journal `directory_created` и `input_ready` — это наблюдения
-identity/readiness во время данной delivery, а не доказательство, что имена
-директорий или input пережили power loss. Future recovery должна заново установить
-actual parent/directory identity и input validity; один record никогда не
-разрешает reuse, adoption, publication или deletion. Отсутствующее имя остаётся
-unresolved и не даёт права автоматически recreate/adopt/cleanup. Это уточнение не
-вводит новую recovery policy и не ослабляет durability requirements для будущих
-exposure, backup или source unlinks.
-При неизвестном содержимом,
-несовпадении ownership или stale fence — конфликт для оператора; не удалять и не
-«усыновлять» файл молча. Не объявлять универсальную atomic replace для разных
-путей/volume. Digest policy не превращать в дополнительное требование продукта.
+Отмена и исчерпание retry завершают operation видимой ошибкой и позволяют ручной
+retry; это не вечный running и не разрешение раннего cleanup. Достаточно дождаться
+основного процесса и собственных callbacks, process-tree proof не требуется.
 
 ### 7. Output reset и удаление источников
 
-Publication claims/in-flight attempts и source cleanup должны быть включены в
-существующие `AcquireOutputAdmissionGate`/`WithOutputAdmissionSession` и
-`checkResetAllowed`/`resetDomainState`. Claimed/running публикация или cleanup
-блокируют reset. Reset проверяет все unresolved execution claims независимо от
-terminal operation или River state и не удаляет их ownership/recovery refs для обхода
-блокировки. Reset обязан в одной DB-транзакции с обновлением output
-epoch/snapshot отменить queued publication/cleanup jobs, удалить их queued refs
-и пометить cleanup items cancelled/stale. Любая
-подготовленная journal operation должна либо быть запрещена reset gate, либо
-иметь явно доказанный recovery contract — не оставлять файловый mutation без
-DB owner. Перепроверить реальные signatures/reset coordinator и tool/source
-fences перед проектированием порядка. При reset старые publication files
-остаются unmanaged, active DB refs очищаются, local entities/source links,
-inventory/analysis сохраняются, автоматической republish нет.
+Publication claims/in-flight attempts и source cleanup включаются в общий
+coordinator и reset fencing. Claimed/running публикация блокирует reset; queued
+work и его DB refs отменяются одной транзакцией с обновлением output epoch.
+Recovery refs/protocol не вводятся. При reset старые publication files остаются
+unmanaged, active DB refs очищаются, local entities/source links и
+inventory/analysis сохраняются, автоматической republish нет. Source cleanup
+начинается только после подтверждённого publication DB-result, перечитывает
+актуальный opt-in и защищает queued/running consumers; opt-in OFF не запускает
+cleanup. Независимые правила проверки size/mtime и shared borrowers остаются
+согласно решениям владельца.
 
 Уточнение владельца от 2026-10-21 для source removal: на любой поддерживаемой ОС
 достаточна последовательная проверка размера и `mtime` по БД непосредственно
@@ -1668,22 +1683,14 @@ inventory/analysis сохраняются, автоматической republis
 при обнаруженном несовпадении в этой проверке, а не гарантию против подмены после
 неё. Остальные borrower/permission/hold gates сохраняются; см. `decisions.md`.
 
-Source removal opt-in OFF. Cleanup item и его operation/job должны быть связаны с
-output epoch, publication generation и source/borrower revisions. Включение
-настройки не запускает retroactive cleanup; точечный и bulk action — явные.
-После успешной публикации+validation запланировать
-все альтернативные sources позиции. Общий источник удалять только когда все
-позиции/релизы, которые его используют, имеют успешно committed + validated
-publication и ни один активный job/claim не требует его. Нужна атомарная
-проверка borrowers и fencing против новых links/jobs перед unlink; непосредственно
-перед unlink повторно сверить path identity и size/mtime, все borrower/source-link
-revisions, validated publication generations и отсутствие queued/running consumer.
-Нельзя удалять путь, если identity/revision изменился или путь уже чужой. На
-ошибку удаления — warning с retry. Удаление root/location не удаляет publication
-bytes/metadata/quality. Отдельное удаление publication — только явное действие;
-внешне изменённый файл требует отдельного подтверждения. Удаление source root не
-должно оставлять попытке FK на исчезнувший источник; snapshot cleanup item
-позволяет безопасную ошибку/retry без source provenance.
+Source removal opt-in OFF. Cleanup перечитывает актуальную настройку и до unlink
+проверяет актуальные publication/validation, shared borrowers и отсутствие
+queued/running consumer; детали проверки size/mtime следуют отдельным решениям
+владельца. Переключение opt-in не инициирует retroactive cleanup. Ошибка cleanup —
+warning с ручным retry, не изменение успешного DB результата. Завершённая River
+delivery при redelivery не выполняет файловую работу даже при отсутствующем
+source. Удаление root/location не удаляет publication bytes/metadata/quality;
+удаление публикации — только явное действие.
 
 ### 8. Изменения данных и trigger coalescing
 
@@ -1730,12 +1737,12 @@ hidden automatic decision за user choice либо формат capability за
 | T03 — reader/writer и native removal | Pin unified deluan reader/writer; убрать go-mkvparse/native trees end-to-end; проверить format scope, actual readback и Navidrome. Не включать поле/формат без подтверждения. |
 | T04 — publication schema, operation, reset | Additive tables/constraints, operation claims/epoch, River InsertTx, reset integration, safe down behavior. |
 | T05 — чистый planner/template/quality | Versioned pure planner, template parser, FS namespace probe, stable suffix/claims, quality comparator vectors. |
-| T06 — worker/extraction/tools | Claims/fencing/recovery inputs, source freshness, FFmpeg clean audio only, writer invocation, real readback. CUE scope rejected with clear validation. |
-| T07 — exposure/recovery | Per-mutation journal, ownership-aware replacement, extension cleanup state, restart/conflict matrix, no cross-path atomicity claim. |
+| T06 — worker/extraction/tools | Durable job ID-only args, fresh full inputs, source freshness, FFmpeg clean audio only, writer invocation, real readback. CUE scope rejected with clear validation. |
+| T07 — atomic replace/result | Private same-FS candidate, readback, native atomic replace, one DB result transaction, serialization and repeat-whole-work crash boundaries; no recovery protocol. |
 | T08 — cover | Provider → stable embedded fallback, manual lock/pending, optional warning/retry, embedding capability gate. |
 | T09 — lyrics | Source synced → exact LRCLIB lookup; manual alternatives, no wrong audio transfer/retiming, Navidrome behavior gate. |
 | T10 — automatic triggers + cleanup | Per-field dirty coalescing, no startup sweep; borrower-aware source cleanup with fencing, UI bulk/targeted retry. |
-| T11 — API/UI, end-to-end, independent review | Generated API, truthful state, real DB/River/files/tool scenario, reset/recovery/partial cases; full task verify and independent acceptance. |
+| T11 — API/UI, end-to-end, independent review | Generated API, truthful state, real DB/River/files/tool scenario, reset/serialization/partial cases; full task verify and independent acceptance. |
 
 ### 11. Верификация, миграции и последовательность реализации
 
@@ -1743,7 +1750,7 @@ hidden automatic decision за user choice либо формат capability за
 независимого review начинать независимые узкие срезы: UUID позиции и модель
 чтения; типизированные метаданные и выбор основного артиста; исследование
 библиотеки чтения/записи тегов. Срезы, меняющие выходные файлы, обязаны сначала
-реализовать и проверить взаимоисключение исполнений, журнал/recovery и fencing
+реализовать и проверить взаимоисключение исполнений, atomic replace и fencing
 сброса output; UI не обходит эти механизмы. Неизвестные возможности инструмента —
 граница поддерживаемых возможностей: сначала исследовать и проверить, затем
 включать только доказанные форматы/поля. Это не требует откладывать независимые
@@ -1761,11 +1768,12 @@ readback и ограничения. Внешнее исследование D09 
 Единственная локальная проверка проекта — `task verify` согласно инструкциям;
 отдельные выборочные наборы тестов и сборки не заменяют её. Приёмка должна
 включать реальные сценарии PostgreSQL-миграций, River, файловой системы и
-инструментов с проверкой готового файла через readback. Матрица сбоев/recovery:
-до/после intent, staging, validation, backup, exposure, фиксации транзакции БД и
-cleanup; потеря закреплённого соединения при живом дочернем процессе; гонки с
-reset; устаревшие attempt/epoch/generation; конкуренция за target и borrowers
-source; сбой БД/rollback; внешняя мутация; ошибки provider/writer/tool. Для
+инструментов с проверкой готового файла через readback. Матрица сбоев включает
+crash после replace до DB commit и после DB commit до завершения River job; отмену
+при основном процессе и callbacks; гонки с reset; устаревшие attempt/epoch/
+generation; конкуренцию за target и borrowers source; ошибку БД/rollback; внешнюю
+мутацию; ошибки provider/writer/tool. Повтор до DB commit готовит целый результат
+заново, а завершённая job при redelivery не делает file work. Для
 Navidrome проверять реальное чтение согласованных тегов/assets, не выводить
 поведение OpenSubsonic API из факта записи тега.
 

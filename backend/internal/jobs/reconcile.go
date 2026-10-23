@@ -76,6 +76,11 @@ type interruptedSourceAnalysisArtifactCleanupRecovery interface {
 	RecoverInterruptedSourceAnalysisArtifactCleanupAtStartup(context.Context, uuid.UUID, int, int64) error
 }
 
+type interruptedPublicationRecovery interface {
+	ListTerminalPublicationCandidates(context.Context, int) ([]persistence.TerminalPublicationCandidate, error)
+	FailTerminalPublication(context.Context, persistence.TerminalPublicationCandidate) (bool, error)
+}
+
 // ReconcileInterruptedOperations marks queued/running operations whose River
 // delivery is not live as retryable failures and removes their private staging.
 // An interrupted scan is resolved against its root first: a generation the root
@@ -117,6 +122,17 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 				}
 			}
 			if live {
+				return nil
+			}
+			if operation.Kind == "publish_track_v1" {
+				if recovery, ok := repository.(interruptedPublicationRecovery); ok {
+					if err := recoverInterruptedPublication(ctx, recovery, operations, operation); err != nil {
+						return err
+					}
+				}
+				// A publication's application state and source hold are owned by its
+				// terminal-delivery persistence transaction. Never infer failure from
+				// an isLive miss; River may still rescue queued/running deliveries.
 				return nil
 			}
 			if operation.Kind == "matching_evaluation_v1" {
@@ -266,6 +282,28 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 	}
 	if err := cleanupTerminalMoves(ctx, repository, operations); err != nil {
 		return err
+	}
+	return nil
+}
+
+func recoverInterruptedPublication(ctx context.Context, repository interruptedPublicationRecovery, operations *service.Operations, operation *persistence.Operation) error {
+	candidates, err := repository.ListTerminalPublicationCandidates(ctx, 500)
+	if err != nil {
+		return fmt.Errorf("list terminal publication deliveries: %w", err)
+	}
+	for _, candidate := range candidates {
+		if candidate.OperationID != operation.ID || candidate.ApplicationAttempt != operation.Attempt ||
+			operation.RiverJobID == nil || candidate.RiverJobID != *operation.RiverJobID {
+			continue
+		}
+		changed, err := repository.FailTerminalPublication(ctx, candidate)
+		if err != nil {
+			return fmt.Errorf("fail terminal publication %s: %w", operation.ID, err)
+		}
+		if changed {
+			operations.Notify(operation.ID)
+		}
+		break
 	}
 	return nil
 }

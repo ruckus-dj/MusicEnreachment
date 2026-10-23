@@ -20,6 +20,27 @@ type multipleOperationRepository struct {
 	rows []*persistence.Operation
 }
 
+type terminalPublicationRecoveryRepository struct {
+	*multipleOperationRepository
+	candidates []persistence.TerminalPublicationCandidate
+	failed     int
+}
+
+func (repository *terminalPublicationRecoveryRepository) ListTerminalPublicationCandidates(context.Context, int) ([]persistence.TerminalPublicationCandidate, error) {
+	return repository.candidates, nil
+}
+
+func (repository *terminalPublicationRecoveryRepository) FailTerminalPublication(_ context.Context, candidate persistence.TerminalPublicationCandidate) (bool, error) {
+	operation, err := repository.GetOperation(context.Background(), candidate.OperationID)
+	if err != nil || operation.State != "queued" && operation.State != "running" || operation.Attempt != candidate.ApplicationAttempt ||
+		operation.RiverJobID == nil || *operation.RiverJobID != candidate.RiverJobID {
+		return false, err
+	}
+	operation.State, operation.Stage = "failed", "failed"
+	repository.failed++
+	return true, nil
+}
+
 func (repository *multipleOperationRepository) ListOperations(context.Context, ...string) ([]persistence.Operation, error) {
 	rows := make([]persistence.Operation, 0, len(repository.rows))
 	for _, operation := range repository.rows {
@@ -43,6 +64,37 @@ func (repository *multipleOperationRepository) TransitionOperation(ctx context.C
 		return err
 	}
 	return transition(operation)
+}
+
+func TestReconcilePublicationOnlySettlesPersistedTerminalDelivery(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		live       bool
+		candidate  bool
+		wantFailed int
+		wantState  string
+	}{
+		{name: "cancelled persisted job", candidate: true, wantFailed: 1, wantState: "failed"},
+		{name: "live delivery", live: true, candidate: true, wantState: "running"},
+		{name: "unobserved live job remains for River rescue", wantState: "running"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			jobID := int64(23)
+			operation := &persistence.Operation{ID: uuid.New(), Kind: "publish_track_v1", State: "running", Stage: "install", Attempt: 2, RiverJobID: &jobID}
+			base := &multipleOperationRepository{workerRepository: &workerRepository{operation: operation}, rows: []*persistence.Operation{operation}}
+			repository := &terminalPublicationRecoveryRepository{multipleOperationRepository: base}
+			if test.candidate {
+				repository.candidates = []persistence.TerminalPublicationCandidate{{OperationID: operation.ID, ApplicationAttempt: 2, RiverJobID: jobID, RiverState: "cancelled"}}
+			}
+			if err := jobs.ReconcileInterruptedOperations(context.Background(), repository, service.NewOperations(repository),
+				func(context.Context, *int64) (bool, error) { return test.live, nil }, workerSettings{}); err != nil {
+				t.Fatalf("reconcile publication: %v", err)
+			}
+			if repository.failed != test.wantFailed || operation.State != test.wantState {
+				t.Fatalf("publication settlement calls/state = %d/%s, want %d/%s", repository.failed, operation.State, test.wantFailed, test.wantState)
+			}
+		})
+	}
 }
 
 func (repository *multipleOperationRepository) FailUndeliveredInstallationRecovery(ctx context.Context, id uuid.UUID, attempt int, snapshot json.RawMessage, stage, safe string) (bool, error) {

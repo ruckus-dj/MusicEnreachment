@@ -190,11 +190,7 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 	installationID := uuid.New()
 	var automaticToolRoot string
 	toolRelative := filepath.ToSlash(filepath.Join("ffmpeg", "7.0"))
-	input.Tools = []persistence.SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "1", VersionBanner: "ffmpeg version 1"},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "1", VersionBanner: "ffprobe version 1"},
-	}
-	if automaticRetry {
+	if delivery {
 		input.Tools = []persistence.SourceAnalysisToolSelection{
 			{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: toolRelative, Executable: "ffmpeg", Version: "7.0", VersionBanner: "ffmpeg version 7.0 build"},
 			{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: toolRelative, Executable: "ffprobe", Version: "7.0", VersionBanner: "ffprobe version 7.0 build"},
@@ -212,6 +208,8 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 				t.Fatal(err)
 			}
 		}
+	} else if !mka {
+		_, input.Tools, _ = pinnedToolFixture(t, true)
 	}
 	var mkaPinned *pinnedToolRepo
 	if mka {
@@ -327,7 +325,20 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 	} else {
 		metadataRevision = input.ManualLyrics.ExpectedMetadataRevision
 	}
-	exec(`INSERT INTO release_track(id,release_id,track_id,position,metadata_revision) VALUES (?,?,?,0,?)`, guard.ExpectedPositionID, releaseID, trackID, metadataRevision)
+	var savedMetadata any = "{}"
+	if input.ManualLyrics != nil {
+		state := librarymetadata.StateValue
+		var value any = input.ManualLyrics.Value
+		if input.ManualLyrics.State == "explicit_empty" {
+			state = librarymetadata.StateExplicitEmpty
+			value = nil
+		}
+		envelope := librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition, Desired: map[string]librarymetadata.FieldValue{
+			"synced_lyrics": librarymetadata.ManualFieldValue(state, value, state == librarymetadata.StateValue),
+		}}
+		savedMetadata = encode(map[string]any{"local_metadata": envelope})
+	}
+	exec(`INSERT INTO release_track(id,release_id,track_id,position,metadata,metadata_revision) VALUES (?,?,?,0,?::jsonb,?)`, guard.ExpectedPositionID, releaseID, trackID, savedMetadata, metadataRevision)
 	if err := tx.QueryRowContext(ctx, `INSERT INTO river_job(kind,args,state,attempt) VALUES ('publish_track_v1','{}','running',1) RETURNING id`).Scan(&guard.RiverJobID); err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +389,7 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 		t.Fatal(err)
 	}
 	repository := persistence.NewSetupManagerRepository(db)
-	if automaticRetry {
+	if delivery {
 		if err := persistence.NewSettingsRepository(db).Set(ctx, settings.ToolsDirectoryKey, automaticToolRoot); err != nil {
 			t.Fatalf("seed managed tools root: %v", err)
 		}
@@ -463,6 +474,8 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 				}
 			}
 			executor.lyrics = NewPublicationLyricsResolver(automaticRetryEnabled{}, retryLookup)
+		} else {
+			executor.commands = &automaticRetryCommands{probeJSON: automaticRetryProbeFixture(t)}
 		}
 		err = executor.ExecutePublicationDelivery(ctx, guard.OperationID, guard.RiverJobID, guard.RiverAttempt)
 		if automaticRetry && scenario.editManualAuthorityDuringLookup {
@@ -511,38 +524,6 @@ func testPreparedManualLyricsOwner(t *testing.T, scenario manualLyricsScenario) 
 				t.Fatalf("authority conflict changed current generation: %s %v", generation, readErr)
 			}
 			assertReplacementDBCounts(t, ctx, db, guard.OperationID, guard.ExpectedPositionID, 1, 1, 0, 1, 0)
-			return
-		}
-		if runtime.GOOS == "windows" {
-			if automaticRetry && scenario.retryLyricsMismatch {
-				assertWindowsAutomaticRetryFallbackResetFrontier(t, ctx, db, repository, guard, input, fixture.output, currentPath, original, originalDigest, err, retryLookup, executor.metadata)
-				return
-			}
-			if !errors.Is(err, sourcefs.ErrUnsupported) {
-				t.Fatalf("manual lyrics executor error = %v, want sourcefs.ErrUnsupported", err)
-			}
-			t.Logf("native replacement failed closed before exposure on Windows: %v", err)
-			got, readErr := os.ReadFile(currentPath)
-			gotDigest := sha256.Sum256(got)
-			if readErr != nil || !bytes.Equal(got, original) || gotDigest != originalDigest {
-				t.Fatalf("unsupported native replacement changed G0: baseline=%x current=%x err=%v", originalDigest, gotDigest, readErr)
-			}
-			var generation uuid.UUID
-			if readErr := db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, guard.ExpectedPositionID).Scan(ctx, &generation); readErr != nil || generation != input.Rewrite.CurrentGeneration {
-				t.Fatalf("unsupported native replacement changed current generation: %s %v", generation, readErr)
-			}
-			if automaticRetry {
-				if len(retryLookup.requests) != 1 || retryLookup.requests[0].Duration <= 0 || retryLookup.requests[0].Duration == math.Trunc(retryLookup.requests[0].Duration) {
-					t.Fatalf("Windows retry exact lookup requests = %+v, want one fractional-duration lookup", retryLookup.requests)
-				}
-				if scenario.retryLyricsMismatch {
-					writer, ok := executor.metadata.(*automaticRetryMissingLyricsWriter)
-					if !ok || writer.calls != 2 {
-						t.Fatalf("Windows fallback native metadata writes = %v, want initial plus one rebuild", executor.metadata)
-					}
-				}
-			}
-			assertReplacementStillExposed(t, ctx, db, repository, guard, input)
 			return
 		}
 		if err != nil {

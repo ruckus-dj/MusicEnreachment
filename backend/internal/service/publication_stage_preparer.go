@@ -59,13 +59,6 @@ func (preparer PublicationStagePreparer) Prepare(ctx context.Context, guard pers
 	return preparer.prepare(ctx, guard, claim, resourcesHeld, false, nil)
 }
 
-func (preparer PublicationStagePreparer) prepareUnderScope(ctx context.Context, scope *PublicationExecutionScope) (PreparedPublicationStage, error) {
-	if scope == nil {
-		return nil, errors.New("publication execution scope is unavailable")
-	}
-	return preparer.prepare(ctx, scope.guard, persistence.PublicationDeliveryAcquired, true, false, scope)
-}
-
 // prepareManualLyricsFLAC is the private staging entry point for the supported
 // manual-lyrics FLAC rewrite capability. Generic callers remain V3-ineligible.
 func (preparer PublicationStagePreparer) prepareManualLyricsFLAC(ctx context.Context, guard persistence.PublicationDeliveryGuard, claim persistence.PublicationDeliveryClaimOutcome, resourcesHeld bool) (PreparedPublicationStage, error) {
