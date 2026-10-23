@@ -50,6 +50,13 @@ failure expectations too: native nested publication must reach the same success
 assertions on every supported platform. Cover-preservation fixtures must acquire
 automatic lyrics explicitly; a saved manual value intentionally suppresses lookup
 and does not silently apply itself during first publication.
+Initial-lyrics lookup uses frozen analysis metadata, never a source/copy read.
+Preserve fractional duration from saved ffprobe JSON, not TagLib's millisecond
+properties. Admission rechecks metadata freshness; delivery must not invalidate
+frozen inputs merely because the canonical metadata row was refreshed later.
+Use Bun `?` placeholders in Bun queries, including fixture SQL; `$1` is not
+interchangeable. For a scalar JSONB scan, select `::text` into a string rather
+than scanning directly into `json.RawMessage` as if it were a scalar driver type.
 For lifecycle fixtures, use named scenario configuration rather than extending a
 positional boolean list. Assert the intended frozen input kind and observed
 provider calls: a green test name alone does not prove that its branch ran.

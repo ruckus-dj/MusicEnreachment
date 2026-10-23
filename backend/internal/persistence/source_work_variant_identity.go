@@ -18,7 +18,9 @@ func ensureReadySourceWorkVariant(ctx context.Context, tx bun.IDB, work SourceAn
 	}
 	var ready bool
 	err := tx.NewRaw(`SELECT COALESCE(
-		metadata.state='succeeded' AND metadata.success_metadata_result_id IS NOT NULL
+			((metadata.state='succeeded' AND metadata.success_metadata_result_id IS NOT NULL)
+				OR (metadata.input_snapshot IS NULL AND (metadata.state='not_requested'
+					OR (metadata.state='skipped' AND metadata.skip_reason IN ('disabled','not_requested')))))
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_step step
 			WHERE step.work_id=work.id AND step.step<>'metadata'
 			AND NOT (

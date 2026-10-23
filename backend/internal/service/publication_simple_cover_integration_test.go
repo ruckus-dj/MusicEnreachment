@@ -37,6 +37,17 @@ func testSimpleFrozenCover(t *testing.T, outcome string) {
 	testPublicationSourceExecution(t, "Track.flac", true, publicationDeliveryScenario{
 		beforeAdmission: func(ctx context.Context, db *bun.DB, _ *persistence.SetupManagerRepository, id uuid.UUID) {
 			releaseID = id
+			metadataID := uuid.New()
+			if _, err := db.ExecContext(ctx, `INSERT INTO media_metadata_result(id,observed_tags,provenance,observed_at,winning_result_id,applied_operation_id,cover_observed,properties)
+				VALUES (?,'{"TITLE":["Analysed track"],"ARTIST":["Analysed artist"]}'::jsonb,'{}'::jsonb,now(),?,?,true,'{"length":183375000000}'::jsonb)`, metadataID, metadataID, uuid.New()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `UPDATE track_source SET source_metadata_result_id=? WHERE track_id IN (SELECT track_id FROM release_track WHERE release_id=?)`, metadataID, id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `UPDATE media_variant SET ffprobe_json=jsonb_set(ffprobe_json,'{format,duration}','"183.456789"'::jsonb) WHERE id IN (SELECT media_variant_id FROM track_source WHERE track_id IN (SELECT track_id FROM release_track WHERE release_id=?))`, id); err != nil {
+				t.Fatal(err)
+			}
 			library := persistence.NewLibraryRepository(db)
 			pending, err := library.SetPendingReleaseCover(ctx, id, 1, generationA, imageA, "image/png")
 			if err != nil {
@@ -47,6 +58,17 @@ func testSimpleFrozenCover(t *testing.T, outcome string) {
 			}
 		},
 		run: func(ctx context.Context, db *bun.DB, manager *persistence.SetupManagerRepository, executor *PublicationExecutor, operationID uuid.UUID, jobID int64, source, output, target string, sourceBytes []byte) {
+			attempt, err := manager.ReadPublicationAttempt(ctx, operationID)
+			if err != nil || attempt == nil {
+				t.Fatalf("read admitted metadata snapshot: %v", err)
+			}
+			frozen, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
+			if err != nil || frozen.Audio == nil || frozen.Audio.AnalysedMetadata == nil || frozen.Audio.AnalysedMetadata.DurationSeconds == nil || *frozen.Audio.AnalysedMetadata.DurationSeconds != 183.456789 {
+				t.Fatalf("admission lost exact stored probe duration: %+v, %v", frozen.Audio, err)
+			}
+			if _, err := db.ExecContext(ctx, `UPDATE media_metadata_result SET observed_tags='{"TITLE":["Refreshed title"],"ARTIST":["Refreshed artist"]}'::jsonb,winning_result_id=?,observed_at=now() WHERE id=?`, uuid.New(), frozen.Audio.AnalysedMetadata.MetadataResultID); err != nil {
+				t.Fatal(err)
+			}
 			var frozenGeneration uuid.UUID
 			if err := db.NewRaw(`SELECT generation FROM publication_attempt_cover_input WHERE operation_id=?`, operationID).Scan(ctx, &frozenGeneration); err != nil || frozenGeneration != generationA {
 				t.Fatalf("admitted cover generation = %s, %v", frozenGeneration, err)
@@ -75,6 +97,9 @@ func testSimpleFrozenCover(t *testing.T, outcome string) {
 			}
 			if len(lookup.requests) != 1 {
 				t.Fatalf("cover handling repeated lyrics acquisition: %d calls", len(lookup.requests))
+			}
+			if request := lookup.requests[0]; request.Artist != "Analysed artist" || request.Title != "Analysed track" || request.Duration != 183.456789 {
+				t.Fatalf("delivery did not use frozen analysed metadata: %+v", request)
 			}
 			published := filepath.Join(output, filepath.FromSlash(target))
 			capture, err := (metadata.Reader{}).Read(ctx, published, metadata.ReadRequest{CoverInspection: true})

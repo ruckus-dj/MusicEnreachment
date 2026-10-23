@@ -2,9 +2,11 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,6 +87,10 @@ type SourceMetadataApply struct {
 	StepAttempt      int
 	ObservedTags     json.RawMessage
 	Provenance       json.RawMessage
+	CoverObserved    bool
+	CoverData        []byte
+	CoverMIME        string
+	Properties       json.RawMessage
 	ObservedAt       time.Time
 }
 
@@ -499,8 +505,14 @@ func (repository *SourceInventoryRepository) ApplySourceFingerprint(ctx context.
 // already selected, makes this result the canonical current capture for that
 // digest; without SHA the step retains its own result until a later promotion.
 func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Context, apply SourceMetadataApply) (*SourceMetadataResult, error) {
-	if len(apply.ObservedTags) == 0 || len(apply.Provenance) == 0 || apply.ObservedAt.IsZero() {
+	if len(apply.ObservedTags) == 0 || !json.Valid(apply.ObservedTags) || len(apply.Provenance) == 0 || !json.Valid(apply.Provenance) || apply.ObservedAt.IsZero() || len(apply.Properties) != 0 && !json.Valid(apply.Properties) {
 		return nil, fmt.Errorf("apply source metadata: captured tags, provenance, and observed time are required")
+	}
+	if len(apply.CoverData) != 0 && (!apply.CoverObserved || !strings.HasPrefix(apply.CoverMIME, "image/") || len(apply.CoverMIME) == len("image/")) {
+		return nil, fmt.Errorf("apply source metadata: observed image cover facts are invalid")
+	}
+	if len(apply.CoverData) == 0 && apply.CoverMIME != "" {
+		return nil, fmt.Errorf("apply source metadata: cover MIME requires cover bytes")
 	}
 	var selected *SourceMetadataResult
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
@@ -520,8 +532,10 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 				var sameResult bool
 				if err := tx.NewRaw(`SELECT EXISTS (
 						SELECT 1 FROM media_metadata_result WHERE id=? AND observed_tags=?::jsonb AND provenance=?::jsonb
-						AND observed_at=? AND applied_operation_id=?
-					)`, selected.ID, apply.ObservedTags, apply.Provenance, apply.ObservedAt.UTC().Truncate(time.Microsecond), apply.OperationID).Scan(ctx, &sameResult); err != nil {
+							AND cover_observed=? AND cover_data IS NOT DISTINCT FROM ? AND cover_mime IS NOT DISTINCT FROM ?
+							AND properties IS NOT DISTINCT FROM ?::jsonb
+							AND observed_at=? AND applied_operation_id=?
+						)`, selected.ID, apply.ObservedTags, apply.Provenance, apply.CoverObserved, nullableBytes(apply.CoverData), nullableMetadataString(apply.CoverMIME), nullableJSON(apply.Properties), apply.ObservedAt.UTC().Truncate(time.Microsecond), apply.OperationID).Scan(ctx, &sameResult); err != nil {
 					return fmt.Errorf("apply source metadata: validate replay: %w", err)
 				}
 				if !sameResult {
@@ -549,13 +563,25 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 		}
 		observedAt := apply.ObservedAt.UTC().Truncate(time.Microsecond)
 		resultID := uuid.New()
+		var coverMIME *string
+		var coverSHA256 []byte
+		var coverSize *int64
+		if len(apply.CoverData) > 0 {
+			mime := apply.CoverMIME
+			coverMIME = &mime
+			digest := sha256.Sum256(apply.CoverData)
+			coverSHA256 = digest[:]
+			size := int64(len(apply.CoverData))
+			coverSize = &size
+		}
 		result := &SourceMetadataResult{ID: resultID, SourceSHA256: digest, ObservedTags: apply.ObservedTags, Provenance: apply.Provenance,
-			ObservedAt: observedAt, WinningResultID: resultID, AppliedOperationID: apply.OperationID}
+			CoverObserved: apply.CoverObserved, CoverData: append([]byte(nil), apply.CoverData...), CoverMIME: coverMIME, CoverSHA256: coverSHA256, CoverSizeBytes: coverSize,
+			Properties: apply.Properties, ObservedAt: observedAt, WinningResultID: resultID, AppliedOperationID: apply.OperationID}
 		previousID := locked.Step.SuccessMetadataResultID
 		if len(digest) == 32 {
-			// Stable conflict arbitration: the earliest observed capture wins, then
-			// UUID breaks equal-time ties. The selected step always references the
-			// canonical row returned by this upsert.
+			// Stable conflict arbitration prioritizes captures that inspected cover
+			// data, then observation time and UUID. The selected step always
+			// references the canonical row returned by this upsert.
 			selected, err = upsertCanonicalMetadataResult(ctx, tx, digest, *result)
 			if err != nil {
 				return fmt.Errorf("apply source metadata: upsert canonical result: %w", err)
@@ -592,6 +618,13 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 
 func nullableJSON(value json.RawMessage) any {
 	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullableMetadataString(value string) any {
+	if value == "" {
 		return nil
 	}
 	return value

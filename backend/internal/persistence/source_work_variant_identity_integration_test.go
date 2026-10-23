@@ -14,6 +14,41 @@ import (
 	"github.com/uptrace/bun"
 )
 
+func TestSourceWorkVariantIdentityAndGroupingAllowUnrequestedMetadataWithPostgreSQL(t *testing.T) {
+	for _, state := range []string{"not_requested", "skipped"} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			db := testpostgres.OpenMigrated(t)
+			ctx := context.Background()
+			repository := persistence.NewSourceInventoryRepository(db)
+			root := createInventoryRoot(t, ctx, repository, "/srv/work-variant-optional-metadata")
+			location := insertAnalysisLocation(t, ctx, db, root.ID, "track.flac", 4096, probeMtime())
+			establishInventory(t, ctx, db, root)
+			var reason *string
+			if state == "skipped" {
+				disabled := "disabled"
+				reason = &disabled
+			}
+			work := normalizedWork(t, ctx, repository, root, location, false,
+				persistence.SourceAnalysisStepInput{Step: persistence.SourceStepProbe, State: "pending"},
+				persistence.SourceAnalysisStepInput{Step: persistence.SourceStepMetadata, State: state, SkipReason: reason},
+			)
+			tool := insertVerifiedAnalysisTool(t, ctx, db, "ffmpeg", "ffprobe", "7.1.2", "ffprobe version 7.1.2")
+			fixture := newAnalysisStepFixture(t, ctx, db, repository, openScanEnqueueRiver(t, db), root, location, work,
+				persistence.SourceAnalysisModeBatch, nil, nil, false, []persistence.SourceAnalysisToolSelection{tool})
+			applyIdentityProbe(t, fixture, location.SizeBytes, "7.1.2")
+			anchor := sourceWorkVariantID(t, ctx, db, work.ID)
+			captures, err := persistence.NewIncomingGroupingRepository(db).CurrentCaptures(ctx)
+			if err != nil || len(captures) != 1 || !captures[0].Ready || captures[0].MediaVariantID == nil || *captures[0].MediaVariantID != anchor {
+				t.Fatalf("optional metadata grouping readiness = %+v, %v", captures, err)
+			}
+			if captures[0].CaptureAnalysisID != nil || captures[0].MetadataWinner != nil || len(captures[0].Tags) != 0 {
+				t.Fatalf("unrequested metadata was fabricated: %+v", captures[0])
+			}
+		})
+	}
+}
+
 func TestSourceWorkVariantIdentityDigestlessReadinessRetryAndCleanupWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	db := testpostgres.OpenMigrated(t)

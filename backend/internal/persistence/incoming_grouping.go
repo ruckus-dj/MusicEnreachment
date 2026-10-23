@@ -205,7 +205,9 @@ func loadIncomingGroupingCapturesForLocations(ctx context.Context, database bun.
 			fingerprint_result.algorithm_id AS fingerprint_algorithm_id,
 			fingerprint_result.calculated_at AS fingerprint_calculated_at,
 			fingerprint_result.parser_contract_version AS fingerprint_parser_version,
-			COALESCE(metadata.state='succeeded' AND metadata.success_metadata_result_id IS NOT NULL
+			COALESCE(((metadata.state='succeeded' AND metadata.success_metadata_result_id IS NOT NULL)
+				OR (metadata.input_snapshot IS NULL AND (metadata.state='not_requested'
+					OR (metadata.state='skipped' AND metadata.skip_reason IN ('disabled','not_requested')))))
 				AND NOT EXISTS (SELECT 1 FROM source_analysis_step analysis_step
 					WHERE analysis_step.work_id=work.id AND analysis_step.step<>'metadata'
 					AND NOT (

@@ -46,10 +46,7 @@ func (runner PublicationStagingRunner) runInitialLyricsStage(
 	if err != nil {
 		return persistence.PublicationStageObservation{}, err
 	}
-	inputCapture, err := (metadata.Reader{}).Read(ctx, paths.InputPath, metadata.ReadRequest{Properties: true})
-	if err != nil {
-		return persistence.PublicationStageObservation{}, err
-	}
+	inputCapture := initialLyricsCapture(input)
 	if err := check(); err != nil {
 		return persistence.PublicationStageObservation{}, err
 	}
@@ -96,6 +93,11 @@ func (runner PublicationStagingRunner) runInitialLyricsStage(
 			}
 			if err := transform(transformCtx); err != nil {
 				return err
+			}
+			if input.Audio != nil {
+				if err := metadata.ClearArtwork(transformCtx, paths.OutputPath); err != nil {
+					return fmt.Errorf("clear source artwork from first publication candidate: %w", err)
+				}
 			}
 			info, err := nativeInitialLyricsCandidateInfo(transformCtx, stage)
 			if err != nil {
@@ -202,11 +204,32 @@ func (runner PublicationStagingRunner) runInitialLyricsStage(
 		},
 	}
 
-	result, err := executeInitialPublicationLyrics(ctx, scope.guard, input, runner.Lyrics, initialLyricsLookupMetadata(inputCapture), journal, callbacks)
+	result, err := executeInitialPublicationLyrics(ctx, scope.guard, input, runner.Lyrics, initialLyricsLookupMetadataFromFrozen(input), journal, callbacks)
 	if err != nil {
 		return persistence.PublicationStageObservation{}, err
 	}
 	return result.Outcome.FinalObservation.Clone(), nil
+}
+
+func initialLyricsCapture(input persistence.PublicationInputs) metadata.Capture {
+	capture := metadata.Capture{Tags: map[string][]string{}}
+	if input.Audio == nil || input.Audio.AnalysedMetadata == nil {
+		return capture
+	}
+	frozen := input.Audio.AnalysedMetadata
+	capture.Tags = cloneTagMap(frozen.Tags)
+	return capture
+}
+
+func initialLyricsLookupMetadataFromFrozen(input persistence.PublicationInputs) lrclib.Metadata {
+	if input.Audio == nil || input.Audio.AnalysedMetadata == nil {
+		return initialLyricsLookupMetadata(initialLyricsCapture(input))
+	}
+	metadata := initialLyricsLookupMetadata(initialLyricsCapture(input))
+	if duration := input.Audio.AnalysedMetadata.DurationSeconds; duration != nil {
+		metadata.Duration = *duration
+	}
+	return metadata
 }
 
 func initialLyricsLookupMetadata(capture metadata.Capture) lrclib.Metadata {

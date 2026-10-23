@@ -25,7 +25,7 @@ func validateAndLockPublicationSource(ctx context.Context, tx bun.IDB, position 
 	if err := validateSelectedPublicationSource(ctx, tx, position, source.WorkID, frozen.MediaVariantID); err != nil {
 		return err
 	}
-	return nil
+	return validateSelectedPublicationMetadata(ctx, tx, position, source.WorkID, frozen)
 }
 
 func validateAndLockPublicationSourceIdentity(ctx context.Context, tx bun.IDB, source PublicationSourceSelection, frozen PublicationAudioInput) error {
@@ -70,13 +70,45 @@ func validateAndLockPublicationSourceIdentity(ctx context.Context, tx bun.IDB, s
 	return validateSelectedPublicationProbe(ctx, tx, source, frozen)
 }
 
-func validateSelectedPublicationSource(ctx context.Context, tx bun.IDB, position, workID, variantID uuid.UUID) error {
+func validateSelectedPublicationSource(ctx context.Context, tx bun.IDB, position, workID, mediaVariantID uuid.UUID) error {
 	var authorized bool
-	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM release_track position JOIN track_source association ON association.track_id=position.track_id JOIN source_work_variant_identity identity ON identity.media_variant_id=association.media_variant_id WHERE position.id=? AND identity.work_id=? AND association.media_variant_id=? AND association.selected=true)`, position, workID, variantID).Scan(ctx, &authorized); err != nil {
+	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM release_track position JOIN track_source association ON association.track_id=position.track_id JOIN source_work_variant_identity identity ON identity.media_variant_id=association.media_variant_id WHERE position.id=? AND identity.work_id=? AND association.media_variant_id=? AND association.selected=true)`, position, workID, mediaVariantID).Scan(ctx, &authorized); err != nil {
 		return fmt.Errorf("admit publication: verify track source association: %w", err)
 	}
 	if !authorized {
 		return fmt.Errorf("admit publication: source variant is not selected for this position")
+	}
+	return nil
+}
+
+func validateSelectedPublicationMetadata(ctx context.Context, tx bun.IDB, position, workID uuid.UUID, frozen PublicationAudioInput) error {
+	if frozen.AnalysedMetadata != nil {
+		var observed struct {
+			ID              uuid.UUID       `bun:"id,type:uuid"`
+			Tags            json.RawMessage `bun:"observed_tags,type:jsonb"`
+			Properties      json.RawMessage `bun:"properties,type:jsonb"`
+			WinningResultID uuid.UUID       `bun:"winning_result_id,type:uuid"`
+		}
+		if err := tx.NewRaw(`SELECT result.id,result.observed_tags,result.properties,result.winning_result_id
+			FROM release_track position JOIN track_source association ON association.track_id=position.track_id
+			JOIN source_work_variant_identity identity ON identity.media_variant_id=association.media_variant_id
+			JOIN media_metadata_result result ON result.id=association.source_metadata_result_id
+			WHERE position.id=? AND identity.work_id=? AND association.media_variant_id=? AND association.selected=true
+			FOR UPDATE OF association,result`, position, workID, frozen.MediaVariantID).Scan(ctx, &observed); err != nil {
+			return fmt.Errorf("admit publication: lock selected source metadata: %w", err)
+		}
+		var tags map[string][]string
+		if json.Unmarshal(observed.Tags, &tags) != nil || tags == nil || observed.ID != frozen.AnalysedMetadata.MetadataResultID || observed.WinningResultID != frozen.AnalysedMetadata.WinningResultID || !reflect.DeepEqual(tags, frozen.AnalysedMetadata.Tags) {
+			return fmt.Errorf("admit publication: selected source metadata changed: %w", ErrPublicationAdmissionConflict)
+		}
+		var probeJSON string
+		if err := tx.NewRaw(`SELECT variant.ffprobe_json::text FROM source_analysis_step step JOIN media_variant variant ON variant.id=step.success_probe_variant_id WHERE step.work_id=? AND step.step='probe' AND step.state='succeeded' AND step.success_probe_variant_id=?`, workID, frozen.ProbeResultID).Scan(ctx, &probeJSON); err != nil {
+			return fmt.Errorf("admit publication: read selected probe duration: %w", err)
+		}
+		duration, err := exactStoredMetadataDuration(json.RawMessage(probeJSON))
+		if err != nil || !reflect.DeepEqual(duration, frozen.AnalysedMetadata.DurationSeconds) {
+			return fmt.Errorf("admit publication: selected source metadata duration changed: %w", ErrPublicationAdmissionConflict)
+		}
 	}
 	return nil
 }
@@ -377,7 +409,10 @@ func (repository *SetupManagerRepository) CheckPublicationSourceHoldForDelivery(
 		if hold.Epoch != guard.Epoch || publicationAttempt.Epoch != guard.Epoch || publicationAttempt.PositionID != guard.ExpectedPositionID || publicationAttempt.CandidateGeneration != guard.CandidateGeneration || !publicationSourceMatchesInput(source, *input.Audio) {
 			return nil
 		}
-		if err := validateAndLockPublicationSource(ctx, tx, publicationAttempt.PositionID, source, *input.Audio); err != nil {
+		if err := validateAndLockPublicationSourceIdentity(ctx, tx, source, *input.Audio); err != nil {
+			return err
+		}
+		if err := validateSelectedPublicationSource(ctx, tx, publicationAttempt.PositionID, source.WorkID, source.MediaVariantID); err != nil {
 			return err
 		}
 		_, _, _, guarded, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "check publication source hold")

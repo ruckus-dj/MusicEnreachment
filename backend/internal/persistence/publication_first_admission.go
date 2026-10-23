@@ -32,15 +32,16 @@ type PrepareFirstPublicationAdmission func(context.Context, FirstPublicationAdmi
 // PublicationSourceAssociation is the transactionally observed decision row
 // needed to authorize a manual first-publication source change.
 type PublicationSourceAssociation struct {
-	ID             uuid.UUID
-	TrackID        uuid.UUID
-	MediaVariantID uuid.UUID
-	Selected       bool
-	Compatible     bool
-	DecisionMethod string
-	PolicyVersion  *string
-	Metadata       json.RawMessage
-	UpdatedAt      time.Time
+	ID                     uuid.UUID
+	TrackID                uuid.UUID
+	MediaVariantID         uuid.UUID
+	SourceMetadataResultID *uuid.UUID
+	Selected               bool
+	Compatible             bool
+	DecisionMethod         string
+	PolicyVersion          *string
+	Metadata               json.RawMessage
+	UpdatedAt              time.Time
 }
 
 // FirstPublicationSourceSelection is a complete witness for the current
@@ -90,6 +91,10 @@ func cloneFirstPublicationSourceSelection(selection FirstPublicationSourceSelect
 	for i, association := range selection.Associations {
 		result.Associations[i] = association
 		result.Associations[i].Metadata = append(json.RawMessage(nil), association.Metadata...)
+		if association.SourceMetadataResultID != nil {
+			id := *association.SourceMetadataResultID
+			result.Associations[i].SourceMetadataResultID = &id
+		}
 		if association.PolicyVersion != nil {
 			policy := *association.PolicyVersion
 			result.Associations[i].PolicyVersion = &policy
@@ -113,7 +118,7 @@ func (repository *SetupManagerRepository) applyFirstPublicationSourceSelection(c
 	selectedFound := false
 	for i, actual := range current {
 		witness := selection.Associations[i]
-		if actual.ID != witness.ID || actual.TrackID != witness.TrackID || actual.MediaVariantID != witness.MediaVariantID || actual.Selected != witness.Selected || actual.Compatible != witness.Compatible || actual.DecisionMethod != witness.DecisionMethod || !sameOptionalString(actual.PolicyVersion, witness.PolicyVersion) || !bytes.Equal(actual.Metadata, witness.Metadata) || !actual.UpdatedAt.Equal(witness.UpdatedAt) {
+		if actual.ID != witness.ID || actual.TrackID != witness.TrackID || actual.MediaVariantID != witness.MediaVariantID || !sameOptionalUUID(actual.SourceMetadataResultID, witness.SourceMetadataResultID) || actual.Selected != witness.Selected || actual.Compatible != witness.Compatible || actual.DecisionMethod != witness.DecisionMethod || !sameOptionalString(actual.PolicyVersion, witness.PolicyVersion) || !bytes.Equal(actual.Metadata, witness.Metadata) || !actual.UpdatedAt.Equal(witness.UpdatedAt) {
 			return fmt.Errorf("admit first publication: source association witness changed: %w", ErrPublicationAdmissionConflict)
 		}
 		if actual.ID == selection.AssociationID {

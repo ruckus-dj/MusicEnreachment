@@ -120,6 +120,18 @@ func TestPromoteDigestlessMetadataLosingToCanonicalRewiresAndDeletes(t *testing.
 	if winner.ID == loser.ID {
 		t.Fatal("digestless candidate unexpectedly became canonical identity")
 	}
+	var otherVariantID uuid.UUID
+	if err := db.NewRaw(`SELECT success_sha_variant_id FROM source_analysis_step WHERE work_id=? AND step='sha256'`, otherWork.ID).Scan(ctx, &otherVariantID); err != nil {
+		t.Fatalf("read SHA variant for metadata reference fixture: %v", err)
+	}
+	localTrackID, sourceID := uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES(?,'metadata promotion')`, localTrackID); err != nil {
+		t.Fatalf("insert local track for metadata source reference: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,decision_method,source_metadata_result_id)
+		VALUES(?,?,?,'manual',?)`, sourceID, localTrackID, otherVariantID, loser.ID); err != nil {
+		t.Fatalf("insert track source metadata reference: %v", err)
+	}
 
 	shaAttempt := fixture.claim(persistence.SourceStepSHA256)
 	if _, err := repository.ApplySourceSHA256(ctx, persistence.SourceSHA256Apply{
@@ -146,6 +158,10 @@ func TestPromoteDigestlessMetadataLosingToCanonicalRewiresAndDeletes(t *testing.
 	}
 	if loserSelection != winnerID || otherSelection != winnerID {
 		t.Fatalf("rewired selections = %s and %s; want canonical %s", loserSelection, otherSelection, winnerID)
+	}
+	var sourceMetadataID uuid.UUID
+	if err := db.NewRaw(`SELECT source_metadata_result_id FROM track_source WHERE id=?`, sourceID).Scan(ctx, &sourceMetadataID); err != nil || sourceMetadataID != winnerID {
+		t.Fatalf("track source metadata reference = %s, %v; want canonical %s", sourceMetadataID, err, winnerID)
 	}
 	var stored persistence.SourceMetadataResult
 	if err := db.NewRaw(`SELECT * FROM media_metadata_result WHERE id=?`, winnerID).Scan(ctx, &stored); err != nil {

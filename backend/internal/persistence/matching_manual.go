@@ -1020,8 +1020,12 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 		if len(variants) == 0 {
 			return ErrIncomingMatchConflict
 		}
+		metadataResultID, err := sourceWorkMetadataResultID(ctx, tx, workID)
+		if err != nil {
+			return err
+		}
 		for _, variantID := range variants {
-			if err := attachTrackSource(ctx, tx, localTrackID, variantID, materializationAuthority{method: "manual"}); err != nil {
+			if err := attachTrackSource(ctx, tx, localTrackID, variantID, materializationAuthority{method: "manual"}, metadataResultID); err != nil {
 				return err
 			}
 		}
@@ -1123,8 +1127,12 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 		if err := tx.NewRaw(`SELECT DISTINCT media_variant_id FROM source_work_variant_identity WHERE work_id=? ORDER BY media_variant_id`, workID).Scan(ctx, &variants); err != nil || len(variants) == 0 {
 			return ErrIncomingMatchConflict
 		}
+		metadataResultID, err := sourceWorkMetadataResultID(ctx, tx, workID)
+		if err != nil {
+			return err
+		}
 		for _, variant := range variants {
-			if err := attachTrackSource(ctx, tx, localTrackID, variant, materializationAuthority{method: "manual"}); err != nil {
+			if err := attachTrackSource(ctx, tx, localTrackID, variant, materializationAuthority{method: "manual"}, metadataResultID); err != nil {
 				return err
 			}
 		}

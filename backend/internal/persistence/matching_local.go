@@ -42,10 +42,11 @@ type MatchingLocalIntent struct {
 }
 
 type MatchingLocalSource struct {
-	FileMemberID         uuid.UUID   `json:"file_member_id"`
-	MediaIDs             []uuid.UUID `json:"media_ids"`
-	Locations            []string    `json:"locations"`
-	CurrentLocalTrackIDs []uuid.UUID `json:"current_local_track_ids"`
+	FileMemberID          uuid.UUID                `json:"file_member_id"`
+	SourceMetadataResults map[uuid.UUID]*uuid.UUID `json:"-"`
+	MediaIDs              []uuid.UUID              `json:"media_ids"`
+	Locations             []string                 `json:"locations"`
+	CurrentLocalTrackIDs  []uuid.UUID              `json:"current_local_track_ids"`
 }
 
 type MatchingLocalPreview struct {
@@ -284,6 +285,22 @@ func previewMatchingLocalTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, i
 	for _, id := range memberIDs {
 		var source MatchingLocalSource
 		source.FileMemberID = id
+		source.SourceMetadataResults = make(map[uuid.UUID]*uuid.UUID)
+		for _, capture := range groupCaptures {
+			if capture.VariantID != id || capture.MediaVariantID == nil {
+				continue
+			}
+			if _, exists := source.SourceMetadataResults[*capture.MediaVariantID]; !exists {
+				if capture.CaptureAnalysisID != nil {
+					value := *capture.CaptureAnalysisID
+					source.SourceMetadataResults[*capture.MediaVariantID] = &value
+				} else {
+					source.SourceMetadataResults[*capture.MediaVariantID] = nil
+				}
+			} else if !sameOptionalUUID(source.SourceMetadataResults[*capture.MediaVariantID], capture.CaptureAnalysisID) {
+				source.SourceMetadataResults[*capture.MediaVariantID] = nil
+			}
+		}
 		if err := tx.NewRaw(`SELECT DISTINCT identity.media_variant_id FROM incoming_group_member_location member_location
 			JOIN source_work_variant_identity identity ON identity.work_id=member_location.work_id
 				WHERE member_location.group_id=? AND member_location.variant_id=? AND identity.media_variant_id IS NOT NULL ORDER BY identity.media_variant_id`, groupID, id).Scan(ctx, &source.MediaIDs); err != nil {
@@ -468,7 +485,7 @@ func materializeMatchingLocal(ctx context.Context, tx bun.Tx, preview MatchingLo
 		}
 		for _, memberID := range track.FileMemberIDs {
 			for _, mediaID := range previewSourceIDs(preview.Sources, memberID) {
-				if _, err := tx.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,decision_method) VALUES (?,?,?,'manual') ON CONFLICT (track_id,media_variant_id) DO NOTHING`, uuid.New(), trackID, mediaID).Exec(ctx); err != nil {
+				if _, err := tx.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,decision_method,source_metadata_result_id) VALUES (?,?,?,'manual',?) ON CONFLICT (track_id,media_variant_id) DO UPDATE SET source_metadata_result_id=EXCLUDED.source_metadata_result_id`, uuid.New(), trackID, mediaID, previewSourceMetadataResultID(preview.Sources, memberID, mediaID)).Exec(ctx); err != nil {
 					return uuid.Nil, err
 				}
 			}
@@ -481,6 +498,15 @@ func previewSourceIDs(sources []MatchingLocalSource, memberID uuid.UUID) []uuid.
 	for _, source := range sources {
 		if source.FileMemberID == memberID {
 			return source.MediaIDs
+		}
+	}
+	return nil
+}
+
+func previewSourceMetadataResultID(sources []MatchingLocalSource, memberID, mediaID uuid.UUID) *uuid.UUID {
+	for _, source := range sources {
+		if source.FileMemberID == memberID {
+			return source.SourceMetadataResults[mediaID]
 		}
 	}
 	return nil

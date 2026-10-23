@@ -59,26 +59,28 @@ type LocalTrack struct {
 }
 
 type TrackSource struct {
-	bun.BaseModel  `bun:"table:track_source"`
-	ID             uuid.UUID       `bun:"id,pk,type:uuid"`
-	TrackID        uuid.UUID       `bun:"track_id,type:uuid"`
-	MediaVariantID uuid.UUID       `bun:"media_variant_id,type:uuid"`
-	Selected       bool            `bun:"selected"`
-	Compatible     bool            `bun:"compatible"`
-	DecisionMethod string          `bun:"decision_method"`
-	PolicyVersion  *string         `bun:"policy_version,nullzero"`
-	Metadata       json.RawMessage `bun:"metadata,type:jsonb"`
-	CreatedAt      time.Time       `bun:"created_at"`
-	UpdatedAt      time.Time       `bun:"updated_at"`
+	bun.BaseModel          `bun:"table:track_source"`
+	ID                     uuid.UUID       `bun:"id,pk,type:uuid"`
+	TrackID                uuid.UUID       `bun:"track_id,type:uuid"`
+	MediaVariantID         uuid.UUID       `bun:"media_variant_id,type:uuid"`
+	SourceMetadataResultID *uuid.UUID      `bun:"source_metadata_result_id,type:uuid,nullzero"`
+	Selected               bool            `bun:"selected"`
+	Compatible             bool            `bun:"compatible"`
+	DecisionMethod         string          `bun:"decision_method"`
+	PolicyVersion          *string         `bun:"policy_version,nullzero"`
+	Metadata               json.RawMessage `bun:"metadata,type:jsonb"`
+	CreatedAt              time.Time       `bun:"created_at"`
+	UpdatedAt              time.Time       `bun:"updated_at"`
 }
 
 type TrackSourceDecision struct {
-	ID             uuid.UUID
-	TrackID        uuid.UUID
-	MediaVariantID uuid.UUID
-	Selected       bool
-	Compatible     bool
-	Method         string
-	PolicyVersion  *string
-	Metadata       json.RawMessage
+	ID                     uuid.UUID
+	TrackID                uuid.UUID
+	MediaVariantID         uuid.UUID
+	Selected               bool
+	Compatible             bool
+	Method                 string
+	PolicyVersion          *string
+	Metadata               json.RawMessage
+	SourceMetadataResultID *uuid.UUID
 }

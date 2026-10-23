@@ -58,12 +58,13 @@ func (repository *CollectionRepository) UpsertTrackSourceDecision(ctx context.Co
 			return fmt.Errorf("upsert track source: automatic decision cannot replace manual decision")
 		}
 		row := TrackSource{ID: decision.ID, TrackID: decision.TrackID, MediaVariantID: decision.MediaVariantID,
-			Selected: decision.Selected, Compatible: decision.Compatible, DecisionMethod: decision.Method,
+			SourceMetadataResultID: decision.SourceMetadataResultID,
+			Selected:               decision.Selected, Compatible: decision.Compatible, DecisionMethod: decision.Method,
 			PolicyVersion: decision.PolicyVersion, Metadata: decision.Metadata, UpdatedAt: time.Now().UTC()}
 		if err == nil {
 			row.ID = existing.ID
 			row.CreatedAt = existing.CreatedAt
-			_, err = tx.NewUpdate().Model(&row).Column("selected", "compatible", "decision_method", "policy_version", "metadata", "updated_at").
+			_, err = tx.NewUpdate().Model(&row).Column("selected", "compatible", "decision_method", "policy_version", "metadata", "source_metadata_result_id", "updated_at").
 				Where("id = ?", existing.ID).Exec(ctx)
 		} else {
 			row.CreatedAt = row.UpdatedAt

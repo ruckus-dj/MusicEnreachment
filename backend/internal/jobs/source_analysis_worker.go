@@ -689,15 +689,40 @@ func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, opera
 		}
 		capture := prepared.Metadata.Capture
 		tags, marshalErr := json.Marshal(capture.Tags)
-		provenance, provenanceErr := json.Marshal(capture.Provenance)
-		if marshalErr != nil || provenanceErr != nil {
+		if marshalErr != nil {
 			failure := fence()
 			failure.SafeError = "The metadata result could not be saved. The previous result is unchanged."
 			return nil, worker.persistStepFailure(ctx, failure)
 		}
+		provenance, provenanceErr := json.Marshal(capture.Provenance)
+		if provenanceErr != nil {
+			failure := fence()
+			failure.SafeError = "The metadata result could not be saved. The previous result is unchanged."
+			return nil, worker.persistStepFailure(ctx, failure)
+		}
+		var properties json.RawMessage
+		if capture.Properties != nil {
+			properties, err = json.Marshal(capture.Properties)
+			if err != nil {
+				failure := fence()
+				failure.SafeError = "The metadata result could not be saved. The previous result is unchanged."
+				return nil, worker.persistStepFailure(ctx, failure)
+			}
+		}
+		var coverObserved bool
+		var coverData []byte
+		var coverMIME string
+		if inspection := capture.CoverInspection; inspection != nil {
+			coverObserved = inspection.Observed
+			if inspection.Cover != nil {
+				coverData = append([]byte(nil), inspection.Cover.Data...)
+				coverMIME = inspection.Cover.MIME
+			}
+		}
 		_, err = worker.repository.ApplySourceMetadata(ctx, persistence.SourceMetadataApply{WorkID: work.ID, OperationID: operation.ID,
 			OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, ObservedTags: tags,
-			Provenance: provenance, ObservedAt: time.Now().UTC()})
+			Provenance: provenance, Properties: properties, CoverObserved: coverObserved, CoverData: coverData, CoverMIME: coverMIME,
+			ObservedAt: time.Now().UTC()})
 	default:
 		return nil, fmt.Errorf("unsupported source analysis step %q", step)
 	}

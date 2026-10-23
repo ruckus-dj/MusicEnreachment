@@ -45,6 +45,39 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**Уточнение владельца от 2026-10-23 — входы только из анализа/БД:** все source
+metadata, включая lyrics, artwork bytes и технические сведения, извлекаются ещё
+при анализе. Матчинг связывает сохранённые данные с recording/track MBID или
+локальными ID; публикация берёт из исходника только аудиодорожку. Позднего поиска
+обложек/тегов/lyrics в связанных исходниках не должно быть. Это заменяет прежнюю
+постановку вопроса о late embedded fallback, но не выбирает приоритет между
+сохранёнными кандидатами. Проверки CURRENT destination и готового кандидата
+сохраняются. В `4d6a65d` initial-lyrics preparation ещё читал metadata/duration
+временной копии source: это был разрыв реализации, а не утверждённое исключение.
+Датированные результаты проверок ниже не означают
+приёмку этого data flow. Авторитетное уточнение — в `docs/design/decisions.md`.
+
+**2026-10-23, source metadata flow на базе `4d6a65d`:** анализ сохраняет
+нормализованные TagLib tags/lyrics, properties и inspected cover bytes/MIME/hash;
+matching закрепляет metadata-result FK на текущей track-source association.
+Publication admission замораживает tags и точную длительность из сохранённого
+ffprobe JSON. Initial lyrics больше не открывает source/copy для metadata lookup.
+Первый аудиорезультат строится existing selected-stream plan; `source` использует
+stream copy без повторного кодирования. CURRENT rewrite сохраняет native copy.
+Полный `task verify` прошёл; повторное независимое ревью не нашло P1/P2 в этих
+изменениях. PG regression проверяет точность DB hydration и неизменность frozen
+lookup после canonical refresh; нативные тесты clearing/replacement artwork
+сохраняют encoded payload для FLAC/MP3/M4A/MKA. Это не исчерпывающая инвентаризация
+всех raw tags/картинок: существующий TagLib capture contract возвращает
+нормализованные tags и первую нормализованную картинку. CI новой ревизии и
+итоговая runtime acceptance ещё не подтверждены; план не завершён.
+
+**Проверка `4d6a65d`:** полная CI `39999342103` завершилась успешно: verify,
+Linux amd64/arm64, macOS x64/arm64, Windows x64, Docker Compose smoke и публикация
+container image. Это подтверждает frozen-cover/whole-job срез и исправленные
+Windows assertions, но не устраняет указанный выше разрыв source metadata flow
+и не означает завершения плана.
+
 **2026-10-23, следующий срез на базе `5da437d`:** frozen effective cover первой
 аудиопубликации подключён к private preparation; actual cover и bounded embedding
 warning сохраняются в одной транзакции результата и доступны через read model/API.

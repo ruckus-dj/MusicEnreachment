@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -68,19 +69,30 @@ type PublicationAutomaticLyricsRetryInput struct {
 // PublicationAudioInput identifies the source file and verified audio result
 // selected at admission. No codec classification is inferred from the path.
 type PublicationAudioInput struct {
-	WorkID                uuid.UUID           `json:"work_id"`
-	RootID                uuid.UUID           `json:"root_id"`
-	LocationID            uuid.UUID           `json:"location_id"`
-	MediaVariantID        uuid.UUID           `json:"media_variant_id"`
-	ProbeResultID         uuid.UUID           `json:"probe_result_id"`
-	ConfiguredRootPath    string              `json:"configured_root_path"`
-	InventoryRootPath     string              `json:"inventory_root_path"`
-	RelativePath          string              `json:"relative_path"`
-	SizeBytes             int64               `json:"size_bytes"`
-	MTime                 time.Time           `json:"mtime"`
-	AnalysisPolicyVersion int                 `json:"analysis_policy_version"`
-	FFProbeVersion        string              `json:"ffprobe_version"`
-	AudioFacts            PersistedAudioFacts `json:"audio_facts"`
+	WorkID                uuid.UUID                    `json:"work_id"`
+	RootID                uuid.UUID                    `json:"root_id"`
+	LocationID            uuid.UUID                    `json:"location_id"`
+	MediaVariantID        uuid.UUID                    `json:"media_variant_id"`
+	ProbeResultID         uuid.UUID                    `json:"probe_result_id"`
+	ConfiguredRootPath    string                       `json:"configured_root_path"`
+	InventoryRootPath     string                       `json:"inventory_root_path"`
+	RelativePath          string                       `json:"relative_path"`
+	SizeBytes             int64                        `json:"size_bytes"`
+	MTime                 time.Time                    `json:"mtime"`
+	AnalysisPolicyVersion int                          `json:"analysis_policy_version"`
+	FFProbeVersion        string                       `json:"ffprobe_version"`
+	AudioFacts            PersistedAudioFacts          `json:"audio_facts"`
+	AnalysedMetadata      *PublicationAnalysedMetadata `json:"analysed_metadata,omitempty"`
+}
+
+// PublicationAnalysedMetadata freezes the TagLib read and duration stored for
+// the exact metadata result linked to the selected source association. A nil
+// value means metadata was unknown; an empty Tags object means observed empty.
+type PublicationAnalysedMetadata struct {
+	Tags             map[string][]string `json:"tags"`
+	DurationSeconds  *float64            `json:"duration_seconds,omitempty"`
+	MetadataResultID uuid.UUID           `json:"metadata_result_id"`
+	WinningResultID  uuid.UUID           `json:"winning_result_id"`
 }
 
 // PublicationRewriteInput pins an already-published current artifact. It does
@@ -283,6 +295,20 @@ func (input PublicationAudioInput) Validate() error {
 	if input.AnalysisPolicyVersion <= 0 || strings.TrimSpace(input.FFProbeVersion) == "" {
 		return fmt.Errorf("verified analysis policy and ffprobe version are required")
 	}
+	if input.AnalysedMetadata != nil {
+		metadata := input.AnalysedMetadata
+		if metadata.MetadataResultID == uuid.Nil || metadata.WinningResultID == uuid.Nil || metadata.Tags == nil {
+			return fmt.Errorf("analysed source metadata identity and tags are required")
+		}
+		if metadata.DurationSeconds != nil && (*metadata.DurationSeconds <= 0 || math.IsNaN(*metadata.DurationSeconds) || math.IsInf(*metadata.DurationSeconds, 0)) {
+			return fmt.Errorf("analysed source duration is invalid")
+		}
+		for name, values := range metadata.Tags {
+			if strings.TrimSpace(name) == "" || values == nil {
+				return fmt.Errorf("analysed source tags must contain named, non-nil value lists")
+			}
+		}
+	}
 	return input.AudioFacts.Validate()
 }
 
@@ -365,6 +391,7 @@ func (input PublicationInputs) Clone() PublicationInputs {
 	if input.Audio != nil {
 		audio := *input.Audio
 		audio.AudioFacts = clonePersistedAudioFacts(audio.AudioFacts)
+		audio.AnalysedMetadata = clonePublicationAnalysedMetadata(audio.AnalysedMetadata)
 		clone.Audio = &audio
 	}
 	if input.Rewrite != nil {
@@ -397,6 +424,24 @@ func (input PublicationInputs) Clone() PublicationInputs {
 		clone.AutomaticLyricsRetry = &retry
 	}
 	return clone
+}
+
+func clonePublicationAnalysedMetadata(value *PublicationAnalysedMetadata) *PublicationAnalysedMetadata {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	if value.DurationSeconds != nil {
+		duration := *value.DurationSeconds
+		clone.DurationSeconds = &duration
+	}
+	if value.Tags != nil {
+		clone.Tags = make(map[string][]string, len(value.Tags))
+		for name, values := range value.Tags {
+			clone.Tags[name] = append(make([]string, 0, len(values)), values...)
+		}
+	}
+	return &clone
 }
 
 func clonePublicationJSONValue(value any) any {

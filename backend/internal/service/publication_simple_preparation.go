@@ -57,10 +57,10 @@ func (preparation PublicationSimplePreparation) Prepare(
 ) (PublicationSimplePreparationResult, error) {
 	if input.Version != persistence.PublicationInputsVersion || (input.Rewrite == nil && input.Audio == nil) || inputPath == "" || tempDir == "" || outputPath == "" ||
 		!filepath.IsAbs(inputPath) || !filepath.IsAbs(tempDir) || !filepath.IsAbs(outputPath) || preparation.Commands == nil ||
-		preparation.Validator == nil || preparation.Metadata == nil || (input.Format != publication.AudioFormatSource && preparation.FFmpegPath == "") {
+		preparation.Validator == nil || preparation.Metadata == nil || ((input.Format != publication.AudioFormatSource || input.Audio != nil) && preparation.FFmpegPath == "") {
 		return PublicationSimplePreparationResult{}, errors.New("simple publication preparation dependencies or rewrite input are incomplete")
 	}
-	if (input.AutomaticLyricsRetry != nil || input.InitialLyrics != nil) && (preparation.FFprobePath == "" || preparation.MetadataReader == nil) {
+	if input.AutomaticLyricsRetry != nil && (preparation.FFprobePath == "" || preparation.MetadataReader == nil) {
 		return PublicationSimplePreparationResult{}, errors.New("optional lyrics preparation requires pinned probing and metadata readers")
 	}
 	if input.Audio != nil && preparation.CoverInput != nil && preparation.CoverInput.State == "value" && preparation.MetadataReader == nil {
@@ -86,27 +86,20 @@ func (preparation PublicationSimplePreparation) Prepare(
 		return PublicationSimplePreparationResult{}, err
 	}
 	facts := sourceFacts.AudioSourceFacts()
-	if input.Format == publication.AudioFormatSource {
-		// An audio-only remux discards attached pictures. A native copy followed by
-		// the tag writer preserves current cover bytes for supported source formats.
+	if input.Rewrite != nil && input.Format == publication.AudioFormatSource {
+		// Rewrites retain the current container and its artwork; a transform is
+		// needed only when the requested format differs from the current one.
 		if err := copyCurrentPublication(tempInput, outputPath); err != nil {
 			return PublicationSimplePreparationResult{}, fmt.Errorf("copy native publication candidate: %w", err)
 		}
 	} else {
-		plan, err := publication.PlanAudioTransform(input.Format, facts)
-		if err != nil {
-			return PublicationSimplePreparationResult{}, fmt.Errorf("plan publication audio transform: %w", err)
+		if err := buildSimpleAudioCandidate(ctx, preparation.Commands, preparation.FFmpegPath, input.Format, facts, tempInput, outputPath); err != nil {
+			return PublicationSimplePreparationResult{}, fmt.Errorf("transform publication candidate: %w", err)
 		}
-		args, err := plan.FFmpegArgs(tempInput, outputPath, facts.StreamIndex, facts.Container)
-		if err != nil {
-			return PublicationSimplePreparationResult{}, err
-		}
-		command, runErr := preparation.Commands.Run(ctx, preparation.FFmpegPath, args...)
-		if !command.QuiescenceEstablished {
-			return PublicationSimplePreparationResult{}, errors.Join(runErr, errors.New("publication transform quiescence was not established"))
-		}
-		if runErr != nil {
-			return PublicationSimplePreparationResult{}, fmt.Errorf("transform publication candidate: %w", runErr)
+	}
+	if input.Audio != nil {
+		if err := metadata.ClearArtwork(ctx, outputPath); err != nil {
+			return PublicationSimplePreparationResult{}, fmt.Errorf("clear source artwork from first publication candidate: %w", err)
 		}
 	}
 	tags := cloneTagMap(input.DesiredTags)
@@ -126,33 +119,8 @@ func (preparation PublicationSimplePreparation) Prepare(
 		}
 	}
 	if input.InitialLyrics != nil {
-		capture, err := preparation.MetadataReader.Read(ctx, tempInput, metadata.ReadRequest{CoverInspection: true})
-		if err != nil {
-			return PublicationSimplePreparationResult{}, fmt.Errorf("read prepared initial publication metadata: %w", err)
-		}
-		probe, probeErr := preparation.Commands.Run(ctx, preparation.FFprobePath, "-v", "error", "-show_entries", "format=duration", "-of", "json", tempInput)
-		if !probe.QuiescenceEstablished {
-			return PublicationSimplePreparationResult{}, errors.Join(probeErr, errors.New("initial publication duration probe quiescence was not established"))
-		}
-		if probeErr != nil {
-			return PublicationSimplePreparationResult{}, fmt.Errorf("probe prepared initial publication duration: %w", probeErr)
-		}
-		var data struct {
-			Format struct {
-				Duration string `json:"duration"`
-			} `json:"format"`
-		}
-		if err := json.Unmarshal(probe.Output, &data); err != nil {
-			return PublicationSimplePreparationResult{}, fmt.Errorf("decode prepared initial publication duration: %w", err)
-		}
-		duration, err := strconv.ParseFloat(strings.TrimSpace(data.Format.Duration), 64)
-		if err != nil || duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
-			duration = 0
-		}
-		// The exact probed duration belongs to the held prepared input. The
-		// helper preserves source/manual/provider precedence without fallback.
-		lookupMetadata := initialLyricsLookupMetadata(capture)
-		lookupMetadata.Duration = duration
+		capture := initialLyricsCapture(input)
+		lookupMetadata := initialLyricsLookupMetadataFromFrozen(input)
 		acquisition, err := resolveInitialPublicationLyrics(ctx, preparation.Lyrics, *input.InitialLyrics, capture.Tags, lookupMetadata)
 		if err != nil {
 			return PublicationSimplePreparationResult{}, fmt.Errorf("resolve initial publication lyrics: %w", err)
@@ -245,26 +213,12 @@ func (preparation PublicationSimplePreparation) Prepare(
 			if err := os.Remove(outputPath); err != nil {
 				return PublicationSimplePreparationResult{}, fmt.Errorf("remove initial publication candidate after lyrics readback mismatch: %w", err)
 			}
-			if input.Format == publication.AudioFormatSource {
+			if input.Rewrite != nil && input.Format == publication.AudioFormatSource {
 				if err := copyCurrentPublication(tempInput, outputPath); err != nil {
 					return PublicationSimplePreparationResult{}, fmt.Errorf("rebuild initial publication candidate without lyrics: %w", err)
 				}
-			} else {
-				plan, err := publication.PlanAudioTransform(input.Format, facts)
-				if err != nil {
-					return PublicationSimplePreparationResult{}, fmt.Errorf("plan initial publication candidate rebuild: %w", err)
-				}
-				args, err := plan.FFmpegArgs(tempInput, outputPath, facts.StreamIndex, facts.Container)
-				if err != nil {
-					return PublicationSimplePreparationResult{}, err
-				}
-				command, runErr := preparation.Commands.Run(ctx, preparation.FFmpegPath, args...)
-				if !command.QuiescenceEstablished {
-					return PublicationSimplePreparationResult{}, errors.Join(runErr, errors.New("initial publication rebuild quiescence was not established"))
-				}
-				if runErr != nil {
-					return PublicationSimplePreparationResult{}, fmt.Errorf("rebuild initial publication candidate without lyrics: %w", runErr)
-				}
+			} else if err := buildSimpleAudioCandidate(ctx, preparation.Commands, preparation.FFmpegPath, input.Format, facts, tempInput, outputPath); err != nil {
+				return PublicationSimplePreparationResult{}, fmt.Errorf("rebuild initial publication candidate without lyrics: %w", err)
 			}
 			deleteTag(tags, "LYRICS")
 			if err := writeTags(); err != nil {
@@ -391,6 +345,32 @@ func (preparation PublicationSimplePreparation) Prepare(
 		prepared.Observation.ActualAssets, _ = json.Marshal(assets)
 	}
 	return prepared, nil
+}
+
+func buildSimpleAudioCandidate(
+	ctx context.Context,
+	commands PublicationCommandRunner,
+	ffmpegPath string,
+	format publication.AudioPublicationFormat,
+	facts publication.AudioSourceFacts,
+	inputPath, outputPath string,
+) error {
+	plan, err := publication.PlanAudioTransform(format, facts)
+	if err != nil {
+		return fmt.Errorf("plan publication audio transform: %w", err)
+	}
+	args, err := plan.FFmpegArgs(inputPath, outputPath, facts.StreamIndex, facts.Container)
+	if err != nil {
+		return err
+	}
+	command, runErr := commands.Run(ctx, ffmpegPath, args...)
+	if !command.QuiescenceEstablished {
+		return errors.Join(runErr, errors.New("publication transform quiescence was not established"))
+	}
+	if runErr != nil {
+		return runErr
+	}
+	return nil
 }
 
 func deleteTag(tags map[string][]string, name string) {

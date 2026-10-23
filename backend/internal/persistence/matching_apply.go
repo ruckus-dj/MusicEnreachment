@@ -69,6 +69,22 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	if len(group.Members) == 0 {
 		return ErrIncomingMatchConflict
 	}
+	var capturedMetadata map[uuid.UUID]capturedMatchingSourceMetadata
+	if header.TargetRunID != uuid.Nil {
+		var exists bool
+		var captureErr error
+		capturedMetadata, exists, captureErr = loadMatchingCapturedMetadataResults(ctx, tx, header.TargetRunID)
+		if captureErr != nil {
+			return captureErr
+		}
+		if exists {
+			for _, member := range group.Members {
+				if _, ok := capturedMetadata[member.FileMemberID]; !ok {
+					return ErrIncomingMatchConflict
+				}
+			}
+		}
+	}
 	evaluation := IncomingMatchEvaluation{
 		ExpectedGroupsRevision: header.GroupsRevision, ExpectedGroupingEpoch: header.GroupingEpoch,
 		PolicyVersion: header.PolicyVersion, Provider: fence, Groups: []IncomingMatchGroupEvaluation{group},
@@ -123,7 +139,7 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	if currentRevision != expectedEvaluationRevision {
 		return ErrIncomingMatchConflict
 	}
-	positions, err := applyPersistedMatchingDecision(ctx, tx, group, decision, fence, header.PolicyVersion)
+	positions, err := applyPersistedMatchingDecision(ctx, tx, group, decision, fence, header.PolicyVersion, capturedMetadata)
 	if err != nil {
 		return err
 	}
@@ -396,7 +412,7 @@ func decodePersistedMatchingDecision(evidence json.RawMessage) (persistedMatchin
 
 // applyPersistedMatchingDecision materializes one persisted unique decision and
 // returns the release positions whose publication inputs it changed.
-func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingMatchGroupEvaluation, decision persistedMatchingDecision, fence IncomingMatchProviderFence, policy string) ([]uuid.UUID, error) {
+func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group IncomingMatchGroupEvaluation, decision persistedMatchingDecision, fence IncomingMatchProviderFence, policy string, capturedMetadata ...map[uuid.UUID]capturedMatchingSourceMetadata) ([]uuid.UUID, error) {
 	if len(decision.Assignments) != len(group.Members) {
 		return nil, fmt.Errorf("apply matching evaluation: assignments do not cover every group member")
 	}
@@ -517,8 +533,19 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 		if len(variants) == 0 {
 			return nil, ErrIncomingMatchConflict
 		}
+		metadataResultID, err := sourceWorkMetadataResultID(ctx, tx, member.WorkID)
+		if err != nil {
+			return nil, err
+		}
+		if len(capturedMetadata) > 0 && capturedMetadata[0] != nil {
+			captured, ok := capturedMetadata[0][member.FileMemberID]
+			if !ok || captured.WorkID != member.WorkID || !sameOptionalUUID(captured.ResultID, metadataResultID) {
+				return nil, ErrIncomingMatchConflict
+			}
+			metadataResultID = captured.ResultID
+		}
 		for _, variantID := range variants {
-			if err := attachAutomaticTrackSource(ctx, tx, localTrackID, variantID, policy); err != nil {
+			if err := attachAutomaticTrackSource(ctx, tx, localTrackID, variantID, policy, metadataResultID); err != nil {
 				return nil, err
 			}
 		}
@@ -528,6 +555,39 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 		return nil, err
 	}
 	return positions, nil
+}
+
+type capturedMatchingSourceMetadata struct {
+	WorkID   uuid.UUID
+	ResultID *uuid.UUID
+}
+
+func loadMatchingCapturedMetadataResults(ctx context.Context, tx bun.IDB, runID uuid.UUID) (map[uuid.UUID]capturedMatchingSourceMetadata, bool, error) {
+	var intent []byte
+	err := tx.NewRaw(`SELECT intent FROM matching_acquisition WHERE run_id=?`, runID).Scan(ctx, &intent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("apply matching evaluation: read captured source metadata: %w", err)
+	}
+	var capture struct {
+		Members []MatchingAcquisitionCapturedMember `json:"captured_members"`
+	}
+	if err := json.Unmarshal(intent, &capture); err != nil || len(capture.Members) == 0 {
+		return nil, false, ErrIncomingMatchConflict
+	}
+	results := make(map[uuid.UUID]capturedMatchingSourceMetadata, len(capture.Members))
+	for _, member := range capture.Members {
+		if member.MemberID == uuid.Nil || member.WorkID == uuid.Nil {
+			return nil, false, ErrIncomingMatchConflict
+		}
+		if _, duplicate := results[member.MemberID]; duplicate {
+			return nil, false, ErrIncomingMatchConflict
+		}
+		results[member.MemberID] = capturedMatchingSourceMetadata{WorkID: member.WorkID, ResultID: member.CaptureAnalysisID}
+	}
+	return results, true, nil
 }
 
 // matchingApplyPublicationPositions lists the release positions whose
@@ -973,11 +1033,15 @@ func optionalPolicy(policy string, manual bool) any {
 	return policy
 }
 
-func attachAutomaticTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.UUID, policy string) error {
-	return attachTrackSource(ctx, tx, trackID, variantID, materializationAuthority{method: "automatic", policyVersion: &policy})
+func attachAutomaticTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.UUID, policy string, metadataResultID ...*uuid.UUID) error {
+	return attachTrackSource(ctx, tx, trackID, variantID, materializationAuthority{method: "automatic", policyVersion: &policy}, metadataResultID...)
 }
 
-func attachTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.UUID, authority materializationAuthority) error {
+func attachTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.UUID, authority materializationAuthority, metadataResultID ...*uuid.UUID) error {
+	var sourceMetadataResultID *uuid.UUID
+	if len(metadataResultID) > 0 {
+		sourceMetadataResultID = metadataResultID[0]
+	}
 	if err := rejectCleanupOwnedSourceVariant(ctx, tx, variantID); err != nil {
 		return fmt.Errorf("apply matching evaluation: %w", err)
 	}
@@ -1002,13 +1066,32 @@ func attachTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.U
 			} else if authority.method == "automatic" && source.Method != authority.method {
 				return fmt.Errorf("apply matching evaluation: %w", ErrMatchingManualProtection)
 			}
+			if sourceMetadataResultID != nil {
+				if _, err := tx.NewRaw(`UPDATE track_source SET source_metadata_result_id=? WHERE track_id=? AND media_variant_id=?`, sourceMetadataResultID, trackID, variantID).Exec(ctx); err != nil {
+					return fmt.Errorf("apply matching evaluation: associate source metadata result: %w", err)
+				}
+			}
 			return nil
 		}
 	}
-	if _, err := tx.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version) VALUES (?,?,?,false,true,?,?)`, uuid.New(), trackID, variantID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
+	if _, err := tx.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,source_metadata_result_id) VALUES (?,?,?,false,true,?,?,?)`, uuid.New(), trackID, variantID, authority.method, authority.policyVersion, sourceMetadataResultID).Exec(ctx); err != nil {
 		return fmt.Errorf("apply matching evaluation: attach source variant: %w", err)
 	}
 	return nil
+}
+
+// sourceWorkMetadataResultID returns only the metadata result frozen on this
+// work's successful metadata step. It never follows a winner to a newer result.
+func sourceWorkMetadataResultID(ctx context.Context, tx bun.IDB, workID uuid.UUID) (*uuid.UUID, error) {
+	var resultID *uuid.UUID
+	err := tx.NewRaw(`SELECT success_metadata_result_id FROM source_analysis_step WHERE work_id=? AND step='metadata' AND state='succeeded'`, workID).Scan(ctx, &resultID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read source work metadata result: %w", err)
+	}
+	return resultID, nil
 }
 
 // applyFrozenMatchingOperationTx applies schema-2 requests exclusively from the

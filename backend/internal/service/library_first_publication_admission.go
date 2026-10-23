@@ -357,6 +357,17 @@ func audioInputCopy(input *persistence.PublicationAudioInput) *persistence.Publi
 		return nil
 	}
 	copy := *input
+	if input.AnalysedMetadata != nil {
+		metadata := *input.AnalysedMetadata
+		if input.AnalysedMetadata.DurationSeconds != nil {
+			duration := *input.AnalysedMetadata.DurationSeconds
+			metadata.DurationSeconds = &duration
+		}
+		if input.AnalysedMetadata.Tags != nil {
+			metadata.Tags = cloneDesiredPublicationTags(input.AnalysedMetadata.Tags)
+		}
+		copy.AnalysedMetadata = &metadata
+	}
 	return &copy
 }
 

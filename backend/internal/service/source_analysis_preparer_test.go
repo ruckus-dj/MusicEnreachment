@@ -49,10 +49,29 @@ func (probe preparerProbe) ProbeMediaFile(ctx context.Context, file sourcefs.Reg
 	return probe(ctx, file)
 }
 
-type preparerMetadataReader func(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
+// preparerMetadataRecorder records every explicit metadata read request so a
+// test can prove exactly which optional work the metadata step requested, and
+// returns its configured capture unchanged.
+type preparerMetadataRecorder struct {
+	mu       sync.Mutex
+	requests []metadata.ReadRequest
+	paths    []string
+	capture  metadata.Capture
+	err      error
+}
 
-func (reader preparerMetadataReader) Read(ctx context.Context, path string, request metadata.ReadRequest) (metadata.Capture, error) {
-	return reader(ctx, path, request)
+func (recorder *preparerMetadataRecorder) Read(_ context.Context, path string, request metadata.ReadRequest) (metadata.Capture, error) {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	recorder.requests = append(recorder.requests, request)
+	recorder.paths = append(recorder.paths, path)
+	return recorder.capture, recorder.err
+}
+
+func (recorder *preparerMetadataRecorder) recorded() ([]metadata.ReadRequest, []string) {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	return append([]metadata.ReadRequest(nil), recorder.requests...), append([]string(nil), recorder.paths...)
 }
 
 type preparerFingerprinter struct {
@@ -668,30 +687,30 @@ func TestSourceAnalysisPreparerCancellationJoinsRunnersAndReleasesHolds(t *testi
 }
 
 func TestSourceAnalysisPreparerMetadataIsIndependentAndPropertiesRemainOptional(t *testing.T) {
-	called := 0
-	reader := preparerMetadataReader(func(_ context.Context, path string, request metadata.ReadRequest) (metadata.Capture, error) {
-		called++
-		if path != "/prepared/source.mka" {
-			t.Fatalf("metadata path = %q", path)
-		}
-		if request.Properties {
-			t.Fatal("properties were requested without explicit opt-in")
-		}
-		return metadata.Capture{Format: "mka", Tags: map[string][]string{"ARTIST": {"one", "two"}}}, errors.New("optional fake failure")
-	})
+	recorder := &preparerMetadataRecorder{
+		capture: metadata.Capture{Format: "mka", Tags: map[string][]string{"ARTIST": {"one", "two"}}},
+		err:     errors.New("optional fake failure"),
+	}
 	probe := preparerProbe(func(context.Context, sourcefs.RegularFile) ([]byte, error) {
 		return []byte(`{"format":{"format_name":"matroska"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac"}]}`), nil
 	})
 	preparer := NewSourceAnalysisPreparer(SourceAnalysisPreparerConfig{
-		MetadataReader: reader, FFProbeVersion: "ffprobe 8.0", AnalysisPolicy: 1,
+		MetadataReader: recorder, FFProbeVersion: "ffprobe 8.0", AnalysisPolicy: 1,
 		ProbeFactory: func(string) (SourceAnalysisProbe, error) { return probe, nil },
 	})
 	result := preparer.Prepare(context.Background(), SourceAnalysisPrepareRequest{
 		File: preparerTestFile(t, "audio"), ServerPath: "/prepared/source.mka",
 		Targets: SourceAnalysisTargetProbe | SourceAnalysisTargetMetadata,
 	})
-	if called != 1 || result.Metadata.State != SourceAnalysisFailed || result.Metadata.Capture != nil {
-		t.Fatalf("metadata outcome = %#v, called %d", result.Metadata, called)
+	requests, paths := recorder.recorded()
+	if len(requests) != 1 || len(paths) != 1 || paths[0] != "/prepared/source.mka" {
+		t.Fatalf("metadata reads = %v at %v", requests, paths)
+	}
+	if !requests[0].Properties || !requests[0].CoverInspection {
+		t.Fatalf("metadata step did not explicitly request properties and cover inspection: %+v", requests[0])
+	}
+	if result.Metadata.State != SourceAnalysisFailed || result.Metadata.Capture != nil {
+		t.Fatalf("metadata outcome = %#v", result.Metadata)
 	}
 	if result.Probe.State != SourceAnalysisSucceeded {
 		t.Fatalf("metadata failure changed probe outcome: %#v", result.Probe)
@@ -699,21 +718,46 @@ func TestSourceAnalysisPreparerMetadataIsIndependentAndPropertiesRemainOptional(
 }
 
 func TestSourceAnalysisPreparerMetadataOnlyDoesNotRequireManagedTools(t *testing.T) {
-	reader := preparerMetadataReader(func(_ context.Context, _ string, request metadata.ReadRequest) (metadata.Capture, error) {
-		if request.Properties {
-			t.Fatal("optional properties were requested")
-		}
-		return metadata.Capture{Tags: map[string][]string{"ARTIST": {"first", "second"}}}, nil
-	})
-	preparer := NewSourceAnalysisPreparer(SourceAnalysisPreparerConfig{MetadataReader: reader})
+	wantImage := []byte("original-cover-image-bytes")
+	recorder := &preparerMetadataRecorder{
+		capture: metadata.Capture{
+			Format: "flac",
+			Tags:   map[string][]string{"ARTIST": {"first", "second"}, "LYRICS": {"line one\nline two"}},
+			CoverInspection: &metadata.CoverInspection{
+				Observed: true,
+				Cover:    &metadata.Cover{Data: append([]byte(nil), wantImage...), MIME: "image/png"},
+			},
+		},
+	}
+	preparer := NewSourceAnalysisPreparer(SourceAnalysisPreparerConfig{MetadataReader: recorder})
 	result := preparer.Prepare(context.Background(), SourceAnalysisPrepareRequest{
 		ServerPath: "/prepared/source.flac", Targets: SourceAnalysisTargetMetadata,
 	})
-	if result.Metadata.State != SourceAnalysisSucceeded || result.Metadata.Capture == nil || len(result.Metadata.Capture.Tags["ARTIST"]) != 2 {
+	requests, paths := recorder.recorded()
+	if len(requests) != 1 || len(paths) != 1 || paths[0] != "/prepared/source.flac" {
+		t.Fatalf("metadata reads = %v at %v", requests, paths)
+	}
+	if !requests[0].Properties || !requests[0].CoverInspection {
+		t.Fatalf("metadata step did not explicitly request properties and cover inspection: %+v", requests[0])
+	}
+	if result.Metadata.State != SourceAnalysisSucceeded || result.Metadata.Capture == nil {
 		t.Fatalf("metadata-only result = %#v", result.Metadata)
 	}
 	if result.Probe.State != SourceAnalysisNotRequested || result.Fingerprint.State != SourceAnalysisNotRequested {
 		t.Fatalf("metadata-only request changed sibling steps: %#v", result)
+	}
+	capture := result.Metadata.Capture
+	if capture.Format != "flac" || len(capture.Tags["ARTIST"]) != 2 {
+		t.Fatalf("captured format/tags changed: %#v", capture.Tags)
+	}
+	if lyrics := capture.Tags["LYRICS"]; len(lyrics) != 1 || lyrics[0] != "line one\nline two" {
+		t.Fatalf("captured lyrics changed: %#v", lyrics)
+	}
+	if capture.CoverInspection == nil || !capture.CoverInspection.Observed || capture.CoverInspection.Cover == nil {
+		t.Fatalf("cover inspection was not preserved: %#v", capture.CoverInspection)
+	}
+	if !bytes.Equal(capture.CoverInspection.Cover.Data, wantImage) || capture.CoverInspection.Cover.MIME != "image/png" {
+		t.Fatalf("captured cover changed: %q %q", capture.CoverInspection.Cover.Data, capture.CoverInspection.Cover.MIME)
 	}
 }
 

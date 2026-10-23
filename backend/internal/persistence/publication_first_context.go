@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type FirstPublicationSource struct {
 	AssociationID                   uuid.UUID
 	Selected                        bool
 	Input                           PublicationAudioInput
+	AnalysedMetadata                *PublicationAnalysedMetadata
 	Quality                         PersistedAudioFacts
 	ChannelLayout                   string
 	StreamTitle                     string
@@ -480,7 +482,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 	// Capture every persisted association as an admission witness, including
 	// associations which are not eligible to become source candidates.
 	var associations []PublicationSourceAssociation
-	if err := tx.NewRaw(`SELECT id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,metadata,updated_at
+	if err := tx.NewRaw(`SELECT id,track_id,media_variant_id,source_metadata_result_id,selected,compatible,decision_method,policy_version,metadata,updated_at
 		FROM track_source WHERE track_id=? ORDER BY id ASC`, trackID).Scan(ctx, &associations); err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("read first publication source associations: %w", err)
 	}
@@ -488,19 +490,23 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 	// Candidate sources must still point at inventory's current location and
 	// have successful probe provenance for that exact variant.
 	var rows []struct {
-		AssociationID uuid.UUID          `bun:"association_id,type:uuid"`
-		Selected      bool               `bun:"selected"`
-		ProbeResultID uuid.UUID          `bun:"probe_result_id,type:uuid"`
-		RootID        uuid.UUID          `bun:"root_id,type:uuid"`
-		LocationID    uuid.UUID          `bun:"location_id,type:uuid"`
-		WorkID        uuid.UUID          `bun:"work_id,type:uuid"`
-		VariantID     uuid.UUID          `bun:"variant_id,type:uuid"`
-		Configured    string             `bun:"configured_path"`
-		Inventory     string             `bun:"inventory_path"`
-		Relative      string             `bun:"relative_path"`
-		Size          int64              `bun:"size_bytes"`
-		MTime         time.Time          `bun:"mtime"`
-		Variant       SourceMediaVariant `bun:"embed:variant__"`
+		AssociationID      uuid.UUID          `bun:"association_id,type:uuid"`
+		MetadataResultID   *uuid.UUID         `bun:"metadata_result_id,type:uuid,nullzero"`
+		MetadataTags       json.RawMessage    `bun:"metadata_tags,type:jsonb,nullzero"`
+		MetadataProperties json.RawMessage    `bun:"metadata_properties,type:jsonb,nullzero"`
+		WinningResultID    uuid.UUID          `bun:"winning_result_id,type:uuid"`
+		Selected           bool               `bun:"selected"`
+		ProbeResultID      uuid.UUID          `bun:"probe_result_id,type:uuid"`
+		RootID             uuid.UUID          `bun:"root_id,type:uuid"`
+		LocationID         uuid.UUID          `bun:"location_id,type:uuid"`
+		WorkID             uuid.UUID          `bun:"work_id,type:uuid"`
+		VariantID          uuid.UUID          `bun:"variant_id,type:uuid"`
+		Configured         string             `bun:"configured_path"`
+		Inventory          string             `bun:"inventory_path"`
+		Relative           string             `bun:"relative_path"`
+		Size               int64              `bun:"size_bytes"`
+		MTime              time.Time          `bun:"mtime"`
+		Variant            SourceMediaVariant `bun:"embed:variant__"`
 	}
 	var rejected struct {
 		UnavailableRoots int `bun:"unavailable_roots"`
@@ -531,13 +537,14 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 	if rejected.Unprobed > 0 {
 		selectedBlockers = append(selectedBlockers, "one or more selected sources lack a fresh successful probe")
 	}
-	err := tx.NewRaw(`SELECT ts.id AS association_id, ts.selected, p.success_probe_variant_id AS probe_result_id,
+	err := tx.NewRaw(`SELECT ts.id AS association_id, ts.source_metadata_result_id AS metadata_result_id, mr.observed_tags AS metadata_tags, mr.properties AS metadata_properties, mr.winning_result_id,
+		 ts.selected, p.success_probe_variant_id AS probe_result_id,
 		r.id AS root_id, l.id AS location_id, w.id AS work_id, i.media_variant_id AS variant_id,
 		w.configured_path, w.inventory_path, w.relative_path, l.size_bytes, l.mtime,
 		v.id AS "variant__id", v.size_bytes AS "variant__size_bytes", v.analysis_policy_version AS "variant__analysis_policy_version",
 		v.ffprobe_version AS "variant__ffprobe_version", v.ffprobe_json AS "variant__ffprobe_json", v.observed_tags AS "variant__observed_tags",
 		v.inspected_at AS "variant__inspected_at", v.applied_operation_id AS "variant__applied_operation_id", v.audio_stream_count AS "variant__audio_stream_count"
-		FROM track_source ts JOIN media_variant identity_variant ON identity_variant.id=ts.media_variant_id
+		FROM track_source ts LEFT JOIN media_metadata_result mr ON mr.id=ts.source_metadata_result_id JOIN media_variant identity_variant ON identity_variant.id=ts.media_variant_id
 		JOIN source_work_variant_identity i ON i.media_variant_id=identity_variant.id JOIN source_analysis_work w ON w.id=i.work_id
 		JOIN source_location l ON l.id=w.current_location_id AND l.id=w.location_id AND l.source_root_id=w.source_root_id
 		JOIN source_root r ON r.id=w.source_root_id
@@ -572,6 +579,21 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 			ProbeResultID: row.ProbeResultID, ConfiguredRootPath: row.Configured, InventoryRootPath: row.Inventory,
 			RelativePath: row.Relative, SizeBytes: row.Size, MTime: row.MTime,
 		}
+		var analysed *PublicationAnalysedMetadata
+		if row.MetadataResultID != nil {
+			var tags map[string][]string
+			if err := json.Unmarshal(row.MetadataTags, &tags); err != nil || tags == nil || row.WinningResultID == uuid.Nil {
+				blocker(fmt.Sprintf("selected source %s has invalid metadata provenance", row.LocationID))
+				continue
+			}
+			duration, err := exactStoredMetadataDuration(row.Variant.FFProbeJSON)
+			if err != nil {
+				blocker(fmt.Sprintf("selected source %s has invalid probe metadata", row.LocationID))
+				continue
+			}
+			analysed = &PublicationAnalysedMetadata{Tags: tags, DurationSeconds: duration, MetadataResultID: *row.MetadataResultID, WinningResultID: row.WinningResultID}
+			input.AnalysedMetadata = analysed
+		}
 		if row.Variant.AnalysisPolicyVersion != nil {
 			input.AnalysisPolicyVersion = *row.Variant.AnalysisPolicyVersion
 		}
@@ -595,7 +617,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 			streamInput := input
 			streamInput.AudioFacts = facts
 			*result = append(*result, FirstPublicationSource{
-				Selection: selection, AssociationID: row.AssociationID, Selected: row.Selected, Input: streamInput, Quality: facts, StreamTitle: stream.Title, StreamLanguage: stream.Language,
+				Selection: selection, AssociationID: row.AssociationID, Selected: row.Selected, Input: streamInput, AnalysedMetadata: clonePublicationAnalysedMetadata(analysed), Quality: facts, StreamTitle: stream.Title, StreamLanguage: stream.Language,
 				ChannelLayout:                   stream.ChannelLayout,
 				RequiresExplicitStreamSelection: len(streams) > 1, AudioStreamCount: len(streams),
 			})
@@ -617,6 +639,36 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		*blockers = append(*blockers, "no selected source has a current inventory identity and successful probe")
 	}
 	return nil
+}
+
+func exactStoredMetadataDuration(raw json.RawMessage) (*float64, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var probe struct {
+		Format struct {
+			Duration json.RawMessage `json:"duration"`
+		} `json:"format"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	if err := decoder.Decode(&probe); err != nil {
+		return nil, err
+	}
+	if len(probe.Format.Duration) == 0 || string(probe.Format.Duration) == "null" {
+		return nil, nil
+	}
+	var rawDuration string
+	if err := json.Unmarshal(probe.Format.Duration, &rawDuration); err != nil {
+		return nil, nil
+	}
+	seconds, err := strconv.ParseFloat(rawDuration, 64)
+	if err != nil {
+		return nil, nil
+	}
+	if seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return nil, nil
+	}
+	return &seconds, nil
 }
 
 func uniquePublicationAudioIndex(raw json.RawMessage) (int, bool) {

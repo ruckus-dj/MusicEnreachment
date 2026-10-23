@@ -107,6 +107,7 @@ type simplePreparationSettings struct{}
 func (simplePreparationSettings) GetLRCLIBEnabled(context.Context) (bool, error) { return true, nil }
 
 type simplePreparationLookup struct {
+	request  lrclib.Metadata
 	duration float64
 	found    bool
 	lyrics   string
@@ -115,23 +116,43 @@ type simplePreparationLookup struct {
 
 func (lookup *simplePreparationLookup) Lookup(_ context.Context, request lrclib.Metadata) (lrclib.LookupResult, error) {
 	lookup.calls++
+	lookup.request = request
 	lookup.duration = request.Duration
 	return lrclib.LookupResult{Found: lookup.found, Lyrics: lookup.lyrics}, nil
 }
 
 type simplePreparationProbeCommand struct {
 	calls int
+	args  []string
 }
 
-func (command *simplePreparationProbeCommand) Run(_ context.Context, executable string, _ ...string) (PublicationCommandResult, error) {
-	if executable != "ffprobe" {
-		return PublicationCommandResult{QuiescenceEstablished: true}, errors.New("unexpected command in native initial publication preparation")
+func (command *simplePreparationProbeCommand) Run(_ context.Context, executable string, args ...string) (PublicationCommandResult, error) {
+	if executable != "ffmpeg" {
+		return PublicationCommandResult{QuiescenceEstablished: true}, errors.New("unexpected command in initial publication preparation")
 	}
 	command.calls++
-	return PublicationCommandResult{Output: []byte(`{"format":{"duration":"183.375"}}`), QuiescenceEstablished: true}, nil
+	command.args = append([]string(nil), args...)
+	input, output := "", args[len(args)-1]
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == "-i" {
+			input = args[index+1]
+			break
+		}
+	}
+	if input == "" {
+		return PublicationCommandResult{QuiescenceEstablished: true}, errors.New("ffmpeg input was not specified")
+	}
+	contents, err := os.ReadFile(input)
+	if err != nil {
+		return PublicationCommandResult{QuiescenceEstablished: true}, err
+	}
+	if err := os.WriteFile(output, contents, 0o600); err != nil {
+		return PublicationCommandResult{QuiescenceEstablished: true}, err
+	}
+	return PublicationCommandResult{QuiescenceEstablished: true}, nil
 }
 
-func TestSimplePreparationInitialLyricsUsesPreparedAudioAndFrozenAuthority(t *testing.T) {
+func TestSimplePreparationInitialLyricsUsesFrozenAnalysisAndAuthority(t *testing.T) {
 	ctx := context.Background()
 	lyrics := "[00:01.00]provider lyrics\n"
 	for _, tc := range []struct {
@@ -170,6 +191,7 @@ func TestSimplePreparationInitialLyricsUsesPreparedAudioAndFrozenAuthority(t *te
 			}
 			_, tools, _ := pinnedToolFixture(t, true)
 			lossless := true
+			frozenDuration := 183.456789
 			input := persistence.PublicationInputs{
 				Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
 				IntentKind: "audio", InitialLyrics: &persistence.PublicationInitialLyricsInput{ExpectedMetadataRevision: 7, Desired: tc.desired},
@@ -178,7 +200,8 @@ func TestSimplePreparationInitialLyricsUsesPreparedAudioAndFrozenAuthority(t *te
 					WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(),
 					ConfiguredRootPath: filepath.Dir(filepath.Dir(inputPath)), InventoryRootPath: filepath.Dir(filepath.Dir(inputPath)),
 					RelativePath: "album/track.flac", SizeBytes: info.Size(), MTime: info.ModTime().UTC().Truncate(time.Microsecond),
-					AnalysisPolicyVersion: 1, FFProbeVersion: "test", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true},
+					AnalysisPolicyVersion: 1, FFProbeVersion: "test", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 2, Codec: "flac", Lossless: &lossless, Container: "flac", SupportedSourceContainer: true},
+					AnalysedMetadata: &persistence.PublicationAnalysedMetadata{Tags: map[string][]string{"ARTIST": {"Frozen Artist"}, "TITLE": {"Frozen Title"}, "ALBUM": {"Frozen Album"}}, DurationSeconds: &frozenDuration, MetadataResultID: uuid.New(), WinningResultID: uuid.New()},
 				},
 			}
 			lookup := &simplePreparationLookup{found: true, lyrics: lyrics}
@@ -191,7 +214,7 @@ func TestSimplePreparationInitialLyricsUsesPreparedAudioAndFrozenAuthority(t *te
 			}
 			output := filepath.Join(t.TempDir(), "candidate.flac")
 			prepared, err := (PublicationSimplePreparation{
-				Commands: command, FFprobePath: "ffprobe", Validator: validator, Metadata: metadata.Writer{}, MetadataReader: metadata.Reader{},
+				Commands: command, FFmpegPath: "ffmpeg", Validator: validator, Metadata: metadata.Writer{}, MetadataReader: simpleOutputOnlyMetadataReader{allowed: output},
 				Lyrics: NewPublicationLyricsResolver(simplePreparationSettings{}, lookup),
 			}).Prepare(ctx, input, inputPath, filepath.Join(t.TempDir(), "temporary"), output)
 			if err != nil {
@@ -213,11 +236,35 @@ func TestSimplePreparationInitialLyricsUsesPreparedAudioAndFrozenAuthority(t *te
 			} else if prepared.InitialLyrics == nil || prepared.InitialLyrics.Outcome != persistence.PublicationInitialLyricsNotRequested || prepared.InitialLyrics.Source != "none" {
 				t.Fatalf("protected initial lyrics projection = %#v", prepared.InitialLyrics)
 			}
-			if lookup.calls != tc.wantLookups || command.calls != 1 || (tc.wantLookups > 0 && lookup.duration != 183.375) {
-				t.Fatalf("resolver calls=%d duration=%v probe calls=%d, want %d, 183.375, 1", lookup.calls, lookup.duration, command.calls, tc.wantLookups)
+			if lookup.calls != tc.wantLookups || command.calls != 1 || (tc.wantLookups > 0 && lookup.duration != frozenDuration) {
+				t.Fatalf("resolver calls=%d duration=%v transform calls=%d, want %d, %v, 1", lookup.calls, lookup.duration, command.calls, tc.wantLookups, frozenDuration)
+			}
+			if !containsCommandArgPair(command.args, "-map", "0:2") || !containsCommandArgPair(command.args, "-c:a", "copy") || !containsCommandArgPair(command.args, "-map_metadata", "-1") || !containsCommandArgPair(command.args, "-map_chapters", "-1") {
+				t.Fatalf("source-format first audio did not use selected-stream audio copy: %v", command.args)
+			}
+			if tc.wantLookups > 0 && (lookup.request.Artist != "Frozen Artist" || lookup.request.Title != "Frozen Title" || lookup.request.Album != "Frozen Album") {
+				t.Fatalf("lookup did not use frozen analysed tags: %+v", lookup.request)
 			}
 		})
 	}
+}
+
+func containsCommandArgPair(args []string, key, value string) bool {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == key && args[index+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+type simpleOutputOnlyMetadataReader struct{ allowed string }
+
+func (reader simpleOutputOnlyMetadataReader) Read(ctx context.Context, path string, request metadata.ReadRequest) (metadata.Capture, error) {
+	if filepath.Clean(path) != filepath.Clean(reader.allowed) {
+		return metadata.Capture{}, errors.New("publication attempted late source metadata extraction")
+	}
+	return (metadata.Reader{}).Read(ctx, path, request)
 }
 
 func TestCopyCurrentPublicationFailureLeavesInputUnchanged(t *testing.T) {

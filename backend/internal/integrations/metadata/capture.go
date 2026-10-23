@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -68,7 +69,7 @@ type ReadRequest struct {
 var tagLibProvenance = Provenance{
 	Name:     "github.com/deluan/go-taglib",
 	Version:  "v0.0.0-20260926163408-32d7614f30ec (TagLib v2.3.2)",
-	Contract: "ReadTags(path) normalized text map; values/order as returned; no raw-tag completeness guarantee",
+	Contract: "ReadTags(path) normalized text map; optional ReadProperties(path) audio properties and ReadImage(path) first normalized picture; values/order as returned; no raw-tag completeness guarantee",
 }
 
 // Read captures normalized metadata from the path prepared by its caller.
@@ -130,7 +131,7 @@ func (reader Reader) readCoverInspection(ctx context.Context, path string, reque
 	}
 	inspection := &CoverInspection{Observed: true}
 	if len(data) != 0 {
-		inspection.Cover = &Cover{Data: append([]byte(nil), data...), MIME: http.DetectContentType(data)}
+		inspection.Cover = &Cover{Data: append([]byte(nil), data...), MIME: coverMIME(data)}
 	}
 	result.CoverInspection = inspection
 	return nil
@@ -218,4 +219,38 @@ func safeReadFormat(path string) (format string, err error) {
 		format = detected.String()
 	}
 	return format, file.Close()
+}
+
+// coverMIME classifies cover bytes without filesystem metadata. net/http does
+// not recognize TIFF, so its reliable byte-order/magic signature is checked
+// before falling back to HTTP sniffing; unknown formats keep their exact bytes.
+func coverMIME(data []byte) string {
+	if isTIFF(data) {
+		return "image/tiff"
+	}
+	return http.DetectContentType(data)
+}
+
+func isTIFF(data []byte) bool {
+	if len(data) < 8 {
+		return false
+	}
+	var order binary.ByteOrder
+	switch {
+	case data[0] == 'I' && data[1] == 'I':
+		order = binary.LittleEndian
+	case data[0] == 'M' && data[1] == 'M':
+		order = binary.BigEndian
+	default:
+		return false
+	}
+	switch order.Uint16(data[2:4]) {
+	case 42:
+		return true
+	case 43:
+		// BigTIFF carries an 8-byte offset size after its 43 magic.
+		return len(data) >= 16 && order.Uint16(data[4:6]) == 8
+	default:
+		return false
+	}
 }
