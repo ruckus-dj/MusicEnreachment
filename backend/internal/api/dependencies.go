@@ -39,6 +39,7 @@ type Dependencies struct {
 	LibraryReleaseDetails  *service.LibraryReleaseDetails
 	LibraryPrimaryArtists  *service.LibraryPrimaryArtists
 	LibraryMetadata        *service.LibraryMetadataService
+	LibraryReleaseCovers   *service.ReleaseCovers
 	LibraryPublications    LibraryPublicationService
 }
 

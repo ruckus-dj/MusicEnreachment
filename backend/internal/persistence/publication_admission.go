@@ -51,6 +51,7 @@ type PublicationAdmission struct {
 	NamespaceManifest             []PublicationNamespaceNode
 	manualLyrics                  *PublicationManualLyricsInput
 	validatedManualLyrics         bool
+	validatedManualCover          bool
 	validatedAutomaticLyricsRetry bool
 	metadataRevision              int64
 	firstAdmission                *firstPublicationAdmissionHook
@@ -103,6 +104,9 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	}
 	if input.AutomaticLyricsRetry != nil && !request.validatedAutomaticLyricsRetry || request.validatedAutomaticLyricsRetry && input.AutomaticLyricsRetry == nil {
 		return uuid.Nil, fmt.Errorf("admit publication: automatic lyrics retry inputs require validated admission")
+	}
+	if input.ManualCover != nil && !request.validatedManualCover || request.validatedManualCover && input.ManualCover == nil {
+		return uuid.Nil, fmt.Errorf("admit publication: manual cover inputs require validated admission")
 	}
 	if request.IntentKind == "audio" {
 		if request.Source == nil || !publicationSourceMatchesInput(*request.Source, *input.Audio) {
@@ -266,7 +270,7 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	}
 	snapshot, _ := json.Marshal(map[string]any{"version": 1, "position_id": request.PositionID.String(), "output_epoch": epoch.String(), "intent_kind": request.IntentKind})
 	frozenInputs := append(json.RawMessage(nil), request.FrozenInputs...)
-	if request.manualLyrics != nil || request.validatedAutomaticLyricsRetry {
+	if request.manualLyrics != nil || request.validatedAutomaticLyricsRetry || request.validatedManualCover {
 		frozenInputs, err = json.Marshal(input)
 		if err != nil {
 			return uuid.Nil, fmt.Errorf("admit publication: encode frozen manual lyrics input: %w", err)

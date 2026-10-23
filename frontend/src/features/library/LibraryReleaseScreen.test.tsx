@@ -7,9 +7,23 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { server } from "../../test/server";
 import { LibraryReleaseScreen } from "./LibraryReleaseScreen";
+
+beforeEach(() => {
+  // The screen always mounts the cover editor; the empty automatic baseline
+  // keeps unrelated tests off the unhandled-request error path.
+  server.use(
+    http.get("*/api/library/releases/:releaseId/cover", ({ params }) =>
+      HttpResponse.json({
+        release_id: params.releaseId,
+        revision: 1,
+        mode: "automatic",
+      }),
+    ),
+  );
+});
 
 afterEach(() => {
   // Unmount while the EventSource stub is still installed. Queued passive

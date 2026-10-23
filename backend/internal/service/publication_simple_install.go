@@ -128,10 +128,13 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		writer = metadata.Writer{}
 	}
 	var coverInput *persistence.PublicationAttemptCoverInput
-	if input.Audio != nil {
+	if input.Audio != nil || input.ManualCover != nil {
 		receipt, found, readErr := executor.repository.PublicationAttemptCoverInputForDelivery(ctx, guard)
 		if readErr != nil {
 			return fmt.Errorf("read frozen publication cover receipt: %w", readErr)
+		}
+		if input.ManualCover != nil && !found {
+			return errors.New("manual cover receipt is unavailable")
 		}
 		if found {
 			coverInput = &receipt

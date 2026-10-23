@@ -124,15 +124,22 @@ func (repository *LibraryRepository) SetPendingReleaseCover(ctx context.Context,
 
 func (repository *LibraryRepository) ApplyPendingReleaseCover(ctx context.Context, releaseID uuid.UUID, expectedRevision int64, pendingGeneration uuid.UUID) (ReleaseCover, error) {
 	return repository.mutateReleaseCover(ctx, releaseID, expectedRevision, func(tx bun.Tx, current ReleaseCover) error {
-		if current.Mode != "manual" || current.PendingGeneration == nil || *current.PendingGeneration != pendingGeneration {
-			return ErrReleaseCoverConflict
-		}
-		_, err := tx.ExecContext(ctx, `UPDATE release_publication_cover SET revision=revision+1,
-			selected_generation=pending_generation,selected_bytes=pending_bytes,selected_mime=pending_mime,selected_sha256=pending_sha256,selected_size=pending_size,
-			pending_generation=NULL,pending_bytes=NULL,pending_mime=NULL,pending_sha256=NULL,pending_size=NULL,acquisition_owner=NULL,warning=NULL,updated_at=now()
-			WHERE release_id=?`, releaseID)
-		return err
+		return applyPendingReleaseCoverTx(ctx, tx, current, pendingGeneration)
 	})
+}
+
+// applyPendingReleaseCoverTx promotes the selected pending image in a caller's
+// transaction so publication admission can make the authority change atomic
+// with its publication attempts and River jobs.
+func applyPendingReleaseCoverTx(ctx context.Context, tx bun.Tx, current ReleaseCover, pendingGeneration uuid.UUID) error {
+	if current.Mode != "manual" || current.PendingGeneration == nil || *current.PendingGeneration != pendingGeneration || current.AcquisitionOwner != nil {
+		return ErrReleaseCoverConflict
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE release_publication_cover SET revision=revision+1,
+		selected_generation=pending_generation,selected_bytes=pending_bytes,selected_mime=pending_mime,selected_sha256=pending_sha256,selected_size=pending_size,
+		pending_generation=NULL,pending_bytes=NULL,pending_mime=NULL,pending_sha256=NULL,pending_size=NULL,acquisition_owner=NULL,warning=NULL,updated_at=now()
+		WHERE release_id=? AND revision=? AND mode='manual' AND pending_generation=?`, current.ReleaseID, current.Revision, pendingGeneration)
+	return requireOneReleaseCoverRow(result, err)
 }
 
 func (repository *LibraryRepository) ReturnReleaseCoverToAutomatic(ctx context.Context, releaseID uuid.UUID, expectedRevision int64) (ReleaseCover, error) {

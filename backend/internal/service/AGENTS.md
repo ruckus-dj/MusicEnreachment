@@ -64,6 +64,12 @@ When injecting metadata races through Bun SQL, pass marshalled JSON as a string
 to `?::jsonb`, not a plain `[]byte` (which becomes a bytea/hex literal). Assert
 the mutation affected the intended row and revision before claiming rejection:
 an error returned from a lookup stub may become a nonfatal provider warning.
+Cover-only rewrites must call the native cover-only writer, not the optional-assets
+writer that clears and rewrites tags. Preserve published tags/lyrics, not pending
+desired metadata. Container-derived bitrate may change with artwork size; verify
+encoded payload preservation separately instead of treating that estimate as an
+audio mutation. Receipt-carry fixtures must establish the actual desired metadata
+revision before asserting generation continuity.
 
 ## ANTI-PATTERNS
 - Empty safe error messages in Operations.Fail (enforced at runtime)

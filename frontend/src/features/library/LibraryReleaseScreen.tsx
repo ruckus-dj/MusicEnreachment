@@ -16,6 +16,7 @@ import type {
   LibraryReleaseDetailResponse,
 } from "../../api/generated/client.schemas";
 import { FirstPublicationPreview } from "./FirstPublicationPreview";
+import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
 
 const initialLyricsSourceLabels: Record<string, string> = {
   none: "источник не выбран",
@@ -1121,6 +1122,32 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
           </label>
         )}
       </header>
+      <ReleaseCoverEditor
+        releaseId={releaseId}
+        epoch={
+          Object.values(positions).find(
+            (position) => position.publication?.active_epoch,
+          )?.publication?.active_epoch
+        }
+        onOperationsAdmitted={(operations) => {
+          const requestScope = scope.current;
+          setPositions((current) => {
+            if (!mounted.current || scope.current !== requestScope)
+              return current;
+            const next = { ...current };
+            for (const operation of operations) {
+              next[operation.position_id] = {
+                ...next[operation.position_id],
+                applyOperationID: operation.operation_id,
+                applying: true,
+                notice:
+                  "Применение обложки запущено. Ожидается проверка опубликованных данных.",
+              };
+            }
+            return next;
+          });
+        }}
+      />
       {(release.tracks ?? []).map((track) => {
         const renderScope = scope.current;
         const position = positions[track.id];
@@ -1256,6 +1283,28 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                 ? ` · поколение ${publication.current_generation}`
                 : ""}
             </p>
+            {publication?.current_generation && (
+              <fieldset aria-label="Фактическая обложка текущей публикации">
+                <p>
+                  Фактическая обложка:{" "}
+                  {publication.current_assets?.cover.state ?? "unknown"}
+                  {publication.current_assets?.cover.sha256
+                    ? ` · SHA-256: ${publication.current_assets.cover.sha256}`
+                    : ""}
+                </p>
+                {publication.cover_embedding && (
+                  <p>
+                    Встраивание выбранной обложки:{" "}
+                    {publication.cover_embedding.outcome === "verified"
+                      ? "проверено"
+                      : "не подтверждено"}
+                    {publication.cover_embedding.warning_code
+                      ? ` · ${publication.cover_embedding.warning_code}`
+                      : ""}
+                  </p>
+                )}
+              </fieldset>
+            )}
             {publication?.initial_lyrics && (
               <fieldset aria-label="Результат текста песни для текущей публикации">
                 <p>

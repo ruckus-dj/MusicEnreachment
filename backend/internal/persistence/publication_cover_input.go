@@ -119,14 +119,21 @@ func nullableCoverDigest(input PublicationAttemptCoverInput) []byte {
 }
 
 // PublicationAttemptCoverInputForDelivery exposes only the immutable receipt of
-// a currently claimed first-audio attempt. It does not consult mutable authority.
+// a currently claimed audio or explicit cover-rewrite attempt.
 func (repository *SetupManagerRepository) PublicationAttemptCoverInputForDelivery(ctx context.Context, guard PublicationDeliveryGuard) (PublicationAttemptCoverInput, bool, error) {
 	var result PublicationAttemptCoverInput
 	valid := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		attempt, _, _, ok, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "read publication attempt cover input")
-		if err != nil || !ok || attempt.Phase != "preparing" || attempt.IntentKind != "audio" {
+		if err != nil || !ok || attempt.Phase != "preparing" {
 			return err
+		}
+		input, err := DecodePublicationInputs(attempt.FrozenInputs)
+		if err != nil {
+			return err
+		}
+		if attempt.IntentKind != "audio" && input.ManualCover == nil {
+			return nil
 		}
 		result, err = scanPublicationAttemptCoverInput(ctx, tx, guard.OperationID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -137,6 +144,18 @@ func (repository *SetupManagerRepository) PublicationAttemptCoverInputForDeliver
 		}
 		if result.PositionID != guard.ExpectedPositionID || result.OperationID != guard.OperationID || validateAttemptCoverInput(result) != nil {
 			return errors.New("publication attempt cover input is inconsistent")
+		}
+		if manual := input.ManualCover; manual != nil {
+			if result.State != "value" || result.Mode != "manual" || result.ReleaseID != manual.ReleaseID || result.Revision != manual.AuthorityRevision || result.Generation == nil || *result.Generation != manual.SelectedGeneration {
+				return errors.New("manual cover receipt conflicts with frozen authority")
+			}
+			cover, err := readReleaseCover(ctx, tx, manual.ReleaseID)
+			if err != nil {
+				return err
+			}
+			if cover.Mode != "manual" || cover.SelectedGeneration == nil || *cover.SelectedGeneration != manual.SelectedGeneration {
+				return ErrReleaseCoverConflict
+			}
 		}
 		valid = true
 		return nil

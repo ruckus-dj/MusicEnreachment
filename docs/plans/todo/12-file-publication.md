@@ -45,6 +45,29 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**Manual cover, текущий срез на базе `0c0dba3`:** реализованы отдельный pending
+save, read/image API, явные release-wide apply/retry и UI через generated client.
+Промоция pending и admission всех текущих опубликованных позиций выполняются
+одной транзакцией; занятая позиция отклоняет admission целиком, без молчаливого
+пропуска. Retry использует selected image и не применяет новый pending.
+Source-free rewrite использует CURRENT и cover-only native writer без записи
+тегов, сохраняя audio payload, tags и lyrics. Результат остаётся observed;
+warning не выдаётся за успешное embedding. Manual-lyrics receipt переносит
+только published generation, не подтверждая более новый сохранённый текст.
+Полный `task verify` прошёл (340 frontend tests, backend integration, tools,
+lint, generate, build); независимое ревью batch/receipt/result не нашло P1/P2.
+PG regressions проверяют fanout, реальный второй River insert с rollback всей
+транзакции, busy conflict, selected retry и receipt continuity. Нативные тесты
+проверяют FLAC/MP3/M4A/MKA; это не заменяет итоговую runtime/Navidrome acceptance.
+CI новой ревизии ещё не подтверждена. Acquisition из provider/DB candidates,
+automatic quality updates и окончательная приёмка плана остаются незавершёнными.
+
+**CI `0c0dba3`:** полный run `40012105550` завершился успешно: verify,
+Linux amd64/arm64, macOS x64/arm64, Windows x64, Docker Compose smoke и
+публикация container image. Подтверждён срез analysis → БД → frozen publication
+inputs. Текущие manual cover API/UI/apply/retry ещё не входят в эту ревизию;
+их интеграционная проверка и итоговая runtime acceptance остаются впереди.
+
 **Уточнение владельца от 2026-10-23 — входы только из анализа/БД:** все source
 metadata, включая lyrics, artwork bytes и технические сведения, извлекаются ещё
 при анализе. Матчинг связывает сохранённые данные с recording/track MBID или
@@ -102,6 +125,18 @@ build). Живой executor использует whole-job preparation и пря
 Frozen cover receipt пока не подключён к embedding в простом executor; scope
 cover, automatic updates и окончательная приёмка ниже остаются незавершёнными.
 
+**2026-10-23, применение pending cover:** владелец уточнил, что применение новой
+pending-обложки обновляет все уже опубликованные позиции этого релиза, а не
+выбранное подмножество; сохранение pending само по себе ничего не применяет.
+Исполнение опирается на уже утверждённую архитектуру: одна обложка на релиз в
+release-level authority, admission и `River.InsertTx` одной Bun-транзакцией,
+отдельная job на позицию. Атомарная промоция pending и постановка jobs на
+затронутые позиции реализуются позже; это техническая реализация, а не новое
+продуктовое требование. Существующий admission отклоняет занятую позицию;
+batch откатывается целиком, не пропуская её молча. Решение от 2026-10-23 о
+source metadata (анализ → БД) сохраняется; авторитетная запись — в
+[decisions.md](../../design/decisions.md).
+
 План **не завершён**. First-publication happy path и manual lyrics MKA/MP3
 проверены на реальном стенде с Navidrome. Automatic matching wake и
 original-owner cleanup после returned validation failure прошли полный CI.
@@ -112,7 +147,9 @@ original-owner cleanup после returned validation failure прошли по�
 1. Source-free lyrics retry: настоящий executable lifecycle, explicit API/UI,
    исходник не требуется; завершение format/artwork preservation coverage.
 2. Cover: current release authority, acquisition/embedding, manual pending/apply
-   и retry; одна обложка на релиз, без sidecars.
+   и retry; одна обложка на релиз, без sidecars. Применение pending cover
+   обновляет все уже опубликованные позиции релиза, а не выбранное подмножество;
+   сохранение pending не применяет (решение владельца 2026-10-23).
 3. Automatic updates: независимая source authority, доказанное quality improvement,
    new-source replacement, остальные invalidation producers и безопасные wakes.
 4. Whole-job retry/crash matrix и итоговая приёмка всех перечисленных сценариев.
@@ -1624,6 +1661,14 @@ position; manual selection блокирует автоматическую см�
 или отсутствие cover остаётся, UI показывает warning и retry. Несовместимость
 writer/container embedding — вернуть на согласование, не вводить sidecar.
 
+Применение новой pending cover обновляет все уже опубликованные позиции этого
+релиза, а не выбранное подмножество; сохранение pending само по себе обложку не
+применяет. Промоция pending и постановка jobs на затронутые позиции выполняются
+одной admission-транзакцией по существующей схеме (`River.InsertTx`, отдельная
+job на позицию). Это техническая реализация уже утверждённого контракта, а не
+новое продуктовое требование; поведение занятой позиции (пропуск/ошибка) этим не
+выбирается.
+
 Только одна synced lyrics версия: сначала synced lyrics выбранного audio source,
 иначе точный LRCLIB lookup по title/artist/album/duration; нет результата —
 публиковать без lyrics. Никакого авто-поиска альтернативных LRCLIB matches,
@@ -1785,7 +1830,7 @@ hidden automatic decision за user choice либо формат capability за
 | T05 — чистый planner/template/quality | Versioned pure planner, template parser, FS namespace probe, stable suffix/claims, quality comparator vectors. |
 | T06 — worker/extraction/tools | Durable job ID-only args, fresh full inputs, source freshness, FFmpeg clean audio only, writer invocation, real readback. CUE scope rejected with clear validation. |
 | T07 — atomic replace/result | Private same-FS candidate, readback, native atomic replace, one DB result transaction, serialization and repeat-whole-work crash boundaries; no recovery protocol. |
-| T08 — cover | Provider → stable embedded fallback, manual lock/pending, optional warning/retry, embedding capability gate. |
+| T08 — cover | Provider → stable embedded fallback, manual lock/pending, optional warning/retry, embedding capability gate; применение pending обновляет все опубликованные позиции релиза. |
 | T09 — lyrics | Source synced → exact LRCLIB lookup; manual alternatives, no wrong audio transfer/retiming, Navidrome behavior gate. |
 | T10 — automatic triggers + cleanup | Per-field dirty coalescing, no startup sweep; borrower-aware source cleanup with fencing, UI bulk/targeted retry. |
 | T11 — API/UI, end-to-end, independent review | Generated API, truthful state, real DB/River/files/tool scenario, reset/serialization/partial cases; full task verify and independent acceptance. |

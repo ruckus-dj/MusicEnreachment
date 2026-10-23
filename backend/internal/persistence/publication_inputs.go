@@ -31,11 +31,20 @@ type PublicationInputs struct {
 	Audio                *PublicationAudioInput                `json:"audio,omitempty"`
 	Rewrite              *PublicationRewriteInput              `json:"rewrite,omitempty"`
 	ManualLyrics         *PublicationManualLyricsInput         `json:"manual_lyrics,omitempty"`
+	ManualCover          *PublicationManualCoverInput          `json:"manual_cover,omitempty"`
 	AutomaticLyricsRetry *PublicationAutomaticLyricsRetryInput `json:"automatic_lyrics_retry,omitempty"`
 	InitialLyrics        *PublicationInitialLyricsInput        `json:"initial_lyrics,omitempty"`
 	Format               publication.AudioPublicationFormat    `json:"format"`
 	DesiredTags          map[string][]string                   `json:"desired_tags"`
 	Tools                []SourceAnalysisToolSelection         `json:"tools"`
+}
+
+// PublicationManualCoverInput freezes release-cover authority for a cover-only
+// rewrite. It carries no caller-selected position or source identity.
+type PublicationManualCoverInput struct {
+	ReleaseID          uuid.UUID `json:"release_id"`
+	AuthorityRevision  int64     `json:"authority_revision"`
+	SelectedGeneration uuid.UUID `json:"selected_generation"`
 }
 
 // PublicationInitialLyricsInput freezes the position's synced-lyrics authority
@@ -197,6 +206,12 @@ func (input PublicationInputs) Validate() error {
 			}
 		default:
 			return errors.New("manual lyrics rewrite requires value or explicit_empty")
+		}
+	}
+	if input.ManualCover != nil {
+		if input.IntentKind != "rewrite" || input.Rewrite == nil || input.Audio != nil || input.ManualLyrics != nil || input.AutomaticLyricsRetry != nil || input.InitialLyrics != nil ||
+			input.ManualCover.ReleaseID == uuid.Nil || input.ManualCover.AuthorityRevision < 1 || input.ManualCover.SelectedGeneration == uuid.Nil || input.Format != publication.AudioFormatSource {
+			return errors.New("manual cover requires an exclusive source-free rewrite and valid release authority")
 		}
 	}
 	if retry := input.AutomaticLyricsRetry; retry != nil {

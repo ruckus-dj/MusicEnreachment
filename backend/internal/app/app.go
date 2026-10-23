@@ -234,6 +234,10 @@ func Run(ctx context.Context, config Config) error {
 	libraryReleaseDetails := service.NewLibraryReleaseDetails(libraryRepository)
 	libraryPrimaryArtists := service.NewLibraryPrimaryArtists(libraryRepository)
 	libraryMetadata := service.NewLibraryMetadataService(libraryRepository).WithPublicationCoordinator(publicationCoordinator)
+	libraryReleaseCovers := service.NewReleaseCovers(libraryRepository).WithPublicationCoordinator(publicationCoordinator).WithPublicationAdmission(
+		registry, setupManagerRepository, setupManagerRepository, riverSlot,
+		tools.Platform{GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH},
+	)
 	libraryPublications := service.NewLibraryPublications(setupManagerRepository, registry, riverSlot, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	})
@@ -467,6 +471,7 @@ func Run(ctx context.Context, config Config) error {
 		LibraryReleaseDetails:  libraryReleaseDetails,
 		LibraryPrimaryArtists:  libraryPrimaryArtists,
 		LibraryMetadata:        libraryMetadata,
+		LibraryReleaseCovers:   libraryReleaseCovers,
 		LibraryPublications:    libraryPublications,
 	}))
 	router.Handle("/*", static.Handler())

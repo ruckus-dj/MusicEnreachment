@@ -538,6 +538,24 @@ export interface LibraryPublicationResponse {
   source_cleanup_warnings?: LibraryPublicationSourceCleanupWarning[] | null;
 }
 
+export interface LibraryReleaseCoverApplyInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_epoch: string;
+  expected_pending_generation?: string;
+  /** @minimum 1 */
+  expected_revision: number;
+  expected_selected_generation?: string;
+}
+
+export interface LibraryReleaseCoverSaveBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_revision: number;
+  image: string;
+  mime: string;
+}
+
 export interface LibrarySourceLocationResponse {
   location_id: string;
   mtime?: string;
@@ -921,6 +939,39 @@ export interface OperationsBody {
   readonly $schema?: string;
   /** @nullable */
   operations: OperationResponse[] | null;
+}
+
+export interface ReleaseCoverPositionOperation {
+  candidate_generation: string;
+  operation_id: string;
+  position_id: string;
+}
+
+export interface ReleaseCoverBatch {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  operations: ReleaseCoverPositionOperation[] | null;
+  release_id: string;
+  revision: number;
+  selected_generation: string;
+}
+
+export interface ReleaseCoverSummary {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  mode: string;
+  pending_generation?: string;
+  pending_mime?: string;
+  pending_sha256?: string;
+  pending_size?: number;
+  release_id: string;
+  revision: number;
+  selected_generation?: string;
+  selected_mime?: string;
+  selected_sha256?: string;
+  selected_size?: number;
+  warning?: string;
 }
 
 export interface RerunSourceFingerprintBody {

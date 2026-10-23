@@ -79,6 +79,9 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				return fmt.Errorf("commit publication result: check current publication: %w", err)
 			}
 		}
+		if input.ManualCover != nil && !manualCoverResultCurrent(ctx, tx, attempt.PositionID, *input.ManualCover) {
+			return nil
+		}
 		if input.AutomaticLyricsRetry != nil {
 			matches, err := validateAutomaticLyricsRetryCurrentAuthority(ctx, tx, attempt.PositionID, *input.AutomaticLyricsRetry)
 			if err != nil {
@@ -91,6 +94,27 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		assets, err := DecodePublicationAssetOutcomes(observation.ActualAssets)
 		if err != nil {
 			return fmt.Errorf("commit publication result: decode current assets: %w", err)
+		}
+		if input.ManualCover != nil {
+			if previous == nil || result.CoverEmbedding == nil {
+				return errors.New("commit publication result: cover rewrite requires current publication and cover outcome")
+			}
+			var beforeMetadata, afterMetadata PublicationCommitMetadata
+			if err := strictMetadata(previous.ActualMetadata, &beforeMetadata); err != nil {
+				return err
+			}
+			if err := strictMetadata(observation.ActualMetadata, &afterMetadata); err != nil {
+				return err
+			}
+			beforeAssets, err := DecodePublicationAssetOutcomes(previous.ActualAssets)
+			if err != nil {
+				return err
+			}
+			beforeTags, _ := json.Marshal(beforeMetadata.Tags)
+			afterTags, _ := json.Marshal(afterMetadata.Tags)
+			if string(beforeTags) != string(afterTags) || !samePublicationLyricsOutcome(beforeAssets.Lyrics, assets.Lyrics) {
+				return errors.New("commit publication result: cover rewrite changed published metadata or lyrics")
+			}
 		}
 		publication := TrackPublication{
 			PositionID: attempt.PositionID, Epoch: attempt.Epoch, Generation: attempt.CandidateGeneration,
@@ -159,6 +183,11 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			if err := carryPositionSourceAuthorityTx(ctx, tx, *previous, next); err != nil {
 				return err
 			}
+			if input.ManualCover != nil && previous != nil {
+				if err := carryManualLyricsReceiptForCoverRewriteTx(ctx, tx, attempt, *previous, publication, assets); err != nil {
+					return err
+				}
+			}
 		} else if input.SourceAuthorityMode != "" {
 			if input.Audio == nil || input.SourceAuthorityMode != "manual" && input.SourceAuthorityMode != "automatic" {
 				return errors.New("commit publication result: invalid source authority snapshot")
@@ -202,6 +231,79 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		return nil
 	})
 	return committed, err
+}
+
+func manualCoverResultCurrent(ctx context.Context, tx bun.Tx, positionID uuid.UUID, frozen PublicationManualCoverInput) bool {
+	var revision int64
+	if err := tx.NewRaw(`SELECT metadata_revision FROM release_track WHERE id=? FOR UPDATE`, positionID).Scan(ctx, &revision); err != nil {
+		return false
+	}
+	var mode string
+	var selected *uuid.UUID
+	err := tx.NewRaw(`SELECT mode,selected_generation FROM release_publication_cover WHERE release_id=? FOR UPDATE`, frozen.ReleaseID).Scan(ctx, &mode, &selected)
+	return err == nil && manualCoverAuthorityMatches(mode, selected, frozen)
+}
+
+func manualCoverAuthorityMatches(mode string, selected *uuid.UUID, frozen PublicationManualCoverInput) bool {
+	return mode == "manual" && selected != nil && *selected == frozen.SelectedGeneration
+}
+
+func carryManualLyricsReceiptForCoverRewriteTx(ctx context.Context, tx bun.Tx, attempt *TrackPublicationAttempt, previous, candidate TrackPublication, candidateAssets PublicationAssetOutcomes) error {
+	var revision int64
+	if err := tx.NewRaw(`SELECT metadata_revision FROM release_track WHERE id=? FOR UPDATE`, attempt.PositionID).Scan(ctx, &revision); err != nil {
+		return fmt.Errorf("commit publication result: lock manual lyrics receipt revision: %w", err)
+	}
+	var receipt PublicationManualLyricsReceipt
+	err := tx.NewSelect().Model(&receipt).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("commit publication result: lock manual lyrics receipt: %w", err)
+	}
+	if !manualLyricsReceiptCanCarry(receipt, previous, attempt.Epoch, revision) {
+		return nil
+	}
+	previousAssets, err := DecodePublicationAssetOutcomes(previous.ActualAssets)
+	if err != nil {
+		return fmt.Errorf("commit publication result: decode previous manual lyrics assets: %w", err)
+	}
+	previousLyrics, previousPresent, err := EncodeObservedManualLyricsMetadata(previous.ActualMetadata)
+	if err != nil {
+		return fmt.Errorf("commit publication result: observe previous manual lyrics: %w", err)
+	}
+	candidateLyrics, candidatePresent, err := EncodeObservedManualLyricsMetadata(candidate.ActualMetadata)
+	if err != nil {
+		return fmt.Errorf("commit publication result: observe candidate manual lyrics: %w", err)
+	}
+	oldObserved := ManualLyricsObserved{MetadataPresent: previousPresent, MetadataValue: previousLyrics, Assets: previousAssets}
+	newObserved := ManualLyricsObserved{MetadataPresent: candidatePresent, MetadataValue: candidateLyrics, Assets: candidateAssets}
+	if previousLyrics != candidateLyrics || previousPresent != candidatePresent || !samePublicationLyricsOutcome(previousAssets.Lyrics, candidateAssets.Lyrics) ||
+		validateManualLyricsReceiptObservation(receipt.DesiredState, receipt.DesiredSHA256, receipt.WarningCode, oldObserved) != nil ||
+		validateManualLyricsReceiptObservation(receipt.DesiredState, receipt.DesiredSHA256, receipt.WarningCode, newObserved) != nil {
+		return nil
+	}
+	result, err := tx.NewRaw(`UPDATE publication_manual_lyrics_receipt SET published_generation=? WHERE position_id=? AND epoch=? AND desired_revision=? AND published_generation=?`,
+		attempt.CandidateGeneration, attempt.PositionID, receipt.Epoch, receipt.DesiredRevision, previous.Generation).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("commit publication result: carry manual lyrics receipt: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("commit publication result: count manual lyrics receipt carry: %w", err)
+	}
+	if rows > 1 {
+		return errors.New("commit publication result: carried multiple manual lyrics receipts")
+	}
+	return nil
+}
+
+func manualLyricsReceiptCanCarry(receipt PublicationManualLyricsReceipt, previous TrackPublication, epoch uuid.UUID, revision int64) bool {
+	return receipt.Epoch == previous.Epoch && receipt.PublishedGeneration == previous.Generation && receipt.Epoch == epoch && receipt.DesiredRevision == revision
+}
+
+func samePublicationLyricsOutcome(a, b PublicationLyricsOutcome) bool {
+	return a.State == b.State && a.SHA256 == b.SHA256 && a.Format == b.Format
 }
 
 func samePublicationCoverOutcome(a, b PublicationCoverOutcome) bool {
