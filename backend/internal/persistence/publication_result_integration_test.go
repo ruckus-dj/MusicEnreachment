@@ -23,6 +23,55 @@ func publicationResultForFixture(f publicationExecutionFixture) PublicationResul
 	}
 }
 
+func TestCommitPublicationResultCarriesUnchangedCoverSummaryPostgreSQL(t *testing.T) {
+	for _, outcome := range []string{"verified", "mismatch"} {
+		t.Run(outcome, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			f, repository, input, observation, _ := prepareManualLyricsCommitFixture(t)
+			alignManualPublicationResultTarget(t, ctx, f, &observation)
+			digest := fmt.Sprintf("%x", sha256.Sum256([]byte("cover bytes")))
+			size := int64(11)
+			cover := PublicationCoverOutcome{State: PublicationAssetEmbedded, SHA256: digest, MIME: "image/png", SizeBytes: &size}
+			assets, err := DecodePublicationAssetOutcomes(observation.ActualAssets)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assets.Cover = cover
+			observation.ActualAssets = mustJSON(assets)
+			projection := PublicationCoverEmbeddingProjection{
+				Version: PublicationCoverEmbeddingProjectionVersion, Generation: input.Rewrite.CurrentGeneration,
+				ReceiptOperationID: uuid.New(), ReceiptReleaseID: uuid.New(), ReceiptRevision: 1, ReceiptMode: "manual",
+				RequestedGeneration: uuid.New(), RequestedSHA256: digest, Outcome: outcome,
+			}
+			if outcome == "mismatch" {
+				projection.WarningCode = "cover_mismatch"
+				projection.RequestedSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte("different requested cover")))
+			}
+			if _, err := f.db.ExecContext(ctx, `UPDATE track_publication SET actual_assets=jsonb_set(actual_assets,'{cover}',?::jsonb),cover_embedding=?::jsonb WHERE position_id=?`, string(mustJSON(cover)), string(mustJSON(projection)), f.guard.ExpectedPositionID); err != nil {
+				t.Fatal(err)
+			}
+			committed, err := repository.CommitPublicationResult(ctx, f.guard, PublicationResult{
+				Observation: observation,
+				InstalledOwnership: PublicationCurrentOwnership{Version: PublicationCurrentOwnershipVersion, Identity: PublicationFileIdentity{
+					SizeBytes: observation.Ownership.ExpectedSize, MTime: observation.Ownership.ExpectedMTime, SHA256: observation.PayloadSHA256,
+				}},
+			})
+			if err != nil || !committed {
+				t.Fatalf("rewrite with unchanged cover = %v, %v", committed, err)
+			}
+			var raw string
+			if err := f.db.NewRaw(`SELECT cover_embedding::text FROM track_publication WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &raw); err != nil {
+				t.Fatal(err)
+			}
+			current, err := decodePublicationCoverEmbeddingProjection(json.RawMessage(raw))
+			if err != nil || current.Generation != f.guard.CandidateGeneration || current.Outcome != outcome || current.WarningCode != projection.WarningCode {
+				t.Fatalf("current rebound cover summary = %s, %v", raw, err)
+			}
+		})
+	}
+}
+
 func TestCommitPublicationResultManualLyricsFreshnessPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

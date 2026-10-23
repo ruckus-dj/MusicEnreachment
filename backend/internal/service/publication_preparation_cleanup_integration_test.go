@@ -61,7 +61,8 @@ type explicitFirstPublicationAuthority struct{}
 // publicationDeliveryScenario lets lifecycle regressions drive more than one
 // River delivery while reusing this integration fixture's real admission.
 type publicationDeliveryScenario struct {
-	run func(context.Context, *bun.DB, *persistence.SetupManagerRepository, *PublicationExecutor, uuid.UUID, int64, string, string, string, []byte)
+	beforeAdmission func(context.Context, *bun.DB, *persistence.SetupManagerRepository, uuid.UUID)
+	run             func(context.Context, *bun.DB, *persistence.SetupManagerRepository, *PublicationExecutor, uuid.UUID, int64, string, string, string, []byte)
 }
 
 func testPublicationSourceExecution(t *testing.T, target string, confirmation ...any) {
@@ -339,6 +340,11 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 					t.Fatal(err)
 				}
 			}
+			for _, option := range confirmation {
+				if scenario, ok := option.(publicationDeliveryScenario); ok && scenario.beforeAdmission != nil {
+					scenario.beforeAdmission(ctx, db, manager, releaseID)
+				}
+			}
 			preview, err := publications.PreviewFirst(ctx, releaseID, positionID)
 			if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil {
 				t.Fatalf("first publication preview = %+v, %v", preview, err)
@@ -407,9 +413,6 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		}
 		err = executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
 		if executor.stageValidator != nil {
-			if runtime.GOOS == "windows" {
-				t.Skip("native output-directory sync is unavailable on Windows")
-			}
 			if err == nil || !strings.Contains(err.Error(), "independent validator test failure") {
 				t.Fatalf("validation failure result = %v", err)
 			}
@@ -449,17 +452,6 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			actualSource, readErr := os.ReadFile(sourceFile)
 			if readErr != nil || !bytes.Equal(actualSource, sourceBytes) {
 				t.Fatalf("source changed during failed validation cleanup: %v", readErr)
-			}
-			return
-		}
-		// Newly created ancestors require directory sync, unsupported on Windows.
-		// Root-level first-absent installation has its own native success contract.
-		if runtime.GOOS == "windows" && strings.Contains(target, "/") {
-			if !errors.Is(err, sourcefs.ErrUnsupported) {
-				t.Fatalf("expected unsupported directory durability: %v", err)
-			}
-			if _, err := os.Stat(filepath.Join(output, filepath.FromSlash(target))); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("unexpected exposed target: %v", err)
 			}
 			return
 		}

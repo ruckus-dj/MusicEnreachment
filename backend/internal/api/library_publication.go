@@ -34,6 +34,7 @@ type LibraryPublicationResponse struct {
 	CurrentMetadata             *publicationMetadataResponse                     `json:"current_metadata,omitempty"`
 	CurrentAssets               *publicationAssetsResponse                       `json:"current_assets,omitempty"`
 	InitialLyrics               *initialLyricsResponse                           `json:"initial_lyrics,omitempty"`
+	CoverEmbedding              *coverEmbeddingResponse                          `json:"cover_embedding,omitempty"`
 	CurrentQualityPolicyVersion *int                                             `json:"current_quality_policy_version,omitempty"`
 	CurrentValidatedAt          *time.Time                                       `json:"current_validated_at,omitempty"`
 	ActiveAttempt               *publicationAttemptResponse                      `json:"active_attempt,omitempty"`
@@ -43,6 +44,11 @@ type LibraryPublicationResponse struct {
 	ManualLyricsReceipt         *service.LibraryPublicationManualLyricsReceipt   `json:"manual_lyrics_receipt,omitempty"`
 	CanApplyManualLyrics        bool                                             `json:"can_apply_manual_lyrics"`
 	SourceCleanupWarnings       []service.LibraryPublicationSourceCleanupWarning `json:"source_cleanup_warnings,omitempty"`
+}
+
+type coverEmbeddingResponse struct {
+	Outcome     string `json:"outcome"`
+	WarningCode string `json:"warning_code,omitempty"`
 }
 
 type initialLyricsResponse struct {
@@ -169,7 +175,11 @@ func libraryPublicationResponse(view service.LibraryPublicationView) LibraryPubl
 		ActiveAttemptCandidate: view.ActiveAttemptCandidate, ActiveAttemptPhase: view.ActiveAttemptPhase,
 		ManualLyrics: view.ManualLyrics, CanApplyManualLyrics: view.CanApplyManualLyrics,
 		ManualLyricsReceipt:   view.ManualLyricsReceipt,
+		CoverEmbedding:        nil,
 		SourceCleanupWarnings: view.SourceCleanupWarnings,
+	}
+	if embedding := view.CurrentCoverEmbedding; embedding != nil {
+		response.CoverEmbedding = &coverEmbeddingResponse{Outcome: embedding.Outcome, WarningCode: embedding.WarningCode}
 	}
 	if initialLyrics := view.CurrentInitialLyrics; initialLyrics != nil {
 		response.InitialLyrics = &initialLyricsResponse{

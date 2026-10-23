@@ -42,17 +42,23 @@ func (validator RealPublicationStageValidator) validateSupervised(scope *Publica
 }
 
 func (validator RealPublicationStageValidator) Validate(ctx context.Context, stagePath string, input persistence.PublicationInputs) (result PublicationStageObservation, resultErr error) {
-	return validator.validate(ctx, stagePath, input, nil)
+	return validator.validate(ctx, stagePath, input, nil, nil)
+}
+
+// ValidateFirstAudioCover validates the first-audio candidate against the
+// independently observed result of its cover attempt (or baseline fallback).
+func (validator RealPublicationStageValidator) ValidateFirstAudioCover(ctx context.Context, stagePath string, input persistence.PublicationInputs, expected persistence.PublicationCoverOutcome) (PublicationStageObservation, error) {
+	return validator.validate(ctx, stagePath, input, nil, &expected)
 }
 
 func (validator RealPublicationStageValidator) ValidateAutomaticLyricsRetry(ctx context.Context, stagePath string, input persistence.PublicationInputs, lyrics string) (PublicationStageObservation, error) {
 	if input.AutomaticLyricsRetry == nil || input.ManualLyrics != nil {
 		return PublicationStageObservation{}, errors.New("automatic retry validation requires retry authority")
 	}
-	return validator.validate(ctx, stagePath, input, &lyrics)
+	return validator.validate(ctx, stagePath, input, &lyrics, nil)
 }
 
-func (validator RealPublicationStageValidator) validate(ctx context.Context, stagePath string, input persistence.PublicationInputs, retryLyrics *string) (result PublicationStageObservation, resultErr error) {
+func (validator RealPublicationStageValidator) validate(ctx context.Context, stagePath string, input persistence.PublicationInputs, retryLyrics *string, firstAudioCover *persistence.PublicationCoverOutcome) (result PublicationStageObservation, resultErr error) {
 	if !input.SupportsExecution() {
 		return PublicationStageObservation{}, fmt.Errorf("publication inputs version %d does not support execution", input.Version)
 	}
@@ -173,7 +179,18 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 		return PublicationStageObservation{}, fmt.Errorf("read publication stage metadata: %w", err)
 	}
 	if retryLyrics == nil {
-		if input.IntentKind == "rewrite" && input.Format == publication.AudioFormatSource {
+		if firstAudioCover != nil {
+			assets, assetErr := ObservePublicationAssets(capture)
+			if assetErr != nil {
+				return PublicationStageObservation{}, fmt.Errorf("observe first-audio publication assets: %w", assetErr)
+			}
+			if assets.Cover.State != firstAudioCover.State || assets.Cover.SHA256 != firstAudioCover.SHA256 || assets.Cover.MIME != firstAudioCover.MIME || !samePublicationOptionalInt64(assets.Cover.SizeBytes, firstAudioCover.SizeBytes) {
+				return PublicationStageObservation{}, errors.New("first-audio cover readback does not match the requested outcome")
+			}
+			if err := validateFirstAudioCoverTopology(raw, plan.OutputContainer, assets.Cover); err != nil {
+				return PublicationStageObservation{}, err
+			}
+		} else if input.IntentKind == "rewrite" && input.Format == publication.AudioFormatSource {
 			assets, assetErr := ObservePublicationAssets(capture)
 			if assetErr != nil {
 				return PublicationStageObservation{}, fmt.Errorf("observe publication stage assets: %w", assetErr)
@@ -262,6 +279,10 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	}
 	result.QualityPolicyVersion = input.QualityPolicyVersion
 	return result, nil
+}
+
+func samePublicationOptionalInt64(left, right *int64) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
 func sameOptionalPublicationSize(left, right *int64) bool {
@@ -500,6 +521,60 @@ func validateNativeRewriteTopology(raw []byte, cover persistence.PublicationCove
 		return errors.New("native rewrite has unexpected audio, cover, or chapter topology")
 	}
 	return nil
+}
+
+// validateFirstAudioCoverTopology permits only the representation supported by
+// the output container: attached pictures for FLAC/MP3 and a tagged image
+// attachment for Matroska. The read-back cover outcome authorizes its format.
+func validateFirstAudioCoverTopology(raw []byte, container publication.AudioContainer, cover persistence.PublicationCoverOutcome) error {
+	var response struct {
+		Streams []struct {
+			Type        string `json:"codec_type"`
+			Codec       string `json:"codec_name"`
+			Disposition struct {
+				AttachedPicture int `json:"attached_pic"`
+			} `json:"disposition"`
+			Tags map[string]string `json:"tags"`
+		} `json:"streams"`
+		Chapters []json.RawMessage `json:"chapters"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return fmt.Errorf("decode first-audio publication topology: %w", err)
+	}
+	audioCount, imageCount := 0, 0
+	for _, stream := range response.Streams {
+		switch stream.Type {
+		case "audio":
+			audioCount++
+		case "video":
+			if (container != publication.AudioContainerFLAC && container != publication.AudioContainerMP3) || stream.Disposition.AttachedPicture != 1 || !coverFormatMatchesCodec(cover.MIME, stream.Codec) {
+				return errors.New("first-audio candidate contains an unauthorized non-audio stream")
+			}
+			imageCount++
+		case "attachment":
+			filename := strings.ToLower(stream.Tags["filename"])
+			mime := strings.ToLower(stream.Tags["mimetype"])
+			validName := cover.MIME == "image/png" && strings.HasSuffix(filename, ".png") || cover.MIME == "image/jpeg" && (strings.HasSuffix(filename, ".jpg") || strings.HasSuffix(filename, ".jpeg"))
+			if container != publication.AudioContainerMKA || cover.State != persistence.PublicationAssetEmbedded || mime != cover.MIME || !validName {
+				return errors.New("first-audio Matroska candidate contains an unauthorized attachment")
+			}
+			imageCount++
+		default:
+			return errors.New("first-audio candidate contains an unauthorized non-audio stream")
+		}
+	}
+	wantImages := 0
+	if cover.State == persistence.PublicationAssetEmbedded {
+		wantImages = 1
+	}
+	if audioCount != 1 || imageCount != wantImages || len(response.Chapters) != 0 {
+		return errors.New("first-audio candidate has unexpected audio, cover, attachment, or chapter topology")
+	}
+	return nil
+}
+
+func coverFormatMatchesCodec(mime, codec string) bool {
+	return mime == "image/png" && codec == "png" || mime == "image/jpeg" && (codec == "mjpeg" || codec == "jpeg")
 }
 
 func validateAutomaticLyricsRetryTopology(raw []byte, expected persistence.PublicationCoverOutcome) error {

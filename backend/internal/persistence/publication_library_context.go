@@ -21,12 +21,13 @@ type LibraryPublicationOperation struct {
 }
 
 type LibraryPublicationCurrent struct {
-	Record        TrackPublication
-	InitialLyrics *PublicationInitialLyricsProjection
-	Ownership     PublicationCurrentOwnership
-	Audio         PublicationCurrentAudio
-	Metadata      PublicationCommitMetadata
-	Assets        PublicationAssetOutcomes
+	Record         TrackPublication
+	InitialLyrics  *PublicationInitialLyricsProjection
+	CoverEmbedding *PublicationCoverEmbeddingProjection
+	Ownership      PublicationCurrentOwnership
+	Audio          PublicationCurrentAudio
+	Metadata       PublicationCommitMetadata
+	Assets         PublicationAssetOutcomes
 }
 
 type LibraryPublicationNamespaceNode struct {
@@ -112,6 +113,13 @@ func readLibraryPublicationContextTx(ctx context.Context, tx bun.IDB, releaseUUI
 					return errors.New("decode current initial lyrics evidence: invalid generation-bound projection")
 				}
 				decoded.InitialLyrics = &projection
+			}
+			if len(current.CoverEmbedding) != 0 && string(current.CoverEmbedding) != "null" {
+				projection, err := decodePublicationCoverEmbeddingProjection(current.CoverEmbedding)
+				if err != nil || projection.Generation != current.Generation {
+					return errors.New("decode current cover embedding evidence: invalid generation-bound projection")
+				}
+				decoded.CoverEmbedding = &projection
 			}
 			assets, err := DecodePublicationAssetOutcomes(current.ActualAssets)
 			if err != nil {

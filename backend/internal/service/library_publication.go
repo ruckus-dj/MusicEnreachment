@@ -78,6 +78,7 @@ type LibraryPublicationView struct {
 	CurrentMetadata             *persistence.PublicationCommitMetadata   `json:"current_metadata,omitempty"`
 	CurrentAssets               *persistence.PublicationAssetOutcomes    `json:"current_assets,omitempty"`
 	CurrentInitialLyrics        *LibraryPublicationInitialLyrics         `json:"initial_lyrics,omitempty"`
+	CurrentCoverEmbedding       *LibraryPublicationCoverEmbedding        `json:"cover_embedding,omitempty"`
 	CurrentQualityPolicyVersion *int                                     `json:"current_quality_policy_version,omitempty"`
 	CurrentValidatedAt          *time.Time                               `json:"current_validated_at,omitempty"`
 	ActiveAttempt               *persistence.LibraryPublicationOperation `json:"active_attempt,omitempty"`
@@ -87,6 +88,13 @@ type LibraryPublicationView struct {
 	ManualLyricsReceipt         *LibraryPublicationManualLyricsReceipt   `json:"manual_lyrics_receipt,omitempty"`
 	CanApplyManualLyrics        bool                                     `json:"can_apply_manual_lyrics"`
 	SourceCleanupWarnings       []LibraryPublicationSourceCleanupWarning `json:"source_cleanup_warnings,omitempty"`
+}
+
+// LibraryPublicationCoverEmbedding exposes only the current cover outcome and
+// its bounded warning code, never the frozen receipt or image data.
+type LibraryPublicationCoverEmbedding struct {
+	Outcome     string `json:"outcome"`
+	WarningCode string `json:"warning_code,omitempty"`
 }
 
 type LibraryPublicationSourceCleanupWarning struct {
@@ -240,6 +248,9 @@ func libraryPublicationView(projection *persistence.LibraryPublicationContext) (
 				ResolutionWarningCode: initialLyrics.ResolutionWarningCode,
 				OutcomeWarningCode:    initialLyrics.OutcomeWarningCode,
 			}
+		}
+		if embedding := current.CoverEmbedding; embedding != nil && embedding.Generation == current.Record.Generation {
+			view.CurrentCoverEmbedding = &LibraryPublicationCoverEmbedding{Outcome: embedding.Outcome, WarningCode: embedding.WarningCode}
 		}
 		qualityPolicyVersion, validatedAt := current.Record.QualityPolicyVersion, current.Record.ValidatedAt
 		view.CurrentQualityPolicyVersion = &qualityPolicyVersion

@@ -45,6 +45,19 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**2026-10-23, следующий срез на базе `5da437d`:** frozen effective cover первой
+аудиопубликации подключён к private preparation; actual cover и bounded embedding
+warning сохраняются в одной транзакции результата и доступны через read model/API.
+Полный `task verify` прошёл. Реальные TagLib/PG regressions проверяют A после
+смены release selection на B, сохранение lyrics и encoded FLAC frames, восстановление
+приватного baseline при optional cover failures и carry-forward текущего summary.
+Probe transport в этих тестах контролируемый: это не приёмка реального ffprobe
+для всех контейнеров. CI `5da437d` прошла все платформы, кроме Windows: три старых
+теста ожидали снятый directory-sync отказ; их assertions приведены к обычному
+успешному nested publication. Полная CI новой ревизии ещё не подтверждена.
+Acquisition, manual cover apply/retry UI, automatic updates и runtime acceptance
+остаются незавершёнными; порядок fallback источников этим срезом не выбран.
+
 **2026-10-23, упрощённое исполнение:** рабочее дерево на базе `c2e3ce1`
 прошло полный `task verify` (generate, lint, backend integration, frontend/tools,
 build). Живой executor использует whole-job preparation и прямую транзакцию

@@ -32,7 +32,8 @@ type PublicationSimplePreparation struct {
 	MetadataReader interface {
 		Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
 	}
-	Lyrics *PublicationLyricsResolver
+	Lyrics     *PublicationLyricsResolver
+	CoverInput *persistence.PublicationAttemptCoverInput
 }
 
 // PublicationSimplePreparationResult carries read-back evidence and a bounded
@@ -42,7 +43,8 @@ type PublicationSimplePreparationResult struct {
 	LyricsOutcome    *persistence.PublicationLyricsOutcome
 	LyricsResolution *PublicationLyricsResolution
 	// Generation is intentionally left unset here; the committing caller binds it.
-	InitialLyrics *persistence.PublicationInitialLyricsProjection
+	InitialLyrics  *persistence.PublicationInitialLyricsProjection
+	CoverEmbedding *persistence.PublicationCoverEmbeddingProjection
 }
 
 // Prepare builds a fresh candidate at outputPath. For rewrites inputPath must
@@ -60,6 +62,9 @@ func (preparation PublicationSimplePreparation) Prepare(
 	}
 	if (input.AutomaticLyricsRetry != nil || input.InitialLyrics != nil) && (preparation.FFprobePath == "" || preparation.MetadataReader == nil) {
 		return PublicationSimplePreparationResult{}, errors.New("optional lyrics preparation requires pinned probing and metadata readers")
+	}
+	if input.Audio != nil && preparation.CoverInput != nil && preparation.CoverInput.State == "value" && preparation.MetadataReader == nil {
+		return PublicationSimplePreparationResult{}, errors.New("first-audio cover validation requires a metadata reader")
 	}
 	if err := input.Validate(); err != nil {
 		return PublicationSimplePreparationResult{}, fmt.Errorf("validate frozen publication input: %w", err)
@@ -274,6 +279,59 @@ func (preparation PublicationSimplePreparation) Prepare(
 	} else if input.InitialLyrics != nil {
 		prepared.InitialLyrics.Outcome = persistence.PublicationInitialLyricsNotRequested
 	}
+	var firstAudioCoverExpected *persistence.PublicationCoverOutcome
+	if input.Audio != nil && preparation.CoverInput != nil && preparation.CoverInput.State == "value" {
+		receipt := preparation.CoverInput
+		baselineCapture, readErr := preparation.MetadataReader.Read(ctx, outputPath, metadata.ReadRequest{CoverInspection: true})
+		if readErr != nil {
+			return PublicationSimplePreparationResult{}, fmt.Errorf("read first-audio cover baseline: %w", readErr)
+		}
+		baselineAssets, assetsErr := ObservePublicationAssets(baselineCapture)
+		if assetsErr != nil {
+			return PublicationSimplePreparationResult{}, fmt.Errorf("observe first-audio cover baseline: %w", assetsErr)
+		}
+		optionalWriter, ok := preparation.Metadata.(interface {
+			WriteWithOptionalAssets(context.Context, string, map[string][]string, *metadata.Cover) (metadata.OptionalAssetsWriteResult, error)
+		})
+		if !ok {
+			return PublicationSimplePreparationResult{}, errors.New("optional publication cover writer is unavailable")
+		}
+		baseline := filepath.Join(tempDir, "cover-baseline."+string(sourceFacts.Container))
+		if err := copyCurrentPublication(outputPath, baseline); err != nil {
+			return PublicationSimplePreparationResult{}, err
+		}
+		writeResult, err := optionalWriter.WriteWithOptionalAssets(ctx, outputPath, tags, &metadata.Cover{Data: receipt.Bytes, MIME: *receipt.MIME})
+		if err != nil {
+			return PublicationSimplePreparationResult{}, fmt.Errorf("write publication candidate optional assets: %w", err)
+		}
+		outcome, warning := "verified", ""
+		switch writeResult.CoverStatus {
+		case metadata.OptionalCoverVerified:
+		case metadata.OptionalCoverWriteFailed:
+			outcome, warning = "write_failed", "cover_write_failed"
+		case metadata.OptionalCoverReadFailed:
+			outcome, warning = "read_failed", "cover_read_failed"
+		case metadata.OptionalCoverMismatch:
+			outcome, warning = "mismatch", "cover_mismatch"
+		default:
+			return PublicationSimplePreparationResult{}, errors.New("optional publication cover outcome is missing")
+		}
+		if warning != "" {
+			if err := os.Remove(outputPath); err != nil {
+				return PublicationSimplePreparationResult{}, err
+			}
+			if err := copyCurrentPublication(baseline, outputPath); err != nil {
+				return PublicationSimplePreparationResult{}, fmt.Errorf("restore candidate after optional cover failure: %w", err)
+			}
+		}
+		prepared.CoverEmbedding = &persistence.PublicationCoverEmbeddingProjection{Version: persistence.PublicationCoverEmbeddingProjectionVersion, ReceiptOperationID: receipt.OperationID, ReceiptReleaseID: receipt.ReleaseID, ReceiptRevision: receipt.Revision, ReceiptMode: receipt.Mode, RequestedGeneration: *receipt.Generation, RequestedSHA256: hex.EncodeToString(receipt.SHA256), Outcome: outcome, WarningCode: warning}
+		preparedCoverOutcome := baselineAssets.Cover
+		if outcome == "verified" {
+			size := int64(len(receipt.Bytes))
+			preparedCoverOutcome = persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, SHA256: hex.EncodeToString(receipt.SHA256), MIME: *receipt.MIME, SizeBytes: &size}
+		}
+		firstAudioCoverExpected = &preparedCoverOutcome
+	}
 	validationInput := input.Clone()
 	if input.AutomaticLyricsRetry == nil {
 		validationInput.DesiredTags = tags
@@ -290,6 +348,14 @@ func (preparation PublicationSimplePreparation) Prepare(
 			return PublicationSimplePreparationResult{}, errors.New("automatic lyrics candidate validator is unavailable")
 		}
 		observed, err = validator.ValidateAutomaticLyricsRetry(ctx, outputPath, validationInput, lyrics)
+	} else if firstAudioCoverExpected != nil {
+		validator, ok := preparation.Validator.(interface {
+			ValidateFirstAudioCover(context.Context, string, persistence.PublicationInputs, persistence.PublicationCoverOutcome) (PublicationStageObservation, error)
+		})
+		if !ok {
+			return PublicationSimplePreparationResult{}, errors.New("first-audio cover candidate validator is unavailable")
+		}
+		observed, err = validator.ValidateFirstAudioCover(ctx, outputPath, validationInput, *firstAudioCoverExpected)
 	} else {
 		observed, err = preparation.Validator.Validate(ctx, outputPath, validationInput)
 	}
@@ -312,13 +378,15 @@ func (preparation PublicationSimplePreparation) Prepare(
 			assets.Cover = input.AutomaticLyricsRetry.CurrentAssets.Cover
 		} else if len(prepared.Observation.ActualAssets) != 0 {
 			observedAssets, decodeErr := persistence.DecodePublicationAssetOutcomes(prepared.Observation.ActualAssets)
-			if decodeErr == nil {
-				assets.Cover = observedAssets.Cover
-			} else {
-				assets.Cover = persistence.PublicationCoverOutcome{State: persistence.PublicationAssetAbsent}
+			if decodeErr != nil {
+				return PublicationSimplePreparationResult{}, fmt.Errorf("decode observed publication assets: %w", decodeErr)
 			}
+			if observedAssets.Lyrics.State != prepared.LyricsOutcome.State || observedAssets.Lyrics.SHA256 != prepared.LyricsOutcome.SHA256 || observedAssets.Lyrics.Format != prepared.LyricsOutcome.Format {
+				return PublicationSimplePreparationResult{}, errors.New("observed publication lyrics do not match the prepared outcome")
+			}
+			assets = observedAssets
 		} else {
-			assets.Cover = persistence.PublicationCoverOutcome{State: persistence.PublicationAssetAbsent}
+			return PublicationSimplePreparationResult{}, errors.New("publication validator omitted required asset observations")
 		}
 		prepared.Observation.ActualAssets, _ = json.Marshal(assets)
 	}

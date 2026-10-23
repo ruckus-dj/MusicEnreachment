@@ -21,6 +21,7 @@ type PublicationResult struct {
 	Observation        PublicationStageObservation
 	InstalledOwnership PublicationCurrentOwnership
 	InitialLyrics      *PublicationInitialLyricsProjection
+	CoverEmbedding     *PublicationCoverEmbeddingProjection
 }
 
 // CommitPublicationResult installs the actual output projection and consumes
@@ -87,12 +88,39 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				return nil
 			}
 		}
-		assets := observation.ActualAssets
+		assets, err := DecodePublicationAssetOutcomes(observation.ActualAssets)
+		if err != nil {
+			return fmt.Errorf("commit publication result: decode current assets: %w", err)
+		}
 		publication := TrackPublication{
 			PositionID: attempt.PositionID, Epoch: attempt.Epoch, Generation: attempt.CandidateGeneration,
 			RelativePath: observation.RelativePath, Ownership: mustPublicationJSON(result.InstalledOwnership),
-			ActualAudio: observation.ActualAudio, ActualMetadata: observation.ActualMetadata, ActualAssets: assets,
+			ActualAudio: observation.ActualAudio, ActualMetadata: observation.ActualMetadata, ActualAssets: observation.ActualAssets,
 			QualityPolicyVersion: observation.QualityPolicyVersion, ValidatedAt: time.Now().UTC(),
+		}
+		if result.CoverEmbedding != nil {
+			receipt, err := scanPublicationAttemptCoverInput(ctx, tx, attempt.OperationID)
+			if err != nil {
+				return fmt.Errorf("commit publication result: read frozen cover receipt: %w", err)
+			}
+			projection := *result.CoverEmbedding
+			if !validPublicationCoverEmbeddingForReceipt(projection, receipt, attempt.CandidateGeneration, assets) {
+				return errors.New("commit publication result: cover embedding does not match frozen receipt")
+			}
+			publication.CoverEmbedding = mustPublicationJSON(projection)
+		} else if previous != nil && len(previous.CoverEmbedding) != 0 {
+			previousProjection, err := decodePublicationCoverEmbeddingProjection(previous.CoverEmbedding)
+			if err != nil {
+				return fmt.Errorf("commit publication result: decode current cover embedding: %w", err)
+			}
+			previousAssets, err := DecodePublicationAssetOutcomes(previous.ActualAssets)
+			if err != nil {
+				return fmt.Errorf("commit publication result: decode previous publication assets: %w", err)
+			}
+			if samePublicationCoverOutcome(previousAssets.Cover, assets.Cover) {
+				previousProjection.Generation = attempt.CandidateGeneration
+				publication.CoverEmbedding = mustPublicationJSON(previousProjection)
+			}
 		}
 		if result.InitialLyrics != nil {
 			projection := *result.InitialLyrics
@@ -114,7 +142,7 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				return fmt.Errorf("commit publication result: insert current publication: %w", err)
 			}
 		} else {
-			res, err := tx.NewUpdate().Model(&publication).Column("epoch", "generation", "relative_path", "ownership", "actual_audio", "actual_metadata", "actual_assets", "initial_lyrics", "quality_policy_version", "validated_at").Where("position_id=? AND generation=?", attempt.PositionID, *attempt.ExpectedGeneration).Exec(ctx)
+			res, err := tx.NewUpdate().Model(&publication).Column("epoch", "generation", "relative_path", "ownership", "actual_audio", "actual_metadata", "actual_assets", "initial_lyrics", "cover_embedding", "quality_policy_version", "validated_at").Where("position_id=? AND generation=?", attempt.PositionID, *attempt.ExpectedGeneration).Exec(ctx)
 			if err != nil {
 				return fmt.Errorf("commit publication result: replace current publication: %w", err)
 			}
@@ -174,6 +202,10 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		return nil
 	})
 	return committed, err
+}
+
+func samePublicationCoverOutcome(a, b PublicationCoverOutcome) bool {
+	return a.State == b.State && a.SHA256 == b.SHA256 && a.MIME == b.MIME && sameOptionalInt64(a.SizeBytes, b.SizeBytes)
 }
 
 func publicationResultPathMatches(raw json.RawMessage, resultPath string) bool {

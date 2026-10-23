@@ -127,9 +127,19 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if writer == nil {
 		writer = metadata.Writer{}
 	}
+	var coverInput *persistence.PublicationAttemptCoverInput
+	if input.Audio != nil {
+		receipt, found, readErr := executor.repository.PublicationAttemptCoverInputForDelivery(ctx, guard)
+		if readErr != nil {
+			return fmt.Errorf("read frozen publication cover receipt: %w", readErr)
+		}
+		if found {
+			coverInput = &receipt
+		}
+	}
 	prepared, err := (PublicationSimplePreparation{
 		Commands: executor.commands, FFmpegPath: ffmpegPath, FFprobePath: toolPair.FFprobe,
-		Validator: validator, Metadata: writer, MetadataReader: metadata.Reader{}, Lyrics: executor.lyrics,
+		Validator: validator, Metadata: writer, MetadataReader: metadata.Reader{}, Lyrics: executor.lyrics, CoverInput: coverInput,
 	}).Prepare(ctx, input, inputPath, tempDir, candidatePath)
 	if err != nil {
 		return err
@@ -230,6 +240,10 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			Version:  persistence.PublicationCurrentOwnershipVersion,
 			Identity: persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest},
 		},
+	}
+	if prepared.CoverEmbedding != nil {
+		prepared.CoverEmbedding.Generation = guard.CandidateGeneration
+		result.CoverEmbedding = prepared.CoverEmbedding
 	}
 	committed, err := executor.repository.CommitPublicationResult(context.WithoutCancel(ctx), guard, result)
 	if err != nil || !committed {

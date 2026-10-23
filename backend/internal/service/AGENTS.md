@@ -45,6 +45,11 @@ Manual-lyrics fixtures must save the actual desired envelope and matching revisi
 before freezing inputs, and use `source` format for tag-only rewrites. Establish a
 valid baseline before testing stale authority. Native path fixtures canonicalize
 temporary roots (`filepath.EvalSymlinks`) before opening no-follow filesystem roots.
+When removing a publication directory-sync gate, remove obsolete Windows-only
+failure expectations too: native nested publication must reach the same success
+assertions on every supported platform. Cover-preservation fixtures must acquire
+automatic lyrics explicitly; a saved manual value intentionally suppresses lookup
+and does not silently apply itself during first publication.
 For lifecycle fixtures, use named scenario configuration rather than extending a
 positional boolean list. Assert the intended frozen input kind and observed
 provider calls: a green test name alone does not prove that its branch ran.

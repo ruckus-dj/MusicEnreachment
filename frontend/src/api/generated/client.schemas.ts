@@ -74,6 +74,11 @@ export interface ConfigurationHealthResponse {
   problems: string[] | null;
 }
 
+export interface CoverEmbeddingResponse {
+  outcome: string;
+  warning_code?: string;
+}
+
 export type CreateSourceBodyProcessingMode = typeof CreateSourceBodyProcessingMode[keyof typeof CreateSourceBodyProcessingMode];
 
 
@@ -513,6 +518,7 @@ export interface LibraryPublicationResponse {
   active_attempt_phase?: string;
   active_epoch: string;
   can_apply_manual_lyrics: boolean;
+  cover_embedding?: CoverEmbeddingResponse;
   current_assets?: PublicationAssetsResponse;
   current_audio?: PublicationAudioResponse;
   current_epoch?: string;
