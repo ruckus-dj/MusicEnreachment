@@ -52,8 +52,9 @@ lyrics и полный упорядоченный inventory изображени
 namespace conflict не разрешается новым суффиксом. Полный локальный `task verify`
 прошёл: native preservation всех изображений и повторная preparation, PostgreSQL
 typed admission с реальным River insert, claim, preparation inputs, freshness,
-result commit, source-authority CAS и удаление потреблённого attempt. Проверка
-поддерживаемых платформ в CI для этого среза ещё не выполнена.
+result commit, source-authority CAS и удаление потреблённого attempt. Ревизия
+`27d68c1` полностью прошла CI `40139964035`: пять платформ, verify, Docker smoke
+и публикация контейнера. CI `e4f11d3` с отдельной executor-регрессией ещё ожидается.
 Добавлена отдельная executor-регрессия same-path retry после фактической native
 замены и ошибки DB commit: старая DB generation/authority и hold сохраняются,
 повторная доставка готовит файл заново, успешный commit освобождает ресурсы,
@@ -63,6 +64,14 @@ completed redelivery не требует ни source, ни output. Сохран�
 Real-media upgrade acceptance, protected provider-tag updates и завершение
 durable wake/no-op/busy обработки остаются незавершёнными. Это не приёмка и не
 завершение плана.
+
+**Provider-tag foundation:** добавлен pure patch helper: меняются только явно
+переданные provider keys, защищённые ключи сохраняют CURRENT (включая отсутствие),
+пропущенные provider fields ничего не удаляют, lyrics не изменяются. Protection
+footprints используют общий normalized mapping, включая fan-out artist credits
+и alias album artist MBID. Полный локальный `task verify` прошёл. Helper сам не
+подтверждает provider authority и пока не подключён к runtime: accepted evidence,
+transactional refresh/wake, rewrite admission и result guards ещё впереди.
 
 **2026-10-24, реальная приёмка применения обложки на ревизии `8f9ac36`:** на
 приватном стенде подтверждён сквозной manual pending cover → release-wide apply →
