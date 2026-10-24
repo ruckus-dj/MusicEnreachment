@@ -115,10 +115,16 @@ type LibraryPublications struct {
 	settings         libraryPublicationSettings
 	river            persistence.RiverInserter
 	platform         tools.Platform
+	coordinator      *publication.Coordinator
 	coverAcquisition interface {
 		Ensure(context.Context, uuid.UUID) error
 	}
 	resolveNamespace func(context.Context, *persistence.LibraryFirstPublicationContext, string, string, *FirstPublicationPreview) ([]persistence.PublicationNamespaceNode, error)
+}
+
+func (service *LibraryPublications) WithPublicationCoordinator(coordinator *publication.Coordinator) *LibraryPublications {
+	service.coordinator = coordinator
+	return service
 }
 
 func (service *LibraryPublications) WithCoverAcquisition(acquisition interface {

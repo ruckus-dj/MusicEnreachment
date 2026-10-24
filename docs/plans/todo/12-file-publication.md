@@ -45,6 +45,19 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**2026-10-25, срез automatic audio upgrade:** соединены V2
+admission, preparation, executor и result commit; frozen CURRENT сохраняет теги,
+lyrics и полный упорядоченный inventory изображений. Путь сохраняет директории
+и basename CURRENT, меняется только необходимое контейнеру расширение;
+namespace conflict не разрешается новым суффиксом. Полный локальный `task verify`
+прошёл: native preservation всех изображений и повторная preparation, PostgreSQL
+typed admission с реальным River insert, claim, preparation inputs, freshness,
+result commit, source-authority CAS и удаление потреблённого attempt. Проверка
+поддерживаемых платформ в CI для этого среза ещё не выполнена.
+Сквозной retry после filesystem replace и ошибки DB commit, protected provider-tag
+updates и завершение durable wake/no-op/busy обработки остаются непроверенными
+или незавершёнными. Это не приёмка и не завершение плана.
+
 **2026-10-24, реальная приёмка применения обложки на ревизии `8f9ac36`:** на
 приватном стенде подтверждён сквозной manual pending cover → release-wide apply →
 derivative embedding для трёх уже опубликованных MKA. Baseline первой публикации
@@ -86,7 +99,8 @@ verify, Docker smoke и публикацию контейнера. Producer от
 `task verify`: cross-path commit и rollback реального River insert, отклонение
 отсутствующего/несовпадающего proof, completed redelivery без повторного enqueue,
 same-path retirement старых reservations с сохранением candidate и claims.
-CI producer ещё не подтверждена; сквозной quality-upgrade сценарий остаётся
+Ревизия producer `5efd479` полностью прошла CI `40085983523` (пять платформ,
+verify, Docker smoke и публикация контейнера); сквозной quality-upgrade сценарий остаётся
 следующим этапом, поэтому весь план не считается завершённым. Продуктовые решения и
 требования этим не меняются; факты CI `61b481c` выше относятся только к той
 ревизии, а не к незакоммиченному дереву.

@@ -18,6 +18,16 @@ import (
 // planFirstPublicationNamespace plans against the caller's complete snapshot of
 // namespace claims without creating publication directories in the output root.
 func planFirstPublicationNamespace(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim) (_ []persistence.PublicationNamespaceNode, resultErr error) {
+	return planPublicationNamespace(ctx, outputRoot, positionID, candidates, claims, false)
+}
+
+// planExactTargetPublicationNamespace reserves the requested file names exactly,
+// without reusing an older filename or choosing a collision suffix.
+func planExactTargetPublicationNamespace(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim) (_ []persistence.PublicationNamespaceNode, resultErr error) {
+	return planPublicationNamespace(ctx, outputRoot, positionID, candidates, claims, true)
+}
+
+func planPublicationNamespace(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim, exactTarget bool) (_ []persistence.PublicationNamespaceNode, resultErr error) {
 	candidates = append([]publication.NamespaceCandidate(nil), candidates...)
 	root, err := sourcefs.NewOutputOpener().OpenRoot(ctx, outputRoot)
 	if err != nil {
@@ -181,23 +191,28 @@ func planFirstPublicationNamespace(ctx context.Context, outputRoot string, posit
 			return nil, openErr
 		}
 		base := path.Base(candidate.RelativePath)
-		// An existing claim is the durable naming decision for this position.
-		// Keep its selected component even if the original collision disappears.
-		for _, claim := range nativeClaims {
-			if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
-				candidate.RelativePath = path.Join(parentCandidate, path.Base(claim.RelativePath))
-				base = path.Base(candidate.RelativePath)
-				break
+		// First publication keeps a durable selected component across retries.
+		// Audio upgrades instead retain their explicitly requested (possibly new
+		// extension) name.
+		if !exactTarget {
+			for _, claim := range nativeClaims {
+				if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
+					candidate.RelativePath = path.Join(parentCandidate, path.Base(claim.RelativePath))
+					base = path.Base(candidate.RelativePath)
+					break
+				}
 			}
 		}
 		ownClaim := false
 		for _, claim := range nativeClaims {
 			if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
-				ownClaim = true
-				break
+				if !exactTarget || path.Base(claim.RelativePath) == base {
+					ownClaim = true
+					break
+				}
 			}
 		}
-		if ownClaim {
+		if ownClaim && !exactTarget {
 			continue
 		}
 		occupied := func(name string) (bool, error) {
@@ -207,6 +222,9 @@ func planFirstPublicationNamespace(ctx context.Context, outputRoot string, posit
 					return false, compareErr
 				}
 				if equal {
+					if exactTarget && ownClaim && entry.Name == base && name == base {
+						continue
+					}
 					return true, nil
 				}
 			}
@@ -214,7 +232,7 @@ func planFirstPublicationNamespace(ctx context.Context, outputRoot string, posit
 				if canonicalNamespaceParent(claim.CanonicalKey) != parentKey {
 					continue
 				}
-				if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID {
+				if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && (!exactTarget || path.Base(claim.RelativePath) == name) {
 					continue
 				}
 				claimName := path.Base(claim.RelativePath)
@@ -237,6 +255,9 @@ func planFirstPublicationNamespace(ctx context.Context, outputRoot string, posit
 		}
 		if !collision {
 			continue
+		}
+		if exactTarget {
+			return nil, fmt.Errorf("plan exact publication namespace: requested target %q is occupied", candidate.RelativePath)
 		}
 		ext := path.Ext(base)
 		stem := strings.TrimSuffix(base, ext)

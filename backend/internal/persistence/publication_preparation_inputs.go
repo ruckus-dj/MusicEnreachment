@@ -88,6 +88,28 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 		if !decoded.SupportsExecution() && (!manualLyricsFLAC || !validManualLyricsRewrite(decoded)) {
 			return fmt.Errorf("read publication preparation inputs: frozen publication contract is admitted but not executable")
 		}
+		if decoded.AudioUpgrade != nil {
+			if attempt.ExpectedGeneration == nil || *attempt.ExpectedGeneration != decoded.AudioUpgrade.Current.Generation {
+				return nil
+			}
+			var current TrackPublication
+			if err := tx.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("read publication preparation inputs: lock audio upgrade CURRENT: %w", err)
+			}
+			var authority PositionSourceAuthority
+			if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("read publication preparation inputs: lock audio upgrade authority: %w", err)
+			}
+			if !automaticAudioUpgradeCurrent(current, authority, decoded, guard.Epoch) {
+				return nil
+			}
+		}
 		if manualLyricsFLAC {
 			if !validManualLyricsRewrite(decoded) || attempt.IntentKind != "rewrite" || attempt.Epoch != guard.Epoch || attempt.CandidateGeneration != guard.CandidateGeneration || attempt.PositionID != guard.ExpectedPositionID {
 				return nil

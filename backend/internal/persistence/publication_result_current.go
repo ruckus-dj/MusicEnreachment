@@ -25,7 +25,25 @@ func (repository *SetupManagerRepository) CheckPublicationResultCurrent(ctx cont
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input)) || input.IntentKind != attempt.IntentKind {
+		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input)) || input.IntentKind != attempt.IntentKind {
+			return nil
+		}
+		if validAutomaticAudioUpgrade(input) {
+			var publication TrackPublication
+			if err := tx.NewSelect().Model(&publication).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("check publication result freshness: read current publication: %w", err)
+			}
+			var authority PositionSourceAuthority
+			if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("check publication result freshness: read current source authority: %w", err)
+			}
+			current = automaticAudioUpgradeCurrent(publication, authority, input, attempt.Epoch)
 			return nil
 		}
 		if input.ManualLyrics != nil {

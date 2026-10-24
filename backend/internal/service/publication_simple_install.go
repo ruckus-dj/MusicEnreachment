@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
@@ -33,7 +34,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	outputRoot string,
 	root sourcefs.OutputDirectory,
 ) (resultErr error) {
-	if input.IntentKind == "rewrite" && (input.Rewrite == nil || input.Audio != nil) ||
+	if input.IntentKind == "rewrite" && (input.Rewrite == nil || input.Audio != nil || input.AudioUpgrade != nil) ||
 		input.IntentKind == "audio" && (input.Audio == nil || input.Rewrite != nil) ||
 		input.IntentKind != "rewrite" && input.IntentKind != "audio" {
 		return errors.New("simple publication input is incomplete")
@@ -48,6 +49,11 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if input.Rewrite != nil {
 		if manifest.RelativePath != input.Rewrite.RelativePath || attempt.ExpectedGeneration == nil || *attempt.ExpectedGeneration != input.Rewrite.CurrentGeneration {
 			return errors.New("publication rewrite target does not match the frozen current generation")
+		}
+	} else if input.AudioUpgrade != nil {
+		expected, err := audioUpgradeTargetRelativePath(input.AudioUpgrade.Current.RelativePath, input.Format, inputAudioFacts(input).AudioSourceFacts())
+		if err != nil || manifest.RelativePath != expected || attempt.ExpectedGeneration == nil || *attempt.ExpectedGeneration != input.AudioUpgrade.Current.Generation {
+			return errors.New("audio-upgrade target does not match the frozen current generation")
 		}
 	} else if manifest.RelativePath == "" || attempt.ExpectedGeneration != nil {
 		return errors.New("first publication target does not match the frozen candidate")
@@ -69,10 +75,47 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		return errors.New("native publication destination mutation is unavailable")
 	}
 	inputPath := targetAbsolute
+	currentPathForPreparation := ""
 	if input.Audio != nil {
 		inputPath, err = executor.openSimpleAudioSource(ctx, guard, *input.Audio)
 		if err != nil {
 			return err
+		}
+		if input.AudioUpgrade != nil {
+			currentPath := filepath.Join(outputRoot, filepath.FromSlash(input.AudioUpgrade.Current.RelativePath))
+			if !filepath.IsAbs(currentPath) || filepath.Clean(currentPath) != currentPath {
+				return errors.New("audio-upgrade current path is invalid")
+			}
+			currentParent, parentErr := openPublicationTargetParent(ctx, root, input.AudioUpgrade.Current.RelativePath, nodes)
+			if parentErr != nil {
+				return fmt.Errorf("open current audio-upgrade parent: %w", parentErr)
+			}
+			if currentParent != root {
+				defer func() { _ = currentParent.Close() }()
+			}
+			currentMutation, ok := currentParent.(sourcefs.OutputMutation)
+			if !ok {
+				return errors.New("native current publication inspection is unavailable")
+			}
+			currentFile, openErr := currentMutation.OpenExistingRegular(ctx, path.Base(input.AudioUpgrade.Current.RelativePath))
+			if openErr != nil {
+				return fmt.Errorf("open current audio-upgrade publication: %w", openErr)
+			}
+			currentInfo, statErr := currentFile.Stat(ctx)
+			if statErr != nil {
+				_ = currentFile.Close()
+				return fmt.Errorf("inspect current audio-upgrade publication: %w", statErr)
+			}
+			if !currentInfo.Mode().IsRegular() {
+				_ = currentFile.Close()
+				return errors.New("current audio-upgrade publication is not a regular file")
+			}
+			if closeErr := currentFile.Close(); closeErr != nil {
+				return fmt.Errorf("close current audio-upgrade publication: %w", closeErr)
+			}
+			// The preparation reader works on a private copy. The handle-relative open
+			// above pins and rejects links for the live CURRENT path.
+			currentPathForPreparation = currentPath
 		}
 	} else {
 		currentFile, openErr := mutation.OpenExistingRegular(ctx, targetName)
@@ -128,7 +171,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		writer = metadata.Writer{}
 	}
 	var coverInput *persistence.PublicationAttemptCoverInput
-	if input.Audio != nil || input.ManualCover != nil {
+	if (input.Audio != nil && input.AudioUpgrade == nil) || input.ManualCover != nil {
 		receipt, found, readErr := executor.repository.PublicationAttemptCoverInputForDelivery(ctx, guard)
 		if readErr != nil {
 			return fmt.Errorf("read frozen publication cover receipt: %w", readErr)
@@ -140,10 +183,16 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			coverInput = &receipt
 		}
 	}
-	prepared, err := (PublicationSimplePreparation{
+	preparation := PublicationSimplePreparation{
 		Commands: executor.commands, FFmpegPath: ffmpegPath, FFprobePath: toolPair.FFprobe,
 		Validator: validator, Metadata: writer, MetadataReader: metadata.Reader{}, Lyrics: executor.lyrics, CoverInput: coverInput,
-	}).Prepare(ctx, input, inputPath, tempDir, candidatePath)
+	}
+	var prepared PublicationSimplePreparationResult
+	if input.AudioUpgrade != nil {
+		prepared, err = preparation.PrepareAudioUpgrade(ctx, input, inputPath, currentPathForPreparation, tempDir, candidatePath)
+	} else {
+		prepared, err = preparation.Prepare(ctx, input, inputPath, tempDir, candidatePath)
+	}
 	if err != nil {
 		return err
 	}
@@ -381,6 +430,25 @@ func publicationTarget(raw []byte) (persistence.PublicationNamespaceNode, []pers
 		return persistence.PublicationNamespaceNode{}, nil, errors.New("publication namespace has no file target")
 	}
 	return *target, manifest.Nodes, nil
+}
+
+func audioUpgradeTargetRelativePath(currentRelative string, format publication.AudioPublicationFormat, source publication.AudioSourceFacts) (string, error) {
+	if currentRelative == "" || path.IsAbs(currentRelative) || path.Clean(currentRelative) != currentRelative || strings.ContainsAny(currentRelative, "\\:\x00") {
+		return "", errors.New("audio-upgrade current relative path is invalid")
+	}
+	for _, component := range strings.Split(currentRelative, "/") {
+		if component == "" || component == "." || component == ".." {
+			return "", errors.New("audio-upgrade current relative path is invalid")
+		}
+	}
+	plan, err := publication.PlanAudioTransform(format, source)
+	if err != nil {
+		return "", fmt.Errorf("plan audio-upgrade target: %w", err)
+	}
+	if plan.Extension == "" || strings.ContainsAny(plan.Extension, "/\\:\x00") || plan.Extension == "." || plan.Extension == ".." {
+		return "", errors.New("audio-upgrade target extension is invalid")
+	}
+	return strings.TrimSuffix(currentRelative, path.Ext(currentRelative)) + "." + plan.Extension, nil
 }
 
 func digestRegular(ctx context.Context, file sourcefs.RegularFile) (string, error) {

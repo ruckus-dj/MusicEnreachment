@@ -53,6 +53,7 @@ type PublicationAdmission struct {
 	validatedManualLyrics         bool
 	validatedManualCover          bool
 	validatedAutomaticLyricsRetry bool
+	validatedAudioUpgrade         bool
 	metadataRevision              int64
 	firstAdmission                *firstPublicationAdmissionHook
 	reconciliationGuard           *PublicationReconciliationDeliveryGuard
@@ -96,7 +97,13 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	if input.IntentKind != request.IntentKind || !samePublicationTools(request.Tools, input.Tools) {
 		return uuid.Nil, fmt.Errorf("admit publication: request conflicts with frozen publication inputs")
 	}
-	if request.firstAdmission == nil && input.SourceAuthorityMode != "" {
+	if input.Version == PublicationAudioUpgradeInputsVersion && !request.validatedAudioUpgrade {
+		return uuid.Nil, fmt.Errorf("admit publication: audio upgrade requires typed admission: %w", ErrPublicationAdmissionConflict)
+	}
+	if request.validatedAudioUpgrade && (input.Version != PublicationAudioUpgradeInputsVersion || input.AudioUpgrade == nil || request.IntentKind != "audio") {
+		return uuid.Nil, fmt.Errorf("admit publication: invalid typed audio upgrade: %w", ErrPublicationAdmissionConflict)
+	}
+	if request.firstAdmission == nil && !request.validatedAudioUpgrade && input.SourceAuthorityMode != "" {
 		return uuid.Nil, fmt.Errorf("admit publication: source authority requires first-publication intent: %w", ErrPublicationAdmissionConflict)
 	}
 	if input.ManualLyrics != nil && (!request.validatedManualLyrics || request.manualLyrics == nil) || request.validatedManualLyrics && input.ManualLyrics == nil {
@@ -117,6 +124,9 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	}
 	if request.IntentKind == "rewrite" && !sameOptionalUUID(request.ExpectedGeneration, &input.Rewrite.CurrentGeneration) {
 		return uuid.Nil, fmt.Errorf("admit publication: rewrite generation does not match frozen input")
+	}
+	if request.validatedAudioUpgrade && !sameOptionalUUID(request.ExpectedGeneration, &input.AudioUpgrade.Current.Generation) {
+		return uuid.Nil, fmt.Errorf("admit publication: audio upgrade generation does not match frozen current: %w", ErrPublicationAdmissionConflict)
 	}
 	if err := validatePublicationManifest(request.NamespaceManifest); err != nil {
 		return uuid.Nil, err
@@ -141,6 +151,27 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		return uuid.Nil, err
 	}
 	return admittedOperationID, nil
+}
+
+// AdmitAutomaticAudioUpgrade is the only admission path allowed to create a
+// version-2 audio-upgrade attempt. Ordinary generic admission deliberately has
+// no way to set the private capability bit.
+func (repository *SetupManagerRepository) AdmitAutomaticAudioUpgrade(ctx context.Context, request PublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	input, err := DecodePublicationInputs(request.FrozenInputs)
+	if err != nil || input.Version != PublicationAudioUpgradeInputsVersion || input.AudioUpgrade == nil || input.SourceAuthorityMode != "automatic" ||
+		request.IntentKind != "audio" || request.ExpectedGeneration == nil || *request.ExpectedGeneration != input.AudioUpgrade.Current.Generation || request.Source == nil {
+		return uuid.Nil, fmt.Errorf("admit automatic audio upgrade: invalid frozen request: %w", ErrPublicationAdmissionConflict)
+	}
+	request.validatedAudioUpgrade = true
+	return repository.AdmitPublication(ctx, request, client)
+}
+
+func (repository *SetupManagerRepository) AdmitAutomaticAudioUpgradeFromReconciliation(ctx context.Context, request PublicationAdmission, guard PublicationReconciliationDeliveryGuard, client RiverInserter) (uuid.UUID, error) {
+	if guard.PositionID != request.PositionID || guard.OutputEpoch != request.ExpectedEpoch {
+		return uuid.Nil, ErrPublicationAdmissionConflict
+	}
+	request.reconciliationGuard = &guard
+	return repository.AdmitAutomaticAudioUpgrade(ctx, request, client)
 }
 
 func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context, tx bun.Tx, request PublicationAdmission, input PublicationInputs, operationID uuid.UUID, client RiverInserter) (uuid.UUID, error) {
@@ -236,6 +267,11 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	}
 	if !sameOptionalUUID(generation, request.ExpectedGeneration) {
 		return uuid.Nil, fmt.Errorf("admit publication: current generation changed: %w", ErrPublicationAdmissionConflict)
+	}
+	if request.validatedAudioUpgrade {
+		if err := repository.validateAudioUpgradeAdmission(ctx, tx, request, input, epoch); err != nil {
+			return uuid.Nil, err
+		}
 	}
 	if input.Rewrite != nil {
 		var current TrackPublication

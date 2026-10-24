@@ -48,7 +48,7 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input)) || input.IntentKind != attempt.IntentKind {
+		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input)) || input.IntentKind != attempt.IntentKind {
 			return nil
 		}
 		if attempt.ExpectedGeneration != nil {
@@ -71,6 +71,18 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			}
 			if current.Generation != *attempt.ExpectedGeneration {
 				return nil
+			}
+			if validAutomaticAudioUpgrade(input) {
+				var authority PositionSourceAuthority
+				if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						return nil
+					}
+					return fmt.Errorf("commit publication result: read current source authority: %w", err)
+				}
+				if !automaticAudioUpgradeCurrent(current, authority, input, attempt.Epoch) {
+					return nil
+				}
 			}
 			if input.ManualLyrics != nil && !manualLyricsResultCurrent(ctx, tx, attempt.PositionID, *input.ManualLyrics, current) {
 				return nil
@@ -104,6 +116,23 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		assets, err := DecodePublicationAssetOutcomes(observation.ActualAssets)
 		if err != nil {
 			return fmt.Errorf("commit publication result: decode current assets: %w", err)
+		}
+		if validAutomaticAudioUpgrade(input) {
+			var beforeMetadata, afterMetadata PublicationCommitMetadata
+			if previous == nil || strictMetadata(previous.ActualMetadata, &beforeMetadata) != nil || strictMetadata(observation.ActualMetadata, &afterMetadata) != nil ||
+				!sameJSONValue(mustPublicationJSON(beforeMetadata.Tags), mustPublicationJSON(input.AudioUpgrade.Current.Tags)) ||
+				!sameJSONValue(mustPublicationJSON(afterMetadata.Tags), mustPublicationJSON(input.AudioUpgrade.Current.Tags)) {
+				return nil
+			}
+			beforeAssets, err := DecodePublicationAssetOutcomes(previous.ActualAssets)
+			if err != nil || !sameJSONValue(mustPublicationJSON(beforeAssets), mustPublicationJSON(input.AudioUpgrade.Current.Assets)) ||
+				!sameJSONValue(mustPublicationJSON(assets), mustPublicationJSON(input.AudioUpgrade.Current.Assets)) {
+				return nil
+			}
+			actualFacts, ok := publicationAudioFactsFromObservation(observation.ActualAudio)
+			if !ok || !automaticAudioUpgradeQualityBetter(actualFacts, input.AudioUpgrade.Current.AudioFacts) {
+				return nil
+			}
 		}
 		if input.ManualCover != nil {
 			if previous == nil || result.CoverEmbedding == nil {
@@ -190,10 +219,31 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		}
 		if previous != nil {
 			next := publication
-			if err := carryPositionSourceAuthorityTx(ctx, tx, *previous, next); err != nil {
+			if validAutomaticAudioUpgrade(input) {
+				var authority PositionSourceAuthority
+				if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+					return fmt.Errorf("commit publication result: lock source authority for audio upgrade: %w", err)
+				}
+				actualFacts, ok := publicationAudioFactsFromObservation(observation.ActualAudio)
+				if !ok || !automaticAudioUpgradeQualityBetter(actualFacts, input.AudioUpgrade.Current.AudioFacts) {
+					return nil
+				}
+				authority.Revision = uuid.New()
+				authority.PublicationEpoch = next.Epoch
+				authority.PublicationGeneration = next.Generation
+				authority.SourceLocationID = input.Audio.LocationID
+				authority.MediaVariantID = input.Audio.MediaVariantID
+				updated, err := compareAndSetPositionSourceAuthorityTx(ctx, tx, &input.AudioUpgrade.SourceAuthorityRevision, authority)
+				if err != nil {
+					return err
+				}
+				if !updated {
+					return fmt.Errorf("commit publication result: source authority changed: %w", ErrPublicationAdmissionConflict)
+				}
+			} else if err := carryPositionSourceAuthorityTx(ctx, tx, *previous, next); err != nil {
 				return err
 			}
-			if input.ManualCover != nil && previous != nil {
+			if (input.ManualCover != nil || validAutomaticAudioUpgrade(input)) && previous != nil {
 				if err := carryManualLyricsReceiptForCoverRewriteTx(ctx, tx, attempt, *previous, publication, assets); err != nil {
 					return err
 				}

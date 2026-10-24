@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
@@ -179,7 +180,19 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 		return PublicationStageObservation{}, fmt.Errorf("read publication stage metadata: %w", err)
 	}
 	if retryLyrics == nil {
-		if firstAudioCover != nil {
+		if input.AudioUpgrade != nil {
+			artwork, artworkErr := metadata.ReadArtworkSnapshot(ctx, stagePath)
+			if artworkErr != nil {
+				return PublicationStageObservation{}, fmt.Errorf("read audio-upgrade publication artwork: %w", artworkErr)
+			}
+			inventory := artwork.ArtworkInventory()
+			if !equalAudioUpgradeArtworkWitnesses(input.AudioUpgrade.Current.ArtworkInventory, inventory) {
+				return PublicationStageObservation{}, errors.New("audio-upgrade stage artwork inventory does not match current publication")
+			}
+			if err := validateAudioUpgradeTopology(raw, inventory); err != nil {
+				return PublicationStageObservation{}, err
+			}
+		} else if firstAudioCover != nil {
 			assets, assetErr := ObservePublicationAssets(capture)
 			if assetErr != nil {
 				return PublicationStageObservation{}, fmt.Errorf("observe first-audio publication assets: %w", assetErr)
@@ -256,6 +269,11 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	if err != nil {
 		return PublicationStageObservation{}, err
 	}
+	if input.Version == persistence.PublicationAudioUpgradeInputsVersion {
+		if input.AudioUpgrade == nil || publication.CompareQuality(audioUpgradeQualityCandidate(actualAudioFacts), audioUpgradeQualityCandidate(input.AudioUpgrade.Current.AudioFacts)) != publication.QualityBetter {
+			return PublicationStageObservation{}, errors.New("publication audio-upgrade stage quality is not strictly better than current")
+		}
+	}
 	actualAudio, err := json.Marshal(struct {
 		Version int                             `json:"version"`
 		Facts   persistence.PersistedAudioFacts `json:"facts"`
@@ -272,6 +290,9 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	}
 	if retryLyrics != nil && (assets.Cover.State != input.AutomaticLyricsRetry.CurrentAssets.Cover.State || assets.Cover.SHA256 != input.AutomaticLyricsRetry.CurrentAssets.Cover.SHA256 || assets.Cover.MIME != input.AutomaticLyricsRetry.CurrentAssets.Cover.MIME || !sameOptionalPublicationSize(assets.Cover.SizeBytes, input.AutomaticLyricsRetry.CurrentAssets.Cover.SizeBytes)) {
 		return PublicationStageObservation{}, errors.New("automatic retry changed the verified current cover")
+	}
+	if input.Version == persistence.PublicationAudioUpgradeInputsVersion && input.AudioUpgrade != nil && !reflect.DeepEqual(assets, input.AudioUpgrade.Current.Assets) {
+		return PublicationStageObservation{}, errors.New("audio-upgrade stage assets do not match current publication")
 	}
 	result.Assets, err = json.Marshal(assets)
 	if err != nil {
@@ -569,6 +590,73 @@ func validateFirstAudioCoverTopology(raw []byte, container publication.AudioCont
 	}
 	if audioCount != 1 || imageCount != wantImages || len(response.Chapters) != 0 {
 		return errors.New("first-audio candidate has unexpected audio, cover, attachment, or chapter topology")
+	}
+	return nil
+}
+
+// validateAudioUpgradeTopology accepts the exact CURRENT artwork inventory: one
+// audio stream and one attached picture or image attachment per preserved image.
+// Formats are not constrained by container or codec; a declared stream MIME must
+// match the inventory multiset when the inventory records any MIME at all.
+func validateAudioUpgradeTopology(raw []byte, inventory []metadata.ArtworkInventoryEntry) error {
+	var response struct {
+		Streams []struct {
+			Type        string `json:"codec_type"`
+			Disposition struct {
+				AttachedPicture int `json:"attached_pic"`
+			} `json:"disposition"`
+			Tags map[string]string `json:"tags"`
+		} `json:"streams"`
+		Chapters []json.RawMessage `json:"chapters"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return fmt.Errorf("decode audio-upgrade topology: %w", err)
+	}
+	remainingMIME := make(map[string]int, len(inventory))
+	for _, entry := range inventory {
+		if entry.MIME != "" {
+			remainingMIME[strings.ToLower(entry.MIME)]++
+		}
+	}
+	claimMIME := func(mime string) error {
+		if mime == "" || len(remainingMIME) == 0 {
+			return nil
+		}
+		mime = strings.ToLower(mime)
+		if remainingMIME[mime] == 0 {
+			return errors.New("audio-upgrade candidate artwork MIME does not match current publication")
+		}
+		remainingMIME[mime]--
+		return nil
+	}
+	audioCount, imageCount := 0, 0
+	for _, stream := range response.Streams {
+		switch stream.Type {
+		case "audio":
+			audioCount++
+		case "video":
+			if stream.Disposition.AttachedPicture != 1 {
+				return errors.New("audio-upgrade candidate contains an unauthorized video stream")
+			}
+			if err := claimMIME(stream.Tags["mimetype"]); err != nil {
+				return err
+			}
+			imageCount++
+		case "attachment":
+			mime := strings.ToLower(stream.Tags["mimetype"])
+			if !strings.HasPrefix(mime, "image/") {
+				return errors.New("audio-upgrade candidate contains an unauthorized attachment")
+			}
+			if err := claimMIME(mime); err != nil {
+				return err
+			}
+			imageCount++
+		default:
+			return errors.New("audio-upgrade candidate contains an unauthorized non-audio stream")
+		}
+	}
+	if audioCount != 1 || imageCount != len(inventory) || len(response.Chapters) != 0 {
+		return errors.New("audio-upgrade candidate has unexpected audio, artwork, or chapter topology")
 	}
 	return nil
 }

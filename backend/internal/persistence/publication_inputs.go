@@ -9,6 +9,7 @@ import (
 	"math"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 )
 
 const PublicationInputsVersion = 1
+const PublicationAudioUpgradeInputsVersion = 2
 
 // PublicationInputs is the versioned, immutable execution contract retained by
 // a publication attempt. Intent-specific data is deliberately disjoint.
@@ -34,6 +36,7 @@ type PublicationInputs struct {
 	ManualCover          *PublicationManualCoverInput          `json:"manual_cover,omitempty"`
 	AutomaticLyricsRetry *PublicationAutomaticLyricsRetryInput `json:"automatic_lyrics_retry,omitempty"`
 	InitialLyrics        *PublicationInitialLyricsInput        `json:"initial_lyrics,omitempty"`
+	AudioUpgrade         *PublicationAudioUpgradeInput         `json:"audio_upgrade,omitempty"`
 	Format               publication.AudioPublicationFormat    `json:"format"`
 	DesiredTags          map[string][]string                   `json:"desired_tags"`
 	Tools                []SourceAnalysisToolSelection         `json:"tools"`
@@ -185,8 +188,22 @@ func DecodePublicationInputs(raw json.RawMessage) (PublicationInputs, error) {
 
 // Validate enforces version, discriminated intent, selectors and portable paths.
 func (input PublicationInputs) Validate() error {
-	if input.Version != PublicationInputsVersion {
+	if input.Version != PublicationInputsVersion && input.Version != PublicationAudioUpgradeInputsVersion {
 		return fmt.Errorf("unsupported publication inputs version %d", input.Version)
+	}
+	if input.Version == PublicationInputsVersion && input.AudioUpgrade != nil {
+		return errors.New("version 1 publication inputs must not contain audio upgrade data")
+	}
+	if input.Version == PublicationAudioUpgradeInputsVersion {
+		if input.IntentKind != "audio" || input.Audio == nil || input.Rewrite != nil || input.AudioUpgrade == nil || input.SourceAuthorityMode != "automatic" || input.InitialLyrics != nil || input.ManualLyrics != nil || input.ManualCover != nil || input.AutomaticLyricsRetry != nil {
+			return errors.New("version 2 publication inputs require an exclusive automatic audio upgrade")
+		}
+		if err := input.AudioUpgrade.Validate(); err != nil {
+			return fmt.Errorf("invalid publication audio upgrade: %w", err)
+		}
+		if !reflect.DeepEqual(input.DesiredTags, input.AudioUpgrade.Current.Tags) {
+			return errors.New("audio upgrade tags must match the frozen current publication")
+		}
 	}
 	if input.QualityPolicyVersion != publication.QualityPolicyVersion {
 		return fmt.Errorf("unsupported publication quality policy version %d", input.QualityPolicyVersion)
@@ -250,10 +267,11 @@ func (input PublicationInputs) Validate() error {
 		}
 	}
 	if input.IntentKind == "audio" {
-		if input.InitialLyrics == nil || input.InitialLyrics.ExpectedMetadataRevision < 0 {
+		if input.Version == PublicationInputsVersion && (input.InitialLyrics == nil || input.InitialLyrics.ExpectedMetadataRevision < 0) {
 			return errors.New("initial audio publication requires a lyrics authority snapshot and metadata revision")
 		}
-		if field := input.InitialLyrics.Desired; field != nil {
+		if input.InitialLyrics != nil && input.InitialLyrics.Desired != nil {
+			field := input.InitialLyrics.Desired
 			lyrics := librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition, Desired: map[string]librarymetadata.FieldValue{"synced_lyrics": *field}}
 			if err := lyrics.Validate(); err != nil {
 				return fmt.Errorf("invalid initial lyrics authority snapshot: %w", err)
@@ -302,6 +320,9 @@ func (input PublicationInputs) Validate() error {
 // SupportsExecution reports whether this frozen contract is executable by the
 // generic publication path. Private manual-lyrics execution is separate.
 func (input PublicationInputs) SupportsExecution() bool {
+	if input.Version == PublicationAudioUpgradeInputsVersion {
+		return validAutomaticAudioUpgrade(input)
+	}
 	return input.Version == PublicationInputsVersion && input.QualityPolicyVersion == publication.QualityPolicyVersion && input.ManualLyrics == nil && (input.AutomaticLyricsRetry == nil || input.IntentKind == "rewrite" && input.Rewrite != nil)
 }
 
@@ -453,7 +474,33 @@ func (input PublicationInputs) Clone() PublicationInputs {
 		}
 		clone.AutomaticLyricsRetry = &retry
 	}
+	if input.AudioUpgrade != nil {
+		upgrade := *input.AudioUpgrade
+		upgrade.Current = clonePublicationCurrentWitness(upgrade.Current)
+		clone.AudioUpgrade = &upgrade
+	}
 	return clone
+}
+
+func clonePublicationCurrentWitness(current PublicationCurrentWitness) PublicationCurrentWitness {
+	if current.ArtworkInventory != nil {
+		current.ArtworkInventory = append(make([]PublicationArtworkWitness, 0, len(current.ArtworkInventory)), current.ArtworkInventory...)
+	}
+	current.Ownership = clonePublicationFileIdentity(current.Ownership)
+	current.AudioFacts = clonePersistedAudioFacts(current.AudioFacts)
+	current.Assets = current.Assets.Clone()
+	if current.Tags != nil {
+		tags := make(map[string][]string, len(current.Tags))
+		for name, values := range current.Tags {
+			if values == nil {
+				tags[name] = nil
+				continue
+			}
+			tags[name] = append(make([]string, 0, len(values)), values...)
+		}
+		current.Tags = tags
+	}
+	return current
 }
 
 func clonePublicationAnalysedMetadata(value *PublicationAnalysedMetadata) *PublicationAnalysedMetadata {

@@ -50,6 +50,11 @@ failure expectations too: native nested publication must reach the same success
 assertions on every supported platform. Cover-preservation fixtures must acquire
 automatic lyrics explicitly; a saved manual value intentionally suppresses lookup
 and does not silently apply itself during first publication.
+Native artwork-preservation tests that observe publication assets need real encoded
+images (for example tiny JPEG/PNG fixtures), not opaque placeholder bytes: asset
+observation derives MIME from content. Probe case equivalence on the actual test
+filesystem rather than inferring it from GOOS. Extension-only path tests must use
+a supported transform; do not request ALAC without verified capability evidence.
 Initial-lyrics lookup uses frozen analysis metadata, never a source/copy read.
 Preserve fractional duration from saved ffprobe JSON, not TagLib's millisecond
 properties. Admission rechecks metadata freshness; delivery must not invalidate

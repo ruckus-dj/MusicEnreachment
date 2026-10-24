@@ -241,7 +241,7 @@ func Run(ctx context.Context, config Config) error {
 	)
 	libraryPublications := service.NewLibraryPublications(setupManagerRepository, registry, riverSlot, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
-	}).WithCoverAcquisition(service.NewReleaseCoverAcquisition(libraryRepository, service.NewReleaseCoverResolver(libraryRepository, coverart.NewClient(nil))))
+	}).WithPublicationCoordinator(publicationCoordinator).WithCoverAcquisition(service.NewReleaseCoverAcquisition(libraryRepository, service.NewReleaseCoverResolver(libraryRepository, coverart.NewClient(nil))))
 	matchingAuthority := service.NewMatchingAuthorityService(persistence.NewIncomingMatchCandidateRepository(db))
 	manualReleaseSelection := service.NewManualReleaseSelectionService(setupManagerRepository, incomingGroups, providerFetch, riverSlot)
 	manualPickerSearch := service.NewManualPickerSearchService(setupManagerRepository, providerFetch, riverSlot)

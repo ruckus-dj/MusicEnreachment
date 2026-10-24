@@ -41,16 +41,14 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 	if facts == nil || facts.ReleaseID == uuid.Nil || facts.RequestedGeneration <= 0 {
 		return fmt.Errorf("reconcile publication: reconciliation context is incomplete")
 	}
-	if facts.HasCurrentPublication {
-		return fmt.Errorf("reconcile publication: an existing publication defers automatic admission until reconciliation revalidates it")
-	}
 	if facts.HasActiveAttempt {
 		return fmt.Errorf("reconcile publication: a publication attempt is retained")
 	}
-	if service.coverAcquisition != nil {
-		if err := service.coverAcquisition.Ensure(ctx, facts.ReleaseID); err != nil {
-			return fmt.Errorf("acquire release cover before first publication: %w", err)
+	if facts.HasCurrentPublication {
+		if _, err := service.admitAutomaticAudioUpgrade(ctx, facts.ReleaseID, guard.PositionID, guard); err != nil {
+			return fmt.Errorf("admit automatic audio upgrade: %w", err)
 		}
+		return nil
 	}
 
 	contextReader, ok := service.repository.(firstPublicationContextReader)
@@ -69,10 +67,18 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 		return fmt.Errorf("reconcile publication: first publication context changed")
 	}
 	if snapshot.Library.Current != nil {
-		return fmt.Errorf("reconcile publication: an existing publication defers automatic admission until reconciliation revalidates it")
+		if _, err := service.admitAutomaticAudioUpgrade(ctx, facts.ReleaseID, guard.PositionID, guard); err != nil {
+			return fmt.Errorf("admit automatic audio upgrade: %w", err)
+		}
+		return nil
 	}
 	if snapshot.Library.ActiveAttempt != nil {
 		return fmt.Errorf("reconcile publication: a publication attempt is retained")
+	}
+	if service.coverAcquisition != nil {
+		if err := service.coverAcquisition.Ensure(ctx, facts.ReleaseID); err != nil {
+			return fmt.Errorf("acquire release cover before first publication: %w", err)
+		}
 	}
 
 	runtimeSettings, err := planningSettings.ReadPublicationPlanningSettings(ctx)
