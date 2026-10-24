@@ -103,8 +103,8 @@ func Thumbnail(ctx context.Context, inputPath, outputPath string) (err error) {
 		return err
 	}
 
-	// Stage beside the destination, then atomically link into place so an existing
-	// destination is never replaced, including in the presence of concurrent calls.
+	// Stage beside the destination, then copy into an exclusively created private
+	// output. Do not require hard-link support from the publication filesystem.
 	if _, err := os.Lstat(outputPath); err == nil {
 		return fmt.Errorf("thumbnail output already exists")
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -151,10 +151,19 @@ func Thumbnail(ctx context.Context, inputPath, outputPath string) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.Link(stagedPath, outputPath); err != nil {
-		return fmt.Errorf("publish thumbnail without replacing existing output: %w", err)
+	output, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create thumbnail without replacing existing output: %w", err)
 	}
 	published = true
+	encoded, err := os.Open(stagedPath)
+	if err != nil {
+		return errors.Join(fmt.Errorf("open staged thumbnail: %w", err), output.Close())
+	}
+	_, copyErr = io.Copy(output, thumbnailContextReader{ctx: ctx, reader: encoded})
+	if err := errors.Join(copyErr, encoded.Close(), output.Close(), ctx.Err()); err != nil {
+		return fmt.Errorf("copy private thumbnail: %w", err)
+	}
 	return nil
 }
 
