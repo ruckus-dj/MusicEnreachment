@@ -216,6 +216,10 @@ not a promise of a hard RSS ceiling. Keep original and embedded hashes distinct.
 - Apply the artwork size limit to new source ingestion, not generic CURRENT
   inspection. Legacy embedded artwork must remain observable for preservation
   and optional-failure restoration even when it exceeds the new input limit.
+- Verify notice filenames against each pinned native source archive; do not
+  assume `COPYING`. libvips 8.18.7 uses `LICENSE`, and libtiff 4.7.1 uses
+  `LICENSE.md`. A successful dependency compilation followed by failed notice
+  staging is still a failed Windows gate, not a validated platform.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 

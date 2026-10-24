@@ -71,7 +71,7 @@ meson setup vips-build vips-8.18.7 --prefix="$prefix" \
   -Dpoppler=disabled -Dppm=false -Danalyze=false -Dradiance=false
 meson compile -C vips-build
 meson install -C vips-build
-cp vips-8.18.7/COPYING "$prefix/share/native-sources/COPYING-libvips"
+cp vips-8.18.7/LICENSE "$prefix/share/native-sources/LICENSE-libvips"
 
 pkgconfig="$prefix/lib/pkgconfig"
 windows_prefix="$(cygpath -m "$prefix")"
