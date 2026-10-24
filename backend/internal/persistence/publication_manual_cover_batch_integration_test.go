@@ -35,7 +35,7 @@ func (inserter *coverBatchInserter) InsertTx(ctx context.Context, tx *sql.Tx, ar
 }
 
 func TestReleaseCoverBatchAdmissionAtomicFanoutPostgreSQL(t *testing.T) {
-	for _, scenario := range []string{"success", "second_insert_failure", "busy", "retry_pending"} {
+	for _, scenario := range []string{"success", "second_insert_failure", "busy", "retry_pending", "retry_automatic"} {
 		t.Run(scenario, func(t *testing.T) {
 			db := testpostgres.OpenMigrated(t)
 			ctx := context.Background()
@@ -112,13 +112,18 @@ func TestReleaseCoverBatchAdmissionAtomicFanoutPostgreSQL(t *testing.T) {
 				t.Fatal(err)
 			}
 			var batch ReleaseCoverBatchAdmission
-			if scenario == "retry_pending" {
+			if scenario == "retry_pending" || scenario == "retry_automatic" {
 				selected, selectErr := library.ApplyPendingReleaseCover(ctx, releaseID, pending.Revision, pendingGeneration)
 				if selectErr != nil {
 					t.Fatal(selectErr)
 				}
-				pending, err = library.SetPendingReleaseCover(ctx, releaseID, selected.Revision, uuid.New(), publicationAdmissionPNG(t), "image/png")
-				if err != nil {
+				pending = selected
+				if scenario == "retry_pending" {
+					pending, err = library.SetPendingReleaseCover(ctx, releaseID, selected.Revision, uuid.New(), publicationAdmissionPNG(t), "image/png")
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else if _, err := db.ExecContext(ctx, `UPDATE release_publication_cover SET mode='automatic' WHERE release_id=?`, releaseID); err != nil {
 					t.Fatal(err)
 				}
 				batch, err = repository.AdmitReleaseCoverRetry(ctx, ReleaseCoverRetryAdmission{ReleaseID: releaseID, ExpectedEpoch: epoch, ExpectedRevision: pending.Revision, ExpectedSelectedGeneration: pendingGeneration, Tools: tools}, inserter)
@@ -145,7 +150,7 @@ func TestReleaseCoverBatchAdmissionAtomicFanoutPostgreSQL(t *testing.T) {
 			if err != nil || len(batch.Operations) != 2 || afterJobs-beforeJobs != 2 {
 				t.Fatalf("batch fanout=%+v jobs=%d->%d err=%v", batch, beforeJobs, afterJobs, err)
 			}
-			if scenario == "retry_pending" && !sameOptionalUUID(current.PendingGeneration, pending.PendingGeneration) {
+			if (scenario == "retry_pending" || scenario == "retry_automatic") && !sameOptionalUUID(current.PendingGeneration, pending.PendingGeneration) {
 				t.Fatal("retry consumed unrelated pending image")
 			}
 			for _, operation := range batch.Operations {
@@ -154,7 +159,11 @@ func TestReleaseCoverBatchAdmissionAtomicFanoutPostgreSQL(t *testing.T) {
 					t.Fatalf("invalid admitted position: %+v, %v", operation, err)
 				}
 				input, err := DecodePublicationInputs(attempt.FrozenInputs)
-				if err != nil || input.ManualCover == nil || input.ManualCover.SelectedGeneration != pendingGeneration || input.Audio != nil {
+				wantMode := "manual"
+				if scenario == "retry_automatic" {
+					wantMode = "automatic"
+				}
+				if err != nil || input.ManualCover == nil || input.ManualCover.SelectedGeneration != pendingGeneration || input.ManualCover.EffectiveAuthorityMode() != wantMode || input.Audio != nil {
 					t.Fatalf("invalid frozen cover input: %+v, %v", input, err)
 				}
 				receipt, err := scanPublicationAttemptCoverInput(ctx, db, operation.OperationID)

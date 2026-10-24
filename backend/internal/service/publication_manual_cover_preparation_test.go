@@ -78,7 +78,11 @@ func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) 
 		t.Fatalf("stale frozen tags error/calls = %v/%d, want pre-write rejection", err, guardWriter.calls)
 	}
 	output := filepath.Join(t.TempDir(), "candidate.flac")
-	prepared, err := (PublicationSimplePreparation{Commands: simplePreparationUnexpectedCommand{}, Metadata: metadata.Writer{}, MetadataReader: metadata.Reader{}, Validator: manualCoverObservationValidator{}, CoverInput: coverInput}).Prepare(ctx, input, inputPath, filepath.Join(t.TempDir(), "temporary"), output)
+	automaticInput := input.Clone()
+	automaticInput.ManualCover.AuthorityMode = "automatic"
+	automaticReceipt := *coverInput
+	automaticReceipt.Mode = "automatic"
+	prepared, err := (PublicationSimplePreparation{Commands: simplePreparationUnexpectedCommand{}, Metadata: metadata.Writer{}, MetadataReader: metadata.Reader{}, Validator: manualCoverObservationValidator{}, CoverInput: &automaticReceipt}).Prepare(ctx, automaticInput, inputPath, filepath.Join(t.TempDir(), "temporary"), output)
 	if err != nil {
 		t.Fatal(err)
 	}

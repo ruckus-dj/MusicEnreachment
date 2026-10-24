@@ -85,7 +85,7 @@ func (repository *SetupManagerRepository) admitReleaseCoverBatch(ctx context.Con
 		if err != nil {
 			return err
 		}
-		if cover.Revision != revision || cover.Mode != "manual" {
+		if cover.Revision != revision || (!retry && cover.Mode != "manual") {
 			return ErrReleaseCoverConflict
 		}
 		if retry {
@@ -124,7 +124,7 @@ func (repository *SetupManagerRepository) admitReleaseCoverBatch(ctx context.Con
 			}
 			input := PublicationInputs{Version: PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "rewrite", Format: publication.AudioFormatSource,
 				Rewrite:     &PublicationRewriteInput{CurrentGeneration: current.Generation, RelativePath: current.RelativePath, Ownership: ownership.Identity, AudioFacts: audio.Facts},
-				ManualCover: &PublicationManualCoverInput{ReleaseID: releaseID, AuthorityRevision: cover.Revision, SelectedGeneration: generation}, DesiredTags: metadata.Tags, Tools: tools}
+				ManualCover: &PublicationManualCoverInput{ReleaseID: releaseID, AuthorityRevision: cover.Revision, SelectedGeneration: generation, AuthorityMode: cover.Mode}, DesiredTags: metadata.Tags, Tools: tools}
 			if err := input.Validate(); err != nil {
 				return fmt.Errorf("validate cover rewrite: %w", err)
 			}

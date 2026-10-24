@@ -121,6 +121,29 @@ func TestPublicationProbeFactsSampleRateIsSelectedStreamOptionalExactInteger(t *
 
 func publicationIntPointer(value int) *int { return &value }
 
+func TestPublicationProbeFactsChannelLayoutComesFromSelectedStream(t *testing.T) {
+	for _, test := range []struct {
+		name, streams, want string
+		count, selected     int
+	}{
+		{name: "stereo", streams: `[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2,"channel_layout":"stereo"}]`, count: 1, want: "stereo"},
+		{name: "missing is not inferred", streams: `[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2}]`, count: 1},
+		{name: "null stays unknown", streams: `[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2,"channel_layout":null}]`, count: 1},
+		{name: "selected second stream", streams: `[{"index":0,"codec_type":"audio","codec_name":"flac","channels":6,"channel_layout":"5.1"},{"index":5,"codec_type":"audio","codec_name":"flac","channels":2,"channel_layout":"stereo"}]`, count: 2, selected: 5, want: "stereo"},
+		{name: "selected first stream", streams: `[{"index":0,"codec_type":"audio","codec_name":"flac","channels":6,"channel_layout":"5.1"},{"index":5,"codec_type":"audio","codec_name":"flac","channels":2,"channel_layout":"stereo"}]`, count: 2, want: "5.1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			probe := publicationProbeFixture("flac", "matroska,webm", "16", "16")
+			probe.AudioStreamCount = publicationIntPointer(test.count)
+			probe.FFProbeJSON = json.RawMessage(`{"format":{"format_name":"matroska,webm"},"streams":` + test.streams + `}`)
+			facts, err := publicationAudioFactsFromProbe(probe, test.selected)
+			if err != nil || facts.ChannelLayout != test.want {
+				t.Fatalf("selected layout = %q, want %q; err=%v", facts.ChannelLayout, test.want, err)
+			}
+		})
+	}
+}
+
 func publicationProbeFixture(codec, format, rawBits, bits string) SourceMediaVariant {
 	policyVersion := 1
 	ffprobeVersion := "ffprobe version test"

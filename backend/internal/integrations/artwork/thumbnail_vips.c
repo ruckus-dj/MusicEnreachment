@@ -11,6 +11,7 @@
 
 int artwork_vips_thumbnail(const char *input_path, const char *output_path, char *error, size_t error_size) {
 	int output_fd = -1;
+	int close_result;
 	VipsTarget *target = NULL;
 	VipsImage *thumbnail = NULL;
 	int result = -1;
@@ -22,12 +23,16 @@ int artwork_vips_thumbnail(const char *input_path, const char *output_path, char
 		goto done;
 	}
 	target = vips_target_new_to_descriptor(output_fd);
-	if (target == NULL) {
-		g_close(output_fd, NULL);
-		output_fd = -1;
+	/* The descriptor target duplicates this descriptor during construction. */
+	close_result = g_close(output_fd, NULL);
+	output_fd = -1;
+	if (close_result != TRUE) {
+		vips_error("artwork", "unable to close staged output file descriptor");
 		goto done;
 	}
-	output_fd = -1; /* target owns the descriptor */
+	if (target == NULL) {
+		goto done;
+	}
 
 	if (vips_thumbnail(input_path, &thumbnail, 2048,
 		"height", 2048,

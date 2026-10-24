@@ -245,7 +245,7 @@ func manualCoverResultCurrent(ctx context.Context, tx bun.Tx, positionID uuid.UU
 }
 
 func manualCoverAuthorityMatches(mode string, selected *uuid.UUID, frozen PublicationManualCoverInput) bool {
-	return mode == "manual" && selected != nil && *selected == frozen.SelectedGeneration
+	return mode == frozen.EffectiveAuthorityMode() && selected != nil && *selected == frozen.SelectedGeneration
 }
 
 func carryManualLyricsReceiptForCoverRewriteTx(ctx context.Context, tx bun.Tx, attempt *TrackPublicationAttempt, previous, candidate TrackPublication, candidateAssets PublicationAssetOutcomes) error {

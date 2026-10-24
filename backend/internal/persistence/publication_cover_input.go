@@ -146,14 +146,14 @@ func (repository *SetupManagerRepository) PublicationAttemptCoverInputForDeliver
 			return errors.New("publication attempt cover input is inconsistent")
 		}
 		if manual := input.ManualCover; manual != nil {
-			if result.State != "value" || result.Mode != "manual" || result.ReleaseID != manual.ReleaseID || result.Revision != manual.AuthorityRevision || result.Generation == nil || *result.Generation != manual.SelectedGeneration {
+			if result.State != "value" || result.Mode != manual.EffectiveAuthorityMode() || result.ReleaseID != manual.ReleaseID || result.Revision != manual.AuthorityRevision || result.Generation == nil || *result.Generation != manual.SelectedGeneration {
 				return errors.New("manual cover receipt conflicts with frozen authority")
 			}
 			cover, err := readReleaseCover(ctx, tx, manual.ReleaseID)
 			if err != nil {
 				return err
 			}
-			if cover.Mode != "manual" || cover.SelectedGeneration == nil || *cover.SelectedGeneration != manual.SelectedGeneration {
+			if cover.Mode != manual.EffectiveAuthorityMode() || cover.SelectedGeneration == nil || *cover.SelectedGeneration != manual.SelectedGeneration {
 				return ErrReleaseCoverConflict
 			}
 		}

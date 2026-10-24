@@ -299,7 +299,7 @@ func (preparation PublicationSimplePreparation) Prepare(
 	var firstAudioCoverExpected *persistence.PublicationCoverOutcome
 	if (input.Audio != nil || input.ManualCover != nil) && preparation.CoverInput != nil && preparation.CoverInput.State == "value" {
 		receipt := preparation.CoverInput
-		if input.ManualCover != nil && (receipt.ReleaseID != input.ManualCover.ReleaseID || receipt.Revision != input.ManualCover.AuthorityRevision || receipt.Mode != "manual" || receipt.Generation == nil || *receipt.Generation != input.ManualCover.SelectedGeneration) {
+		if input.ManualCover != nil && (receipt.ReleaseID != input.ManualCover.ReleaseID || receipt.Revision != input.ManualCover.AuthorityRevision || receipt.Mode != input.ManualCover.EffectiveAuthorityMode() || receipt.Generation == nil || *receipt.Generation != input.ManualCover.SelectedGeneration) {
 			return PublicationSimplePreparationResult{}, errors.New("manual cover receipt does not match frozen release authority")
 		}
 		var baselineCapture metadata.Capture

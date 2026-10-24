@@ -45,6 +45,16 @@ type PublicationManualCoverInput struct {
 	ReleaseID          uuid.UUID `json:"release_id"`
 	AuthorityRevision  int64     `json:"authority_revision"`
 	SelectedGeneration uuid.UUID `json:"selected_generation"`
+	AuthorityMode      string    `json:"authority_mode,omitempty"`
+}
+
+// EffectiveAuthorityMode preserves the legacy manual-cover interpretation for
+// frozen inputs written before authority_mode was included.
+func (input PublicationManualCoverInput) EffectiveAuthorityMode() string {
+	if input.AuthorityMode == "" {
+		return "manual"
+	}
+	return input.AuthorityMode
 }
 
 // PublicationInitialLyricsInput freezes the position's synced-lyrics authority
@@ -210,7 +220,8 @@ func (input PublicationInputs) Validate() error {
 	}
 	if input.ManualCover != nil {
 		if input.IntentKind != "rewrite" || input.Rewrite == nil || input.Audio != nil || input.ManualLyrics != nil || input.AutomaticLyricsRetry != nil || input.InitialLyrics != nil ||
-			input.ManualCover.ReleaseID == uuid.Nil || input.ManualCover.AuthorityRevision < 1 || input.ManualCover.SelectedGeneration == uuid.Nil || input.Format != publication.AudioFormatSource {
+			input.ManualCover.ReleaseID == uuid.Nil || input.ManualCover.AuthorityRevision < 1 || input.ManualCover.SelectedGeneration == uuid.Nil || input.Format != publication.AudioFormatSource ||
+			(input.ManualCover.AuthorityMode != "" && input.ManualCover.AuthorityMode != "manual" && input.ManualCover.AuthorityMode != "automatic") {
 			return errors.New("manual cover requires an exclusive source-free rewrite and valid release authority")
 		}
 	}
@@ -418,6 +429,10 @@ func (input PublicationInputs) Clone() PublicationInputs {
 	if input.ManualLyrics != nil {
 		manual := *input.ManualLyrics
 		clone.ManualLyrics = &manual
+	}
+	if input.ManualCover != nil {
+		cover := *input.ManualCover
+		clone.ManualCover = &cover
 	}
 	if input.InitialLyrics != nil {
 		initial := *input.InitialLyrics

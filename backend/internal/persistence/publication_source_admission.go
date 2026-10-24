@@ -148,6 +148,7 @@ type publicationFFProbeDocument struct {
 		CodecType     string          `json:"codec_type"`
 		CodecName     string          `json:"codec_name"`
 		Channels      json.Number     `json:"channels"`
+		ChannelLayout string          `json:"channel_layout"`
 		Bitrate       json.Number     `json:"bit_rate"`
 		RawSampleBits json.Number     `json:"bits_per_raw_sample"`
 		SampleBits    json.Number     `json:"bits_per_sample"`
@@ -170,13 +171,7 @@ func publicationAudioFactsFromProbe(probe SourceMediaVariant, selectedIndex int)
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return PersistedAudioFacts{}, fmt.Errorf("ffprobe JSON has trailing data")
 	}
-	var selected *struct {
-		Index                                        json.Number
-		CodecType, CodecName                         string
-		Channels, Bitrate, RawSampleBits, SampleBits json.Number
-		SampleFormat                                 string
-		SampleRate                                   json.RawMessage
-	}
+	selectedStream := -1
 	seen := make(map[int]bool)
 	audioCount := 0
 	for i := range document.Streams {
@@ -193,31 +188,26 @@ func publicationAudioFactsFromProbe(probe SourceMediaVariant, selectedIndex int)
 			audioCount++
 		}
 		if stream.CodecType == "audio" && int(index) == selectedIndex {
-			if selected != nil {
+			if selectedStream >= 0 {
 				return PersistedAudioFacts{}, fmt.Errorf("ffprobe result has ambiguous selected audio stream")
 			}
-			selected = &struct {
-				Index                                        json.Number
-				CodecType, CodecName                         string
-				Channels, Bitrate, RawSampleBits, SampleBits json.Number
-				SampleFormat                                 string
-				SampleRate                                   json.RawMessage
-			}{stream.Index, stream.CodecType, stream.CodecName, stream.Channels, stream.Bitrate, stream.RawSampleBits, stream.SampleBits, stream.SampleFormat, stream.SampleRate}
+			selectedStream = i
 		}
 	}
 	if audioCount != *probe.AudioStreamCount {
 		return PersistedAudioFacts{}, fmt.Errorf("ffprobe audio stream count does not match persisted result")
 	}
-	if selected == nil {
+	if selectedStream < 0 {
 		return PersistedAudioFacts{}, fmt.Errorf("ffprobe result has no unique selected audio stream")
 	}
+	selected := &document.Streams[selectedStream]
 	index, _ := strictProbeNumber(selected.Index)
 	codec := strings.ToLower(strings.TrimSpace(selected.CodecName))
 	lossless, ok := publicationCodecLossless(codec, selected.SampleFormat)
 	if !ok {
 		return PersistedAudioFacts{}, fmt.Errorf("ffprobe codec losslessness is ambiguous")
 	}
-	facts := PersistedAudioFacts{StreamIndex: int(index), Codec: codec, Lossless: &lossless}
+	facts := PersistedAudioFacts{StreamIndex: int(index), Codec: codec, Lossless: &lossless, ChannelLayout: selected.ChannelLayout}
 	facts.SampleRate = publicationProbeSampleRate(selected.SampleRate)
 	if n, ok := strictProbeNumber(selected.Channels); ok && n > 0 && n <= int64(^uint(0)>>1) {
 		v := int(n)

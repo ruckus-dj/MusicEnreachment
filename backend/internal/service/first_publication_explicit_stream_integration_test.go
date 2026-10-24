@@ -30,13 +30,13 @@ func TestFirstPublicationExplicitAudioStreamAdmissionPostgreSQL(t *testing.T) {
 		if err := db.NewRaw(`SELECT sl.id,mv.id FROM track_source ts JOIN media_variant mv ON mv.id=ts.media_variant_id JOIN source_location sl ON sl.media_variant_id=mv.id WHERE ts.track_id=?`, trackID).Scan(ctx, &locationID, &variantID); err != nil {
 			t.Fatal(err)
 		}
-		probe := `{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"video","codec_name":"mjpeg"},{"index":2,"codec_type":"audio","codec_name":"flac","channels":2},{"index":5,"codec_type":"audio","codec_name":"flac","channels":2,"sample_rate":"96000"}]}`
+		probe := `{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"video","codec_name":"mjpeg"},{"index":2,"codec_type":"audio","codec_name":"flac","channels":6,"channel_layout":"5.1"},{"index":5,"codec_type":"audio","codec_name":"flac","channels":2,"channel_layout":"stereo","sample_rate":"96000"}]}`
 		if _, err := db.ExecContext(ctx, `UPDATE media_variant SET ffprobe_json=?::jsonb,audio_stream_count=2 WHERE id=?`, probe, variantID); err != nil {
 			t.Fatal(err)
 		}
 		choice := &FirstPublicationSourceChoice{LocationID: locationID, MediaVariantID: variantID, StreamIndex: 5}
 		preview, err := publications.PreviewFirstSelected(ctx, releaseID, positionID, choice)
-		if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil || preview.SelectedSource.StreamIndex != 5 {
+		if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil || preview.SelectedSource.StreamIndex != 5 || preview.SelectedSource.Quality.ChannelLayout != "stereo" {
 			t.Fatalf("selected preview = %+v, %v", preview, err)
 		}
 		// A different stream's confirmation digest must fail before any durable
@@ -67,12 +67,65 @@ func TestFirstPublicationExplicitAudioStreamAdmissionPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if inputs.Audio == nil || inputs.Audio.LocationID != locationID || inputs.Audio.MediaVariantID != variantID || inputs.Audio.AudioFacts.StreamIndex != 5 || inputs.Audio.AudioFacts.SampleRate == nil || *inputs.Audio.AudioFacts.SampleRate != 96000 || inputs.SourceAuthorityMode != "manual" {
+		if inputs.Audio == nil || inputs.Audio.LocationID != locationID || inputs.Audio.MediaVariantID != variantID || inputs.Audio.AudioFacts.StreamIndex != 5 || inputs.Audio.AudioFacts.ChannelLayout != "stereo" || inputs.Audio.AudioFacts.SampleRate == nil || *inputs.Audio.AudioFacts.SampleRate != 96000 || inputs.SourceAuthorityMode != "manual" {
 			t.Fatalf("frozen selected stream = %+v", inputs.Audio)
 		}
 	})
 	if !ran {
 		t.Fatal("explicit stream admission fixture callback did not run")
+	}
+}
+
+func TestFirstPublicationAdmitsSingleStreamMatroskaFLACStereoPostgreSQL(t *testing.T) {
+	ran := false
+	testPublicationSourceExecution(t, "Track.flac", true, false, func(db *bun.DB, releaseID, positionID, trackID, epoch uuid.UUID, publications *LibraryPublications) {
+		ran = true
+		ctx := context.Background()
+		var locationID, variantID uuid.UUID
+		if err := db.NewRaw(`SELECT sl.id,mv.id FROM track_source ts JOIN media_variant mv ON mv.id=ts.media_variant_id JOIN source_location sl ON sl.media_variant_id=mv.id WHERE ts.track_id=?`, trackID).Scan(ctx, &locationID, &variantID); err != nil {
+			t.Fatal(err)
+		}
+		probe := `{"format":{"format_name":"matroska,webm"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2,"channel_layout":"stereo","sample_rate":"44100"}]}`
+		result, err := db.ExecContext(ctx, `UPDATE media_variant SET ffprobe_json=?::jsonb,audio_stream_count=1 WHERE id=?`, probe, variantID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count, err := result.RowsAffected(); err != nil || count != 1 {
+			t.Fatalf("update probe row count = %d, %v", count, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE track_source SET selected=false WHERE track_id=? AND media_variant_id=? AND decision_method='manual'`, trackID, variantID); err != nil {
+			t.Fatal(err)
+		}
+		choice := &FirstPublicationSourceChoice{LocationID: locationID, MediaVariantID: variantID, StreamIndex: 0}
+		preview, err := publications.PreviewFirstSelected(ctx, releaseID, positionID, choice)
+		if err != nil || len(preview.Blockers) != 0 || preview.SelectedSource == nil || preview.SelectedSource.StreamIndex != 0 || preview.SelectedSource.Quality.ChannelLayout != "stereo" {
+			t.Fatalf("single-stream Matroska FLAC preview = %+v, %v", preview, err)
+		}
+		if preview.SelectedSource.Selected || preview.SelectedSource.RequiresExplicitStreamSelection || preview.SelectedSource.AudioStreamCount != 1 {
+			t.Fatalf("single-stream explicit source choice changed association or stream semantics: %+v", preview.SelectedSource)
+		}
+		id, err := publications.AdmitFirst(ctx, releaseID, positionID, FirstPublicationConfirmation{PreviewDigest: preview.ContextDigest, ExpectedEpoch: epoch, SourceChoice: choice})
+		if err != nil {
+			t.Fatalf("admit single-stream Matroska FLAC: %v", err)
+		}
+		attempt, err := persistence.NewSetupManagerRepository(db).ReadPublicationAttempt(ctx, id)
+		if err != nil || attempt == nil {
+			t.Fatalf("read admitted attempt = %+v, %v", attempt, err)
+		}
+		inputs, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inputs.Audio == nil || inputs.Audio.AudioFacts.StreamIndex != 0 || inputs.Audio.AudioFacts.ChannelLayout != "stereo" || inputs.SourceAuthorityMode != "manual" {
+			t.Fatalf("frozen explicit stereo audio facts = %+v, authority=%q", inputs.Audio, inputs.SourceAuthorityMode)
+		}
+		jobs, operations, _ := integrationPublicationArtifacts(t, db)
+		if jobs == 0 || operations == 0 {
+			t.Fatalf("admission artifacts missing: jobs=%d operations=%d", jobs, operations)
+		}
+	})
+	if !ran {
+		t.Fatal("single-stream Matroska FLAC admission fixture callback did not run")
 	}
 }
 

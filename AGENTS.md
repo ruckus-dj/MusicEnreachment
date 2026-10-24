@@ -97,6 +97,9 @@ the upstream all-codecs SDK or copy unrelated codec DLLs into build output.
 Artwork headers enforce 10000 pixels per side; publication uses a libvips
 derivative fitting 2048×2048. Native decoder buffers are explicitly permitted,
 not a promise of a hard RSS ceiling. Keep original and embedded hashes distinct.
+`vips_target_new_to_descriptor` duplicates the supplied C descriptor: close the
+original after construction, then unref the target to close its duplicate.
+Otherwise Unix can hide the leak while Windows cannot remove staged PNG files.
 
 **Migrations**: Bun with embedded `//go:embed *.sql`, versioned .tx.up/.down pairs, applied at server startup before River and HTTP.
 

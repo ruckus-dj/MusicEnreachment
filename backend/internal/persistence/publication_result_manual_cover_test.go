@@ -25,6 +25,22 @@ func TestManualCoverAuthorityUsesSelectedGenerationNotRevision(t *testing.T) {
 	}
 }
 
+func TestManualCoverAuthorityModeIsFrozen(t *testing.T) {
+	selected := uuid.New()
+	manual := PublicationManualCoverInput{SelectedGeneration: selected, AuthorityMode: "manual"}
+	automatic := PublicationManualCoverInput{SelectedGeneration: selected, AuthorityMode: "automatic"}
+	legacy := PublicationManualCoverInput{SelectedGeneration: selected}
+	if !manualCoverAuthorityMatches("manual", &selected, legacy) || !manualCoverAuthorityMatches("manual", &selected, manual) {
+		t.Fatal("manual and legacy frozen authority should match manual mode")
+	}
+	if !manualCoverAuthorityMatches("automatic", &selected, automatic) {
+		t.Fatal("automatic frozen authority should match automatic mode")
+	}
+	if manualCoverAuthorityMatches("automatic", &selected, manual) || manualCoverAuthorityMatches("manual", &selected, automatic) {
+		t.Fatal("cover retry must reject a stale authority-mode switch")
+	}
+}
+
 func TestManualLyricsReceiptCarryRequiresCurrentPublishedReceipt(t *testing.T) {
 	epoch, previousGeneration, candidateGeneration := uuid.New(), uuid.New(), uuid.New()
 	previous := TrackPublication{Epoch: epoch, Generation: previousGeneration}
