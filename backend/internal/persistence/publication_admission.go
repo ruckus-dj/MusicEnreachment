@@ -456,6 +456,18 @@ func reservePublicationNamespace(ctx context.Context, tx bun.Tx, request Publica
 				return fmt.Errorf("admit publication: namespace digest collision")
 			}
 			if old.CanonicalKey == n.CanonicalKey {
+				if n.NodeKind == "file" {
+					var cleanupOwned bool
+					if err := tx.NewRaw(`SELECT EXISTS (
+							SELECT 1 FROM obsolete_publication_output_cleanup
+							WHERE namespace_claim_id=?
+						)`, old.ID).Scan(ctx, &cleanupOwned); err != nil {
+						return fmt.Errorf("admit publication: inspect obsolete output cleanup authority: %w", err)
+					}
+					if cleanupOwned {
+						return fmt.Errorf("admit publication: namespace is owned by obsolete output cleanup: %w", ErrPublicationAdmissionConflict)
+					}
+				}
 				if n.NodeKind == "dir" && old.NodeKind == "dir" && old.DirectoryScopeKey != nil && *old.DirectoryScopeKey == n.DirectoryScope {
 					reusable = &old
 					continue

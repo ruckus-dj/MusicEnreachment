@@ -531,6 +531,25 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	if _, err := tx.ExecContext(ctx, `DELETE FROM track_publication`); err != nil {
 		return fmt.Errorf("clear current track publications: %w", err)
 	}
+	// These records authorize deletion of old physical outputs. Reset must
+	// revoke that authority before releasing the namespace claims it references.
+	if _, err := tx.ExecContext(ctx, `UPDATE river_job job SET state='cancelled',finalized_at=now()
+		FROM obsolete_publication_output_cleanup cleanup
+		JOIN operation operation ON operation.id=cleanup.operation_id
+		WHERE job.id=operation.river_job_id
+		AND operation.kind='obsolete_publication_output_cleanup_v1'
+		AND operation.state IN ('queued','running','failed')
+		AND job.state IN ('available','pending','retryable','scheduled','running')`); err != nil {
+		return fmt.Errorf("cancel obsolete publication output cleanup deliveries: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE operation SET state='failed',stage='finished',safe_error=$1,finished_at=now(),updated_at=now()
+		WHERE kind='obsolete_publication_output_cleanup_v1' AND state IN ('queued','running','failed')
+		AND id IN (SELECT operation_id FROM obsolete_publication_output_cleanup)`, outputResetSafeError); err != nil {
+		return fmt.Errorf("fail obsolete publication output cleanup operations: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM obsolete_publication_output_cleanup`); err != nil {
+		return fmt.Errorf("revoke obsolete publication output cleanup authority: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM publication_namespace_reservation`); err != nil {
 		return fmt.Errorf("clear publication namespace reservations: %w", err)
 	}

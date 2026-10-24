@@ -99,6 +99,43 @@ type PublicationNamespaceReservation struct {
 	Generation       uuid.UUID `bun:"generation,pk,type:uuid"`
 }
 
+// ObsoletePublicationOutputCleanup is live authority for removing one exact
+// superseded output. It is deleted when settled; it is not a cleanup history.
+type ObsoletePublicationOutputCleanup struct {
+	bun.BaseModel      `bun:"table:obsolete_publication_output_cleanup"`
+	OperationID        uuid.UUID       `bun:"operation_id,pk,type:uuid"`
+	Epoch              uuid.UUID       `bun:"epoch,type:uuid"`
+	PositionID         uuid.UUID       `bun:"position_id,type:uuid"`
+	Generation         uuid.UUID       `bun:"generation,type:uuid"`
+	RelativePath       string          `bun:"relative_path"`
+	NativePath         string          `bun:"native_path"`
+	OutputRootIdentity json.RawMessage `bun:"output_root_identity,type:jsonb"`
+	ParentIdentity     json.RawMessage `bun:"parent_identity,type:jsonb"`
+	NamespaceClaimID   uuid.UUID       `bun:"namespace_claim_id,type:uuid"`
+	FileSize           int64           `bun:"file_size"`
+	ModifiedAt         time.Time       `bun:"modified_at"`
+	SHA256             []byte          `bun:"sha256"`
+	State              string          `bun:"state"`
+	SafeError          *string         `bun:"safe_error,nullzero"`
+}
+
+// ObsoletePublicationOutputCleanupAdmission is the caller-frozen authority for
+// one output from a superseded publication. The caller supplies native identity
+// evidence only after validating it against the actual filesystem observation.
+type ObsoletePublicationOutputCleanupAdmission struct {
+	Epoch              uuid.UUID
+	PositionID         uuid.UUID
+	Generation         uuid.UUID
+	RelativePath       string
+	NativePath         string
+	OutputRootIdentity PublicationDirectoryIdentity
+	ParentIdentity     PublicationDirectoryIdentity
+	NamespaceClaimID   uuid.UUID
+	FileSize           int64
+	ModifiedAt         time.Time
+	SHA256             []byte
+}
+
 // SourceCleanupItem is a live cleanup decision, not a historical source log.
 type SourceCleanupItem struct {
 	bun.BaseModel         `bun:"table:source_cleanup_item"`

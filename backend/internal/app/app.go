@@ -262,6 +262,8 @@ func Run(ctx context.Context, config Config) error {
 		publicationCoordinator, publicationBootUUID, publicationCommands,
 	)
 	publicationWorker := jobs.NewPublicationWorker(publicationExecutor)
+	obsoleteOutputCleanupRunner := service.NewObsoletePublicationOutputCleanupRunner(setupManagerRepository, registry, publicationCoordinator, nil)
+	obsoleteOutputCleanupWorker := jobs.NewObsoletePublicationOutputCleanupWorker(obsoleteOutputCleanupRunner)
 	publicationReconciliationWorker := jobs.NewPublicationReconciliationWorker(setupManagerRepository, libraryPublications, operationService)
 	publicationReconciliationDispatcher := publicationReconciliationDispatcher{repository: setupManagerRepository, river: riverSlot}
 	publicationReconciliationDispatchWorker := jobs.NewPublicationReconciliationDispatchWorker(publicationReconciliationDispatcher)
@@ -320,6 +322,7 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, matchingEvaluationWorker)
 		river.AddWorker(workers, matchingApplyWorker)
 		river.AddWorker(workers, publicationWorker)
+		river.AddWorker(workers, obsoleteOutputCleanupWorker)
 		river.AddWorker(workers, publicationReconciliationWorker)
 		river.AddWorker(workers, publicationReconciliationDispatchWorker)
 		river.AddWorker(workers, publicationSourceCleanupDispatchWorker)

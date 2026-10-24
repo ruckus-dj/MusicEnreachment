@@ -4,9 +4,13 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -49,6 +53,27 @@ func TestOutputResetClearsOnlyPublicationNamespaceStatePostgreSQL(t *testing.T) 
 	if _, err := db.ExecContext(ctx, `INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?, ?, ?)`, claimID, position, generation); err != nil {
 		t.Fatal(err)
 	}
+	obsoleteClaim, obsoleteGeneration := uuid.New(), uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id)
+		VALUES (?,?,decode(repeat('cd',32),'hex'),'obsolete.flac','obsolete.flac','file',?)`, obsoleteClaim, epoch, position).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewInsert().Model(&PublicationNamespaceReservation{NamespaceClaimID: obsoleteClaim, PositionID: position, Generation: obsoleteGeneration}).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte("old output"))
+	var cleanupOperation *Operation
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		cleanupOperation, err = repository.AdmitObsoletePublicationOutputCleanupTx(ctx, tx, ObsoletePublicationOutputCleanupAdmission{
+			Epoch: epoch, PositionID: position, Generation: obsoleteGeneration, RelativePath: "obsolete.flac", NativePath: filepath.Join(oldRoot, "obsolete.flac"), NamespaceClaimID: obsoleteClaim,
+			OutputRootIdentity: PublicationDirectoryIdentity{Platform: "unix", Volume: "volume", FileID: "root"}, ParentIdentity: PublicationDirectoryIdentity{Platform: "unix", Volume: "volume", FileID: "parent"},
+			FileSize: 10, ModifiedAt: time.Now().UTC(), SHA256: digest[:],
+		}, obsoleteCleanupTestInserter{}, func(id uuid.UUID) river.JobArgs { return ObsoletePublicationOutputCleanupJobArgs{OperationID: id} }, nil)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
 		ExpectedOldRoot: oldRoot, NewRoot: newRoot,
 		Prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil },
@@ -72,6 +97,21 @@ func TestOutputResetClearsOnlyPublicationNamespaceStatePostgreSQL(t *testing.T) 
 	}
 	if publications != 0 || claims != 0 || reservations != 0 || authorities != 0 {
 		t.Fatalf("publication state after reset: publications=%d claims=%d reservations=%d authority=%d", publications, claims, reservations, authorities)
+	}
+	if row, err := repository.ReadObsoletePublicationOutputCleanup(ctx, cleanupOperation.ID); err != nil || row != nil {
+		t.Fatalf("reset retained obsolete cleanup authority: %+v %v", row, err)
+	}
+	var jobState string
+	if err := db.NewRaw(`SELECT state FROM river_job WHERE id=?`, *cleanupOperation.RiverJobID).Scan(ctx, &jobState); err != nil || jobState != "cancelled" {
+		t.Fatalf("obsolete cleanup job after reset=%q %v", jobState, err)
+	}
+	settled, err := repository.GetOperation(ctx, cleanupOperation.ID)
+	if err != nil || settled.State != "failed" || settled.SafeError == nil || settled.FinishedAt == nil {
+		t.Fatalf("obsolete cleanup operation after reset=%+v %v", settled, err)
+	}
+	calls := 0
+	if acquired, err := repository.ExecuteObsoletePublicationOutputCleanup(ctx, cleanupOperation.ID, cleanupOperation.Attempt, *cleanupOperation.RiverJobID, func(context.Context, ObsoletePublicationOutputCleanup) error { calls++; return nil }); err != nil || acquired || calls != 0 {
+		t.Fatalf("reset delivery invoked filesystem: acquired=%t calls=%d err=%v", acquired, calls, err)
 	}
 	var retainedPositions int
 	if err := db.NewRaw(`SELECT count(*) FROM release_track WHERE id=? AND release_id=? AND track_id=?`, position, releaseID, trackID).Scan(ctx, &retainedPositions); err != nil || retainedPositions != 1 {

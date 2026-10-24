@@ -59,10 +59,31 @@ format/audio stream tags, включая lyrics, не изменились. Navi
 отдаёт `getCoverArt` 2048 × 2048 с тем же SHA-256. Это приёмка cover-сценария, а
 не всего плана: исходные MKA содержали только audio без embedded artwork, поэтому
 захват embedded artwork при анализе исходника этим прогоном не доказан. Полный
-`task verify` и hook прошли для `8f9ac36`; CI `40073281723` ещё выполняется, run
-для `8f9ac36` пока без ID. Остаются автоматические обновления качества,
-provider-защищённые теги, wakes, очистка устаревших output и платформенная CI.
+`task verify` и hook прошли для `8f9ac36`. Последующая ревизия `61b481c`
+полностью прошла CI `40078308182`: все пять платформ, verify, Docker smoke и
+публикация контейнера. Остаются автоматические обновления качества,
+provider-защищённые теги, wakes и очистка устаревших output.
 Подробности — [отчёт о приёмке обложки](../../reports/plan12-cover-acceptance-2026-10-24.md).
+
+**2026-10-24, foundation очистки устаревших output:** добавлены схема
+`obsolete_publication_output_cleanup`, транзакционный
+admission только вместе с реальным River insert (в args — лишь ID операции),
+guarded callback под DB-локами operation/authority/namespace, запрет повторного
+использования старого canonical пути при живой cleanup authority, отзыв authority
+и отмена доставок при output reset, а также регистрация service/jobs worker в
+`app.Run`. Это foundation, а не завершённая очистка: `CommitPublicationResult`
+пока не создаёт cleanup authority и не связан с admission, поэтому автоматическое
+удаление прежнего файла не включено; автоматические quality upgrades намеренно
+остаются выключенными. PG-тесты покрывают rollback admission с реальной вставкой
+River job и успешное/отказное терминальное завершение без filesystem-работы при
+stale delivery, а также схему и malformed authority, rebinding, reset и reuse
+старого пути; native-тесты — nested пути, hash, missing leaf, неверный parent и
+ошибку чтения settings из БД. Полный `task verify` прошёл; CI этого foundation
+ещё не подтверждена. Следующий
+шаг — атомарная связка нового CURRENT результата с admission cleanup; без неё
+очистка устаревших output не считается завершённой. Продуктовые решения и
+требования этим не меняются; факты CI `61b481c` выше относятся только к той
+ревизии, а не к незакоммиченному дереву.
 
 **2026-10-24, уточнение владельца — оригинал обложки и derivative:** оригинальные
 bytes обложки сохраняются в анализе/БД без изменений, если каждая сторона
