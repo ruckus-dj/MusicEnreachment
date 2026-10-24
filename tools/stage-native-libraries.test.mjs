@@ -28,7 +28,7 @@ test("stages only reachable DLL closure once, case-insensitively, plus notices/l
   const image = await f.dll(f.bin, "Image.dll");
   await f.dll(f.bin, "unused-gpl-plugin.dll");
   const codec = await f.dll(f.toolchain, "Codec.dll");
-  const deps = new Map([[root, "DLL Name: image.DLL\nDLL Name: KERNEL32.dll\n"], [image, "DLL Name: CODEC.dll\nDLL Name: codec.DLL\n"], [codec, "DLL Name: api-ms-win-core-file-l1-1-0.dll\n"]]);
+  const deps = new Map([[root, "DLL Name: image.DLL\nDLL Name: KERNEL32.dll\n"], [image, "DLL Name: CODEC.dll\nDLL Name: codec.DLL\nDLL Name: urlmon.dll\n"], [codec, "DLL Name: api-ms-win-core-file-l1-1-0.dll\n"]]);
   await stageNativeLibraries(path.dirname(f.bin), f.destination, f.toolchain, { inspectImports: (file) => deps.get(file) });
   const names = (await readdir(f.destination)).sort();
   assert.deepEqual(names, ["Codec.dll", "Image.dll", "libvips-42.dll", "native-sources"]);

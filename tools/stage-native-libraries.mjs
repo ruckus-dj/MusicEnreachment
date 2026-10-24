@@ -99,6 +99,6 @@ const windowsSystemLibraries = new Set([
 	"imm32.dll", "iphlpapi.dll", "kernel32.dll", "msvcrt.dll", "netapi32.dll",
 	"normaliz.dll", "ntdll.dll", "ole32.dll", "oleaut32.dll", "powrprof.dll",
 	"psapi.dll", "rpcrt4.dll", "secur32.dll", "setupapi.dll", "shell32.dll",
-	"shlwapi.dll", "ucrtbase.dll", "user32.dll", "userenv.dll", "usp10.dll",
+	"shlwapi.dll", "ucrtbase.dll", "urlmon.dll", "user32.dll", "userenv.dll", "usp10.dll",
 	"version.dll", "winmm.dll", "winspool.drv", "ws2_32.dll", "wtsapi32.dll",
 ]);
