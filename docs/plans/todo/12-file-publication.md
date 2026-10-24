@@ -54,9 +54,15 @@ namespace conflict не разрешается новым суффиксом. П
 typed admission с реальным River insert, claim, preparation inputs, freshness,
 result commit, source-authority CAS и удаление потреблённого attempt. Проверка
 поддерживаемых платформ в CI для этого среза ещё не выполнена.
-Сквозной retry после filesystem replace и ошибки DB commit, protected provider-tag
-updates и завершение durable wake/no-op/busy обработки остаются непроверенными
-или незавершёнными. Это не приёмка и не завершение плана.
+Добавлена отдельная executor-регрессия same-path retry после фактической native
+замены и ошибки DB commit: старая DB generation/authority и hold сохраняются,
+повторная доставка готовит файл заново, успешный commit освобождает ресурсы,
+completed redelivery не требует ни source, ни output. Сохранение CURRENT lyrics
+и двух изображений проверяется native readback. Codec observations в этом тесте
+задаются transport fixture: это проверка lifecycle, не реального улучшения аудио.
+Real-media upgrade acceptance, protected provider-tag updates и завершение
+durable wake/no-op/busy обработки остаются незавершёнными. Это не приёмка и не
+завершение плана.
 
 **2026-10-24, реальная приёмка применения обложки на ревизии `8f9ac36`:** на
 приватном стенде подтверждён сквозной manual pending cover → release-wide apply →
