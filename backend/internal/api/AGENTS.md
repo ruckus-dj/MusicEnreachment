@@ -23,6 +23,12 @@ HTTP API layer: Huma v2 on chi router via humachi adapter. Health endpoints, mid
 
 **Error responses**: Huma standard error format, service layer provides safe error messages.
 
+**Artwork uploads**: Huma defaults JSON request bodies to 1 MiB, including
+base64 overhead. The cover-save operation must explicitly disable that implicit
+byte cap (`MaxBodyBytes: -1`); the approved admission bound is 10000 pixels per
+side, not encoded size. Cover tests must pass an actual valid PNG larger than
+1 MiB through the handler and still reject dimensions above the approved bound.
+
 **Metadata PATCH fixtures**: use the field registry's actual scope and canonical
 name (`synced_lyrics` belongs to a position). Requests carry only `state`/`value`;
 manual authority/provenance are server-owned response fields. Serialize request

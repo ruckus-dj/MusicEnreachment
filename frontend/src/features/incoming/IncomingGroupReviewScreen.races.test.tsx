@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 import type {
@@ -258,10 +264,12 @@ describe("incoming review request races", () => {
     expect(screen.getByLabelText("Издание (выбор вручную)")).toBeDisabled();
 
     pending.resolve(HttpResponse.json(previewBody));
-    await screen.findByRole("button", {
-      name: "Предпросмотр всего назначения",
+    await waitFor(() => {
+      expect(
+        screen.getByText("evaluation-group-a-refreshed"),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText("Издание (выбор вручную)")).toBeEnabled();
     });
-    expect(screen.getByLabelText("Издание (выбор вручную)")).toBeEnabled();
     expect(
       screen.queryByRole("heading", {
         name: "Предпросмотр полного назначения",

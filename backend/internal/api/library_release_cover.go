@@ -59,6 +59,9 @@ func registerLibraryReleaseCover(api huma.API, covers *service.ReleaseCovers) {
 	huma.Register(api, huma.Operation{
 		OperationID: "save-library-release-cover", Method: http.MethodPatch,
 		Path: "/library/releases/{release_id}/cover", Summary: "Save a pending release cover", Tags: []string{"Library"},
+		// Encoded artwork legitimately exceeds Huma's 1 MiB default; the service
+		// still enforces the 10000-pixel decoded dimension limit.
+		MaxBodyBytes: -1,
 	}, func(ctx context.Context, input *libraryReleaseCoverSaveInput) (*libraryReleaseCoverOutput, error) {
 		if covers == nil {
 			return nil, huma.Error503ServiceUnavailable("library release cover service is unavailable")
