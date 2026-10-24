@@ -1442,8 +1442,25 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 		if len(variants) == 0 {
 			return ErrIncomingMatchConflict
 		}
+		metadataResultID, err := sourceWorkMetadataResultID(ctx, tx, frozenAssignment.WorkID)
+		if err != nil {
+			return err
+		}
+		captured := false
+		for _, member := range snapshot.Captured {
+			if member.MemberID == frozenAssignment.FileMemberID && member.WorkID == frozenAssignment.WorkID {
+				if !sameOptionalUUID(member.CaptureAnalysisID, metadataResultID) {
+					return ErrIncomingMatchConflict
+				}
+				captured = true
+				break
+			}
+		}
+		if !captured {
+			return ErrIncomingMatchConflict
+		}
 		for _, variantID := range variants {
-			if err := attachAutomaticTrackSource(ctx, tx, localTrackID, variantID, policy); err != nil {
+			if err := attachAutomaticTrackSource(ctx, tx, localTrackID, variantID, policy, metadataResultID); err != nil {
 				return err
 			}
 		}

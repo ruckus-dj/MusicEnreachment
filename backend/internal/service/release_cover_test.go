@@ -92,6 +92,11 @@ func TestReleaseCoverSaveRejectsInvalidImageWithoutWrite(t *testing.T) {
 	if fixture.setCalls != 0 {
 		t.Fatal("invalid image reached persistence")
 	}
+	encoded := releaseCoverPNG(t)
+	_, err = NewReleaseCovers(fixture).Save(context.Background(), releaseID, 1, encoded[:len(encoded)/2], "image/png")
+	if !IsLibraryReleaseCoverInvalid(err) || fixture.setCalls != 0 {
+		t.Fatalf("truncated PNG was not rejected as invalid before persistence: calls=%d err=%v", fixture.setCalls, err)
+	}
 }
 
 func TestReleaseCoverImageOnlyServesCurrentGenerations(t *testing.T) {

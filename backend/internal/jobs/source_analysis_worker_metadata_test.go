@@ -111,3 +111,39 @@ func TestSourceAnalysisWorkerPreservesObservedCoverAbsence(t *testing.T) {
 		})
 	}
 }
+
+func TestSourceAnalysisWorkerPersistsOptionalCoverDiagnosticWithMetadata(t *testing.T) {
+	const coverError = "cover exceeds the storage limit"
+	repository := &metadataApplyWorkerRepository{}
+	worker := &SourceAnalysisWorker{repository: repository}
+	_, err := worker.applyPreparedStep(context.Background(), &persistence.Operation{ID: uuid.New(), Attempt: 1},
+		persistence.SourceAnalysisOperationSnapshot{}, 1, persistence.SourceAnalysisExecution{}, 1,
+		&persistence.SourceAnalysisWork{ID: uuid.New()}, persistence.SourceStepMetadata,
+		service.SourceAnalysisPreparation{Metadata: service.SourceAnalysisMetadataOutcome{
+			SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisSucceeded},
+			Capture: &metadata.Capture{
+				Tags:            map[string][]string{"TITLE": {"preserved title"}},
+				CoverInspection: &metadata.CoverInspection{Observed: true, Error: coverError},
+			},
+		}},
+	)
+	if err != nil {
+		t.Fatalf("apply metadata: %v", err)
+	}
+	if repository.failure != nil {
+		t.Fatalf("unexpected step failure: %+v", repository.failure)
+	}
+	if repository.apply.CoverError != coverError || !repository.apply.CoverObserved {
+		t.Fatalf("cover diagnostic = %q, observed %v; want %q, true", repository.apply.CoverError, repository.apply.CoverObserved, coverError)
+	}
+	if len(repository.apply.CoverData) != 0 || repository.apply.CoverMIME != "" {
+		t.Fatalf("oversized cover unexpectedly retained: data %d bytes, MIME %q", len(repository.apply.CoverData), repository.apply.CoverMIME)
+	}
+	var tags map[string][]string
+	if err := json.Unmarshal(repository.apply.ObservedTags, &tags); err != nil {
+		t.Fatalf("decode observed tags: %v", err)
+	}
+	if got := tags["TITLE"]; len(got) != 1 || got[0] != "preserved title" {
+		t.Fatalf("metadata tags = %#v, want preserved title", tags)
+	}
+}

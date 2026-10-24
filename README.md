@@ -64,6 +64,13 @@ Install these prerequisites:
 - [Go 1.27](https://go.dev/doc/install);
 - a C/C++17 toolchain for cgo: Xcode Command Line Tools on macOS, GCC/G++ on
   Linux, or MinGW-w64 on Windows;
+- [libvips](https://www.libvips.org/install.html) 8.14 or later with `pkg-config`
+  development metadata and JPEG, PNG, TIFF, GIF, WebP and BMP loading support;
+  install `libvips-dev pkg-config` on Debian/Ubuntu or `vips pkg-config` with
+  Homebrew on macOS. BMP loading requires the ImageMagick loader. Windows CI
+  builds a pinned, delegate-minimal dependency set using
+  `task native:windows-vips`; see `tools/prepare-windows-vips.mjs` for its source
+  archives and recipe, rather than using the upstream all-codecs SDK;
 - [Node.js 24 LTS](https://nodejs.org/) with npm;
 - [Task 3](https://taskfile.dev/docs/installation);
 - [golangci-lint 2.14](https://golangci-lint.run/docs/welcome/install/);
@@ -90,6 +97,16 @@ Backend matching uses the vendored MIT-licensed RapidFuzz C++ library through
 cgo. Linux binaries require the system C++ runtime (`libstdc++6` on Debian);
 the supplied Docker image includes it. Normalization, transliteration, and
 coverage penalties remain in Go.
+
+Artwork preparation links to libvips through its C API. Source artwork is kept
+unchanged up to 10000 pixels per side; publication uses an aspect-preserving
+thumbnail fitting 2048×2048 without upscaling. Encoded downloads use private
+temporary files, and Go does not allocate the original pixel raster. Native
+decoders can still buffer pixels (notably BMP); this is not a hard RAM limit.
+Linux runtime packages include `libvips42`; macOS needs the corresponding
+Homebrew runtime. Windows builds stage the required DLL import closure beside
+the executable. See `backend/THIRD_PARTY_NOTICES.md` and the staged native-source
+materials for dependency provenance and distribution obligations.
 
 For frontend development, `npm --prefix frontend run dev` starts Vite. Its
 `/api` and `/health` requests are proxied to a backend listening on

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/artwork"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -45,6 +46,50 @@ type PublicationSimplePreparationResult struct {
 	// Generation is intentionally left unset here; the committing caller binds it.
 	InitialLyrics  *persistence.PublicationInitialLyricsProjection
 	CoverEmbedding *persistence.PublicationCoverEmbeddingProjection
+}
+
+func publicationCoverThumbnail(ctx context.Context, tempDir string, receipt *persistence.PublicationAttemptCoverInput) (*metadata.Cover, error) {
+	if receipt == nil || receipt.MIME == nil || len(receipt.Bytes) == 0 {
+		return nil, errors.New("publication cover receipt is incomplete")
+	}
+	input, err := os.CreateTemp(tempDir, "cover-original-*")
+	if err != nil {
+		return nil, fmt.Errorf("create private cover source: %w", err)
+	}
+	inputPath := input.Name()
+	defer func() { _ = os.Remove(inputPath) }()
+	if err := input.Chmod(0o600); err != nil {
+		_ = input.Close()
+		return nil, fmt.Errorf("protect private cover source: %w", err)
+	}
+	if _, err := input.Write(receipt.Bytes); err != nil {
+		_ = input.Close()
+		return nil, fmt.Errorf("write private cover source: %w", err)
+	}
+	if err := input.Close(); err != nil {
+		return nil, fmt.Errorf("close private cover source: %w", err)
+	}
+	output, err := os.CreateTemp(tempDir, "cover-thumbnail-*.png")
+	if err != nil {
+		return nil, fmt.Errorf("create private cover thumbnail: %w", err)
+	}
+	outputPath := output.Name()
+	if err := output.Close(); err != nil {
+		_ = os.Remove(outputPath)
+		return nil, fmt.Errorf("close private cover thumbnail: %w", err)
+	}
+	if err := os.Remove(outputPath); err != nil {
+		return nil, fmt.Errorf("prepare private cover thumbnail: %w", err)
+	}
+	defer func() { _ = os.Remove(outputPath) }()
+	if err := artwork.Thumbnail(ctx, inputPath, outputPath); err != nil {
+		return nil, fmt.Errorf("create bounded publication cover: %w", err)
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("read private publication cover thumbnail: %w", err)
+	}
+	return &metadata.Cover{Data: data, MIME: "image/png"}, nil
 }
 
 // Prepare builds a fresh candidate at outputPath. For rewrites inputPath must
@@ -276,9 +321,23 @@ func (preparation PublicationSimplePreparation) Prepare(
 			return PublicationSimplePreparationResult{}, err
 		}
 		cover := &metadata.Cover{Data: receipt.Bytes, MIME: *receipt.MIME}
+		coverProjectionVersion := persistence.PublicationCoverEmbeddingProjectionVersion
+		if thumbnail, thumbnailErr := publicationCoverThumbnail(ctx, tempDir, receipt); thumbnailErr != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return PublicationSimplePreparationResult{}, contextErr
+			}
+			// Cover conversion is optional. Keep the already prepared audio and
+			// its baseline artwork when the derivative cannot be produced.
+			cover = nil
+		} else {
+			cover = thumbnail
+			coverProjectionVersion = persistence.PublicationCoverEmbeddingDerivativeProjectionVersion
+		}
 		var writeResult metadata.OptionalAssetsWriteResult
 		var err error
-		if input.ManualCover != nil {
+		if cover == nil {
+			writeResult.CoverStatus = metadata.OptionalCoverWriteFailed
+		} else if input.ManualCover != nil {
 			coverOnlyWriter, ok := preparation.Metadata.(interface {
 				WriteCoverOnly(context.Context, string, *metadata.Cover) (metadata.OptionalAssetsWriteResult, error)
 			})
@@ -316,7 +375,7 @@ func (preparation PublicationSimplePreparation) Prepare(
 			// cover-only rewrites, so never install that mutation.
 			readback, readErr := preparation.MetadataReader.Read(ctx, outputPath, metadata.ReadRequest{})
 			if readErr != nil || !equalTags(readback.Tags, baselineCapture.Tags) {
-				outcome, warning = "mismatch", "cover_readback_mismatch"
+				outcome, warning = "mismatch", "cover_mismatch"
 			}
 		}
 		if warning != "" {
@@ -331,11 +390,20 @@ func (preparation PublicationSimplePreparation) Prepare(
 		if input.ManualCover != nil {
 			requestedGeneration = input.ManualCover.SelectedGeneration
 		}
-		prepared.CoverEmbedding = &persistence.PublicationCoverEmbeddingProjection{Version: persistence.PublicationCoverEmbeddingProjectionVersion, ReceiptOperationID: receipt.OperationID, ReceiptReleaseID: receipt.ReleaseID, ReceiptRevision: receipt.Revision, ReceiptMode: receipt.Mode, RequestedGeneration: requestedGeneration, RequestedSHA256: hex.EncodeToString(receipt.SHA256), Outcome: outcome, WarningCode: warning}
+		projection := &persistence.PublicationCoverEmbeddingProjection{Version: coverProjectionVersion, ReceiptOperationID: receipt.OperationID, ReceiptReleaseID: receipt.ReleaseID, ReceiptRevision: receipt.Revision, ReceiptMode: receipt.Mode, RequestedGeneration: requestedGeneration, RequestedSHA256: hex.EncodeToString(receipt.SHA256), Outcome: outcome, WarningCode: warning}
+		if outcome == "verified" && cover != nil && coverProjectionVersion == persistence.PublicationCoverEmbeddingDerivativeProjectionVersion {
+			derivativeDigest := sha256.Sum256(cover.Data)
+			projection.EmbeddedSHA256 = hex.EncodeToString(derivativeDigest[:])
+			projection.EmbeddedMIME = cover.MIME
+			size := int64(len(cover.Data))
+			projection.EmbeddedSize = &size
+		}
+		prepared.CoverEmbedding = projection
 		preparedCoverOutcome := baselineAssets.Cover
 		if outcome == "verified" {
-			size := int64(len(receipt.Bytes))
-			preparedCoverOutcome = persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, SHA256: hex.EncodeToString(receipt.SHA256), MIME: *receipt.MIME, SizeBytes: &size}
+			size := int64(len(cover.Data))
+			digest := sha256.Sum256(cover.Data)
+			preparedCoverOutcome = persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, SHA256: hex.EncodeToString(digest[:]), MIME: cover.MIME, SizeBytes: &size}
 		}
 		if input.Audio != nil {
 			firstAudioCoverExpected = &preparedCoverOutcome

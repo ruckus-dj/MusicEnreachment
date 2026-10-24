@@ -8,11 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/jpeg"
-	_ "image/png"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/artwork"
 	"github.com/uptrace/bun"
 )
 
@@ -88,9 +87,6 @@ func (cover ReleaseCover) validate() error {
 		if image.generation == nil || *image.generation == uuid.Nil || len(image.data) == 0 || image.mime == nil || len(image.digest) != sha256.Size || image.size == nil || *image.size != int64(len(image.data)) {
 			return errors.New("release cover authority has an incomplete image tuple")
 		}
-		if *image.mime != "image/png" && *image.mime != "image/jpeg" {
-			return errors.New("release cover authority has an unsupported image MIME type")
-		}
 		if err := validateReleaseCoverImage(*image.generation, image.data, *image.mime); err != nil {
 			return fmt.Errorf("release cover authority image is invalid: %w", err)
 		}
@@ -111,7 +107,7 @@ func (cover ReleaseCover) validate() error {
 // SetPendingReleaseCover records a manual choice without changing the effective
 // selected image. Applying the pending image is a separate explicit CAS action.
 func (repository *LibraryRepository) SetPendingReleaseCover(ctx context.Context, releaseID uuid.UUID, expectedRevision int64, generation uuid.UUID, data []byte, mime string) (ReleaseCover, error) {
-	if err := validateReleaseCoverImage(generation, data, mime); err != nil {
+	if err := validateNewReleaseCoverImage(generation, data, mime); err != nil {
 		return ReleaseCover{}, err
 	}
 	return repository.mutateReleaseCover(ctx, releaseID, expectedRevision, func(tx bun.Tx, current ReleaseCover) error {
@@ -165,7 +161,7 @@ func (repository *LibraryRepository) ClaimReleaseCoverAcquisition(ctx context.Co
 }
 
 func (repository *LibraryRepository) FinishReleaseCoverAcquisition(ctx context.Context, releaseID uuid.UUID, expectedRevision int64, owner uuid.UUID, data []byte, mime string) (ReleaseCover, error) {
-	if err := validateReleaseCoverImage(uuid.New(), data, mime); err != nil {
+	if err := validateNewReleaseCoverImage(uuid.New(), data, mime); err != nil {
 		return ReleaseCover{}, err
 	}
 	return repository.mutateReleaseCover(ctx, releaseID, expectedRevision, func(tx bun.Tx, current ReleaseCover) error {
@@ -242,12 +238,25 @@ func requireOneReleaseCoverRow(result sql.Result, err error) error {
 }
 
 func validateReleaseCoverImage(generation uuid.UUID, data []byte, mime string) error {
-	if generation == uuid.Nil || len(data) == 0 || mime != "image/png" && mime != "image/jpeg" {
+	if generation == uuid.Nil || len(data) == 0 {
 		return errors.New("release cover image is invalid")
 	}
-	_, format, err := image.Decode(bytes.NewReader(data))
-	if err != nil || format != strings.TrimPrefix(mime, "image/") {
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || config.Width <= 0 || config.Height <= 0 || format != strings.TrimPrefix(mime, "image/") {
 		return errors.New("release cover image bytes do not match their declared MIME type")
+	}
+	if err := artwork.ValidateEncoding(data, format); err != nil {
+		return errors.New("release cover image bytes do not match their declared MIME type")
+	}
+	return nil
+}
+
+func validateNewReleaseCoverImage(generation uuid.UUID, data []byte, mime string) error {
+	if err := validateReleaseCoverImage(generation, data, mime); err != nil {
+		return err
+	}
+	if _, _, _, err := artwork.Inspect(data); err != nil {
+		return fmt.Errorf("release cover image dimensions are invalid: %w", err)
 	}
 	return nil
 }

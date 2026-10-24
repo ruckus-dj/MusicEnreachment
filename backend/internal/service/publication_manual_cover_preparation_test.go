@@ -8,7 +8,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"image"
 	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
+	"go.senan.xyz/taglib"
 )
 
 func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) {
@@ -38,8 +41,13 @@ func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) 
 	}
 	lyrics := "[ar:Artist]\r\n[00:01.00]Words\r\n"
 	tags := map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}, "LYRICS": {lyrics}}
-	imageA := simpleCoverPNG(t, color.RGBA{R: 255, A: 255})
-	if _, err := (metadata.Writer{}).Write(ctx, inputPath, tags, &metadata.Cover{Data: imageA, MIME: "image/png"}); err != nil {
+	imageA := oversizedBaselineCoverPNG(t)
+	if _, err := (metadata.Writer{}).Write(ctx, inputPath, tags, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Seed the legacy oversized baseline through TagLib directly. The metadata
+	// writer intentionally rejects this image under the current cover guard.
+	if err := taglib.WriteImage(inputPath, imageA); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(inputPath)
@@ -85,11 +93,22 @@ func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assets.Cover.State != persistence.PublicationAssetEmbedded || assets.Cover.SHA256 != hex.EncodeToString(coverDigest[:]) {
+	thumbnail, err := publicationCoverThumbnail(ctx, t.TempDir(), coverInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	convertedDigest := sha256.Sum256(thumbnail.Data)
+	if assets.Cover.State != persistence.PublicationAssetEmbedded || assets.Cover.SHA256 != hex.EncodeToString(convertedDigest[:]) {
 		t.Fatalf("cover = %+v", assets.Cover)
 	}
 	if prepared.CoverEmbedding == nil || prepared.CoverEmbedding.Outcome != "verified" || prepared.CoverEmbedding.RequestedGeneration != generation {
 		t.Fatalf("cover projection = %+v", prepared.CoverEmbedding)
+	}
+	if prepared.CoverEmbedding.Version != persistence.PublicationCoverEmbeddingDerivativeProjectionVersion ||
+		prepared.CoverEmbedding.RequestedSHA256 != hex.EncodeToString(coverDigest[:]) ||
+		prepared.CoverEmbedding.EmbeddedSHA256 != hex.EncodeToString(convertedDigest[:]) ||
+		prepared.CoverEmbedding.EmbeddedMIME != "image/png" || prepared.CoverEmbedding.EmbeddedSize == nil || *prepared.CoverEmbedding.EmbeddedSize != int64(len(thumbnail.Data)) {
+		t.Fatalf("original authority and embedded derivative identities were not kept separate: %+v", prepared.CoverEmbedding)
 	}
 	actual := mustRead(t, output)
 	if !bytes.Equal(simpleCoverFLACFrames(t, actual), simpleCoverFLACFrames(t, mustRead(t, inputPath))) {
@@ -113,6 +132,37 @@ func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) 
 	if faultAssets.Cover.State != persistence.PublicationAssetEmbedded || faultAssets.Cover.SHA256 != hex.EncodeToString(baselineDigest[:]) || faultCapture.Tags["LYRICS"][0] != lyrics {
 		t.Fatalf("failed optional cover did not restore baseline artwork/tags: %+v %#v", faultAssets.Cover, faultCapture.Tags)
 	}
+	if faultAssets.Cover.MIME != "image/png" || faultAssets.Cover.SizeBytes == nil || *faultAssets.Cover.SizeBytes != int64(len(imageA)) ||
+		faultCapture.CoverInspection.Cover == nil || !bytes.Equal(faultCapture.CoverInspection.Cover.Data, imageA) || !equalTags(faultCapture.Tags, tags) {
+		t.Fatalf("restored CURRENT artwork bytes or metadata changed: %+v %#v", faultAssets.Cover, faultCapture.Tags)
+	}
+	if !bytes.Equal(mustRead(t, faultOutput), mustRead(t, inputPath)) {
+		t.Fatal("optional-cover failure changed the legacy CURRENT file, including encoded audio")
+	}
+	legacyReceipt := *coverInput
+	legacyReceipt.Bytes, legacyReceipt.SHA256 = imageA, baselineDigest[:]
+	legacyOutput := filepath.Join(t.TempDir(), "oversized-receipt.flac")
+	unusedWriter := &manualCoverOnlyWriter{}
+	legacyResult, err := (PublicationSimplePreparation{Commands: simplePreparationUnexpectedCommand{}, Metadata: unusedWriter, MetadataReader: metadata.Reader{}, Validator: manualCoverObservationValidator{}, CoverInput: &legacyReceipt}).Prepare(ctx, input, inputPath, filepath.Join(t.TempDir(), "oversized-receipt-temp"), legacyOutput)
+	if err != nil || unusedWriter.calls != 0 || legacyResult.CoverEmbedding == nil || legacyResult.CoverEmbedding.Outcome != "write_failed" || legacyResult.CoverEmbedding.WarningCode != "cover_write_failed" {
+		t.Fatalf("legacy oversized request blocked preparation instead of producing an optional warning: %+v calls=%d err=%v", legacyResult.CoverEmbedding, unusedWriter.calls, err)
+	}
+	if !bytes.Equal(mustRead(t, legacyOutput), mustRead(t, inputPath)) {
+		t.Fatal("oversized receipt changed CURRENT instead of preserving its complete baseline")
+	}
+}
+
+func oversizedBaselineCoverPNG(t *testing.T) []byte {
+	t.Helper()
+	var encoded bytes.Buffer
+	imageData := image.NewRGBA(image.Rect(0, 0, 10001, 1))
+	for x := 0; x < 10001; x++ {
+		imageData.SetRGBA(x, 0, color.RGBA{R: 255, A: 255})
+	}
+	if err := png.Encode(&encoded, imageData); err != nil {
+		t.Fatal(err)
+	}
+	return encoded.Bytes()
 }
 
 type manualCoverOnlyWriter struct {

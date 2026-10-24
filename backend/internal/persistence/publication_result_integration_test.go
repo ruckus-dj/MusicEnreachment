@@ -72,6 +72,51 @@ func TestCommitPublicationResultCarriesUnchangedCoverSummaryPostgreSQL(t *testin
 	}
 }
 
+func TestPublicationCoverEmbeddingV2SQLConstraintPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, _, _, _, _ := prepareManualLyricsCommitFixture(t)
+	valid := map[string]any{
+		"version": 2, "generation": uuid.NewString(), "receipt_operation_id": uuid.NewString(),
+		"receipt_release_id": uuid.NewString(), "receipt_revision": 1, "receipt_mode": "manual",
+		"requested_generation": uuid.NewString(), "requested_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte("original"))),
+		"outcome": "verified", "warning_code": "", "embedded_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte("derivative"))),
+		"embedded_mime": "image/png", "embedded_size": 10,
+	}
+	write := func(value any) error {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		_, err = f.db.ExecContext(ctx, `UPDATE track_publication SET cover_embedding=?::jsonb WHERE position_id=?`, string(raw), f.guard.ExpectedPositionID)
+		return err
+	}
+	if err := write(valid); err != nil {
+		t.Fatalf("valid v2 derivative projection was rejected: %v", err)
+	}
+	invalid := []struct {
+		name string
+		edit func(map[string]any)
+	}{
+		{name: "missing derivative hash", edit: func(value map[string]any) { delete(value, "embedded_sha256") }},
+		{name: "JSON null size", edit: func(value map[string]any) { value["embedded_size"] = nil }},
+		{name: "invalid nested hash", edit: func(value map[string]any) { value["embedded_sha256"] = map[string]any{"hex": "bad"} }},
+		{name: "missing receipt fields", edit: func(value map[string]any) { delete(value, "receipt_revision") }},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := make(map[string]any, len(valid))
+			for key, value := range valid {
+				candidate[key] = value
+			}
+			test.edit(candidate)
+			if err := write(candidate); err == nil {
+				t.Fatal("invalid v2 projection passed the SQL constraint")
+			}
+		})
+	}
+}
+
 func TestCommitPublicationResultManualLyricsFreshnessPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

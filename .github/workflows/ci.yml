@@ -65,6 +65,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
+            libvips-dev \
+            pkg-config \
             libssl3t64 \
             libreadline8t64 \
             libxml2 \
@@ -114,6 +116,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
+            libvips-dev \
+            pkg-config \
             libssl3t64 \
             libreadline8t64 \
             libxml2 \
@@ -128,13 +132,28 @@ jobs:
         with:
           msystem: MINGW64
           update: false
-          install: mingw-w64-x86_64-gcc
+          install: >-
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-meson mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-cmake mingw-w64-x86_64-glib2
+            mingw-w64-x86_64-expat mingw-w64-x86_64-libjpeg-turbo
+            mingw-w64-x86_64-libpng mingw-w64-x86_64-libwebp
+            mingw-w64-x86_64-zlib mingw-w64-x86_64-lcms2
+            mingw-w64-x86_64-libexif make
       - name: Add Windows C++ tools to PATH
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Join-Path '${{ steps.windows-cxx.outputs.msys2-location }}' 'mingw64\bin' |
             Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build pinned native Windows image libraries
+        if: runner.os == 'Windows'
+        env:
+          MSYS2_BASH: ${{ steps.windows-cxx.outputs.msys2-location }}\usr\bin\bash.exe
+        run: task native:windows-vips
+      - name: Install macOS libvips
+        if: runner.os == 'macOS'
+        run: brew install vips pkg-config
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -167,6 +186,8 @@ jobs:
         run: node tools/stage-frontend.mjs
       - name: Prepare backend output
         run: node tools/prepare-build.mjs
+        env:
+          VIPSHOME: ${{ env.VIPSHOME }}
       - name: Build backend
         working-directory: backend
         env:

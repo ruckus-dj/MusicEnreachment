@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -216,6 +217,56 @@ func TestReadCoverInspectionAbsenceFailuresAndCancellation(t *testing.T) {
 	if _, err := reader.Read(cancelled, path, ReadRequest{CoverInspection: true}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("pre-read cancellation error = %v", err)
 	}
+}
+
+func TestReadCoverInspectionOnlyRejectsOversizedHeaders(t *testing.T) {
+	path := writeMetadataFixture(t, ".flac", tagLibTrialFLACFixture())
+	tags := map[string][]string{"ARTIST": {"kept"}}
+	for _, test := range []struct {
+		name        string
+		data        []byte
+		wantCover   bool
+		wantError   bool
+		limitSource bool
+	}{
+		{name: "oversized source PNG", data: metadataPNGHeader(10001, 1), wantError: true, limitSource: true},
+		{name: "legacy CURRENT artwork remains observable", data: metadataPNGHeader(10001, 1), wantCover: true},
+		{name: "unknown image bytes retained", data: []byte("unknown image format"), wantCover: true, limitSource: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reader := Reader{
+				readTags:  func(string) (map[string][]string, error) { return tags, nil },
+				readImage: func(string) ([]byte, error) { return test.data, nil },
+			}
+			capture, err := reader.Read(context.Background(), path, ReadRequest{CoverInspection: true, LimitSourceCover: test.limitSource})
+			if err != nil || capture.Tags["ARTIST"][0] != "kept" || capture.CoverInspection == nil || !capture.CoverInspection.Observed {
+				t.Fatalf("capture = %#v, err=%v", capture, err)
+			}
+			if (capture.CoverInspection.Cover != nil) != test.wantCover || (capture.CoverInspection.Error != "") != test.wantError {
+				t.Fatalf("cover inspection = %#v", capture.CoverInspection)
+			}
+			if test.wantCover && !bytes.Equal(capture.CoverInspection.Cover.Data, test.data) {
+				t.Fatal("unknown image bytes were not preserved")
+			}
+		})
+	}
+}
+
+func metadataPNGHeader(width, height uint32) []byte {
+	var result bytes.Buffer
+	result.Write([]byte{137, 80, 78, 71, 13, 10, 26, 10})
+	var chunk bytes.Buffer
+	_ = binary.Write(&chunk, binary.BigEndian, width)
+	_ = binary.Write(&chunk, binary.BigEndian, height)
+	chunk.Write([]byte{8, 2, 0, 0, 0})
+	_ = binary.Write(&result, binary.BigEndian, uint32(chunk.Len()))
+	result.WriteString("IHDR")
+	result.Write(chunk.Bytes())
+	crc := crc32.NewIEEE()
+	crc.Write([]byte("IHDR"))
+	crc.Write(chunk.Bytes())
+	_ = binary.Write(&result, binary.BigEndian, crc.Sum32())
+	return result.Bytes()
 }
 
 func TestReadCoverInspectionRoundTripsAcrossFormats(t *testing.T) {

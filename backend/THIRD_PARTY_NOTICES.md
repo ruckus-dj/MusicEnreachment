@@ -22,6 +22,7 @@ product are reproduced here.
 | `golang.org/x/net` | v0.61.0 | BSD-3-Clause |
 | `github.com/go-air/gini` | v1.0.4 | MIT |
 | RapidFuzz C++ (`backend/internal/integrations/textsimilarity/third_party/rapidfuzz`) | v3.3.4 | MIT |
+| libvips (native image adapter; system library, Windows SDK v8.18.7) | 8.14.0 or later | LGPL-2.1-or-later |
 | TagLib (embedded in `github.com/deluan/go-taglib` `taglib.wasm`) | v2.3.2 | LGPL-2.1 or MPL-1.1 |
 | utfcpp (TagLib submodule `3rdparty/utfcpp`) | BSL-1.0 |
 
@@ -137,6 +138,35 @@ relinking, replacement, or distribution requirements have been resolved.
 Complete corresponding source and relinking materials are not yet bundled with
 this repository or the container image. Distribution readiness is pending
 separate review.
+
+### libvips (native image adapter)
+
+The backend links to libvips through its public C API. The libvips license
+headers identify the library as GNU Lesser General Public License version 2.1
+or (at your option) any later version; the full LGPL-2.1 text is reproduced in
+[Appendix A](#appendix-a-gnu-lesser-general-public-license-v21). This notice is
+not a substitute for the complete corresponding source, build inputs, and
+relinking materials required for a distributed binary. Those materials and the
+distribution mechanism for them require separate review before distributing
+the application binary or container image. Upstream project and source:
+<https://github.com/libvips/libvips>. Windows x64 builds use verified source
+archives, not the upstream all-codecs binary SDK. The pinned build recipe is
+`tools/prepare-windows-vips.mjs`; it disables FFTW, Poppler and other unrelated
+delegates. BMP decoding uses ImageMagick; JPEG, PNG, TIFF, GIF and WebP use the
+corresponding libvips loaders. Only the recursive DLL import closure is staged.
+The adjacent `native-sources` directory carries the three source archives,
+recipe, notices, and MSYS2 package provenance. Redistribution review must also
+cover corresponding sources for every staged MSYS2 dependency, not just libvips.
+
+### ImageMagick and libtiff (Windows image adapter dependencies)
+
+The Windows source build pins ImageMagick 7.1.2-31 and libtiff 4.7.1. The
+ImageMagick license and libtiff copyright/permission notice are copied into
+`native-sources` beside the backend, together with their original source
+archives and the build recipe. ImageMagick delegates and libtiff JBIG support
+are disabled by that recipe. Upstream sources:
+<https://github.com/ImageMagick/ImageMagick/releases/tag/7.1.2-31> and
+<https://download.osgeo.org/libtiff/tiff-4.7.1.tar.xz>.
 
 ### utfcpp (TagLib submodule)
 

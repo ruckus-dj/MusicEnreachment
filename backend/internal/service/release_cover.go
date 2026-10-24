@@ -1,15 +1,13 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg"
-	_ "image/png"
+	"os"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/artwork"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
@@ -101,11 +99,14 @@ func (service *ReleaseCovers) Save(ctx context.Context, releaseID uuid.UUID, exp
 	if service == nil || service.repository == nil {
 		return ReleaseCoverSummary{}, errors.New("library release cover service is unavailable")
 	}
-	if releaseID == uuid.Nil || expectedRevision < 1 || len(data) == 0 || (mime != "image/png" && mime != "image/jpeg") {
+	if releaseID == uuid.Nil || expectedRevision < 1 || len(data) == 0 {
 		return ReleaseCoverSummary{}, fmt.Errorf("save library release cover: %w", ErrReleaseCoverInvalid)
 	}
-	_, format, err := image.Decode(bytes.NewReader(data))
+	format, _, _, err := artwork.Inspect(data)
 	if err != nil || "image/"+format != mime {
+		return ReleaseCoverSummary{}, fmt.Errorf("save library release cover: %w", ErrReleaseCoverInvalid)
+	}
+	if err := artwork.ValidateEncoding(data, format); err != nil {
 		return ReleaseCoverSummary{}, fmt.Errorf("save library release cover: %w", ErrReleaseCoverInvalid)
 	}
 	if _, err := service.repository.ReadReleaseDetail(ctx, releaseID); err != nil {
@@ -145,12 +146,29 @@ func (service *ReleaseCovers) Image(ctx context.Context, releaseID, generation u
 		return ReleaseCoverImage{}, err
 	}
 	if cover.SelectedGeneration != nil && *cover.SelectedGeneration == generation {
-		return ReleaseCoverImage{MIME: *cover.SelectedMIME, Data: append([]byte(nil), cover.SelectedBytes...)}, nil
+		return releaseCoverPreview(ctx, *cover.SelectedMIME, cover.SelectedBytes)
 	}
 	if cover.PendingGeneration != nil && *cover.PendingGeneration == generation {
-		return ReleaseCoverImage{MIME: *cover.PendingMIME, Data: append([]byte(nil), cover.PendingBytes...)}, nil
+		return releaseCoverPreview(ctx, *cover.PendingMIME, cover.PendingBytes)
 	}
 	return ReleaseCoverImage{}, ErrReleaseCoverNotFound
+}
+
+func releaseCoverPreview(ctx context.Context, mime string, data []byte) (ReleaseCoverImage, error) {
+	if mime != "image/tiff" && mime != "image/bmp" {
+		return ReleaseCoverImage{MIME: mime, Data: append([]byte(nil), data...)}, nil
+	}
+	tempDir, err := os.MkdirTemp("", "melotrove-cover-preview-*")
+	if err != nil {
+		return ReleaseCoverImage{}, fmt.Errorf("create private release cover preview directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+	receipt := &persistence.PublicationAttemptCoverInput{Bytes: data, MIME: &mime}
+	thumbnail, err := publicationCoverThumbnail(ctx, tempDir, receipt)
+	if err != nil {
+		return ReleaseCoverImage{}, fmt.Errorf("create release cover preview: %w", err)
+	}
+	return ReleaseCoverImage{MIME: thumbnail.MIME, Data: thumbnail.Data}, nil
 }
 
 func (service *ReleaseCovers) read(ctx context.Context, releaseID uuid.UUID) (persistence.ReleaseCover, error) {

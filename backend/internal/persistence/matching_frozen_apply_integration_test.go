@@ -115,6 +115,27 @@ func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(
 		if err != nil || applied.State != "succeeded" || applied.Stage != "applied" {
 			t.Fatalf("frozen apply child=%+v err=%v; want succeeded/applied", applied, err)
 		}
+		for _, assignment := range fixture.InputSnapshot.Assignments {
+			var expected *uuid.UUID
+			for _, captured := range fixture.InputSnapshot.Captured {
+				if captured.MemberID == assignment.FileMemberID && captured.WorkID == assignment.WorkID {
+					expected = captured.CaptureAnalysisID
+				}
+			}
+			if expected == nil {
+				t.Fatal("frozen matching fixture must include each member's analysed metadata")
+			}
+			var actual *uuid.UUID
+			if err := database.NewRaw(`SELECT association.source_metadata_result_id FROM track_source association
+				JOIN provider_local_track mapping ON mapping.local_track_id=association.track_id
+				JOIN source_work_variant_identity identity ON identity.media_variant_id=association.media_variant_id
+				WHERE mapping.provider_id=? AND mapping.provider_track_id=? AND identity.work_id=?`, fixture.Source.ProviderID, assignment.ProviderTrackID, assignment.WorkID).Scan(ctx, &actual); err != nil {
+				t.Fatal(err)
+			}
+			if actual == nil || *actual != *expected {
+				t.Fatalf("frozen matching attached another member's metadata: member=%s got=%v want=%s", assignment.FileMemberID, actual, *expected)
+			}
+		}
 		var reconciliationEpoch uuid.UUID
 		if err := database.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &reconciliationEpoch); err != nil {
 			t.Fatal(err)

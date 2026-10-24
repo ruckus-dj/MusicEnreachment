@@ -88,6 +88,7 @@ type SourceMetadataApply struct {
 	ObservedTags     json.RawMessage
 	Provenance       json.RawMessage
 	CoverObserved    bool
+	CoverError       string
 	CoverData        []byte
 	CoverMIME        string
 	Properties       json.RawMessage
@@ -514,6 +515,9 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 	if len(apply.CoverData) == 0 && apply.CoverMIME != "" {
 		return nil, fmt.Errorf("apply source metadata: cover MIME requires cover bytes")
 	}
+	if apply.CoverError != "" && (!apply.CoverObserved || len(apply.CoverData) != 0) {
+		return nil, fmt.Errorf("apply source metadata: cover error requires an observed cover without stored bytes")
+	}
 	var selected *SourceMetadataResult
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
@@ -533,9 +537,9 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 				if err := tx.NewRaw(`SELECT EXISTS (
 						SELECT 1 FROM media_metadata_result WHERE id=? AND observed_tags=?::jsonb AND provenance=?::jsonb
 							AND cover_observed=? AND cover_data IS NOT DISTINCT FROM ? AND cover_mime IS NOT DISTINCT FROM ?
-							AND properties IS NOT DISTINCT FROM ?::jsonb
+							AND cover_error IS NOT DISTINCT FROM ? AND properties IS NOT DISTINCT FROM ?::jsonb
 							AND observed_at=? AND applied_operation_id=?
-						)`, selected.ID, apply.ObservedTags, apply.Provenance, apply.CoverObserved, nullableBytes(apply.CoverData), nullableMetadataString(apply.CoverMIME), nullableJSON(apply.Properties), apply.ObservedAt.UTC().Truncate(time.Microsecond), apply.OperationID).Scan(ctx, &sameResult); err != nil {
+						)`, selected.ID, apply.ObservedTags, apply.Provenance, apply.CoverObserved, nullableBytes(apply.CoverData), nullableMetadataString(apply.CoverMIME), nullableMetadataString(apply.CoverError), nullableJSON(apply.Properties), apply.ObservedAt.UTC().Truncate(time.Microsecond), apply.OperationID).Scan(ctx, &sameResult); err != nil {
 					return fmt.Errorf("apply source metadata: validate replay: %w", err)
 				}
 				if !sameResult {
@@ -564,6 +568,11 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 		observedAt := apply.ObservedAt.UTC().Truncate(time.Microsecond)
 		resultID := uuid.New()
 		var coverMIME *string
+		var coverError *string
+		if apply.CoverError != "" {
+			value := apply.CoverError
+			coverError = &value
+		}
 		var coverSHA256 []byte
 		var coverSize *int64
 		if len(apply.CoverData) > 0 {
@@ -575,7 +584,7 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 			coverSize = &size
 		}
 		result := &SourceMetadataResult{ID: resultID, SourceSHA256: digest, ObservedTags: apply.ObservedTags, Provenance: apply.Provenance,
-			CoverObserved: apply.CoverObserved, CoverData: append([]byte(nil), apply.CoverData...), CoverMIME: coverMIME, CoverSHA256: coverSHA256, CoverSizeBytes: coverSize,
+			CoverObserved: apply.CoverObserved, CoverError: coverError, CoverData: append([]byte(nil), apply.CoverData...), CoverMIME: coverMIME, CoverSHA256: coverSHA256, CoverSizeBytes: coverSize,
 			Properties: apply.Properties, ObservedAt: observedAt, WinningResultID: resultID, AppliedOperationID: apply.OperationID}
 		previousID := locked.Step.SuccessMetadataResultID
 		if len(digest) == 32 {

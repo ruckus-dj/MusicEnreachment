@@ -20,6 +20,7 @@ require (
 	go.senan.xyz/taglib v0.0.0-20260926163408-32d7614f30ec
 	go.uploadedlobster.com/mbtypes v0.4.0
 	go.uploadedlobster.com/musicbrainzws2 v0.19.0
+	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.43.0
 	golang.org/x/time v0.16.0

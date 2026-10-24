@@ -89,6 +89,15 @@ never remove gates or mistake an incomplete platform matrix for full success.
 
 **Lint**: Go 1.27 gofmt + golangci-lint default linters; Biome (not ESLint/Prettier) for frontend; zero `nolint` usage.
 
+**Native artwork dependency**: backend builds (including OpenAPI generation) need
+libvips >= 8.14 and its `pkg-config` metadata. Use `libvips-dev pkg-config` on
+Debian/Ubuntu or `brew install vips pkg-config` on macOS. Windows CI builds the
+pinned dependency set through `task native:windows-vips`; do not replace it with
+the upstream all-codecs SDK or copy unrelated codec DLLs into build output.
+Artwork headers enforce 10000 pixels per side; publication uses a libvips
+derivative fitting 2048×2048. Native decoder buffers are explicitly permitted,
+not a promise of a hard RSS ceiling. Keep original and embedded hashes distinct.
+
 **Migrations**: Bun with embedded `//go:embed *.sql`, versioned .tx.up/.down pairs, applied at server startup before River and HTTP.
 
 ## ANTI-PATTERNS (THIS PROJECT)
@@ -201,6 +210,12 @@ never remove gates or mistake an incomplete platform matrix for full success.
 - CURRENT-frontier tests distinguish incoming evidence from new resolution rows:
   acquiring a successor creates no acknowledgements. Completed incoming items
   must acknowledge with zero filesystem callbacks, including interrupted ACKs.
+- Re-read canonical metadata into a fresh Bun model after replacing a winning
+  capture: scanning SQL NULL into a reused nullable field can retain its former
+  value in memory. Test both recording and clearing optional cover diagnostics.
+- Apply the artwork size limit to new source ingestion, not generic CURRENT
+  inspection. Legacy embedded artwork must remain observable for preservation
+  and optional-failure restoration even when it exceeds the new input limit.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 

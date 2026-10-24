@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"go.senan.xyz/taglib"
@@ -240,6 +243,45 @@ func TestWriteWithOptionalAssetsRoundTripsRealContainers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateOptionalCoverRejectsOversizedHeaderWithoutDecodingPixels(t *testing.T) {
+	data := oversizedOptionalAssetsPNGHeader()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := validateOptionalCover(Cover{Data: data, MIME: "image/png"})
+	runtime.ReadMemStats(&after)
+	if err == nil || err.Error() != "requested cover image is not decodable" {
+		t.Fatalf("oversized header validation error = %v", err)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 1<<20 {
+		t.Fatalf("oversized header validation allocated %d bytes, want bounded header-only inspection", allocated)
+	}
+	writes := 0
+	writer := Writer{
+		writeTags:  func(string, map[string][]string, taglib.WriteOption) error { writes++; return nil },
+		writeImage: func(string, []byte) error { writes++; return nil },
+	}
+	if _, err := writer.WriteWithOptionalAssets(context.Background(), "staged", map[string][]string{"TITLE": {"title"}}, &Cover{Data: data, MIME: "image/png"}); err == nil {
+		t.Fatal("optional cover accepted an oversized header")
+	}
+	if writes != 0 {
+		t.Fatalf("oversized cover reached %d metadata writes, want rejection before mutation", writes)
+	}
+}
+
+func oversizedOptionalAssetsPNGHeader() []byte {
+	const width, height = 50000, 50000
+	chunk := make([]byte, 0, 17)
+	chunk = append(chunk, "IHDR"...)
+	chunk = binary.BigEndian.AppendUint32(chunk, width)
+	chunk = binary.BigEndian.AppendUint32(chunk, height)
+	chunk = append(chunk, 8, 6, 0, 0, 0)
+	data := make([]byte, 0, 8+4+len(chunk)+4)
+	data = append(data, "\x89PNG\r\n\x1a\n"...)
+	data = binary.BigEndian.AppendUint32(data, uint32(len(chunk)-4))
+	data = append(data, chunk...)
+	return binary.BigEndian.AppendUint32(data, crc32.ChecksumIEEE(chunk))
 }
 
 func generatedOptionalAssetsPNG(t *testing.T) []byte {

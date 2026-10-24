@@ -47,6 +47,11 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 	if facts.HasActiveAttempt {
 		return fmt.Errorf("reconcile publication: a publication attempt is retained")
 	}
+	if service.coverAcquisition != nil {
+		if err := service.coverAcquisition.Ensure(ctx, facts.ReleaseID); err != nil {
+			return fmt.Errorf("acquire release cover before first publication: %w", err)
+		}
+	}
 
 	contextReader, ok := service.repository.(firstPublicationContextReader)
 	if !ok {

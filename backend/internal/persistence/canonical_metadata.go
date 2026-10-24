@@ -51,8 +51,8 @@ func upsertCanonicalMetadataResult(ctx context.Context, tx bun.IDB, digest []byt
 	}
 
 	if candidate.ID != canonical.ID && metadataCandidateWins(candidate, *canonical) {
-		if _, err := tx.NewRaw(`UPDATE media_metadata_result SET observed_tags=?,provenance=?,cover_observed=?,cover_data=?,cover_mime=?,cover_sha256=?,cover_size_bytes=?,properties=?,observed_at=?,winning_result_id=?,applied_operation_id=? WHERE id=?`,
-			candidate.ObservedTags, candidate.Provenance, candidate.CoverObserved, nullableBytes(candidate.CoverData), candidate.CoverMIME, nullableBytes(candidate.CoverSHA256), candidate.CoverSizeBytes, nullableJSON(candidate.Properties), candidate.ObservedAt, candidate.WinningResultID, candidate.AppliedOperationID, canonical.ID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`UPDATE media_metadata_result SET observed_tags=?,provenance=?,cover_observed=?,cover_error=?,cover_data=?,cover_mime=?,cover_sha256=?,cover_size_bytes=?,properties=?,observed_at=?,winning_result_id=?,applied_operation_id=? WHERE id=?`,
+			candidate.ObservedTags, candidate.Provenance, candidate.CoverObserved, candidate.CoverError, nullableBytes(candidate.CoverData), candidate.CoverMIME, nullableBytes(candidate.CoverSHA256), candidate.CoverSizeBytes, nullableJSON(candidate.Properties), candidate.ObservedAt, candidate.WinningResultID, candidate.AppliedOperationID, canonical.ID).Exec(ctx); err != nil {
 			return nil, fmt.Errorf("upsert canonical source metadata: update winning capture: %w", err)
 		}
 	}
@@ -67,7 +67,9 @@ func upsertCanonicalMetadataResult(ctx context.Context, tx bun.IDB, digest []byt
 			return nil, fmt.Errorf("upsert canonical source metadata: remove losing candidate: %w", err)
 		}
 	}
-	if err := tx.NewRaw(`SELECT * FROM media_metadata_result WHERE id=?`, canonical.ID).Scan(ctx, canonical); err != nil {
+	canonicalID := canonical.ID
+	canonical = new(SourceMetadataResult)
+	if err := tx.NewRaw(`SELECT * FROM media_metadata_result WHERE id=?`, canonicalID).Scan(ctx, canonical); err != nil {
 		return nil, fmt.Errorf("upsert canonical source metadata: read canonical row: %w", err)
 	}
 	return canonical, nil

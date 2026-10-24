@@ -219,7 +219,7 @@ func (preparer *SourceAnalysisPreparer) Prepare(ctx context.Context, request Sou
 			// The metadata step requests exactly the optional work its contract
 			// needs. Whether the step runs at all stays with the caller's target
 			// mask; no stage, provider, or tool default is applied here.
-			capture, err := reader.Read(ctx, request.ServerPath, metadata.ReadRequest{Properties: true, CoverInspection: true})
+			capture, err := reader.Read(ctx, request.ServerPath, metadata.ReadRequest{Properties: true, CoverInspection: true, LimitSourceCover: true})
 			if err != nil {
 				metadataChannel <- metadataResult{outcome: SourceAnalysisMetadataOutcome{SourceAnalysisStepOutcome: SourceAnalysisStepOutcome{State: SourceAnalysisFailed, SafeError: "source metadata could not be read"}}}
 				return

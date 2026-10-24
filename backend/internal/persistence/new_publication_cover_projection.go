@@ -11,6 +11,7 @@ import (
 )
 
 const PublicationCoverEmbeddingProjectionVersion = 1
+const PublicationCoverEmbeddingDerivativeProjectionVersion = 2
 
 // PublicationCoverEmbeddingProjection is the bounded current result of applying
 // a frozen first-audio cover receipt. It contains no cover bytes or paths.
@@ -23,12 +24,15 @@ type PublicationCoverEmbeddingProjection struct {
 	ReceiptMode         string    `json:"receipt_mode"`
 	RequestedGeneration uuid.UUID `json:"requested_generation"`
 	RequestedSHA256     string    `json:"requested_sha256"`
+	EmbeddedSHA256      string    `json:"embedded_sha256,omitempty"`
+	EmbeddedMIME        string    `json:"embedded_mime,omitempty"`
+	EmbeddedSize        *int64    `json:"embedded_size,omitempty"`
 	Outcome             string    `json:"outcome"`
 	WarningCode         string    `json:"warning_code"`
 }
 
 func (projection PublicationCoverEmbeddingProjection) Validate() error {
-	if projection.Version != PublicationCoverEmbeddingProjectionVersion || projection.Generation == uuid.Nil ||
+	if (projection.Version != PublicationCoverEmbeddingProjectionVersion && projection.Version != PublicationCoverEmbeddingDerivativeProjectionVersion) || projection.Generation == uuid.Nil ||
 		projection.ReceiptOperationID == uuid.Nil || projection.ReceiptReleaseID == uuid.Nil || projection.ReceiptRevision < 1 ||
 		(projection.ReceiptMode != "automatic" && projection.ReceiptMode != "manual") ||
 		projection.RequestedGeneration == uuid.Nil || !publicationSHA256(projection.RequestedSHA256) {
@@ -48,6 +52,17 @@ func (projection PublicationCoverEmbeddingProjection) Validate() error {
 	}
 	if projection.WarningCode != wantWarning {
 		return errors.New("publication cover embedding warning does not match outcome")
+	}
+	if projection.Version == PublicationCoverEmbeddingProjectionVersion {
+		if projection.EmbeddedSHA256 != "" || projection.EmbeddedMIME != "" || projection.EmbeddedSize != nil {
+			return errors.New("legacy publication cover embedding projection contains derivative facts")
+		}
+	} else if projection.Outcome == "verified" {
+		if !publicationSHA256(projection.EmbeddedSHA256) || projection.EmbeddedMIME != "image/png" || projection.EmbeddedSize == nil || *projection.EmbeddedSize <= 0 {
+			return errors.New("publication cover derivative facts are invalid")
+		}
+	} else if projection.EmbeddedSHA256 != "" || projection.EmbeddedMIME != "" || projection.EmbeddedSize != nil {
+		return errors.New("unverified publication cover projection contains derivative facts")
 	}
 	return nil
 }
@@ -81,7 +96,13 @@ func validPublicationCoverEmbeddingForReceipt(projection PublicationCoverEmbeddi
 		return false
 	}
 	if projection.Outcome == "verified" {
-		return assets.Cover.State == PublicationAssetEmbedded && assets.Cover.SHA256 == projection.RequestedSHA256
+		if assets.Cover.State != PublicationAssetEmbedded {
+			return false
+		}
+		if projection.Version == PublicationCoverEmbeddingProjectionVersion {
+			return assets.Cover.SHA256 == projection.RequestedSHA256
+		}
+		return assets.Cover.SHA256 == projection.EmbeddedSHA256 && assets.Cover.MIME == projection.EmbeddedMIME && assets.Cover.SizeBytes != nil && *assets.Cover.SizeBytes == *projection.EmbeddedSize
 	}
 	return true
 }

@@ -5,12 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg"
-	_ "image/png"
 	"net/http"
 	"strings"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/artwork"
 	"go.senan.xyz/taglib"
 )
 
@@ -294,7 +292,7 @@ func validateOptionalCover(cover Cover) error {
 	if len(cover.Data) == 0 {
 		return errors.New("requested cover image is empty")
 	}
-	_, format, err := image.Decode(bytes.NewReader(cover.Data))
+	format, _, _, err := artwork.Inspect(cover.Data)
 	if err != nil {
 		return errors.New("requested cover image is not decodable")
 	}

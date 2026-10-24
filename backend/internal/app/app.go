@@ -21,6 +21,7 @@ import (
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/acoustid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/coverart"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
@@ -240,7 +241,7 @@ func Run(ctx context.Context, config Config) error {
 	)
 	libraryPublications := service.NewLibraryPublications(setupManagerRepository, registry, riverSlot, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
-	})
+	}).WithCoverAcquisition(service.NewReleaseCoverAcquisition(libraryRepository, service.NewReleaseCoverResolver(libraryRepository, coverart.NewClient(nil))))
 	matchingAuthority := service.NewMatchingAuthorityService(persistence.NewIncomingMatchCandidateRepository(db))
 	manualReleaseSelection := service.NewManualReleaseSelectionService(setupManagerRepository, incomingGroups, providerFetch, riverSlot)
 	manualPickerSearch := service.NewManualPickerSearchService(setupManagerRepository, providerFetch, riverSlot)

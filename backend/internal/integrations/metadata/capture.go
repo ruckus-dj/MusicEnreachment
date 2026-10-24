@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/artwork"
 	"go.senan.xyz/taglib"
 )
 
@@ -44,10 +45,12 @@ type Capture struct {
 // CoverInspection reports the first normalized picture returned by TagLib.
 // It is not an exhaustive inventory: an observed nil cover can mean the first
 // normalized picture was empty, and does not prove that no raw image exists or
-// that the picture is a front cover or unique.
+// that the picture is a front cover or unique. Error reports a rejected
+// oversized image while leaving the rest of metadata capture successful.
 type CoverInspection struct {
 	Observed bool   `json:"observed"`
 	Cover    *Cover `json:"cover,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Reader reads metadata from the already-prepared path supplied by its caller.
@@ -64,6 +67,8 @@ type Reader struct {
 type ReadRequest struct {
 	Properties      bool
 	CoverInspection bool
+	// LimitSourceCover applies new-ingestion policy, not CURRENT observation.
+	LimitSourceCover bool
 }
 
 var tagLibProvenance = Provenance{
@@ -103,13 +108,13 @@ func (reader Reader) Read(ctx context.Context, preparedPath string, request Read
 	if err := reader.readOptionalProperties(ctx, preparedPath, request.Properties, &result); err != nil {
 		return Capture{}, err
 	}
-	if err := reader.readCoverInspection(ctx, preparedPath, request.CoverInspection, &result); err != nil {
+	if err := reader.readCoverInspection(ctx, preparedPath, request.CoverInspection, request.LimitSourceCover, &result); err != nil {
 		return Capture{}, err
 	}
 	return result, nil
 }
 
-func (reader Reader) readCoverInspection(ctx context.Context, path string, requested bool, result *Capture) error {
+func (reader Reader) readCoverInspection(ctx context.Context, path string, requested, limitSource bool, result *Capture) error {
 	if !requested {
 		return nil
 	}
@@ -131,7 +136,11 @@ func (reader Reader) readCoverInspection(ctx context.Context, path string, reque
 	}
 	inspection := &CoverInspection{Observed: true}
 	if len(data) != 0 {
-		inspection.Cover = &Cover{Data: append([]byte(nil), data...), MIME: coverMIME(data)}
+		if _, _, _, err := artwork.Inspect(data); !limitSource || !errors.Is(err, artwork.ErrDimensionsExceeded) {
+			inspection.Cover = &Cover{Data: append([]byte(nil), data...), MIME: coverMIME(data)}
+		} else {
+			inspection.Error = err.Error()
+		}
 	}
 	result.CoverInspection = inspection
 	return nil

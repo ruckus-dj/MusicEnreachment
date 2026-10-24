@@ -111,7 +111,13 @@ func testSimpleFrozenCover(t *testing.T, outcome string) {
 			}
 			assets, err := ObservePublicationAssets(capture)
 			digestA := sha256.Sum256(imageA)
-			if err != nil || outcome == "verified" && assets.Cover.SHA256 != hex.EncodeToString(digestA[:]) || outcome != "verified" && assets.Cover.State != persistence.PublicationAssetAbsent {
+			mime := "image/png"
+			derivative, thumbnailErr := publicationCoverThumbnail(ctx, t.TempDir(), &persistence.PublicationAttemptCoverInput{Bytes: imageA, MIME: &mime})
+			if thumbnailErr != nil {
+				t.Fatal(thumbnailErr)
+			}
+			derivativeDigest := sha256.Sum256(derivative.Data)
+			if err != nil || outcome == "verified" && assets.Cover.SHA256 != hex.EncodeToString(derivativeDigest[:]) || outcome != "verified" && assets.Cover.State != persistence.PublicationAssetAbsent {
 				t.Fatalf("published frozen cover = %+v, %v", assets.Cover, err)
 			}
 			actual, err := os.ReadFile(published)
@@ -129,6 +135,12 @@ func testSimpleFrozenCover(t *testing.T, outcome string) {
 			}
 			if err := json.Unmarshal([]byte(raw), &projection); err != nil || projection.RequestedGeneration != generationA || projection.Outcome != outcome || projection.WarningCode != warning {
 				t.Fatalf("current cover summary = %s, %v", raw, err)
+			}
+			if projection.RequestedSHA256 != hex.EncodeToString(digestA[:]) || projection.Version != persistence.PublicationCoverEmbeddingDerivativeProjectionVersion {
+				t.Fatalf("original cover receipt binding changed: %+v", projection)
+			}
+			if outcome == "verified" && (projection.EmbeddedSHA256 != hex.EncodeToString(derivativeDigest[:]) || projection.EmbeddedMIME != "image/png" || projection.EmbeddedSize == nil || *projection.EmbeddedSize != int64(len(derivative.Data))) {
+				t.Fatalf("embedded derivative facts were not committed: %+v", projection)
 			}
 			var count int
 			if err := db.NewRaw(`SELECT count(*) FROM publication_attempt_cover_input WHERE operation_id=?`, operationID).Scan(ctx, &count); err != nil || count != 0 {

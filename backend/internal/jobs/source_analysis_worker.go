@@ -712,8 +712,10 @@ func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, opera
 		var coverObserved bool
 		var coverData []byte
 		var coverMIME string
+		var coverError string
 		if inspection := capture.CoverInspection; inspection != nil {
 			coverObserved = inspection.Observed
+			coverError = inspection.Error
 			if inspection.Cover != nil {
 				coverData = append([]byte(nil), inspection.Cover.Data...)
 				coverMIME = inspection.Cover.MIME
@@ -721,7 +723,7 @@ func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, opera
 		}
 		_, err = worker.repository.ApplySourceMetadata(ctx, persistence.SourceMetadataApply{WorkID: work.ID, OperationID: operation.ID,
 			OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, ObservedTags: tags,
-			Provenance: provenance, Properties: properties, CoverObserved: coverObserved, CoverData: coverData, CoverMIME: coverMIME,
+			Provenance: provenance, Properties: properties, CoverObserved: coverObserved, CoverError: coverError, CoverData: coverData, CoverMIME: coverMIME,
 			ObservedAt: time.Now().UTC()})
 	default:
 		return nil, fmt.Errorf("unsupported source analysis step %q", step)
