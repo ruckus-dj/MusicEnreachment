@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/uptrace/bun"
 )
@@ -18,10 +19,11 @@ import (
 // PublicationResult is the read-back of the artifact that was actually
 // installed. It is evidence for the current projection, not a journal entry.
 type PublicationResult struct {
-	Observation        PublicationStageObservation
-	InstalledOwnership PublicationCurrentOwnership
-	InitialLyrics      *PublicationInitialLyricsProjection
-	CoverEmbedding     *PublicationCoverEmbeddingProjection
+	Observation           PublicationStageObservation
+	InstalledOwnership    PublicationCurrentOwnership
+	InitialLyrics         *PublicationInitialLyricsProjection
+	CoverEmbedding        *PublicationCoverEmbeddingProjection
+	ObsoleteOutputCleanup *ObsoletePublicationOutputCleanupAdmission
 }
 
 // CommitPublicationResult installs the actual output projection and consumes
@@ -48,6 +50,11 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
 		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input)) || input.IntentKind != attempt.IntentKind {
 			return nil
+		}
+		if attempt.ExpectedGeneration != nil {
+			if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+				return fmt.Errorf("commit publication result: lock output admission gate: %w", err)
+			}
 		}
 		observation := result.Observation.Clone()
 		if observation.QualityPolicyVersion != input.QualityPolicyVersion || !publicationResultPathMatches(attempt.NamespaceManifest, observation.RelativePath) {
@@ -78,6 +85,9 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			if !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("commit publication result: check current publication: %w", err)
 			}
+		}
+		if err := validateObsoletePublicationOutputCleanup(result.ObsoleteOutputCleanup, previous, attempt, observation.RelativePath); err != nil {
+			return err
 		}
 		if input.ManualCover != nil && !manualCoverResultCurrent(ctx, tx, attempt.PositionID, *input.ManualCover) {
 			return nil
@@ -212,6 +222,18 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		if err := repository.requestSourceCleanupTx(ctx, tx, attempt.OperationID, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration); err != nil {
 			return fmt.Errorf("commit publication result: request source cleanup: %w", err)
 		}
+		if previous != nil && previous.RelativePath != observation.RelativePath {
+			if result.ObsoleteOutputCleanup == nil {
+				return errors.New("commit publication result: superseded output cleanup proof is required")
+			}
+			if repository.riverInserter == nil {
+				return errors.New("commit publication result: River inserter is unavailable for obsolete output cleanup")
+			}
+			if _, err := repository.AdmitObsoletePublicationOutputCleanupTx(ctx, tx, *result.ObsoleteOutputCleanup, repository.riverInserter,
+				func(id uuid.UUID) river.JobArgs { return ObsoletePublicationOutputCleanupJobArgs{OperationID: id} }, nil); err != nil {
+				return fmt.Errorf("commit publication result: admit obsolete output cleanup: %w", err)
+			}
+		}
 		if _, err := tx.NewRaw(`DELETE FROM publication_source_hold WHERE operation_id=?`, attempt.OperationID).Exec(ctx); err != nil {
 			return fmt.Errorf("commit publication result: release source holds: %w", err)
 		}
@@ -226,6 +248,27 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		}
 		if _, err := tx.NewRaw(`DELETE FROM track_publication_attempt WHERE operation_id=?`, attempt.OperationID).Exec(ctx); err != nil {
 			return fmt.Errorf("commit publication result: consume attempt: %w", err)
+		}
+		if previous != nil {
+			if _, err := tx.NewRaw(`DELETE FROM publication_namespace_reservation r
+				USING publication_namespace_claim c
+				WHERE c.id=r.namespace_claim_id AND c.epoch=? AND r.position_id=? AND r.generation=?
+				AND NOT EXISTS (
+					SELECT 1 FROM track_publication p
+					WHERE p.position_id=r.position_id AND p.epoch=c.epoch AND p.generation=r.generation
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM track_publication_attempt a
+					WHERE a.position_id=r.position_id AND a.epoch=c.epoch
+					AND (a.candidate_generation=r.generation OR a.expected_generation=r.generation)
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM obsolete_publication_output_cleanup o
+					WHERE o.epoch=c.epoch AND o.position_id=r.position_id AND o.generation=r.generation
+					AND o.namespace_claim_id=r.namespace_claim_id
+				)`, previous.Epoch, previous.PositionID, previous.Generation).Exec(ctx); err != nil {
+				return fmt.Errorf("commit publication result: release unreferenced superseded namespace reservations: %w", err)
+			}
 		}
 		committed = true
 		return nil

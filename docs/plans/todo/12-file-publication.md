@@ -71,17 +71,23 @@ admission только вместе с реальным River insert (в args �
 guarded callback под DB-локами operation/authority/namespace, запрет повторного
 использования старого canonical пути при живой cleanup authority, отзыв authority
 и отмена доставок при output reset, а также регистрация service/jobs worker в
-`app.Run`. Это foundation, а не завершённая очистка: `CommitPublicationResult`
-пока не создаёт cleanup authority и не связан с admission, поэтому автоматическое
-удаление прежнего файла не включено; автоматические quality upgrades намеренно
-остаются выключенными. PG-тесты покрывают rollback admission с реальной вставкой
+`app.Run`. Foundation дополнен producer: `CommitPublicationResult` атомарно
+фиксирует новый CURRENT, cleanup authority и River job при смене пути.
+Executor перед установкой проверяет старый файл по CURRENT ownership и снимает
+native root/parent identities; same-path rewrite cleanup не создаёт.
+Автоматические quality upgrades ещё не реализованы и не включены.
+PG-тесты покрывают rollback admission с реальной вставкой
 River job и успешное/отказное терминальное завершение без filesystem-работы при
 stale delivery, а также схему и malformed authority, rebinding, reset и reuse
 старого пути; native-тесты — nested пути, hash, missing leaf, неверный parent и
-ошибку чтения settings из БД. Полный `task verify` прошёл; CI этого foundation
-ещё не подтверждена. Следующий
-шаг — атомарная связка нового CURRENT результата с admission cleanup; без неё
-очистка устаревших output не считается завершённой. Продуктовые решения и
+ошибку чтения settings из БД. Полный `task verify` и обычный hook прошли;
+ревизия `83d33c8` полностью прошла CI `40082590001`, включая все пять платформ,
+verify, Docker smoke и публикацию контейнера. Producer отдельно прошёл полный
+`task verify`: cross-path commit и rollback реального River insert, отклонение
+отсутствующего/несовпадающего proof, completed redelivery без повторного enqueue,
+same-path retirement старых reservations с сохранением candidate и claims.
+CI producer ещё не подтверждена; сквозной quality-upgrade сценарий остаётся
+следующим этапом, поэтому весь план не считается завершённым. Продуктовые решения и
 требования этим не меняются; факты CI `61b481c` выше относятся только к той
 ревизии, а не к незакоммиченному дереву.
 

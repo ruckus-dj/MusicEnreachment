@@ -180,6 +180,19 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if err := executor.checkSimplePublicationCurrent(ctx, guard, input); err != nil {
 		return err
 	}
+	var obsoleteOutput *persistence.ObsoletePublicationOutputCleanupAdmission
+	if attempt.ExpectedGeneration != nil {
+		previous, err := executor.repository.ReadPublicationObsoleteOutputCandidate(ctx, guard, manifest.RelativePath)
+		if err != nil {
+			return fmt.Errorf("read superseded publication output: %w", err)
+		}
+		if previous != nil {
+			obsoleteOutput, err = captureObsoletePublicationOutput(ctx, root, outputRoot, previous.Publication, previous.NamespaceClaimID)
+			if err != nil {
+				return fmt.Errorf("capture superseded publication output: %w", err)
+			}
+		}
+	}
 	currentFile, currentErr := mutation.OpenExistingRegular(ctx, targetName)
 	if currentErr == nil {
 		currentInfo, statErr := currentFile.Stat(ctx)
@@ -237,8 +250,9 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	}
 	size, mtime := installedInfo.Size(), installedInfo.ModTime().UnixMicro()
 	result := persistence.PublicationResult{
-		Observation:   observation,
-		InitialLyrics: prepared.InitialLyrics,
+		Observation:           observation,
+		InitialLyrics:         prepared.InitialLyrics,
+		ObsoleteOutputCleanup: obsoleteOutput,
 		InstalledOwnership: persistence.PublicationCurrentOwnership{
 			Version:  persistence.PublicationCurrentOwnershipVersion,
 			Identity: persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest},

@@ -147,6 +147,10 @@ raising that buffer is not a substitute for streaming the dependency inspection.
 - Frozen publication inputs live in the publication attempt, not the operation's
   summary snapshot. Test transactional enqueue rollback with an actual River job
   inserted through the supplied transaction, not a fabricated job ID.
+- Live `CommitPublicationResult` tests must use a claimed journal-free result
+  fixture (`preparePublicationResultFixture`), not a legacy exposure/installed
+  fixture. Prove the successful commit baseline before testing rejected proof;
+  `(false, nil)` before validation does not demonstrate proof rejection.
 - Do not let agents edit the working tree while a commit hook is running: even
   unrelated edits can make pre-commit report "files were modified by this hook"
   after a successful gate. Finish edits first, then run the hook against a stable

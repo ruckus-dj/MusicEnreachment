@@ -5,7 +5,9 @@ package persistence
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -69,6 +71,77 @@ func TestCommitPublicationResultCarriesUnchangedCoverSummaryPostgreSQL(t *testin
 				t.Fatalf("current rebound cover summary = %s, %v", raw, err)
 			}
 		})
+	}
+}
+
+func TestCommitPublicationResultSamePathRewriteRetiresOldReservationsPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, repository, input, observation, _ := prepareManualLyricsCommitFixture(t)
+	alignManualPublicationResultTarget(t, ctx, f, &observation)
+
+	var oldGeneration uuid.UUID
+	var oldPath string
+	if err := f.db.NewRaw(`SELECT generation,relative_path FROM track_publication WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &oldGeneration, &oldPath); err != nil {
+		t.Fatal(err)
+	}
+	if oldPath != observation.RelativePath || oldGeneration != input.Rewrite.CurrentGeneration {
+		t.Fatalf("fixture CURRENT path/generation = %q/%s, want %q/%s", oldPath, oldGeneration, observation.RelativePath, input.Rewrite.CurrentGeneration)
+	}
+
+	var claimID uuid.UUID
+	err := f.db.NewRaw(`SELECT id FROM publication_namespace_claim WHERE epoch=? AND relative_path=? AND node_kind='file' AND owner_position_id=?`, f.guard.Epoch, oldPath, f.guard.ExpectedPositionID).Scan(ctx, &claimID)
+	if errors.Is(err, sql.ErrNoRows) {
+		digest := sha256.Sum256([]byte(oldPath))
+		claimID = uuid.New()
+		if _, err := f.db.NewRaw(`INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id,directory_scope_key) VALUES (?,?,?,?,?,?,?,NULL)`, claimID, f.guard.Epoch, digest[:], oldPath, oldPath, "file", f.guard.ExpectedPositionID).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	for _, generation := range []uuid.UUID{oldGeneration, f.guard.CandidateGeneration} {
+		if _, err := f.db.NewRaw(`INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?,?,?) ON CONFLICT DO NOTHING`, claimID, f.guard.ExpectedPositionID, generation).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	committed, err := repository.CommitPublicationResult(ctx, f.guard, PublicationResult{
+		Observation: observation,
+		InstalledOwnership: PublicationCurrentOwnership{Version: PublicationCurrentOwnershipVersion, Identity: PublicationFileIdentity{
+			SizeBytes: observation.Ownership.ExpectedSize, MTime: observation.Ownership.ExpectedMTime, SHA256: observation.PayloadSHA256,
+		}},
+	})
+	if err != nil || !committed {
+		t.Fatalf("same path rewrite commit = %v, %v", committed, err)
+	}
+
+	var current TrackPublication
+	if err := f.db.NewSelect().Model(&current).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if current.Generation != f.guard.CandidateGeneration || current.RelativePath != observation.RelativePath {
+		t.Fatalf("committed CURRENT = %s/%q", current.Generation, current.RelativePath)
+	}
+	var oldReservations, candidateReservations int
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_namespace_reservation WHERE namespace_claim_id=? AND position_id=? AND generation=?`, claimID, f.guard.ExpectedPositionID, oldGeneration).Scan(ctx, &oldReservations); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_namespace_reservation WHERE namespace_claim_id=? AND position_id=? AND generation=?`, claimID, f.guard.ExpectedPositionID, f.guard.CandidateGeneration).Scan(ctx, &candidateReservations); err != nil {
+		t.Fatal(err)
+	}
+	var fileClaims, cleanups, cleanupJobs int
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_namespace_claim WHERE epoch=? AND relative_path=? AND node_kind='file' AND owner_position_id=?`, f.guard.Epoch, oldPath, f.guard.ExpectedPositionID).Scan(ctx, &fileClaims); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT count(*) FROM obsolete_publication_output_cleanup WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &cleanups); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind=?`, ObsoletePublicationOutputCleanupJobKind).Scan(ctx, &cleanupJobs); err != nil {
+		t.Fatal(err)
+	}
+	if oldReservations != 0 || candidateReservations == 0 || fileClaims != 1 || cleanups != 0 || cleanupJobs != 0 {
+		t.Fatalf("same path rewrite reservations old=%d candidate=%d claims=%d cleanups=%d cleanup jobs=%d", oldReservations, candidateReservations, fileClaims, cleanups, cleanupJobs)
 	}
 }
 
