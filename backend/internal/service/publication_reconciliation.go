@@ -11,6 +11,8 @@ import (
 
 type publicationReconciliationRepository interface {
 	ResolvePublicationReconciliationContext(context.Context, persistence.PublicationReconciliationDeliveryGuard) (*persistence.PublicationReconciliationContext, error)
+	EvaluatePublicationReconciliationCurrent(context.Context, uuid.UUID, persistence.PublicationReconciliationDeliveryGuard, string, string) (persistence.PublicationReconciliationDecision, error)
+	AcknowledgePublicationReconciliationNoop(context.Context, persistence.PublicationReconciliationDeliveryGuard, *persistence.PublicationReconciliationNoop) (bool, error)
 }
 
 type publicationReconciliationBusyParker interface {
@@ -18,12 +20,13 @@ type publicationReconciliationBusyParker interface {
 }
 
 // ReconcilePublication consumes one already-requested publication reconciliation.
-// The worker owns claim release on every error; nil means this delivery admitted
-// and transactionally acknowledged.
+// The worker owns claim release on every error; nil means this delivery was
+// transactionally parked, admitted, or explicitly acknowledged as a no-op.
 //
 // A retained attempt is parked only after persistence atomically revalidates
-// both the delivery and the busy condition. All other decisions remain subject
-// to their existing retry and admission behavior.
+// both the delivery and the busy condition. For CURRENT publications, nil means
+// the delivery was admitted, safely parked, or explicitly acknowledged as a
+// proven no-op.
 func (service *LibraryPublications) ReconcilePublication(ctx context.Context, guard persistence.PublicationReconciliationDeliveryGuard) error {
 	if service == nil || service.repository == nil {
 		return fmt.Errorf("reconcile publication: service is unavailable")
@@ -50,10 +53,7 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 		return nil
 	}
 	if facts.HasCurrentPublication {
-		if _, err := service.admitAutomaticAudioUpgrade(ctx, facts.ReleaseID, guard.PositionID, guard); err != nil {
-			return fmt.Errorf("admit automatic audio upgrade: %w", err)
-		}
-		return nil
+		return service.reconcileCurrentPublication(ctx, repository, facts.ReleaseID, guard)
 	}
 
 	contextReader, ok := service.repository.(firstPublicationContextReader)
@@ -72,10 +72,7 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 		return fmt.Errorf("reconcile publication: first publication context changed")
 	}
 	if snapshot.Library.Current != nil {
-		if _, err := service.admitAutomaticAudioUpgrade(ctx, facts.ReleaseID, guard.PositionID, guard); err != nil {
-			return fmt.Errorf("admit automatic audio upgrade: %w", err)
-		}
-		return nil
+		return service.reconcileCurrentPublication(ctx, repository, facts.ReleaseID, guard)
 	}
 	if snapshot.Library.ActiveAttempt != nil {
 		parked, err := parkBusyReconciliation(ctx, service.repository, guard, facts.RequestedGeneration)
@@ -111,6 +108,68 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 		return fmt.Errorf("admit automatic first publication: %w", err)
 	}
 	return nil
+}
+
+func (service *LibraryPublications) reconcileCurrentPublication(ctx context.Context, repository publicationReconciliationRepository, releaseID uuid.UUID, guard persistence.PublicationReconciliationDeliveryGuard) error {
+	endpoint, configuration := "", ""
+	if reader, ok := service.settings.(matchingConfigurationReader); ok {
+		config, err := reader.GetMusicBrainzConfig(ctx)
+		if err != nil {
+			return fmt.Errorf("read MusicBrainz configuration for publication reconciliation: %w", err)
+		}
+		endpoint, configuration = musicBrainzEndpoint(config), config.Identity
+	}
+	if service.coordinator == nil {
+		return fmt.Errorf("reconcile current publication: publication coordinator is unavailable")
+	}
+	unlock, err := service.coordinator.Acquire(ctx, []publication.ResourceLock{{Key: GlobalPublicationMutationResource, Mode: publication.Exclusive}})
+	if err != nil {
+		return fmt.Errorf("acquire publication reconciliation coordinator: %w", err)
+	}
+	decision, err := repository.EvaluatePublicationReconciliationCurrent(ctx, releaseID, guard, endpoint, configuration)
+	unlock()
+	if err != nil {
+		return fmt.Errorf("evaluate current publication reconciliation: %w", err)
+	}
+	switch decision.Action {
+	case persistence.AudioUpgradeRequired:
+		operationID, err := service.admitAutomaticAudioUpgrade(ctx, releaseID, guard.PositionID, guard)
+		if err != nil {
+			return fmt.Errorf("admit automatic audio upgrade: %w", err)
+		}
+		if operationID == uuid.Nil {
+			return fmt.Errorf("reconcile current publication: audio-upgrade admission returned no operation; retry delivery")
+		}
+		return nil
+	case persistence.ProviderTagsRequired:
+		operationID, err := service.admitAutomaticProviderTags(ctx, releaseID, guard.PositionID, guard)
+		if err != nil {
+			return fmt.Errorf("admit automatic provider tags: %w", err)
+		}
+		if operationID == uuid.Nil {
+			return fmt.Errorf("reconcile current publication: provider-tag condition changed during admission; retry delivery")
+		}
+		return nil
+	case persistence.AllNoop:
+		if decision.Noop == nil {
+			return fmt.Errorf("reconcile current publication: all-noop decision has no witness")
+		}
+		unlock, err := service.coordinator.Acquire(ctx, []publication.ResourceLock{{Key: GlobalPublicationMutationResource, Mode: publication.Exclusive}})
+		if err != nil {
+			return fmt.Errorf("acquire publication no-op acknowledgement coordinator: %w", err)
+		}
+		acknowledged, ackErr := repository.AcknowledgePublicationReconciliationNoop(ctx, guard, decision.Noop)
+		unlock()
+		if ackErr != nil {
+			return fmt.Errorf("acknowledge current publication no-op: %w", ackErr)
+		}
+		if !acknowledged {
+			return fmt.Errorf("reconcile current publication: no-op proof changed before acknowledgement; retry delivery")
+		}
+		return nil
+	default:
+		return fmt.Errorf("reconcile current publication: invalid reconciliation action %d", decision.Action)
+	}
 }
 
 func parkBusyReconciliation(ctx context.Context, candidate any, guard persistence.PublicationReconciliationDeliveryGuard, generation int64) (bool, error) {

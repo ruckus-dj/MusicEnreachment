@@ -576,6 +576,9 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 		return fmt.Errorf("apply successful provider response: invalid payload: %w", err)
 	}
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("apply successful provider response: acquire output admission gate: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
 			return fmt.Errorf("apply successful provider response: lock configuration: %w", err)
 		}
@@ -624,7 +627,8 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 				WHERE provider_source_id = ? AND cache_key = ? AND generation = ? AND fetch_order = ?`, string(response.Payload), response.FetchedAt, response.Revision, ticket.ProviderSourceID, ticket.CacheKey, ticket.Generation, ticket.FetchOrder).Exec(ctx); err != nil {
 			return fmt.Errorf("apply successful provider response: save response: %w", err)
 		}
-		if err := applyProviderSourceGraph(ctx, tx, ticket, response.Graph); err != nil {
+		accepted, err := applyProviderSourceGraph(ctx, tx, ticket, response.Graph)
+		if err != nil {
 			return fmt.Errorf("apply successful provider response: save source projection: %w", err)
 		}
 		if err := applyProviderGraph(ctx, tx, ticket, response.Graph); err != nil {
@@ -683,6 +687,9 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 					return fmt.Errorf("apply successful provider response: capture manual lookup response: %w", err)
 				}
 			}
+		}
+		if err := requestProviderRefreshPublicationReconciliation(ctx, tx, ticket, accepted); err != nil {
+			return fmt.Errorf("apply successful provider response: request publication reconciliation: %w", err)
 		}
 		return nil
 	})
@@ -863,18 +870,29 @@ func nullableString(value *string) string {
 	return *value
 }
 
-func applyProviderSourceGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTicket, graph ProviderGraph) error {
+type acceptedProviderSourceChanges struct {
+	ReleaseKeys       map[string]struct{}
+	RecordingKeys     map[string]struct{}
+	ArtistKeys        map[string]struct{}
+	TracksReleaseKeys map[string]struct{}
+}
+
+func applyProviderSourceGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTicket, graph ProviderGraph) (acceptedProviderSourceChanges, error) {
+	accepted := acceptedProviderSourceChanges{
+		ReleaseKeys: make(map[string]struct{}), RecordingKeys: make(map[string]struct{}),
+		ArtistKeys: make(map[string]struct{}), TracksReleaseKeys: make(map[string]struct{}),
+	}
 	for _, entity := range graph.Entities {
 		if entity.ProviderKey == "" || (entity.Kind != "artist" && entity.Kind != "release" && entity.Kind != "recording") || entity.Authority < 0 {
-			return fmt.Errorf("source entity kind, provider key, and authority are required")
+			return acceptedProviderSourceChanges{}, fmt.Errorf("source entity kind, provider key, and authority are required")
 		}
 		fields, err := providerJSON(entity.Fields, true)
 		if err != nil {
-			return fmt.Errorf("source entity fields: %w", err)
+			return acceptedProviderSourceChanges{}, fmt.Errorf("source entity fields: %w", err)
 		}
 		raw, err := providerJSON(entity.RawSource, false)
 		if err != nil {
-			return fmt.Errorf("source entity source: %w", err)
+			return acceptedProviderSourceChanges{}, fmt.Errorf("source entity source: %w", err)
 		}
 		_, err = tx.NewRaw(`INSERT INTO provider_source_entity
 			(provider_source_id, provider_id, entity_kind, provider_key, name, fields, field_evidence, raw_source, authority, complete, fetch_order)
@@ -882,26 +900,28 @@ func applyProviderSourceGraph(ctx context.Context, tx bun.Tx, ticket ProviderRef
 			ON CONFLICT (provider_source_id, entity_kind, provider_key) DO NOTHING`,
 			ticket.ProviderSourceID, ticket.ProviderID, entity.Kind, entity.ProviderKey, raw, entity.Authority, ticket.FetchOrder).Exec(ctx)
 		if err != nil {
-			return err
+			return acceptedProviderSourceChanges{}, err
 		}
 		var currentFields, currentEvidence string
 		if err := tx.NewRaw(`SELECT fields, field_evidence FROM provider_source_entity
 			WHERE provider_source_id=? AND entity_kind=? AND provider_key=? FOR UPDATE`, ticket.ProviderSourceID, entity.Kind, entity.ProviderKey).Scan(ctx, &currentFields, &currentEvidence); err != nil {
-			return err
+			return acceptedProviderSourceChanges{}, err
 		}
 		storedFields := map[string]json.RawMessage{}
 		storedEvidence := map[string]ProviderFieldEvidence{}
 		if err := json.Unmarshal([]byte(currentFields), &storedFields); err != nil {
-			return err
+			return acceptedProviderSourceChanges{}, err
 		}
 		if err := json.Unmarshal([]byte(currentEvidence), &storedEvidence); err != nil {
-			return err
+			return acceptedProviderSourceChanges{}, err
 		}
 		incomingFields := map[string]json.RawMessage{}
 		if err := json.Unmarshal(json.RawMessage(fields), &incomingFields); err != nil {
-			return err
+			return acceptedProviderSourceChanges{}, err
 		}
 		changed := false
+		acceptedFieldChanged := false
+		acceptedTracks := false
 		applyField := func(key string, value json.RawMessage, supplied bool) {
 			if !supplied {
 				return
@@ -916,6 +936,7 @@ func applyProviderSourceGraph(ctx context.Context, tx bun.Tx, ticket ProviderRef
 				storedFields[key] = value
 				storedEvidence[key] = ProviderFieldEvidence{Authority: incomingAuthority, FetchOrder: ticket.FetchOrder}
 				changed = true
+				acceptedFieldChanged = true
 			}
 		}
 		for key, value := range incomingFields {
@@ -931,16 +952,20 @@ func applyProviderSourceGraph(ctx context.Context, tx bun.Tx, ticket ProviderRef
 					(entity.Authority == previous.Authority && ticket.FetchOrder > previous.FetchOrder) {
 					storedEvidence[key] = ProviderFieldEvidence{Authority: entity.Authority, FetchOrder: ticket.FetchOrder}
 					changed = true
+					acceptedFieldChanged = true
+					if key == "__tracks" {
+						acceptedTracks = true
+					}
 				}
 			}
 		}
 		encodedFields, err := json.Marshal(storedFields)
 		if err != nil {
-			return err
+			return acceptedProviderSourceChanges{}, err
 		}
 		encodedEvidence, err := json.Marshal(storedEvidence)
 		if err != nil {
-			return err
+			return acceptedProviderSourceChanges{}, err
 		}
 		if changed {
 			if _, err := tx.NewRaw(`UPDATE provider_source_entity SET fields=?::jsonb, field_evidence=?::jsonb,
@@ -948,15 +973,28 @@ func applyProviderSourceGraph(ctx context.Context, tx bun.Tx, ticket ProviderRef
 				authority=GREATEST(authority, ?), complete=complete OR ?, fetch_order=GREATEST(fetch_order, ?), updated_at=now()
 				WHERE provider_source_id=? AND entity_kind=? AND provider_key=?`, string(encodedFields), string(encodedEvidence), string(encodedFields), raw,
 				entity.Authority, entity.Complete, ticket.FetchOrder, ticket.ProviderSourceID, entity.Kind, entity.ProviderKey).Exec(ctx); err != nil {
-				return err
+				return acceptedProviderSourceChanges{}, err
 			}
 		} else if entity.Complete {
 			if _, err := tx.NewRaw(`UPDATE provider_source_entity SET complete=true WHERE provider_source_id=? AND entity_kind=? AND provider_key=?`, ticket.ProviderSourceID, entity.Kind, entity.ProviderKey).Exec(ctx); err != nil {
-				return err
+				return acceptedProviderSourceChanges{}, err
 			}
 		}
+		if acceptedFieldChanged {
+			switch entity.Kind {
+			case "release":
+				accepted.ReleaseKeys[entity.ProviderKey] = struct{}{}
+			case "recording":
+				accepted.RecordingKeys[entity.ProviderKey] = struct{}{}
+			case "artist":
+				accepted.ArtistKeys[entity.ProviderKey] = struct{}{}
+			}
+		}
+		if entity.Kind == "release" && acceptedTracks {
+			accepted.TracksReleaseKeys[entity.ProviderKey] = struct{}{}
+		}
 	}
-	return nil
+	return accepted, nil
 }
 
 func validProviderJSON(value json.RawMessage, allowArray bool) error {

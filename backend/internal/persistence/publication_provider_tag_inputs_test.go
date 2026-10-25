@@ -35,8 +35,8 @@ func TestPublicationProviderTagInputsValidateRoundTripExclusively(t *testing.T) 
 	if err := input.Validate(); err != nil {
 		t.Fatalf("valid provider tag rewrite rejected: %v", err)
 	}
-	if input.SupportsExecution() {
-		t.Fatal("provider tag rewrite unexpectedly supports execution")
+	if !input.SupportsExecution() {
+		t.Fatal("validated provider tag rewrite is not executable")
 	}
 	raw, err := json.Marshal(input)
 	if err != nil {

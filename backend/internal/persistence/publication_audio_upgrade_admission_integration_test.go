@@ -265,4 +265,25 @@ func TestValidateAudioUpgradeAdmissionAgainstCurrentAndSourceUniversePostgreSQL(
 		t.Fatalf("completed redelivery created %d River jobs; want the single admitted job", jobs)
 	}
 
+	// The selected source now equals CURRENT. A fresh automatic evaluation may
+	// acknowledge no work, but not using a witness from an older source universe.
+	noopGuard, _ := startPublicationReconciliationForResult(t, ctx, repo, request.ExpectedEpoch, request.PositionID)
+	decision, err := repo.EvaluatePublicationReconciliationCurrent(ctx, releaseID, noopGuard, "", "")
+	if err != nil || decision.Action != AllNoop || decision.Noop == nil {
+		t.Fatalf("evaluate equal automatic source: decision=%+v err=%v", decision, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE track_source SET metadata='{"witness_note":true}'::jsonb WHERE track_id=? AND selected`, trackID); err != nil {
+		t.Fatal(err)
+	}
+	changedDecision, err := repo.EvaluatePublicationReconciliationCurrent(ctx, releaseID, noopGuard, "", "")
+	if err != nil || changedDecision.Action != AllNoop || changedDecision.Noop == nil {
+		t.Fatalf("evaluate unchanged quality with changed source association: decision=%+v err=%v", changedDecision, err)
+	}
+	if acknowledged, err := repo.AcknowledgePublicationReconciliationNoop(ctx, noopGuard, decision.Noop); err != nil || acknowledged {
+		t.Fatalf("old source-universe witness acknowledged: acknowledged=%v err=%v", acknowledged, err)
+	}
+	if acknowledged, err := repo.AcknowledgePublicationReconciliationNoop(ctx, noopGuard, changedDecision.Noop); err != nil || !acknowledged {
+		t.Fatalf("fresh source-universe witness rejected: acknowledged=%v err=%v", acknowledged, err)
+	}
+
 }

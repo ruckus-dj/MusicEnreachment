@@ -46,8 +46,8 @@ func (validator RealPublicationStageValidator) Validate(ctx context.Context, sta
 	return validator.validate(ctx, stagePath, input, nil, nil, false)
 }
 
-// ValidateProviderTags validates a private provider-tag candidate without
-// enabling the still-guarded provider contract in the generic executor.
+// ValidateProviderTags requires exclusive provider authority when validating a
+// private provider-tag candidate.
 func (validator RealPublicationStageValidator) ValidateProviderTags(ctx context.Context, stagePath string, input persistence.PublicationInputs) (PublicationStageObservation, error) {
 	if input.Version != persistence.PublicationProviderTagInputsVersion || input.ProviderTags == nil {
 		return PublicationStageObservation{}, errors.New("provider-tag validation requires exclusive provider authority")

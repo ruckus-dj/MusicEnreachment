@@ -45,6 +45,24 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**2026-10-26:** `fbd9a0a` прошёл полный CI `40233475368`: verify, пять
+платформ, Docker smoke и публикация контейнера. Это подтверждает предыдущий
+срез busy/continuation и защищённой provider foundation, не последующие
+незакоммиченные refresh wake, typed lifecycle и all-no-op ACK. План остаётся
+незавершённым; runtime routing и real-media приёмка ещё открыты.
+
+**Следующий локально проверенный срез 2026-10-26:** соединены CURRENT routing,
+V3 provider execution, accepted-only provider-refresh wake и атомарный all-no-op
+ACK. Полный `task verify` прошёл. PostgreSQL проверяет реальный typed admission,
+rollback фактически вставленной River job, claim, preparation inputs, freshness,
+result commit, carry ручной source authority и replay. No-op повторно проверяет
+обе ветви, source universe и owner facts; новые dirty generations сохраняются.
+Независимый provider update не блокируется отсутствующим audio authority, но
+не снимает оставшееся audio-обязательство. Открыт выявленный reachability gap:
+matching добавляет новые источники невыбранными, а automatic upgrade пока выбирает
+только `selected`. Следующий шаг — транзакционный выбор лучшего пригодного linked
+source, затем приёмка через обычный API. Это не завершение плана.
+
 **Уточнение 2026-10-25:** CI `e4f11d3` (`40140794161`) и `0b03751`
 (`40175959182`) полностью завершились успешно. Последующие незакоммиченные
 изменения busy parking/settlement wake и provider rewrite этим CI не покрыты.

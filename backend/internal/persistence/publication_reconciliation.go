@@ -26,6 +26,10 @@ type PublicationReconciliationSnapshot struct {
 // obligations. Producers acquire the output-admission gate before domain locks
 // and mutations; replayed receipts must not call this helper.
 func (repository *SetupManagerRepository) RequestPublicationReconciliationWith(ctx context.Context, tx bun.Tx, epoch uuid.UUID, positions []uuid.UUID, scopes []string) error {
+	return requestPublicationReconciliationWith(ctx, tx, epoch, positions, scopes)
+}
+
+func requestPublicationReconciliationWith(ctx context.Context, tx bun.Tx, epoch uuid.UUID, positions []uuid.UUID, scopes []string) error {
 	if tx.Tx == nil || epoch == uuid.Nil || len(positions) == 0 || len(scopes) == 0 {
 		return fmt.Errorf("request publication reconciliation: epoch, positions, and scopes are required")
 	}

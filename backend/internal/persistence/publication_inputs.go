@@ -339,6 +339,9 @@ func (input PublicationInputs) Validate() error {
 // SupportsExecution reports whether this frozen contract is executable by the
 // generic publication path. Private manual-lyrics execution is separate.
 func (input PublicationInputs) SupportsExecution() bool {
+	if input.Version == PublicationProviderTagInputsVersion {
+		return validProviderTagRewrite(input)
+	}
 	if input.Version == PublicationAudioUpgradeInputsVersion {
 		return validAutomaticAudioUpgrade(input)
 	}

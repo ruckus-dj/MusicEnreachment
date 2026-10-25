@@ -145,9 +145,9 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		if err != nil || request.reconciliationGuard == nil {
 			return err
 		}
-		if request.validatedAudioUpgrade {
+		if request.validatedAudioUpgrade || request.validatedProviderTags {
 			if err := repository.continuePublicationAudioReconciliationWith(ctx, tx, *request.reconciliationGuard); err != nil {
-				return fmt.Errorf("admit publication: continue audio reconciliation: %w", err)
+				return fmt.Errorf("admit publication: continue current-publication reconciliation: %w", err)
 			}
 		}
 		acknowledged, err := repository.AcknowledgePublicationReconciliationDeliveryWith(ctx, tx, *request.reconciliationGuard)
@@ -166,7 +166,9 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 }
 
 // continuePublicationAudioReconciliationWith preserves the evaluated obligation
-// for every dirty scope observed by an audio-only reconciliation. The scopes are
+// for every dirty scope observed by an audio-only or provider-only admission.
+// Neither admission alone proves every current-publication branch is complete.
+// The scopes are
 // restamped into a successor generation before acknowledging this delivery.
 func (repository *SetupManagerRepository) continuePublicationAudioReconciliationWith(ctx context.Context, tx bun.Tx, guard PublicationReconciliationDeliveryGuard) error {
 	event, err := repository.lockPublicationReconciliationDelivery(ctx, tx, guard)
@@ -191,8 +193,8 @@ func (repository *SetupManagerRepository) continuePublicationAudioReconciliation
 }
 
 // AdmitPublicationWithProviderTags is the private-capability admission path for
-// a source-free provider metadata rewrite. Execution remains disabled until the
-// executor is wired to this contract.
+// a source-free provider metadata rewrite. Generic admission cannot confer this
+// capability without re-reading accepted evidence and local field protection.
 func (repository *SetupManagerRepository) AdmitPublicationWithProviderTags(ctx context.Context, request PublicationAdmission, client RiverInserter) (uuid.UUID, error) {
 	input, err := DecodePublicationInputs(request.FrozenInputs)
 	if err != nil || input.Version != PublicationProviderTagInputsVersion || input.ProviderTags == nil || request.IntentKind != "rewrite" || request.Source != nil || !request.ToolsReadRequired || len(request.Tools) != 2 {
