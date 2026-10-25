@@ -130,6 +130,16 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
 	}
 	library := contextSnapshot.Library
+	automaticChoice := choice == nil
+	automaticReason := ""
+	if automaticChoice {
+		selected, reason, err := automaticFirstSourceChoiceWithReason(contextSnapshot, publication.AudioPublicationFormat(format))
+		if err == nil {
+			choice = &selected
+		} else {
+			automaticReason = reason
+		}
+	}
 	preview := FirstPublicationPreview{
 		ReleaseID: releaseID, PositionID: positionID, Epoch: library.ActiveEpoch,
 		Current: library.Current, ActiveAttempt: library.ActiveAttempt,
@@ -142,8 +152,14 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 		Warnings: []string{}, Blockers: append([]string(nil), contextSnapshot.Blockers...),
 		NativeStatus: "native verification required",
 	}
-	if choice == nil {
+	if automaticChoice && choice == nil {
 		preview.Blockers = append(preview.Blockers, contextSnapshot.DefaultSourceBlockers...)
+		switch automaticReason {
+		case "manual_stream_selection":
+			preview.Blockers = append(preview.Blockers, "explicit source and audio stream selection is required")
+		case "ambiguous_quality":
+			preview.Blockers = append(preview.Blockers, "automatic source quality is ambiguous")
+		}
 	}
 	if library.Current != nil {
 		preview.Blockers = append(preview.Blockers, "a current publication exists; this preview is only for first publication")

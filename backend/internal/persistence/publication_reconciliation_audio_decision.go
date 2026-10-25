@@ -42,9 +42,6 @@ func publicationReconciliationAudioUpgradeRequired(
 	if err := readFirstPublicationSources(ctx, tx, trackID, &sources, &associations, &blockers); err != nil {
 		return false, "", fmt.Errorf("reconcile publication audio: read sources: %w", err)
 	}
-	if len(blockers) != 0 {
-		return false, "", fmt.Errorf("reconcile publication audio: default source blockers: %v", blockers)
-	}
 	encoded, err := json.Marshal([]any{sources, associations, blockers})
 	if err != nil {
 		return false, "", fmt.Errorf("reconcile publication audio: encode source witness: %w", err)
@@ -54,7 +51,7 @@ func publicationReconciliationAudioUpgradeRequired(
 
 	candidates := make([]publication.QualityCandidate, 0, len(sources))
 	for _, source := range sources {
-		if !source.Selected || source.RequiresExplicitStreamSelection || source.AudioStreamCount != 1 {
+		if source.RequiresExplicitStreamSelection || source.AudioStreamCount != 1 {
 			continue
 		}
 		if _, err := publication.PlanAudioTransform(format, source.Quality.AudioSourceFacts()); err != nil {

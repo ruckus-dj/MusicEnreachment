@@ -68,14 +68,38 @@ type firstPublicationAdmissionHook struct {
 // AdmitFirstPublicationFromPreview binds native namespace planning to this same
 // transaction's first-publication snapshot and existing admission/reservation path.
 func (repository *SetupManagerRepository) AdmitFirstPublicationFromPreview(ctx context.Context, first FirstPublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	return repository.admitFirstPublicationFromPreview(ctx, first, client, false)
+}
+
+// AdmitDefaultFirstPublicationFromPreview authorizes service-planned automatic
+// source selection for a confirmed default preview, without a reconciliation
+// delivery guard. Generic first-publication admissions cannot request this mode.
+func (repository *SetupManagerRepository) AdmitDefaultFirstPublicationFromPreview(ctx context.Context, first FirstPublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	return repository.admitFirstPublicationFromPreview(ctx, first, client, true)
+}
+
+func (repository *SetupManagerRepository) admitFirstPublicationFromPreview(ctx context.Context, first FirstPublicationAdmission, client RiverInserter, automaticSelection bool) (uuid.UUID, error) {
 	request := first.PublicationAdmission
 	if client == nil || first.PrepareFirst == nil || !validFirstPublicationPreviewDigest(first.PreviewDigest) ||
 		request.ExpectedReleaseID == uuid.Nil || request.PositionID == uuid.Nil || request.ExpectedEpoch == uuid.Nil ||
 		request.CandidateGeneration == uuid.Nil || request.IntentKind != "audio" || request.ExpectedGeneration != nil {
 		return uuid.Nil, fmt.Errorf("admit first publication: invalid preview admission")
 	}
-	if first.SourceSelection != nil && first.reconciliationGuard != nil {
+	frozen, err := DecodePublicationInputs(request.FrozenInputs)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("admit first publication: invalid frozen inputs: %w", err)
+	}
+	if automaticSelection && frozen.SourceAuthorityMode != "automatic" {
+		return uuid.Nil, fmt.Errorf("admit first publication: automatic selection requires automatic source authority")
+	}
+	if !automaticSelection && first.SourceSelection != nil && frozen.SourceAuthorityMode != "manual" {
+		return uuid.Nil, fmt.Errorf("admit first publication: explicit selection requires manual source authority")
+	}
+	if first.SourceSelection != nil && first.reconciliationGuard != nil && !automaticSelection {
 		return uuid.Nil, fmt.Errorf("admit first publication: automatic admission cannot select a source association")
+	}
+	if automaticSelection && first.SourceSelection == nil {
+		return uuid.Nil, fmt.Errorf("admit first publication: automatic source selection witness is required")
 	}
 	var selection *FirstPublicationSourceSelection
 	if first.SourceSelection != nil {
@@ -104,84 +128,9 @@ func cloneFirstPublicationSourceSelection(selection FirstPublicationSourceSelect
 }
 
 func (repository *SetupManagerRepository) applyFirstPublicationSourceSelection(ctx context.Context, tx bun.Tx, position, epoch uuid.UUID, source PublicationSourceSelection, frozen PublicationAudioInput, selection FirstPublicationSourceSelection) error {
-	var trackID uuid.UUID
-	if err := tx.NewRaw(`SELECT track_id FROM release_track WHERE id=?`, position).Scan(ctx, &trackID); err != nil {
-		return fmt.Errorf("admit first publication: read selected track: %w", err)
-	}
-	var current []TrackSource
-	if err := tx.NewSelect().Model(&current).Where("track_id=?", trackID).Order("id ASC").For("UPDATE").Scan(ctx); err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("admit first publication: lock source associations: %w", err)
-	}
-	if len(current) != len(selection.Associations) || selection.AssociationID == uuid.Nil {
-		return fmt.Errorf("admit first publication: source association witness changed: %w", ErrPublicationAdmissionConflict)
-	}
-	selectedFound := false
-	for i, actual := range current {
-		witness := selection.Associations[i]
-		if actual.ID != witness.ID || actual.TrackID != witness.TrackID || actual.MediaVariantID != witness.MediaVariantID || !sameOptionalUUID(actual.SourceMetadataResultID, witness.SourceMetadataResultID) || actual.Selected != witness.Selected || actual.Compatible != witness.Compatible || actual.DecisionMethod != witness.DecisionMethod || !sameOptionalString(actual.PolicyVersion, witness.PolicyVersion) || !bytes.Equal(actual.Metadata, witness.Metadata) || !actual.UpdatedAt.Equal(witness.UpdatedAt) {
-			return fmt.Errorf("admit first publication: source association witness changed: %w", ErrPublicationAdmissionConflict)
-		}
-		if actual.ID == selection.AssociationID {
-			if actual.TrackID != trackID || actual.MediaVariantID != frozen.MediaVariantID || !actual.Compatible {
-				return fmt.Errorf("admit first publication: selected source association is incompatible: %w", ErrPublicationAdmissionConflict)
-			}
-			selectedFound = true
-		}
-	}
-	if !selectedFound || source.MediaVariantID != frozen.MediaVariantID {
-		return fmt.Errorf("admit first publication: selected source association does not match source input: %w", ErrPublicationAdmissionConflict)
-	}
-	changed := false
-	for _, actual := range current {
-		chosen := actual.ID == selection.AssociationID
-		if actual.Selected == chosen {
-			continue
-		}
-		changed = true
-		if err := rejectCleanupOwnedSourceVariant(ctx, tx, actual.MediaVariantID); err != nil {
-			if errors.Is(err, ErrSourceCleanupOwned) {
-				return fmt.Errorf("admit first publication: changed source association is cleanup-owned: %w: %w", ErrPublicationAdmissionConflict, err)
-			}
-			return fmt.Errorf("admit first publication: changed source association is cleanup-owned: %w", err)
-		}
-		var held bool
-		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM publication_source_hold WHERE media_variant_id=?)`, actual.MediaVariantID).Scan(ctx, &held); err != nil {
-			return fmt.Errorf("admit first publication: check changed source variant hold: %w", err)
-		}
-		if held {
-			return fmt.Errorf("admit first publication: changed source association is held: %w", ErrPublicationAdmissionConflict)
-		}
-		type sourceWorkIdentity struct {
-			WorkID            uuid.UUID  `bun:"work_id"`
-			SourceRootID      uuid.UUID  `bun:"source_root_id"`
-			CurrentLocationID *uuid.UUID `bun:"current_location_id"`
-		}
-		var identities []sourceWorkIdentity
-		if err := tx.NewRaw(`SELECT identity.work_id, work.source_root_id, work.current_location_id FROM source_work_variant_identity identity JOIN source_analysis_work work ON work.id=identity.work_id WHERE identity.media_variant_id=? ORDER BY identity.work_id`, actual.MediaVariantID).Scan(ctx, &identities); err != nil {
-			return fmt.Errorf("admit first publication: read changed source identities: %w", err)
-		}
-		for _, identity := range identities {
-			var locationID uuid.UUID
-			if identity.CurrentLocationID != nil {
-				locationID = *identity.CurrentLocationID
-			}
-			held, err := sourceHoldExists(ctx, tx, identity.SourceRootID, locationID, identity.WorkID)
-			if err != nil {
-				return fmt.Errorf("admit first publication: check changed source hold: %w", err)
-			}
-			if held {
-				return fmt.Errorf("admit first publication: changed source association is held: %w", ErrPublicationAdmissionConflict)
-			}
-		}
-	}
-	if !changed {
-		return nil
-	}
-	if _, err := tx.NewRaw(`UPDATE track_source SET selected=false, updated_at=now() WHERE track_id=? AND id<>? AND selected=true`, trackID, selection.AssociationID).Exec(ctx); err != nil {
-		return fmt.Errorf("admit first publication: deselect prior source associations: %w", err)
-	}
-	if _, err := tx.NewRaw(`UPDATE track_source SET selected=true, updated_at=now() WHERE id=? AND selected=false`, selection.AssociationID).Exec(ctx); err != nil {
-		return fmt.Errorf("admit first publication: select source association: %w", err)
+	trackID, changed, err := applyTrackSourceSelection(ctx, tx, position, source, frozen, selection, "admit first publication")
+	if err != nil || !changed {
+		return err
 	}
 	var positions []uuid.UUID
 	if err := tx.NewRaw(`SELECT id FROM release_track WHERE track_id=? ORDER BY id`, trackID).Scan(ctx, &positions); err != nil {
@@ -193,6 +142,91 @@ func (repository *SetupManagerRepository) applyFirstPublicationSourceSelection(c
 	return nil
 }
 
+// applyTrackSourceSelection validates a complete association witness and changes
+// only selection state. Callers own reconciliation fanout and its ordering.
+func applyTrackSourceSelection(ctx context.Context, tx bun.Tx, position uuid.UUID, source PublicationSourceSelection, frozen PublicationAudioInput, selection FirstPublicationSourceSelection, errorContext string) (uuid.UUID, bool, error) {
+	var trackID uuid.UUID
+	if err := tx.NewRaw(`SELECT track_id FROM release_track WHERE id=?`, position).Scan(ctx, &trackID); err != nil {
+		return uuid.Nil, false, fmt.Errorf("%s: read selected track: %w", errorContext, err)
+	}
+	var current []TrackSource
+	if err := tx.NewSelect().Model(&current).Where("track_id=?", trackID).Order("id ASC").For("UPDATE").Scan(ctx); err != nil && err != sql.ErrNoRows {
+		return uuid.Nil, false, fmt.Errorf("%s: lock source associations: %w", errorContext, err)
+	}
+	if len(current) != len(selection.Associations) || selection.AssociationID == uuid.Nil {
+		return uuid.Nil, false, fmt.Errorf("%s: source association witness changed: %w", errorContext, ErrPublicationAdmissionConflict)
+	}
+	selectedFound := false
+	for i, actual := range current {
+		witness := selection.Associations[i]
+		if actual.ID != witness.ID || actual.TrackID != witness.TrackID || actual.MediaVariantID != witness.MediaVariantID || !sameOptionalUUID(actual.SourceMetadataResultID, witness.SourceMetadataResultID) || actual.Selected != witness.Selected || actual.Compatible != witness.Compatible || actual.DecisionMethod != witness.DecisionMethod || !sameOptionalString(actual.PolicyVersion, witness.PolicyVersion) || !bytes.Equal(actual.Metadata, witness.Metadata) || !actual.UpdatedAt.Equal(witness.UpdatedAt) {
+			return uuid.Nil, false, fmt.Errorf("%s: source association witness changed: %w", errorContext, ErrPublicationAdmissionConflict)
+		}
+		if actual.ID == selection.AssociationID {
+			if actual.TrackID != trackID || actual.MediaVariantID != frozen.MediaVariantID || !actual.Compatible {
+				return uuid.Nil, false, fmt.Errorf("%s: selected source association is incompatible: %w", errorContext, ErrPublicationAdmissionConflict)
+			}
+			selectedFound = true
+		}
+	}
+	if !selectedFound || source.MediaVariantID != frozen.MediaVariantID {
+		return uuid.Nil, false, fmt.Errorf("%s: selected source association does not match source input: %w", errorContext, ErrPublicationAdmissionConflict)
+	}
+	changed := false
+	for _, actual := range current {
+		chosen := actual.ID == selection.AssociationID
+		if actual.Selected == chosen {
+			continue
+		}
+		changed = true
+		if err := rejectCleanupOwnedSourceVariant(ctx, tx, actual.MediaVariantID); err != nil {
+			if errors.Is(err, ErrSourceCleanupOwned) {
+				return uuid.Nil, false, fmt.Errorf("%s: changed source association is cleanup-owned: %w: %w", errorContext, ErrPublicationAdmissionConflict, err)
+			}
+			return uuid.Nil, false, fmt.Errorf("%s: changed source association is cleanup-owned: %w", errorContext, err)
+		}
+		var held bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM publication_source_hold WHERE media_variant_id=?)`, actual.MediaVariantID).Scan(ctx, &held); err != nil {
+			return uuid.Nil, false, fmt.Errorf("%s: check changed source variant hold: %w", errorContext, err)
+		}
+		if held {
+			return uuid.Nil, false, fmt.Errorf("%s: changed source association is held: %w", errorContext, ErrPublicationAdmissionConflict)
+		}
+		type sourceWorkIdentity struct {
+			WorkID            uuid.UUID  `bun:"work_id"`
+			SourceRootID      uuid.UUID  `bun:"source_root_id"`
+			CurrentLocationID *uuid.UUID `bun:"current_location_id"`
+		}
+		var identities []sourceWorkIdentity
+		if err := tx.NewRaw(`SELECT identity.work_id, work.source_root_id, work.current_location_id FROM source_work_variant_identity identity JOIN source_analysis_work work ON work.id=identity.work_id WHERE identity.media_variant_id=? ORDER BY identity.work_id`, actual.MediaVariantID).Scan(ctx, &identities); err != nil {
+			return uuid.Nil, false, fmt.Errorf("%s: read changed source identities: %w", errorContext, err)
+		}
+		for _, identity := range identities {
+			var locationID uuid.UUID
+			if identity.CurrentLocationID != nil {
+				locationID = *identity.CurrentLocationID
+			}
+			held, err := sourceHoldExists(ctx, tx, identity.SourceRootID, locationID, identity.WorkID)
+			if err != nil {
+				return uuid.Nil, false, fmt.Errorf("%s: check changed source hold: %w", errorContext, err)
+			}
+			if held {
+				return uuid.Nil, false, fmt.Errorf("%s: changed source association is held: %w", errorContext, ErrPublicationAdmissionConflict)
+			}
+		}
+	}
+	if !changed {
+		return trackID, false, nil
+	}
+	if _, err := tx.NewRaw(`UPDATE track_source SET selected=false, updated_at=now() WHERE track_id=? AND id<>? AND selected=true`, trackID, selection.AssociationID).Exec(ctx); err != nil {
+		return uuid.Nil, false, fmt.Errorf("%s: deselect prior source associations: %w", errorContext, err)
+	}
+	if _, err := tx.NewRaw(`UPDATE track_source SET selected=true, updated_at=now() WHERE id=? AND selected=false`, selection.AssociationID).Exec(ctx); err != nil {
+		return uuid.Nil, false, fmt.Errorf("%s: select source association: %w", errorContext, err)
+	}
+	return trackID, true, nil
+}
+
 // AdmitAutomaticFirstPublicationFromPreview binds an internal automatic source
 // choice and reconciliation delivery to the same first-publication transaction.
 func (repository *SetupManagerRepository) AdmitAutomaticFirstPublicationFromPreview(ctx context.Context, first FirstPublicationAdmission, guard PublicationReconciliationDeliveryGuard, client RiverInserter) (uuid.UUID, error) {
@@ -202,7 +236,7 @@ func (repository *SetupManagerRepository) AdmitAutomaticFirstPublicationFromPrev
 	}
 	guardCopy := guard
 	first.reconciliationGuard = &guardCopy
-	return repository.AdmitFirstPublicationFromPreview(ctx, first, client)
+	return repository.admitFirstPublicationFromPreview(ctx, first, client, true)
 }
 
 func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx context.Context, tx bun.Tx, request PublicationAdmission) ([]PublicationNamespaceNode, error) {

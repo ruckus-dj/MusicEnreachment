@@ -82,7 +82,7 @@ func (service *LibraryPublications) admitAutomaticAudioUpgrade(
 	var selected *persistence.FirstPublicationSource
 	for i := range firstSnapshot.Sources {
 		source := &firstSnapshot.Sources[i]
-		if source.Selected && source.Selection.LocationID == choice.LocationID && source.Selection.MediaVariantID == choice.MediaVariantID && source.Quality.StreamIndex == choice.StreamIndex {
+		if source.Selection.LocationID == choice.LocationID && source.Selection.MediaVariantID == choice.MediaVariantID && source.Quality.StreamIndex == choice.StreamIndex {
 			selected = source
 			break
 		}
@@ -281,8 +281,8 @@ func automaticAudioUpgradeNamespace(
 	return result, nil
 }
 
-// automaticAudioUpgradeSourceChoice chooses only a selected, single-audio
-// source that is strictly better than the audio actually published in CURRENT.
+// automaticAudioUpgradeSourceChoice chooses a compatible, single-audio source
+// that is strictly better than the audio actually published in CURRENT.
 // It intentionally does not infer CURRENT facts from the original source or
 // make a stream choice for a multi-audio source.
 func automaticAudioUpgradeSourceChoice(
@@ -290,13 +290,13 @@ func automaticAudioUpgradeSourceChoice(
 	current persistence.PersistedAudioFacts,
 	format publication.AudioPublicationFormat,
 ) (FirstPublicationSourceChoice, error) {
-	if snapshot == nil || len(snapshot.DefaultSourceBlockers) != 0 {
+	if snapshot == nil {
 		return FirstPublicationSourceChoice{}, persistence.ErrPublicationAdmissionConflict
 	}
 
 	candidates := make([]publication.QualityCandidate, 0, len(snapshot.Sources))
 	for _, source := range snapshot.Sources {
-		if !source.Selected || source.RequiresExplicitStreamSelection || source.AudioStreamCount != 1 {
+		if source.RequiresExplicitStreamSelection || source.AudioStreamCount != 1 {
 			continue
 		}
 		facts := source.Quality.AudioSourceFacts()
@@ -323,7 +323,7 @@ func automaticAudioUpgradeSourceChoice(
 		return FirstPublicationSourceChoice{}, persistence.ErrPublicationAdmissionConflict
 	}
 	for _, source := range snapshot.Sources {
-		if source.Selected && !source.RequiresExplicitStreamSelection && source.AudioStreamCount == 1 &&
+		if !source.RequiresExplicitStreamSelection && source.AudioStreamCount == 1 &&
 			source.Selection.MediaVariantID.String() == selection.Candidate.VariantUUID &&
 			source.Selection.LocationID.String() == selection.Candidate.LocationUUID &&
 			source.Quality.StreamIndex == selection.Candidate.StreamIndex {

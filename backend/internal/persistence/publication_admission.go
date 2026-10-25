@@ -246,6 +246,8 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 		return uuid.Nil, fmt.Errorf("admit publication: lock output gate: %w", err)
 	}
 	var pinnedInstallation *ToolInstallation
+	var sourceSelectionTrackID uuid.UUID
+	var sourceSelectionChanged bool
 	if request.Source != nil {
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return uuid.Nil, fmt.Errorf("admit publication: lock source mutation gate: %w", err)
@@ -273,7 +275,7 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	}
 	if request.Source != nil {
 		var err error
-		if request.firstAdmission != nil && request.firstAdmission.sourceSelection != nil {
+		if request.validatedAudioUpgrade || request.firstAdmission != nil && request.firstAdmission.sourceSelection != nil {
 			err = validateAndLockPublicationSourceIdentity(ctx, tx, *request.Source, *input.Audio)
 		} else {
 			err = validateAndLockPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio)
@@ -371,6 +373,12 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	} else if err != sql.ErrNoRows {
 		return uuid.Nil, fmt.Errorf("admit publication: check active attempt: %w", err)
 	}
+	if request.validatedAudioUpgrade {
+		sourceSelectionTrackID, sourceSelectionChanged, err = repository.applyAutomaticAudioUpgradeSourceSelection(ctx, tx, request, input)
+		if err != nil {
+			return uuid.Nil, err
+		}
+	}
 	if err := reservePublicationNamespace(ctx, tx, request); err != nil {
 		return uuid.Nil, err
 	}
@@ -424,6 +432,15 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 		}
 		if _, err := tx.NewRaw(`INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, operationID, 1, result.Job.ID, epoch, source.HoldUUID, source.RootID, source.LocationID, source.WorkID, source.MediaVariantID, source.ConfiguredPath, source.InventoryPath, source.RelativePath, source.SizeBytes, source.MTime).Exec(ctx); err != nil {
 			return uuid.Nil, fmt.Errorf("admit publication: create source hold: %w", err)
+		}
+	}
+	if sourceSelectionChanged {
+		var positions []uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM release_track WHERE track_id=? ORDER BY id`, sourceSelectionTrackID).Scan(ctx, &positions); err != nil {
+			return uuid.Nil, fmt.Errorf("admit audio upgrade: list source-borrowing positions: %w", err)
+		}
+		if err := repository.RequestPublicationReconciliationWith(ctx, tx, epoch, positions, []string{"source_selection"}); err != nil {
+			return uuid.Nil, fmt.Errorf("admit audio upgrade: request source-selection reconciliation: %w", err)
 		}
 	}
 	return operationID, nil

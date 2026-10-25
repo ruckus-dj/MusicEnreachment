@@ -4,7 +4,9 @@ package persistence
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -13,9 +15,30 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/uptrace/bun"
 )
+
+type failingAfterRiverInsert struct {
+	base          RiverInserter
+	insertedJobID *int64
+}
+
+func (inserter failingAfterRiverInsert) InsertTx(ctx context.Context, tx *sql.Tx, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	result, err := inserter.base.InsertTx(ctx, tx, args, opts)
+	if err != nil {
+		return result, err
+	}
+	if result == nil || result.Job == nil {
+		return result, fmt.Errorf("River insertion returned no job")
+	}
+	if inserter.insertedJobID != nil {
+		*inserter.insertedJobID = result.Job.ID
+	}
+	return result, fmt.Errorf("injected failure after River insertion")
+}
 
 // This exercises the persisted CURRENT witness and candidate-universe query
 // used by V2 admission. In particular, admission must read the real setting
@@ -73,10 +96,11 @@ func TestValidateAudioUpgradeAdmissionAgainstCurrentAndSourceUniversePostgreSQL(
 	if err := f.db.NewRaw(`SELECT track_id,release_id FROM release_track WHERE id=?`, f.guard.ExpectedPositionID).Scan(ctx, &trackID, &releaseID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, uuid.New(), trackID, variantID); err != nil {
+	betterAssociationID, currentAssociationID := uuid.New(), uuid.New()
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,false,true,'manual','{}'::jsonb)`, betterAssociationID, trackID, variantID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,false,true,'manual','{}'::jsonb)`, uuid.New(), trackID, currentVariantID); err != nil {
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, currentAssociationID, trackID, currentVariantID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -170,6 +194,19 @@ func TestValidateAudioUpgradeAdmissionAgainstCurrentAndSourceUniversePostgreSQL(
 	}); err != nil {
 		t.Fatalf("validate live audio-upgrade admission: %v", err)
 	}
+	if result, err := f.db.ExecContext(ctx, `UPDATE track_source SET compatible=false WHERE id=? AND compatible`, betterAssociationID); err != nil {
+		t.Fatal(err)
+	} else if count, _ := result.RowsAffected(); count != 1 {
+		t.Fatalf("stale candidate mutation affected %d rows, want 1", count)
+	}
+	if err := f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return repo.validateAudioUpgradeAdmission(ctx, tx, request, input, f.guard.Epoch)
+	}); err == nil {
+		t.Fatal("stale candidate universe was admitted")
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE track_source SET compatible=true WHERE id=?`, betterAssociationID); err != nil {
+		t.Fatal(err)
+	}
 	stale := input
 	stale.AudioUpgrade = &PublicationAudioUpgradeInput{
 		SourceAuthorityRevision: uuid.New(), Current: input.AudioUpgrade.Current,
@@ -189,9 +226,43 @@ func TestValidateAudioUpgradeAdmissionAgainstCurrentAndSourceUniversePostgreSQL(
 		t.Fatal(err)
 	}
 	client := openPublicationRetryRiver(t, ctx, f.db)
+	var rolledBackRiverJobID int64
+	failingInserter := failingAfterRiverInsert{base: client, insertedJobID: &rolledBackRiverJobID}
+	if _, err := repo.AdmitAutomaticAudioUpgrade(ctx, request, failingInserter); err == nil {
+		t.Fatal("injected failure after actual River insertion unexpectedly admitted upgrade")
+	}
+	if rolledBackRiverJobID == 0 {
+		t.Fatal("failure was not injected after an actual River INSERT")
+	}
+	var rolledBackJobs int
+	if err := f.db.NewRaw(`SELECT count(*) FROM river_job WHERE id=?`, rolledBackRiverJobID).Scan(ctx, &rolledBackJobs); err != nil {
+		t.Fatal(err)
+	}
+	if rolledBackJobs != 0 {
+		t.Fatalf("failed admission retained %d inserted River jobs", rolledBackJobs)
+	}
+	var selectedBetter, selectedCurrent bool
+	if err := f.db.NewRaw(`SELECT selected FROM track_source WHERE id=?`, betterAssociationID).Scan(ctx, &selectedBetter); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT selected FROM track_source WHERE id=?`, currentAssociationID).Scan(ctx, &selectedCurrent); err != nil {
+		t.Fatal(err)
+	}
+	if selectedBetter || !selectedCurrent {
+		t.Fatalf("failed admission did not restore selection: better=%v current=%v", selectedBetter, selectedCurrent)
+	}
 	operationID, err := repo.AdmitAutomaticAudioUpgrade(ctx, request, client)
 	if err != nil {
 		t.Fatalf("admit automatic audio upgrade: %v", err)
+	}
+	if err := f.db.NewRaw(`SELECT selected FROM track_source WHERE id=?`, betterAssociationID).Scan(ctx, &selectedBetter); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT selected FROM track_source WHERE id=?`, currentAssociationID).Scan(ctx, &selectedCurrent); err != nil {
+		t.Fatal(err)
+	}
+	if !selectedBetter || selectedCurrent {
+		t.Fatalf("successful admission did not select quality winner: better=%v current=%v", selectedBetter, selectedCurrent)
 	}
 	var riverJobID int64
 	if err := f.db.NewRaw(`SELECT river_job_id FROM operation WHERE id=?`, operationID).Scan(ctx, &riverJobID); err != nil {

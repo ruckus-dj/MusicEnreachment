@@ -75,6 +75,14 @@ func TestAdmitAutomaticFirstPublicationRejectsStaleGuardPostgreSQL(t *testing.T)
 	selections := []SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(installPath), Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner}, {PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(installPath), Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner}}
 	lossless, channels := true, 2
 	input := PublicationInputs{Version: PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", InitialLyrics: &PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}, Audio: &PublicationAudioInput{WorkID: workID, RootID: rootID, LocationID: locationID, MediaVariantID: variantID, ProbeResultID: variantID, ConfiguredRootPath: rootPath, InventoryRootPath: rootPath, RelativePath: "track.flac", SizeBytes: 42, MTime: now, AnalysisPolicyVersion: 1, FFProbeVersion: "ffprobe 1", AudioFacts: PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Channels: &channels, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}}, Format: publication.AudioFormatSource, DesiredTags: map[string][]string{"TITLE": {"Fixture"}}, Tools: selections}
+	input.SourceAuthorityMode = "automatic"
+	var associations []PublicationSourceAssociation
+	if err := db.NewRaw(`SELECT id,track_id,media_variant_id,source_metadata_result_id,selected,compatible,decision_method,policy_version,metadata,updated_at FROM track_source WHERE track_id=? ORDER BY id`, trackID).Scan(ctx, &associations); err != nil {
+		t.Fatal(err)
+	}
+	if len(associations) != 1 {
+		t.Fatalf("expected one source association, got %d", len(associations))
+	}
 	frozen, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +93,7 @@ func TestAdmitAutomaticFirstPublicationRejectsStaleGuardPostgreSQL(t *testing.T)
 		called = true
 		return request.NamespaceManifest, nil
 	}}
+	first.SourceSelection = &FirstPublicationSourceSelection{AssociationID: associations[0].ID, Associations: associations}
 	guard := PublicationReconciliationDeliveryGuard{OperationID: uuid.New(), ApplicationAttempt: 1, RiverJobID: 1, RiverAttempt: 1, OutputEpoch: epoch, DeliveryEpoch: 1, PositionID: positionID, ObservedGeneration: 1, ClaimToken: uuid.New()}
 	_, err = repo.AdmitAutomaticFirstPublicationFromPreview(ctx, first, guard, &publicationAdmissionInserter{})
 	if !errors.Is(err, ErrPublicationAdmissionConflict) {

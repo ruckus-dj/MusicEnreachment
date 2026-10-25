@@ -15,7 +15,7 @@ import (
 
 func (repository *SetupManagerRepository) validateAudioUpgradeAdmission(ctx context.Context, tx bun.Tx, request PublicationAdmission, input PublicationInputs, epoch uuid.UUID) error {
 	frozen := input.AudioUpgrade
-	if frozen == nil || request.Source == nil || request.ExpectedGeneration == nil {
+	if frozen == nil || request.Source == nil || request.ExpectedGeneration == nil || input.Audio == nil {
 		return ErrPublicationAdmissionConflict
 	}
 	for _, table := range []string{"app_setting", "local_artist", "local_recording", "local_release", "local_track", "media_variant", "provider", "provider_artist", "provider_local_artist", "release_artist", "release_track", "source_analysis_step", "source_analysis_work", "source_location", "source_root", "source_work_variant_identity", "tool_installation", "track_artist", "track_source"} {
@@ -77,12 +77,6 @@ func (repository *SetupManagerRepository) validateAudioUpgradeAdmission(ctx cont
 	if err := json.Unmarshal(current.ActualMetadata, &tagWitness); err != nil || !reflect.DeepEqual(tagWitness.Tags, frozen.Current.Tags) {
 		return fmt.Errorf("admit audio upgrade: frozen current tags changed: %w", ErrPublicationAdmissionConflict)
 	}
-	if err := validateSelectedPublicationSource(ctx, tx, request.PositionID, request.Source.WorkID, input.Audio.MediaVariantID); err != nil {
-		return err
-	}
-	if err := validateSelectedPublicationMetadata(ctx, tx, request.PositionID, request.Source.WorkID, *input.Audio); err != nil {
-		return err
-	}
 	var contextSnapshot *LibraryFirstPublicationContext
 	if err := readLibraryFirstPublicationContextTx(ctx, tx, request.ExpectedReleaseID, request.PositionID, &contextSnapshot); err != nil {
 		return fmt.Errorf("admit audio upgrade: read source candidate universe: %w", ErrPublicationAdmissionConflict)
@@ -92,7 +86,7 @@ func (repository *SetupManagerRepository) validateAudioUpgradeAdmission(ctx cont
 	}
 	candidates := make([]publication.QualityCandidate, 0, len(contextSnapshot.Sources))
 	for _, source := range contextSnapshot.Sources {
-		if !source.Selected || source.RequiresExplicitStreamSelection || source.AudioStreamCount != 1 {
+		if source.RequiresExplicitStreamSelection || source.AudioStreamCount != 1 {
 			continue
 		}
 		if _, err := publication.PlanAudioTransform(input.Format, source.Quality.AudioSourceFacts()); err != nil {
@@ -115,9 +109,40 @@ func (repository *SetupManagerRepository) validateAudioUpgradeAdmission(ctx cont
 
 func sourceFactsForUpgrade(sources []FirstPublicationSource, selected PublicationSourceSelection, stream int) PersistedAudioFacts {
 	for _, source := range sources {
-		if source.Selected && source.Selection.LocationID == selected.LocationID && source.Selection.MediaVariantID == selected.MediaVariantID && source.Quality.StreamIndex == stream {
+		if source.Selection.LocationID == selected.LocationID && source.Selection.MediaVariantID == selected.MediaVariantID && source.Input.WorkID == selected.WorkID && source.Quality.StreamIndex == stream {
 			return source.Quality
 		}
 	}
 	return PersistedAudioFacts{}
+}
+
+func (repository *SetupManagerRepository) applyAutomaticAudioUpgradeSourceSelection(ctx context.Context, tx bun.Tx, request PublicationAdmission, input PublicationInputs) (uuid.UUID, bool, error) {
+	var snapshot *LibraryFirstPublicationContext
+	if err := readLibraryFirstPublicationContextTx(ctx, tx, request.ExpectedReleaseID, request.PositionID, &snapshot); err != nil {
+		return uuid.Nil, false, fmt.Errorf("admit audio upgrade: read source association witness: %w", ErrPublicationAdmissionConflict)
+	}
+	if snapshot == nil || input.Audio == nil || request.Source == nil {
+		return uuid.Nil, false, ErrPublicationAdmissionConflict
+	}
+	var associationID uuid.UUID
+	for _, source := range snapshot.Sources {
+		if source.Input.WorkID == request.Source.WorkID && source.Selection.LocationID == request.Source.LocationID &&
+			source.Selection.MediaVariantID == request.Source.MediaVariantID && source.Quality.StreamIndex == input.Audio.AudioFacts.StreamIndex &&
+			!source.RequiresExplicitStreamSelection && source.AudioStreamCount == 1 {
+			associationID = source.AssociationID
+			break
+		}
+	}
+	if associationID == uuid.Nil {
+		return uuid.Nil, false, fmt.Errorf("admit audio upgrade: winning source association changed: %w", ErrPublicationAdmissionConflict)
+	}
+	trackID, changed, err := applyTrackSourceSelection(ctx, tx, request.PositionID, *request.Source, *input.Audio,
+		FirstPublicationSourceSelection{AssociationID: associationID, Associations: snapshot.SourceAssociations}, "admit audio upgrade")
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	if err := validateAndLockPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio); err != nil {
+		return uuid.Nil, false, err
+	}
+	return trackID, changed, nil
 }

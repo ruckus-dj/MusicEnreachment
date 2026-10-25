@@ -228,7 +228,7 @@ func TestPreviewFirstRequiresAndBindsExplicitSourceStreamChoice(t *testing.T) {
 	}
 }
 
-func TestPreviewFirstDoesNotDefaultToAnUnselectedAssociation(t *testing.T) {
+func TestPreviewFirstUsesEligibleUnselectedAssociationAutomatically(t *testing.T) {
 	releaseID, positionID, locationID, variantID, associationID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	known := true
 	source := persistence.FirstPublicationSource{
@@ -251,16 +251,29 @@ func TestPreviewFirstDoesNotDefaultToAnUnselectedAssociation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.SelectedSource != nil || len(preview.SourceCandidates) != 1 || preview.SourceCandidates[0].AssociationID != associationID || preview.SourceCandidates[0].Selected {
-		t.Fatalf("unselected association default/candidate state = %#v", preview)
+	if preview.SelectedSource == nil || preview.SelectedSource.AssociationID != associationID ||
+		preview.SelectedSource.LocationID != locationID || preview.SelectedSource.MediaVariantID != variantID || preview.SelectedSource.StreamIndex != 0 {
+		t.Fatalf("eligible unselected association was not chosen automatically: %#v", preview.SelectedSource)
 	}
-	if len(preview.Blockers) == 0 || preview.Blockers[0] != snapshot.DefaultSourceBlockers[0] {
-		t.Fatalf("default source failure was not retained: %#v", preview.Blockers)
+	if len(preview.SourceCandidates) != 1 || preview.SourceCandidates[0].AssociationID != associationID || preview.SourceCandidates[0].Selected {
+		t.Fatalf("automatic selection changed the persisted association decision: %#v", preview.SourceCandidates)
+	}
+	if len(preview.Blockers) != 0 {
+		t.Fatalf("automatic eligible selection retained stale blockers: %#v", preview.Blockers)
+	}
+	if snapshot.Sources[0].Selected {
+		t.Fatal("automatic preview mutated the persisted association decision")
 	}
 	choice := &FirstPublicationSourceChoice{LocationID: locationID, MediaVariantID: variantID, StreamIndex: 0}
 	explicit, err := service.PreviewFirstSelected(context.Background(), releaseID, positionID, choice)
 	if err != nil || explicit.SelectedSource == nil || explicit.SelectedSource.AssociationID != associationID || len(explicit.Blockers) != 0 {
 		t.Fatalf("explicit eligible association choice = %#v, blockers=%v, %v", explicit.SelectedSource, explicit.Blockers, err)
+	}
+	if explicit.ContextDigest != preview.ContextDigest {
+		t.Fatalf("automatic and explicit preview digests differ: %q != %q", preview.ContextDigest, explicit.ContextDigest)
+	}
+	if snapshot.Sources[0].Selected {
+		t.Fatal("explicit preview mutated the persisted association decision")
 	}
 }
 

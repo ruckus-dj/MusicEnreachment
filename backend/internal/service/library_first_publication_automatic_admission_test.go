@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -34,25 +35,29 @@ func TestAutomaticFirstSourceChoiceUsesOnlySuitableSingleAudioCandidates(t *test
 	}
 }
 
-func TestAutomaticFirstSourceChoiceIgnoresEligibleUnselectedSources(t *testing.T) {
+func TestAutomaticFirstSourceChoiceUsesEligibleUnselectedSources(t *testing.T) {
 	channels := 2
-	lossless := false
+	lossless, lossy := true, false
+	bitDepth, sampleRate := 24, 96000
 	selected := persistence.FirstPublicationSource{
 		Selected: true, Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()},
-		Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "aac", Lossless: &lossless, Channels: &channels}, AudioStreamCount: 1,
+		Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "aac", Lossless: &lossy, Channels: &channels}, ChannelLayout: "stereo", AudioStreamCount: 1,
 	}
-	unselected := selected
-	unselected.Selected = false
-	unselected.Selection.LocationID, unselected.Selection.MediaVariantID = uuid.New(), uuid.New()
-	unselected.Quality.Codec = "flac"
+	unselected := persistence.FirstPublicationSource{
+		Selected: false, Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()},
+		Quality: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Channels: &channels,
+			BitDepth: &bitDepth, SampleRate: &sampleRate}, ChannelLayout: "stereo", AudioStreamCount: 1,
+	}
 	snapshot := &persistence.LibraryFirstPublicationContext{Sources: []persistence.FirstPublicationSource{selected, unselected}, DefaultSourceBlockers: []string{"selected source root unavailable"}}
-	if _, err := automaticFirstSourceChoice(snapshot, publication.AudioFormatMKA); err == nil {
-		t.Fatal("automatic choice ignored a persisted-selected source failure")
-	}
-	snapshot.DefaultSourceBlockers = nil
 	choice, err := automaticFirstSourceChoice(snapshot, publication.AudioFormatMKA)
-	if err != nil || choice.LocationID != selected.Selection.LocationID || choice.MediaVariantID != selected.Selection.MediaVariantID {
-		t.Fatalf("automatic choice = %#v, %v; want persisted selected source", choice, err)
+	if err != nil {
+		t.Fatalf("automaticFirstSourceChoice() error = %v", err)
+	}
+	if choice.LocationID != unselected.Selection.LocationID || choice.MediaVariantID != unselected.Selection.MediaVariantID || choice.StreamIndex != 0 {
+		t.Fatalf("automatic choice = %#v, want the eligible unselected source proven better by SelectQuality", choice)
+	}
+	if !snapshot.Sources[0].Selected || snapshot.Sources[1].Selected {
+		t.Fatalf("automatic choice mutated persisted association decisions: %#v", snapshot.Sources)
 	}
 }
 
@@ -167,8 +172,16 @@ func TestAdmitAutomaticFirstPublicationUsesFinalizedBindingAndAuthoritativeWinne
 		if repository.automaticCalls != 1 || repository.manualCalls != 0 {
 			t.Fatalf("automatic/manual calls = %d/%d", repository.automaticCalls, repository.manualCalls)
 		}
-		if repository.lastFirst == nil || repository.lastFirst.SourceSelection != nil {
-			t.Fatal("automatic admission carried manual source-selection intent")
+		if repository.lastFirst == nil || repository.lastFirst.SourceSelection == nil {
+			t.Fatal("automatic admission omitted source-selection witness")
+		}
+		selection := repository.lastFirst.SourceSelection
+		if !reflect.DeepEqual(selection.Associations, repository.snapshot.SourceAssociations) {
+			t.Fatal("automatic admission omitted complete association witness")
+		}
+		frozen, err := persistence.DecodePublicationInputs(repository.lastFirst.FrozenInputs)
+		if err != nil || frozen.SourceAuthorityMode != "automatic" {
+			t.Fatalf("automatic source authority missing: mode=%s err=%v", frozen.SourceAuthorityMode, err)
 		}
 	})
 	t.Run("authoritative settings change winner", func(t *testing.T) {
