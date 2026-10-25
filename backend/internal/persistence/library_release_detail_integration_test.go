@@ -26,6 +26,7 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 	providerID, providerReleaseID := uuid.New(), uuid.New()
 	musicBrainzProviderID, providerArtistA, providerArtistB := uuid.New(), uuid.New(), uuid.New()
 	artistAMbid, artistBMbid := uuid.New(), uuid.New()
+	musicBrainzReleaseID, releaseMBID := uuid.New(), uuid.New()
 
 	statements := []struct {
 		query string
@@ -49,6 +50,8 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 		{`INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method) VALUES (?,?,?,'manual'),(?,?,?,'manual')`, []any{musicBrainzProviderID, providerArtistA, artistA, musicBrainzProviderID, providerArtistB, artistB}},
 		{`INSERT INTO provider_release(id,provider_id,provider_key,title) VALUES (?,?,?,'linked')`, []any{providerReleaseID, providerID, "linked-release"}},
 		{`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method) VALUES (?,?,?,'manual')`, []any{providerID, providerReleaseID, linkedID}},
+		{`INSERT INTO provider_release(id,provider_id,provider_key,title) VALUES (?,?,?,'MusicBrainz linked')`, []any{musicBrainzReleaseID, musicBrainzProviderID, releaseMBID.String()}},
+		{`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method) VALUES (?,?,?,'manual')`, []any{musicBrainzProviderID, musicBrainzReleaseID, linkedID}},
 	}
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement.query, statement.args...); err != nil {
@@ -104,6 +107,9 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 	linked, err := persistence.NewLibraryRepository(db).ReadReleaseDetail(ctx, linkedID)
 	if err != nil || linked.ID != linkedID {
 		t.Fatalf("provider-linked release detail = %+v, %v", linked, err)
+	}
+	if !linked.CanRefreshMusicBrainz || detail.CanRefreshMusicBrainz {
+		t.Fatalf("MusicBrainz refresh capability local=%t linked=%t, want false/true", detail.CanRefreshMusicBrainz, linked.CanRefreshMusicBrainz)
 	}
 	if _, err := persistence.NewLibraryRepository(db).ReadReleaseDetail(ctx, uuid.New()); err == nil || !errors.Is(err, persistence.ErrLibraryReleaseNotFound) {
 		t.Fatalf("unknown release error = %v, want not found", err)

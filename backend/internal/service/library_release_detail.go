@@ -22,14 +22,15 @@ type libraryReleaseDetailReader interface {
 }
 
 type LibraryReleaseDetail struct {
-	ID               uuid.UUID
-	Title            string
-	Metadata         json.RawMessage
-	MetadataVersion  int
-	MetadataRevision int64
-	PrimaryArtist    LibraryArtistResolution
-	Artists          []LibraryArtistCredit
-	Tracks           []LibraryReleaseTrackDetail
+	ID                    uuid.UUID
+	Title                 string
+	Metadata              json.RawMessage
+	MetadataVersion       int
+	MetadataRevision      int64
+	CanRefreshMusicBrainz bool
+	PrimaryArtist         LibraryArtistResolution
+	Artists               []LibraryArtistCredit
+	Tracks                []LibraryReleaseTrackDetail
 }
 
 type LibraryArtistCredit struct {
@@ -117,8 +118,9 @@ func (service *LibraryReleaseDetails) Read(ctx context.Context, id uuid.UUID) (L
 	}
 	result := LibraryReleaseDetail{
 		ID: detail.ID, Title: detail.Title, Metadata: detail.Metadata, MetadataVersion: detail.MetadataVersion, MetadataRevision: detail.MetadataRevision,
-		PrimaryArtist: resolveLibraryArtist(detail.PrimaryArtistID, detail.PrimaryArtistCandidates, detail.PrimaryArtistMBIDs),
-		Artists:       make([]LibraryArtistCredit, 0, len(detail.Artists)), Tracks: make([]LibraryReleaseTrackDetail, 0, len(detail.Tracks)),
+		CanRefreshMusicBrainz: detail.CanRefreshMusicBrainz,
+		PrimaryArtist:         resolveLibraryArtist(detail.PrimaryArtistID, detail.PrimaryArtistCandidates, detail.PrimaryArtistMBIDs),
+		Artists:               make([]LibraryArtistCredit, 0, len(detail.Artists)), Tracks: make([]LibraryReleaseTrackDetail, 0, len(detail.Tracks)),
 	}
 	for _, artist := range detail.Artists {
 		result.Artists = append(result.Artists, libraryArtistCredit(artist))

@@ -43,14 +43,15 @@ type LibraryReleaseDetailOutput struct {
 }
 
 type LibraryReleaseDetailResponse struct {
-	ID               uuid.UUID                       `json:"id"`
-	Title            string                          `json:"title"`
-	Metadata         json.RawMessage                 `json:"metadata"`
-	MetadataVersion  int                             `json:"metadata_version"`
-	MetadataRevision int64                           `json:"metadata_revision"`
-	PrimaryArtist    service.LibraryArtistResolution `json:"primary_artist"`
-	Artists          []LibraryArtistCreditResponse   `json:"artists"`
-	Tracks           []LibraryReleaseTrackResponse   `json:"tracks"`
+	ID                    uuid.UUID                       `json:"id"`
+	Title                 string                          `json:"title"`
+	Metadata              json.RawMessage                 `json:"metadata"`
+	MetadataVersion       int                             `json:"metadata_version"`
+	MetadataRevision      int64                           `json:"metadata_revision"`
+	CanRefreshMusicBrainz bool                            `json:"can_refresh_musicbrainz"`
+	PrimaryArtist         service.LibraryArtistResolution `json:"primary_artist"`
+	Artists               []LibraryArtistCreditResponse   `json:"artists"`
+	Tracks                []LibraryReleaseTrackResponse   `json:"tracks"`
 }
 
 type LibraryArtistCreditResponse struct {
@@ -172,8 +173,9 @@ func libraryReleaseDetailResponse(detail service.LibraryReleaseDetail) LibraryRe
 	response := LibraryReleaseDetailResponse{
 		ID: detail.ID, Title: detail.Title, Metadata: detail.Metadata, MetadataVersion: detail.MetadataVersion,
 		MetadataRevision: detail.MetadataRevision, PrimaryArtist: detail.PrimaryArtist,
-		Artists: make([]LibraryArtistCreditResponse, 0, len(detail.Artists)),
-		Tracks:  make([]LibraryReleaseTrackResponse, 0, len(detail.Tracks)),
+		CanRefreshMusicBrainz: detail.CanRefreshMusicBrainz,
+		Artists:               make([]LibraryArtistCreditResponse, 0, len(detail.Artists)),
+		Tracks:                make([]LibraryReleaseTrackResponse, 0, len(detail.Tracks)),
 	}
 	for _, artist := range detail.Artists {
 		response.Artists = append(response.Artists, libraryArtistCreditResponse(artist))

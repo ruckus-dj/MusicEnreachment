@@ -5,6 +5,7 @@ export function subscribeToOperation(
   operationId: string,
   onSnapshot: (snapshot: OperationResponse) => void,
   onError: (error: Error) => void,
+  onMissing?: (error: Error) => void,
 ) {
   const events = new EventSource(`${getGetOperationUrl(operationId)}/events`);
   let request: AbortController | undefined;
@@ -27,9 +28,15 @@ export function subscribeToOperation(
       });
       if (!subscribed || current.signal.aborted) return;
       if (response.status !== 200) {
-        onError(
-          new Error(`Operation snapshot request failed (${response.status}).`),
+        const error = new Error(
+          `Operation snapshot request failed (${response.status}).`,
         );
+        if (response.status === 404 && onMissing) {
+          onMissing(error);
+          stop();
+        } else {
+          onError(error);
+        }
         return;
       }
       onSnapshot(response.data);
@@ -63,7 +70,7 @@ export function subscribeToOperation(
   events.addEventListener("operation-changed", refetch);
   events.addEventListener("error", disconnected);
 
-  return () => {
+  function stop() {
     subscribed = false;
     dirty = false;
     events.removeEventListener("open", refetch);
@@ -71,5 +78,7 @@ export function subscribeToOperation(
     events.removeEventListener("error", disconnected);
     events.close();
     request?.abort();
-  };
+  }
+
+  return stop;
 }

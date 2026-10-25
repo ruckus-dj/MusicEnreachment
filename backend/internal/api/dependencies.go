@@ -37,6 +37,7 @@ type Dependencies struct {
 	ManualReleaseSelection *service.ManualReleaseSelectionService
 	ManualPickerSearch     *service.ManualPickerSearchService
 	LibraryReleaseDetails  *service.LibraryReleaseDetails
+	LibraryProviderRefresh *service.LibraryProviderRefresh
 	LibraryPrimaryArtists  *service.LibraryPrimaryArtists
 	LibraryMetadata        *service.LibraryMetadataService
 	LibraryReleaseCovers   *service.ReleaseCovers

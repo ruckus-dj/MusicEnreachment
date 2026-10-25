@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -396,12 +397,22 @@ func TestProviderOperationAndRiverInsertRollbackTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := persistence.NewProviderCacheRepository(db)
-	provider := persistence.Provider{ID: uuid.New(), Code: "provider-rollback-test"}
+	provider := persistence.Provider{ID: uuid.New(), Code: "musicbrainz"}
 	if err := cache.CreateProvider(ctx, &provider); err != nil {
 		t.Fatal(err)
 	}
 	source := persistence.ProviderSource{ID: uuid.New(), ProviderID: provider.ID, Namespace: "mb-rollback-test", Endpoint: "https://musicbrainz.org/ws/2", ConfigurationIdentity: "cfg-provider-rollback"}
 	if err := cache.CreateProviderSource(ctx, &source); err != nil {
+		t.Fatal(err)
+	}
+	localReleaseID, providerReleaseID, mbid := uuid.New(), uuid.New(), uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO local_release(id,title) VALUES (?, 'Bound release')`, localReleaseID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO provider_release(id,provider_id,provider_key,title) VALUES (?,?,?,'Bound release')`, providerReleaseID, provider.ID, mbid.String()).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method) VALUES (?,?,?,'manual')`, provider.ID, providerReleaseID, localReleaseID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.NewRaw(`CREATE TABLE provider_operation_enqueue_test_job(id bigint PRIMARY KEY)`).Exec(ctx); err != nil {
@@ -412,13 +423,29 @@ func TestProviderOperationAndRiverInsertRollbackTogether(t *testing.T) {
 		ID: uuid.New(), Kind: "provider_release_search", State: "queued", Stage: "queued",
 		InputSnapshot: json.RawMessage(`{invalid`), ProviderSourceID: &sourceID,
 		ProviderConfigurationIdentity: &identity, ProviderCacheKey: &key,
+		MusicBrainzReleaseBinding: &persistence.MusicBrainzReleaseBinding{LocalReleaseID: localReleaseID, MBID: uuid.NewString()},
 	}
 	err := persistence.NewSetupManagerRepository(db).CreateOperationAndEnqueue(ctx, operation,
+		providerOperationTestInserter{jobID: jobID}, providerOperationTestArgs{}, nil)
+	if !errors.Is(err, persistence.ErrMusicBrainzReleaseBindingChanged) {
+		t.Fatalf("stale binding admission error = %v, want binding change", err)
+	}
+	var jobs int
+	if err := db.NewRaw(`SELECT count(*) FROM provider_operation_enqueue_test_job`).Scan(ctx, &jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 {
+		t.Fatalf("stale binding inserted %d River jobs", jobs)
+	}
+	operation.ID = uuid.New()
+	operation.InputSnapshot = json.RawMessage(`{invalid`)
+	operation.MusicBrainzReleaseBinding.MBID = mbid.String()
+	err = persistence.NewSetupManagerRepository(db).CreateOperationAndEnqueue(ctx, operation,
 		providerOperationTestInserter{jobID: jobID}, providerOperationTestArgs{}, nil)
 	if err == nil {
 		t.Fatal("invalid operation unexpectedly committed")
 	}
-	var jobs, operations int
+	var operations int
 	if err := db.NewRaw(`SELECT count(*) FROM provider_operation_enqueue_test_job`).Scan(ctx, &jobs); err != nil {
 		t.Fatal(err)
 	}

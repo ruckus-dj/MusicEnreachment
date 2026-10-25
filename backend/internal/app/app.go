@@ -233,6 +233,7 @@ func Run(ctx context.Context, config Config) error {
 	matchingLocal := service.NewMatchingLocalService(persistence.NewIncomingMatchCandidateRepository(db))
 	libraryRepository := persistence.NewLibraryRepository(db)
 	libraryReleaseDetails := service.NewLibraryReleaseDetails(libraryRepository)
+	libraryProviderRefresh := service.NewLibraryProviderRefresh(libraryRepository, providerFetch)
 	libraryPrimaryArtists := service.NewLibraryPrimaryArtists(libraryRepository)
 	libraryMetadata := service.NewLibraryMetadataService(libraryRepository).WithPublicationCoordinator(publicationCoordinator)
 	libraryReleaseCovers := service.NewReleaseCovers(libraryRepository).WithPublicationCoordinator(publicationCoordinator).WithPublicationAdmission(
@@ -474,6 +475,7 @@ func Run(ctx context.Context, config Config) error {
 		ManualReleaseSelection: manualReleaseSelection,
 		ManualPickerSearch:     manualPickerSearch,
 		LibraryReleaseDetails:  libraryReleaseDetails,
+		LibraryProviderRefresh: libraryProviderRefresh,
 		LibraryPrimaryArtists:  libraryPrimaryArtists,
 		LibraryMetadata:        libraryMetadata,
 		LibraryReleaseCovers:   libraryReleaseCovers,

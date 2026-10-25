@@ -171,6 +171,24 @@ func (service *ProviderFetchService) StartProviderOperation(ctx context.Context,
 	return operation, nil
 }
 
+// StartMusicBrainzReleaseRefresh admits a release lookup using the MBID resolved
+// from a local binding. The binding is revalidated transactionally by the
+// repository before the durable provider job is inserted.
+func (service *ProviderFetchService) StartMusicBrainzReleaseRefresh(ctx context.Context, releaseID uuid.UUID, mbid string) (*persistence.Operation, error) {
+	if service.operations == nil || service.river == nil {
+		return nil, fmt.Errorf("durable provider operations are unavailable")
+	}
+	operation, err := service.PrepareOperation(ctx, "release_lookup", mbid, 0, 0, true)
+	if err != nil {
+		return nil, err
+	}
+	operation.MusicBrainzReleaseBinding = &persistence.MusicBrainzReleaseBinding{LocalReleaseID: releaseID, MBID: strings.ToLower(mbid)}
+	if err := service.operations.CreateOperationAndEnqueue(ctx, operation, service.river, ProviderFetchOperationArgs{OperationID: operation.ID}, nil); err != nil {
+		return nil, err
+	}
+	return operation, nil
+}
+
 func validProviderMBID(value string) bool {
 	parsed, err := uuid.Parse(value)
 	return err == nil && strings.EqualFold(value, parsed.String())

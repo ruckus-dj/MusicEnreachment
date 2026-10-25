@@ -6,6 +6,7 @@ import {
   getLibraryPublication,
   getLibraryRelease,
   patchLibraryPositionMetadata,
+  refreshLibraryReleaseMusicbrainz,
   retryPublicationSourceCleanup,
   setLibraryPositionPrimaryArtist,
   setLibraryReleasePrimaryArtist,
@@ -14,6 +15,7 @@ import type {
   LibraryMetadataResponse,
   LibraryPublicationResponse,
   LibraryReleaseDetailResponse,
+  OperationResponse,
 } from "../../api/generated/client.schemas";
 import { FirstPublicationPreview } from "./FirstPublicationPreview";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
@@ -63,6 +65,10 @@ function errorMessage(data: { detail?: string }, status: number) {
   return data.detail || `Запрос не выполнен (HTTP ${status}).`;
 }
 
+function isTerminalOperation(state: string) {
+  return ["succeeded", "failed", "cancelled"].includes(state);
+}
+
 export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
   const scope = useRef({ releaseId, generation: 0 });
   if (scope.current.releaseId !== releaseId) {
@@ -72,6 +78,18 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
   const [loadedReleaseID, setLoadedReleaseID] = useState("");
   const [positions, setPositions] = useState<Record<string, PositionData>>({});
   const [error, setError] = useState("");
+  const [musicBrainzRefresh, setMusicBrainzRefresh] = useState<{
+    scope: typeof scope.current;
+    operationID?: string;
+    pending: boolean;
+    active: boolean;
+    notice?: string;
+    error?: string;
+  }>({ scope: scope.current, pending: false, active: false });
+  const musicBrainzRefreshPending = useRef<
+    { scope: typeof scope.current; token: number } | undefined
+  >(undefined);
+  const musicBrainzRefreshToken = useRef(0);
   const [releasePrimaryArtist, setReleasePrimaryArtist] = useState({
     scope: scope.current,
     token: 0,
@@ -202,6 +220,135 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
     [releaseId],
   );
 
+  const refreshReleaseDetail = useCallback(
+    async (
+      requestScope: typeof scope.current,
+    ): Promise<LibraryReleaseDetailResponse | undefined> => {
+      if (!mounted.current || scope.current !== requestScope) return undefined;
+      const generation = ++releaseReadGeneration.current;
+      const response = await getLibraryRelease(requestScope.releaseId, {
+        cache: "no-store",
+      });
+      if (
+        !mounted.current ||
+        scope.current !== requestScope ||
+        releaseReadGeneration.current !== generation
+      )
+        return undefined;
+      if (response.status !== 200)
+        throw new Error(errorMessage(response.data, response.status));
+      setRelease(response.data);
+      return response.data;
+    },
+    [],
+  );
+
+  const completeMusicBrainzRefresh = useCallback(
+    (
+      snapshot: OperationResponse,
+      requestScope: typeof scope.current,
+      operationID: string,
+    ) => {
+      if (!mounted.current || scope.current !== requestScope) return;
+      if (!isTerminalOperation(snapshot.state)) return;
+      if (finishedOperations.current.has(operationID)) return;
+      finishedOperations.current.add(operationID);
+      setMusicBrainzRefresh((current) =>
+        current.scope === requestScope && current.operationID === operationID
+          ? {
+              ...current,
+              pending: false,
+              active: false,
+              notice:
+                snapshot.state === "succeeded"
+                  ? "Данные MusicBrainz обновлены. Обновление публикаций выполняется отдельно."
+                  : undefined,
+              error:
+                snapshot.state === "succeeded"
+                  ? undefined
+                  : snapshot.safe_error ||
+                    `Обновление MusicBrainz завершилось со статусом: ${snapshot.state}.`,
+            }
+          : current,
+      );
+      if (snapshot.state !== "succeeded") return;
+      void (async () => {
+        try {
+          const detail = await refreshReleaseDetail(requestScope);
+          if (!detail || !mounted.current || scope.current !== requestScope)
+            return;
+          await Promise.all(
+            (detail.tracks ?? []).map((track) => refreshPosition(track.id)),
+          );
+        } catch (reason) {
+          if (!mounted.current || scope.current !== requestScope) return;
+          setMusicBrainzRefresh((current) =>
+            current.scope === requestScope &&
+            current.operationID === operationID
+              ? {
+                  ...current,
+                  error:
+                    reason instanceof Error
+                      ? reason.message
+                      : "Не удалось обновить данные релиза.",
+                }
+              : current,
+          );
+        }
+      })();
+    },
+    [refreshPosition, refreshReleaseDetail],
+  );
+
+  const rereadMusicBrainzRelease = useCallback(
+    async (requestScope: typeof scope.current, operationID: string) => {
+      if (!mounted.current || scope.current !== requestScope) return;
+      setMusicBrainzRefresh((current) =>
+        current.scope === requestScope && current.operationID === operationID
+          ? { ...current, active: false, pending: true }
+          : current,
+      );
+      try {
+        const detail = await refreshReleaseDetail(requestScope);
+        if (!mounted.current || scope.current !== requestScope) return;
+        if (!detail) {
+          setMusicBrainzRefresh((current) =>
+            current.scope === requestScope &&
+            current.operationID === operationID
+              ? { ...current, pending: false, operationID: undefined }
+              : current,
+          );
+          return;
+        }
+        await Promise.all(
+          (detail.tracks ?? []).map((track) => refreshPosition(track.id)),
+        );
+        if (!mounted.current || scope.current !== requestScope) return;
+        setMusicBrainzRefresh((current) =>
+          current.scope === requestScope && current.operationID === operationID
+            ? { ...current, pending: false, operationID: undefined }
+            : current,
+        );
+      } catch (reason) {
+        if (!mounted.current || scope.current !== requestScope) return;
+        setMusicBrainzRefresh((current) =>
+          current.scope === requestScope
+            ? {
+                ...current,
+                pending: false,
+                operationID: undefined,
+                error:
+                  reason instanceof Error
+                    ? reason.message
+                    : "Не удалось обновить данные релиза.",
+              }
+            : current,
+        );
+      }
+    },
+    [refreshPosition, refreshReleaseDetail],
+  );
+
   useEffect(() => {
     let active = true;
     setRelease(undefined);
@@ -250,6 +397,56 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
       positionReadGenerations.current.clear();
     };
   }, [releaseId, refreshPosition]);
+
+  const musicBrainzRefreshScope = musicBrainzRefresh.scope;
+  const musicBrainzRefreshOperationID =
+    musicBrainzRefresh.scope === scope.current && musicBrainzRefresh.active
+      ? musicBrainzRefresh.operationID
+      : undefined;
+
+  useEffect(() => {
+    const requestScope = musicBrainzRefreshScope;
+    const operationID = musicBrainzRefreshOperationID;
+    if (!operationID) return;
+    return subscribeToOperation(
+      operationID,
+      (snapshot) => {
+        if (!mounted.current || scope.current !== requestScope) return;
+        if (["queued", "running"].includes(snapshot.state)) {
+          setMusicBrainzRefresh((current) =>
+            current.scope === requestScope &&
+            current.operationID === operationID
+              ? { ...current, pending: false, active: true, error: undefined }
+              : current,
+          );
+          return;
+        }
+        completeMusicBrainzRefresh(snapshot, requestScope, operationID);
+      },
+      (reason) => {
+        if (!mounted.current || scope.current !== requestScope) return;
+        setMusicBrainzRefresh((current) =>
+          current.scope === requestScope && current.operationID === operationID
+            ? {
+                ...current,
+                error:
+                  reason instanceof Error
+                    ? reason.message
+                    : "Не удалось проверить обновление MusicBrainz.",
+              }
+            : current,
+        );
+      },
+      () => {
+        void rereadMusicBrainzRelease(requestScope, operationID);
+      },
+    );
+  }, [
+    musicBrainzRefreshScope,
+    musicBrainzRefreshOperationID,
+    completeMusicBrainzRefresh,
+    rereadMusicBrainzRelease,
+  ]);
 
   // Keep one wake-only SSE subscription per operation, including attempts that
   // were already active when the release screen was opened.
@@ -1035,24 +1232,56 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
     }
   }
 
-  async function refreshReleaseDetail(
-    requestScope: typeof scope.current,
-  ): Promise<boolean> {
-    if (!mounted.current || scope.current !== requestScope) return false;
-    const generation = ++releaseReadGeneration.current;
-    const response = await getLibraryRelease(requestScope.releaseId, {
-      cache: "no-store",
-    });
+  async function refreshMusicBrainz() {
     if (
-      !mounted.current ||
-      scope.current !== requestScope ||
-      releaseReadGeneration.current !== generation
+      !release?.can_refresh_musicbrainz ||
+      musicBrainzRefreshPending.current?.scope === scope.current ||
+      (musicBrainzRefresh.scope === scope.current && musicBrainzRefresh.active)
     )
-      return false;
-    if (response.status !== 200)
-      throw new Error(errorMessage(response.data, response.status));
-    setRelease(response.data);
-    return true;
+      return;
+    const requestScope = scope.current;
+    const pending = {
+      scope: requestScope,
+      token: ++musicBrainzRefreshToken.current,
+    };
+    musicBrainzRefreshPending.current = pending;
+    setMusicBrainzRefresh({
+      scope: requestScope,
+      pending: true,
+      active: false,
+    });
+    try {
+      const response = await refreshLibraryReleaseMusicbrainz(releaseId);
+      if (!mounted.current || scope.current !== requestScope) return;
+      if (response.status !== 202)
+        throw new Error(errorMessage(response.data, response.status));
+      setMusicBrainzRefresh({
+        scope: requestScope,
+        operationID: response.data.id,
+        pending: false,
+        active: !isTerminalOperation(response.data.state),
+      });
+      if (isTerminalOperation(response.data.state))
+        completeMusicBrainzRefresh(
+          response.data,
+          requestScope,
+          response.data.id,
+        );
+    } catch (reason) {
+      if (!mounted.current || scope.current !== requestScope) return;
+      setMusicBrainzRefresh({
+        scope: requestScope,
+        pending: false,
+        active: false,
+        error:
+          reason instanceof Error
+            ? reason.message
+            : "Не удалось запустить обновление MusicBrainz.",
+      });
+    } finally {
+      if (musicBrainzRefreshPending.current === pending)
+        musicBrainzRefreshPending.current = undefined;
+    }
   }
 
   function uniqueArtists(artists: LibraryReleaseDetailResponse["artists"]) {
@@ -1120,6 +1349,36 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
               <p role="alert">{releasePrimaryArtistError}</p>
             )}
           </label>
+        )}
+        {release.can_refresh_musicbrainz && (
+          <div className="mt-3 space-y-2">
+            <button
+              type="button"
+              disabled={
+                (musicBrainzRefresh.scope === scope.current &&
+                  (musicBrainzRefresh.pending || musicBrainzRefresh.active)) ||
+                musicBrainzRefreshPending.current?.scope === scope.current
+              }
+              onClick={() => void refreshMusicBrainz()}
+            >
+              {musicBrainzRefresh.scope === scope.current &&
+              (musicBrainzRefresh.pending || musicBrainzRefresh.active)
+                ? "Обновление MusicBrainz выполняется…"
+                : "Обновить данные MusicBrainz"}
+            </button>
+            {musicBrainzRefresh.scope === scope.current &&
+              musicBrainzRefresh.active && (
+                <p role="status">Ожидание обновления данных MusicBrainz…</p>
+              )}
+            {musicBrainzRefresh.scope === scope.current &&
+              musicBrainzRefresh.notice && (
+                <p role="status">{musicBrainzRefresh.notice}</p>
+              )}
+            {musicBrainzRefresh.scope === scope.current &&
+              musicBrainzRefresh.error && (
+                <p role="alert">{musicBrainzRefresh.error}</p>
+              )}
+          </div>
         )}
       </header>
       <ReleaseCoverEditor

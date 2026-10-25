@@ -29,6 +29,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerManualReleaseSelection(api, dependencies.ManualReleaseSelection)
 	registerManualPickerSearch(api, dependencies.ManualPickerSearch)
 	registerLibraryReleaseDetail(api, dependencies)
+	registerLibraryMusicBrainzRefresh(api, dependencies.LibraryProviderRefresh, dependencies.Operations)
 	registerLibraryReleaseCover(api, dependencies.LibraryReleaseCovers)
 	registerLibraryReleaseCoverApply(api, dependencies.LibraryReleaseCovers, dependencies.Operations)
 	registerLibraryMetadata(api, dependencies.LibraryMetadata)

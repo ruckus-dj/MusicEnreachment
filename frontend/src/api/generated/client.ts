@@ -2792,6 +2792,106 @@ export const usePatchLibraryReleaseMetadata = <TError = ErrorModel,
       return useMutation(getPatchLibraryReleaseMetadataMutationOptions(options), queryClient);
     }
 
+export type refreshLibraryReleaseMusicbrainzResponse202 = {
+  data: OperationResponse
+  status: 202
+}
+
+export type refreshLibraryReleaseMusicbrainzResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type refreshLibraryReleaseMusicbrainzResponseSuccess = (refreshLibraryReleaseMusicbrainzResponse202) & {
+  headers: Headers;
+};
+export type refreshLibraryReleaseMusicbrainzResponseError = (refreshLibraryReleaseMusicbrainzResponseDefault) & {
+  headers: Headers;
+};
+
+export type refreshLibraryReleaseMusicbrainzResponse = (refreshLibraryReleaseMusicbrainzResponseSuccess | refreshLibraryReleaseMusicbrainzResponseError)
+
+export const getRefreshLibraryReleaseMusicbrainzUrl = (releaseId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/musicbrainz-refresh`
+}
+
+/**
+ * @summary Refresh a locally bound release from MusicBrainz
+ */
+export const refreshLibraryReleaseMusicbrainz = async (releaseId: string, options?: RequestInit): Promise<refreshLibraryReleaseMusicbrainzResponse> => {
+
+  const res = await fetch(getRefreshLibraryReleaseMusicbrainzUrl(releaseId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: refreshLibraryReleaseMusicbrainzResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as refreshLibraryReleaseMusicbrainzResponse
+}
+
+
+
+
+
+export const getRefreshLibraryReleaseMusicbrainzMutationKey = () => ['refreshLibraryReleaseMusicbrainz'] as const;
+
+export const getRefreshLibraryReleaseMusicbrainzMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshLibraryReleaseMusicbrainz>>, TError,RefreshLibraryReleaseMusicbrainzMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshLibraryReleaseMusicbrainz>>, TError,RefreshLibraryReleaseMusicbrainzMutationVariables, TContext> => {
+
+const mutationKey = getRefreshLibraryReleaseMusicbrainzMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshLibraryReleaseMusicbrainz>>, RefreshLibraryReleaseMusicbrainzMutationVariables> = (props) => {
+          const {releaseId} = props ?? {};
+
+          return  refreshLibraryReleaseMusicbrainz(releaseId,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshLibraryReleaseMusicbrainzMutationResult = NonNullable<Awaited<ReturnType<typeof refreshLibraryReleaseMusicbrainz>>>
+
+    export type RefreshLibraryReleaseMusicbrainzMutationError = ErrorModel
+    export type RefreshLibraryReleaseMusicbrainzMutationVariables = {releaseId: string}
+
+    /**
+ * @summary Refresh a locally bound release from MusicBrainz
+ */
+export const useRefreshLibraryReleaseMusicbrainz = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshLibraryReleaseMusicbrainz>>, TError,RefreshLibraryReleaseMusicbrainzMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof refreshLibraryReleaseMusicbrainz>>,
+        TError,
+        RefreshLibraryReleaseMusicbrainzMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRefreshLibraryReleaseMusicbrainzMutationOptions(options), queryClient);
+    }
+
 export type getLibraryPositionMetadataResponse200 = {
   data: LibraryMetadataResponse
   status: 200

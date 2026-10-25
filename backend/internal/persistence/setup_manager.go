@@ -59,10 +59,13 @@ type Operation struct {
 	ProviderConfigurationIdentity *string    `bun:"provider_configuration_identity,nullzero"`
 	ProviderID                    *uuid.UUID `bun:"-"`
 	ProviderEndpoint              string     `bun:"-"`
-	ProviderCacheKey              *string    `bun:"provider_cache_key,nullzero"`
-	ProviderExplicitRefresh       bool       `bun:"provider_explicit_refresh"`
-	ProviderDeliveryClaimedAt     *time.Time `bun:"provider_delivery_claimed_at,nullzero"`
-	ProviderExecutionEpoch        int64      `bun:"provider_execution_epoch"`
+	// MusicBrainzReleaseBinding is transient admission authority for a local
+	// release refresh. It is validated under row locks before River insertion.
+	MusicBrainzReleaseBinding *MusicBrainzReleaseBinding `bun:"-"`
+	ProviderCacheKey          *string                    `bun:"provider_cache_key,nullzero"`
+	ProviderExplicitRefresh   bool                       `bun:"provider_explicit_refresh"`
+	ProviderDeliveryClaimedAt *time.Time                 `bun:"provider_delivery_claimed_at,nullzero"`
+	ProviderExecutionEpoch    int64                      `bun:"provider_execution_epoch"`
 	// TargetWorkID and TargetStep are both present only for a single-step
 	// operation; batch operations select their work items in the snapshot.
 	TargetWorkID      *uuid.UUID `bun:"target_work_id,type:uuid,nullzero"`
@@ -80,6 +83,11 @@ type Operation struct {
 	StartedAt           *time.Time                    `bun:"started_at,nullzero"`
 	FinishedAt          *time.Time                    `bun:"finished_at,nullzero"`
 	UpdatedAt           time.Time                     `bun:"updated_at,nullzero"`
+}
+
+type MusicBrainzReleaseBinding struct {
+	LocalReleaseID uuid.UUID
+	MBID           string
 }
 
 type SetupManagerRepository struct {
@@ -403,6 +411,11 @@ func (repository *SetupManagerRepository) createOperationAndEnqueueTx(ctx contex
 			if operation.ProviderSourceID == nil || tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, *operation.ProviderSourceID).Scan(ctx, &sourceIdentity) != nil || sourceIdentity != currentIdentity {
 				return fmt.Errorf("enqueue provider operation: source configuration changed")
 			}
+		}
+	}
+	if operation != nil && operation.MusicBrainzReleaseBinding != nil {
+		if err := repository.ValidateMusicBrainzReleaseBindingTx(ctx, tx, *operation.MusicBrainzReleaseBinding); err != nil {
+			return fmt.Errorf("enqueue MusicBrainz release refresh: %w", err)
 		}
 	}
 	result, err := client.InsertTx(ctx, tx.Tx, args, options)

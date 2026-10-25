@@ -13,10 +13,12 @@ import (
 )
 
 var ErrLibraryReleaseNotFound = errors.New("library release not found")
+var ErrMusicBrainzReleaseBindingChanged = errors.New("MusicBrainz release binding changed")
 
 type LibraryReleaseDetail struct {
 	ID                      uuid.UUID
 	Title                   string
+	CanRefreshMusicBrainz   bool
 	Metadata                json.RawMessage
 	MetadataVersion         int
 	MetadataRevision        int64
@@ -83,6 +85,43 @@ func NewLibraryRepository(db *bun.DB) *LibraryRepository {
 	return &LibraryRepository{db: db}
 }
 
+func (repository *LibraryRepository) ReadMusicBrainzReleaseBinding(ctx context.Context, releaseID uuid.UUID) (string, error) {
+	var id uuid.UUID
+	if err := repository.db.NewRaw(`SELECT id FROM local_release WHERE id=?`, releaseID).Scan(ctx, &id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("read MusicBrainz release binding: %w", ErrLibraryReleaseNotFound)
+		}
+		return "", fmt.Errorf("read MusicBrainz release binding: %w", err)
+	}
+	mbid, err := musicBrainzReleaseBinding(ctx, repository.db, releaseID)
+	if err != nil {
+		return "", fmt.Errorf("read MusicBrainz release binding: %w", err)
+	}
+	return mbid, nil
+}
+
+// ValidateMusicBrainzReleaseBindingTx serializes admission against binding
+// changes and confirms that the exact MBID prepared by the service is current.
+func (repository *SetupManagerRepository) ValidateMusicBrainzReleaseBindingTx(ctx context.Context, tx bun.Tx, expected MusicBrainzReleaseBinding) error {
+	var localID uuid.UUID
+	if err := tx.NewRaw(`SELECT id FROM local_release WHERE id=? FOR UPDATE`, expected.LocalReleaseID).Scan(ctx, &localID); err != nil {
+		return fmt.Errorf("validate MusicBrainz release binding: %w: %v", ErrMusicBrainzReleaseBindingChanged, err)
+	}
+	var key string
+	if err := tx.NewRaw(`SELECT provider_release.provider_key
+		FROM provider_local_release binding
+		JOIN provider ON provider.id=binding.provider_id AND provider.code='musicbrainz'
+		JOIN provider_release ON provider_release.provider_id=binding.provider_id AND provider_release.id=binding.provider_release_id
+		WHERE binding.local_release_id=? FOR UPDATE OF binding,provider_release`, expected.LocalReleaseID).Scan(ctx, &key); err != nil {
+		return fmt.Errorf("validate MusicBrainz release binding: %w: %v", ErrMusicBrainzReleaseBindingChanged, err)
+	}
+	mbid, err := uuid.Parse(key)
+	if err != nil || !strings.EqualFold(key, mbid.String()) || !strings.EqualFold(mbid.String(), expected.MBID) {
+		return fmt.Errorf("validate MusicBrainz release binding: %w", ErrMusicBrainzReleaseBindingChanged)
+	}
+	return nil
+}
+
 // ReadReleaseDetail reads all local release detail in one read-only snapshot.
 // Related rows are batch-loaded so releases with many positions do not cause
 // per-track queries.
@@ -98,6 +137,11 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 		if err != nil {
 			return fmt.Errorf("read library release: %w", err)
 		}
+		mbid, bindingErr := musicBrainzReleaseBinding(ctx, tx, id)
+		if bindingErr != nil {
+			return fmt.Errorf("read library MusicBrainz release binding: %w", bindingErr)
+		}
+		result.CanRefreshMusicBrainz = mbid != ""
 
 		result.Artists = make([]LibraryArtistCredit, 0)
 		if err := tx.NewRaw(`SELECT credit.artist_id,artist.name AS artist_name,credit.name AS credit_name,credit.name_join_phrase AS join_phrase
@@ -285,4 +329,25 @@ func loadMusicBrainzArtistMBIDs(ctx context.Context, tx bun.IDB, artistIDs []uui
 		}
 	}
 	return result, nil
+}
+
+// musicBrainzReleaseBinding returns a canonical MBID only when the local release
+// has an unambiguous, valid binding to the MusicBrainz provider.
+func musicBrainzReleaseBinding(ctx context.Context, tx bun.IDB, releaseID uuid.UUID) (string, error) {
+	var mbids []string
+	if err := tx.NewRaw(`SELECT provider_release.provider_key
+		FROM provider_local_release binding
+		JOIN provider ON provider.id=binding.provider_id AND provider.code='musicbrainz'
+		JOIN provider_release ON provider_release.provider_id=binding.provider_id AND provider_release.id=binding.provider_release_id
+		WHERE binding.local_release_id=? ORDER BY provider_release.provider_key LIMIT 2`, releaseID).Scan(ctx, &mbids); err != nil {
+		return "", err
+	}
+	if len(mbids) != 1 {
+		return "", nil
+	}
+	mbid, err := uuid.Parse(mbids[0])
+	if err != nil || !strings.EqualFold(mbids[0], mbid.String()) {
+		return "", nil
+	}
+	return mbid.String(), nil
 }

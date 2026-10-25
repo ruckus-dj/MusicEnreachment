@@ -47,14 +47,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function watch() {
+function watch(withMissingHandler = false) {
   const onSnapshot = vi.fn<(value: OperationResponse) => void>();
   const onError = vi.fn<(error: Error) => void>();
-  const close = subscribeToOperation(operationId, onSnapshot, onError);
+  const onMissing = vi.fn<(error: Error) => void>();
+  const close = subscribeToOperation(
+    operationId,
+    onSnapshot,
+    onError,
+    withMissingHandler ? onMissing : undefined,
+  );
   onTestFinished(close);
   const source = TestEventSource.instances[0];
   if (!source) throw new Error("EventSource was not created");
-  return { source, onSnapshot, onError, close };
+  return { source, onSnapshot, onError, onMissing, close };
 }
 
 function snapshotAfter(watcher: ReturnType<typeof watch>, event: Event) {
@@ -127,6 +133,45 @@ describe("operation SSE snapshots", () => {
     );
 
     expect(await snapshotAfter(watcher, new Event("open"))).toEqual(snapshot);
+  });
+
+  it("reports a missing snapshot separately when a missing handler is supplied", async () => {
+    server.use(
+      http.get(`/api/operations/${operationId}`, () =>
+        HttpResponse.json({ status: 404 }, { status: 404 }),
+      ),
+    );
+    const watcher = watch(true);
+    const missing = new Promise<Error>((resolve) => {
+      watcher.onMissing.mockImplementationOnce(resolve);
+    });
+
+    watcher.source.dispatchEvent(new Event("open"));
+
+    expect(await missing).toMatchObject({
+      message: "Operation snapshot request failed (404).",
+    });
+    expect(watcher.onError).not.toHaveBeenCalled();
+    expect(watcher.onSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("preserves the existing error callback behavior for 404 without a missing handler", async () => {
+    server.use(
+      http.get(`/api/operations/${operationId}`, () =>
+        HttpResponse.json({ status: 404 }, { status: 404 }),
+      ),
+    );
+    const watcher = watch();
+    const failed = new Promise<Error>((resolve) => {
+      watcher.onError.mockImplementationOnce(resolve);
+    });
+
+    watcher.source.dispatchEvent(new Event("open"));
+
+    expect(await failed).toMatchObject({
+      message: "Operation snapshot request failed (404).",
+    });
+    expect(watcher.onMissing).not.toHaveBeenCalled();
   });
 
   it("coalesces wake-ups received while a snapshot is in flight", async () => {

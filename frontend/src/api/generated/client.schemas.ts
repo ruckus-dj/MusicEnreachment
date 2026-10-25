@@ -603,6 +603,7 @@ export interface LibraryReleaseDetailResponse {
   readonly $schema?: string;
   /** @nullable */
   artists: LibraryArtistCreditResponse[] | null;
+  can_refresh_musicbrainz: boolean;
   id: string;
   metadata: unknown;
   metadata_revision: number;

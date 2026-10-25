@@ -382,6 +382,387 @@ function stubEventSource() {
   vi.stubGlobal("EventSource", FakeEventSource);
 }
 
+function setupMusicBrainzRelease(canRefresh: boolean, tracks: unknown[] = []) {
+  let releaseReads = 0;
+  server.use(
+    http.get("*/api/library/releases/musicbrainz-test", () => {
+      releaseReads += 1;
+      return HttpResponse.json({
+        id: "musicbrainz-test",
+        title: "MusicBrainz album",
+        metadata: {},
+        metadata_revision: releaseReads,
+        metadata_version: 1,
+        can_refresh_musicbrainz: canRefresh,
+        primary_artist: {},
+        artists: [],
+        tracks,
+      });
+    }),
+  );
+  return () => releaseReads;
+}
+
+function musicBrainzTrack() {
+  return {
+    id: "musicbrainz-position",
+    local_track_id: "musicbrainz-track",
+    title: "Song",
+    displayed_number: "1",
+    medium: 1,
+    position: 1,
+    metadata: {},
+    metadata_revision: 1,
+    metadata_version: 1,
+    track_metadata_revision: 1,
+    primary_artist: {},
+    artists: [],
+    sources: [],
+  };
+}
+
+function musicBrainzOperation(state: string, safe_error?: string) {
+  return {
+    id: "musicbrainz-operation",
+    kind: "refresh_library_release_musicbrainz",
+    state,
+    stage: state,
+    bytes_completed: 0,
+    created_at: "2026-10-01T10:20:00Z",
+    updated_at: "2026-10-01T10:20:00Z",
+    ...(safe_error ? { safe_error } : {}),
+  };
+}
+
+it("shows MusicBrainz refresh only when the server advertises the capability", async () => {
+  setupMusicBrainzRelease(false);
+  stubEventSource();
+  let refreshRequests = 0;
+  server.use(
+    http.post(
+      "*/api/library/releases/musicbrainz-test/musicbrainz-refresh",
+      () => {
+        refreshRequests += 1;
+        return HttpResponse.json(musicBrainzOperation("queued"), {
+          status: 202,
+        });
+      },
+    ),
+  );
+  render(<LibraryReleaseScreen releaseId="musicbrainz-test" />);
+  expect(
+    await screen.findByRole("heading", { name: "MusicBrainz album" }),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Обновить данные MusicBrainz" }),
+  ).not.toBeInTheDocument();
+  expect(refreshRequests).toBe(0);
+  expect(FakeEventSource.instances).toHaveLength(0);
+});
+
+it("submits one bodyless refresh and refreshes the guarded release and positions on success", async () => {
+  const releaseReads = setupMusicBrainzRelease(true, [musicBrainzTrack()]);
+  stubEventSource();
+  let posts = 0;
+  let postBody = "";
+  let operationState = musicBrainzOperation("running");
+  let operationReads = 0;
+  let positionReads = 0;
+  server.use(
+    http.post(
+      "*/api/library/releases/musicbrainz-test/musicbrainz-refresh",
+      async ({ request }) => {
+        posts += 1;
+        postBody = await request.text();
+        return HttpResponse.json(musicBrainzOperation("queued"), {
+          status: 202,
+        });
+      },
+    ),
+    http.get("*/api/operations/musicbrainz-operation", () => {
+      operationReads += 1;
+      return HttpResponse.json(operationState);
+    }),
+    http.get(
+      "*/api/library/releases/musicbrainz-test/positions/musicbrainz-position/metadata",
+      () => {
+        positionReads += 1;
+        return HttpResponse.json({
+          revision: 1,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        });
+      },
+    ),
+    http.get(
+      "*/api/library/releases/musicbrainz-test/positions/musicbrainz-position/publication",
+      () =>
+        HttpResponse.json({
+          release_id: "musicbrainz-test",
+          position_id: "musicbrainz-position",
+          metadata_revision: 1,
+          can_apply_manual_lyrics: false,
+        }),
+    ),
+  );
+  render(<LibraryReleaseScreen releaseId="musicbrainz-test" />);
+  const button = await screen.findByRole("button", {
+    name: "Обновить данные MusicBrainz",
+  });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  await waitFor(() => expect(posts).toBe(1));
+  expect(postBody).toBe("");
+  expect(button).toBeDisabled();
+  const stream = await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+    return FakeEventSource.instances[0];
+  });
+  await act(async () => {
+    stream.emit("open");
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Ожидание обновления данных MusicBrainz",
+    ),
+  );
+  await act(async () => {
+    stream.emit("error");
+  });
+  await act(async () => {
+    stream.emit("open");
+  });
+  await waitFor(() => expect(operationReads).toBeGreaterThan(1));
+  operationState = musicBrainzOperation("succeeded");
+  await act(async () => {
+    stream.emit("operation-changed");
+  });
+  expect(
+    await screen.findByText(
+      "Данные MusicBrainz обновлены. Обновление публикаций выполняется отдельно.",
+    ),
+  ).toBeTruthy();
+  await waitFor(() => {
+    expect(releaseReads()).toBeGreaterThan(1);
+    expect(positionReads).toBeGreaterThan(1);
+  });
+});
+
+it("reports the operation safe error and closes its watcher on navigation", async () => {
+  setupMusicBrainzRelease(true);
+  stubEventSource();
+  let operationState = musicBrainzOperation("running");
+  server.use(
+    http.post(
+      "*/api/library/releases/musicbrainz-test/musicbrainz-refresh",
+      () => HttpResponse.json(musicBrainzOperation("queued"), { status: 202 }),
+    ),
+    http.get("*/api/operations/musicbrainz-operation", () =>
+      HttpResponse.json(operationState),
+    ),
+    http.get("*/api/library/releases/another-release", () =>
+      HttpResponse.json({
+        id: "another-release",
+        title: "Another release",
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        can_refresh_musicbrainz: false,
+        primary_artist: {},
+        artists: [],
+        tracks: [],
+      }),
+    ),
+  );
+  const view = render(<LibraryReleaseScreen releaseId="musicbrainz-test" />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Обновить данные MusicBrainz" }),
+  );
+  const stream = await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+    return FakeEventSource.instances[0];
+  });
+  await act(async () => stream.emit("open"));
+  operationState = musicBrainzOperation(
+    "failed",
+    "MusicBrainz safely unavailable",
+  );
+  await act(async () => stream.emit("operation-changed"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "MusicBrainz safely unavailable",
+  );
+  view.rerender(<LibraryReleaseScreen releaseId="another-release" />);
+  await screen.findByRole("heading", { name: "Another release" });
+  await waitFor(() => expect(stream.closed).toBe(true));
+});
+
+it("rereads current release state when an active operation snapshot is missing", async () => {
+  const releaseReads = setupMusicBrainzRelease(true, [musicBrainzTrack()]);
+  stubEventSource();
+  let operationReads = 0;
+  let positionReads = 0;
+  server.use(
+    http.post(
+      "*/api/library/releases/musicbrainz-test/musicbrainz-refresh",
+      () => HttpResponse.json(musicBrainzOperation("queued"), { status: 202 }),
+    ),
+    http.get("*/api/operations/musicbrainz-operation", () => {
+      operationReads += 1;
+      return HttpResponse.json({ status: 404 }, { status: 404 });
+    }),
+    http.get(
+      "*/api/library/releases/musicbrainz-test/positions/musicbrainz-position/metadata",
+      () => {
+        positionReads += 1;
+        return HttpResponse.json({
+          revision: 1,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        });
+      },
+    ),
+    http.get(
+      "*/api/library/releases/musicbrainz-test/positions/musicbrainz-position/publication",
+      () =>
+        HttpResponse.json({
+          release_id: "musicbrainz-test",
+          position_id: "musicbrainz-position",
+          metadata_revision: 1,
+          can_apply_manual_lyrics: false,
+        }),
+    ),
+  );
+  render(<LibraryReleaseScreen releaseId="musicbrainz-test" />);
+  const button = await screen.findByRole("button", {
+    name: "Обновить данные MusicBrainz",
+  });
+  fireEvent.click(button);
+  const stream = await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+    return FakeEventSource.instances[0];
+  });
+  await act(async () => stream.emit("open"));
+  await waitFor(() => {
+    expect(releaseReads()).toBeGreaterThan(1);
+    expect(positionReads).toBeGreaterThan(1);
+    expect(button).toBeEnabled();
+  });
+  expect(operationReads).toBe(1);
+  expect(stream.closed).toBe(true);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("handles an already-succeeded admission without starting an operation watcher", async () => {
+  const releaseReads = setupMusicBrainzRelease(true);
+  stubEventSource();
+  let operationReads = 0;
+  server.use(
+    http.post(
+      "*/api/library/releases/musicbrainz-test/musicbrainz-refresh",
+      () =>
+        HttpResponse.json(musicBrainzOperation("succeeded"), { status: 202 }),
+    ),
+    http.get("*/api/operations/musicbrainz-operation", () => {
+      operationReads += 1;
+      return HttpResponse.json(musicBrainzOperation("succeeded"));
+    }),
+  );
+  render(<LibraryReleaseScreen releaseId="musicbrainz-test" />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Обновить данные MusicBrainz" }),
+  );
+  expect(
+    await screen.findByText(
+      "Данные MusicBrainz обновлены. Обновление публикаций выполняется отдельно.",
+    ),
+  ).toBeTruthy();
+  await waitFor(() => expect(releaseReads()).toBeGreaterThan(1));
+  expect(operationReads).toBe(0);
+  expect(FakeEventSource.instances).toHaveLength(0);
+});
+
+it("shows the safe error for an already-failed admission without a watcher", async () => {
+  const releaseReads = setupMusicBrainzRelease(true);
+  stubEventSource();
+  let operationReads = 0;
+  server.use(
+    http.post(
+      "*/api/library/releases/musicbrainz-test/musicbrainz-refresh",
+      () =>
+        HttpResponse.json(
+          musicBrainzOperation("failed", "Safe provider failure"),
+          { status: 202 },
+        ),
+    ),
+    http.get("*/api/operations/musicbrainz-operation", () => {
+      operationReads += 1;
+      return HttpResponse.json(musicBrainzOperation("failed"));
+    }),
+  );
+  render(<LibraryReleaseScreen releaseId="musicbrainz-test" />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Обновить данные MusicBrainz" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Safe provider failure",
+  );
+  expect(releaseReads()).toBe(1);
+  expect(operationReads).toBe(0);
+  expect(FakeEventSource.instances).toHaveLength(0);
+});
+
+it("ignores a refresh admission that completes after navigating to another release", async () => {
+  setupMusicBrainzRelease(true);
+  stubEventSource();
+  let finishPost: (() => void) | undefined;
+  let postStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    postStarted = resolve;
+  });
+  server.use(
+    http.post(
+      "*/api/library/releases/musicbrainz-test/musicbrainz-refresh",
+      () =>
+        new Promise((resolve) => {
+          finishPost = () =>
+            resolve(
+              HttpResponse.json(musicBrainzOperation("queued"), {
+                status: 202,
+              }),
+            );
+          postStarted?.();
+        }),
+    ),
+    http.get("*/api/library/releases/another-release", () =>
+      HttpResponse.json({
+        id: "another-release",
+        title: "Another release",
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        can_refresh_musicbrainz: false,
+        primary_artist: {},
+        artists: [],
+        tracks: [],
+      }),
+    ),
+  );
+  const view = render(<LibraryReleaseScreen releaseId="musicbrainz-test" />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Обновить данные MusicBrainz" }),
+  );
+  await started;
+  view.rerender(<LibraryReleaseScreen releaseId="another-release" />);
+  await screen.findByRole("heading", { name: "Another release" });
+  await act(async () => finishPost?.());
+  await waitFor(() => expect(FakeEventSource.instances).toHaveLength(0));
+  expect(
+    screen.queryByText(
+      "Данные MusicBrainz обновлены. Обновление публикаций выполняется отдельно.",
+    ),
+  ).not.toBeInTheDocument();
+});
+
 type CleanupWarningFixture = {
   original_operation_id: string;
   safe_error: string;
