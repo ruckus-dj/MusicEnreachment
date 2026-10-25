@@ -24,9 +24,6 @@ func validatePublicationProviderTagAuthorityTx(ctx context.Context, tx bun.Tx, r
 	if err != nil {
 		return fmt.Errorf("validate provider-tag authority: read protection: %w", err)
 	}
-	if len(protection.ManualAbsentFields) != 0 {
-		return fmt.Errorf("validate provider-tag authority: manual-absent protection needs an owner decision: %w", ErrPublicationAdmissionConflict)
-	}
 	patch, err := BuildPublicationProviderCanonicalTagPatch(*snapshot)
 	if err != nil {
 		return fmt.Errorf("validate provider-tag authority: project accepted fields: %w", err)

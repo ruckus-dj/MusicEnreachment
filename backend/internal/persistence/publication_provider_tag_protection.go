@@ -10,15 +10,15 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
-// PublicationProviderTagProtection reports the normalized tag keys with local
-// manual protection, separately from manual-absent facts requiring a decision.
+// PublicationProviderTagProtection reports normalized tag keys protected by
+// local manual authority and the manual-absent fields that caused protection.
 type PublicationProviderTagProtection struct {
 	Keys               []string
 	ManualAbsentFields []string
 }
 
-// BuildPublicationProviderTagProtection collects local facts only. It does
-// not decide whether manual-absent fields should protect provider tags.
+// BuildPublicationProviderTagProtection collects the normalized tag footprints
+// of all local manual authority, including fields explicitly marked absent.
 func BuildPublicationProviderTagProtection(context *PublicationProviderTagContext) (PublicationProviderTagProtection, error) {
 	result := PublicationProviderTagProtection{Keys: []string{}, ManualAbsentFields: []string{}}
 	if context == nil {
@@ -44,7 +44,6 @@ func BuildPublicationProviderTagProtection(context *PublicationProviderTagContex
 			}
 			if value.State == librarymetadata.StateAbsent {
 				absent[field] = struct{}{}
-				continue
 			}
 			for _, key := range publication.PublicationTagKeysForField(tagProtectionScope(scope), field) {
 				keys[key] = struct{}{}

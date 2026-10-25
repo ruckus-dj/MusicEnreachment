@@ -70,9 +70,6 @@ func (service *LibraryPublications) admitAutomaticProviderTags(ctx context.Conte
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if len(protection.ManualAbsentFields) != 0 {
-		return uuid.Nil, errors.New("manual-absent tag protection requires an owner decision")
-	}
 	patch, err := persistence.BuildPublicationProviderCanonicalTagPatch(*providerContext)
 	if err != nil {
 		return uuid.Nil, err

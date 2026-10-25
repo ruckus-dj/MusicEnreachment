@@ -180,9 +180,6 @@ func (repository *SetupManagerRepository) evaluatePublicationReconciliationCurre
 		if err != nil {
 			return PublicationReconciliationDecision{}, err
 		}
-		if len(protection.ManualAbsentFields) != 0 {
-			return PublicationReconciliationDecision{}, fmt.Errorf("evaluate publication reconciliation: manual-absent protection requires an owner decision")
-		}
 		patch, err := BuildPublicationProviderCanonicalTagPatch(*providerContext)
 		if err != nil {
 			return PublicationReconciliationDecision{}, err

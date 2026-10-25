@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,8 @@ func TestValidatePublicationProviderTagAuthorityTxPostgreSQL(t *testing.T) {
 	if _, err := db.NewRaw(`INSERT INTO local_release(id,title,metadata) VALUES(?,?,'{}'::jsonb)`, localReleaseID, "Local album").Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.NewRaw(`INSERT INTO local_track(id,title,metadata) VALUES(?,?, '{}'::jsonb)`, localTrackID, "Local track").Exec(ctx); err != nil {
+	manualAbsentTitle := `{"local_metadata":{"version":1,"scope":"track","desired":{"title":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`
+	if _, err := db.NewRaw(`INSERT INTO local_track(id,title,metadata) VALUES(?,?, ?::jsonb)`, localTrackID, "Local track", manualAbsentTitle).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.NewRaw(`INSERT INTO release_track(id,release_id,medium,position,track_id,displayed_number) VALUES(?,?,0,0,?,'1')`, positionID, localReleaseID, localTrackID).Exec(ctx); err != nil {
@@ -91,6 +93,8 @@ func TestValidatePublicationProviderTagAuthorityTxPostgreSQL(t *testing.T) {
 			t.Fatal(err)
 		}
 		input.ProviderTags.ProtectedKeys = protection.Keys
+		delete(input.ProviderTags.Current.Tags, "TITLE")
+		input.ProviderTags.Current.Tags["GENRE"] = []string{"Local genre"}
 		input.DesiredTags, err = publication.ApplyProviderTagPatch(input.ProviderTags.Current.Tags, input.ProviderTags.Patch, protection.Keys)
 		if err != nil {
 			t.Fatal(err)
@@ -98,6 +102,18 @@ func TestValidatePublicationProviderTagAuthorityTxPostgreSQL(t *testing.T) {
 		return accepted, input
 	}
 	accepted, input := load()
+	if !strings.Contains(strings.Join(input.ProviderTags.ProtectedKeys, ","), "TITLE") {
+		t.Fatalf("manual-absent title did not protect TITLE: %v", input.ProviderTags.ProtectedKeys)
+	}
+	if _, exists := input.DesiredTags["TITLE"]; exists {
+		t.Fatalf("provider patch reinstated manual-absent CURRENT TITLE: %v", input.DesiredTags)
+	}
+	if !reflect.DeepEqual(input.DesiredTags["ALBUM"], input.ProviderTags.Patch["ALBUM"]) {
+		t.Fatalf("manual-absent TITLE blocked unprotected provider ALBUM update: desired=%v patch=%v", input.DesiredTags, input.ProviderTags.Patch)
+	}
+	if !reflect.DeepEqual(input.DesiredTags["GENRE"], []string{"Local genre"}) {
+		t.Fatalf("provider omission deleted an existing CURRENT tag: desired=%v", input.DesiredTags)
+	}
 	validate := func(candidate PublicationInputs) error {
 		t.Helper()
 		return db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {

@@ -24,9 +24,15 @@ func TestCurrentPublicationProviderTagProtection(t *testing.T) {
 			wantKeys: []string{"ALBUM"},
 		},
 		{
-			name:       "position manual absent remains a separate fact",
+			name:       "position manual absent protects its footprint",
 			position:   `{"local_metadata":{"version":1,"scope":"position","desired":{"synced_lyrics":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`,
 			wantAbsent: []string{"synced_lyrics"},
+		},
+		{
+			name:       "position manual absent title protects title footprint",
+			position:   `{"local_metadata":{"version":1,"scope":"position","desired":{"title":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`,
+			wantKeys:   []string{"TITLE"},
+			wantAbsent: []string{"title"},
 		},
 		{
 			name:     "position manual title protects position footprint",
@@ -49,8 +55,9 @@ func TestCurrentPublicationProviderTagProtection(t *testing.T) {
 			wantKeys: []string{"ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "TITLE"},
 		},
 		{
-			name:       "manual absent returned separately",
+			name:       "manual absent returned and protects matching provider key",
 			track:      `{"local_metadata":{"version":1,"scope":"track","desired":{"title":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`,
+			wantKeys:   []string{"TITLE"},
 			wantAbsent: []string{"title"},
 		},
 		{
