@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
@@ -33,6 +34,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	guard persistence.PublicationDeliveryGuard,
 	outputRoot string,
 	root sourcefs.OutputDirectory,
+	commands *simplePublicationTrackingRunner,
 ) (resultErr error) {
 	if input.IntentKind == "rewrite" && (input.Rewrite == nil || input.Audio != nil || input.AudioUpgrade != nil) ||
 		input.IntentKind == "audio" && (input.Audio == nil || input.Rewrite != nil) ||
@@ -130,10 +132,12 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if err != nil {
 		return fmt.Errorf("create publication candidate directory: %w", err)
 	}
-	defer func() { resultErr = errors.Join(resultErr, os.RemoveAll(tempDir)) }()
+	defer func() {
+		resultErr = errors.Join(resultErr, removeSimplePublicationTempDir(tempDir, commands))
+	}()
 	tempName := filepath.Base(targetAbsolute)
 	candidatePath := filepath.Join(tempDir, tempName)
-	resolver := NewPublicationPinnedToolsResolver(executor.repository, simplePublicationToolCommands{executor.commands}, executor.platform)
+	resolver := NewPublicationPinnedToolsResolver(executor.repository, simplePublicationToolCommands{runner: commands}, executor.platform)
 	toolPair, validTools, err := resolver.Resolve(ctx, guard, input.Tools)
 	if err != nil || !validTools {
 		return errors.Join(err, errors.New("pinned publication tools are unavailable"))
@@ -143,7 +147,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	validator := executor.stageValidator
 	if validator == nil {
 		real := RealPublicationStageValidator{MetadataReader: metadata.Reader{}, Tools: pinned}
-		if runner, ok := executor.commands.(PublicationFileCommandRunner); ok {
+		if runner, ok := commands.PublicationCommandRunner().(PublicationFileCommandRunner); ok {
 			real.Probe = func(ctx context.Context, executable string, input sourcefs.RegularFile, container publication.AudioContainer) ([]byte, error) {
 				demuxer, _ := publication.InputDemuxer(container)
 				request, err := tools.BuildPublicationFileCommandRequest(executable, demuxer, nil)
@@ -184,11 +188,13 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		}
 	}
 	preparation := PublicationSimplePreparation{
-		Commands: executor.commands, FFmpegPath: ffmpegPath, FFprobePath: toolPair.FFprobe,
+		Commands: commands.PublicationCommandRunner(), FFmpegPath: ffmpegPath, FFprobePath: toolPair.FFprobe,
 		Validator: validator, Metadata: writer, MetadataReader: metadata.Reader{}, Lyrics: executor.lyrics, CoverInput: coverInput,
 	}
 	var prepared PublicationSimplePreparationResult
-	if input.AudioUpgrade != nil {
+	if input.ProviderTags != nil {
+		prepared, err = preparation.PrepareProviderTags(ctx, input, targetAbsolute, tempDir, candidatePath)
+	} else if input.AudioUpgrade != nil {
 		prepared, err = preparation.PrepareAudioUpgrade(ctx, input, inputPath, currentPathForPreparation, tempDir, candidatePath)
 	} else {
 		prepared, err = preparation.Prepare(ctx, input, inputPath, tempDir, candidatePath)
@@ -196,10 +202,16 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if err != nil {
 		return err
 	}
+	if commands.QuiescenceUnknown() {
+		return errors.New("publication command quiescence is unknown")
+	}
 	observation := prepared.Observation
 	observation.RelativePath = manifest.RelativePath
 	if err := executor.checkSimplePublicationCurrent(ctx, guard, input); err != nil {
 		return err
+	}
+	if commands.QuiescenceUnknown() {
+		return errors.New("publication command quiescence is unknown")
 	}
 	candidateRoot, err := sourcefs.NewOutputOpener().OpenRoot(ctx, tempDir)
 	if err != nil {
@@ -300,6 +312,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	size, mtime := installedInfo.Size(), installedInfo.ModTime().UnixMicro()
 	result := persistence.PublicationResult{
 		Observation:           observation,
+		PreservedAudioSHA256:  prepared.PreservedAudioSHA256,
 		InitialLyrics:         prepared.InitialLyrics,
 		ObsoleteOutputCleanup: obsoleteOutput,
 		InstalledOwnership: persistence.PublicationCurrentOwnership{
@@ -400,12 +413,106 @@ func sameSimplePublicationInputs(current, frozen persistence.PublicationInputs) 
 	return errLeft == nil && errRight == nil && string(left) == string(right)
 }
 
+type simplePublicationTrackingRunner struct {
+	runner  PublicationCommandRunner
+	mu      sync.Mutex
+	unknown bool
+}
+
+func newSimplePublicationTrackingRunner(runner PublicationCommandRunner) *simplePublicationTrackingRunner {
+	return &simplePublicationTrackingRunner{runner: runner}
+}
+
+func (runner *simplePublicationTrackingRunner) record(result PublicationCommandResult) {
+	if result.QuiescenceEstablished {
+		return
+	}
+	runner.mu.Lock()
+	runner.unknown = true
+	runner.mu.Unlock()
+}
+
+func (runner *simplePublicationTrackingRunner) recordUnknown() {
+	runner.mu.Lock()
+	runner.unknown = true
+	runner.mu.Unlock()
+}
+
+func (runner *simplePublicationTrackingRunner) QuiescenceUnknown() bool {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return runner.unknown
+}
+
+func removeSimplePublicationTempDir(tempDir string, runner *simplePublicationTrackingRunner) error {
+	if runner.QuiescenceUnknown() {
+		return nil
+	}
+	return os.RemoveAll(tempDir)
+}
+
+func (runner *simplePublicationTrackingRunner) Run(ctx context.Context, name string, args ...string) (PublicationCommandResult, error) {
+	if runner.QuiescenceUnknown() {
+		return PublicationCommandResult{}, errors.New("publication command quiescence is unknown")
+	}
+	completed := false
+	defer func() {
+		if !completed {
+			runner.recordUnknown()
+		}
+	}()
+	result, err := runner.runner.Run(ctx, name, args...)
+	completed = true
+	runner.record(result)
+	if !result.QuiescenceEstablished {
+		err = errors.Join(err, errors.New("publication command quiescence is unknown"))
+	}
+	return result, err
+}
+
+type simplePublicationFileTrackingRunner struct {
+	*simplePublicationTrackingRunner
+}
+
+func (runner simplePublicationFileTrackingRunner) RunFile(ctx context.Context, request tools.FileCommandRequest) (PublicationCommandResult, error) {
+	if runner.QuiescenceUnknown() {
+		return PublicationCommandResult{}, errors.New("publication command quiescence is unknown")
+	}
+	fileRunner, ok := runner.runner.(PublicationFileCommandRunner)
+	if !ok {
+		return unavailablePublicationCommand()
+	}
+	completed := false
+	defer func() {
+		if !completed {
+			runner.recordUnknown()
+		}
+	}()
+	result, err := fileRunner.RunFile(ctx, request)
+	completed = true
+	runner.record(result)
+	if !result.QuiescenceEstablished {
+		err = errors.Join(err, errors.New("publication command quiescence is unknown"))
+	}
+	return result, err
+}
+
+func (runner *simplePublicationTrackingRunner) PublicationCommandRunner() PublicationCommandRunner {
+	if _, ok := runner.runner.(PublicationFileCommandRunner); ok {
+		return simplePublicationFileTrackingRunner{runner}
+	}
+	return runner
+}
+
 type simplePublicationToolCommands struct{ runner PublicationCommandRunner }
 
 func (commands simplePublicationToolCommands) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	result, err := commands.runner.Run(ctx, name, args...)
 	return result.Output, err
 }
+
+var _ PublicationCommandRunner = (*simplePublicationTrackingRunner)(nil)
+var _ PublicationFileCommandRunner = simplePublicationFileTrackingRunner{}
 
 func publicationTarget(raw []byte) (persistence.PublicationNamespaceNode, []persistence.PublicationNamespaceNode, error) {
 	var manifest struct {

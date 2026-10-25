@@ -117,6 +117,69 @@ func TestMusicBrainzMatchingSnapshotUsesAcceptedSourceProjection(t *testing.T) {
 	if got := release.Tracks[1].RecordingArtists; len(got) != 2 || got[0] != "Second Artist" || got[1] != "Second Artist" || release.Tracks[1].RecordingLengthMS == nil || *release.Tracks[1].RecordingLengthMS != 0 {
 		t.Fatalf("normalized recording projection = %#v", release.Tracks[1])
 	}
+
+	// A publication context resolves the selected local release-track edge by
+	// release_track.id (deliberately distinct from track_id) and preserves local
+	// manual-override facts without making a protection decision.
+	localReleaseID, localTrackID, localRecordingID := uuid.New(), uuid.New(), uuid.New()
+	positionID := uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO local_release(id,title,metadata) VALUES(?,?, '{}'::jsonb)`, localReleaseID, "Local album").Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO local_track(id,title,metadata) VALUES(?,?,?::jsonb)`, localTrackID, "Local track", `{"manual_matching_override":{"title":"keep"},"local_metadata":{"scope":"position","desired":{"title":{"state":"set","value":"Local title"}}}}`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO local_recording(id,title,metadata) VALUES(?,?,?::jsonb)`, localRecordingID, "Local recording", `{"manual_matching_override":{"genre":"keep"}}`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO release_track(id,release_id,medium,position,track_id,recording_id,displayed_number) VALUES(?,?,0,0,?,?, '1')`, positionID, localReleaseID, localTrackID, localRecordingID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method) VALUES(?,?,?,'manual')`, provider.ID, release.ID, localReleaseID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO provider_local_track(provider_id,provider_track_id,local_track_id,method) VALUES(?,?,?,'manual')`, provider.ID, release.Tracks[0].ID, localTrackID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var providerRecordingID uuid.UUID
+	if err := db.NewRaw(`SELECT id FROM provider_recording WHERE provider_id=? AND provider_key=?`, provider.ID, release.Tracks[0].RecordingProviderKey).Scan(ctx, &providerRecordingID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method) VALUES(?,?,?,'manual')`, provider.ID, providerRecordingID, localRecordingID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	contextRepository := persistence.NewSetupManagerRepository(db)
+	providerContext, err := contextRepository.ReadPublicationProviderTagContextForPosition(ctx, localReleaseID, positionID, source.Endpoint, identity)
+	if err != nil {
+		t.Fatalf("read accepted publication provider context: %v", err)
+	}
+	if providerContext.PositionOwner.TrackID != localTrackID || providerContext.PositionOwner.Owner.ID != positionID || len(providerContext.PositionOwner.Owner.Metadata) == 0 || providerContext.PositionOwner.Owner.Revision == 0 || providerContext.TrackOwner.ID != localTrackID || !providerContext.RecordingBound || providerContext.RecordingOwner.ID != localRecordingID {
+		t.Fatalf("publication provider owner identities = %+v", providerContext)
+	}
+	if !providerContext.TrackOwner.ManualOverridePresent || providerContext.TrackOwner.Revision == 0 || providerContext.Digest == "" {
+		t.Fatalf("publication provider manual override/revision/digest facts = %+v", providerContext.TrackOwner)
+	}
+	if _, err := db.NewRaw(`UPDATE release_track SET metadata='{"local_metadata":{"version":1,"scope":"position","desired":{}}}'::jsonb,metadata_revision=metadata_revision+1 WHERE id=?`, positionID).Exec(ctx); err != nil {
+		t.Fatalf("mutate position metadata authority: %v", err)
+	}
+	mutatedContext, err := contextRepository.ReadPublicationProviderTagContextForPosition(ctx, localReleaseID, positionID, source.Endpoint, identity)
+	if err != nil {
+		t.Fatalf("rebuild context after position metadata mutation: %v", err)
+	}
+	if mutatedContext.PositionOwner.Owner.Revision == providerContext.PositionOwner.Owner.Revision || mutatedContext.Digest == providerContext.Digest {
+		t.Fatalf("position metadata mutation did not invalidate frozen digest: before=%+v after=%+v", providerContext.PositionOwner.Owner, mutatedContext.PositionOwner.Owner)
+	}
+	if _, err := db.NewRaw(`DELETE FROM provider_local_recording WHERE provider_id=? AND provider_recording_id=?`, provider.ID, providerRecordingID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	withoutRecordingBinding, err := contextRepository.ReadPublicationProviderTagContextForPosition(ctx, localReleaseID, positionID, source.Endpoint, identity)
+	if err != nil || withoutRecordingBinding.RecordingBound || withoutRecordingBinding.RecordingOwner.ID != localRecordingID || !withoutRecordingBinding.RecordingOwner.ManualOverridePresent || withoutRecordingBinding.Recording != nil {
+		t.Fatalf("unbound local recording must not be assumed authoritative: context=%+v err=%v", withoutRecordingBinding, err)
+	}
+	if providerContext.Release.FieldEvidence["title"].Authority == 0 || providerContext.Release.FieldEvidence["title"].FetchOrder == 0 {
+		t.Fatalf("publication provider release title lacks accepted field evidence: %+v", providerContext.Release.FieldEvidence)
+	}
+
 	queryOne := snapshot.SearchScores["release-search:0:2:query-one"]
 	queryTwo := snapshot.SearchScores["release-search:0:2:query-two"]
 	if !queryOne[releaseKey].Present || queryOne[releaseKey].Value != 0 || queryOne["dddddddd-dddd-4ddd-8ddd-dddddddddddd"].Present {

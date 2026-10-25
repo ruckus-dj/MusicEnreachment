@@ -21,6 +21,7 @@ import (
 type PublicationResult struct {
 	Observation           PublicationStageObservation
 	InstalledOwnership    PublicationCurrentOwnership
+	PreservedAudioSHA256  string
 	InitialLyrics         *PublicationInitialLyricsProjection
 	CoverEmbedding        *PublicationCoverEmbeddingProjection
 	ObsoleteOutputCleanup *ObsoletePublicationOutputCleanupAdmission
@@ -35,10 +36,19 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 	if !validPublicationStageObservation(result.Observation) || !validInstalledPublicationOwnership(result.InstalledOwnership) {
 		return false, errors.New("commit publication result: invalid installed projection")
 	}
+	if result.PreservedAudioSHA256 != "" && !validSHA256(result.PreservedAudioSHA256) {
+		return false, errors.New("commit publication result: invalid preserved audio proof")
+	}
 	committed := false
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("commit publication result: lock output admission gate: %w", err)
+		}
 		if err := lockPublicationSourceCleanupPolicy(ctx, tx, true); err != nil {
 			return fmt.Errorf("commit publication result: lock source cleanup policy: %w", err)
+		}
+		if err := lockProviderTagDeliveryAuthority(ctx, tx, guard); err != nil {
+			return err
 		}
 		attempt, _, claim, live, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "commit publication result")
 		if err != nil || !live {
@@ -48,13 +58,16 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input)) || input.IntentKind != attempt.IntentKind {
+		providerTags := err == nil && validProviderTagRewrite(input)
+		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input) && !providerTags) || input.IntentKind != attempt.IntentKind {
 			return nil
 		}
-		if attempt.ExpectedGeneration != nil {
-			if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
-				return fmt.Errorf("commit publication result: lock output admission gate: %w", err)
+		if providerTags {
+			if result.PreservedAudioSHA256 != input.ProviderTags.AudioPayloadSHA256 || result.InitialLyrics != nil || result.CoverEmbedding != nil {
+				return nil
 			}
+		} else if result.PreservedAudioSHA256 != "" {
+			return nil
 		}
 		observation := result.Observation.Clone()
 		if observation.QualityPolicyVersion != input.QualityPolicyVersion || !publicationResultPathMatches(attempt.NamespaceManifest, observation.RelativePath) {
@@ -85,6 +98,9 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				}
 			}
 			if input.ManualLyrics != nil && !manualLyricsResultCurrent(ctx, tx, attempt.PositionID, *input.ManualLyrics, current) {
+				return nil
+			}
+			if providerTags && !providerTagResultCurrent(current, observation, input) {
 				return nil
 			}
 			previous = &current
@@ -243,7 +259,7 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			} else if err := carryPositionSourceAuthorityTx(ctx, tx, *previous, next); err != nil {
 				return err
 			}
-			if (input.ManualCover != nil || validAutomaticAudioUpgrade(input)) && previous != nil {
+			if (input.ManualCover != nil || validAutomaticAudioUpgrade(input) || providerTags) && previous != nil {
 				if err := carryManualLyricsReceiptForCoverRewriteTx(ctx, tx, attempt, *previous, publication, assets); err != nil {
 					return err
 				}
@@ -318,6 +334,21 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 					AND o.namespace_claim_id=r.namespace_claim_id
 				)`, previous.Epoch, previous.PositionID, previous.Generation).Exec(ctx); err != nil {
 				return fmt.Errorf("commit publication result: release unreferenced superseded namespace reservations: %w", err)
+			}
+		}
+		requestExists, err := lockPublicationReconciliationRequest(ctx, tx, attempt.Epoch, attempt.PositionID)
+		if err != nil {
+			return fmt.Errorf("commit publication result: lock reconciliation request: %w", err)
+		}
+		if requestExists {
+			var scopes []string
+			if err := tx.NewRaw(`SELECT scope FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=? ORDER BY scope`, attempt.Epoch, attempt.PositionID).Scan(ctx, &scopes); err != nil {
+				return fmt.Errorf("commit publication result: read dirty reconciliation scopes: %w", err)
+			}
+			if len(scopes) != 0 {
+				if err := repository.RequestPublicationReconciliationWith(ctx, tx, attempt.Epoch, []uuid.UUID{attempt.PositionID}, scopes); err != nil {
+					return fmt.Errorf("commit publication result: wake reconciliation after settlement: %w", err)
+				}
 			}
 		}
 		committed = true

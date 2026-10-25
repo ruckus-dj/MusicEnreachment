@@ -13,19 +13,17 @@ type publicationReconciliationRepository interface {
 	ResolvePublicationReconciliationContext(context.Context, persistence.PublicationReconciliationDeliveryGuard) (*persistence.PublicationReconciliationContext, error)
 }
 
+type publicationReconciliationBusyParker interface {
+	ParkPublicationReconciliationBusyAttempt(context.Context, persistence.PublicationReconciliationDeliveryGuard, int64, string) (bool, error)
+}
+
 // ReconcilePublication consumes one already-requested publication reconciliation.
 // The worker owns claim release on every error; nil means this delivery admitted
 // and transactionally acknowledged.
 //
-// The current-publication and quality facts below come from snapshots read
-// outside the admission transaction, while not every invalidation producer
-// (settings, source, and manual changes) is wired to re-run reconciliation.
-// Permanent parking is therefore blocked here until exact transactional
-// revalidation and the complete wake frontier exist: an unsatisfied runtime
-// decision is returned as a contextual retryable error, and the worker's
-// existing owned-release queues plus River backoff preserve the intent. This is
-// technical safe scheduling, not a new source policy. The generic parking
-// persistence API stays available, unused here, for that future path.
+// A retained attempt is parked only after persistence atomically revalidates
+// both the delivery and the busy condition. All other decisions remain subject
+// to their existing retry and admission behavior.
 func (service *LibraryPublications) ReconcilePublication(ctx context.Context, guard persistence.PublicationReconciliationDeliveryGuard) error {
 	if service == nil || service.repository == nil {
 		return fmt.Errorf("reconcile publication: service is unavailable")
@@ -42,7 +40,14 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 		return fmt.Errorf("reconcile publication: reconciliation context is incomplete")
 	}
 	if facts.HasActiveAttempt {
-		return fmt.Errorf("reconcile publication: a publication attempt is retained")
+		parked, err := parkBusyReconciliation(ctx, service.repository, guard, facts.RequestedGeneration)
+		if err != nil {
+			return fmt.Errorf("park reconciliation with retained publication attempt: %w", err)
+		}
+		if !parked {
+			return fmt.Errorf("reconcile publication: retained-attempt condition changed; retry delivery")
+		}
+		return nil
 	}
 	if facts.HasCurrentPublication {
 		if _, err := service.admitAutomaticAudioUpgrade(ctx, facts.ReleaseID, guard.PositionID, guard); err != nil {
@@ -73,7 +78,14 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 		return nil
 	}
 	if snapshot.Library.ActiveAttempt != nil {
-		return fmt.Errorf("reconcile publication: a publication attempt is retained")
+		parked, err := parkBusyReconciliation(ctx, service.repository, guard, facts.RequestedGeneration)
+		if err != nil {
+			return fmt.Errorf("park reconciliation with retained publication attempt: %w", err)
+		}
+		if !parked {
+			return fmt.Errorf("reconcile publication: retained-attempt condition changed; retry delivery")
+		}
+		return nil
 	}
 	if service.coverAcquisition != nil {
 		if err := service.coverAcquisition.Ensure(ctx, facts.ReleaseID); err != nil {
@@ -99,4 +111,12 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 		return fmt.Errorf("admit automatic first publication: %w", err)
 	}
 	return nil
+}
+
+func parkBusyReconciliation(ctx context.Context, candidate any, guard persistence.PublicationReconciliationDeliveryGuard, generation int64) (bool, error) {
+	parker, ok := candidate.(publicationReconciliationBusyParker)
+	if !ok {
+		return false, fmt.Errorf("reconcile publication: busy-attempt parking is unavailable")
+	}
+	return parker.ParkPublicationReconciliationBusyAttempt(ctx, guard, generation, persistence.PublicationReconciliationBusyAttemptReason)
 }

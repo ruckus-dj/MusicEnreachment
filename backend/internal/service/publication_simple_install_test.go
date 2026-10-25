@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 )
 
 func TestResolveSimpleAudioSourcePathUsesHeldRelativePath(t *testing.T) {
@@ -41,6 +42,98 @@ func TestResolveSimpleAudioSourcePathUsesHeldRelativePath(t *testing.T) {
 	if _, err := resolveSimpleAudioSourcePath(context.Background(), root, relative, info.Size()+1, mtime); err == nil {
 		t.Fatal("changed source size was accepted")
 	}
+}
+
+func TestSimplePublicationTempDirectoryCleanupRequiresCommandQuiescence(t *testing.T) {
+	for _, quiescent := range []bool{true, false} {
+		t.Run(map[bool]string{true: "known", false: "unknown"}[quiescent], func(t *testing.T) {
+			dir := t.TempDir()
+			privateInput := filepath.Join(dir, "private-input")
+			if err := os.WriteFile(privateInput, []byte("private"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runner := newSimplePublicationTrackingRunner(simplePublicationCommandFake{result: PublicationCommandResult{QuiescenceEstablished: quiescent}})
+			if _, err := runner.Run(context.Background(), "tool"); (err == nil) != quiescent {
+				t.Fatalf("command quiescent=%v error=%v", quiescent, err)
+			}
+			if err := removeSimplePublicationTempDir(dir, runner); err != nil {
+				t.Fatal(err)
+			}
+			_, err := os.Stat(privateInput)
+			if quiescent && !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("known-quiescent private input remains: %v", err)
+			}
+			if !quiescent && err != nil {
+				t.Fatalf("unknown-quiescence private input was not retained: %v", err)
+			}
+		})
+	}
+}
+
+func TestSimplePublicationTrackingRunnerTracksFileQuiescence(t *testing.T) {
+	base := newSimplePublicationTrackingRunner(simplePublicationCommandFake{result: PublicationCommandResult{QuiescenceEstablished: false}})
+	tracked := base.PublicationCommandRunner()
+	if _, ok := tracked.(PublicationFileCommandRunner); !ok {
+		t.Fatal("tracking runner dropped delegated file-command support")
+	}
+	fileRunner := tracked.(PublicationFileCommandRunner)
+	if _, err := fileRunner.RunFile(context.Background(), tools.FileCommandRequest{Executable: "tool", Input: os.Stdin}); err == nil {
+		t.Fatal("unknown-quiescence file command returned no error")
+	}
+	if !base.QuiescenceUnknown() {
+		t.Fatal("unknown file-command quiescence was not tracked")
+	}
+
+	withoutFiles := newSimplePublicationTrackingRunner(simplePublicationRunOnlyFake{result: PublicationCommandResult{QuiescenceEstablished: true}})
+	if _, ok := withoutFiles.PublicationCommandRunner().(PublicationFileCommandRunner); ok {
+		t.Fatal("tracking runner advertised unsupported file-command execution")
+	}
+}
+
+func TestSimplePublicationTrackingRunnerRefusesLaunchAfterUnknownQuiescence(t *testing.T) {
+	backend := new(countingSimplePublicationCommandFake)
+	runner := newSimplePublicationTrackingRunner(backend)
+	if _, err := runner.Run(context.Background(), "tool"); err == nil {
+		t.Fatal("unknown-quiescence command returned no error")
+	}
+	if _, err := runner.Run(context.Background(), "tool"); err == nil {
+		t.Fatal("command launched after quiescence became unknown")
+	}
+	fileRunner := runner.PublicationCommandRunner().(PublicationFileCommandRunner)
+	if _, err := fileRunner.RunFile(context.Background(), tools.FileCommandRequest{Executable: "tool", Input: os.Stdin}); err == nil {
+		t.Fatal("file command launched after quiescence became unknown")
+	}
+	if backend.calls != 1 {
+		t.Fatalf("backend launches = %d, want 1", backend.calls)
+	}
+}
+
+type countingSimplePublicationCommandFake struct{ calls int }
+
+func (fake *countingSimplePublicationCommandFake) Run(context.Context, string, ...string) (PublicationCommandResult, error) {
+	fake.calls++
+	return PublicationCommandResult{}, nil
+}
+
+func (fake *countingSimplePublicationCommandFake) RunFile(context.Context, tools.FileCommandRequest) (PublicationCommandResult, error) {
+	fake.calls++
+	return PublicationCommandResult{}, nil
+}
+
+type simplePublicationCommandFake struct{ result PublicationCommandResult }
+
+func (fake simplePublicationCommandFake) Run(context.Context, string, ...string) (PublicationCommandResult, error) {
+	return fake.result, nil
+}
+
+func (fake simplePublicationCommandFake) RunFile(context.Context, tools.FileCommandRequest) (PublicationCommandResult, error) {
+	return fake.result, nil
+}
+
+type simplePublicationRunOnlyFake struct{ result PublicationCommandResult }
+
+func (fake simplePublicationRunOnlyFake) Run(context.Context, string, ...string) (PublicationCommandResult, error) {
+	return fake.result, nil
 }
 
 // TestSimplePublicationSecondPendingInstallAtomicallyReplacesExistingTarget

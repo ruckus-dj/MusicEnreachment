@@ -252,6 +252,7 @@ func Run(ctx context.Context, config Config) error {
 	if err != nil {
 		return fmt.Errorf("create publication command runner: %w", err)
 	}
+	libraryPublications.WithPublicationCommands(publicationCommands)
 	publicationBootUUID, err := uuid.NewRandom()
 	if err != nil {
 		return fmt.Errorf("create publication boot identity: %w", err)

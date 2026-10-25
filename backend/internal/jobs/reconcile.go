@@ -135,6 +135,12 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 				// an isLive miss; River may still rescue queued/running deliveries.
 				return nil
 			}
+			if operation.Kind == persistence.PublicationReconciliationOperationKind && operation.ToolsReadRequired {
+				// Generic recovery calls Operations.Fail, which removes tool holds.
+				// A reconciliation hold is native-command safety authority; startup
+				// cannot infer command quiescence from a missing/live River delivery.
+				return fmt.Errorf("recover publication reconciliation %s: ffmpeg read hold is retained; establish native-command quiescence before releasing it", operation.ID)
+			}
 			if operation.Kind == "matching_evaluation_v1" {
 				if scanner, ok := repository.(matchingRuntimeScannerOwnership); ok {
 					owned, err := scanner.IsMatchingRuntimeScannerOwnedOperation(ctx, operation.ID)

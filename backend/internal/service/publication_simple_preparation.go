@@ -40,9 +40,10 @@ type PublicationSimplePreparation struct {
 // PublicationSimplePreparationResult carries read-back evidence and a bounded
 // lyrics projection for the committing caller to bind to its generation.
 type PublicationSimplePreparationResult struct {
-	Observation      persistence.PublicationStageObservation
-	LyricsOutcome    *persistence.PublicationLyricsOutcome
-	LyricsResolution *PublicationLyricsResolution
+	Observation          persistence.PublicationStageObservation
+	PreservedAudioSHA256 string
+	LyricsOutcome        *persistence.PublicationLyricsOutcome
+	LyricsResolution     *PublicationLyricsResolution
 	// Generation is intentionally left unset here; the committing caller binds it.
 	InitialLyrics  *persistence.PublicationInitialLyricsProjection
 	CoverEmbedding *persistence.PublicationCoverEmbeddingProjection

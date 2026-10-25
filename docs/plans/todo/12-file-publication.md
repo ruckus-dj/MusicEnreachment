@@ -45,6 +45,27 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**Уточнение 2026-10-25:** CI `e4f11d3` (`40140794161`) и `0b03751`
+(`40175959182`) полностью завершились успешно. Последующие незакоммиченные
+изменения busy parking/settlement wake и provider rewrite этим CI не покрыты.
+Provider V3 остаётся выключен в generic execution: завершаются проверки
+authority и жизненного цикла tools-read holds, подключение reconciliation и
+no-op/continuation. Полная real-media приёмка ещё не выполнена. Значение
+`authority=manual, state=absent` для защиты CURRENT остаётся вопросом владельцу,
+а не принятым решением.
+
+В текущем незакоммиченном срезе добавлены guarded busy parking, атомарный
+settlement wake и сохранение dirty scopes для продолжения после audio admission.
+Provider authority учитывает также metadata/revision позиции, а private rewrite
+передаёт проверенный encoded-packet digest в result. V3 execution не включён;
+успешный admission/result lifecycle и полная reconciliation/no-op цепочка ещё
+не подтверждены. Неподтверждённая quiescence не должна освобождать уже взятые
+coordinator locks или удалять private inputs; отдельная проверка live executor
+прошла, включая отказ следующей delivery и освобождение locks при известной
+quiescence. Полный локальный `task verify` этого среза прошёл 2026-10-25;
+CI ещё не выполнен. Это не заменяет открытые lifecycle-проверки и real-media
+приёмку.
+
 **2026-10-25, срез automatic audio upgrade:** соединены V2
 admission, preparation, executor и result commit; frozen CURRENT сохраняет теги,
 lyrics и полный упорядоченный inventory изображений. Путь сохраняет директории

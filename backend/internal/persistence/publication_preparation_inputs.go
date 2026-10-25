@@ -77,6 +77,9 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 	var input PublicationInputs
 	valid := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockProviderTagDeliveryAuthority(ctx, tx, guard); err != nil {
+			return err
+		}
 		attempt, operation, _, ok, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "read publication preparation inputs")
 		if err != nil || !ok || attempt.Phase != "preparing" || operation.Stage != "preparing" {
 			return err
@@ -85,8 +88,20 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 		if err != nil {
 			return fmt.Errorf("read publication preparation inputs: decode frozen inputs: %w", err)
 		}
-		if !decoded.SupportsExecution() && (!manualLyricsFLAC || !validManualLyricsRewrite(decoded)) {
+		if !decoded.SupportsExecution() && !validProviderTagRewrite(decoded) && (!manualLyricsFLAC || !validManualLyricsRewrite(decoded)) {
 			return fmt.Errorf("read publication preparation inputs: frozen publication contract is admitted but not executable")
+		}
+		if decoded.ProviderTags != nil {
+			var current TrackPublication
+			if err := tx.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("read provider-tag preparation CURRENT: %w", err)
+			}
+			if !providerTagCurrent(current, decoded, guard.Epoch) {
+				return nil
+			}
 		}
 		if decoded.AudioUpgrade != nil {
 			if attempt.ExpectedGeneration == nil || *attempt.ExpectedGeneration != decoded.AudioUpgrade.Current.Generation {
@@ -181,6 +196,9 @@ func (repository *SetupManagerRepository) CheckPublicationRewriteForDelivery(ctx
 	var facts PublicationRewritePreparationFacts
 	valid := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockProviderTagDeliveryAuthority(ctx, tx, guard); err != nil {
+			return err
+		}
 		attempt, operation, _, ok, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "check publication rewrite")
 		if err != nil || !ok || (attempt.Phase != "preparing" && attempt.Phase != "staged" && attempt.Phase != "exposing") || operation.Stage != attempt.Phase {
 			return err

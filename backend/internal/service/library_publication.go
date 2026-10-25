@@ -116,6 +116,7 @@ type LibraryPublications struct {
 	river            persistence.RiverInserter
 	platform         tools.Platform
 	coordinator      *publication.Coordinator
+	commands         PublicationCommandRunner
 	coverAcquisition interface {
 		Ensure(context.Context, uuid.UUID) error
 	}
@@ -124,6 +125,11 @@ type LibraryPublications struct {
 
 func (service *LibraryPublications) WithPublicationCoordinator(coordinator *publication.Coordinator) *LibraryPublications {
 	service.coordinator = coordinator
+	return service
+}
+
+func (service *LibraryPublications) WithPublicationCommands(commands PublicationCommandRunner) *LibraryPublications {
+	service.commands = commands
 	return service
 }
 

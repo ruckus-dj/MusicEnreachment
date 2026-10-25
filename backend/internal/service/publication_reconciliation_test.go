@@ -14,6 +14,7 @@ type publicationReconciliationServiceRepository struct {
 	*automaticAdmissionServiceRepository
 	facts      *persistence.PublicationReconciliationContext
 	parked     bool
+	parkResult bool
 	parkReason string
 }
 
@@ -21,13 +22,13 @@ func (repository *publicationReconciliationServiceRepository) ResolvePublication
 	return repository.facts, nil
 }
 
-func (repository *publicationReconciliationServiceRepository) ParkPublicationReconciliationDelivery(_ context.Context, _ persistence.PublicationReconciliationDeliveryGuard, generation int64, reason string) (bool, error) {
+func (repository *publicationReconciliationServiceRepository) ParkPublicationReconciliationBusyAttempt(_ context.Context, _ persistence.PublicationReconciliationDeliveryGuard, generation int64, reason string) (bool, error) {
 	if generation != repository.facts.RequestedGeneration {
 		return false, nil
 	}
-	repository.parked = true
+	repository.parked = repository.parkResult
 	repository.parkReason = reason
-	return true, nil
+	return repository.parkResult, nil
 }
 
 func TestReconcilePublicationDefersExistingPublicationWithoutReplacingIt(t *testing.T) {
@@ -50,15 +51,16 @@ func TestReconcilePublicationRetriesForRetainedAttemptAndMissingTools(t *testing
 		base, runtime, _, _, guard := automaticAdmissionFixture(t)
 		repository := &publicationReconciliationServiceRepository{
 			automaticAdmissionServiceRepository: base,
+			parkResult:                          true,
 			facts: &persistence.PublicationReconciliationContext{
 				ReleaseID: base.snapshot.Library.ReleaseID, RequestedGeneration: 2, HasActiveAttempt: true,
 			},
 		}
 		service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
-		if err := service.ReconcilePublication(context.Background(), guard); err == nil {
-			t.Fatal("retained attempt was not deferred")
+		if err := service.ReconcilePublication(context.Background(), guard); err != nil {
+			t.Fatalf("retained attempt was not safely parked: %v", err)
 		}
-		if repository.parked || base.automaticCalls != 0 {
+		if !repository.parked || repository.parkReason != persistence.PublicationReconciliationBusyAttemptReason || base.automaticCalls != 0 {
 			t.Fatalf("parked=%v automatic admissions=%d", repository.parked, base.automaticCalls)
 		}
 	})
@@ -73,6 +75,22 @@ func TestReconcilePublicationRetriesForRetainedAttemptAndMissingTools(t *testing
 		service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
 		if err := service.ReconcilePublication(context.Background(), guard); err == nil {
 			t.Fatal("missing tools were not retried")
+		}
+		if repository.parked || base.automaticCalls != 0 {
+			t.Fatalf("parked=%v automatic admissions=%d", repository.parked, base.automaticCalls)
+		}
+	})
+	t.Run("busy condition changed", func(t *testing.T) {
+		base, runtime, _, _, guard := automaticAdmissionFixture(t)
+		repository := &publicationReconciliationServiceRepository{
+			automaticAdmissionServiceRepository: base,
+			facts: &persistence.PublicationReconciliationContext{
+				ReleaseID: base.snapshot.Library.ReleaseID, RequestedGeneration: 2, HasActiveAttempt: true,
+			},
+		}
+		service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
+		if err := service.ReconcilePublication(context.Background(), guard); err == nil {
+			t.Fatal("changed busy condition was reported as success")
 		}
 		if repository.parked || base.automaticCalls != 0 {
 			t.Fatalf("parked=%v automatic admissions=%d", repository.parked, base.automaticCalls)

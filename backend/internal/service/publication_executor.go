@@ -64,7 +64,16 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	defer releaseMutation()
+	commands := newSimplePublicationTrackingRunner(executor.commands)
+	var releaseResources func()
+	defer func() {
+		if !commands.QuiescenceUnknown() {
+			if releaseResources != nil {
+				releaseResources()
+			}
+			releaseMutation()
+		}
+	}()
 	operation, err := executor.repository.GetOperation(ctx, operationID)
 	if err != nil {
 		return fmt.Errorf("read publication operation: %w", err)
@@ -125,7 +134,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	defer release()
+	releaseResources = release
 	claim, err := executor.repository.ClaimPublicationDelivery(ctx, guard)
 	if err != nil || claim != persistence.PublicationDeliveryAcquired {
 		return errors.Join(err, errors.New("publication delivery claim was not acquired"))
@@ -146,5 +155,5 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		return errors.Join(errors.New("publication frozen inputs are unavailable for this delivery"), err)
 	}
 	input = guarded
-	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root)
+	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root, commands)
 }

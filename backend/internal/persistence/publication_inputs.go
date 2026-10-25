@@ -22,6 +22,7 @@ import (
 
 const PublicationInputsVersion = 1
 const PublicationAudioUpgradeInputsVersion = 2
+const PublicationProviderTagInputsVersion = 3
 
 // PublicationInputs is the versioned, immutable execution contract retained by
 // a publication attempt. Intent-specific data is deliberately disjoint.
@@ -37,6 +38,7 @@ type PublicationInputs struct {
 	AutomaticLyricsRetry *PublicationAutomaticLyricsRetryInput `json:"automatic_lyrics_retry,omitempty"`
 	InitialLyrics        *PublicationInitialLyricsInput        `json:"initial_lyrics,omitempty"`
 	AudioUpgrade         *PublicationAudioUpgradeInput         `json:"audio_upgrade,omitempty"`
+	ProviderTags         *PublicationProviderTagInput          `json:"provider_tags,omitempty"`
 	Format               publication.AudioPublicationFormat    `json:"format"`
 	DesiredTags          map[string][]string                   `json:"desired_tags"`
 	Tools                []SourceAnalysisToolSelection         `json:"tools"`
@@ -188,11 +190,28 @@ func DecodePublicationInputs(raw json.RawMessage) (PublicationInputs, error) {
 
 // Validate enforces version, discriminated intent, selectors and portable paths.
 func (input PublicationInputs) Validate() error {
-	if input.Version != PublicationInputsVersion && input.Version != PublicationAudioUpgradeInputsVersion {
+	if input.Version != PublicationInputsVersion && input.Version != PublicationAudioUpgradeInputsVersion && input.Version != PublicationProviderTagInputsVersion {
 		return fmt.Errorf("unsupported publication inputs version %d", input.Version)
 	}
 	if input.Version == PublicationInputsVersion && input.AudioUpgrade != nil {
 		return errors.New("version 1 publication inputs must not contain audio upgrade data")
+	}
+	if input.Version == PublicationInputsVersion && input.ProviderTags != nil {
+		return errors.New("version 1 publication inputs must not contain provider tag data")
+	}
+	if input.Version == PublicationAudioUpgradeInputsVersion && input.ProviderTags != nil {
+		return errors.New("version 2 publication inputs must not contain provider tag data")
+	}
+	if input.Version == PublicationProviderTagInputsVersion {
+		if input.IntentKind != "rewrite" || input.Rewrite == nil || input.ProviderTags == nil || input.Audio != nil || input.AudioUpgrade != nil || input.ManualLyrics != nil || input.ManualCover != nil || input.AutomaticLyricsRetry != nil || input.InitialLyrics != nil || input.SourceAuthorityMode != "" || input.Format != publication.AudioFormatSource {
+			return errors.New("version 3 publication inputs require an exclusive provider tag rewrite")
+		}
+		if err := input.ProviderTags.Validate(*input.Rewrite, input.DesiredTags); err != nil {
+			return fmt.Errorf("invalid provider tag rewrite: %w", err)
+		}
+		if input.QualityPolicyVersion != publication.QualityPolicyVersion {
+			return fmt.Errorf("unsupported publication quality policy version %d", input.QualityPolicyVersion)
+		}
 	}
 	if input.Version == PublicationAudioUpgradeInputsVersion {
 		if input.IntentKind != "audio" || input.Audio == nil || input.Rewrite != nil || input.AudioUpgrade == nil || input.SourceAuthorityMode != "automatic" || input.InitialLyrics != nil || input.ManualLyrics != nil || input.ManualCover != nil || input.AutomaticLyricsRetry != nil {
@@ -478,6 +497,30 @@ func (input PublicationInputs) Clone() PublicationInputs {
 		upgrade := *input.AudioUpgrade
 		upgrade.Current = clonePublicationCurrentWitness(upgrade.Current)
 		clone.AudioUpgrade = &upgrade
+	}
+	if input.ProviderTags != nil {
+		providerTags := *input.ProviderTags
+		providerTags.Current = clonePublicationCurrentWitness(providerTags.Current)
+		providerTags.Patch = cloneProviderTagMap(providerTags.Patch)
+		if providerTags.ProtectedKeys != nil {
+			providerTags.ProtectedKeys = append([]string{}, providerTags.ProtectedKeys...)
+		}
+		clone.ProviderTags = &providerTags
+	}
+	return clone
+}
+
+func cloneProviderTagMap(tags map[string][]string) map[string][]string {
+	if tags == nil {
+		return nil
+	}
+	clone := make(map[string][]string, len(tags))
+	for key, values := range tags {
+		if values == nil {
+			clone[key] = nil
+		} else {
+			clone[key] = append([]string{}, values...)
+		}
 	}
 	return clone
 }

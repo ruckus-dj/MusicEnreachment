@@ -57,6 +57,7 @@ type PublicationAdmission struct {
 	metadataRevision              int64
 	firstAdmission                *firstPublicationAdmissionHook
 	reconciliationGuard           *PublicationReconciliationDeliveryGuard
+	validatedProviderTags         bool
 }
 
 // PublicationSourceSelection is the caller's exact inventory selector. The
@@ -100,6 +101,12 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	if input.Version == PublicationAudioUpgradeInputsVersion && !request.validatedAudioUpgrade {
 		return uuid.Nil, fmt.Errorf("admit publication: audio upgrade requires typed admission: %w", ErrPublicationAdmissionConflict)
 	}
+	if input.Version == PublicationProviderTagInputsVersion && !request.validatedProviderTags {
+		return uuid.Nil, fmt.Errorf("admit publication: provider tag rewrite requires typed admission: %w", ErrPublicationAdmissionConflict)
+	}
+	if request.validatedProviderTags && (input.Version != PublicationProviderTagInputsVersion || input.ProviderTags == nil || request.IntentKind != "rewrite") {
+		return uuid.Nil, fmt.Errorf("admit publication: invalid typed provider tag rewrite: %w", ErrPublicationAdmissionConflict)
+	}
 	if request.validatedAudioUpgrade && (input.Version != PublicationAudioUpgradeInputsVersion || input.AudioUpgrade == nil || request.IntentKind != "audio") {
 		return uuid.Nil, fmt.Errorf("admit publication: invalid typed audio upgrade: %w", ErrPublicationAdmissionConflict)
 	}
@@ -138,6 +145,11 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		if err != nil || request.reconciliationGuard == nil {
 			return err
 		}
+		if request.validatedAudioUpgrade {
+			if err := repository.continuePublicationAudioReconciliationWith(ctx, tx, *request.reconciliationGuard); err != nil {
+				return fmt.Errorf("admit publication: continue audio reconciliation: %w", err)
+			}
+		}
 		acknowledged, err := repository.AcknowledgePublicationReconciliationDeliveryWith(ctx, tx, *request.reconciliationGuard)
 		if err != nil {
 			return fmt.Errorf("admit publication: acknowledge reconciliation delivery: %w", err)
@@ -151,6 +163,51 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		return uuid.Nil, err
 	}
 	return admittedOperationID, nil
+}
+
+// continuePublicationAudioReconciliationWith preserves the evaluated obligation
+// for every dirty scope observed by an audio-only reconciliation. The scopes are
+// restamped into a successor generation before acknowledging this delivery.
+func (repository *SetupManagerRepository) continuePublicationAudioReconciliationWith(ctx context.Context, tx bun.Tx, guard PublicationReconciliationDeliveryGuard) error {
+	event, err := repository.lockPublicationReconciliationDelivery(ctx, tx, guard)
+	if err != nil {
+		return err
+	}
+	if event == nil {
+		return fmt.Errorf("reconciliation delivery is stale: %w", ErrPublicationAdmissionConflict)
+	}
+	var scopes []string
+	if err := tx.NewRaw(`SELECT scope FROM publication_reconciliation_dirty_scope
+		WHERE output_epoch=? AND position_id=? AND generation<=? ORDER BY scope`, guard.OutputEpoch, guard.PositionID, guard.ObservedGeneration).Scan(ctx, &scopes); err != nil {
+		return fmt.Errorf("read observed dirty scopes: %w", err)
+	}
+	if len(scopes) == 0 {
+		return nil
+	}
+	if err := repository.RequestPublicationReconciliationWith(ctx, tx, guard.OutputEpoch, []uuid.UUID{guard.PositionID}, scopes); err != nil {
+		return fmt.Errorf("request successor reconciliation: %w", err)
+	}
+	return nil
+}
+
+// AdmitPublicationWithProviderTags is the private-capability admission path for
+// a source-free provider metadata rewrite. Execution remains disabled until the
+// executor is wired to this contract.
+func (repository *SetupManagerRepository) AdmitPublicationWithProviderTags(ctx context.Context, request PublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	input, err := DecodePublicationInputs(request.FrozenInputs)
+	if err != nil || input.Version != PublicationProviderTagInputsVersion || input.ProviderTags == nil || request.IntentKind != "rewrite" || request.Source != nil || !request.ToolsReadRequired || len(request.Tools) != 2 {
+		return uuid.Nil, fmt.Errorf("admit provider tag publication: invalid frozen request: %w", ErrPublicationAdmissionConflict)
+	}
+	request.validatedProviderTags = true
+	return repository.AdmitPublication(ctx, request, client)
+}
+
+func (repository *SetupManagerRepository) AdmitPublicationProviderTagsFromReconciliation(ctx context.Context, request PublicationAdmission, guard PublicationReconciliationDeliveryGuard, client RiverInserter) (uuid.UUID, error) {
+	if guard.PositionID != request.PositionID || guard.OutputEpoch != request.ExpectedEpoch {
+		return uuid.Nil, ErrPublicationAdmissionConflict
+	}
+	request.reconciliationGuard = &guard
+	return repository.AdmitPublicationWithProviderTags(ctx, request, client)
 }
 
 // AdmitAutomaticAudioUpgrade is the only admission path allowed to create a
@@ -175,6 +232,14 @@ func (repository *SetupManagerRepository) AdmitAutomaticAudioUpgradeFromReconcil
 }
 
 func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context, tx bun.Tx, request PublicationAdmission, input PublicationInputs, operationID uuid.UUID, client RiverInserter) (uuid.UUID, error) {
+	if request.validatedProviderTags {
+		if request.ExpectedReleaseID == uuid.Nil || request.ExpectedGeneration == nil || input.ProviderTags == nil {
+			return uuid.Nil, fmt.Errorf("admit provider tag publication: missing current identity: %w", ErrPublicationAdmissionConflict)
+		}
+		if err := validatePublicationProviderTagAuthorityTx(ctx, tx, request.ExpectedReleaseID, request.PositionID, input); err != nil {
+			return uuid.Nil, err
+		}
+	}
 	if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 		return uuid.Nil, fmt.Errorf("admit publication: lock output gate: %w", err)
 	}
@@ -283,6 +348,9 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 		}
 		if !publicationRewriteMatchesCurrent(current, epoch, *input.Rewrite) {
 			return uuid.Nil, fmt.Errorf("admit publication: frozen rewrite facts do not match current publication: %w", ErrPublicationAdmissionConflict)
+		}
+		if request.validatedProviderTags && !providerTagCurrent(current, input, epoch) {
+			return uuid.Nil, fmt.Errorf("admit provider-tag publication: CURRENT witness changed: %w", ErrPublicationAdmissionConflict)
 		}
 		if request.manualLyrics != nil {
 			if err := validateManualLyricsAdmission(ctx, tx, request, &input, current); err != nil {

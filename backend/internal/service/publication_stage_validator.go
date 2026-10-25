@@ -43,24 +43,33 @@ func (validator RealPublicationStageValidator) validateSupervised(scope *Publica
 }
 
 func (validator RealPublicationStageValidator) Validate(ctx context.Context, stagePath string, input persistence.PublicationInputs) (result PublicationStageObservation, resultErr error) {
-	return validator.validate(ctx, stagePath, input, nil, nil)
+	return validator.validate(ctx, stagePath, input, nil, nil, false)
+}
+
+// ValidateProviderTags validates a private provider-tag candidate without
+// enabling the still-guarded provider contract in the generic executor.
+func (validator RealPublicationStageValidator) ValidateProviderTags(ctx context.Context, stagePath string, input persistence.PublicationInputs) (PublicationStageObservation, error) {
+	if input.Version != persistence.PublicationProviderTagInputsVersion || input.ProviderTags == nil {
+		return PublicationStageObservation{}, errors.New("provider-tag validation requires exclusive provider authority")
+	}
+	return validator.validate(ctx, stagePath, input, nil, nil, true)
 }
 
 // ValidateFirstAudioCover validates the first-audio candidate against the
 // independently observed result of its cover attempt (or baseline fallback).
 func (validator RealPublicationStageValidator) ValidateFirstAudioCover(ctx context.Context, stagePath string, input persistence.PublicationInputs, expected persistence.PublicationCoverOutcome) (PublicationStageObservation, error) {
-	return validator.validate(ctx, stagePath, input, nil, &expected)
+	return validator.validate(ctx, stagePath, input, nil, &expected, false)
 }
 
 func (validator RealPublicationStageValidator) ValidateAutomaticLyricsRetry(ctx context.Context, stagePath string, input persistence.PublicationInputs, lyrics string) (PublicationStageObservation, error) {
 	if input.AutomaticLyricsRetry == nil || input.ManualLyrics != nil {
 		return PublicationStageObservation{}, errors.New("automatic retry validation requires retry authority")
 	}
-	return validator.validate(ctx, stagePath, input, &lyrics, nil)
+	return validator.validate(ctx, stagePath, input, &lyrics, nil, false)
 }
 
-func (validator RealPublicationStageValidator) validate(ctx context.Context, stagePath string, input persistence.PublicationInputs, retryLyrics *string, firstAudioCover *persistence.PublicationCoverOutcome) (result PublicationStageObservation, resultErr error) {
-	if !input.SupportsExecution() {
+func (validator RealPublicationStageValidator) validate(ctx context.Context, stagePath string, input persistence.PublicationInputs, retryLyrics *string, firstAudioCover *persistence.PublicationCoverOutcome, privateProviderTags bool) (result PublicationStageObservation, resultErr error) {
+	if !input.SupportsExecution() && !privateProviderTags {
 		return PublicationStageObservation{}, fmt.Errorf("publication inputs version %d does not support execution", input.Version)
 	}
 	if err := ctx.Err(); err != nil {
@@ -180,13 +189,19 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 		return PublicationStageObservation{}, fmt.Errorf("read publication stage metadata: %w", err)
 	}
 	if retryLyrics == nil {
-		if input.AudioUpgrade != nil {
+		if input.AudioUpgrade != nil || input.ProviderTags != nil {
+			var witnesses []persistence.PublicationArtworkWitness
+			if input.AudioUpgrade != nil {
+				witnesses = input.AudioUpgrade.Current.ArtworkInventory
+			} else {
+				witnesses = input.ProviderTags.Current.ArtworkInventory
+			}
 			artwork, artworkErr := metadata.ReadArtworkSnapshot(ctx, stagePath)
 			if artworkErr != nil {
 				return PublicationStageObservation{}, fmt.Errorf("read audio-upgrade publication artwork: %w", artworkErr)
 			}
 			inventory := artwork.ArtworkInventory()
-			if !equalAudioUpgradeArtworkWitnesses(input.AudioUpgrade.Current.ArtworkInventory, inventory) {
+			if !equalAudioUpgradeArtworkWitnesses(witnesses, inventory) {
 				return PublicationStageObservation{}, errors.New("audio-upgrade stage artwork inventory does not match current publication")
 			}
 			if err := validateAudioUpgradeTopology(raw, inventory); err != nil {
@@ -293,6 +308,9 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	}
 	if input.Version == persistence.PublicationAudioUpgradeInputsVersion && input.AudioUpgrade != nil && !reflect.DeepEqual(assets, input.AudioUpgrade.Current.Assets) {
 		return PublicationStageObservation{}, errors.New("audio-upgrade stage assets do not match current publication")
+	}
+	if input.ProviderTags != nil && !reflect.DeepEqual(assets, input.ProviderTags.Current.Assets) {
+		return PublicationStageObservation{}, errors.New("provider-tag stage assets do not match current publication")
 	}
 	result.Assets, err = json.Marshal(assets)
 	if err != nil {

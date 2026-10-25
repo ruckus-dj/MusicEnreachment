@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 )
 
 func publicationResultForFixture(f publicationExecutionFixture) PublicationResult {
@@ -383,6 +384,131 @@ func TestCommitPublicationResultInstallsCurrentProjectionPostgreSQL(t *testing.T
 	committed, err = repository.CommitPublicationResult(ctx, f.guard, result)
 	if err != nil || committed {
 		t.Fatalf("retry without attempt = %v, %v", committed, err)
+	}
+}
+
+func TestPublicationBusyParkingAndResultSettlementWakePostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := preparePublicationResultFixture(t)
+	repository := NewSetupManagerRepository(f.db)
+	epoch, position := f.guard.Epoch, f.guard.ExpectedPositionID
+	reconciliationGuard, inserter := startPublicationReconciliationForResult(t, ctx, repository, epoch, position)
+	if parked, err := repository.ParkPublicationReconciliationBusyAttempt(ctx, reconciliationGuard, 1, PublicationReconciliationBusyAttemptReason); err != nil || !parked {
+		t.Fatalf("park busy reconciliation=%v err=%v", parked, err)
+	}
+	if committed, err := repository.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
+		t.Fatalf("settle publication=%v err=%v", committed, err)
+	}
+	assertReconciliationWake(t, ctx, f.db, epoch, position, 2, 1)
+	if committed, err := repository.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || committed {
+		t.Fatalf("replay consumed publication result=%v err=%v", committed, err)
+	}
+	assertReconciliationWake(t, ctx, f.db, epoch, position, 2, 1)
+	if dispatched, err := repository.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || dispatched != 1 {
+		t.Fatalf("dispatch settlement successor=%d err=%v", dispatched, err)
+	}
+}
+
+func TestPublicationResultSettlementBeforeBusyParkRetainsSuccessorPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := preparePublicationResultFixture(t)
+	repository := NewSetupManagerRepository(f.db)
+	epoch, position := f.guard.Epoch, f.guard.ExpectedPositionID
+	reconciliationGuard, inserter := startPublicationReconciliationForResult(t, ctx, repository, epoch, position)
+	if committed, err := repository.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
+		t.Fatalf("settle publication=%v err=%v", committed, err)
+	}
+	if parked, err := repository.ParkPublicationReconciliationBusyAttempt(ctx, reconciliationGuard, 1, PublicationReconciliationBusyAttemptReason); err != nil || parked {
+		t.Fatalf("stale busy park=%v err=%v", parked, err)
+	}
+	assertReconciliationWake(t, ctx, f.db, epoch, position, 2, 1)
+	if released, err := repository.ReleasePublicationReconciliationDelivery(ctx, reconciliationGuard); err != nil || !released {
+		t.Fatalf("release pre-settlement reconciliation=%v err=%v", released, err)
+	}
+	if _, err := repository.db.ExecContext(ctx, `UPDATE river_job SET state='completed',finalized_at=now() WHERE id=?`, reconciliationGuard.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	if dispatched, err := repository.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || dispatched != 1 {
+		t.Fatalf("dispatch retained successor=%d err=%v", dispatched, err)
+	}
+}
+
+func TestPublicationResultWakeFailureRollsBackSettlementPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := preparePublicationResultFixture(t)
+	repository := NewSetupManagerRepository(f.db)
+	reconciliationGuard, _ := startPublicationReconciliationForResult(t, ctx, repository, f.guard.Epoch, f.guard.ExpectedPositionID)
+	if parked, err := repository.ParkPublicationReconciliationBusyAttempt(ctx, reconciliationGuard, 1, PublicationReconciliationBusyAttemptReason); err != nil || !parked {
+		t.Fatalf("park busy reconciliation=%v err=%v", parked, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `CREATE FUNCTION fail_reconciliation_wake() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected reconciliation wake failure'; END $$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `CREATE TRIGGER fail_reconciliation_wake BEFORE INSERT ON publication_reconciliation_event FOR EACH ROW EXECUTE FUNCTION fail_reconciliation_wake()`); err != nil {
+		t.Fatal(err)
+	}
+	if committed, err := repository.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err == nil || committed {
+		t.Fatalf("settlement with failed wake=%v err=%v", committed, err)
+	}
+	var projection, attempt, claim int
+	var operationState string
+	if err := f.db.NewRaw(`SELECT count(*) FROM track_publication WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &projection); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT count(*) FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &claim); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT state FROM operation WHERE id=?`, f.guard.OperationID).Scan(ctx, &operationState); err != nil {
+		t.Fatal(err)
+	}
+	if projection != 0 || attempt != 1 || claim != 1 || operationState != "running" {
+		t.Fatalf("failed wake left projection=%d attempt=%d claim=%d operation=%s", projection, attempt, claim, operationState)
+	}
+}
+
+func startPublicationReconciliationForResult(t *testing.T, ctx context.Context, repository *SetupManagerRepository, epoch, position uuid.UUID) (PublicationReconciliationDeliveryGuard, *reconciliationDeliveryInserter) {
+	t.Helper()
+	if err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return repository.RequestPublicationReconciliationWith(ctx, tx, epoch, []uuid.UUID{position}, []string{"publication_result_test"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	inserter := new(reconciliationDeliveryInserter)
+	if dispatched, err := repository.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || dispatched != 1 {
+		t.Fatalf("dispatch initial reconciliation=%d err=%v", dispatched, err)
+	}
+	jobID, operationID := inserter.ids[0], inserter.args[0].OperationID
+	if _, err := repository.db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	guard, outcome, err := repository.ClaimPublicationReconciliationDelivery(ctx, operationID, jobID, 1)
+	if err != nil || outcome != PublicationReconciliationClaimed {
+		t.Fatalf("claim reconciliation=%s err=%v", outcome, err)
+	}
+	return guard, inserter
+}
+
+func assertReconciliationWake(t *testing.T, ctx context.Context, db *bun.DB, epoch, position uuid.UUID, requested, dirty int) {
+	t.Helper()
+	var generation, dirtyCount int
+	var pending int
+	if err := db.NewRaw(`SELECT requested_generation FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, epoch, position).Scan(ctx, &generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=?`, epoch, position).Scan(ctx, &dirtyCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_event WHERE output_epoch=? AND position_id=? AND state='pending'`, epoch, position).Scan(ctx, &pending); err != nil {
+		t.Fatal(err)
+	}
+	if generation != requested || dirtyCount != dirty || pending != 1 {
+		t.Fatalf("wake generation=%d dirty=%d pending=%d; want %d/%d/1", generation, dirtyCount, pending, requested, dirty)
 	}
 }
 

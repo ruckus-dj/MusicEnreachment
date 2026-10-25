@@ -100,6 +100,18 @@ func (resolver *PublicationPinnedToolsResolver) Resolve(ctx context.Context, gua
 	if !samePublicationToolSelections(frozen, supplied) {
 		return PublicationToolExecutables{}, false, fmt.Errorf("publication tools differ from frozen selections")
 	}
+	return resolver.resolveHeldSnapshot(ctx, frozen, installation, root, func(ctx context.Context) (bool, error) {
+		return resolver.repository.CheckPublicationDelivery(ctx, guard)
+	})
+}
+
+// resolveHeldSnapshot shares native executable verification between publication
+// deliveries and reconciliation producers. The caller must already own durable
+// tools-read authority and supply its independent final freshness check.
+func (resolver *PublicationPinnedToolsResolver) resolveHeldSnapshot(ctx context.Context, frozen []persistence.SourceAnalysisToolSelection, installation *persistence.ToolInstallation, root string, checkAlive func(context.Context) (bool, error)) (PublicationToolExecutables, bool, error) {
+	if resolver == nil || resolver.runner == nil || checkAlive == nil {
+		return PublicationToolExecutables{}, false, fmt.Errorf("held publication tools require command runner and authority check")
+	}
 	if !resolver.platform.Supported() || !filepath.IsAbs(root) || filepath.Clean(root) != root {
 		return PublicationToolExecutables{}, false, fmt.Errorf("publication tools root or platform is invalid")
 	}
@@ -182,7 +194,7 @@ func (resolver *PublicationPinnedToolsResolver) Resolve(ctx context.Context, gua
 			return PublicationToolExecutables{}, false, fmt.Errorf("managed publication executable changed during verification")
 		}
 	}
-	stillValid, err := resolver.repository.CheckPublicationDelivery(ctx, guard)
+	stillValid, err := checkAlive(ctx)
 	if err != nil || !stillValid {
 		return PublicationToolExecutables{}, false, err
 	}

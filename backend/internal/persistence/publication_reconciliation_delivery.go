@@ -43,6 +43,8 @@ const (
 	PublicationReconciliationClaimed    PublicationReconciliationClaimResult = "claimed"
 )
 
+const PublicationReconciliationBusyAttemptReason = "publication attempt is retained"
+
 type publicationReconciliationEvent struct {
 	ID                 uuid.UUID  `bun:"id"`
 	OutputEpoch        uuid.UUID  `bun:"output_epoch"`
@@ -73,6 +75,9 @@ type publicationReconciliationJob struct {
 func (repository *SetupManagerRepository) DispatchPendingPublicationReconciliations(ctx context.Context, client RiverInserter) (int, error) {
 	if client == nil {
 		return 0, fmt.Errorf("dispatch publication reconciliations: River client is required")
+	}
+	if err := repository.wakeSettledPublicationReconciliations(ctx); err != nil {
+		return 0, err
 	}
 	var candidates []struct {
 		Epoch    uuid.UUID `bun:"output_epoch"`
@@ -134,6 +139,13 @@ func (repository *SetupManagerRepository) DispatchPendingPublicationReconciliati
 			if err != nil {
 				return err
 			}
+			var held bool
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM operation_tool_read_hold WHERE operation_id=?)`, event.OperationID).Scan(ctx, &held); err != nil {
+				return err
+			}
+			if held {
+				return nil
+			}
 			if op.Kind != PublicationReconciliationOperationKind || (op.State != "queued" && op.State != "running" && op.State != "failed") {
 				return fmt.Errorf("publication reconciliation operation is not dispatchable")
 			}
@@ -163,6 +175,61 @@ func (repository *SetupManagerRepository) DispatchPendingPublicationReconciliati
 		}
 	}
 	return dispatched, nil
+}
+
+// wakeSettledPublicationReconciliations repairs only already-requested busy
+// obligations. It never discovers positions. The request-row lock protects the
+// decision and successor generation; the shared output gate fences output reset,
+// not concurrent settlement. The attempt check deliberately remains non-locking.
+func (repository *SetupManagerRepository) wakeSettledPublicationReconciliations(ctx context.Context) error {
+	var candidates []struct {
+		Epoch    uuid.UUID `bun:"output_epoch"`
+		Position uuid.UUID `bun:"position_id"`
+	}
+	if err := repository.db.NewRaw(`SELECT r.output_epoch,r.position_id
+		FROM publication_reconciliation_request r
+		JOIN publication_namespace_state n ON n.singleton AND n.output_epoch=r.output_epoch
+		WHERE r.parked_reason=? AND r.evaluated_generation>=r.requested_generation
+		AND EXISTS (SELECT 1 FROM publication_reconciliation_dirty_scope d
+			WHERE d.output_epoch=r.output_epoch AND d.position_id=r.position_id)
+		AND NOT EXISTS (SELECT 1 FROM track_publication_attempt a WHERE a.position_id=r.position_id)
+		ORDER BY r.position_id LIMIT 64`, PublicationReconciliationBusyAttemptReason).Scan(ctx, &candidates); err != nil {
+		return fmt.Errorf("select settled busy publication reconciliations: %w", err)
+	}
+	for _, candidate := range candidates {
+		err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			current, err := lockPublicationReconciliationRequest(ctx, tx, candidate.Epoch, candidate.Position)
+			if err != nil || !current {
+				return err
+			}
+			var eligible bool
+			if err := tx.NewRaw(`SELECT r.parked_reason=? AND r.evaluated_generation>=r.requested_generation
+				AND EXISTS (SELECT 1 FROM publication_reconciliation_dirty_scope d WHERE d.output_epoch=r.output_epoch AND d.position_id=r.position_id)
+				AND NOT EXISTS (SELECT 1 FROM track_publication_attempt a WHERE a.position_id=r.position_id)
+				FROM publication_reconciliation_request r WHERE r.output_epoch=? AND r.position_id=?`,
+				PublicationReconciliationBusyAttemptReason, candidate.Epoch, candidate.Position).Scan(ctx, &eligible); err != nil {
+				return fmt.Errorf("recheck settled busy publication reconciliation: %w", err)
+			}
+			if !eligible {
+				return nil
+			}
+			var scopes []string
+			if err := tx.NewRaw(`SELECT scope FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=? ORDER BY scope`, candidate.Epoch, candidate.Position).Scan(ctx, &scopes); err != nil {
+				return fmt.Errorf("read settled busy reconciliation scopes: %w", err)
+			}
+			if len(scopes) == 0 {
+				return nil
+			}
+			if err := repository.RequestPublicationReconciliationWith(ctx, tx, candidate.Epoch, []uuid.UUID{candidate.Position}, scopes); err != nil {
+				return fmt.Errorf("wake settled busy publication reconciliation: %w", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (repository *SetupManagerRepository) ClaimPublicationReconciliationDelivery(ctx context.Context, operationID uuid.UUID, jobID int64, riverAttempt int) (PublicationReconciliationDeliveryGuard, PublicationReconciliationClaimResult, error) {
@@ -221,6 +288,14 @@ func (repository *SetupManagerRepository) ClaimPublicationReconciliationDelivery
 			result = PublicationReconciliationBusy
 			return nil
 		}
+		var held bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM operation_tool_read_hold WHERE operation_id=?)`, operationID).Scan(ctx, &held); err != nil {
+			return err
+		}
+		if held {
+			result = PublicationReconciliationBusy
+			return nil
+		}
 		token := uuid.New()
 		if _, err := tx.NewRaw(`UPDATE publication_reconciliation_event SET highest_delivery_attempt=?,delivery_claimed=true,claim_token=? WHERE id=?`, riverAttempt, token, event.ID).Exec(ctx); err != nil {
 			return err
@@ -245,6 +320,9 @@ func (repository *SetupManagerRepository) ReleasePublicationReconciliationDelive
 		if err != nil || event == nil {
 			return err
 		}
+		if err := rejectPublicationReconciliationToolHold(ctx, tx, guard.OperationID); err != nil {
+			return err
+		}
 		if _, err = tx.NewRaw(`UPDATE publication_reconciliation_event SET delivery_claimed=false,claim_token=NULL WHERE id=?`, event.ID).Exec(ctx); err == nil {
 			_, err = tx.NewRaw(`UPDATE operation SET state='queued',stage='waiting',safe_error=NULL,started_at=NULL,finished_at=NULL,updated_at=now() WHERE id=?`, guard.OperationID).Exec(ctx)
 		}
@@ -262,30 +340,63 @@ func (repository *SetupManagerRepository) ParkPublicationReconciliationDelivery(
 	}
 	var parked bool
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		event, err := repository.lockPublicationReconciliationDelivery(ctx, tx, guard)
-		if err != nil || event == nil {
-			return err
-		}
-		var requested int64
-		if err := tx.NewRaw(`SELECT requested_generation FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, guard.OutputEpoch, guard.PositionID).Scan(ctx, &requested); err != nil {
-			return err
-		}
-		if evaluatedGeneration != requested || evaluatedGeneration < event.ObservedGeneration {
-			return nil
-		}
-		if _, err := tx.NewRaw(`UPDATE publication_reconciliation_request SET evaluated_generation=?,parked_reason=?,retry_not_before=NULL WHERE output_epoch=? AND position_id=?`, evaluatedGeneration, reason, guard.OutputEpoch, guard.PositionID).Exec(ctx); err != nil {
-			return err
-		}
-		if _, err := tx.NewRaw(`UPDATE publication_reconciliation_event SET state='completed',completed_at=now(),delivery_claimed=false,claim_token=NULL WHERE id=?`, event.ID).Exec(ctx); err != nil {
-			return err
-		}
-		if _, err := tx.NewRaw(`UPDATE operation SET state='failed',stage='waiting',safe_error=?,finished_at=now(),updated_at=now() WHERE id=?`, reason, guard.OperationID).Exec(ctx); err != nil {
-			return err
-		}
-		parked = true
-		return nil
+		var err error
+		parked, err = repository.parkPublicationReconciliationDeliveryWith(ctx, tx, guard, evaluatedGeneration, reason, false)
+		return err
 	})
 	return parked && err == nil, err
+}
+
+// ParkPublicationReconciliationBusyAttempt atomically revalidates a delivery,
+// confirms an attempt still exists without locking that attempt row, and parks
+// the delivery without acknowledging or deleting any dirty scopes.
+func (repository *SetupManagerRepository) ParkPublicationReconciliationBusyAttempt(ctx context.Context, guard PublicationReconciliationDeliveryGuard, evaluatedGeneration int64, reason string) (bool, error) {
+	if evaluatedGeneration < 0 || reason == "" {
+		return false, fmt.Errorf("park publication reconciliation: generation and reason are required")
+	}
+	var parked bool
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		parked, err = repository.parkPublicationReconciliationDeliveryWith(ctx, tx, guard, evaluatedGeneration, reason, true)
+		return err
+	})
+	return parked && err == nil, err
+}
+
+func (repository *SetupManagerRepository) parkPublicationReconciliationDeliveryWith(ctx context.Context, tx bun.Tx, guard PublicationReconciliationDeliveryGuard, evaluatedGeneration int64, reason string, requireBusyAttempt bool) (bool, error) {
+	event, err := repository.lockPublicationReconciliationDelivery(ctx, tx, guard)
+	if err != nil || event == nil {
+		return false, err
+	}
+	if err := rejectPublicationReconciliationToolHold(ctx, tx, guard.OperationID); err != nil {
+		return false, err
+	}
+	var requested int64
+	if err := tx.NewRaw(`SELECT requested_generation FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, guard.OutputEpoch, guard.PositionID).Scan(ctx, &requested); err != nil {
+		return false, err
+	}
+	if evaluatedGeneration != requested || evaluatedGeneration < event.ObservedGeneration {
+		return false, nil
+	}
+	if requireBusyAttempt {
+		var busy bool
+		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM track_publication_attempt WHERE position_id=?)`, guard.PositionID).Scan(ctx, &busy); err != nil {
+			return false, err
+		}
+		if !busy {
+			return false, nil
+		}
+	}
+	if _, err := tx.NewRaw(`UPDATE publication_reconciliation_request SET evaluated_generation=?,parked_reason=?,retry_not_before=NULL WHERE output_epoch=? AND position_id=?`, evaluatedGeneration, reason, guard.OutputEpoch, guard.PositionID).Exec(ctx); err != nil {
+		return false, err
+	}
+	if _, err := tx.NewRaw(`UPDATE publication_reconciliation_event SET state='completed',completed_at=now(),delivery_claimed=false,claim_token=NULL WHERE id=?`, event.ID).Exec(ctx); err != nil {
+		return false, err
+	}
+	if _, err := tx.NewRaw(`UPDATE operation SET state='failed',stage='waiting',safe_error=?,finished_at=now(),updated_at=now() WHERE id=?`, reason, guard.OperationID).Exec(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // PublicationReconciliationContext is a short-transaction factual snapshot for
@@ -348,6 +459,9 @@ func (repository *SetupManagerRepository) AcknowledgePublicationReconciliationDe
 	if err != nil || event == nil {
 		return false, err
 	}
+	if err := rejectPublicationReconciliationToolHold(ctx, tx, guard.OperationID); err != nil {
+		return false, err
+	}
 	if _, err := tx.NewRaw(`DELETE FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=? AND generation<=?`, guard.OutputEpoch, guard.PositionID, event.ObservedGeneration).Exec(ctx); err != nil {
 		return false, err
 	}
@@ -404,6 +518,17 @@ func publicationReconciliationJobMatches(job *publicationReconciliationJob, oper
 	return decoder.Decode(&args) == nil && args.OperationID == operationID
 }
 
+func rejectPublicationReconciliationToolHold(ctx context.Context, tx bun.Tx, operationID uuid.UUID) error {
+	var held bool
+	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM operation_tool_read_hold WHERE operation_id=?)`, operationID).Scan(ctx, &held); err != nil {
+		return err
+	}
+	if held {
+		return fmt.Errorf("publication reconciliation delivery retains a live tools read hold")
+	}
+	return nil
+}
+
 func (repository *SetupManagerRepository) lockPublicationReconciliationDelivery(ctx context.Context, tx bun.Tx, guard PublicationReconciliationDeliveryGuard) (*publicationReconciliationEvent, error) {
 	if guard.OperationID == uuid.Nil || guard.ClaimToken == uuid.Nil || guard.OutputEpoch == uuid.Nil || guard.PositionID == uuid.Nil || guard.ApplicationAttempt <= 0 || guard.RiverJobID <= 0 || guard.RiverAttempt <= 0 || guard.DeliveryEpoch <= 0 || guard.ObservedGeneration <= 0 {
 		return nil, fmt.Errorf("publication reconciliation requires a valid delivery fence")
@@ -432,6 +557,52 @@ func (repository *SetupManagerRepository) lockPublicationReconciliationDelivery(
 		return nil, err
 	}
 	if op.Kind != PublicationReconciliationOperationKind || op.State != "running" || op.Attempt != guard.ApplicationAttempt || op.RiverJobID == nil || *op.RiverJobID != guard.RiverJobID {
+		return nil, nil
+	}
+	return &event, nil
+}
+
+// lockPublicationReconciliationToolHoldOwner verifies the original application's
+// claim authority without requiring River to still consider that delivery live.
+// A held tool installation cannot be handed to a successor, so River state and
+// attempt are deliberately not part of the release fence.
+func (repository *SetupManagerRepository) lockPublicationReconciliationToolHoldOwner(ctx context.Context, tx bun.Tx, guard PublicationReconciliationDeliveryGuard) (*publicationReconciliationEvent, error) {
+	if guard.OperationID == uuid.Nil || guard.ClaimToken == uuid.Nil || guard.OutputEpoch == uuid.Nil || guard.PositionID == uuid.Nil || guard.ApplicationAttempt <= 0 || guard.RiverJobID <= 0 || guard.RiverAttempt <= 0 || guard.DeliveryEpoch <= 0 || guard.ObservedGeneration <= 0 {
+		return nil, fmt.Errorf("publication reconciliation requires a valid release authority")
+	}
+	current, err := lockPublicationReconciliationRequest(ctx, tx, guard.OutputEpoch, guard.PositionID)
+	if err != nil || !current {
+		return nil, err
+	}
+	var event publicationReconciliationEvent
+	err = tx.NewRaw(`SELECT * FROM publication_reconciliation_event WHERE operation_id=? FOR UPDATE`, guard.OperationID).Scan(ctx, &event)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if event.OutputEpoch != guard.OutputEpoch || event.PositionID != guard.PositionID || event.ObservedGeneration != guard.ObservedGeneration || event.State != "dispatched" || event.RegisteredJobID == nil || *event.RegisteredJobID != guard.RiverJobID || event.DeliveryEpoch != guard.DeliveryEpoch || !event.Claimed || event.ClaimToken == nil || *event.ClaimToken != guard.ClaimToken {
+		return nil, nil
+	}
+	job, err := lockPublicationReconciliationJob(ctx, tx, guard.RiverJobID)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil || job.Kind != PublicationReconciliationOperationKind {
+		return nil, nil
+	}
+	var args PublicationReconciliationJobArgs
+	decoder := json.NewDecoder(bytes.NewReader(job.Args))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&args) != nil || args.OperationID != guard.OperationID {
+		return nil, nil
+	}
+	op, err := repository.GetOperationForUpdate(ctx, tx, guard.OperationID)
+	if err != nil {
+		return nil, err
+	}
+	if op.Kind != PublicationReconciliationOperationKind || op.Attempt != guard.ApplicationAttempt || op.RiverJobID == nil || *op.RiverJobID != guard.RiverJobID {
 		return nil, nil
 	}
 	return &event, nil
