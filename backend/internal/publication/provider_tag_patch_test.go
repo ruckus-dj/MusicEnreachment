@@ -104,6 +104,13 @@ func TestPublicationTagKeysForFieldUsesApprovedMappingFootprints(t *testing.T) {
 		{"release canonical credit", librarymetadata.ScopeRelease, "artist_credit", []string{"ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID"}},
 		{"artists only", librarymetadata.ScopePosition, "artists", []string{"ARTISTS"}},
 		{"release artist MBID alias", librarymetadata.ScopeRelease, "artist_mbid", []string{"MUSICBRAINZ_ALBUMARTISTID"}},
+		{"release sort title", librarymetadata.ScopeRelease, "sort_title", []string{"ALBUMSORT"}},
+		{"position sort title", librarymetadata.ScopePosition, "sort_title", []string{"TITLESORT"}},
+		{"release album artist sort names", librarymetadata.ScopeRelease, "album_artist_sort_names", []string{"ALBUMARTISTSORT"}},
+		{"position artist sort names", librarymetadata.ScopePosition, "artist_sort_names", []string{"ARTISTSORT"}},
+		{"position movement footprint", librarymetadata.ScopePosition, "movement", []string{"MOVEMENTNAME", "MOVEMENTNUMBER", "MOVEMENTCOUNT"}},
+		{"position work footprint", librarymetadata.ScopePosition, "works", []string{"WORK", "MUSICBRAINZ_WORKID"}},
+		{"release artist sort names remains unsupported", librarymetadata.ScopeRelease, "artist_sort_names", nil},
 		{"unsupported registered field", librarymetadata.ScopePosition, "album_artist_credit", nil},
 		{"unregistered field", librarymetadata.ScopePosition, "lyrics", nil},
 	}
@@ -113,5 +120,35 @@ func TestPublicationTagKeysForFieldUsesApprovedMappingFootprints(t *testing.T) {
 				t.Fatalf("PublicationTagKeysForField() = %#v, want %#v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestApplyProviderTagPatchProtectsCompleteOptionalFieldFootprints(t *testing.T) {
+	fields := []struct {
+		scope librarymetadata.Scope
+		name  string
+	}{
+		{librarymetadata.ScopeRelease, "sort_title"},
+		{librarymetadata.ScopePosition, "sort_title"},
+		{librarymetadata.ScopeRelease, "album_artist_sort_names"},
+		{librarymetadata.ScopePosition, "artist_sort_names"},
+		{librarymetadata.ScopePosition, "movement"},
+		{librarymetadata.ScopePosition, "works"},
+	}
+	current, patch := make(map[string][]string), make(map[string][]string)
+	var protected []string
+	for _, field := range fields {
+		for _, key := range PublicationTagKeysForField(field.scope, field.name) {
+			current[key] = []string{"local:" + key}
+			patch[key] = []string{"provider:" + key}
+			protected = append(protected, key)
+		}
+	}
+	got, err := ApplyProviderTagPatch(current, patch, protected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, current) {
+		t.Fatalf("protected optional footprint changed: got=%#v want=%#v", got, current)
 	}
 }

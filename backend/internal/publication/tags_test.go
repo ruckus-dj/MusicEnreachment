@@ -116,6 +116,98 @@ func TestProjectTagsSupportsDecodedEnvelopeValues(t *testing.T) {
 	}
 }
 
+func TestProjectTagsProjectsOptionalSortMovementAndWorkMappings(t *testing.T) {
+	workID := uuid.NewString()
+	position := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
+		Desired: map[string]librarymetadata.FieldValue{
+			"sort_title":        librarymetadata.ManualFieldValue(librarymetadata.StateValue, "Été, Pt. 2", true),
+			"artist_sort_names": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"Zed", "Ångström"}, true),
+			"movement":          librarymetadata.ManualFieldValue(librarymetadata.StateValue, librarymetadata.Movement{Name: "序曲", Number: 2, Count: 7}, true),
+			"works":             librarymetadata.ManualFieldValue(librarymetadata.StateValue, []librarymetadata.Work{{Name: "作品一", MBID: &workID}, {Name: "作品二", MBID: ptrString(workID)}}, true),
+		},
+	}
+	release := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease,
+		Desired: map[string]librarymetadata.FieldValue{
+			"sort_title":              librarymetadata.ManualFieldValue(librarymetadata.StateValue, "Album, The", true),
+			"album_artist_sort_names": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"Artist, A", "Artist, B"}, true),
+		},
+	}
+	result, err := ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &release},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &position},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		"ALBUMSORT": {"Album, The"}, "TITLESORT": {"Été, Pt. 2"},
+		"ALBUMARTISTSORT": {"Artist, A", "Artist, B"}, "ARTISTSORT": {"Zed", "Ångström"},
+		"MOVEMENTNAME": {"序曲"}, "MOVEMENTNUMBER": {"2"}, "MOVEMENTCOUNT": {"7"},
+		"WORK": {"作品一", "作品二"}, "MUSICBRAINZ_WORKID": {workID, workID},
+	}
+	for key, values := range want {
+		if !reflect.DeepEqual(result.Tags[key], values) {
+			t.Errorf("%s = %#v, want %#v", key, result.Tags[key], values)
+		}
+	}
+	if result.Fields["position.works"].Status != "represented" || result.Fields["position.works.mbids"].Status != "represented" {
+		t.Fatalf("work statuses = %#v / %#v", result.Fields["position.works"], result.Fields["position.works.mbids"])
+	}
+}
+
+func TestProjectTagsDecodedStructuredValuesAndIncompleteWorkIDs(t *testing.T) {
+	position, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"position","desired":{"movement":{"state":"value","value":{"name":"Suite","number":1,"count":3},"authority":"manual","provenance":{"kind":"manual"}},"works":{"state":"value","value":[{"name":"Work α","mbid":"11111111-1111-4111-8111-111111111111"},{"name":"Work β"}],"authority":"manual","provenance":{"kind":"manual"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &position},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.Tags["WORK"], []string{"Work α", "Work β"}) {
+		t.Fatalf("work names = %#v", result.Tags["WORK"])
+	}
+	if _, exists := result.Tags["MUSICBRAINZ_WORKID"]; exists {
+		t.Fatalf("partial work IDs emitted: %#v", result.Tags["MUSICBRAINZ_WORKID"])
+	}
+	if result.Fields["position.works"].Status != "represented" || result.Fields["position.works.mbids"].Status != "unsupported" {
+		t.Fatalf("partial work results = %#v / %#v", result.Fields["position.works"], result.Fields["position.works.mbids"])
+	}
+}
+
+func TestProjectTagsOptionalMappingsAbsentAndExplicitEmpty(t *testing.T) {
+	position := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
+		Desired: map[string]librarymetadata.FieldValue{
+			"sort_title": librarymetadata.ManualFieldValue(librarymetadata.StateAbsent, nil, false),
+			"movement":   librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
+			"works":      librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
+		},
+	}
+	result, err := ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &position},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := result.Tags["TITLESORT"]; exists || result.Fields["position.sort_title"].Status != "" {
+		t.Fatalf("absent sort title took action: tags=%#v fields=%#v", result.Tags, result.Fields)
+	}
+	for _, key := range []string{"MOVEMENTNAME", "MOVEMENTNUMBER", "MOVEMENTCOUNT", "WORK", "MUSICBRAINZ_WORKID"} {
+		if values, exists := result.Tags[key]; !exists || values == nil || len(values) != 0 {
+			t.Errorf("explicit empty %s = %#v, exists=%t", key, values, exists)
+		}
+	}
+}
+
+func ptrString(value string) *string { return &value }
+
 func TestProjectTagsDoesNotPublishUnconfirmedSyncedLyrics(t *testing.T) {
 	position := librarymetadata.Envelope{
 		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,

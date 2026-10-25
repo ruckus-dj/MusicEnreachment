@@ -3,6 +3,7 @@ package publication
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -174,18 +175,31 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 	if envelope == nil {
 		return
 	}
-	for name, value := range envelope.Desired {
+	names := make([]string, 0, len(envelope.Desired))
+	for name := range envelope.Desired {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		value := envelope.Desired[name]
 		if value.State == librarymetadata.StateAbsent {
 			continue
 		}
-		key, supported := normalizedTagKey(scope, name)
+		keys, supported := normalizedTagKeys(scope, name)
 		if !supported {
 			fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "no approved normalized TagLib mapping"}
 			continue
 		}
 		if value.State == librarymetadata.StateExplicitEmpty {
-			tags[key] = []string{}
+			for _, key := range keys {
+				tags[key] = []string{}
+			}
+			delete(fields, string(scope)+"."+name+".mbids")
 			fields[string(scope)+"."+name] = TagFieldResult{Status: "explicit_empty"}
+			continue
+		}
+		if name == "movement" || name == "works" {
+			projectStructuredDesired(tags, fields, scope, name, value.Value)
 			continue
 		}
 		values, ok := normalizedTagValues(name, value.Value)
@@ -193,9 +207,114 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 			fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
 			continue
 		}
-		tags[key] = values
+		for _, key := range keys {
+			tags[key] = values
+		}
 		fields[string(scope)+"."+name] = TagFieldResult{Status: "represented"}
 	}
+}
+
+func projectStructuredDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, field string, value any) {
+	fieldName := string(scope) + "." + field
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+		return
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
+	decoder.UseNumber()
+	var normalized any
+	if decoder.Decode(&normalized) != nil {
+		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+		return
+	}
+	if field == "movement" {
+		movement, ok := normalized.(map[string]any)
+		name, nameOK := movement["name"].(string)
+		number, numberOK := movement["number"].(json.Number)
+		count, countOK := movement["count"].(json.Number)
+		if !ok || !nameOK || !numberOK || !countOK {
+			fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+			return
+		}
+		tags["MOVEMENTNAME"] = []string{name}
+		tags["MOVEMENTNUMBER"] = []string{number.String()}
+		tags["MOVEMENTCOUNT"] = []string{count.String()}
+		fields[fieldName] = TagFieldResult{Status: "represented"}
+		return
+	}
+	works, ok := normalized.([]any)
+	if !ok {
+		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+		return
+	}
+	names := make([]string, 0, len(works))
+	ids := make([]string, 0, len(works))
+	hasID, missingID := false, false
+	for _, entry := range works {
+		work, ok := entry.(map[string]any)
+		name, nameOK := work["name"].(string)
+		if !ok || !nameOK {
+			fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+			return
+		}
+		names = append(names, name)
+		if rawID, exists := work["mbid"]; exists && rawID != nil {
+			id, ok := rawID.(string)
+			if !ok {
+				fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+				return
+			}
+			hasID = true
+			ids = append(ids, id)
+		} else {
+			missingID = true
+		}
+	}
+	tags["WORK"] = names
+	fields[fieldName] = TagFieldResult{Status: "represented"}
+	if hasID && missingID {
+		fields[fieldName+".mbids"] = TagFieldResult{Status: "unsupported", Reason: "work MBIDs are incomplete; ordered per-work alignment cannot be represented"}
+	} else if hasID {
+		tags["MUSICBRAINZ_WORKID"] = ids
+		fields[fieldName+".mbids"] = TagFieldResult{Status: "represented"}
+	} else {
+		delete(tags, "MUSICBRAINZ_WORKID")
+		delete(fields, fieldName+".mbids")
+	}
+}
+
+func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, bool) {
+	switch field {
+	case "sort_title":
+		if scope == librarymetadata.ScopeRelease {
+			return []string{"ALBUMSORT"}, true
+		}
+		if scope == librarymetadata.ScopePosition {
+			return []string{"TITLESORT"}, true
+		}
+	case "album_artist_sort_names":
+		if scope == librarymetadata.ScopeRelease {
+			return []string{"ALBUMARTISTSORT"}, true
+		}
+	case "artist_sort_names":
+		if scope == librarymetadata.ScopePosition {
+			return []string{"ARTISTSORT"}, true
+		}
+	case "movement":
+		if scope == librarymetadata.ScopePosition {
+			return []string{"MOVEMENTNAME", "MOVEMENTNUMBER", "MOVEMENTCOUNT"}, true
+		}
+	case "works":
+		if scope == librarymetadata.ScopePosition {
+			return []string{"WORK", "MUSICBRAINZ_WORKID"}, true
+		}
+	}
+	key, ok := normalizedTagKey(scope, field)
+	if !ok {
+		return nil, false
+	}
+	return []string{key}, true
 }
 
 func normalizedTagKey(scope librarymetadata.Scope, field string) (string, bool) {
@@ -228,6 +347,9 @@ func normalizedTagKey(scope librarymetadata.Scope, field string) (string, bool) 
 	}
 	if field == "artist_mbid" && scope == librarymetadata.ScopeRelease {
 		return "MUSICBRAINZ_ALBUMARTISTID", true
+	}
+	if field == "artist_sort_names" && scope == librarymetadata.ScopeRelease {
+		return "", false
 	}
 	key, ok := keys[field]
 	return key, ok

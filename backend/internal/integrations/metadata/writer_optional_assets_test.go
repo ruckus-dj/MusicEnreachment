@@ -198,7 +198,13 @@ func TestWriteWithOptionalAssetsRoundTripsRealContainers(t *testing.T) {
 				t.Fatalf("read initial audio properties: %+v, %v", before.Properties, err)
 			}
 			coverData := generatedOptionalAssetsPNG(t)
-			requested := map[string][]string{"TITLE": {"optional assets"}, "LYRICS": {"[00:01.00]Line one\n[00:02.00]Line two\n"}}
+			requested := map[string][]string{
+				"TITLE": {"optional assets"}, "LYRICS": {"[00:01.00]Line one\n[00:02.00]Line two\n"},
+				"ALBUMSORT": {"Album, The"}, "TITLESORT": {"Song, The"},
+				"ALBUMARTISTSORT": {"Artist, Album"}, "ARTISTSORT": {"Artist, Track"},
+				"MOVEMENTNAME": {"序曲"}, "MOVEMENTNUMBER": {"2"}, "MOVEMENTCOUNT": {"7"},
+				"WORK": {"作品一", "作品二"}, "MUSICBRAINZ_WORKID": {"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"},
+			}
 			result, err := (Writer{}).WriteWithOptionalAssets(context.Background(), path, requested, &Cover{Data: coverData, MIME: "image/png"})
 			if err != nil || result.LyricsStatus != OptionalLyricsVerified || result.CoverStatus != OptionalCoverVerified {
 				t.Fatalf("write result = %+v, %v", result, err)
@@ -207,8 +213,13 @@ func TestWriteWithOptionalAssetsRoundTripsRealContainers(t *testing.T) {
 			if err != nil || after.Properties == nil || after.CoverInspection == nil || after.CoverInspection.Cover == nil {
 				t.Fatalf("fresh readback = %+v, %v", after, err)
 			}
-			if !bytes.Equal(after.CoverInspection.Cover.Data, coverData) || !reflect.DeepEqual(after.Tags["LYRICS"], requested["LYRICS"]) {
-				t.Fatalf("fresh optional assets differ: cover=%v lyrics=%v", bytes.Equal(after.CoverInspection.Cover.Data, coverData), after.Tags["LYRICS"])
+			if !bytes.Equal(after.CoverInspection.Cover.Data, coverData) {
+				t.Fatalf("fresh optional cover differs: cover=%v", bytes.Equal(after.CoverInspection.Cover.Data, coverData))
+			}
+			for key, values := range requested {
+				if !reflect.DeepEqual(after.Tags[key], values) {
+					t.Errorf("fresh %s readback = %#v, want %#v", key, after.Tags[key], values)
+				}
 			}
 			afterBytes, err := os.ReadFile(path)
 			if err != nil {

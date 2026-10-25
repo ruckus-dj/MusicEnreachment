@@ -46,17 +46,17 @@ func PublicationTagKeysForField(scope librarymetadata.Scope, field string) []str
 	if scope != librarymetadata.ScopeRelease && scope != librarymetadata.ScopePosition {
 		return nil
 	}
-	key, ok := normalizedTagKey(scope, field)
+	keys, ok := normalizedTagKeys(scope, field)
 	if !ok {
 		return nil
 	}
 	if field == "artist_credit" {
 		if scope == librarymetadata.ScopePosition {
-			return []string{key, "ARTISTS", "MUSICBRAINZ_ARTISTID"}
+			return append(keys, "ARTISTS", "MUSICBRAINZ_ARTISTID")
 		}
-		return []string{key, "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID"}
+		return append(keys, "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID")
 	}
-	return []string{key}
+	return keys
 }
 
 func validProviderTagKey(key string) bool {
