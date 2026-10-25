@@ -563,8 +563,9 @@ func validateNativeRewriteTopology(raw []byte, cover persistence.PublicationCove
 }
 
 // validateFirstAudioCoverTopology permits only the representation supported by
-// the output container: attached pictures for FLAC/MP3 and a tagged image
-// attachment for Matroska. The read-back cover outcome authorizes its format.
+// the output container: attached pictures for FLAC/MP3 and tagged image
+// attachments (including Matroska's attached-picture video representation) for
+// Matroska. The read-back cover outcome authorizes its format.
 func validateFirstAudioCoverTopology(raw []byte, container publication.AudioContainer, cover persistence.PublicationCoverOutcome) error {
 	var response struct {
 		Streams []struct {
@@ -586,15 +587,19 @@ func validateFirstAudioCoverTopology(raw []byte, container publication.AudioCont
 		case "audio":
 			audioCount++
 		case "video":
-			if (container != publication.AudioContainerFLAC && container != publication.AudioContainerMP3) || stream.Disposition.AttachedPicture != 1 || !coverFormatMatchesCodec(cover.MIME, stream.Codec) {
+			if stream.Disposition.AttachedPicture != 1 {
+				return errors.New("first-audio candidate contains an unauthorized non-audio stream")
+			}
+			if container == publication.AudioContainerMKA {
+				if cover.State != persistence.PublicationAssetEmbedded || !coverFormatMatchesCodec(cover.MIME, stream.Codec) || !validPublicationCoverAttachment(stream.Tags["filename"], stream.Tags["mimetype"], cover.MIME) {
+					return errors.New("first-audio Matroska attached picture does not match read-back cover")
+				}
+			} else if (container != publication.AudioContainerFLAC && container != publication.AudioContainerMP3) || !coverFormatMatchesCodec(cover.MIME, stream.Codec) {
 				return errors.New("first-audio candidate contains an unauthorized non-audio stream")
 			}
 			imageCount++
 		case "attachment":
-			filename := strings.ToLower(stream.Tags["filename"])
-			mime := strings.ToLower(stream.Tags["mimetype"])
-			validName := cover.MIME == "image/png" && strings.HasSuffix(filename, ".png") || cover.MIME == "image/jpeg" && (strings.HasSuffix(filename, ".jpg") || strings.HasSuffix(filename, ".jpeg"))
-			if container != publication.AudioContainerMKA || cover.State != persistence.PublicationAssetEmbedded || mime != cover.MIME || !validName {
+			if container != publication.AudioContainerMKA || cover.State != persistence.PublicationAssetEmbedded || !validPublicationCoverAttachment(stream.Tags["filename"], stream.Tags["mimetype"], cover.MIME) {
 				return errors.New("first-audio Matroska candidate contains an unauthorized attachment")
 			}
 			imageCount++
@@ -610,6 +615,13 @@ func validateFirstAudioCoverTopology(raw []byte, container publication.AudioCont
 		return errors.New("first-audio candidate has unexpected audio, cover, attachment, or chapter topology")
 	}
 	return nil
+}
+
+func validPublicationCoverAttachment(filename, mime, coverMIME string) bool {
+	filename = strings.ToLower(filename)
+	mime = strings.ToLower(mime)
+	validName := coverMIME == "image/png" && strings.HasSuffix(filename, ".png") || coverMIME == "image/jpeg" && (strings.HasSuffix(filename, ".jpg") || strings.HasSuffix(filename, ".jpeg"))
+	return mime == coverMIME && validName
 }
 
 // validateAudioUpgradeTopology accepts the exact CURRENT artwork inventory: one
