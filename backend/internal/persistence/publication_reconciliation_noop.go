@@ -21,6 +21,7 @@ const (
 	AudioUpgradeRequired PublicationReconciliationAction = iota + 1
 	ProviderTagsRequired
 	AllNoop
+	InputsPending
 )
 
 // PublicationReconciliationNoop is an ephemeral evaluation capability. It is
@@ -33,9 +34,22 @@ type PublicationReconciliationNoop struct {
 	digest        string
 }
 
+// PublicationReconciliationInputsPending is an ephemeral capability proving
+// that the current publication was evaluated against an unavailable accepted
+// release graph. Parking repeats that evaluation transactionally.
+type PublicationReconciliationInputsPending struct {
+	guard         PublicationReconciliationDeliveryGuard
+	releaseID     uuid.UUID
+	endpoint      string
+	configuration string
+	generation    int64
+	digest        string
+}
+
 type PublicationReconciliationDecision struct {
-	Action PublicationReconciliationAction
-	Noop   *PublicationReconciliationNoop
+	Action        PublicationReconciliationAction
+	Noop          *PublicationReconciliationNoop
+	InputsPending *PublicationReconciliationInputsPending
 }
 
 func (repository *SetupManagerRepository) EvaluatePublicationReconciliationCurrent(ctx context.Context, releaseID uuid.UUID, guard PublicationReconciliationDeliveryGuard, endpoint, configuration string) (PublicationReconciliationDecision, error) {
@@ -166,40 +180,48 @@ func (repository *SetupManagerRepository) evaluatePublicationReconciliationCurre
 		audioRequired, audioWitness, audioErr = publicationReconciliationAudioUpgradeRequired(ctx, tx, position.TrackID, current, authority, publication.AudioPublicationFormat(format))
 	}
 	action := AllNoop
+	var inputsPending bool
 	if audioRequired {
 		action = AudioUpgradeRequired
 	} else if hasBindings {
 		if endpoint == "" || configuration == "" || activeConfiguration != configuration {
 			return PublicationReconciliationDecision{}, ErrPublicationAdmissionConflict
 		}
-		if err := readPublicationProviderTagContextForPositionTx(ctx, tx, releaseID, guard.PositionID, endpoint, configuration, true, &providerContext); err != nil {
+		if err := readPublicationProviderTagContextForPositionTxWithAvailability(ctx, tx, releaseID, guard.PositionID, endpoint, configuration, true, &providerContext, &inputsPending); err != nil {
 			return PublicationReconciliationDecision{}, err
 		}
-		ownerWitness = providerContext.Digest
-		protection, err := BuildPublicationProviderTagProtection(providerContext)
-		if err != nil {
-			return PublicationReconciliationDecision{}, err
-		}
-		patch, err := BuildPublicationProviderCanonicalTagPatch(*providerContext)
-		if err != nil {
-			return PublicationReconciliationDecision{}, err
-		}
-		var metadata PublicationCommitMetadata
-		if err := strictMetadata(current.ActualMetadata, &metadata); err != nil {
-			return PublicationReconciliationDecision{}, err
-		}
-		desired, err := publication.ApplyProviderTagPatch(metadata.Tags, patch, protection.Keys)
-		if err != nil {
-			return PublicationReconciliationDecision{}, err
-		}
-		if !reflect.DeepEqual(desired, metadata.Tags) {
-			action = ProviderTagsRequired
+		if inputsPending {
+			action = InputsPending
+		} else {
+			ownerWitness = providerContext.Digest
+			protection, err := BuildPublicationProviderTagProtection(providerContext)
+			if err != nil {
+				return PublicationReconciliationDecision{}, err
+			}
+			patch, err := BuildPublicationProviderCanonicalTagPatch(*providerContext)
+			if err != nil {
+				return PublicationReconciliationDecision{}, err
+			}
+			var metadata PublicationCommitMetadata
+			if err := strictMetadata(current.ActualMetadata, &metadata); err != nil {
+				return PublicationReconciliationDecision{}, err
+			}
+			desired, err := publication.ApplyProviderTagPatch(metadata.Tags, patch, protection.Keys)
+			if err != nil {
+				return PublicationReconciliationDecision{}, err
+			}
+			if !reflect.DeepEqual(desired, metadata.Tags) {
+				action = ProviderTagsRequired
+			}
 		}
 	}
 	// One blocked branch must not prevent an independent admitted change. Both
 	// kinds of admission preserve continuation; only an all-no-op ACK requires
 	// successful evaluation of both branches.
 	if action == AllNoop && audioErr != nil {
+		return PublicationReconciliationDecision{}, audioErr
+	}
+	if action == InputsPending && audioErr != nil {
 		return PublicationReconciliationDecision{}, audioErr
 	}
 	// Delivery locks are always last, after domain and policy facts. No-op ACK
@@ -209,6 +231,18 @@ func (repository *SetupManagerRepository) evaluatePublicationReconciliationCurre
 		return PublicationReconciliationDecision{}, errors.Join(err, ErrPublicationAdmissionConflict)
 	}
 	decision := PublicationReconciliationDecision{Action: action}
+	if action == InputsPending {
+		var generation int64
+		if err := tx.NewRaw(`SELECT requested_generation FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, guard.OutputEpoch, guard.PositionID).Scan(ctx, &generation); err != nil {
+			return PublicationReconciliationDecision{}, err
+		}
+		encoded, err := json.Marshal([]any{current, authority, format, activeConfiguration, hasBindings, ownerWitness, audioWitness, publication.QualityPolicyVersion, generation})
+		if err != nil {
+			return PublicationReconciliationDecision{}, err
+		}
+		digest := sha256.Sum256(encoded)
+		decision.InputsPending = &PublicationReconciliationInputsPending{guard: guard, releaseID: releaseID, endpoint: endpoint, configuration: configuration, generation: generation, digest: hex.EncodeToString(digest[:])}
+	}
 	if action == AllNoop {
 		encoded, err := json.Marshal([]any{current, authority, format, activeConfiguration, hasBindings, ownerWitness, audioWitness, publication.QualityPolicyVersion})
 		if err != nil {

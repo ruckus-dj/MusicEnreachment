@@ -44,6 +44,7 @@ const (
 )
 
 const PublicationReconciliationBusyAttemptReason = "publication attempt is retained"
+const PublicationReconciliationAcceptedGraphPendingReason = "accepted MusicBrainz release track graph is unavailable"
 
 type publicationReconciliationEvent struct {
 	ID                 uuid.UUID  `bun:"id"`
@@ -342,6 +343,28 @@ func (repository *SetupManagerRepository) ParkPublicationReconciliationDelivery(
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var err error
 		parked, err = repository.parkPublicationReconciliationDeliveryWith(ctx, tx, guard, evaluatedGeneration, reason, false)
+		return err
+	})
+	return parked && err == nil, err
+}
+
+// ParkPublicationReconciliationInputsPending re-evaluates the current
+// publication and accepted-graph condition before durably parking this delivery.
+// A changed proof or a newer request leaves the obligation available for retry.
+func (repository *SetupManagerRepository) ParkPublicationReconciliationInputsPending(ctx context.Context, witness *PublicationReconciliationInputsPending) (bool, error) {
+	if witness == nil || witness.guard.OperationID == uuid.Nil || witness.generation <= 0 {
+		return false, fmt.Errorf("park publication reconciliation: invalid pending-input witness")
+	}
+	var parked bool
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		decision, err := repository.evaluatePublicationReconciliationCurrentTx(ctx, tx, witness.releaseID, witness.guard, witness.endpoint, witness.configuration)
+		if err != nil {
+			return err
+		}
+		if decision.Action != InputsPending || decision.InputsPending == nil || *decision.InputsPending != *witness {
+			return nil
+		}
+		parked, err = repository.parkPublicationReconciliationDeliveryWith(ctx, tx, witness.guard, witness.generation, PublicationReconciliationAcceptedGraphPendingReason, false)
 		return err
 	})
 	return parked && err == nil, err

@@ -17,6 +17,9 @@ type publicationReconciliationServiceRepository struct {
 	parked        bool
 	parkResult    bool
 	parkReason    string
+	inputsParked  bool
+	inputsResult  bool
+	inputsCalls   int
 	decision      persistence.PublicationReconciliationDecision
 	evaluateErr   error
 	evaluateCalls int
@@ -48,6 +51,12 @@ func (repository *publicationReconciliationServiceRepository) ParkPublicationRec
 	return repository.parkResult, nil
 }
 
+func (repository *publicationReconciliationServiceRepository) ParkPublicationReconciliationInputsPending(_ context.Context, witness *persistence.PublicationReconciliationInputsPending) (bool, error) {
+	repository.inputsCalls++
+	repository.inputsParked = witness != nil && repository.inputsResult
+	return repository.inputsParked, nil
+}
+
 func TestReconcilePublicationDefersExistingPublicationWithoutReplacingIt(t *testing.T) {
 	base, runtime, _, _, guard := automaticAdmissionFixture(t)
 	repository := &publicationReconciliationServiceRepository{
@@ -64,6 +73,23 @@ func TestReconcilePublicationDefersExistingPublicationWithoutReplacingIt(t *test
 }
 
 func TestReconcilePublicationCurrentRoutesOnlyProvenNoopToAcknowledgement(t *testing.T) {
+	t.Run("pending accepted graph parks without acknowledgement", func(t *testing.T) {
+		base, runtime, _, _, guard := automaticAdmissionFixture(t)
+		repository := &publicationReconciliationServiceRepository{
+			automaticAdmissionServiceRepository: base,
+			facts:                               &persistence.PublicationReconciliationContext{ReleaseID: base.snapshot.Library.ReleaseID, RequestedGeneration: 1, HasCurrentPublication: true},
+			decision:                            persistence.PublicationReconciliationDecision{Action: persistence.InputsPending, InputsPending: &persistence.PublicationReconciliationInputsPending{}},
+			inputsResult:                        true,
+		}
+		service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"}).WithPublicationCoordinator(publication.NewCoordinator())
+		if err := service.ReconcilePublication(context.Background(), guard); err != nil {
+			t.Fatalf("ReconcilePublication() error = %v", err)
+		}
+		if repository.inputsCalls != 1 || !repository.inputsParked || repository.ackCalls != 0 || base.automaticCalls != 0 {
+			t.Fatalf("pending parks=%d/%v acknowledgements=%d producer admissions=%d", repository.inputsCalls, repository.inputsParked, repository.ackCalls, base.automaticCalls)
+		}
+	})
+
 	t.Run("all noop acknowledges without producer", func(t *testing.T) {
 		base, runtime, _, _, guard := automaticAdmissionFixture(t)
 		repository := &publicationReconciliationServiceRepository{

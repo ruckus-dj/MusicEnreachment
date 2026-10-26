@@ -91,6 +91,14 @@ func (repository *SetupManagerRepository) ReadPublicationProviderTagContextForPo
 // use READ COMMITTED: the keyed reader takes projection/binding locks and then
 // verifies that the selected binding still identifies this exact position.
 func readPublicationProviderTagContextForPositionTx(ctx context.Context, tx bun.Tx, releaseID, positionID uuid.UUID, endpoint, expectedIdentity string, lockRows bool, result **PublicationProviderTagContext) error {
+	return readPublicationProviderTagContextForPositionTxWithAvailability(ctx, tx, releaseID, positionID, endpoint, expectedIdentity, lockRows, result, nil)
+}
+
+// readPublicationProviderTagContextForPositionTxWithAvailability is used by
+// reconciliation, which may defer only when the accepted release graph itself
+// has not arrived. All other failures remain errors, as they are for strict
+// admission readers.
+func readPublicationProviderTagContextForPositionTxWithAvailability(ctx context.Context, tx bun.Tx, releaseID, positionID uuid.UUID, endpoint, expectedIdentity string, lockRows bool, result **PublicationProviderTagContext, graphPending *bool) error {
 	if releaseID == uuid.Nil || positionID == uuid.Nil || endpoint == "" || expectedIdentity == "" {
 		return fmt.Errorf("read publication provider tag context: required identity is missing")
 	}
@@ -124,7 +132,7 @@ func readPublicationProviderTagContextForPositionTx(ctx context.Context, tx bun.
 	if binding.ReleaseKey == "" || binding.TrackKey == "" {
 		return fmt.Errorf("read publication provider tag context: selected local provider binding is incomplete: %w", ErrPublicationAdmissionConflict)
 	}
-	return readPublicationProviderTagContextTx(ctx, tx, releaseID, positionID, endpoint, expectedIdentity, binding.ReleaseKey, binding.TrackKey, lockRows, result)
+	return readPublicationProviderTagContextTxWithAvailability(ctx, tx, releaseID, positionID, endpoint, expectedIdentity, binding.ReleaseKey, binding.TrackKey, lockRows, result, graphPending)
 }
 
 // readPublicationProviderTagContextTx is reusable in an existing transaction.
@@ -132,6 +140,10 @@ func readPublicationProviderTagContextForPositionTx(ctx context.Context, tx bun.
 // gates, then locks projection, binding, and local-owner rows in order. The
 // standalone repeatable-read API uses lockRows=false and is a factual snapshot.
 func readPublicationProviderTagContextTx(ctx context.Context, tx bun.Tx, releaseID, positionID uuid.UUID, endpoint, expectedIdentity, releaseKey, trackKey string, lockRows bool, result **PublicationProviderTagContext) error {
+	return readPublicationProviderTagContextTxWithAvailability(ctx, tx, releaseID, positionID, endpoint, expectedIdentity, releaseKey, trackKey, lockRows, result, nil)
+}
+
+func readPublicationProviderTagContextTxWithAvailability(ctx context.Context, tx bun.Tx, releaseID, positionID uuid.UUID, endpoint, expectedIdentity, releaseKey, trackKey string, lockRows bool, result **PublicationProviderTagContext, graphPending *bool) error {
 	if releaseID == uuid.Nil || positionID == uuid.Nil || endpoint == "" || expectedIdentity == "" || releaseKey == "" || trackKey == "" {
 		return fmt.Errorf("read publication provider tag context: required identity is missing")
 	}
@@ -170,6 +182,10 @@ func readPublicationProviderTagContextTx(ctx context.Context, tx bun.Tx, release
 	}
 	_, hasTrackEvidence := releaseEvidence(release, "__tracks")
 	if release == nil || !hasTrackEvidence {
+		if graphPending != nil {
+			*graphPending = true
+			return nil
+		}
 		return fmt.Errorf("read publication provider tag context: accepted release track graph is unavailable")
 	}
 	var selected *MatchingReleaseTrack

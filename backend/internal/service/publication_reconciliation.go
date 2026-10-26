@@ -19,6 +19,10 @@ type publicationReconciliationBusyParker interface {
 	ParkPublicationReconciliationBusyAttempt(context.Context, persistence.PublicationReconciliationDeliveryGuard, int64, string) (bool, error)
 }
 
+type publicationReconciliationInputsPendingParker interface {
+	ParkPublicationReconciliationInputsPending(context.Context, *persistence.PublicationReconciliationInputsPending) (bool, error)
+}
+
 // ReconcilePublication consumes one already-requested publication reconciliation.
 // The worker owns claim release on every error; nil means this delivery was
 // transactionally parked, admitted, or explicitly acknowledged as a no-op.
@@ -165,6 +169,22 @@ func (service *LibraryPublications) reconcileCurrentPublication(ctx context.Cont
 		}
 		if !acknowledged {
 			return fmt.Errorf("reconcile current publication: no-op proof changed before acknowledgement; retry delivery")
+		}
+		return nil
+	case persistence.InputsPending:
+		if decision.InputsPending == nil {
+			return fmt.Errorf("reconcile current publication: pending-input decision has no witness")
+		}
+		parker, ok := service.repository.(publicationReconciliationInputsPendingParker)
+		if !ok {
+			return fmt.Errorf("reconcile current publication: pending-input parking is unavailable")
+		}
+		parked, err := parker.ParkPublicationReconciliationInputsPending(ctx, decision.InputsPending)
+		if err != nil {
+			return fmt.Errorf("park publication reconciliation with pending accepted graph: %w", err)
+		}
+		if !parked {
+			return fmt.Errorf("reconcile current publication: pending-input proof changed before parking; retry delivery")
 		}
 		return nil
 	default:
