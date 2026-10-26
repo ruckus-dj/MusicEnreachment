@@ -23,7 +23,6 @@ type PublicationPinnedToolsResolver struct {
 	repository publicationPinnedToolsRepository
 	runner     tools.CommandRunner
 	platform   tools.Platform
-	scope      *PublicationExecutionScope
 }
 
 type PublicationToolExecutables struct {
@@ -36,7 +35,6 @@ type PublicationToolExecutables struct {
 type GuardedPublicationPinnedTools struct {
 	resolver *PublicationPinnedToolsResolver
 	guard    persistence.PublicationDeliveryGuard
-	scope    *PublicationExecutionScope
 }
 
 var _ PublicationPinnedTools = (*GuardedPublicationPinnedTools)(nil)
@@ -52,25 +50,9 @@ func NewGuardedPublicationPinnedTools(resolver *PublicationPinnedToolsResolver, 
 	return &GuardedPublicationPinnedTools{resolver: resolver, guard: guard}
 }
 
-// NewScopeBoundPublicationPinnedTools binds all executable version checks to
-// the same execution authority used by publication staging.
-func NewScopeBoundPublicationPinnedTools(repository publicationPinnedToolsRepository, scope *PublicationExecutionScope, guard persistence.PublicationDeliveryGuard, platform tools.Platform) (*GuardedPublicationPinnedTools, error) {
-	if scope == nil || scope.guard != guard || !scope.CanExecute() {
-		return nil, fmt.Errorf("publication pinned tools require a matching live execution scope")
-	}
-	resolver := NewPublicationPinnedToolsResolver(repository, scope.CommandRunner(), platform)
-	resolver.scope = scope
-	adapter := NewGuardedPublicationPinnedTools(resolver, guard)
-	adapter.scope = scope
-	return adapter, nil
-}
-
 func (adapter *GuardedPublicationPinnedTools) Executable(ctx context.Context, selections []persistence.SourceAnalysisToolSelection, name string) (string, error) {
 	if adapter == nil || adapter.resolver == nil {
 		return "", fmt.Errorf("publication pinned tools resolver is unavailable")
-	}
-	if adapter.scope != nil && (adapter.scope != adapter.resolver.scope || adapter.scope.guard != adapter.guard || !adapter.scope.CanExecute()) {
-		return "", fmt.Errorf("publication pinned tools execution scope is unavailable")
 	}
 	pair, valid, err := adapter.resolver.Resolve(ctx, adapter.guard, selections)
 	if err != nil {

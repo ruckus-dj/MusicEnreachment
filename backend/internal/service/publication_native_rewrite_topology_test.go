@@ -15,8 +15,8 @@ import (
 )
 
 func TestRealValidatorAcceptsNativeRewriteArtworkButRejectsOtherStreams(t *testing.T) {
-	_, _, input, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
-	input.IntentKind, input.Audio, input.Format = "rewrite", nil, publication.AudioFormatSource
+	fixture := makeRewriteFixture(t)
+	input := fixture.input
 	lossless := true
 	input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{
 		StreamIndex: 0, Codec: "flac", Lossless: &lossless,

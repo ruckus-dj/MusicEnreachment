@@ -32,9 +32,10 @@ func (reader *publicationValidatorMetadataReader) Read(_ context.Context, _ stri
 }
 
 func TestRealPublicationStageValidatorCapturesCurrentAssetEvidence(t *testing.T) {
-	_, _, input, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
-	input.Version = persistence.PublicationInputsVersion
-	input.QualityPolicyVersion = publication.QualityPolicyVersion
+	fixture := makeRewriteFixture(t)
+	input := fixture.input
+	input.DesiredTags = map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}
+	_, input.Tools, _ = pinnedToolFixture(t, true)
 
 	stage := filepath.Join(t.TempDir(), "stage.flac")
 	if err := os.WriteFile(stage, []byte("staged payload"), 0o600); err != nil {
@@ -69,15 +70,13 @@ func TestRealPublicationStageValidatorCapturesCurrentAssetEvidence(t *testing.T)
 }
 
 func TestRealPublicationStageValidatorRejectsManualLyricsBeforeOpeningStageOrDependencies(t *testing.T) {
-	_, _, input, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
-	input.Version = persistence.PublicationInputsVersion
-	input.QualityPolicyVersion = publication.QualityPolicyVersion
-	input.IntentKind, input.Audio = "rewrite", nil
-	input.InitialLyrics = nil
-	input.Format = publication.AudioFormatSource
 	fixture := makeRewriteFixture(t)
-	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
-	input.Rewrite = fixture.repo.input.Rewrite
+	input := fixture.input
+	lossless := false
+	input.Rewrite.AudioFacts = persistence.PersistedAudioFacts{
+		StreamIndex: 0, Codec: "mp3", Lossless: &lossless,
+		Container: publication.AudioContainerMKA, SupportedSourceContainer: true,
+	}
 	input.ManualLyrics = &persistence.PublicationManualLyricsInput{
 		ExpectedMetadataRevision: 1, ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration,
 		State: "explicit_empty",

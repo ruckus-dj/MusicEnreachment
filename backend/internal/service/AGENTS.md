@@ -93,6 +93,15 @@ delivery ownership and absence of a false park/ACK rather than an invented state
 - Empty safe error messages in Operations.Fail (enforced at runtime)
 - Passing full operation inputs in River job args (args = ID only, reload from snapshot)
 - Using SSE as data channel (it's wake-up only)
+- Removing tests by legacy filename alone: publication fixtures can mix obsolete
+  journal/scope scenarios with live preview, confirmation, executor and settlement
+  coverage. Preserve the live scenarios and shared fixtures when deleting the old
+  execution graph; keep the journal-free retry/redelivery tests as the baseline.
+  A dormant admission entry point does not make executor coverage obsolete: a
+  seeded frozen-input fixture can still exercise the live delivery path.
+- Publication fixture edits must read the current metadata revision rather than
+  assume zero after admission. Insert tool read holds and set `tools_read_required`
+  in one transaction: deferred consistency checks reject either half alone.
 
 ## NOTES
 Operations.Progress allows partial updates (e.g., download progress) without changing state. Subscribe returns a channel that closes on operation completion or error, never sends intermediate data.

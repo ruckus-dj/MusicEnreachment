@@ -23,7 +23,6 @@ import (
 func TestPublicationSimplePreparationManualLyricsNativeFLAC(t *testing.T) {
 	ctx := context.Background()
 	fixture := makeRewriteFixture(t)
-	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
 	if err := os.Remove(filepath.Join(fixture.output, "current.mp3")); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +51,7 @@ func TestPublicationSimplePreparationManualLyricsNativeFLAC(t *testing.T) {
 	}
 	size, mtime := info.Size(), info.ModTime().UnixMicro()
 	digest := sha256.Sum256(original)
-	input := fixture.repo.input.Clone()
+	input := fixture.input.Clone()
 	input.Rewrite.RelativePath = "current.flac"
 	input.Rewrite.Ownership = persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])}
 	input.Version = persistence.PublicationInputsVersion
@@ -169,7 +168,7 @@ func TestSimplePreparationInitialLyricsUsesFrozenAnalysisAndAuthority(t *testing
 		{name: "explicit empty suppresses automatic", desired: &librarymetadata.FieldValue{State: librarymetadata.StateExplicitEmpty, Authority: librarymetadata.AuthorityManual, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := newPublicationStageFixture(t)
+			fixture := newSimplePreparationFixture(t)
 			inputPath := fixture.source
 			contents, err := os.ReadFile("../integrations/metadata/testdata/eg.flac")
 			if err != nil {

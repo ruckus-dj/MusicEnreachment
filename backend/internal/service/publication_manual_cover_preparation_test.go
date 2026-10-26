@@ -25,7 +25,6 @@ import (
 func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) {
 	ctx := context.Background()
 	fixture := makeRewriteFixture(t)
-	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
 	_ = os.Remove(filepath.Join(fixture.output, "current.mp3"))
 	inputPath := filepath.Join(fixture.output, "current.flac")
 	contents, err := os.ReadFile("../integrations/metadata/testdata/eg.flac")
@@ -56,7 +55,7 @@ func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) 
 	}
 	size, mtime := info.Size(), info.ModTime().UnixMicro()
 	digest := sha256.Sum256(mustRead(t, inputPath))
-	input := fixture.repo.input.Clone()
+	input := fixture.input.Clone()
 	input.Rewrite.RelativePath = "current.flac"
 	input.Rewrite.Ownership = persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: hex.EncodeToString(digest[:])}
 	input.Version, input.QualityPolicyVersion, input.Format = persistence.PublicationInputsVersion, publication.QualityPolicyVersion, publication.AudioFormatSource

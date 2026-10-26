@@ -31,15 +31,7 @@ type RealPublicationStageValidator struct {
 	MetadataReader interface {
 		Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
 	}
-	Probe           PublicationStageProbe
-	supervisedProbe *ScopeBoundPublicationStageProbe
-}
-
-func (validator RealPublicationStageValidator) validateSupervised(scope *PublicationExecutionScope) error {
-	if validator.Probe != nil || validator.supervisedProbe == nil || validator.supervisedProbe.scope != scope || validator.Tools != validator.supervisedProbe.pinnedTools {
-		return errors.New("supervised publication validator requires a scope-bound probe")
-	}
-	return nil
+	Probe PublicationStageProbe
 }
 
 func (validator RealPublicationStageValidator) Validate(ctx context.Context, stagePath string, input persistence.PublicationInputs) (result PublicationStageObservation, resultErr error) {
@@ -114,7 +106,7 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("plan publication stage probe container: %w", err)
 	}
-	if probe == nil && validator.supervisedProbe == nil {
+	if probe == nil {
 		probe = func(ctx context.Context, executable string, file sourcefs.RegularFile, container publication.AudioContainer) ([]byte, error) {
 			ffprobe, err := tools.NewFFProbe(executable)
 			if err != nil {
@@ -124,12 +116,7 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 			return ffprobe.ProbePublicationTechnicalFile(ctx, file, demuxer)
 		}
 	}
-	var raw []byte
-	if validator.supervisedProbe != nil {
-		raw, err = validator.supervisedProbe.probe(ctx, input.Tools, executable, anchored, plan.OutputContainer)
-	} else {
-		raw, err = probe(ctx, executable, anchored, plan.OutputContainer)
-	}
+	raw, err := probe(ctx, executable, anchored, plan.OutputContainer)
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("probe publication stage: %w", err)
 	}

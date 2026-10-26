@@ -76,7 +76,6 @@ func audioUpgradeImage(t *testing.T, mimeType string, pixel color.RGBA) []byte {
 func TestPrepareAudioUpgradePreservesCurrentAssetsAndRejectsDriftOrNoImprovement(t *testing.T) {
 	ctx := context.Background()
 	fixture := makeRewriteFixture(t)
-	t.Cleanup(func() { _ = fixture.preparer.OutputParent.Close() })
 	currentPath := filepath.Join(fixture.output, "current.flac")
 	newAudioPath := filepath.Join(t.TempDir(), "new-audio.flac")
 	contents, err := os.ReadFile("../integrations/metadata/testdata/eg.flac")

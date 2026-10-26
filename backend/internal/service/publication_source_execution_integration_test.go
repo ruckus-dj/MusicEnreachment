@@ -20,7 +20,6 @@ import (
 	riverdatabasesql "github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	rivermigrate "github.com/riverqueue/river/rivermigrate"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	integrationtools "github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
@@ -28,14 +27,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
-
-// This PostgreSQL test exercises the preparation journal through the real
-// repository. It intentionally stops at preparation: cleanup authorization is
-// covered separately by the publication cleanup flow tests.
-func TestPublicationStagePreparationPersistsObservedInputFactsPostgreSQL(t *testing.T) {
-	t.Parallel()
-	testPublicationSourceExecution(t, "")
-}
 
 func TestPublicationExecutorAudioDeliveryPostgreSQL(t *testing.T) {
 	for _, target := range []string{"Track.flac", "Artist/Album/Track.flac"} {
@@ -89,7 +80,6 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		t.Fatalf("apply River migrations: %v", err)
 	}
 	manager := persistence.NewSetupManagerRepository(db)
-	inventory := persistence.NewSourceInventoryRepository(db)
 
 	sourceRoot, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -415,73 +405,12 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		}
 		executor := NewPublicationExecutor(manager, registry, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), audioDeliveryTestCommands{})
 		for _, option := range confirmation {
-			if validator, ok := option.(PublicationStageValidator); ok {
-				executor.stageValidator = validator
-			}
-			if beforeRun, ok := option.(func(*bun.DB, uuid.UUID) error); ok {
-				if err := beforeRun(db, operationID); err != nil {
-					t.Fatalf("prepare execution fault: %v", err)
-				}
-			}
-		}
-		for _, option := range confirmation {
 			if scenario, ok := option.(publicationDeliveryScenario); ok {
 				scenario.run(ctx, db, manager, executor, operationID, riverJobID, sourceFile, scenarioOutput, target, sourceBytes)
 				return
 			}
 		}
-		var validationOutputPath string
-		var originalValidator PublicationStageValidator
-		for _, option := range confirmation {
-			if validator, ok := option.(PublicationStageValidator); ok {
-				originalValidator = validator
-				executor.stageValidator = recordingStageValidator{delegate: validator, outputPath: &validationOutputPath}
-			}
-		}
 		err = executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
-		if executor.stageValidator != nil {
-			if err == nil || !strings.Contains(err.Error(), "independent validator test failure") {
-				t.Fatalf("validation failure result = %v", err)
-			}
-			if _, substituted := originalValidator.(substitutingValidationFailure); substituted {
-				if _, statErr := os.Stat(filepath.Join(output, filepath.FromSlash(target))); !errors.Is(statErr, os.ErrNotExist) {
-					t.Fatalf("substituted output was installed: %v", statErr)
-				}
-			}
-			// Whole preparation is retried after a candidate failure: the admitted
-			// attempt, delivery claim, and holds stay live for the next River attempt.
-			attempt, readErr := manager.ReadPublicationAttempt(ctx, operationID)
-			if readErr != nil || attempt == nil || attempt.Phase != "preparing" {
-				t.Fatalf("retryable attempt evidence = %+v, %v", attempt, readErr)
-			}
-			var claimCount int
-			if readErr := db.NewRaw(`SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`, operationID).Scan(ctx, &claimCount); readErr != nil || claimCount != 1 {
-				t.Fatalf("retryable delivery claim count=%d err=%v", claimCount, readErr)
-			}
-			operation, readErr := manager.GetOperation(ctx, operationID)
-			if readErr != nil || operation == nil || operation.State != "running" || operation.Stage != "preparing" {
-				t.Fatalf("retryable operation = %+v, %v", operation, readErr)
-			}
-			var current int
-			if readErr := db.NewRaw(`SELECT count(*) FROM track_publication WHERE position_id=?`, positionID).Scan(ctx, &current); readErr != nil || current != 0 {
-				t.Fatalf("current publication after failed first publication = %d, %v", current, readErr)
-			}
-			var authorityCount int
-			if readErr := db.NewRaw(`SELECT count(*) FROM position_source_authority WHERE position_id=?`, positionID).Scan(ctx, &authorityCount); readErr != nil || authorityCount != 0 {
-				t.Fatalf("source authority after failed first publication = %d, %v", authorityCount, readErr)
-			}
-			if validationOutputPath == "" {
-				t.Fatal("validator did not record stage output path")
-			}
-			if _, statErr := os.Stat(filepath.Dir(validationOutputPath)); !errors.Is(statErr, os.ErrNotExist) {
-				t.Fatalf("private staging directory status = %v", statErr)
-			}
-			actualSource, readErr := os.ReadFile(sourceFile)
-			if readErr != nil || !bytes.Equal(actualSource, sourceBytes) {
-				t.Fatalf("source changed during failed validation cleanup: %v", readErr)
-			}
-			return
-		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -515,107 +444,6 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		}
 		return
 	}
-	guard := persistence.PublicationDeliveryGuard{OperationID: operationID, ApplicationAttempt: 1, RiverJobID: riverJobID, RiverAttempt: 1, ClaimUUID: uuid.New(), BootUUID: uuid.New(), DeliveryToken: uuid.NewString(), Epoch: epoch, CandidateGeneration: candidateID, ExpectedPositionID: positionID}
-	if outcome, err := manager.ClaimPublicationDelivery(ctx, guard); err != nil || outcome != persistence.PublicationDeliveryAcquired {
-		t.Fatalf("claim = %q, %v", outcome, err)
-	}
-	output, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	parent, err := sourcefs.NewOutputOpener().OpenRoot(ctx, output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = parent.Close() })
-	preparer := PublicationStagePreparer{Repository: manager, SourceOpener: sourcefs.NewOpener(), OutputParent: parent, ParentPath: output, HoldUUID: holdID}
-	stage, err := preparer.Prepare(ctx, guard, persistence.PublicationDeliveryAcquired, true)
-	if err != nil {
-		t.Fatalf("prepare: %v", err)
-	}
-	t.Cleanup(func() { _ = stage.Close() })
-	var journal []byte
-	if err := db.NewRaw(`SELECT mutation_journal FROM track_publication_attempt WHERE operation_id=?`, operationID).Scan(ctx, &journal); err != nil {
-		t.Fatal(err)
-	}
-	var records []persistence.PublicationPreparationRecord
-	if err := json.Unmarshal(journal, &records); err != nil {
-		t.Fatalf("decode persisted preparation journal: %v", err)
-	}
-	var inputReady *persistence.PublicationPreparationRecord
-	for i := range records {
-		if records[i].Step == "input_ready" {
-			inputReady = &records[i]
-		}
-	}
-	if inputReady == nil || inputReady.InputMTime == nil || *inputReady.InputMTime != oldMTime.UnixMicro() {
-		t.Fatalf("input_ready source mtime = %+v, want %d", inputReady, oldMTime.UnixMicro())
-	}
-	privateRoot, err := sourcefs.NewOpener().OpenRoot(ctx, filepath.Dir(stage.Paths().InputPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	privateInput, err := sourcefs.OpenRegularAt(ctx, privateRoot, filepath.Base(stage.Paths().InputPath))
-	if err != nil {
-		_ = privateRoot.Close()
-		t.Fatal(err)
-	}
-	privateInfo, err := privateInput.Stat(ctx)
-	if err != nil {
-		_ = privateInput.Close()
-		_ = privateRoot.Close()
-		t.Fatal(err)
-	}
-	if err := privateInput.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := privateRoot.Close(); err != nil {
-		t.Fatal(err)
-	}
-	privateMTime := privateInfo.ModTime().UTC().Truncate(time.Microsecond).UnixMicro()
-	if inputReady.CopiedInput == nil || inputReady.CopiedInput.SizeBytes == nil || inputReady.CopiedInput.MTime == nil ||
-		*inputReady.CopiedInput.SizeBytes != privateInfo.Size() || *inputReady.CopiedInput.MTime != privateMTime {
-		t.Fatalf("copied input facts = %+v, want handle-observed private-copy size=%d mtime=%d", inputReady.CopiedInput, privateInfo.Size(), privateMTime)
-	}
-	if _, err := inventory.GetSourceRoot(ctx, rootID); err != nil {
-		t.Fatalf("read seeded source root through inventory repository: %v", err)
-	}
-}
-
-type returnedValidationFailure struct{}
-
-func (returnedValidationFailure) Validate(context.Context, string, persistence.PublicationInputs) (PublicationStageObservation, error) {
-	return PublicationStageObservation{}, errors.New("independent validator test failure")
-}
-
-type substitutingValidationFailure struct{}
-
-func (substitutingValidationFailure) Validate(_ context.Context, path string, _ persistence.PublicationInputs) (PublicationStageObservation, error) {
-	if err := os.Rename(path, path+".retained"); err != nil {
-		return PublicationStageObservation{}, err
-	}
-	if err := os.WriteFile(path, []byte("substituted output"), 0o600); err != nil {
-		return PublicationStageObservation{}, err
-	}
-	return PublicationStageObservation{}, errors.New("independent validator test failure")
-}
-
-type recordingStageValidator struct {
-	delegate   PublicationStageValidator
-	outputPath *string
-}
-
-func (validator recordingStageValidator) Validate(ctx context.Context, path string, input persistence.PublicationInputs) (PublicationStageObservation, error) {
-	*validator.outputPath = path
-	return validator.delegate.Validate(ctx, path, input)
-}
-
-func TestInitialPublicationReturnedValidationFailureCleansNativeStagePostgreSQL(t *testing.T) {
-	testPublicationSourceExecution(t, "Track.flac", true, false, returnedValidationFailure{})
-}
-
-func TestInitialPublicationSubstitutedOutputFailsClosedPostgreSQL(t *testing.T) {
-	testPublicationSourceExecution(t, "Track.flac", true, false, substitutingValidationFailure{})
 }
 
 func preparationBoolPointer(value bool) *bool { return &value }

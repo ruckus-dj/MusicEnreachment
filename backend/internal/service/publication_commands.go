@@ -69,21 +69,6 @@ func (collector *BoundedOutputCollector) Snapshot() (output []byte, total uint64
 	return append([]byte(nil), collector.output...), collector.total, collector.overflow
 }
 
-// publicationCommandAdapter exposes a publication scope to legacy tool
-// consumers. It discards only the quiescence bit after the scope has recorded
-// it; callers still receive command output and errors.
-type publicationCommandAdapter struct{ scope *PublicationExecutionScope }
-
-func (adapter publicationCommandAdapter) Run(ctx context.Context, path string, args ...string) ([]byte, error) {
-	if adapter.scope == nil {
-		return nil, errors.New("publication execution scope is unavailable")
-	}
-	result, err := adapter.scope.Run(ctx, path, args...)
-	return result.Output, err
-}
-
-var _ tools.CommandRunner = publicationCommandAdapter{}
-
 func unavailablePublicationCommand() (PublicationCommandResult, error) {
 	return PublicationCommandResult{QuiescenceEstablished: true}, errors.New("publication command backend is unavailable")
 }
