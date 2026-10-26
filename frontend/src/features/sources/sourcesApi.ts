@@ -1,11 +1,13 @@
+import {
+  apiResponseError,
+  errorMessage as sharedErrorMessage,
+} from "../../api/client/errors";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 
 export type SourceAction = "list" | "read" | "create" | "edit" | "delete";
 
 export function message(reason: unknown): string {
-  return reason instanceof Error
-    ? reason.message
-    : "Не удалось выполнить запрос.";
+  return sharedErrorMessage(reason, "Не удалось выполнить запрос.");
 }
 
 export function sourceFailure(
@@ -30,9 +32,7 @@ export function sourceFailure(
       "Сервер отклонил каталог: путь должен быть существующим читаемым каталогом на сервере, не пересекаться с каталогами MeloTrove и не повторять уже зарегистрированный путь.",
     );
   }
-  return new Error(
-    response.data?.detail || `Сервер вернул ошибку ${response.status}.`,
-  );
+  return apiResponseError(response, `Сервер вернул ошибку ${response.status}.`);
 }
 
 export function statusLabel(status: SourceRootResponse["status"]): string {

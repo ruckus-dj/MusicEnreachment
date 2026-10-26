@@ -128,4 +128,35 @@ describe("SetupTools", () => {
       screen.queryByRole("button", { name: /Активировать/ }),
     ).not.toBeInTheDocument();
   });
+
+  it("keeps the multiple-ready safety block when catalog loading fails", async () => {
+    server.use(
+      http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
+      http.get("/api/tools/catalog", () =>
+        HttpResponse.json({ detail: "Каталог недоступен." }, { status: 503 }),
+      ),
+      http.get("/api/tools/installations", () =>
+        HttpResponse.json({
+          installations: [
+            installation("ffmpeg-1", "ffmpeg", true),
+            installation("ffmpeg-2", "ffmpeg", false),
+          ],
+        }),
+      ),
+    );
+    const onBlockedChange = vi.fn();
+
+    render(<SetupTools onBlockedChange={onBlockedChange} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Каталог недоступен.",
+    );
+    await waitFor(() => expect(onBlockedChange).toHaveBeenLastCalledWith(true));
+    expect(
+      screen.queryByRole("button", { name: /Версия/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Проверить установку/ }),
+    ).not.toBeInTheDocument();
+  });
 });

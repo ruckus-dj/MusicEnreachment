@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getSetupState } from "../api/generated/client";
 import type { SetupStateBody } from "../api/generated/client.schemas";
 import { AppButton } from "../components/AppButton";
@@ -14,6 +8,8 @@ import "../features/incoming/incoming.css";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
 import { SourcesScreen } from "../features/sources/SourcesScreen";
+import { parseSourcesRoute } from "../features/sources/sourcesRoute";
+import { useHashLocation } from "../navigation/hashLocation";
 
 type Route =
   | "/"
@@ -23,34 +19,24 @@ type Route =
   | "/incoming-groups"
   | `/library/releases/${string}`;
 
-// The inventory screen owns its own #/sources/{id} address, so any string
-// under #/sources maps to the same shell route.
-const sourcesRoute = /^#\/sources(\/[^/]+(\/locations\/[^/]+)?)?$/;
 // The local release editor is addressed by the release UUID only. The backend
 // validates the identifier, so the shell accepts a plain canonical UUID and
 // leaves any other #/library/releases value to the landing fallback.
 const libraryReleaseRoute =
   /^#\/library\/releases\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-function currentRoute(): Route {
-  const hash = window.location.hash;
+function currentRoute(hash: string, isSourcesRoute: boolean): Route {
   if (hash === "#/settings") return "/settings";
   if (hash === "#/setup") return "/setup";
-  if (sourcesRoute.test(hash)) return "/sources";
+  if (isSourcesRoute) return "/sources";
   if (hash === "#/incoming-groups") return "/incoming-groups";
   const libraryRelease = libraryReleaseRoute.exec(hash);
   if (libraryRelease) return `/library/releases/${libraryRelease[1]}`;
   return "/";
 }
-function subscribe(onChange: () => void) {
-  window.addEventListener("hashchange", onChange);
-  return () => window.removeEventListener("hashchange", onChange);
-}
-function useRoute() {
-  return useSyncExternalStore(subscribe, currentRoute, () => "/" as Route);
-}
-
 export function AppShell() {
-  const route = useRoute();
+  const hash = useHashLocation();
+  const sourcesRoute = parseSourcesRoute(hash);
+  const route = currentRoute(hash, sourcesRoute !== undefined);
   const [state, setState] = useState<SetupStateBody>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -173,7 +159,7 @@ export function AppShell() {
         ) : state && route === "/settings" ? (
           <SettingsScreen />
         ) : state && route === "/sources" ? (
-          <SourcesScreen />
+          <SourcesScreen route={sourcesRoute} />
         ) : state && route === "/incoming-groups" ? (
           <IncomingGroupReviewScreen />
         ) : state && route.startsWith("/library/releases/") ? (

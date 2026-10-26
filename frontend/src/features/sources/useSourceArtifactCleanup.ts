@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiResponseError } from "../../api/client/errors";
 import {
   isOperationSnapshotNewer,
   useOperationFollower,
@@ -13,8 +14,6 @@ import type {
 } from "../../api/generated/client.schemas";
 import { message } from "./sourcesApi";
 
-export { isOperationSnapshotNewer } from "../../api/client/useOperationFollower";
-
 const pending = (operation: OperationResponse) =>
   operation.state === "queued" || operation.state === "running";
 
@@ -22,9 +21,7 @@ function requestFailure(response: {
   status: number;
   data?: { detail?: string };
 }) {
-  return new Error(
-    response.data?.detail || `Сервер вернул ошибку ${response.status}.`,
-  );
+  return apiResponseError(response, `Сервер вернул ошибку ${response.status}.`);
 }
 
 export function useSourceArtifactCleanup() {

@@ -3,12 +3,10 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { subscribeToOperation } from "../../api/client/operations";
+import { isOperationSnapshotNewer } from "../../api/client/useOperationFollower";
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import { server } from "../../test/server";
-import {
-  isOperationSnapshotNewer,
-  useSourceArtifactCleanup,
-} from "./useSourceArtifactCleanup";
+import { useSourceArtifactCleanup } from "./useSourceArtifactCleanup";
 
 vi.mock("../../api/client/operations", () => ({
   subscribeToOperation: vi.fn(),

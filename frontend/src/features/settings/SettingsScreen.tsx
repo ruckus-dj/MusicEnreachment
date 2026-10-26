@@ -5,6 +5,10 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  apiResponseError,
+  errorMessage as sharedErrorMessage,
+} from "../../api/client/errors";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
   activateToolInstallation,
@@ -15,12 +19,9 @@ import {
   getSettings,
   listInstallations,
   listOperations,
-  listToolCatalog,
-  preflightToolInstall,
   preflightToolsRootMove,
   retryOperation,
   setAcoustidApplicationKey,
-  startToolInstall,
   startToolsRootMove,
   updateLogLevel,
   updateLrclibSetting,
@@ -42,6 +43,11 @@ import type {
   UpdateSettingsBodyPublicationFormat,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import {
+  loadManagedToolCatalogs,
+  preflightManagedToolInstall,
+  startManagedToolInstall,
+} from "../tools/toolWorkflow";
 import "../setup/setup.css";
 import "./settings.css";
 
@@ -159,13 +165,10 @@ const sameMusicBrainz = (
   left.selfHostedDelaySeconds === right.selfHostedDelaySeconds;
 
 function message(reason: unknown): string {
-  if (reason instanceof Error) return reason.message;
-  return "Не удалось выполнить запрос.";
+  return sharedErrorMessage(reason, "Не удалось выполнить запрос.");
 }
 function apiError(response: { status: number; data?: { detail?: string } }) {
-  return new Error(
-    response.data?.detail || `Ошибка сервера (${response.status}).`,
-  );
+  return apiResponseError(response);
 }
 function successful<T extends { status: number }, S extends T["status"]>(
   response: T,
@@ -513,17 +516,9 @@ export function SettingsScreen() {
     setCatalogBusy(true);
     setCatalogError("");
     try {
-      const [ffmpeg, fpcalc] = await Promise.all([
-        listToolCatalog({ package_kind: "ffmpeg" }),
-        listToolCatalog({ package_kind: "fpcalc" }),
-      ]);
-      successful(ffmpeg, 200);
-      successful(fpcalc, 200);
+      const catalogs = await loadManagedToolCatalogs();
       if (!isCurrent()) return;
-      setCatalog({
-        ffmpeg: ffmpeg.data as CatalogBody,
-        fpcalc: fpcalc.data as CatalogBody,
-      });
+      setCatalog(catalogs);
       const timestamp = new Date().toISOString();
       localStorage.setItem(catalogCheckedKey, timestamp);
       setCheckedAt(timestamp);
@@ -798,19 +793,12 @@ export function SettingsScreen() {
     setError("");
     setBusy(true);
     try {
-      const response = successful(
-        await preflightToolInstall({
-          package_kind: kind,
-          release_identity: release,
-        }),
-        200,
-      );
+      const plan = await preflightManagedToolInstall(kind, release);
       if (
         sessionRevision !== installSessionRevision.current ||
         requestRevision !== installRequestRevision.current
       )
         return;
-      const plan = response.data;
       if (plan.conflicts?.length) setInstallDialog({ kind, release, plan });
       else await startInstall(plan, [], sessionRevision);
     } catch (reason) {
@@ -832,16 +820,10 @@ export function SettingsScreen() {
     sessionRevision?: number,
   ) {
     const startRevision = ++installStartRevision.current;
-    const started = successful(
-      await startToolInstall({
-        preflight_token: plan.preflight_token,
-        confirmed_conflicts: confirmed,
-      }),
-      200,
-    );
+    const started = await startManagedToolInstall(plan, confirmed);
     setOperations((previous) => [
-      ...previous.filter((item) => item.id !== started.data.id),
-      started.data,
+      ...previous.filter((item) => item.id !== started.id),
+      started,
     ]);
     if (
       sessionRevision !== undefined &&
@@ -858,16 +840,12 @@ export function SettingsScreen() {
     setBusy(true);
     setInstallDialogError("");
     try {
-      const started = successful(
-        await startToolInstall({
-          preflight_token: installDialog.plan.preflight_token,
-          confirmed_conflicts: [...(installDialog.plan.conflicts || [])],
-        }),
-        200,
-      );
+      const started = await startManagedToolInstall(installDialog.plan, [
+        ...(installDialog.plan.conflicts || []),
+      ]);
       setOperations((previous) => [
-        ...previous.filter((item) => item.id !== started.data.id),
-        started.data,
+        ...previous.filter((item) => item.id !== started.id),
+        started,
       ]);
       if (
         sessionRevision !== installSessionRevision.current ||

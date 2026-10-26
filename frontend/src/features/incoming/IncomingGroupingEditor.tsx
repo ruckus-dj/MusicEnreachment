@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  apiResponseError,
+  errorMessage as sharedErrorMessage,
+} from "../../api/client/errors";
+import {
   confirmIncomingGroups,
   getIncomingGroups,
   previewIncomingGroups,
@@ -21,7 +25,8 @@ function errorMessage(
   fallback: string,
   status: number,
 ) {
-  return data.detail || `${fallback} (HTTP ${status}).`;
+  return apiResponseError({ status, data }, `${fallback} (HTTP ${status}).`)
+    .message;
 }
 
 function groupLabel(group: IncomingGroupResponse, index: number) {
@@ -134,11 +139,7 @@ export function IncomingGroupingEditor({
       setStale(false);
     } catch (reason) {
       if (request === sequence.current)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Предпросмотр не выполнен.",
-        );
+        setError(sharedErrorMessage(reason, "Предпросмотр не выполнен."));
     } finally {
       if (request === sequence.current) setBusy(false);
     }
@@ -177,11 +178,7 @@ export function IncomingGroupingEditor({
       await onConfirmed?.(response.data);
     } catch (reason) {
       if (request === sequence.current)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Подтверждение не выполнено.",
-        );
+        setError(sharedErrorMessage(reason, "Подтверждение не выполнено."));
     } finally {
       if (request === sequence.current) setBusy(false);
     }
@@ -214,9 +211,7 @@ export function IncomingGroupingEditor({
       );
     } catch (reason) {
       if (request === sequence.current)
-        setError(
-          reason instanceof Error ? reason.message : "Обновление не выполнено.",
-        );
+        setError(sharedErrorMessage(reason, "Обновление не выполнено."));
     } finally {
       if (request === sequence.current) setBusy(false);
     }

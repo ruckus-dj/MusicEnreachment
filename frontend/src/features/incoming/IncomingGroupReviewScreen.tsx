@@ -5,6 +5,10 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  apiResponseError,
+  errorMessage as sharedErrorMessage,
+} from "../../api/client/errors";
 import { createUUID } from "../../api/client/uuid";
 import {
   confirmIncomingGroupManualMatching,
@@ -66,16 +70,14 @@ type AuthorityIntent = {
 };
 
 function errorText(reason: unknown, fallback: string) {
-  return reason instanceof Error && reason.message ? reason.message : fallback;
+  return sharedErrorMessage(reason, fallback) || fallback;
 }
 
 function responseError(
   response: { data: { detail?: string }; status: number },
   fallback: string,
 ) {
-  return new Error(
-    response.data.detail || `${fallback} (HTTP ${response.status}).`,
-  );
+  return apiResponseError(response, `${fallback} (HTTP ${response.status}).`);
 }
 
 function parsedProposal(review: MatchingReview | undefined): ReviewProposal {

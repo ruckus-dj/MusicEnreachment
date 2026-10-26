@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createSource,
   listSources,
@@ -12,6 +6,7 @@ import {
 } from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useHashLocation } from "../../navigation/hashLocation";
 import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
 import { SourceInspectorScreen } from "./SourceInspectorScreen";
@@ -26,48 +21,24 @@ import {
   statusLabel,
 } from "./sourcesApi";
 import "./sources.css";
+import {
+  parseSourcesRoute,
+  type SourcesRoute,
+  sourcesListRoute,
+} from "./sourcesRoute";
 
-// This screen owns both addresses of the source inventory: the list of
-// registered roots at #/sources and one root at #/sources/{id}.
-type SourcesRoute =
-  | { view: "list" }
-  | { view: "detail"; id: string }
-  | { view: "location"; id: string; locationId: string };
-
-const listRoute: SourcesRoute = { view: "list" };
-let cachedHash: string | undefined;
-let cachedRoute: SourcesRoute = listRoute;
-
-// useSyncExternalStore requires the same reference for an unchanged hash.
-function routeFor(hash: string): SourcesRoute {
-  if (hash === cachedHash) return cachedRoute;
-  const path = hash.startsWith("#") ? hash.slice(1) : hash;
-  const detail = /^\/sources\/([^/]+)$/.exec(path);
-  const location = /^\/sources\/([^/]+)\/locations\/([^/]+)$/.exec(path);
-  cachedHash = hash;
-  cachedRoute = location
-    ? {
-        view: "location",
-        id: decodeURIComponent(location[1]),
-        locationId: decodeURIComponent(location[2]),
-      }
-    : detail
-      ? { view: "detail", id: decodeURIComponent(detail[1]) }
-      : listRoute;
-  return cachedRoute;
+// AppShell supplies its parsed route, so the mounted application has only one
+// hash subscription. The standalone entry remains useful for embedding/tests.
+export function SourcesScreen({ route }: { route?: SourcesRoute } = {}) {
+  return route ? <SourcesView route={route} /> : <StandaloneSourcesScreen />;
 }
 
-function subscribe(onChange: () => void) {
-  window.addEventListener("hashchange", onChange);
-  return () => window.removeEventListener("hashchange", onChange);
+function StandaloneSourcesScreen() {
+  const hash = useHashLocation();
+  return <SourcesView route={parseSourcesRoute(hash) ?? sourcesListRoute} />;
 }
 
-export function SourcesScreen() {
-  const route = useSyncExternalStore(
-    subscribe,
-    () => routeFor(window.location.hash),
-    () => listRoute,
-  );
+function SourcesView({ route }: { route: SourcesRoute }) {
   switch (route.view) {
     case "location":
       return (

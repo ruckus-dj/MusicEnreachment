@@ -8,13 +8,7 @@ import {
   Select,
   SelectValue,
 } from "react-aria-components";
-import {
-  listInstallations,
-  listOperations,
-  listToolCatalog,
-  preflightToolInstall,
-  startToolInstall,
-} from "../../api/generated/client";
+import { listInstallations, listOperations } from "../../api/generated/client";
 import type {
   CatalogBody,
   InstallationResponse,
@@ -22,10 +16,16 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import {
+  loadManagedToolCatalogs,
+  type ManagedToolKind,
+  preflightManagedToolInstall,
+  startManagedToolInstall,
+} from "../tools/toolWorkflow";
 import { OperationProgress } from "./OperationProgress";
 import { errorMessage, setupError } from "./setupApi";
 
-type Kind = "ffmpeg" | "fpcalc";
+type Kind = ManagedToolKind;
 const kinds: readonly Kind[] = ["ffmpeg", "fpcalc"];
 const operationKey = "melotrove.setup.operations";
 
@@ -140,16 +140,16 @@ export function SetupTools({
     setPending(true);
     setError("");
     try {
-      const [installed, ffmpeg, fpcalc] = await Promise.all([
+      const [installedResult, catalogsResult] = await Promise.allSettled([
         listInstallations(),
-        listToolCatalog({ package_kind: "ffmpeg" }),
-        listToolCatalog({ package_kind: "fpcalc" }),
+        loadManagedToolCatalogs(),
       ]);
+      if (installedResult.status === "rejected") throw installedResult.reason;
+      const installed = installedResult.value;
       if (installed.status !== 200) throw setupError(installed);
       setInstallations(installed.data.installations || []);
-      if (ffmpeg.status !== 200) throw setupError(ffmpeg);
-      if (fpcalc.status !== 200) throw setupError(fpcalc);
-      setCatalog({ ffmpeg: ffmpeg.data, fpcalc: fpcalc.data });
+      if (catalogsResult.status === "rejected") throw catalogsResult.reason;
+      setCatalog(catalogsResult.value);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -164,12 +164,7 @@ export function SetupTools({
     if (readyByKind(kind).length) {
       throw new Error("Для этого пакета уже есть готовая версия.");
     }
-    const response = await startToolInstall({
-      preflight_token: plan.preflight_token,
-      confirmed_conflicts: plan.conflicts || [],
-    });
-    if (response.status !== 200) throw setupError(response);
-    const snapshot = response.data;
+    const snapshot = await startManagedToolInstall(plan);
     setSnapshots((previous) => ({ ...previous, [snapshot.id]: snapshot }));
     if (!initialIds.current.includes(snapshot.id)) {
       initialIds.current = [...initialIds.current, snapshot.id];
@@ -188,14 +183,9 @@ export function SetupTools({
       }
       const identity = selected[kind];
       if (!identity) throw new Error("Выберите версию.");
-      const response = await preflightToolInstall({
-        package_kind: kind,
-        release_identity: identity,
-      });
-      if (response.status !== 200) throw setupError(response);
-      if (response.data.conflicts?.length)
-        setPreflight({ kind, plan: response.data });
-      else await start(response.data, kind);
+      const plan = await preflightManagedToolInstall(kind, identity);
+      if (plan.conflicts?.length) setPreflight({ kind, plan });
+      else await start(plan, kind);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {

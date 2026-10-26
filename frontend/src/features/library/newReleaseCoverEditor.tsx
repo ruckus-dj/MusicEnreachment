@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  apiResponseError,
+  errorMessage as sharedErrorMessage,
+} from "../../api/client/errors";
+import {
   applyLibraryReleaseCover,
   getGetLibraryReleaseCoverImageUrl,
   getLibraryReleaseCover,
@@ -18,15 +22,10 @@ type Props = {
 };
 
 function errorMessage(data: unknown, status: number) {
-  if (
-    typeof data === "object" &&
-    data !== null &&
-    "detail" in data &&
-    typeof data.detail === "string" &&
-    data.detail
-  )
-    return data.detail;
-  return `Запрос не выполнен (HTTP ${status}).`;
+  return apiResponseError(
+    { status, data },
+    `Запрос не выполнен (HTTP ${status}).`,
+  ).message;
 }
 
 export function ReleaseCoverEditor({
@@ -64,11 +63,7 @@ export function ReleaseCoverEditor({
       })
       .catch((reason: unknown) => {
         if (active && requestScope.current === scope)
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "Не удалось загрузить обложку.",
-          );
+          setError(sharedErrorMessage(reason, "Не удалось загрузить обложку."));
       });
     return () => {
       active = false;
@@ -107,11 +102,7 @@ export function ReleaseCoverEditor({
       setNotice("Обложка сохранена как ожидающая. Публикации не изменены.");
     } catch (reason) {
       if (requestScope.current === scope)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Не удалось сохранить обложку.",
-        );
+        setError(sharedErrorMessage(reason, "Не удалось сохранить обложку."));
     } finally {
       if (requestScope.current === scope) setBusy(false);
     }
@@ -157,9 +148,10 @@ export function ReleaseCoverEditor({
     } catch (reason) {
       if (requestScope.current === scope)
         setError(
-          reason instanceof Error
-            ? reason.message
-            : "Не удалось запустить применение обложки.",
+          sharedErrorMessage(
+            reason,
+            "Не удалось запустить применение обложки.",
+          ),
         );
     } finally {
       if (requestScope.current === scope) setBusy(false);

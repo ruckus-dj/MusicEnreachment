@@ -1,17 +1,12 @@
+import {
+  apiResponseError,
+  errorMessage as sharedErrorMessage,
+} from "../../api/client/errors";
+
 export function setupError(response: { status: number; data: unknown }): Error {
-  const { data } = response;
-  if (
-    typeof data === "object" &&
-    data !== null &&
-    "detail" in data &&
-    typeof data.detail === "string" &&
-    data.detail
-  ) {
-    return new Error(data.detail);
-  }
-  return new Error(`Ошибка сервера (${response.status}).`);
+  return apiResponseError(response);
 }
 
 export function errorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "Неизвестная ошибка.";
+  return sharedErrorMessage(reason, "Неизвестная ошибка.");
 }

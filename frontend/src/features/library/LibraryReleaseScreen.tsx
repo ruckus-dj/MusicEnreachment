@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  apiResponseError,
+  errorMessage as sharedErrorMessage,
+} from "../../api/client/errors";
 import { subscribeToOperation } from "../../api/client/operations";
 import {
   applyLibraryManualLyrics,
@@ -62,7 +66,10 @@ type PositionData = {
 };
 
 function errorMessage(data: { detail?: string }, status: number) {
-  return data.detail || `Запрос не выполнен (HTTP ${status}).`;
+  return apiResponseError(
+    { status, data },
+    `Запрос не выполнен (HTTP ${status}).`,
+  ).message;
 }
 
 function isTerminalOperation(state: string) {
@@ -287,10 +294,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
             current.operationID === operationID
               ? {
                   ...current,
-                  error:
-                    reason instanceof Error
-                      ? reason.message
-                      : "Не удалось обновить данные релиза.",
+                  error: sharedErrorMessage(
+                    reason,
+                    "Не удалось обновить данные релиза.",
+                  ),
                 }
               : current,
           );
@@ -337,10 +344,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                 ...current,
                 pending: false,
                 operationID: undefined,
-                error:
-                  reason instanceof Error
-                    ? reason.message
-                    : "Не удалось обновить данные релиза.",
+                error: sharedErrorMessage(
+                  reason,
+                  "Не удалось обновить данные релиза.",
+                ),
               }
             : current,
         );
@@ -371,10 +378,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                   [track.id]: {
                     ...current[track.id],
                     lyrics: current[track.id]?.lyrics ?? "",
-                    readError:
-                      reason instanceof Error
-                        ? reason.message
-                        : "Не удалось загрузить данные публикации.",
+                    readError: sharedErrorMessage(
+                      reason,
+                      "Не удалось загрузить данные публикации.",
+                    ),
                   },
                 }));
             }),
@@ -383,11 +390,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
       })
       .catch((reason: unknown) => {
         if (active && scope.current.releaseId === releaseId)
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "Не удалось загрузить релиз.",
-          );
+          setError(sharedErrorMessage(reason, "Не удалось загрузить релиз."));
       });
     return () => {
       active = false;
@@ -429,10 +432,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
           current.scope === requestScope && current.operationID === operationID
             ? {
                 ...current,
-                error:
-                  reason instanceof Error
-                    ? reason.message
-                    : "Не удалось проверить обновление MusicBrainz.",
+                error: sharedErrorMessage(
+                  reason,
+                  "Не удалось проверить обновление MusicBrainz.",
+                ),
               }
             : current,
         );
@@ -656,10 +659,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                       ? {
                           [positionID]: {
                             ...current[positionID],
-                            readError:
-                              reason instanceof Error
-                                ? reason.message
-                                : "Не удалось обновить публикацию.",
+                            readError: sharedErrorMessage(
+                              reason,
+                              "Не удалось обновить публикацию.",
+                            ),
                           },
                         }
                       : {}),
@@ -748,10 +751,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                     ...current,
                     [positionID]: {
                       ...current[positionID],
-                      readError:
-                        reason instanceof Error
-                          ? reason.message
-                          : "Не удалось обновить публикацию.",
+                      readError: sharedErrorMessage(
+                        reason,
+                        "Не удалось обновить публикацию.",
+                      ),
                     },
                   };
                 });
@@ -793,10 +796,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                     ...current,
                     [positionID]: {
                       ...current[positionID],
-                      readError:
-                        reason instanceof Error
-                          ? reason.message
-                          : "Не удалось обновить публикацию.",
+                      readError: sharedErrorMessage(
+                        reason,
+                        "Не удалось обновить публикацию.",
+                      ),
                     },
                   };
                 });
@@ -887,10 +890,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         ...current,
         [positionId]: {
           ...current[positionId],
-          error:
-            reason instanceof Error
-              ? reason.message
-              : "Не удалось сохранить текст.",
+          error: sharedErrorMessage(reason, "Не удалось сохранить текст."),
         },
       }));
     } finally {
@@ -972,14 +972,11 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         [positionId]: {
           ...current[positionId],
           applying: false,
-          error:
-            reason instanceof Error
-              ? reason.message
-              : "Не удалось применить текст.",
-          readError:
-            reason instanceof Error
-              ? reason.message
-              : "Не удалось проверить публикацию.",
+          error: sharedErrorMessage(reason, "Не удалось применить текст."),
+          readError: sharedErrorMessage(
+            reason,
+            "Не удалось проверить публикацию.",
+          ),
         },
       }));
     }
@@ -1117,10 +1114,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
             cleanupRetryPendingIDs: (
               current[positionId]?.cleanupRetryPendingIDs ?? []
             ).filter((id) => id !== originalOperationID),
-            error:
-              reason instanceof Error
-                ? reason.message
-                : "Не удалось повторить очистку источников.",
+            error: sharedErrorMessage(
+              reason,
+              "Не удалось повторить очистку источников.",
+            ),
             ...(projectionReadFailed
               ? {
                   readError:
@@ -1178,10 +1175,7 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         ...current,
         [positionId]: {
           ...current[positionId],
-          error:
-            reason instanceof Error
-              ? reason.message
-              : "Не удалось выбрать исполнителя.",
+          error: sharedErrorMessage(reason, "Не удалось выбрать исполнителя."),
         },
       }));
     } finally {
@@ -1215,10 +1209,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
       setReleasePrimaryArtist({
         ...pending,
         saving: false,
-        error:
-          reason instanceof Error
-            ? reason.message
-            : "Не удалось выбрать исполнителя релиза.",
+        error: sharedErrorMessage(
+          reason,
+          "Не удалось выбрать исполнителя релиза.",
+        ),
       });
     } finally {
       if (releasePrimaryArtistPending.current === pending)
@@ -1273,10 +1267,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
         scope: requestScope,
         pending: false,
         active: false,
-        error:
-          reason instanceof Error
-            ? reason.message
-            : "Не удалось запустить обновление MusicBrainz.",
+        error: sharedErrorMessage(
+          reason,
+          "Не удалось запустить обновление MusicBrainz.",
+        ),
       });
     } finally {
       if (musicBrainzRefreshPending.current === pending)
@@ -1435,10 +1429,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
                 ...current,
                 [track.id]: {
                   ...current[track.id],
-                  readError:
-                    reason instanceof Error
-                      ? reason.message
-                      : "Не удалось обновить публикацию.",
+                  readError: sharedErrorMessage(
+                    reason,
+                    "Не удалось обновить публикацию.",
+                  ),
                 },
               };
             });

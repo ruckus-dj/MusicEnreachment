@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  apiResponseError,
+  errorMessage as sharedErrorMessage,
+} from "../../api/client/errors";
 import { createUUID } from "../../api/client/uuid";
 import {
   confirmIncomingGroupLocalMatching,
@@ -88,14 +92,15 @@ const emptyDraft = (): LocalDraft => ({
 const emptyGroupState = (): GroupState => ({ draft: emptyDraft() });
 
 function message(reason: unknown, fallback: string) {
-  return reason instanceof Error && reason.message ? reason.message : fallback;
+  return sharedErrorMessage(reason, fallback) || fallback;
 }
 
 function responseMessage(
   response: { data: { detail?: string }; status: number },
   fallback: string,
 ) {
-  return response.data.detail || `${fallback} (HTTP ${response.status}).`;
+  return apiResponseError(response, `${fallback} (HTTP ${response.status}).`)
+    .message;
 }
 
 function tagValues(file: IncomingFileResponse | undefined, name: string) {

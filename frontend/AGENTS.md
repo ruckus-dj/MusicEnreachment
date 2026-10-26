@@ -51,6 +51,17 @@ frontend/
 
 **Hash routing**: Uses hash router (#/setup, #/settings) for embedded static serving without backend routing.
 
+**Shared operation following**: Use `api/client/useOperationFollower.ts` for REST
+snapshot reads and SSE wake-ups. Action responses introducing a new operation ID
+must first update the feature's selected operation. Keep disconnect notices until
+the stream reconnects; a fallback REST success alone is not a reconnect. Compare
+RFC3339 timestamps by instant without losing sub-millisecond precision, and retain
+equal-timestamp progress and terminal/retry regression coverage.
+
+**Managed tool catalog failures**: Setup must retain a successfully loaded tool
+inventory even if catalog requests fail; ready-package restrictions and duplicate
+ready-package diagnostics do not depend on catalog availability.
+
 ## ANTI-PATTERNS
 - Hand-editing src/api/generated/** (always regenerate via `task generate`)
 - Adding ESLint or Prettier (Biome is the toolchain)

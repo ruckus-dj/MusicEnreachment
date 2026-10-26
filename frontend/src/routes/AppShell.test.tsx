@@ -190,6 +190,7 @@ describe("AppShell gates", () => {
 });
 describe("AppShell sources routing", () => {
   it("renders a direct nested file URL instead of the landing when Setup is complete", async () => {
+    const subscriptions = vi.spyOn(window, "addEventListener");
     server.use(
       http.get("/api/setup", () => HttpResponse.json(completedState)),
       http.get("/api/sources/root-1/locations/file-1", () =>
@@ -214,6 +215,10 @@ describe("AppShell sources routing", () => {
       screen.getByRole("heading", { name: "Инспектор файла" }),
     ).toBeVisible();
     expect(window.location.hash).toBe("#/sources/root-1/locations/file-1");
+    expect(
+      subscriptions.mock.calls.filter(([type]) => type === "hashchange"),
+    ).toHaveLength(1);
+    subscriptions.mockRestore();
   });
   it("keeps an incomplete Setup redirecting away from #/sources", async () => {
     server.use(http.get("/api/setup", () => HttpResponse.json(state)));
