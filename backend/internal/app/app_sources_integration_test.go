@@ -90,7 +90,7 @@ func newSourceApplicationFixture(t *testing.T, tc testContainer) sourceApplicati
 	)
 	worker := jobs.NewSourceScanWorker(
 		scanWorkerRepository{SetupManagerRepository: setupManager, SourceInventoryRepository: inventory},
-		operations, roots, registry, platform, tools.NewLifecycle(nil),
+		operations, roots, registry, platform,
 	)
 	worker.SetPendingDispatcher(sourceAnalysis)
 	analysisWorker := jobs.NewSourceAnalysisWorker(

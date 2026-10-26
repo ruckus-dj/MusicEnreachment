@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -56,14 +55,8 @@ type scanDeliveryRepository interface {
 	FinishSourceScanDelivery(context.Context, uuid.UUID, int, int64, string, string, string) error
 }
 
-// scanWorkerSettings stays in the constructor contract for composition
-// compatibility. Enumeration does not read Setup or tool settings.
-type scanWorkerSettings interface {
-	SetupCompleted(context.Context) (bool, error)
-	GetToolsDirectory(context.Context) (string, bool, error)
-	ReadRuntimeSettings(context.Context) (settings.RuntimeSettings, error)
-}
-
+// scanSHA256SettingReader is the one runtime setting a scan reads: whether the
+// enumeration samples SHA-256.
 type scanSHA256SettingReader interface {
 	GetSHA256Enabled(context.Context) (bool, error)
 }
@@ -83,7 +76,7 @@ type SourceScanWorker struct {
 	repository         scanWorkerRepository
 	operations         *service.Operations
 	paths              service.SourceScanPathValidator
-	settings           scanWorkerSettings
+	settings           scanSHA256SettingReader
 	platform           settings.PlatformState
 	pending            sourceAnalysisPendingDispatcher
 	incomingGroups     incomingGroupsRefresher
@@ -104,7 +97,7 @@ func (worker *SourceScanWorker) SetIncomingMatchingReconcileDispatcher(dispatche
 	worker.matchingReconciles = dispatcher
 }
 
-func NewSourceScanWorker(repository scanWorkerRepository, operations *service.Operations, paths service.SourceScanPathValidator, runtimeSettings scanWorkerSettings, platform settings.PlatformState, _ *tools.Lifecycle) *SourceScanWorker {
+func NewSourceScanWorker(repository scanWorkerRepository, operations *service.Operations, paths service.SourceScanPathValidator, runtimeSettings scanSHA256SettingReader, platform settings.PlatformState) *SourceScanWorker {
 	return &SourceScanWorker{
 		repository: repository, operations: operations, paths: paths,
 		settings: runtimeSettings, platform: platform,
@@ -186,11 +179,10 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 		}
 		return worker.fail(ctx, operation, service.SourceScanStageTraversing, scanSafeTraversal)
 	}
-	shaSettings, ok := worker.settings.(scanSHA256SettingReader)
-	if !ok {
+	if worker.settings == nil {
 		return fmt.Errorf("source scan SHA-256 setting reader is unavailable")
 	}
-	sha256Enabled, err := shaSettings.GetSHA256Enabled(ctx)
+	sha256Enabled, err := worker.settings.GetSHA256Enabled(ctx)
 	if err != nil {
 		return fmt.Errorf("read current SHA-256 setting for source enumeration: %w", err)
 	}

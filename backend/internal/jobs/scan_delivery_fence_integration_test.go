@@ -49,7 +49,7 @@ func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A's failure arrives after the durable operation has moved to attempt/job B.
-	worker := NewSourceScanWorker(scanDispatchRepository{manager, inventory}, nil, nil, nil, settings.PlatformState{}, nil)
+	worker := NewSourceScanWorker(scanDispatchRepository{manager, inventory}, nil, nil, nil, settings.PlatformState{})
 	oldDelivery := &river.Job[service.ScanSourceJobArgs]{
 		JobRow: &rivertype.JobRow{ID: 101}, Args: service.ScanSourceJobArgs{OperationID: operation.ID},
 	}
@@ -123,7 +123,7 @@ func TestHistoricalSourceScanRetryUsesCurrentGenerationPostgreSQL(t *testing.T) 
 	if err := inventory.FinishSourceScanDelivery(ctx, b.ID, 1, 303, "succeeded", "succeeded", ""); err != nil {
 		t.Fatal(err)
 	}
-	worker := NewSourceScanWorker(scanDispatchRepository{manager, inventory}, service.NewOperations(manager), nil, registry, platform, nil)
+	worker := NewSourceScanWorker(scanDispatchRepository{manager, inventory}, service.NewOperations(manager), nil, registry, platform)
 	client, listenerPool := startScanDispatchRiver(t, databaseURL, database, worker)
 	defer listenerPool.Close()
 	defer stopRiverClient(t, client)

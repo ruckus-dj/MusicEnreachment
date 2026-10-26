@@ -65,7 +65,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 		t.Fatalf("create the source root: %v", err)
 	}
 
-	worker := NewSourceScanWorker(scanDispatchRepository{setupManager, inventory}, operations, roots, registry, platform, tools.NewLifecycle(nil))
+	worker := NewSourceScanWorker(scanDispatchRepository{setupManager, inventory}, operations, roots, registry, platform)
 	riverClient, listenerPool := startScanDispatchRiver(t, databaseURL, database, worker)
 	defer listenerPool.Close()
 	defer stopRiverClient(t, riverClient)

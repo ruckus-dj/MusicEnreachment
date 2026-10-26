@@ -290,7 +290,7 @@ func Run(ctx context.Context, config Config) error {
 	sourceRoots.SetPendingDispatcher(sourceAnalysis)
 	scanWorker := jobs.NewSourceScanWorker(
 		scanWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
-		operationService, sourceRoots, registry, platform, tools.NewLifecycle(nil),
+		operationService, sourceRoots, registry, platform,
 	)
 	scanWorker.SetIncomingGroupsRefresher(incomingGroups)
 	scanWorker.SetIncomingMatchingReconcileDispatcher(matchingReconcileDispatcher)

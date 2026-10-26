@@ -105,7 +105,7 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	operations := service.NewOperations(setupManager)
 	pathValidator := &recordingScanPathValidator{delegate: roots}
 	scanRepository := &unreadableScopeScanRepository{scanDispatchRepository: scanDispatchRepository{setupManager, inventory}, path: "locked"}
-	worker := NewSourceScanWorker(scanRepository, operations, pathValidator, registry, platform, tools.NewLifecycle(nil))
+	worker := NewSourceScanWorker(scanRepository, operations, pathValidator, registry, platform)
 	riverClient, listenerPool := startScanDispatchRiver(t, databaseURL, database, worker)
 	defer listenerPool.Close()
 	defer stopRiverClient(t, riverClient)
