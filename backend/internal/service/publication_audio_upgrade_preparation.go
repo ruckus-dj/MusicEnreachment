@@ -77,6 +77,9 @@ func (preparation PublicationSimplePreparation) PrepareAudioUpgrade(
 	}
 
 	sourceFacts := inputAudioFacts(input).AudioSourceFacts()
+	if input.Format == publication.AudioFormatM4A && sourceFacts.Lossless != nil && *sourceFacts.Lossless && sourceFacts.Codec != "alac" && preparation.FFprobePath == "" {
+		return PublicationSimplePreparationResult{}, errors.New("ALAC preservation proof requires pinned ffprobe")
+	}
 	privateSource := filepath.Join(tempDir, "new-audio."+string(sourceFacts.Container))
 	if err := copyCurrentPublication(newAudioPath, privateSource); err != nil {
 		return PublicationSimplePreparationResult{}, err
@@ -107,6 +110,11 @@ func (preparation PublicationSimplePreparation) PrepareAudioUpgrade(
 	}
 	if !equalAudioUpgradeArtworkWitnesses(current.ArtworkInventory, finalArtwork.ArtworkInventory()) {
 		return PublicationSimplePreparationResult{}, errors.New("audio-upgrade candidate artwork inventory does not match current publication")
+	}
+	if input.Format == publication.AudioFormatM4A && sourceFacts.Lossless != nil && *sourceFacts.Lossless && sourceFacts.Codec != "alac" {
+		if err := proveALACCandidate(ctx, preparation.Commands, preparation.FFmpegPath, preparation.FFprobePath, privateSource, outputPath, input.Audio.AudioFacts); err != nil {
+			return PublicationSimplePreparationResult{}, err
+		}
 	}
 	observed, err := preparation.Validator.Validate(ctx, outputPath, input)
 	if err != nil {

@@ -45,6 +45,20 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**Исправление ALAC 2026-10-26, на базе `0245cdb`:** runtime-проверка выявила
+недостижимый lossless → ALAC flow: preview требовал tool capability, producer
+которой отсутствовал. Технический placeholder заменён проверкой конкретного
+готового private candidate перед exposure: pinned ffprobe сравнивает actual
+source/candidate channels, layout, rate и depth; pinned FFmpeg с `-xerror`
+сравнивает полный decoded PCM SHA-256 в canonical signed 32-bit representation.
+Проверяется финальный candidate после metadata/assets fallback, включая audio
+upgrade относительно нового source. Неизвестная shape, mismatch, decode error
+и неподтверждённое завершение команды отклоняются. Generic capability не
+приписывается source facts; copy/AAC не получают дополнительных proof commands.
+Добавлены реальные FFmpeg regressions для 16/24 бит с различающимися каналами
+и значимыми младшими битами. Gate и публичная ALAC-приёмка этой правки ещё
+должны завершиться; план остаётся в `todo`.
+
 **Решение владельца 2026-10-26 — общие каталоги:** семантические конфликты
 уровней artist/release/track и возможный UI выбора FS-only имён вынесены в
 [отдельную проработку](../to-decompose/publication-path-level-conflicts.md).
@@ -53,7 +67,10 @@ commit и повторная работа допустимы. Внутрення
 flow стабильного position suffix; file/directory conflicts и запрет перезаписи
 другой позиции сохраняются. Это решение заменяет прежний запрет смешивания
 каталогов разных релизов и прежнюю необходимость определять intentional sharing.
-Ограничение реализации на default/flat layouts устраняется отдельно; сам будущий
+Ограничение реализации на default/flat layouts снято в `0245cdb`: arbitrary-depth
+rendered directories используют native name equivalence с сохранением existing
+claim scope/key. Полный commit hook прошёл, включая nested preview/confirmation/
+delivery PostgreSQL regression; CI `40305565660` выполняется. Будущий
 entity-level conflict UI больше не является scope плана 12.
 
 **Финальная сверка 2026-10-26, `ba29040`:** последние mappings и исправление

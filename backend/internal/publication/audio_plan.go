@@ -93,8 +93,8 @@ func PlanAudioTransform(format AudioPublicationFormat, source AudioSourceFacts) 
 			return AudioTransformPlan{Action: AudioCodecCopy, OutputContainer: AudioContainerM4A, Extension: "m4a"}, nil
 		}
 		if *source.Lossless {
-			if source.Channels == nil || source.BitDepth == nil || !validALACBitDepth(*source.BitDepth) || !source.ALACCapabilitiesVerified {
-				return AudioTransformPlan{}, fmt.Errorf("%w: verified ALAC channel and sample-depth capability is required", errUnsupportedAudioPlan)
+			if source.Channels == nil || source.BitDepth == nil || !validALACBitDepth(*source.BitDepth) {
+				return AudioTransformPlan{}, fmt.Errorf("%w: known ALAC channel and sample-depth facts are required", errUnsupportedAudioPlan)
 			}
 			return AudioTransformPlan{Action: AudioCodecALAC, OutputContainer: AudioContainerM4A, Extension: "m4a"}, nil
 		}

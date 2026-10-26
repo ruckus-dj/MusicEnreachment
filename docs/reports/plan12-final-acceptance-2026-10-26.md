@@ -78,6 +78,22 @@ ALAC **не принят**: source scan и local confirmation завершили
 `evidence/alac-public-acceptance.json` в том же stand. Для продолжения нужно
 восстановить доступ к существующей БД без reset и перечитать состояние релиза.
 
+После запуска OrbStack владельцем существующий PostgreSQL-контейнер восстановился,
+`/api/settings` вернул HTTP 200. Повторное чтение обнаружило успешную операцию
+`e012b017-0a12-4793-b206-f1979d17ab2f`, но её CURRENT — MKA/FLAC, не ALAC.
+PCM и cover совпали с source/receipt; этот результат не считается ALAC acceptance.
+Для ALAC используется отдельный disposable fixture с сохранением `m4a` до
+settlement; существующая публикация не изменяется.
+
+V2 fixture выявил уже программный blocker: public preview возвращает
+`verified ALAC channel and sample-depth capability is required`. В production
+нет producer такой capability, а persisted source facts запрещают её `true`.
+Это незавершённый технический gate, не отказ FFmpeg сохранить аудио. Его
+замена реализуется как проверка конкретного готового private ALAC candidate:
+равенство decoded PCM и сохранение actual audio shape до native exposure,
+без generic capability cache и без присваивания источнику tool evidence.
+До gate и повторной runtime-проверки эта правка не считается принятой.
+
 ## Последующее решение и исправление namespace
 
 Независимая сверка полного scope обнаружила ограничение
@@ -91,8 +107,11 @@ ALAC **не принят**: source scan и local confirmation завершили
 Это позволяет использовать существующие directory claims без миграции и не
 объединяет разные имена каталогов из-за совпадения identity scope.
 Файловая ownership и стандартный filename suffix flow сохраняются.
-Повторный gate после этой правки ещё не завершён; ALAC blocker остаётся,
-поэтому план остаётся в `todo`.
+Исправление `0245cdb` прошло полный локальный gate обычного commit hook,
+включая nested preview → confirmation → executor PostgreSQL regression,
+и отправлено в `go-development`. Полная CI
+[40305565660](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/40305565660)
+выполняется. До завершения проверки ALAC и CI план остаётся в `todo`.
 
 Boot recovery, journals, backup/rollback и resume не являются открытыми
 пунктами: они исключены действующим решением владельца от 2026-10-23.

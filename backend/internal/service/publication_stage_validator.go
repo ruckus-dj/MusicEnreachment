@@ -174,6 +174,9 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	if facts.Channels != nil && (actual.Channels == nil || *actual.Channels != int64(*facts.Channels)) {
 		return PublicationStageObservation{}, errors.New("publication stage channel count does not match the frozen plan")
 	}
+	if plan.Action == publication.AudioCodecALAC && facts.ChannelLayout != "" && (actual.ChannelLayout == nil || *actual.ChannelLayout != facts.ChannelLayout) {
+		return PublicationStageObservation{}, errors.New("publication stage channel layout does not match the frozen lossless plan")
+	}
 	if !publicationStageSampleRateMatches(facts.SampleRate, actual.SampleRateHz) {
 		return PublicationStageObservation{}, errors.New("publication stage sample rate does not match the frozen plan")
 	}

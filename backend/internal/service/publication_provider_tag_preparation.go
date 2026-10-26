@@ -150,3 +150,57 @@ func publicationEncodedAudioSHA256(ctx context.Context, commands PublicationComm
 	}
 	return value, nil
 }
+
+// publicationDecodedAudioSHA256 proves that a lossless candidate decodes to the
+// same selected PCM stream as its private source.
+func publicationDecodedAudioSHA256(ctx context.Context, commands PublicationCommandRunner, ffmpegPath, inputPath string, container publication.AudioContainer, streamIndex int) (string, error) {
+	demuxer, mov := publication.InputDemuxer(container)
+	if commands == nil || ffmpegPath == "" || !filepath.IsAbs(inputPath) || demuxer == "" || streamIndex < 0 {
+		return "", errors.New("decoded audio proof dependencies are incomplete")
+	}
+	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-protocol_whitelist", "file", "-f", demuxer}
+	if mov {
+		args = append(args, "-enable_drefs", "0", "-use_absolute_path", "0")
+	}
+	args = append(args, "-xerror", "-i", inputPath, "-map", fmt.Sprintf("0:%d", streamIndex), "-vn", "-sn", "-dn", "-c:a", "pcm_s32le", "-f", "hash", "-hash", "sha256", "-")
+	result, err := commands.Run(ctx, ffmpegPath, args...)
+	if !result.QuiescenceEstablished {
+		return "", errors.Join(err, errors.New("decoded audio proof did not establish command quiescence"))
+	}
+	if err != nil {
+		return "", fmt.Errorf("decode audio for lossless proof: %w", err)
+	}
+	value, ok := strings.CutPrefix(strings.TrimSpace(string(result.Output)), "SHA256=")
+	decoded, decodeErr := hex.DecodeString(value)
+	if !ok || decodeErr != nil || len(decoded) != 32 || value != strings.ToLower(value) {
+		return "", errors.New("decoded audio proof returned an invalid SHA-256 digest")
+	}
+	return value, nil
+}
+
+func publicationALACTechnicalAnalysis(ctx context.Context, commands PublicationCommandRunner, ffprobePath, inputPath string, container publication.AudioContainer) (SourceTechnicalAnalysis, error) {
+	demuxer, mov := publication.InputDemuxer(container)
+	if commands == nil || !filepath.IsAbs(ffprobePath) || !filepath.IsAbs(inputPath) || demuxer == "" {
+		return SourceTechnicalAnalysis{}, errors.New("ALAC technical proof dependencies are incomplete")
+	}
+	args := []string{"-v", "error", "-protocol_whitelist", "file"}
+	if mov {
+		args = append(args, "-enable_drefs", "0", "-use_absolute_path", "0")
+	}
+	args = append(args, "-f", demuxer, "-show_format", "-show_streams", "-of", "json", inputPath)
+	result, err := commands.Run(ctx, ffprobePath, args...)
+	if !result.QuiescenceEstablished {
+		return SourceTechnicalAnalysis{}, errors.Join(err, errors.New("ALAC technical probe did not establish command quiescence"))
+	}
+	if err != nil {
+		return SourceTechnicalAnalysis{}, fmt.Errorf("probe ALAC candidate audio facts: %w", err)
+	}
+	analysis, err := ParseSourceTechnicalAnalysis(result.Output)
+	if err != nil {
+		return SourceTechnicalAnalysis{}, fmt.Errorf("parse ALAC technical proof: %w", err)
+	}
+	if len(analysis.Streams) == 0 {
+		return SourceTechnicalAnalysis{}, errors.New("ALAC technical proof found no audio stream")
+	}
+	return analysis, nil
+}

@@ -65,24 +65,18 @@ func TestPlanAudioTransformSourceMKAAndLosslessCapability(t *testing.T) {
 	for _, depth := range []int{16, 24} {
 		lossless := facts("flac", true, 2, nil)
 		lossless.BitDepth = intPointer(depth)
-		if _, err := PlanAudioTransform(AudioFormatM4A, lossless); err == nil {
-			t.Fatalf("unverified ALAC capability accepted at depth %d", depth)
-		}
-		lossless.ALACCapabilitiesVerified = true
 		plan, err = PlanAudioTransform(AudioFormatM4A, lossless)
 		if err != nil || plan.Action != AudioCodecALAC {
-			t.Fatalf("verified ALAC depth %d plan = %+v, %v", depth, plan, err)
+			t.Fatalf("known-shape ALAC depth %d plan = %+v, %v", depth, plan, err)
 		}
 	}
 	unsupportedDepth := facts("flac", true, 2, nil)
 	unsupportedDepth.BitDepth = intPointer(32)
-	unsupportedDepth.ALACCapabilitiesVerified = true
 	if _, err := PlanAudioTransform(AudioFormatM4A, unsupportedDepth); err == nil {
 		t.Fatal("32-bit lossless ALAC transcode was accepted")
 	}
 	unknownDepth := facts("flac", true, 2, nil)
 	unknownDepth.BitDepth = nil
-	unknownDepth.ALACCapabilitiesVerified = true
 	if _, err := PlanAudioTransform(AudioFormatM4A, unknownDepth); err == nil {
 		t.Fatal("unknown lossless sample depth was accepted")
 	}

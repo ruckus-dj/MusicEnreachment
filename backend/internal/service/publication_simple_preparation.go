@@ -130,6 +130,9 @@ func (preparation PublicationSimplePreparation) Prepare(
 		return PublicationSimplePreparationResult{}, fmt.Errorf("create publication temporary directory: %w", err)
 	}
 	sourceFacts := inputAudioFacts(input)
+	if input.Audio != nil && input.Format == publication.AudioFormatM4A && sourceFacts.Lossless != nil && *sourceFacts.Lossless && sourceFacts.Codec != "alac" && preparation.FFprobePath == "" {
+		return PublicationSimplePreparationResult{}, errors.New("ALAC preservation proof requires pinned ffprobe")
+	}
 	tempInput := filepath.Join(tempDir, "current-input"+"."+string(sourceFacts.Container))
 	if err := copyCurrentPublication(inputPath, tempInput); err != nil {
 		return PublicationSimplePreparationResult{}, err
@@ -440,6 +443,11 @@ func (preparation PublicationSimplePreparation) Prepare(
 	if err != nil {
 		return PublicationSimplePreparationResult{}, fmt.Errorf("validate publication candidate: %w", err)
 	}
+	if input.Format == publication.AudioFormatM4A && input.Audio != nil && input.Audio.AudioFacts.Lossless != nil && *input.Audio.AudioFacts.Lossless && input.Audio.AudioFacts.Codec != "alac" {
+		if err := proveALACCandidate(ctx, preparation.Commands, preparation.FFmpegPath, preparation.FFprobePath, tempInput, outputPath, input.Audio.AudioFacts); err != nil {
+			return PublicationSimplePreparationResult{}, err
+		}
+	}
 	prepared.Observation = persistence.PublicationStageObservation{
 		Version:              1,
 		RelativePath:         filepath.Base(outputPath),
@@ -469,6 +477,87 @@ func (preparation PublicationSimplePreparation) Prepare(
 		prepared.Observation.ActualAssets, _ = json.Marshal(assets)
 	}
 	return prepared, nil
+}
+
+func proveALACCandidate(ctx context.Context, commands PublicationCommandRunner, ffmpegPath, ffprobePath, sourcePath, candidatePath string, facts persistence.PersistedAudioFacts) error {
+	sourceAnalysis, err := publicationALACTechnicalAnalysis(ctx, commands, ffprobePath, sourcePath, facts.Container)
+	if err != nil {
+		return err
+	}
+	sourceFacts, ok := publicationALACStream(sourceAnalysis, facts.StreamIndex)
+	if !ok {
+		return errors.New("ALAC proof could not identify the selected private source stream")
+	}
+	if err := validateALACSourceShape(sourceFacts, facts); err != nil {
+		return err
+	}
+	candidateAnalysis, err := publicationALACTechnicalAnalysis(ctx, commands, ffprobePath, candidatePath, publication.AudioContainerM4A)
+	if err != nil {
+		return err
+	}
+	if len(candidateAnalysis.Streams) != 1 {
+		return errors.New("ALAC candidate must contain exactly one audio stream")
+	}
+	candidateFacts := candidateAnalysis.Streams[0]
+	if candidateFacts.CodecName == nil || *candidateFacts.CodecName != "alac" {
+		return errors.New("ALAC candidate technical probe did not identify ALAC")
+	}
+	if err := compareALACShapes(sourceFacts, candidateFacts); err != nil {
+		return err
+	}
+	source, err := publicationDecodedAudioSHA256(ctx, commands, ffmpegPath, sourcePath, facts.Container, facts.StreamIndex)
+	if err != nil {
+		return err
+	}
+	if candidateFacts.Index == nil {
+		return errors.New("ALAC candidate audio stream index is unknown")
+	}
+	candidate, err := publicationDecodedAudioSHA256(ctx, commands, ffmpegPath, candidatePath, publication.AudioContainerM4A, int(*candidateFacts.Index))
+	if err != nil {
+		return err
+	}
+	if source != candidate {
+		return errors.New("ALAC candidate does not preserve decoded source audio")
+	}
+	return nil
+}
+
+func publicationALACStream(analysis SourceTechnicalAnalysis, index int) (SourceTechnicalAudioStream, bool) {
+	var selected SourceTechnicalAudioStream
+	found := false
+	for _, stream := range analysis.Streams {
+		if stream.Index != nil && *stream.Index == int64(index) {
+			if found {
+				return SourceTechnicalAudioStream{}, false
+			}
+			selected = stream
+			found = true
+		}
+	}
+	return selected, found
+}
+
+func validateALACSourceShape(source SourceTechnicalAudioStream, frozen persistence.PersistedAudioFacts) error {
+	if source.Index == nil || source.CodecName == nil || source.Channels == nil || source.SampleRateHz == nil || source.BitsPerSample == nil || source.ChannelLayout == nil || strings.TrimSpace(*source.ChannelLayout) == "" {
+		return errors.New("private source probe lacks required ALAC preservation facts")
+	}
+	if *source.CodecName != frozen.Codec {
+		return errors.New("private source codec differs from frozen audio facts")
+	}
+	if frozen.Channels != nil && *source.Channels != int64(*frozen.Channels) || frozen.BitDepth != nil && *source.BitsPerSample != int64(*frozen.BitDepth) || frozen.SampleRate != nil && *source.SampleRateHz != int64(*frozen.SampleRate) || frozen.ChannelLayout != "" && *source.ChannelLayout != frozen.ChannelLayout {
+		return errors.New("private source audio shape differs from frozen facts")
+	}
+	return nil
+}
+
+func compareALACShapes(source, candidate SourceTechnicalAudioStream) error {
+	if candidate.Channels == nil || candidate.SampleRateHz == nil || candidate.BitsPerSample == nil || candidate.ChannelLayout == nil || strings.TrimSpace(*candidate.ChannelLayout) == "" {
+		return errors.New("ALAC candidate probe lacks required audio preservation facts")
+	}
+	if *source.Channels != *candidate.Channels || *source.SampleRateHz != *candidate.SampleRateHz || *source.BitsPerSample != *candidate.BitsPerSample || *source.ChannelLayout != *candidate.ChannelLayout {
+		return errors.New("ALAC candidate channel layout, count, rate, or depth differs from private source")
+	}
+	return nil
 }
 
 func buildSimpleAudioCandidate(
