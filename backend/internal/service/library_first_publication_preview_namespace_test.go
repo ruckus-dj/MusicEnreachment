@@ -34,13 +34,13 @@ func TestBuildFirstPublicationPreviewChecksSharedNamespaceLayouts(t *testing.T) 
 	}
 
 	customPreview, err := buildFirstPublicationPreview(snapshot, settings.RuntimeSettings{
-		PublicationFormat: "mka", PublicationPathTemplate: "Artist/Album/Track",
+		PublicationFormat: "mka", PublicationPathTemplate: "literal/shared/{ALBUM_NAME}/{TRACK_NAME}.{EXT}",
 	}, selectedTools, releaseID, positionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(customPreview.Blockers, " "), "namespace layout is unsupported") {
-		t.Fatalf("unsupported custom nested layout was not surfaced: %#v", customPreview.Blockers)
+	if strings.Contains(strings.Join(customPreview.Blockers, " "), "namespace layout is unsupported") {
+		t.Fatalf("supported custom nested namespace was rejected: %#v", customPreview.Blockers)
 	}
 }
 

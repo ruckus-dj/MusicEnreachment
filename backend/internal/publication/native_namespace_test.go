@@ -130,6 +130,35 @@ func TestPlanNativeNamespaceScopeReuseStillRejectsNativeAlias(t *testing.T) {
 	}
 }
 
+func TestPlanNativeNamespaceSharedDirectoryRetainsExistingScope(t *testing.T) {
+	owner := uuid.New()
+	claims := []NamespaceClaim{{CanonicalKey: "existing", RelativePath: "Artist", NodeKind: "directory", DirectoryScope: "legacy-identity"}}
+	candidates := []NamespaceCandidate{
+		{RelativePath: "artist", NodeKind: "directory", DirectoryScope: "rendered-name", PositionID: owner, ShareDirectory: true},
+		{RelativePath: "artist/Track.flac", NodeKind: "file", PositionID: owner},
+	}
+	got, err := PlanNativeNamespace(context.Background(), candidates, claims, nativeComparator)
+	if err != nil {
+		t.Fatalf("plan shared directory: %v", err)
+	}
+	if got[0].CanonicalKey != "existing" || got[0].RelativePath != "Artist" || got[0].DirectoryScope != "legacy-identity" {
+		t.Fatalf("shared directory = %#v; want existing representative and scope", got[0])
+	}
+}
+
+func TestPlanNativeNamespaceSharedDirectoryDoesNotReuseNonEquivalentSameScope(t *testing.T) {
+	owner := uuid.New()
+	claims := []NamespaceClaim{{CanonicalKey: "existing", RelativePath: "Artist", NodeKind: "directory", DirectoryScope: "legacy-identity"}}
+	candidate := NamespaceCandidate{RelativePath: "Renamed Artist", NodeKind: "directory", DirectoryScope: "legacy-identity", PositionID: owner, ShareDirectory: true}
+	got, err := PlanNativeNamespace(context.Background(), []NamespaceCandidate{candidate}, claims, nativeComparator)
+	if err != nil {
+		t.Fatalf("plan renamed shared directory: %v", err)
+	}
+	if got[0].CanonicalKey == "existing" || got[0].RelativePath != "Renamed Artist" {
+		t.Fatalf("renamed shared directory = %#v; want a new node", got[0])
+	}
+}
+
 func TestPlanNativeNamespaceScopeReuseChecksRepresentativeAgainstSiblings(t *testing.T) {
 	owner := uuid.New()
 	claims := []NamespaceClaim{

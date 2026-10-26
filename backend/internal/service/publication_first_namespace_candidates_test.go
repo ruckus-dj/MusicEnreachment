@@ -46,7 +46,7 @@ func TestBuildFirstPublicationNamespaceCandidatesSharesArtistAndTypeScopes(t *te
 		}
 	}
 	// Artist and album-type directories are shared across releases of one artist.
-	if a[0].RelativePath != b[0].RelativePath || a[0].DirectoryScope != b[0].DirectoryScope {
+	if a[0].RelativePath != b[0].RelativePath || a[0].DirectoryScope != b[0].DirectoryScope || !a[0].ShareDirectory || !a[1].ShareDirectory || !a[2].ShareDirectory {
 		t.Fatalf("artist directory not shared: %#v vs %#v", a[0], b[0])
 	}
 	if got := decodeFirstPublicationScope(t, a[0].DirectoryScope); len(got) != 2 || got[0] != "artist" || got[1] != artistID.String() {
@@ -161,13 +161,26 @@ func TestBuildFirstPublicationNamespaceCandidatesFallsBackToApprovedAlbumType(t 
 	}
 }
 
-func TestBuildFirstPublicationNamespaceCandidatesRejectsCustomNestedLayout(t *testing.T) {
+func TestBuildFirstPublicationNamespaceCandidatesSupportsNestedTemplates(t *testing.T) {
+	positionID := uuid.New()
+	candidates, err := buildFirstPublicationNamespaceCandidates("{ALBUM_PRIMARY_ARTIST}/{ALBUM_NAME}/{TRACK_TITLE}.{EXT}", []string{"Artist", "Album", "Track.flac"}, uuid.Nil, uuid.Nil, positionID, "")
+	if err != nil {
+		t.Fatalf("build nested candidates: %v", err)
+	}
+	if len(candidates) != 3 || candidates[0].RelativePath != "Artist" || candidates[1].RelativePath != "Artist/Album" || candidates[2].RelativePath != "Artist/Album/Track.flac" {
+		t.Fatalf("nested candidates = %#v", candidates)
+	}
+	if !candidates[0].ShareDirectory || !candidates[1].ShareDirectory || candidates[0].DirectoryScope == "" || candidates[1].DirectoryScope == "" {
+		t.Fatalf("nested directory sharing/scopes = %#v", candidates[:2])
+	}
+}
+
+func TestBuildFirstPublicationNamespaceCandidatesRejectsUnsupportedLayout(t *testing.T) {
 	for _, testCase := range []struct {
 		name           string
 		templateSource string
 		components     []string
 	}{
-		{"custom nested", "{ALBUM_PRIMARY_ARTIST}/{ALBUM_NAME}.{EXT}", []string{"Artist", "Track.flac"}},
 		{"default short", publication.DefaultTemplate, []string{"Artist", "Album", "Track.flac"}},
 		{"empty template", "", []string{"Track.flac"}},
 	} {

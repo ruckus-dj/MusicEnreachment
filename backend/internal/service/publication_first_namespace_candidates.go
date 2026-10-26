@@ -26,12 +26,10 @@ const (
 	firstPublicationNodeFile      = "file"
 )
 
-// buildFirstPublicationNamespaceCandidates derives the bounded namespace
-// candidates for one first-publication attempt from an already rendered
-// template. Only the exact owner-approved default template and flat
-// (single-component) templates are supported. Any other directory layout is
-// rejected with ErrFirstPublicationNamespaceLayoutUnavailable; the helper never
-// sanitizes, truncates, or substitutes a path.
+// buildFirstPublicationNamespaceCandidates derives namespace candidates for
+// one first-publication attempt from an already rendered template. Directory
+// candidates may share a rendered directory; file collisions remain resolved
+// separately. The helper never sanitizes, truncates, or substitutes a path.
 func buildFirstPublicationNamespaceCandidates(templateSource string, components []string, artistID, releaseID, positionID uuid.UUID, resolvedAlbumType string) ([]publication.NamespaceCandidate, error) {
 	if positionID == uuid.Nil {
 		return nil, errors.New("build first publication namespace candidates: position ID is required")
@@ -41,10 +39,26 @@ func buildFirstPublicationNamespaceCandidates(templateSource string, components 
 			return nil, fmt.Errorf("%w: unsafe path component %q", ErrFirstPublicationNamespaceLayoutUnavailable, component)
 		}
 	}
-	if templateSource == publication.DefaultTemplate {
-		if len(components) != 4 || artistID == uuid.Nil || releaseID == uuid.Nil {
-			return nil, fmt.Errorf("%w: default template requires three directories, a file, and complete identity", ErrFirstPublicationNamespaceLayoutUnavailable)
+	if templateSource == "" || len(components) == 0 {
+		return nil, fmt.Errorf("%w: template must render at least one path component", ErrFirstPublicationNamespaceLayoutUnavailable)
+	}
+	if templateSource == publication.DefaultTemplate && (len(components) != 4 || artistID == uuid.Nil || releaseID == uuid.Nil) {
+		return nil, fmt.Errorf("%w: default template requires three directories, a file, and complete identity", ErrFirstPublicationNamespaceLayoutUnavailable)
+	}
+	candidates := make([]publication.NamespaceCandidate, 0, len(components))
+	for i := range components {
+		name := strings.Join(components[:i+1], "/")
+		if i == len(components)-1 {
+			candidates = append(candidates, publication.NamespaceCandidate{RelativePath: name, NodeKind: firstPublicationNodeFile, PositionID: positionID})
+			continue
 		}
+		scope, err := firstPublicationDirectoryScope("rendered-directory", name)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, publication.NamespaceCandidate{RelativePath: name, NodeKind: firstPublicationNodeDirectory, DirectoryScope: scope, PositionID: positionID, ShareDirectory: true})
+	}
+	if templateSource == publication.DefaultTemplate {
 		albumType := resolvedAlbumType
 		if albumType == "" {
 			albumType = unresolvedFirstPublicationAlbumType
@@ -61,22 +75,12 @@ func buildFirstPublicationNamespaceCandidates(templateSource string, components 
 		if err != nil {
 			return nil, err
 		}
-		artistPath := components[0]
-		typePath := artistPath + "/" + components[1]
-		releasePath := typePath + "/" + components[2]
-		return []publication.NamespaceCandidate{
-			{RelativePath: artistPath, NodeKind: firstPublicationNodeDirectory, DirectoryScope: artistScope, PositionID: positionID},
-			{RelativePath: typePath, NodeKind: firstPublicationNodeDirectory, DirectoryScope: typeScope, PositionID: positionID},
-			{RelativePath: releasePath, NodeKind: firstPublicationNodeDirectory, DirectoryScope: releaseScope, PositionID: positionID},
-			{RelativePath: releasePath + "/" + components[3], NodeKind: firstPublicationNodeFile, PositionID: positionID},
-		}, nil
+		candidates[0].DirectoryScope = artistScope
+		candidates[1].DirectoryScope = typeScope
+		candidates[2].DirectoryScope = releaseScope
+		return candidates, nil
 	}
-	if templateSource == "" || len(components) != 1 {
-		return nil, fmt.Errorf("%w: only flat single-component templates are supported", ErrFirstPublicationNamespaceLayoutUnavailable)
-	}
-	return []publication.NamespaceCandidate{
-		{RelativePath: components[0], NodeKind: firstPublicationNodeFile, PositionID: positionID},
-	}, nil
+	return candidates, nil
 }
 
 // firstPublicationDirectoryScope returns the unambiguous JSON scope key for a

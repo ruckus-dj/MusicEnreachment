@@ -44,11 +44,22 @@ func TestPublicationExecutorAudioDeliveryPostgreSQL(t *testing.T) {
 }
 
 func TestFirstPublicationPreviewConfirmationDeliveryPostgreSQL(t *testing.T) {
-	for _, target := range []string{"Track.flac", "Artist/Album/Track.flac"} {
-		t.Run(target, func(t *testing.T) {
-			testPublicationSourceExecution(t, "Track.flac", true, target == "Artist/Album/Track.flac")
+	for _, scenario := range []firstPublicationTemplateScenario{
+		{name: "flat", template: "Track.{EXT}", expectedPath: "Track.flac"},
+		{name: "default nested", defaultLayout: true},
+		{name: "custom nested", template: "literal/shared/{ALBUM_NAME}/{TRACK_NAME}.{EXT}", expectedPath: "literal/shared/preparation fixture/Published track.flac"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			testPublicationSourceExecution(t, "Track.flac", true, scenario)
 		})
 	}
+}
+
+type firstPublicationTemplateScenario struct {
+	name          string
+	template      string
+	defaultLayout bool
+	expectedPath  string
 }
 
 func TestFirstPublicationExplicitAlreadySelectedSourceAuthorityCommitPostgreSQL(t *testing.T) {
@@ -335,8 +346,19 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 					return
 				}
 			}
-			if len(confirmation) > 1 && confirmation[1] == true {
+			var templateScenario firstPublicationTemplateScenario
+			for _, option := range confirmation {
+				if scenario, ok := option.(firstPublicationTemplateScenario); ok {
+					templateScenario = scenario
+				}
+			}
+			legacyDefaultLayout := len(confirmation) > 1 && confirmation[1] == true
+			if templateScenario.defaultLayout || legacyDefaultLayout {
 				if err := persistence.NewSettingsRepository(db).Set(ctx, settings.PublicationPathTemplateKey, publication.DefaultTemplate); err != nil {
+					t.Fatal(err)
+				}
+			} else if templateScenario.template != "" {
+				if err := persistence.NewSettingsRepository(db).Set(ctx, settings.PublicationPathTemplateKey, templateScenario.template); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -361,9 +383,14 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 					expectedAuthorityMode = "manual"
 				}
 			}
-			if len(confirmation) > 1 && confirmation[1] == true {
+			if templateScenario.defaultLayout || legacyDefaultLayout {
 				if len(preview.PathComponents) != 4 {
 					t.Fatalf("default-layout preview components = %#v, want 4", preview.PathComponents)
+				}
+				target = strings.Join(preview.PathComponents, "/")
+			} else if templateScenario.expectedPath != "" {
+				if got, want := strings.Join(preview.PathComponents, "/"), templateScenario.expectedPath; got != want {
+					t.Fatalf("custom nested preview path = %q, want %q", got, want)
 				}
 				target = strings.Join(preview.PathComponents, "/")
 			}

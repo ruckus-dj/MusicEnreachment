@@ -25,6 +25,7 @@ type NamespaceCandidate struct {
 	NodeKind       string
 	DirectoryScope string
 	PositionID     uuid.UUID
+	ShareDirectory bool
 }
 
 type NamespaceClaim struct {
@@ -72,6 +73,7 @@ func PlanNativeNamespace(ctx context.Context, candidates []NamespaceCandidate, c
 		entries = append(entries, e)
 	}
 	requestedScopes := make(map[string]string)
+	sharedDirectories := make(map[string]bool)
 	seenCandidates := make(map[string]struct{}, len(candidates))
 	for _, c := range candidates {
 		if _, exists := seenCandidates[c.RelativePath]; exists {
@@ -85,6 +87,7 @@ func PlanNativeNamespace(ctx context.Context, candidates []NamespaceCandidate, c
 			return nil, fmt.Errorf("plan native namespace: conflicting requested directory scopes")
 		}
 		requestedScopes[c.RelativePath] = c.DirectoryScope
+		sharedDirectories[c.RelativePath] = c.ShareDirectory
 	}
 	for _, e := range entries {
 		p := path.Dir(e.path)
@@ -130,7 +133,7 @@ func PlanNativeNamespace(ctx context.Context, candidates []NamespaceCandidate, c
 			kind, scope := "directory", requestedScopes[strings.Join(parts[:i+1], "/")]
 			if i == len(parts)-1 {
 				kind = c.NodeKind
-				if kind == "directory" {
+				if kind == "directory" && !sharedDirectories[strings.Join(parts[:i+1], "/")] {
 					scope = c.DirectoryScope
 				}
 			}
@@ -140,7 +143,7 @@ func PlanNativeNamespace(ctx context.Context, candidates []NamespaceCandidate, c
 			}
 			var found *namespaceEntry
 			siblingsForParent := siblings[parentKey]
-			if kind == "directory" {
+			if kind == "directory" && !sharedDirectories[strings.Join(parts[:i+1], "/")] {
 				var scoped *namespaceEntry
 				for _, e := range siblingsForParent {
 					if e.kind != "directory" {
@@ -197,7 +200,7 @@ func PlanNativeNamespace(ctx context.Context, candidates []NamespaceCandidate, c
 				if found.kind != kind {
 					return nil, fmt.Errorf("plan native namespace: file/directory collision at %q", rel)
 				}
-				if kind == "directory" && found.scope != scope {
+				if kind == "directory" && found.scope != scope && !sharedDirectories[strings.Join(parts[:i+1], "/")] {
 					return nil, fmt.Errorf("plan native namespace: directory scope conflict at %q", rel)
 				}
 				if kind == "file" && found.owner != nil && *found.owner != c.PositionID {
