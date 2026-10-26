@@ -45,6 +45,48 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**Уточнение 2026-10-26, после format acceptance:** MP3 source-format publication
+через public local confirm завершилась успешно: release
+`31ef6c43-c5c1-44dd-917b-25d18f15859f`, position
+`9eafab09-c2c0-448e-83e3-a725d5bb00b2`, операция
+`dd9bf7ba-9920-49ea-b288-5a70c0a5dfd9`. Native readback: MP3 44.1-kHz stereo,
+171011 bit/s; все 6136 encoded-audio packet hashes совпали с source. Проверены
+title/artist/album и cover. Plain-text input lyrics не были synced LRC и не
+попали в публикацию; этот прогон не заявляет приёмку переноса synced lyrics.
+AAC/M4A операция `a629c84c-8961-4b68-a7a6-d3c14439dabb` обнаружила отклонение
+легитимного cover stream валидатором, CURRENT не создала; исправление и повторная
+приёмка ещё открыты. Исходная настройка формата MKA восстановлена, cleanup OFF.
+Свидетельства: `format-acceptance.json` того же локального stand. ALAC не проверен.
+`00f3e21` и `93120de` прошли полные CI, включая пять платформ и контейнер.
+
+**Уточнение 2026-10-26, после `93120de`:** реализовано durable parking при
+отсутствии accepted release/`__tracks` graph текущего provider source. Это не
+успешный no-op и не fallback к прежнему endpoint: dirty scope сохраняется,
+причина ожидания видима, unchanged generation не диспетчеризуется повторно.
+Перед parking транзакционно повторяется proof CURRENT/configuration/generation;
+accepted refresh может разбудить successor. Строгие admission-readers остаются
+строгими, независимый audio upgrade сохраняет приоритет. PostgreSQL проверяет
+parking/wake, refresh-before-park и отклонение изменившихся proof без потери
+claimed delivery. Срез прошёл полный локальный `task verify`, ревью и commit hook;
+его CI ещё ожидается.
+
+Real-tool multiimage integration
+`TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL`
+выполнена локально, не пропущена: production reconciliation/admission сами
+захватили witness pre-existing CURRENT с JPEG front, PNG back и lyrics;
+реальные ffmpeg/ffprobe и executor повысили качество до 24-bit/48-kHz FLAC,
+сохранив путь, tags/lyrics, порядок, descriptors и байты обоих изображений,
+а также исходники. Fixture CURRENT устанавливается до upgrade admission;
+это service/repository integration, не HTTP/настоящая River-worker приёмка.
+Availability skip на другой платформе не считается доказательством её native
+прохождения. Повторный общий gate после исправления fixture assertions успешен.
+
+`fcc0ad9` после infrastructure rerun, `99378b6`, `ec3e1e1` и `3050d3e` прошли
+полные CI. Согласованные barcode/country/status local/provider mappings
+добавлены в `00f3e21`, проверены native roundtrip четырёх форматов и локальным
+полным gate/hook; его CI ещё ожидается. MP3/M4A public publication acceptance
+пока не объявлена завершённой. План остаётся в `todo`.
+
 **Уточнение 2026-10-26, после `3050d3e`:** protected provider refresh прошёл
 на настоящем медиа через публичные API с локальным MusicBrainz transport fixture.
 Ручной matching `title_override` сохранил TITLE «Танцуй», непротектированный ALBUM

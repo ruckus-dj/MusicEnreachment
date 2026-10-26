@@ -164,6 +164,69 @@ func TestValidatePublicationTopology(t *testing.T) {
 	}
 }
 
+func TestValidateFirstAudioCoverTopologyM4A(t *testing.T) {
+	tests := []struct {
+		name  string
+		json  string
+		cover persistence.PublicationCoverOutcome
+		valid bool
+	}{
+		{
+			name:  "embedded PNG attached picture",
+			json:  `{"streams":[{"codec_type":"audio"},{"codec_type":"video","codec_name":"png","disposition":{"attached_pic":1}}]}`,
+			cover: persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, MIME: "image/png"}, valid: true,
+		},
+		{
+			name:  "embedded JPEG attached picture",
+			json:  `{"streams":[{"codec_type":"audio"},{"codec_type":"video","codec_name":"mjpeg","disposition":{"attached_pic":1}}]}`,
+			cover: persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, MIME: "image/jpeg"}, valid: true,
+		},
+		{
+			name:  "absent cover rejects picture",
+			json:  `{"streams":[{"codec_type":"audio"},{"codec_type":"video","codec_name":"png","disposition":{"attached_pic":1}}]}`,
+			cover: persistence.PublicationCoverOutcome{State: persistence.PublicationAssetAbsent, MIME: "image/png"},
+		},
+		{
+			name:  "missing attached picture disposition",
+			json:  `{"streams":[{"codec_type":"audio"},{"codec_type":"video","codec_name":"png","disposition":{"attached_pic":0}}]}`,
+			cover: persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, MIME: "image/png"},
+		},
+		{
+			name:  "wrong codec for read-back MIME",
+			json:  `{"streams":[{"codec_type":"audio"},{"codec_type":"video","codec_name":"mjpeg","disposition":{"attached_pic":1}}]}`,
+			cover: persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, MIME: "image/png"},
+		},
+		{
+			name:  "duplicate attachment",
+			json:  `{"streams":[{"codec_type":"audio"},{"codec_type":"video","codec_name":"png","disposition":{"attached_pic":1}},{"codec_type":"video","codec_name":"png","disposition":{"attached_pic":1}}]}`,
+			cover: persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, MIME: "image/png"},
+		},
+		{
+			name:  "ordinary video",
+			json:  `{"streams":[{"codec_type":"audio"},{"codec_type":"video","codec_name":"png","disposition":{"attached_pic":0}}]}`,
+			cover: persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, MIME: "image/png"},
+		},
+		{
+			name:  "data stream",
+			json:  `{"streams":[{"codec_type":"audio"},{"codec_type":"data"}]}`,
+			cover: persistence.PublicationCoverOutcome{State: persistence.PublicationAssetAbsent},
+		},
+		{
+			name:  "chapters",
+			json:  `{"streams":[{"codec_type":"audio"}],"chapters":[{}]}`,
+			cover: persistence.PublicationCoverOutcome{State: persistence.PublicationAssetAbsent},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateFirstAudioCoverTopology([]byte(test.json), publication.AudioContainerM4A, test.cover)
+			if (err == nil) != test.valid {
+				t.Fatalf("validateFirstAudioCoverTopology() error = %v, valid %v", err, test.valid)
+			}
+		})
+	}
+}
+
 func TestEqualTagsChecksEveryRequestedValueAndDeletion(t *testing.T) {
 	wanted := map[string][]string{"artist": {"one", "two"}, "title": {"track"}}
 	if !equalTags(map[string][]string{"artist": {"one", "two"}, "title": {"track"}}, wanted) {

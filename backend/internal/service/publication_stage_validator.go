@@ -563,7 +563,7 @@ func validateNativeRewriteTopology(raw []byte, cover persistence.PublicationCove
 }
 
 // validateFirstAudioCoverTopology permits only the representation supported by
-// the output container: attached pictures for FLAC/MP3 and tagged image
+// the output container: attached pictures for FLAC/MP3/M4A and tagged image
 // attachments (including Matroska's attached-picture video representation) for
 // Matroska. The read-back cover outcome authorizes its format.
 func validateFirstAudioCoverTopology(raw []byte, container publication.AudioContainer, cover persistence.PublicationCoverOutcome) error {
@@ -594,7 +594,7 @@ func validateFirstAudioCoverTopology(raw []byte, container publication.AudioCont
 				if cover.State != persistence.PublicationAssetEmbedded || !coverFormatMatchesCodec(cover.MIME, stream.Codec) || !validPublicationCoverAttachment(stream.Tags["filename"], stream.Tags["mimetype"], cover.MIME) {
 					return errors.New("first-audio Matroska attached picture does not match read-back cover")
 				}
-			} else if (container != publication.AudioContainerFLAC && container != publication.AudioContainerMP3) || !coverFormatMatchesCodec(cover.MIME, stream.Codec) {
+			} else if (container != publication.AudioContainerFLAC && container != publication.AudioContainerMP3 && container != publication.AudioContainerM4A) || cover.State != persistence.PublicationAssetEmbedded || !coverFormatMatchesCodec(cover.MIME, stream.Codec) {
 				return errors.New("first-audio candidate contains an unauthorized non-audio stream")
 			}
 			imageCount++
