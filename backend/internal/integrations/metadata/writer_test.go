@@ -87,6 +87,177 @@ func TestWriterRoundTripsTagsAndPreservesAudioProperties(t *testing.T) {
 	}
 }
 
+func TestWriterPreservesMPEGContributorValuesLosslesslyAcrossFormats(t *testing.T) {
+	want := map[string][]string{
+		"ARRANGER": {"A, One", "雪,🎵", "A, One"},
+		"ENGINEER": {"Engineer, Two", "雪"},
+		"PRODUCER": {"Producer, Three", "Producer, Three"},
+		"DJMIXER":  {"DJ, Four", "雪"},
+		"MIXER":    {"Mixer, Five", "Mixer, Five"},
+	}
+	for _, ext := range []string{".mp3", ".flac", ".m4a", ".mka"} {
+		t.Run(ext, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join("testdata", "eg"+ext))
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := writeMetadataFixture(t, ext, contents)
+			for iteration := 0; iteration < 2; iteration++ {
+				cover := &Cover{Data: generatedPNG(t), MIME: "image/png"}
+				result, err := (Writer{}).Write(context.Background(), path, want, cover)
+				if err != nil {
+					t.Fatalf("write %d: %v", iteration, err)
+				}
+				for key, values := range want {
+					if !reflect.DeepEqual(result.Tags[key], values) {
+						t.Errorf("write %d %s = %#v, want %#v", iteration, key, result.Tags[key], values)
+					}
+				}
+				fresh, err := (Reader{}).Read(context.Background(), path, ReadRequest{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for key, values := range want {
+					if !reflect.DeepEqual(fresh.Tags[key], values) {
+						t.Errorf("fresh %s = %#v, want %#v", key, fresh.Tags[key], values)
+					}
+				}
+				if ext == ".mp3" {
+					native, err := taglib.ReadTags(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for canonical, alias := range mpegContributorAliases {
+						if !reflect.DeepEqual(native[alias], want[canonical]) {
+							t.Errorf("native alias %s = %#v, want %#v", alias, native[alias], want[canonical])
+						}
+						if _, present := native[canonical]; present {
+							t.Errorf("canonical %s unexpectedly stored as joined TIPL", canonical)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestContributorNativeAliasCollisionsAreRejected(t *testing.T) {
+	for _, tags := range []map[string][]string{
+		{"PRODUCER": {"one"}, "TIPL:PRODUCER": {"one"}},
+		{"MIXER": {"one"}, "TIPL:MIX": {"one"}},
+	} {
+		if _, err := normalizeContributorTags(tags); err == nil {
+			t.Fatalf("reader accepted canonical/native collision: %#v", tags)
+		}
+		called := false
+		err := safeWriteTags(func(string, map[string][]string, taglib.WriteOption) error {
+			called = true
+			return nil
+		}, "unused", tags, taglib.Clear)
+		if err == nil || called {
+			t.Fatalf("writer accepted collision or reached native writer: called=%t err=%v", called, err)
+		}
+	}
+}
+
+func TestWriterRejectsTransportControlsBeforeAnyMutation(t *testing.T) {
+	for name, requested := range map[string]map[string][]string{
+		"value on empty deletion": {"TITLE": {""}, "ARTIST": {"bad\vvalue"}},
+		"key on empty deletion":   {"BAD\x00KEY": {""}},
+		"empty alias collision":   {"PRODUCER": {"one"}, "TIPL:PRODUCER": {""}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			writes := 0
+			writer := Writer{
+				writeTags: func(string, map[string][]string, taglib.WriteOption) error { writes++; return nil },
+				readTags:  func(string) (map[string][]string, error) { return nil, nil },
+			}
+			if _, err := writer.Write(context.Background(), "staged", requested, nil); err == nil || writes != 0 {
+				t.Fatalf("Write err=%v, write calls=%d", err, writes)
+			}
+			lyrics := cloneTags(requested)
+			lyrics["LYRICS"] = []string{"text"}
+			if _, err := writer.WriteWithOptionalLyrics(context.Background(), "staged", lyrics, nil); err == nil || writes != 0 {
+				t.Fatalf("WriteWithOptionalLyrics err=%v, write calls=%d", err, writes)
+			}
+			if _, err := writer.WriteWithOptionalAssets(context.Background(), "staged", requested, nil); err == nil || writes != 0 {
+				t.Fatalf("WriteWithOptionalAssets err=%v, write calls=%d", err, writes)
+			}
+		})
+	}
+}
+
+func TestMPEGContributorAdapterClearsNativeTIPLAndTXXXFrames(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("testdata", "eg.mp3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeMetadataFixture(t, ".mp3", contents)
+	if err := taglib.WriteTags(path, map[string][]string{
+		"ARRANGER":      {"stale arranger"},
+		"PRODUCER":      {"stale producer"},
+		"TIPL:PRODUCER": {"stale alias"},
+	}, taglib.Clear); err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := taglib.ReadID3v2Frames(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seededProperties, err := taglib.ReadTags(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seeded["TIPL"]) == 0 || len(seededProperties["TIPL:PRODUCER"]) == 0 {
+		t.Fatalf("native seed frames missing: %#v", seeded)
+	}
+	want := map[string][]string{
+		"ARRANGER": {"New, Arranger", "雪", "New, Arranger"},
+		"ENGINEER": {"New, Engineer"},
+		"PRODUCER": {"New, Producer"},
+		"DJMIXER":  {"New, DJ"},
+		"MIXER":    {"New, Mixer"},
+	}
+	if _, err := (Writer{}).Write(context.Background(), path, want, nil); err != nil {
+		t.Fatal(err)
+	}
+	native, err := taglib.ReadID3v2Frames(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(native["TIPL"]) != 0 {
+		t.Fatalf("stale native TIPL/TXXX frames survived clear: %#v", native)
+	}
+	properties, err := taglib.ReadTags(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for canonical, alias := range mpegContributorAliases {
+		if !reflect.DeepEqual(properties[alias], want[canonical]) {
+			t.Errorf("native %s = %#v, want %#v", alias, properties[alias], want[canonical])
+		}
+	}
+}
+
+func TestMPEGAdapterUsesDetectedFormatForUnrecognizedFilename(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("testdata", "eg.mp3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeMetadataFixture(t, ".opaque", contents)
+	want := map[string][]string{"PRODUCER": {"Comma, Unicode 雪", "Comma, Unicode 雪"}}
+	if _, err := (Writer{}).Write(context.Background(), path, want, nil); err != nil {
+		t.Fatal(err)
+	}
+	native, err := taglib.ReadTags(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(native["TIPL:PRODUCER"], want["PRODUCER"]) {
+		t.Fatalf("detected MPEG native value = %#v", native["TIPL:PRODUCER"])
+	}
+}
+
 func TestWriterRejectsTagReadbackMismatchAndContainsPanics(t *testing.T) {
 	write := func(string, map[string][]string, taglib.WriteOption) error { return nil }
 	_, err := (Writer{writeTags: write, readTags: func(string) (map[string][]string, error) {

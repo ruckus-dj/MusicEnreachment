@@ -2,6 +2,7 @@ package publication
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -184,9 +185,11 @@ func TestProjectTagsOptionalMappingsAbsentAndExplicitEmpty(t *testing.T) {
 	position := librarymetadata.Envelope{
 		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
 		Desired: map[string]librarymetadata.FieldValue{
-			"sort_title": librarymetadata.ManualFieldValue(librarymetadata.StateAbsent, nil, false),
-			"movement":   librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
-			"works":      librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
+			"sort_title":       librarymetadata.ManualFieldValue(librarymetadata.StateAbsent, nil, false),
+			"contributors":     librarymetadata.ManualFieldValue(librarymetadata.StateAbsent, nil, false),
+			"content_advisory": librarymetadata.ManualFieldValue(librarymetadata.StateAbsent, nil, false),
+			"movement":         librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
+			"works":            librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
 		},
 	}
 	result, err := ProjectTags(TagProjectionInput{
@@ -199,7 +202,90 @@ func TestProjectTagsOptionalMappingsAbsentAndExplicitEmpty(t *testing.T) {
 	if _, exists := result.Tags["TITLESORT"]; exists || result.Fields["position.sort_title"].Status != "" {
 		t.Fatalf("absent sort title took action: tags=%#v fields=%#v", result.Tags, result.Fields)
 	}
+	for _, key := range []string{"COMPOSER", "LYRICIST", "ITUNESADVISORY"} {
+		if _, exists := result.Tags[key]; exists {
+			t.Errorf("absent optional mapping %s took action: %#v", key, result.Tags[key])
+		}
+	}
 	for _, key := range []string{"MOVEMENTNAME", "MOVEMENTNUMBER", "MOVEMENTCOUNT", "WORK", "MUSICBRAINZ_WORKID"} {
+		if values, exists := result.Tags[key]; !exists || values == nil || len(values) != 0 {
+			t.Errorf("explicit empty %s = %#v, exists=%t", key, values, exists)
+		}
+	}
+}
+
+func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
+	position, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"position","desired":{"contributors":{"state":"value","value":[{"name":"Family,Given 音楽","role":" Composer ","artist_id":"11111111-1111-4111-8111-111111111111"},{"name":"作詞者","role":"LYRICIST","mbid":"22222222-2222-4222-8222-222222222222"},{"name":"unknown role","role":"instrumentalist"}],"authority":"manual","provenance":{"kind":"manual"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"release","desired":{"content_advisory":{"state":"value","value":"explicit","authority":"manual","provenance":{"kind":"manual"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Album Artist"}}, Desired: &release},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Track Artist"}}, Desired: &position},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string][]string{
+		"COMPOSER": {"Family,Given 音楽"}, "LYRICIST": {"作詞者"}, "ITUNESADVISORY": {"1"},
+	} {
+		if !reflect.DeepEqual(result.Tags[key], want) {
+			t.Errorf("%s = %#v, want %#v", key, result.Tags[key], want)
+		}
+	}
+	if result.Fields["position.contributors"].Status != "unsupported" {
+		t.Errorf("unknown role status = %#v", result.Fields["position.contributors"])
+	}
+	if _, exists := result.Tags["PERFORMER"]; exists {
+		t.Fatal("unknown contributor role was coerced to PERFORMER")
+	}
+	if result.Fields["position.contributors.mbids"].Status != "unsupported" {
+		t.Errorf("MBID status = %#v", result.Fields["position.contributors.mbids"])
+	}
+	for key, values := range result.Tags {
+		joined := strings.Join(values, "")
+		if strings.Contains(joined, "11111111") || strings.Contains(joined, "22222222") {
+			t.Fatalf("contributor identifier leaked into normalized tag %s", key)
+		}
+	}
+	release.Desired["content_advisory"] = librarymetadata.ManualFieldValue(librarymetadata.StateValue, "clean", true)
+	result, err = ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Album Artist"}}, Desired: &release},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Track Artist"}}, Desired: &position},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.Tags["ITUNESADVISORY"], []string{"2"}) {
+		t.Fatalf("clean advisory = %#v, want [2]", result.Tags["ITUNESADVISORY"])
+	}
+}
+
+func TestProjectTagsContributorAndAdvisoryExplicitEmptyClearsFootprints(t *testing.T) {
+	position := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
+		Desired: map[string]librarymetadata.FieldValue{
+			"contributors": librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
+		},
+	}
+	release := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease,
+		Desired: map[string]librarymetadata.FieldValue{
+			"content_advisory": librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
+		},
+	}
+	result, err := ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Album Artist"}}, Desired: &release},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Track Artist"}}, Desired: &position},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"COMPOSER", "LYRICIST", "CONDUCTOR", "ARRANGER", "ENGINEER", "PRODUCER", "REMIXER", "DJMIXER", "MIXER", "ITUNESADVISORY"} {
 		if values, exists := result.Tags[key]; !exists || values == nil || len(values) != 0 {
 			t.Errorf("explicit empty %s = %#v, exists=%t", key, values, exists)
 		}

@@ -75,6 +75,50 @@ func TestWriteWithOptionalAssetsRequestCombinations(t *testing.T) {
 	}
 }
 
+func TestOptionalAssetWritersPreserveMPEGContributorValuesAfterCoverWrite(t *testing.T) {
+	contributors := map[string][]string{
+		"ARRANGER": {"Arrange, One", "雪", "Arrange, One"},
+		"ENGINEER": {"Engineer, Two", "雪"},
+		"PRODUCER": {"Produce, Three", "Produce, Three"},
+		"DJMIXER":  {"DJ, Four", "雪"},
+		"MIXER":    {"Mix, Five", "Mix, Five"},
+	}
+	cover := &Cover{Data: generatedOptionalAssetsPNG(t), MIME: "image/png"}
+	for _, method := range []string{"optional lyrics", "optional assets"} {
+		t.Run(method, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join("testdata", "eg.mp3"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := writeMetadataFixture(t, ".mp3", contents)
+			requested := cloneTags(contributors)
+			requested["TITLE"] = []string{"title"}
+			requested["LYRICS"] = []string{"lyrics"}
+			if method == "optional lyrics" {
+				result, err := (Writer{}).WriteWithOptionalLyrics(context.Background(), path, requested, cover)
+				if err != nil || result.Status != OptionalLyricsVerified {
+					t.Fatalf("result=%#v err=%v", result, err)
+				}
+				for key, values := range contributors {
+					if !reflect.DeepEqual(result.Tags[key], values) {
+						t.Errorf("%s = %#v, want %#v", key, result.Tags[key], values)
+					}
+				}
+				return
+			}
+			result, err := (Writer{}).WriteWithOptionalAssets(context.Background(), path, requested, cover)
+			if err != nil || result.LyricsStatus != OptionalLyricsVerified || result.CoverStatus != OptionalCoverVerified {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+			for key, values := range contributors {
+				if !reflect.DeepEqual(result.Tags[key], values) {
+					t.Errorf("%s = %#v, want %#v", key, result.Tags[key], values)
+				}
+			}
+		})
+	}
+}
+
 func TestWriteWithOptionalAssetsClassifiesOnlyIsolatedCoverFailures(t *testing.T) {
 	cover := &Cover{Data: generatedOptionalAssetsPNG(t), MIME: "image/png"}
 	requested := map[string][]string{"TITLE": {"title"}, "LYRICS": {"text"}}

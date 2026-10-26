@@ -127,12 +127,23 @@ func validateMatchingRunFence(ctx context.Context, tx bun.Tx, runID uuid.UUID, f
 
 // validateMatchingRunFenceCurrentTarget ignores unrelated grouping refreshes;
 // exact target capture, authority, and source identities are still revalidated.
-func validateMatchingRunFenceCurrentTarget(ctx context.Context, tx bun.Tx, runID uuid.UUID) error {
-	return validateMatchingRunFenceWithFreshness(ctx, tx, runID, 2, false)
+func validateMatchingRunFenceCurrentTarget(ctx context.Context, tx bun.Tx, runID uuid.UUID, manualContexts ...*manualReviewFenceContext) error {
+	if len(manualContexts) > 1 {
+		return ErrIncomingMatchConflict
+	}
+	var manualContext *manualReviewFenceContext
+	if len(manualContexts) == 1 {
+		manualContext = manualContexts[0]
+	}
+	return validateMatchingRunFenceWithFreshnessAndManualContext(ctx, tx, runID, 2, false, manualContext)
 }
 
 func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID uuid.UUID, fenceVersion int, requireFreshGrouping bool) error {
-	return validateMatchingRunFenceWithRequestMode(ctx, tx, runID, fenceVersion, requireFreshGrouping, false, true)
+	return validateMatchingRunFenceWithRequestMode(ctx, tx, runID, fenceVersion, requireFreshGrouping, false, true, nil)
+}
+
+func validateMatchingRunFenceWithFreshnessAndManualContext(ctx context.Context, tx bun.Tx, runID uuid.UUID, fenceVersion int, requireFreshGrouping bool, manualContext *manualReviewFenceContext) error {
+	return validateMatchingRunFenceWithRequestMode(ctx, tx, runID, fenceVersion, requireFreshGrouping, false, true, manualContext)
 }
 
 // validateMatchingRunFenceForObsolescence is used only under the canonical
@@ -140,10 +151,10 @@ func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID
 // strictly newer coalesced request while still validating every immutable and
 // current target, authority, provider, and capture fence.
 func validateMatchingRunFenceForObsolescence(ctx context.Context, tx bun.Tx, runID uuid.UUID) error {
-	return validateMatchingRunFenceWithRequestMode(ctx, tx, runID, 2, true, true, false)
+	return validateMatchingRunFenceWithRequestMode(ctx, tx, runID, 2, true, true, false, nil)
 }
 
-func validateMatchingRunFenceWithRequestMode(ctx context.Context, tx bun.Tx, runID uuid.UUID, fenceVersion int, requireFreshGrouping, allowAdvancedRequest, requireCurrentCapture bool) error {
+func validateMatchingRunFenceWithRequestMode(ctx context.Context, tx bun.Tx, runID uuid.UUID, fenceVersion int, requireFreshGrouping, allowAdvancedRequest, requireCurrentCapture bool, manualContext *manualReviewFenceContext) error {
 	if fenceVersion != 2 {
 		return fmt.Errorf("matching run fence version is unsupported")
 	}
@@ -241,7 +252,12 @@ func validateMatchingRunFenceWithRequestMode(ctx context.Context, tx bun.Tx, run
 	if err != nil {
 		return err
 	}
-	if authority.Mode != "automatic" || authority.Revision != original.AuthorityRevision {
+	manualContinuation := manualContext != nil && manualContext.GroupID == target.GroupID && manualContext.EvaluationRevision != "" &&
+		manualContext.CapturedAuthorityRevision == original.AuthorityRevision &&
+		authority.Mode == "manual" && authority.Revision == original.AuthorityRevision+1
+	automaticAuthorityCurrent := authority.Mode == "automatic" && authority.Revision == original.AuthorityRevision
+	manualContinuation = manualContinuation && matchingManualContinuationReceiptExists(ctx, tx, *manualContext)
+	if !automaticAuthorityCurrent && !manualContinuation {
 		return ErrIncomingMatchConflict
 	}
 	var group struct {
@@ -253,7 +269,11 @@ func validateMatchingRunFenceWithRequestMode(ctx context.Context, tx bun.Tx, run
 	if !requireCurrentCapture {
 		return nil
 	}
-	current, err := captureAutomaticArtistTarget(ctx, tx, target.GroupID, group.Revision, authority.Revision)
+	captureAuthorityRevision := authority.Revision
+	if manualContinuation {
+		captureAuthorityRevision = original.AuthorityRevision
+	}
+	current, err := captureAutomaticArtistTarget(ctx, tx, target.GroupID, group.Revision, captureAuthorityRevision)
 	if err != nil {
 		return fmt.Errorf("validate matching target fence: capture current target: %w", err)
 	}
@@ -266,4 +286,13 @@ func validateMatchingRunFenceWithRequestMode(ctx context.Context, tx bun.Tx, run
 		return ErrIncomingMatchConflict
 	}
 	return nil
+}
+
+func matchingManualContinuationReceiptExists(ctx context.Context, tx bun.Tx, manualContext manualReviewFenceContext) bool {
+	var exists bool
+	if tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM manual_matching_receipt WHERE group_id=? AND response->>'evaluation_revision'=?)`,
+		manualContext.GroupID, manualContext.EvaluationRevision).Scan(ctx, &exists) != nil {
+		return false
+	}
+	return exists
 }

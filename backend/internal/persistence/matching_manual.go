@@ -252,7 +252,7 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 		return result, state, err
 	}
 	var err error
-	err = tx.NewRaw(`SELECT group_id,evaluation_revision,evaluation_evidence,group_revision,groups_revision,grouping_epoch,policy_version,provider_id,provider_source_id,provider_configuration_identity,provider_namespace,provider_endpoint,cache_key,cache_revision,provider_snapshot_revision,provider_fences,evaluated_at,matching_authority_mode,matching_authority_revision,frozen_authority_version,frozen_run_id,frozen_wait_revision,frozen_seal_digest FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &state.header)
+	err = tx.NewRaw(`SELECT group_id,evaluation_revision,evaluation_evidence,group_revision,groups_revision,grouping_epoch,policy_version,provider_id,provider_source_id,provider_configuration_identity,provider_namespace,provider_endpoint,cache_key,cache_revision,provider_snapshot_revision,provider_fences,evaluated_at,matching_authority_mode,matching_authority_revision,fence_version,target_run_id,target_capture,target_capture_digest,frozen_authority_version,frozen_run_id,frozen_wait_revision,frozen_seal_digest FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &state.header)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, state, ErrIncomingMatchConflict
 	}
@@ -282,7 +282,22 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 		return result, state, ErrIncomingMatchConflict
 	}
 	evaluation := IncomingMatchEvaluation{ExpectedGroupsRevision: state.header.GroupsRevision, ExpectedGroupingEpoch: state.header.GroupingEpoch, PolicyVersion: state.header.PolicyVersion, Provider: state.fence, Groups: []IncomingMatchGroupEvaluation{group}}
-	if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "manual matching"); err != nil {
+	if state.header.FenceVersion == 2 {
+		if state.header.TargetRunID == uuid.Nil || len(state.header.TargetCapture) == 0 || len(state.header.TargetCaptureDigest) != sha256.Size {
+			return result, state, ErrIncomingMatchConflict
+		}
+		evaluation.TargetFenceVersion = 2
+		evaluation.TargetRunID = state.header.TargetRunID
+		evaluation.TargetCapture = append(json.RawMessage(nil), state.header.TargetCapture...)
+		evaluation.TargetCaptureDigest = hex.EncodeToString(state.header.TargetCaptureDigest)
+	} else if state.header.FenceVersion != 1 || state.header.TargetRunID != uuid.Nil || len(state.header.TargetCapture) != 0 || len(state.header.TargetCaptureDigest) != 0 {
+		return result, state, ErrIncomingMatchConflict
+	}
+	manualContext := manualReviewFenceContext{
+		GroupID: groupID, EvaluationRevision: expectedRevision,
+		CapturedAuthorityRevision: state.header.MatchingAuthorityRevision,
+	}
+	if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "manual matching", manualContext); err != nil {
 		return result, state, err
 	}
 	authority, err := lockIncomingGroupMatchingAuthority(ctx, tx, groupID)

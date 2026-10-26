@@ -33,7 +33,8 @@ type AudioProperties struct {
 }
 
 // Capture is detached from the prepared path. Tags are normalized text values;
-// this is not a promise that every raw or format-specific tag is represented.
+// recognized MPEG contributor TXXX aliases are canonicalized by this adapter.
+// This is not a promise that every raw or format-specific tag is represented.
 type Capture struct {
 	Format          string              `json:"format"`
 	Provenance      Provenance          `json:"provenance"`
@@ -74,7 +75,7 @@ type ReadRequest struct {
 var tagLibProvenance = Provenance{
 	Name:     "github.com/deluan/go-taglib",
 	Version:  "v0.0.0-20260926163408-32d7614f30ec (TagLib v2.3.2)",
-	Contract: "ReadTags(path) normalized text map; optional ReadProperties(path) audio properties and ReadImage(path) first normalized picture; values/order as returned; no raw-tag completeness guarantee",
+	Contract: "ReadTags(path) normalized text map with recognized MPEG contributor TXXX aliases canonicalized; optional ReadProperties(path) audio properties and ReadImage(path) first normalized picture; values/order preserved; no raw-tag completeness guarantee",
 }
 
 // Read captures normalized metadata from the path prepared by its caller.
@@ -192,7 +193,11 @@ func safeReadTags(read func(string) (map[string][]string, error), path string) (
 			err = errors.New("metadata tag reader panicked")
 		}
 	}()
-	return read(path)
+	tags, err = read(path)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeContributorTags(tags)
 }
 
 func safeReadProperties(read func(string) (taglib.Properties, error), path string) (properties taglib.Properties, err error) {

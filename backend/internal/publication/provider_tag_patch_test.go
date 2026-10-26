@@ -110,6 +110,9 @@ func TestPublicationTagKeysForFieldUsesApprovedMappingFootprints(t *testing.T) {
 		{"position artist sort names", librarymetadata.ScopePosition, "artist_sort_names", []string{"ARTISTSORT"}},
 		{"position movement footprint", librarymetadata.ScopePosition, "movement", []string{"MOVEMENTNAME", "MOVEMENTNUMBER", "MOVEMENTCOUNT"}},
 		{"position work footprint", librarymetadata.ScopePosition, "works", []string{"WORK", "MUSICBRAINZ_WORKID"}},
+		{"position contributor footprint", librarymetadata.ScopePosition, "contributors", []string{"COMPOSER", "LYRICIST", "CONDUCTOR", "ARRANGER", "ENGINEER", "PRODUCER", "REMIXER", "DJMIXER", "MIXER"}},
+		{"release content advisory footprint", librarymetadata.ScopeRelease, "content_advisory", []string{"ITUNESADVISORY"}},
+		{"position content advisory footprint", librarymetadata.ScopePosition, "content_advisory", []string{"ITUNESADVISORY"}},
 		{"release artist sort names remains unsupported", librarymetadata.ScopeRelease, "artist_sort_names", nil},
 		{"unsupported registered field", librarymetadata.ScopePosition, "album_artist_credit", nil},
 		{"unregistered field", librarymetadata.ScopePosition, "lyrics", nil},
@@ -134,6 +137,9 @@ func TestApplyProviderTagPatchProtectsCompleteOptionalFieldFootprints(t *testing
 		{librarymetadata.ScopePosition, "artist_sort_names"},
 		{librarymetadata.ScopePosition, "movement"},
 		{librarymetadata.ScopePosition, "works"},
+		{librarymetadata.ScopePosition, "contributors"},
+		{librarymetadata.ScopePosition, "content_advisory"},
+		{librarymetadata.ScopeRelease, "content_advisory"},
 	}
 	current, patch := make(map[string][]string), make(map[string][]string)
 	var protected []string

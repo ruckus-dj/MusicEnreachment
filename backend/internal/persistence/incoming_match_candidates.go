@@ -185,7 +185,23 @@ func (repository *IncomingMatchCandidateRepository) ReplaceIfCurrent(ctx context
 // lockAndValidateMatchingPrelude establishes the shared mutation/configuration
 // gates before locking source, grouping, and provider state. Both evaluation
 // publication and decision application must follow this exact order.
-func lockAndValidateMatchingPrelude(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation, operation string) error {
+type manualReviewFenceContext struct {
+	GroupID                   uuid.UUID
+	EvaluationRevision        string
+	CapturedAuthorityRevision int64
+}
+
+func lockAndValidateMatchingPrelude(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation, operation string, manualContexts ...manualReviewFenceContext) error {
+	if len(manualContexts) > 1 {
+		return ErrIncomingMatchConflict
+	}
+	var manualContext *manualReviewFenceContext
+	if len(manualContexts) == 1 {
+		manualContext = &manualContexts[0]
+		if len(evaluation.Groups) != 1 || manualContext.GroupID == uuid.Nil || manualContext.GroupID != evaluation.Groups[0].GroupID || manualContext.EvaluationRevision == "" {
+			return ErrIncomingMatchConflict
+		}
+	}
 	if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 		return fmt.Errorf("%s: lock source mutation gate: %w", operation, err)
 	}
@@ -229,7 +245,7 @@ func lockAndValidateMatchingPrelude(ctx context.Context, tx bun.Tx, evaluation I
 		if err != nil || targetErr != nil || !bytes.Equal(canonicalCapture, canonicalTarget) {
 			return ErrIncomingMatchConflict
 		}
-		if err := validateMatchingRunFenceCurrentTarget(ctx, tx, evaluation.TargetRunID); err != nil {
+		if err := validateMatchingRunFenceCurrentTarget(ctx, tx, evaluation.TargetRunID, manualContext); err != nil {
 			return err
 		}
 		var generationCurrent bool
@@ -238,9 +254,17 @@ func lockAndValidateMatchingPrelude(ctx context.Context, tx bun.Tx, evaluation I
 				JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
 				WHERE target.run_id=? AND target.group_id=?
 				AND generation.current_run_id=target.run_id AND generation.high_water=target.target_generation
-				AND COALESCE((SELECT authority.mode FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id),'automatic')='automatic'
-				AND COALESCE((SELECT authority.revision FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id),0)=target.authority_revision
-			)`, evaluation.TargetRunID, evaluation.Groups[0].GroupID).Scan(ctx, &generationCurrent); err != nil {
+				AND (
+					(COALESCE((SELECT authority.mode FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id),'automatic')='automatic'
+					 AND COALESCE((SELECT authority.revision FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id),0)=target.authority_revision)
+					OR (?::uuid IS NOT NULL
+					 AND target.group_id=? AND target.authority_revision=?
+					 AND (SELECT authority.mode FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id)='manual'
+					 AND (SELECT authority.revision FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id)=?+1
+					 AND EXISTS (SELECT 1 FROM manual_matching_receipt receipt WHERE receipt.group_id=target.group_id AND receipt.response->>'evaluation_revision'=?))
+				)
+			)`, evaluation.TargetRunID, evaluation.Groups[0].GroupID,
+			nullableManualContext(manualContext), nullableManualContext(manualContext), nullableManualAuthorityRevision(manualContext), nullableManualAuthorityRevision(manualContext), nullableManualEvaluationRevision(manualContext)).Scan(ctx, &generationCurrent); err != nil {
 			return fmt.Errorf("%s: validate target generation: %w", operation, err)
 		}
 		if !generationCurrent {
@@ -248,6 +272,27 @@ func lockAndValidateMatchingPrelude(ctx context.Context, tx bun.Tx, evaluation I
 		}
 	}
 	return nil
+}
+
+func nullableManualContext(context *manualReviewFenceContext) any {
+	if context == nil {
+		return nil
+	}
+	return context.GroupID
+}
+
+func nullableManualAuthorityRevision(context *manualReviewFenceContext) any {
+	if context == nil {
+		return nil
+	}
+	return context.CapturedAuthorityRevision
+}
+
+func nullableManualEvaluationRevision(context *manualReviewFenceContext) any {
+	if context == nil {
+		return nil
+	}
+	return context.EvaluationRevision
 }
 
 func matchingAcoustIDCacheKeys(fence IncomingMatchProviderFence) []string {

@@ -198,7 +198,7 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 			fields[string(scope)+"."+name] = TagFieldResult{Status: "explicit_empty"}
 			continue
 		}
-		if name == "movement" || name == "works" {
+		if name == "movement" || name == "works" || name == "contributors" || name == "content_advisory" {
 			projectStructuredDesired(tags, fields, scope, name, value.Value)
 			continue
 		}
@@ -216,6 +216,26 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 
 func projectStructuredDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, field string, value any) {
 	fieldName := string(scope) + "." + field
+	if field == "contributors" {
+		projectContributors(tags, fields, fieldName, value)
+		return
+	}
+	if field == "content_advisory" {
+		advisory, ok := value.(string)
+		if !ok || (advisory != "explicit" && advisory != "clean") {
+			fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+			return
+		}
+		value := "1"
+		if advisory == "clean" {
+			value = "2"
+		}
+		// This is the portable ITUNESADVISORY property, not M4A's native
+		// rtng atom; normalized TagLib ReadTags does not observe rtng.
+		tags["ITUNESADVISORY"] = []string{value}
+		fields[fieldName] = TagFieldResult{Status: "represented"}
+		return
+	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
@@ -284,6 +304,54 @@ func projectStructuredDesired(tags map[string][]string, fields map[string]TagFie
 	}
 }
 
+func projectContributors(tags map[string][]string, fields map[string]TagFieldResult, fieldName string, value any) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+		return
+	}
+	var contributors []librarymetadata.Contributor
+	if err := json.Unmarshal(encoded, &contributors); err != nil {
+		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+		return
+	}
+	// Map only these standard role properties; no instrument taxonomy is
+	// implied, and unknown roles remain unsupported rather than becoming PERFORMER.
+	roleKeys := map[string]string{
+		"composer": "COMPOSER", "lyricist": "LYRICIST", "conductor": "CONDUCTOR", "arranger": "ARRANGER",
+		"engineer": "ENGINEER", "producer": "PRODUCER", "remixer": "REMIXER", "djmixer": "DJMIXER", "mixer": "MIXER",
+	}
+	unsupported := false
+	mbidsIncomplete := false
+	mbidsPresent := false
+	for _, contributor := range contributors {
+		if contributor.MBID == nil || strings.TrimSpace(*contributor.MBID) == "" {
+			mbidsIncomplete = true
+		} else {
+			mbidsPresent = true
+		}
+		role := strings.ToLower(strings.TrimSpace(contributor.Role))
+		key, ok := roleKeys[role]
+		if !ok {
+			unsupported = true
+			continue
+		}
+		tags[key] = append(tags[key], contributor.Name)
+	}
+	if unsupported {
+		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "one or more contributor roles have no approved normalized TagLib mapping"}
+	} else {
+		fields[fieldName] = TagFieldResult{Status: "represented"}
+	}
+	if mbidsIncomplete {
+		fields[fieldName+".mbids"] = TagFieldResult{Status: "unsupported", Reason: "contributor MBIDs are incomplete; contributor names are represented without MBIDs"}
+	} else if mbidsPresent {
+		fields[fieldName+".mbids"] = TagFieldResult{Status: "unsupported", Reason: "contributor MBIDs have no approved normalized TagLib mapping"}
+	} else {
+		delete(fields, fieldName+".mbids")
+	}
+}
+
 func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, bool) {
 	switch field {
 	case "sort_title":
@@ -309,6 +377,12 @@ func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, boo
 		if scope == librarymetadata.ScopePosition {
 			return []string{"WORK", "MUSICBRAINZ_WORKID"}, true
 		}
+	case "contributors":
+		if scope == librarymetadata.ScopePosition {
+			return []string{"COMPOSER", "LYRICIST", "CONDUCTOR", "ARRANGER", "ENGINEER", "PRODUCER", "REMIXER", "DJMIXER", "MIXER"}, true
+		}
+	case "content_advisory":
+		return []string{"ITUNESADVISORY"}, true
 	}
 	key, ok := normalizedTagKey(scope, field)
 	if !ok {

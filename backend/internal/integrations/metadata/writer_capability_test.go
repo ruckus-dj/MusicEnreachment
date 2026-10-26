@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -12,13 +13,13 @@ import (
 	"go.senan.xyz/taglib"
 )
 
-// These are round-trip capability checks, not mocks: TagLib must write the
-// copied real container and a fresh TagLib read must observe the values.
-func TestTagLibWriteTagsRoundTripsKnownStandardFields(t *testing.T) {
+// These are round-trip capability checks, not mocks: the production metadata
+// writer must mutate the copied real container and an independent production
+// reader must observe the requested canonical values.
+func TestMetadataWriterRoundTripsKnownStandardFields(t *testing.T) {
 	for _, ext := range []string{".flac", ".mp3", ".m4a", ".mka"} {
 		t.Run(ext, func(t *testing.T) {
-			fixture := "eg" + ext
-			contents, err := os.ReadFile(filepath.Join("testdata", fixture))
+			contents, err := os.ReadFile(filepath.Join("testdata", "eg"+ext))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -37,32 +38,108 @@ func TestTagLibWriteTagsRoundTripsKnownStandardFields(t *testing.T) {
 				taglib.MusicBrainzTrackID:        {"recording-mbid"},
 				taglib.MusicBrainzReleaseTrackID: {"releasetrack-mbid"},
 				taglib.ReleaseType:               {"album", "compilation"},
+				"ITUNESADVISORY":                 {"1"},
+				"COMPOSER":                       {"Composer One 音楽", "Composer, Two"},
+				"LYRICIST":                       {"Lyricist One 作詞者", "Lyricist, Two"},
+				"CONDUCTOR":                      {"Conductor One", "Conductor, Two"},
+				"ARRANGER":                       {"Arranger One", "Arranger, Two"},
+				"ENGINEER":                       {"Engineer One", "Engineer, Two"},
+				"PRODUCER":                       {"Producer One", "Producer, Two"},
+				"REMIXER":                        {"Remixer One", "Remixer, Two"},
+				"DJMIXER":                        {"DJ Mixer One", "DJ Mixer, Two"},
+				"MIXER":                          {"Mixer One", "Mixer, Two"},
 				taglib.Lyrics:                    {"[00:01.00]First synced line\n[00:02.50]Second synced line\n"},
 			}
-			if err := taglib.WriteTags(path, want, taglib.Clear); err != nil {
-				t.Fatalf("WriteTags: %v", err)
-			}
-			got, err := taglib.ReadTags(path)
+			// Contributor names deliberately include commas, Unicode, and ordered
+			// multiple values. A lossy TIPL parse is a capability failure, not a
+			// reason to rewrite requested values. Duplicate-value behavior is
+			// covered separately below so a container's de-duplication is visible.
+			imageBytes := generatedPNG(t)
+			result, err := (Writer{}).Write(context.Background(), path, want, &Cover{Data: imageBytes, MIME: "image/png"})
 			if err != nil {
-				t.Fatalf("fresh ReadTags: %v", err)
+				t.Fatalf("Write: %v", err)
 			}
 			for key, values := range want {
-				assertValues(t, got, key, values)
+				assertValues(t, result.Tags, key, values)
 			}
-
-			imageBytes := generatedPNG(t)
-			if err := taglib.WriteImage(path, imageBytes); err != nil {
-				t.Fatalf("WriteImage: %v", err)
-			}
-			gotImage, err := taglib.ReadImage(path)
+			fresh, err := (Reader{}).Read(context.Background(), path, ReadRequest{CoverInspection: true})
 			if err != nil {
-				t.Fatalf("fresh ReadImage: %v", err)
+				t.Fatalf("fresh Read: %v", err)
 			}
-			if !bytes.Equal(gotImage, imageBytes) {
-				t.Fatal("fresh ReadImage did not return the written cover image bytes")
+			for key, values := range want {
+				assertValues(t, fresh.Tags, key, values)
+			}
+			if result.Cover == nil || result.Cover.Error != "" || !bytes.Equal(result.Cover.Data, imageBytes) {
+				t.Fatalf("write cover observation = %#v", result.Cover)
+			}
+			if fresh.CoverInspection == nil || !fresh.CoverInspection.Observed || fresh.CoverInspection.Cover == nil {
+				t.Fatalf("fresh cover inspection = %#v", fresh.CoverInspection)
+			}
+			if !bytes.Equal(fresh.CoverInspection.Cover.Data, imageBytes) {
+				t.Fatal("fresh cover inspection did not return the written cover image bytes")
 			}
 		})
 	}
+}
+
+func TestMetadataWriterRoundTripsDuplicateContributorValues(t *testing.T) {
+	for _, ext := range []string{".flac", ".mp3", ".m4a", ".mka"} {
+		t.Run(ext, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join("testdata", "eg"+ext))
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := writeMetadataFixture(t, ext, contents)
+			want := map[string][]string{
+				"COMPOSER":  {"Same Contributor", "Same Contributor"},
+				"LYRICIST":  {"Same Contributor", "Same Contributor"},
+				"CONDUCTOR": {"Same Contributor", "Same Contributor"},
+				"ARRANGER":  {"Same Contributor", "Same Contributor"},
+				"ENGINEER":  {"Same Contributor", "Same Contributor"},
+				"PRODUCER":  {"Same Contributor", "Same Contributor"},
+				"REMIXER":   {"Same Contributor", "Same Contributor"},
+				"DJMIXER":   {"Same Contributor", "Same Contributor"},
+				"MIXER":     {"Same Contributor", "Same Contributor"},
+			}
+			result, err := (Writer{}).Write(context.Background(), path, want, nil)
+			if err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			for key, values := range want {
+				assertValues(t, result.Tags, key, values)
+			}
+			fresh, err := (Reader{}).Read(context.Background(), path, ReadRequest{})
+			if err != nil {
+				t.Fatalf("fresh Read: %v", err)
+			}
+			for key, values := range want {
+				assertValues(t, fresh.Tags, key, values)
+			}
+		})
+	}
+}
+
+// TestTagLibDirectMPEGProducerCommaIsAnUpstreamLimitation records the TagLib
+// behavior that the production writer adapter exists to avoid. TagLib's
+// normalized MPEG writer serializes PRODUCER as a comma-joined TIPL value, so a
+// direct fresh TagLib read splits "Producer, Two" into separate values. This
+// regression documents why Writer.Write routes canonical contributor roles
+// through native aliases; the production round-trip matrix above is the hard
+// contract, not this upstream serialization.
+func TestTagLibDirectMPEGProducerCommaIsAnUpstreamLimitation(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("testdata", "eg.mp3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeMetadataFixture(t, ".mp3", contents)
+	if err := taglib.WriteTags(path, map[string][]string{"PRODUCER": {"Producer One", "Producer, Two"}}, taglib.Clear); err != nil {
+		t.Fatalf("direct WriteTags: %v", err)
+	}
+	got, err := taglib.ReadTags(path)
+	if err != nil {
+		t.Fatalf("direct fresh ReadTags: %v", err)
+	}
+	assertValues(t, got, "PRODUCER", []string{"Producer One", "Producer", " Two"})
 }
 
 func generatedPNG(t *testing.T) []byte {

@@ -94,11 +94,14 @@ func (writer Writer) Write(ctx context.Context, preparedPath string, requested m
 	if preparedPath == "" {
 		return WriteResult{}, errors.New("prepared metadata path is required")
 	}
+	if err := validateTagTransport(requested); err != nil {
+		return WriteResult{}, fmt.Errorf("validate normalized metadata tags: %w", err)
+	}
 	deletions := emptyTagKeys(requested)
 	expected := nonEmptyTags(requested)
 	writeTags := writer.writeTags
 	if writeTags == nil {
-		writeTags = taglib.WriteTags
+		writeTags = writeNormalizedTagLib
 	}
 	if err := ctx.Err(); err != nil {
 		return WriteResult{}, err
@@ -158,6 +161,9 @@ func (writer Writer) WriteWithOptionalLyrics(ctx context.Context, preparedPath s
 	if preparedPath == "" {
 		return OptionalLyricsWriteResult{}, errors.New("prepared metadata path is required")
 	}
+	if err := validateTagTransport(requested); err != nil {
+		return OptionalLyricsWriteResult{}, fmt.Errorf("validate normalized metadata tags: %w", err)
+	}
 	lyrics, ok := requested["LYRICS"]
 	if !ok || len(lyrics) != 1 || strings.TrimSpace(lyrics[0]) == "" {
 		return OptionalLyricsWriteResult{}, errors.New("optional lyrics must contain one non-empty text value")
@@ -166,7 +172,7 @@ func (writer Writer) WriteWithOptionalLyrics(ctx context.Context, preparedPath s
 	delete(expected, "LYRICS")
 	writeTags := writer.writeTags
 	if writeTags == nil {
-		writeTags = taglib.WriteTags
+		writeTags = writeNormalizedTagLib
 	}
 	if err := ctx.Err(); err != nil {
 		return OptionalLyricsWriteResult{}, err
@@ -226,6 +232,9 @@ func (writer Writer) WriteWithOptionalAssets(ctx context.Context, preparedPath s
 	if preparedPath == "" {
 		return OptionalAssetsWriteResult{}, errors.New("prepared metadata path is required")
 	}
+	if err := validateTagTransport(requested); err != nil {
+		return OptionalAssetsWriteResult{}, fmt.Errorf("validate normalized metadata tags: %w", err)
+	}
 	lyrics, lyricsRequested := requested["LYRICS"]
 	if lyricsRequested && (len(lyrics) != 1 || strings.TrimSpace(lyrics[0]) == "") {
 		return OptionalAssetsWriteResult{}, errors.New("optional lyrics must contain one non-empty text value")
@@ -241,7 +250,7 @@ func (writer Writer) WriteWithOptionalAssets(ctx context.Context, preparedPath s
 	delete(mandatory, "LYRICS")
 	writeTags := writer.writeTags
 	if writeTags == nil {
-		writeTags = taglib.WriteTags
+		writeTags = writeNormalizedTagLib
 	}
 	if err := ctx.Err(); err != nil {
 		return OptionalAssetsWriteResult{}, err
@@ -506,6 +515,9 @@ func safeWriteTags(write func(string, map[string][]string, taglib.WriteOption) e
 			err = errors.New("metadata tag writer panicked")
 		}
 	}()
+	if err := validateTagTransport(tags); err != nil {
+		return err
+	}
 	return write(path, tags, options)
 }
 
