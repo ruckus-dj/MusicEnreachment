@@ -11,7 +11,7 @@ import (
 func TestCheckPublicationResultCurrentManualLyricsPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f, repository, input, _, _ := prepareManualLyricsCommitFixture(t)
+	f, repository, input, _ := prepareManualLyricsCommitFixture(t)
 	seedManualPublicationResultChoice(t, ctx, f)
 	input.Format = "source"
 	if err := input.Validate(); err != nil {

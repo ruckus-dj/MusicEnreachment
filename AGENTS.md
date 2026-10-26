@@ -151,6 +151,11 @@ raising that buffer is not a substitute for streaming the dependency inspection.
   fixture (`preparePublicationResultFixture`), not a legacy exposure/installed
   fixture. Prove the successful commit baseline before testing rejected proof;
   `(false, nil)` before validation does not demonstrate proof rejection.
+- The journal-free result fixture supplies a manifest, not namespace claim and
+  reservation rows: seed those explicitly for cleanup-authority SQL tests.
+  A successful result consumes its attempt, claim and holds. Foreign-consumer
+  tests must create a real live owner, not silently insert zero rows by selecting
+  from the consumed publisher attempt; assert that evidence mutations affect rows.
 - Do not let agents edit the working tree while a commit hook is running: even
   unrelated edits can make pre-commit report "files were modified by this hook"
   after a successful gate. Finish edits first, then run the hook against a stable

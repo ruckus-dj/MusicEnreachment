@@ -165,15 +165,6 @@ func TestCheckPublicationSourceHoldForDeliveryRequiresLiveAnchoredHoldPostgreSQL
 			}
 		})
 	}
-	if changed, err := repo.MarkPublicationQuiescent(ctx, f.guard); err != nil || !changed {
-		t.Fatalf("mark quiescent = %t, %v", changed, err)
-	}
-	if _, valid, err := repo.CheckPublicationSourceHoldForDelivery(ctx, f.guard, holdUUID); err != nil || valid {
-		t.Fatalf("quiescent claim valid=%t, err=%v", valid, err)
-	}
-	if count := countHolds(); count != 1 {
-		t.Fatalf("hold row count after quiescence = %d, want 1", count)
-	}
 	if _, valid, err := repo.CheckPublicationSourceHoldForDelivery(ctx, f.guard, uuid.New()); err != nil || valid {
 		t.Fatalf("missing hold valid=%t, err=%v", valid, err)
 	}

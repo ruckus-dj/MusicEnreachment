@@ -1,0 +1,182 @@
+package persistence
+
+import (
+	"context"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+)
+
+// PublicationStageObservation is the source-free readback for one artifact.
+type PublicationStageObservation struct {
+	Version              int               `json:"version"`
+	RelativePath         string            `json:"relative_path"`
+	Ownership            ArtifactOwnership `json:"ownership"`
+	PayloadSHA256        string            `json:"payload_sha256,omitempty"`
+	ActualAudio          json.RawMessage   `json:"actual_audio"`
+	ActualMetadata       json.RawMessage   `json:"actual_metadata"`
+	ActualAssets         json.RawMessage   `json:"actual_assets,omitempty"`
+	QualityPolicyVersion int               `json:"quality_policy_version,omitempty"`
+}
+
+// Clone detaches JSON evidence and optional ownership pointers from caller-owned memory.
+func (o PublicationStageObservation) Clone() PublicationStageObservation {
+	o.ActualAudio = append(json.RawMessage(nil), o.ActualAudio...)
+	o.ActualMetadata = append(json.RawMessage(nil), o.ActualMetadata...)
+	o.ActualAssets = append(json.RawMessage(nil), o.ActualAssets...)
+	if o.Ownership.ExpectedSize != nil {
+		value := *o.Ownership.ExpectedSize
+		o.Ownership.ExpectedSize = &value
+	}
+	if o.Ownership.ExpectedMTime != nil {
+		value := *o.Ownership.ExpectedMTime
+		o.Ownership.ExpectedMTime = &value
+	}
+	return o
+}
+
+// ArtifactOwnership captures the expected filesystem identity for an artifact.
+type ArtifactOwnership struct {
+	ExpectedSize  *int64 `json:"expected_size,omitempty"`
+	ExpectedMTime *int64 `json:"expected_mtime,omitempty"`
+}
+
+// CheckPublicationDelivery confirms that the guarded delivery is still live.
+func (repository *SetupManagerRepository) CheckPublicationDelivery(ctx context.Context, guard PublicationDeliveryGuard) (bool, error) {
+	if err := validatePublicationDeliveryGuard(guard); err != nil {
+		return false, err
+	}
+	valid := false
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, _, _, ok, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "check publication delivery")
+		valid = ok
+		return err
+	})
+	return valid, err
+}
+
+// Lock order is output admission gate, epoch, position, attempt, operation,
+// River job, claim. The actual River row must remain running at its frozen attempt.
+func lockAndValidatePublicationDelivery(ctx context.Context, tx bun.Tx, guard PublicationDeliveryGuard, action string) (*TrackPublicationAttempt, *Operation, *PublicationExecutionClaim, bool, error) {
+	attempt, op, claim, live, err := lockPublicationDeliveryIdentity(ctx, tx, guard, action)
+	if err != nil || !live {
+		return attempt, op, claim, live, err
+	}
+	if claim.State != "executing" {
+		return nil, nil, nil, false, nil
+	}
+	var currentGeneration *uuid.UUID
+	err = tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, guard.ExpectedPositionID).Scan(ctx, &currentGeneration)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil, false, fmt.Errorf("%s: read current publication: %w", action, err)
+	}
+	if !sameOptionalUUID(currentGeneration, attempt.ExpectedGeneration) {
+		return nil, nil, nil, false, nil
+	}
+	return attempt, op, claim, true, nil
+}
+
+func lockPublicationDeliveryIdentity(ctx context.Context, tx bun.Tx, guard PublicationDeliveryGuard, action string) (*TrackPublicationAttempt, *Operation, *PublicationExecutionClaim, bool, error) {
+	fail := func(err error) (*TrackPublicationAttempt, *Operation, *PublicationExecutionClaim, bool, error) {
+		return nil, nil, nil, false, err
+	}
+	if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+		return fail(fmt.Errorf("%s: acquire output admission: %w", action, err))
+	}
+	var epoch uuid.UUID
+	if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &epoch); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil, false, nil
+		}
+		return fail(fmt.Errorf("%s: lock epoch: %w", action, err))
+	}
+	if epoch != guard.Epoch {
+		return nil, nil, nil, false, nil
+	}
+	var position uuid.UUID
+	if err := tx.NewRaw(`SELECT id FROM release_track WHERE id=? FOR UPDATE`, guard.ExpectedPositionID).Scan(ctx, &position); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil, false, nil
+		}
+		return fail(fmt.Errorf("%s: lock position: %w", action, err))
+	}
+	attempt := new(TrackPublicationAttempt)
+	if err := tx.NewSelect().Model(attempt).Where("operation_id=?", guard.OperationID).For("UPDATE").Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil, false, nil
+		}
+		return fail(fmt.Errorf("%s: lock attempt: %w", action, err))
+	}
+	op := new(Operation)
+	if err := tx.NewSelect().Model(op).Where("id=?", guard.OperationID).For("UPDATE").Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil, false, nil
+		}
+		return fail(fmt.Errorf("%s: lock operation: %w", action, err))
+	}
+	var riverState string
+	var riverAttempt int
+	if err := tx.NewRaw(`SELECT state, attempt FROM river_job WHERE id=? FOR UPDATE`, guard.RiverJobID).Scan(ctx, &riverState, &riverAttempt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil, false, nil
+		}
+		return fail(fmt.Errorf("%s: lock River job: %w", action, err))
+	}
+	claim := new(PublicationExecutionClaim)
+	if err := tx.NewSelect().Model(claim).Where("operation_id=? AND application_attempt=?", guard.OperationID, guard.ApplicationAttempt).For("UPDATE").Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil, false, nil
+		}
+		return fail(fmt.Errorf("%s: lock claim: %w", action, err))
+	}
+	if op.Kind != "publish_track_v1" || op.State != "running" || op.Attempt != guard.ApplicationAttempt || op.RiverJobID == nil || *op.RiverJobID != guard.RiverJobID ||
+		riverState != "running" || riverAttempt != guard.RiverAttempt || attempt.PositionID != guard.ExpectedPositionID || attempt.Epoch != guard.Epoch ||
+		attempt.CandidateGeneration != guard.CandidateGeneration || !publicationClaimMatches(*claim, guard) {
+		return nil, nil, nil, false, nil
+	}
+	return attempt, op, claim, true, nil
+}
+
+func validPublicationStageObservation(o PublicationStageObservation) bool {
+	if o.Version != 1 || o.RelativePath == "" || strings.ContainsAny(o.RelativePath, "\\\x00") || path.IsAbs(o.RelativePath) ||
+		len(o.RelativePath) >= 2 && ((o.RelativePath[0] >= 'A' && o.RelativePath[0] <= 'Z') || (o.RelativePath[0] >= 'a' && o.RelativePath[0] <= 'z')) && o.RelativePath[1] == ':' ||
+		path.Clean(o.RelativePath) != o.RelativePath {
+		return false
+	}
+	for _, part := range strings.Split(o.RelativePath, "/") {
+		if part == ".." || part == "." || part == "" {
+			return false
+		}
+	}
+	if o.Ownership.ExpectedSize != nil && *o.Ownership.ExpectedSize < 0 {
+		return false
+	}
+	if o.PayloadSHA256 != "" {
+		b, err := hex.DecodeString(o.PayloadSHA256)
+		if err != nil || len(b) != 32 {
+			return false
+		}
+	}
+	if !publicationJSONObject(o.ActualAudio) || !publicationJSONObject(o.ActualMetadata) {
+		return false
+	}
+	if len(o.ActualAssets) == 0 {
+		return o.QualityPolicyVersion == 0
+	}
+	assets, err := DecodePublicationAssetOutcomes(o.ActualAssets)
+	if err != nil {
+		return false
+	}
+	var metadata PublicationCommitMetadata
+	if strictMetadata(o.ActualMetadata, &metadata) != nil || assets.ValidateAgainstMetadata(metadata.Tags, nil) != nil {
+		return false
+	}
+	return o.QualityPolicyVersion >= 0
+}

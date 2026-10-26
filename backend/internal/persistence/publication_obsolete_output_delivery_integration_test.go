@@ -36,7 +36,8 @@ func (i obsoleteCleanupTestInserter) InsertTx(ctx context.Context, tx *sql.Tx, a
 func TestAdmitObsoletePublicationOutputCleanupAtomicPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f, _, _, repo := readyFirstPublicationCommitFixture(t)
+	f := preparePublicationResultFixture(t)
+	repo := NewSetupManagerRepository(f.db)
 	initializeRiver(t, ctx, f.db)
 	position := f.guard.ExpectedPositionID
 	oldGeneration := uuid.New()

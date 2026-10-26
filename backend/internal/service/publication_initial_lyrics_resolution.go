@@ -21,7 +21,6 @@ func resolveInitialPublicationLyrics(
 ) (persistence.PublicationInitialLyricsAcquisitionRecord, error) {
 	record := persistence.PublicationInitialLyricsAcquisitionRecord{
 		Version:   persistence.PublicationInitialLyricsVersion,
-		Kind:      persistence.PublicationInitialLyricsAcquisitionKind,
 		Authority: authority,
 		Source:    "none",
 	}

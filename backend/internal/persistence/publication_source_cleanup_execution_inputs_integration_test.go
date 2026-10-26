@@ -4,11 +4,13 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -18,6 +20,28 @@ func TestValidatePublicationSourceCleanupExecutionInputsPostgreSQL(t *testing.T)
 	t.Parallel()
 	ctx := context.Background()
 	f, repo, variantID := publicationSourceCleanupReadyFixture(t)
+	// The journal-free result fixture writes the publication manifest on the
+	// attempt but does not persist namespace ownership. Seed the committed
+	// publication's actual current-generation claims for this authority test.
+	for _, node := range []PublicationNamespaceNode{
+		{CanonicalKey: "album", RelativePath: "album", NodeKind: "dir", DirectoryScope: "album"},
+		{CanonicalKey: "album/track.flac", RelativePath: "album/track.flac", NodeKind: "file"},
+	} {
+		digest := sha256.Sum256([]byte(node.CanonicalKey))
+		claimID := uuid.New()
+		var owner any = f.guard.ExpectedPositionID
+		var scope any
+		if node.NodeKind == "dir" {
+			owner = nil
+			scope = node.DirectoryScope
+		}
+		if _, err := f.db.ExecContext(ctx, `INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id,directory_scope_key) VALUES (?,?,?,?,?,?,?,?)`, claimID, f.guard.Epoch, digest[:], node.CanonicalKey, node.RelativePath, node.NodeKind, owner, scope); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.db.ExecContext(ctx, `INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?,?,?)`, claimID, f.guard.ExpectedPositionID, f.guard.CandidateGeneration); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := f.db.NewRaw(`UPDATE source_root SET status=?`, SourceRootStatusAvailable).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -95,10 +119,6 @@ func TestValidatePublicationSourceCleanupExecutionInputsPostgreSQL(t *testing.T)
 		{"link policy value", `UPDATE track_source SET policy_version='cleanup-validation-v2' WHERE media_variant_id=?`, variantID},
 		{"link removal", `DELETE FROM track_source WHERE media_variant_id=?`, variantID},
 		{"borrower validation", `UPDATE track_publication SET validated_at=validated_at+interval '1 microsecond' WHERE position_id=?`, request.PositionID},
-		{"foreign publication hold", `INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime)
-			SELECT op.id,op.attempt,op.river_job_id,a.epoch,'22222222-2222-4222-8222-222222222222',o.source_root_id,o.source_location_id,o.work_id,l.media_variant_id,r.configured_path,r.inventory_path,l.relative_path,l.size_bytes,l.mtime
-			FROM operation op JOIN track_publication_attempt a ON a.operation_id=op.id CROSS JOIN source_cleanup_owner o
-			JOIN source_location l ON l.id=o.source_location_id JOIN source_root r ON r.id=o.source_root_id WHERE op.id=?`, f.guard.OperationID},
 		{"owner root mismatch", `UPDATE source_cleanup_owner SET source_root_id='11111111-1111-4111-8111-111111111111' WHERE operation_id=?`, admitted.OperationID},
 		{"retained operation source work hold", `INSERT INTO operation_source_work_hold(operation_id,work_id) SELECT ?,work_id FROM source_cleanup_owner WHERE operation_id=?`, []any{f.guard.OperationID, admitted.OperationID}},
 		{"output epoch", `UPDATE publication_namespace_state SET output_epoch=? WHERE singleton`, uuid.New()},
@@ -127,6 +147,143 @@ func TestValidatePublicationSourceCleanupExecutionInputsPostgreSQL(t *testing.T)
 				t.Fatalf("validate changed evidence: %v", err)
 			}
 		})
+	}
+	// A foreign publisher remains a source consumer only while its real River
+	// job, queued operation, frozen attempt, and source-hold grant all exist in
+	// this database. The cleanup publisher's own attempt was consumed above.
+	var baselineHolds int
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_source_hold WHERE source_location_id=(SELECT source_location_id FROM source_cleanup_owner WHERE operation_id=? LIMIT 1)`, admitted.OperationID).Scan(ctx, &baselineHolds); err != nil {
+		t.Fatal(err)
+	}
+	if baselineHolds != 0 {
+		t.Fatalf("baseline foreign publication holds = %d, want 0", baselineHolds)
+	}
+	err = f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var rootID, locationID, workID, variant uuid.UUID
+		var configuredPath, inventoryPath, relativePath string
+		var size int64
+		var mtime time.Time
+		if err := tx.NewRaw(`SELECT o.source_root_id,o.source_location_id,o.work_id,l.media_variant_id,r.configured_path,r.inventory_path,l.relative_path,l.size_bytes,l.mtime
+			FROM source_cleanup_owner o JOIN source_location l ON l.id=o.source_location_id JOIN source_root r ON r.id=o.source_root_id
+			WHERE o.operation_id=? LIMIT 1`, admitted.OperationID).
+			Scan(ctx, &rootID, &locationID, &workID, &variant, &configuredPath, &inventoryPath, &relativePath, &size, &mtime); err != nil {
+			return err
+		}
+		positionID, operationID, candidateGeneration := uuid.New(), uuid.New(), uuid.New()
+		releaseID, trackID, epoch := uuid.New(), uuid.New(), f.guard.Epoch
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'foreign publication')`, releaseID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'foreign publication')`, trackID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
+			return err
+		}
+		jobArgs, err := json.Marshal(struct {
+			OperationID uuid.UUID `json:"operation_id"`
+		}{OperationID: operationID})
+		if err != nil {
+			return err
+		}
+		var foreignJobID int64
+		if err := tx.NewRaw(`INSERT INTO river_job(kind,args,state,attempt) VALUES ('publish_track_v1',?::jsonb,'available',0) RETURNING id`, string(jobArgs)).Scan(ctx, &foreignJobID); err != nil {
+			return err
+		}
+		snapshot, err := json.Marshal(struct {
+			Version    int       `json:"version"`
+			PositionID uuid.UUID `json:"position_id"`
+			Epoch      uuid.UUID `json:"output_epoch"`
+			IntentKind string    `json:"intent_kind"`
+		}{Version: 1, PositionID: positionID, Epoch: epoch, IntentKind: "audio"})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,attempt,river_job_id) VALUES (?,'publish_track_v1','queued','queued',?::jsonb,1,?)`, operationID, string(snapshot), foreignJobID); err != nil {
+			return err
+		}
+		input := publicationInputsFixture(t, "audio")
+		input.Audio.RootID = rootID
+		input.Audio.LocationID = locationID
+		input.Audio.WorkID = workID
+		input.Audio.MediaVariantID = variant
+		input.Audio.ConfiguredRootPath = configuredPath
+		input.Audio.InventoryRootPath = inventoryPath
+		input.Audio.RelativePath = relativePath
+		input.Audio.SizeBytes = size
+		input.Audio.MTime = mtime.UTC()
+		frozenInputs, err := json.Marshal(input)
+		if err != nil {
+			return err
+		}
+		namespaceNodes := []PublicationNamespaceNode{
+			{CanonicalKey: "foreign", RelativePath: "foreign", NodeKind: "dir", DirectoryScope: "foreign"},
+			{CanonicalKey: "foreign/track.flac", RelativePath: "foreign/track.flac", NodeKind: "file"},
+		}
+		namespaceManifest, err := json.Marshal(struct {
+			Version int                        `json:"version"`
+			Nodes   []PublicationNamespaceNode `json:"nodes"`
+		}{Version: 1, Nodes: namespaceNodes})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal)
+			VALUES (?,?,?,?,'audio','queued',?::jsonb,?::jsonb,'[]'::jsonb)`, operationID, positionID, epoch, candidateGeneration, string(frozenInputs), string(namespaceManifest)); err != nil {
+			return err
+		}
+		for _, node := range namespaceNodes {
+			digest := sha256.Sum256([]byte(node.CanonicalKey))
+			claimID := uuid.New()
+			var owner any = positionID
+			var scope any
+			if node.NodeKind == "dir" {
+				owner = nil
+				scope = node.DirectoryScope
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id,directory_scope_key) VALUES (?,?,?,?,?,?,?,?)`, claimID, epoch, digest[:], node.CanonicalKey, node.RelativePath, node.NodeKind, owner, scope); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?,?,?)`, claimID, positionID, candidateGeneration); err != nil {
+				return err
+			}
+		}
+		result, err := tx.ExecContext(ctx, `INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime)
+			VALUES (?,1,?,?,?,?,?,?,?,?,?,?,?,?)`, operationID, foreignJobID, epoch, uuid.New(), rootID, locationID, workID, variant, configuredPath, inventoryPath, relativePath, size, mtime)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return errors.New("foreign publication source hold insert affected no rows")
+		}
+		var currentHolds int
+		if err := tx.NewRaw(`SELECT count(*) FROM publication_source_hold WHERE source_location_id=?`, locationID).Scan(ctx, &currentHolds); err != nil {
+			return err
+		}
+		if currentHolds != baselineHolds+1 {
+			return errors.New("foreign publication source hold did not establish the expected baseline")
+		}
+		valid, err := validatePublicationSourceCleanupExecutionInputsTx(ctx, tx, guard)
+		if err != nil {
+			return err
+		}
+		if valid {
+			t.Error("foreign live publication hold validated")
+		}
+		return rollbackMutation
+	})
+	if !errors.Is(err, rollbackMutation) {
+		t.Fatalf("validate foreign publication hold: %v", err)
+	}
+	var restoredHolds int
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_source_hold WHERE source_location_id=(SELECT source_location_id FROM source_cleanup_owner WHERE operation_id=? LIMIT 1)`, admitted.OperationID).Scan(ctx, &restoredHolds); err != nil {
+		t.Fatal(err)
+	}
+	if restoredHolds != baselineHolds {
+		t.Fatalf("foreign publication hold rollback count = %d, want baseline %d", restoredHolds, baselineHolds)
 	}
 	if !validate() {
 		t.Fatal("rolled-back evidence mutations changed the valid baseline")

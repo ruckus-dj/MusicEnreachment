@@ -31,7 +31,7 @@ func TestCommitPublicationResultCarriesUnchangedCoverSummaryPostgreSQL(t *testin
 		t.Run(outcome, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			f, repository, input, observation, _ := prepareManualLyricsCommitFixture(t)
+			f, repository, input, observation := prepareManualLyricsCommitFixture(t)
 			alignManualPublicationResultTarget(t, ctx, f, &observation)
 			digest := fmt.Sprintf("%x", sha256.Sum256([]byte("cover bytes")))
 			size := int64(11)
@@ -78,7 +78,7 @@ func TestCommitPublicationResultCarriesUnchangedCoverSummaryPostgreSQL(t *testin
 func TestCommitPublicationResultSamePathRewriteRetiresOldReservationsPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f, repository, input, observation, _ := prepareManualLyricsCommitFixture(t)
+	f, repository, input, observation := prepareManualLyricsCommitFixture(t)
 	alignManualPublicationResultTarget(t, ctx, f, &observation)
 
 	var oldGeneration uuid.UUID
@@ -149,7 +149,7 @@ func TestCommitPublicationResultSamePathRewriteRetiresOldReservationsPostgreSQL(
 func TestPublicationCoverEmbeddingV2SQLConstraintPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f, _, _, _, _ := prepareManualLyricsCommitFixture(t)
+	f, _, _, _ := prepareManualLyricsCommitFixture(t)
 	valid := map[string]any{
 		"version": 2, "generation": uuid.NewString(), "receipt_operation_id": uuid.NewString(),
 		"receipt_release_id": uuid.NewString(), "receipt_revision": 1, "receipt_mode": "manual",
@@ -194,7 +194,7 @@ func TestPublicationCoverEmbeddingV2SQLConstraintPostgreSQL(t *testing.T) {
 func TestCommitPublicationResultManualLyricsFreshnessPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f, repository, input, observation, _ := prepareManualLyricsCommitFixture(t)
+	f, repository, input, observation := prepareManualLyricsCommitFixture(t)
 	alignManualPublicationResultTarget(t, ctx, f, &observation)
 	result := PublicationResult{
 		Observation: observation,
@@ -222,7 +222,7 @@ func TestCommitPublicationResultManualLyricsFreshnessPostgreSQL(t *testing.T) {
 		t.Fatalf("manual lyrics receipt does not bind frozen authority: %+v", receipt)
 	}
 
-	stale, staleRepository, staleInput, staleObservation, _ := prepareManualLyricsCommitFixture(t)
+	stale, staleRepository, staleInput, staleObservation := prepareManualLyricsCommitFixture(t)
 	alignManualPublicationResultTarget(t, ctx, stale, &staleObservation)
 	if _, err := stale.db.ExecContext(ctx, `UPDATE release_track SET metadata_revision=metadata_revision+1 WHERE id=?`, stale.guard.ExpectedPositionID); err != nil {
 		t.Fatal(err)
@@ -234,7 +234,7 @@ func TestCommitPublicationResultManualLyricsFreshnessPostgreSQL(t *testing.T) {
 	}
 	assertManualLyricsResultUnchanged(t, ctx, stale, staleInput)
 
-	drift, driftRepository, driftInput, driftObservation, _ := prepareManualLyricsCommitFixture(t)
+	drift, driftRepository, driftInput, driftObservation := prepareManualLyricsCommitFixture(t)
 	alignManualPublicationResultTarget(t, ctx, drift, &driftObservation)
 	changed := "[00:03.00]different\r\n"
 	metadata, err := json.Marshal(PublicationCommitMetadata{Version: 1, Tags: map[string][]string{"TITLE": {"published title"}, "LYRICS": {changed}}})

@@ -15,7 +15,7 @@ import (
 func TestCoverRewriteCarriesOnlyCurrentManualLyricsReceiptPostgreSQL(t *testing.T) {
 	for _, newerDesired := range []bool{false, true} {
 		t.Run(fmt.Sprintf("newer_desired_%t", newerDesired), func(t *testing.T) {
-			f, repository, input, observation, _ := prepareManualLyricsCommitFixture(t)
+			f, repository, input, observation := prepareManualLyricsCommitFixture(t)
 			ctx := context.Background()
 			seedManualPublicationResultChoice(t, ctx, f)
 			var previous TrackPublication

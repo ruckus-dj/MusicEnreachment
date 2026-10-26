@@ -14,7 +14,7 @@ import (
 func preparingManualLyricsFLACFixture(t *testing.T) (publicationExecutionFixture, *SetupManagerRepository, PublicationInputs) {
 	t.Helper()
 	ctx := context.Background()
-	f, repo, input, _, _ := prepareManualLyricsCommitFixture(t)
+	f, repo, input, _ := prepareManualLyricsCommitFixture(t)
 	input.Version = PublicationInputsVersion
 	input.QualityPolicyVersion = publication.QualityPolicyVersion
 	input.Format = publication.AudioFormatSource
@@ -111,6 +111,20 @@ func TestPublicationManualLyricsPreparationInputsRejectsStaleCurrentAndMissingRe
 			},
 		},
 		{
+			name: "same-generation ownership drift",
+			mutate: func(f *publicationExecutionFixture) error {
+				_, err := f.db.ExecContext(ctx, `UPDATE track_publication SET ownership=jsonb_set(ownership,'{identity,size_bytes}',to_jsonb((ownership #>> '{identity,size_bytes}')::bigint+1)) WHERE position_id=?`, f.guard.ExpectedPositionID)
+				return err
+			},
+		},
+		{
+			name: "same-generation audio facts drift",
+			mutate: func(f *publicationExecutionFixture) error {
+				_, err := f.db.ExecContext(ctx, `UPDATE track_publication SET actual_audio=jsonb_set(actual_audio,'{facts,stream_index}',to_jsonb((actual_audio #>> '{facts,stream_index}')::int+1)) WHERE position_id=?`, f.guard.ExpectedPositionID)
+				return err
+			},
+		},
+		{
 			name: "missing candidate namespace reservation",
 			mutate: func(f *publicationExecutionFixture) error {
 				_, err := f.db.ExecContext(ctx, `DELETE FROM publication_namespace_reservation WHERE generation=?`, f.guard.CandidateGeneration)
@@ -121,6 +135,9 @@ func TestPublicationManualLyricsPreparationInputsRejectsStaleCurrentAndMissingRe
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f, repo, _ := preparingManualLyricsFLACFixture(t)
+			if _, ok, err := repo.PublicationManualLyricsPreparationInputs(ctx, f.guard); err != nil || !ok {
+				t.Fatalf("valid manual preparation baseline: ok:%v err:%v", ok, err)
+			}
 			if err := tc.mutate(&f); err != nil {
 				t.Fatal(err)
 			}

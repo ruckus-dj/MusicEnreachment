@@ -15,7 +15,7 @@ import (
 func TestReadLibraryPublicationContextUsesPositionMetadataAndCurrentNamespacePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f, repo, input, _, _ := prepareManualLyricsCommitFixture(t)
+	f, repo, input, _ := prepareManualLyricsCommitFixture(t)
 
 	const positionEnvelope = `{"version":1,"scope":"position","desired":{"synced_lyrics":{"state":"value","value":"[00:01.00]position lyrics\n","authority":"manual","provenance":{"kind":"manual"}}}}`
 	// The local track carries its own valid track-scope metadata. synced_lyrics is
@@ -112,7 +112,7 @@ func TestReadLibraryPublicationContextUsesPositionMetadataAndCurrentNamespacePos
 func TestReadLibraryPublicationContextRejectsWrongReleaseMembershipPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f, repo, _, _, _ := prepareManualLyricsCommitFixture(t)
+	f, repo, _, _ := prepareManualLyricsCommitFixture(t)
 	if _, err := repo.ReadLibraryPublicationContext(ctx, uuid.New(), f.guard.ExpectedPositionID); !errors.Is(err, ErrPublicationPositionNotFound) {
 		t.Fatalf("wrong release membership error = %v, want %v", err, ErrPublicationPositionNotFound)
 	}

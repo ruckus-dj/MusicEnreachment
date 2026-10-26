@@ -88,7 +88,8 @@ func TestPublicationSourceCleanupAdmissionRejectsMalformedSettingPostgreSQL(t *t
 func publicationSourceCleanupReadyFixture(t *testing.T) (publicationExecutionFixture, *SetupManagerRepository, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
-	f, _, _, repo := readyFirstPublicationCommitFixture(t)
+	f := preparePublicationResultFixture(t)
+	repo := NewSetupManagerRepository(f.db)
 	_, _, variantID, _ := pubSourceProtectionHoldWithFixture(t, f)
 	var hold PublicationSourceHold
 	if err := f.db.NewSelect().Model(&hold).Where("operation_id=?", f.guard.OperationID).Scan(ctx); err != nil {
@@ -109,11 +110,8 @@ func publicationSourceCleanupReadyFixture(t *testing.T) (publicationExecutionFix
 	if _, err := f.db.ExecContext(ctx, `UPDATE source_analysis_work SET inventory_path=configured_path WHERE id=?`, workID); err != nil {
 		t.Fatal(err)
 	}
-	if committed, err := repo.CommitFirstPublication(ctx, f.guard); err != nil || !committed {
-		t.Fatalf("commit ready first publication = %v, %v", committed, err)
-	}
-	if _, err := f.db.ExecContext(ctx, `DELETE FROM publication_source_hold WHERE operation_id=?`, f.guard.OperationID); err != nil {
-		t.Fatal(err)
+	if committed, err := repo.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
+		t.Fatalf("commit ready publication result = %v, %v", committed, err)
 	}
 	if err := NewSettingsRepository(f.db).Set(ctx, "publication_remove_sources", "true"); err != nil {
 		t.Fatal(err)

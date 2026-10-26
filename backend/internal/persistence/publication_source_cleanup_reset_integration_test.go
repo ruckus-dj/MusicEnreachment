@@ -10,22 +10,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// The ready-publication fixture commits a real publication but intentionally
-// leaves the publisher's operation/job alive. Settle that delivery as a worker
-// would before exercising reset's independent cleanup-owner proof.
+// The publication result fixture settles the publisher operation and consumes
+// its attempt/claim. Finish its real River row before exercising reset's
+// independent cleanup-owner proof.
 func settleReadyPublicationForReset(t *testing.T, f publicationExecutionFixture) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := f.db.ExecContext(ctx, `UPDATE operation SET state='succeeded',stage='complete',finished_at=now() WHERE id=?`, f.guard.OperationID); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='completed',finalized_at=now() WHERE id=?`, f.guard.RiverJobID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.db.ExecContext(ctx, `DELETE FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.db.ExecContext(ctx, `DELETE FROM publication_execution_claim WHERE operation_id=?`, f.guard.OperationID); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -4,6 +4,7 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"strings"
 	"testing"
 
@@ -16,20 +17,23 @@ import (
 func TestObsoletePublicationOutputCleanupSchemaRejectsMalformedAuthorityPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f, _, _, _ := readyFirstPublicationCommitFixture(t)
+	f := preparePublicationResultFixture(t)
 	db := f.db
-	// The publication fixture supplies a real release_track, active epoch,
-	// namespace claim and reservation. Reuse those values so every attempted
-	// insert reaches the schema checks under test rather than failing an FK.
-	var position, epoch, generation, claim uuid.UUID
-	var relative string
-	if err := db.NewRaw(`SELECT c.owner_position_id, c.epoch, r.generation, c.id, c.relative_path
-		FROM publication_namespace_claim c JOIN publication_namespace_reservation r
-		ON r.namespace_claim_id=c.id WHERE c.node_kind='file' LIMIT 1`).Scan(ctx, &position, &epoch, &generation, &claim, &relative); err != nil {
+	// The result fixture supplies the position and delivery, not namespace rows.
+	// Establish real claim/reservation authority before testing malformed values.
+	position, epoch, generation, claim := f.guard.ExpectedPositionID, f.guard.Epoch, f.guard.CandidateGeneration, uuid.New()
+	const relative = "track.flac"
+	digest := sha256.Sum256([]byte(relative))
+	if _, err := db.NewInsert().Model(&PublicationNamespaceClaim{
+		ID: claim, Epoch: epoch, KeyDigest: digest[:], CanonicalKey: relative,
+		RelativePath: relative, NodeKind: "file", OwnerPositionID: &position,
+	}).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if position == uuid.Nil || epoch == uuid.Nil || generation == uuid.Nil || claim == uuid.Nil {
-		t.Fatal("fixture did not provide a complete namespace claim and reservation")
+	if _, err := db.NewInsert().Model(&PublicationNamespaceReservation{
+		NamespaceClaimID: claim, PositionID: position, Generation: generation,
+	}).Exec(ctx); err != nil {
+		t.Fatal(err)
 	}
 	operationID := uuid.New()
 	if _, err := db.NewRaw(`INSERT INTO operation(id,kind,state,stage,input_snapshot) VALUES (?,?,'queued','queued',jsonb_build_object('operation_id',?::text))`, operationID, ObsoletePublicationOutputCleanupOperationKind, operationID).Exec(ctx); err != nil {
