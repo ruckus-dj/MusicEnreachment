@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { subscribeToOperation } from "../../api/client/operations";
 import {
-  getOperation,
+  isOperationSnapshotNewer,
+  useOperationFollower,
+} from "../../api/client/useOperationFollower";
+import {
   listOperations,
   retryOperation,
   startSourceScan,
@@ -85,22 +87,32 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
   const retryInFlight = useRef(false);
   const reportedCompletion = useRef("");
   const completed = useRef(onScanCompleted);
+  const operationSnapshot = useRef<OperationResponse | undefined>(undefined);
   useEffect(() => {
     completed.current = onScanCompleted;
   });
 
-  const applySnapshot = useCallback((snapshot: OperationResponse) => {
-    setOperation(snapshot);
-    const completion =
-      snapshot.state === "succeeded" || snapshot.state === "failed"
-        ? `${snapshot.id}:${snapshot.state}`
-        : "";
-    const changed = completion !== reportedCompletion.current;
-    // Pending snapshots re-arm the same operation after a retry; repeated
-    // terminal snapshots must not repeatedly reload the parent inventory.
-    reportedCompletion.current = completion;
-    if (completion && changed) void completed.current();
-  }, []);
+  const applySnapshot = useCallback(
+    (snapshot: OperationResponse, force = false) => {
+      if (
+        !force &&
+        !isOperationSnapshotNewer(operationSnapshot.current, snapshot)
+      )
+        return;
+      operationSnapshot.current = snapshot;
+      setOperation(snapshot);
+      const completion =
+        snapshot.state === "succeeded" || snapshot.state === "failed"
+          ? `${snapshot.id}:${snapshot.state}`
+          : "";
+      const changed = completion !== reportedCompletion.current;
+      // Pending snapshots re-arm the same operation after a retry; repeated
+      // terminal snapshots must not repeatedly reload the parent inventory.
+      reportedCompletion.current = completion;
+      if (completion && changed) void completed.current();
+    },
+    [],
+  );
 
   // Discovery owns the window between opening the page and knowing whether a
   // scan is already active: the Scan button stays disabled until it answers,
@@ -138,51 +150,23 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
   }, [root.id, applySnapshot]);
 
   const operationId = operation?.id;
-  useEffect(() => {
-    if (!operationId) return;
-    const id = operationId;
-    let request: AbortController | undefined;
-    const read = async () => {
-      request?.abort();
-      const current = new AbortController();
-      request = current;
-      try {
-        const response = await getOperation(id, {
-          signal: current.signal,
-          cache: "no-store",
-        });
-        if (current.signal.aborted) return;
-        if (response.status !== 200) {
-          setStreamError(
-            `Не удалось перечитать состояние операции (${response.status}).`,
-          );
-          return;
-        }
-        applySnapshot(response.data);
-      } catch (reason) {
-        if (!current.signal.aborted) setStreamError(message(reason));
-      }
-    };
-    // A stream event is a wake-up only; the payload is never a snapshot. A
-    // snapshot delivered by the stream is the proof it reconnected, so the
-    // error clears on that delivery and not on this control's own re-read.
-    const unsubscribe = subscribeToOperation(
-      id,
-      (snapshot) => {
-        setStreamError("");
-        applySnapshot(snapshot);
-      },
-      (reason) => {
-        setStreamError(reason.message);
-        void read();
-      },
-    );
-    void read();
-    return () => {
-      unsubscribe();
-      request?.abort();
-    };
-  }, [operationId, applySnapshot]);
+  const follower = useOperationFollower(operationId, {
+    initialSnapshot: operation,
+    onSnapshot: (snapshot, source) => {
+      applySnapshot(snapshot, source === "action");
+    },
+    onSnapshotRead: (_snapshot, source) => {
+      if (source === "stream") setStreamError("");
+    },
+    onError: (reason) =>
+      setStreamError(
+        reason.message.startsWith("Ошибка сервера (")
+          ? `Не удалось перечитать состояние операции (${reason.message.match(/\((\d+)\)/)?.[1] ?? "?"}).`
+          : message(reason),
+      ),
+    onStreamError: (reason) => setStreamError(reason.message),
+    refreshOnStreamError: true,
+  });
 
   async function startScan() {
     if (startInFlight.current) return;
@@ -215,7 +199,7 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
     try {
       const response = await retryOperation(operation.id);
       if (response.status !== 200) throw scanFailure(response);
-      applySnapshot(response.data);
+      follower.acceptSnapshot(response.data, "action", true);
     } catch (reason) {
       setActionError(message(reason));
     } finally {

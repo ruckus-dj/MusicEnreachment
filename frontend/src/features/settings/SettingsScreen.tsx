@@ -5,14 +5,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { subscribeToOperation } from "../../api/client/operations";
+import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
   activateToolInstallation,
   checkSettingsMusicbrainz,
   deleteAcoustidApplicationKey,
   deleteToolInstallation,
   dismissOperation,
-  getOperation,
   getSettings,
   listInstallations,
   listOperations,
@@ -2016,35 +2015,21 @@ function OperationRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const errorRef = useRef<HTMLParagraphElement>(null);
-  useEffect(() => {
-    const unsubscribe = subscribeToOperation(
-      operation.id,
-      (snapshot) => {
-        setOperation(snapshot);
-        setError("");
-        void onSnapshot(snapshot);
-      },
-      (reason) => {
-        setError(reason.message);
-        void getOperation(operation.id, { cache: "no-store" })
-          .then((response) => {
-            if (response.status !== 200) throw apiError(response);
-            setOperation(response.data);
-            setError("");
-            void onSnapshot(response.data);
-          })
-          .catch((recoveryError) => setError(message(recoveryError)));
-      },
-    );
-    void getOperation(operation.id, { cache: "no-store" })
-      .then((response) => {
-        if (response.status !== 200) throw apiError(response);
-        setOperation(response.data);
-        void onSnapshot(response.data);
-      })
-      .catch((reason) => setError(message(reason)));
-    return unsubscribe;
-  }, [operation.id, onSnapshot]);
+  useOperationFollower(operation.id, {
+    initialSnapshot: operation,
+    onSnapshot: (snapshot) => {
+      setOperation(snapshot);
+      setError("");
+      void onSnapshot(snapshot);
+    },
+    onSnapshotRead: (_snapshot, _source, accepted) => {
+      if (!accepted) setError("");
+    },
+    onHttpError: apiError,
+    onError: (reason) => setError(message(reason)),
+    onStreamError: (reason) => setError(reason.message),
+    refreshOnStreamError: true,
+  });
   useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);

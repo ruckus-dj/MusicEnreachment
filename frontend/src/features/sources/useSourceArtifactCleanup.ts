@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { subscribeToOperation } from "../../api/client/operations";
+import {
+  isOperationSnapshotNewer,
+  useOperationFollower,
+} from "../../api/client/useOperationFollower";
 import {
   cleanupSourceAnalysisArtifacts,
-  getOperation,
   listSourceAnalysisArtifactCleanupCandidates,
 } from "../../api/generated/client";
 import type {
@@ -11,27 +13,10 @@ import type {
 } from "../../api/generated/client.schemas";
 import { message } from "./sourcesApi";
 
+export { isOperationSnapshotNewer } from "../../api/client/useOperationFollower";
+
 const pending = (operation: OperationResponse) =>
   operation.state === "queued" || operation.state === "running";
-
-// Monotonic acceptance rule shared by every snapshot source (the SSE wake-up
-// re-read and the immediate REST read after an accepted POST). A snapshot only
-// replaces the current one when it belongs to a new operation, or when it is
-// strictly fresher for the same operation. Equal timestamps accept a pending ->
-// terminal transition (a terminal can share its timestamp with the last pending
-// update) but never let a terminal regress back to a non-terminal snapshot.
-export function isOperationSnapshotNewer(
-  current: OperationResponse | undefined,
-  incoming: OperationResponse,
-): boolean {
-  if (!current || current.id !== incoming.id) return true;
-  if (incoming.updated_at > current.updated_at) return true;
-  return (
-    incoming.updated_at === current.updated_at &&
-    pending(current) &&
-    !pending(incoming)
-  );
-}
 
 function requestFailure(response: {
   status: number;
@@ -57,8 +42,6 @@ export function useSourceArtifactCleanup() {
   const lifetime = useRef(new AbortController());
   const candidateRequest = useRef<AbortController | undefined>(undefined);
   const actionRequest = useRef<AbortController | undefined>(undefined);
-  const operationRequest = useRef<AbortController | undefined>(undefined);
-  const generation = useRef(0);
 
   const load = useCallback(async (preserveError = false) => {
     candidateRequest.current?.abort();
@@ -97,40 +80,26 @@ export function useSourceArtifactCleanup() {
     lifetime.current = new AbortController();
     void load();
     return () => {
-      generation.current += 1;
       lifetime.current.abort();
       candidateRequest.current?.abort();
       actionRequest.current?.abort();
-      operationRequest.current?.abort();
     };
   }, [load]);
 
   const operationId = operation?.id;
   const isPending = operation ? pending(operation) : false;
-  useEffect(() => {
-    if (!operationId || !isPending) return;
-    const currentGeneration = ++generation.current;
-    let disposed = false;
-    const current = () =>
-      !disposed &&
-      !lifetime.current.signal.aborted &&
-      generation.current === currentGeneration;
-    const close = subscribeToOperation(
-      operationId,
-      (snapshot) => {
-        if (!current()) return;
-        setStreamError("");
-        applySnapshot(snapshot);
-      },
-      (reason) => {
-        if (current()) setStreamError(reason.message);
-      },
-    );
-    return () => {
-      disposed = true;
-      close();
-    };
-  }, [operationId, isPending, applySnapshot]);
+  useOperationFollower(operationId, {
+    enabled: Boolean(operationId && isPending),
+    initialSnapshot: operation,
+    onSnapshot: (snapshot) => {
+      applySnapshot(snapshot);
+    },
+    onSnapshotRead: (_snapshot, source) => {
+      if (source === "stream") setStreamError("");
+    },
+    onHttpError: requestFailure,
+    onStreamError: (reason) => setStreamError(reason.message),
+  });
 
   const results = operation?.cleanup_results;
   const wasPending = useRef(false);
@@ -182,7 +151,6 @@ export function useSourceArtifactCleanup() {
       wasPending.current = true;
       operationSnapshot.current = response.data;
       setOperation(response.data);
-      void readOperationSnapshot(response.data.id);
     } catch (reason) {
       if (!request.signal.aborted && !lifetime.current.signal.aborted)
         setError(message(reason));
@@ -195,32 +163,6 @@ export function useSourceArtifactCleanup() {
         actionRequest.current = undefined;
         setBusy(false);
       }
-    }
-  }
-
-  async function readOperationSnapshot(operationId: string) {
-    operationRequest.current?.abort();
-    const request = new AbortController();
-    operationRequest.current = request;
-    try {
-      const response = await getOperation(operationId, {
-        signal: request.signal,
-        cache: "no-store",
-      });
-      if (
-        request.signal.aborted ||
-        lifetime.current.signal.aborted ||
-        response.status !== 200
-      )
-        return;
-      applySnapshot(response.data);
-    } catch {
-      // The event stream and its wake-up-triggered REST reads remain active.
-      // An initial snapshot failure must not turn an accepted action into an
-      // apparent POST failure.
-    } finally {
-      if (operationRequest.current === request)
-        operationRequest.current = undefined;
     }
   }
 

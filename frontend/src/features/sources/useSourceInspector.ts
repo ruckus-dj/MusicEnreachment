@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { subscribeToOperation } from "../../api/client/operations";
+import {
+  isOperationSnapshotNewer,
+  useOperationFollower,
+} from "../../api/client/useOperationFollower";
 import {
   getOperation,
   getSourceLocation,
@@ -38,6 +41,17 @@ export function useSourceInspector(sourceId: string, locationId: string) {
   const detailRequest = useRef<AbortController | undefined>(undefined);
   const actionRequest = useRef<AbortController | undefined>(undefined);
   const completion = useRef("");
+  const operationSnapshot = useRef<OperationResponse | undefined>(undefined);
+
+  const apply = useCallback((snapshot: OperationResponse, force = false) => {
+    if (
+      lifetime.current.signal.aborted ||
+      (!force && !isOperationSnapshotNewer(operationSnapshot.current, snapshot))
+    )
+      return;
+    operationSnapshot.current = snapshot;
+    setOperation(snapshot);
+  }, []);
 
   const load = useCallback(async () => {
     detailRequest.current?.abort();
@@ -61,8 +75,9 @@ export function useSourceInspector(sourceId: string, locationId: string) {
         });
         if (request.signal.aborted || lifetime.current.signal.aborted) return;
         if (active.status !== 200) throw inspectorFailure(active);
-        setOperation(active.data);
+        apply(active.data);
       } else {
+        operationSnapshot.current = undefined;
         setOperation(undefined);
       }
     } catch (reason) {
@@ -72,7 +87,7 @@ export function useSourceInspector(sourceId: string, locationId: string) {
       if (!request.signal.aborted && !lifetime.current.signal.aborted)
         setLoading(false);
     }
-  }, [sourceId, locationId]);
+  }, [sourceId, locationId, apply]);
 
   useEffect(() => {
     lifetime.current = new AbortController();
@@ -84,64 +99,28 @@ export function useSourceInspector(sourceId: string, locationId: string) {
     };
   }, [load]);
 
-  const apply = useCallback((snapshot: OperationResponse) => {
-    if (lifetime.current.signal.aborted) return;
-    setOperation(snapshot);
-  }, []);
-
   const operationId = operation?.id;
   const pending =
     operation?.state === "queued" || operation?.state === "running";
-  useEffect(() => {
-    if (!operationId || !pending) return;
-    // Effect-local disposal guard: a late SSE wake-up or an in-flight reread
-    // must never issue a new request or reload the inspector after navigation.
-    let disposed = false;
-    let request: AbortController | undefined;
-    const read = async () => {
-      if (disposed) return;
-      request?.abort();
-      const current = new AbortController();
-      request = current;
-      try {
-        const response = await getOperation(operationId, {
-          signal: current.signal,
-          cache: "no-store",
-        });
-        if (disposed || current.signal.aborted) return;
-        if (response.status !== 200) throw inspectorFailure(response);
-        apply(response.data);
-        if (disposed) return;
-        // SSE is only a wake-up channel. Every wake re-reads the inspector,
-        // including intermediate updates from independently running steps.
-        void load();
-      } catch (reason) {
-        if (!disposed && !current.signal.aborted)
-          setStreamError(message(reason));
-      }
-    };
-    const close = subscribeToOperation(
-      operationId,
-      (snapshot) => {
-        if (disposed) return;
-        request?.abort();
-        setStreamError("");
-        apply(snapshot);
-        void load();
-      },
-      (reason) => {
-        if (disposed) return;
-        setStreamError(reason.message);
-        void read();
-      },
-    );
-    void read();
-    return () => {
-      disposed = true;
-      close();
-      request?.abort();
-    };
-  }, [operationId, pending, apply, load]);
+  useOperationFollower(operationId, {
+    enabled: Boolean(operationId && pending),
+    initialSnapshot: operation,
+    onSnapshot: (snapshot, source) => {
+      apply(snapshot, source === "action");
+    },
+    onSnapshotRead: (_snapshot, source) => {
+      if (source === "initial") return;
+      if (source === "stream") setStreamError("");
+      // SSE is only a wake-up channel; the follower supplies REST snapshots.
+      // Refresh detail on wakes and recovery reads, including duplicate states.
+      // A fallback REST read does not prove that EventSource has reconnected.
+      void load();
+    },
+    onHttpError: inspectorFailure,
+    onError: (reason) => setStreamError(message(reason)),
+    onStreamError: (reason) => setStreamError(reason.message),
+    refreshOnStreamError: true,
+  });
 
   // Terminal refresh owns its own lifecycle. It must not go through the
   // subscription wake-up channel: that channel is a no-op when the initial
@@ -186,7 +165,7 @@ export function useSourceInspector(sourceId: string, locationId: string) {
             void load();
             throw inspectorFailure(response);
           }
-          apply(response.data);
+          apply(response.data, true);
           void load();
           break;
         }
@@ -207,7 +186,7 @@ export function useSourceInspector(sourceId: string, locationId: string) {
             void load();
             throw inspectorFailure(response);
           }
-          apply(response.data);
+          apply(response.data, true);
           void load();
           break;
         }

@@ -217,6 +217,83 @@ describe("source inspector step controls", () => {
     ).toBeVisible();
   });
 
+  it("keeps and follows a newly accepted action when the detail reload fails", async () => {
+    let detailReads = 0;
+    server.use(
+      http.get(detailPath, () => {
+        detailReads += 1;
+        if (detailReads > 1)
+          return HttpResponse.json(
+            { detail: "detail reload unavailable" },
+            { status: 503 },
+          );
+        return HttpResponse.json(
+          detail({
+            active_fpcalc_version: "fpcalc 1.6",
+            steps: [
+              {
+                name: "fingerprint",
+                state: "succeeded",
+                attempt: 1,
+                fingerprint: {
+                  value: "stored-fingerprint",
+                  version: "fpcalc 1.5",
+                  version_banner: "fpcalc 1.5",
+                  algorithm_namespace: "chromaprint",
+                  algorithm_id: 1,
+                  duration: 42,
+                  calculated_at: "2026-10-01T10:20:00Z",
+                  applied_operation_id: "old-operation",
+                  parser_contract_version: 1,
+                },
+              },
+            ],
+          }),
+        );
+      }),
+      http.post(`${detailPath}/fingerprint/rerun`, () =>
+        HttpResponse.json(
+          operation({
+            id: "new-rerun-operation",
+            kind: "rerun-source-location-fingerprint",
+            state: "queued",
+          }),
+          { status: 202 },
+        ),
+      ),
+      http.get("/api/operations/new-rerun-operation", () =>
+        HttpResponse.json(
+          operation({
+            id: "new-rerun-operation",
+            kind: "rerun-source-location-fingerprint",
+            state: "running",
+            stage: "fingerprinting",
+            updated_at: "2026-10-01T10:21:00Z",
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+
+    const detailReload = responseFor(detailPath);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Повторно вычислить отпечаток" }),
+    );
+    await act(async () => {
+      await detailReload;
+    });
+
+    expect(
+      await screen.findByText("Выполняется этап анализа файла."),
+    ).toBeVisible();
+    await waitFor(() => expect(InspectorStream.instances).toHaveLength(1));
+    expect(stream().url).toBe("/api/operations/new-rerun-operation/events");
+    expect(screen.getByText("stored-fingerprint")).toBeVisible();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "detail reload unavailable",
+    );
+  });
+
   it("keeps the prior fingerprint visible while rerun is running and after failure", async () => {
     let phase: "initial" | "running" | "failed" = "initial";
     server.use(

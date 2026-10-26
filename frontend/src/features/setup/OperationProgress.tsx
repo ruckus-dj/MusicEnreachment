@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { subscribeToOperation } from "../../api/client/operations";
-import { getOperation, retryOperation } from "../../api/generated/client";
+import { useOperationFollower } from "../../api/client/useOperationFollower";
+import { retryOperation } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { errorMessage, setupError } from "./setupApi";
@@ -22,8 +22,7 @@ export function OperationProgress({
   const [pending, setPending] = useState(false);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const refreshing = useRef(false);
-  const request = useRef<AbortController | null>(null);
-  const generation = useRef(0);
+  const completion = useRef("");
   const alert = useRef<HTMLParagraphElement>(null);
   const refreshAlert = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -50,54 +49,40 @@ export function OperationProgress({
     },
     [id, onSuccess, onFinished],
   );
+  const { acceptSnapshot, refresh } = useOperationFollower(id, {
+    initialSnapshot: initial,
+    onSnapshot: (next) => {
+      setSnapshot(next);
+      setError("");
+      if (next.state === "queued" || next.state === "running") {
+        completion.current = "";
+      } else if (next.state === "succeeded") {
+        const key = `${next.id}:${next.state}`;
+        if (completion.current !== key) {
+          completion.current = key;
+          void refreshInstallations(next);
+        }
+      }
+    },
+    onHttpError: (response) =>
+      setupError({ status: response.status, data: response.data ?? {} }),
+    onError: (reason) => setError(errorMessage(reason)),
+    onStreamError: (reason) => setError(reason.message),
+  });
+  useEffect(() => {
+    if (snapshot?.state !== "succeeded") return;
+    const key = `${snapshot.id}:${snapshot.state}`;
+    if (completion.current !== key) {
+      completion.current = key;
+      void refreshInstallations(snapshot);
+    }
+  }, [snapshot, refreshInstallations]);
   const refreshSnapshot = useCallback(async () => {
-    request.current?.abort();
-    const controller = new AbortController();
-    request.current = controller;
-    const startedAt = generation.current;
     setSnapshotPending(true);
     setError("");
-    try {
-      const response = await getOperation(id, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (controller.signal.aborted || startedAt !== generation.current) return;
-      if (response.status !== 200) throw setupError(response);
-      setSnapshot(response.data);
-      if (response.data.state === "succeeded")
-        void refreshInstallations(response.data);
-    } catch (reason) {
-      if (!controller.signal.aborted && startedAt === generation.current)
-        setError(errorMessage(reason));
-    } finally {
-      if (request.current === controller) {
-        request.current = null;
-        setSnapshotPending(false);
-      }
-    }
-  }, [id, refreshInstallations]);
-  useEffect(() => {
-    // The first REST read does not wait for EventSource to connect. Later SSE
-    // wake-ups still read REST; cancel this read if a newer one wins.
-    const unsubscribe = subscribeToOperation(
-      id,
-      (next) => {
-        generation.current += 1;
-        request.current?.abort();
-        setSnapshot(next);
-        setError("");
-        if (next.state === "succeeded") void refreshInstallations(next);
-      },
-      (reason) => setError(reason.message),
-    );
-    void refreshSnapshot();
-    return () => {
-      generation.current += 1;
-      request.current?.abort();
-      unsubscribe();
-    };
-  }, [id, refreshInstallations, refreshSnapshot]);
+    await refresh();
+    setSnapshotPending(false);
+  }, [refresh]);
 
   async function retry() {
     setPending(true);
@@ -105,9 +90,7 @@ export function OperationProgress({
     try {
       const response = await retryOperation(id);
       if (response.status !== 200) throw setupError(response);
-      generation.current += 1;
-      request.current?.abort();
-      setSnapshot(response.data);
+      acceptSnapshot(response.data, "action", true);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
