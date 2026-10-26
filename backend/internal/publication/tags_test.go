@@ -214,6 +214,49 @@ func TestProjectTagsOptionalMappingsAbsentAndExplicitEmpty(t *testing.T) {
 	}
 }
 
+func TestProjectTagsReleaseBarcodeCountryAndStatusStates(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		state      librarymetadata.ValueState
+		value      any
+		want       []string
+		wantStatus string
+	}{
+		{name: "value", state: librarymetadata.StateValue, value: "  value preserved  ", want: []string{"  value preserved  "}, wantStatus: "represented"},
+		{name: "absent", state: librarymetadata.StateAbsent},
+		{name: "explicit empty", state: librarymetadata.StateExplicitEmpty, want: []string{}, wantStatus: "explicit_empty"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			desired := map[string]librarymetadata.FieldValue{}
+			for _, field := range []string{"barcode", "release_country", "release_status"} {
+				desired[field] = librarymetadata.ManualFieldValue(test.state, test.value, false)
+			}
+			envelope := librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease, Desired: desired}
+			projection, err := ProjectTags(TagProjectionInput{
+				Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &envelope},
+				Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for field, key := range map[string]string{"barcode": "BARCODE", "release_country": "RELEASECOUNTRY", "release_status": "RELEASESTATUS"} {
+				if test.wantStatus == "" {
+					if _, exists := projection.Tags[key]; exists || projection.Fields["release."+field].Status != "" {
+						t.Errorf("absent %s projected: tags=%#v field=%#v", field, projection.Tags[key], projection.Fields["release."+field])
+					}
+					continue
+				}
+				if got := projection.Tags[key]; !reflect.DeepEqual(got, test.want) {
+					t.Errorf("%s = %#v, want %#v", key, got, test.want)
+				}
+				if got := projection.Fields["release."+field].Status; got != test.wantStatus {
+					t.Errorf("%s status = %q, want %q", field, got, test.wantStatus)
+				}
+			}
+		})
+	}
+}
+
 func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 	position, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"position","desired":{"contributors":{"state":"value","value":[{"name":"Family,Given 音楽","role":" Composer ","artist_id":"11111111-1111-4111-8111-111111111111"},{"name":"作詞者","role":"LYRICIST","mbid":"22222222-2222-4222-8222-222222222222"},{"name":"unknown role","role":"instrumentalist"}],"authority":"manual","provenance":{"kind":"manual"}}}}`))
 	if err != nil {

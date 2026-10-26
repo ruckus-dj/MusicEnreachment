@@ -45,6 +45,55 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**Уточнение 2026-10-26, после `3050d3e`:** protected provider refresh прошёл
+на настоящем медиа через публичные API с локальным MusicBrainz transport fixture.
+Ручной matching `title_override` сохранил TITLE «Танцуй», непротектированный ALBUM
+обновился до `Plan12 Provider Album v2 7f705f9c`. Операция refresh
+`1e0113d5-b8bc-4e5a-83d3-5051935d4a65` и reconciliation
+`243e17d7-050b-4a6a-8bb2-4c80360e1f60` завершились успешно; CURRENT generation
+изменилась, encoded-audio SHA-256, все фактические изображения, отсутствие lyrics
+и путь сохранились. Все десять проверок `acceptance_comparison` в локальном
+`evidence/provider-refresh-run.json` успешны. Это fixture-backed транспортная
+приёмка, не изменение настоящего каталога MusicBrainz. Канонический TITLE менялся
+через matching, не через запрещённый для него metadata PATCH.
+
+Проверенный бинарник: SHA-256
+`6f74c4453070cd15275388627b6715610b0768f57df45c75e685fd3c5b6a190b`;
+при restart зафиксированы HEAD `99378b6` и working-diff SHA-256
+`07f0d571ddc68b96ee7d5728e4d5aea00512401ca8db2643d42a158c35fb2f39`.
+Позднейший HEAD `ec3e1e1` не подменяет эту provenance. После settlement fixture
+остановлен, настройка MusicBrainz возвращена в public mode; повторная проверка
+здоровья публичного провайдера этим не подтверждается.
+
+`1fa4079` и optional sort/work/movement (`99378b6`, CI `40245902631`) прошли
+полный CI, включая пять платформ и публикацию контейнера. Contributors
+и portable advisory, lossless MPEG boundary и v2 manual continuation (`ec3e1e1`),
+а также evidence-scoped provider dates/MBID/ISRC (`3050d3e`) прошли локальные
+полные gates и обычные commit hooks; их полные CI ещё ожидаются.
+Advisory `ITUNESADVISORY` не означает ingestion/removal native M4A `rtng`.
+Неизвестные contributor roles/IDs и неполные work MBIDs имеют явную диагностику;
+release `artist_sort_names` не получил придуманного приоритета над
+`album_artist_sort_names`. Label/catalog multiplicity и weighted genres не
+получили неутверждённых правил агрегации.
+
+Navidrome MKA-приёмка выполнена отдельно на Navidrome `0.64.2 (10114574)`, image
+digest `sha256:38dc2727bfcfd5ede290f8ada114fc90368146f265ae4701ddddbcbe2a44ee52`.
+Изолированный контейнер прочитал read-only копию CURRENT «Интро»: authenticated
+scan/getAlbum/getSong/getCoverArt/stream успешны; title/album/artist видны,
+обложка возвращена как PNG 300×300. Raw MKA stream byte-for-byte совпал с копией
+CURRENT (SHA-256 `4d962bf9c40a68756986e9f641884b720117918dcf63f16a1974dfe745df5280`),
+ffprobe подтвердил Matroska/FLAC с PNG. Это не проверка перекодирования Navidrome
+и не доказательство поддержки каждого optional-поля. Свидетельства находятся в
+`navidrome-acceptance-7e603eb6-5487-4f97-935a-5f7fe4193946/evidence/acceptance-summary.json`
+того же локального stand; остановлен только новый acceptance-контейнер.
+
+Приёмка MP3/M4A остаётся открытой. Чистый публичный first-publication
+flow создаёт одну выбранную обложку, поэтому multiimage CURRENT нельзя требовать
+от него без нового продуктового решения. Для preservation нескольких изображений
+готовится отдельная real-tool integration с согласованным pre-existing CURRENT
+fixture до admission; она не будет названа публичной end-to-end приёмкой.
+План остаётся в `todo`.
+
 **Актуализация 2026-10-26, после `1fa4079`:** automatic first publication и
 audio upgrade выбирают пригодные связанные источники независимо от прежнего
 `selected`, с транзакционным переключением association и сохранением CURRENT

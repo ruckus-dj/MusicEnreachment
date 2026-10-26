@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func TestBuildPublicationProviderCanonicalTagPatchUsesAcceptedFieldsAndTrackOverride(t *testing.T) {
@@ -70,6 +72,65 @@ func TestBuildPublicationProviderCanonicalTagPatchProjectsAcceptedReleaseAndReco
 	}
 	if !reflect.DeepEqual(patch, want) {
 		t.Fatalf("patch = %#v, want %#v", patch, want)
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchProjectsOnlyAcceptedReleaseBarcodeCountryAndStatus(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Release.Fields = json.RawMessage(`{"barcode":"  0123456789  ","country":"XW","status":"non-official"}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"barcode": {}, "country": {}, "status": {}}
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{"BARCODE": {"  0123456789  "}, "RELEASECOUNTRY": {"XW"}, "RELEASESTATUS": {"non-official"}}
+	if !reflect.DeepEqual(patch, want) {
+		t.Fatalf("patch = %#v, want %#v", patch, want)
+	}
+
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{}
+	patch, err = BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patch) != 0 {
+		t.Fatalf("patch without field evidence = %#v, want empty", patch)
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchRejectsMalformedAcceptedReleaseScalars(t *testing.T) {
+	for _, field := range []string{"barcode", "country", "status"} {
+		t.Run(field, func(t *testing.T) {
+			context := publicationTagProjectionFixture()
+			context.Release.Fields = json.RawMessage(`{"` + field + `":42}`)
+			context.Release.FieldEvidence = map[string]ProviderFieldEvidence{field: {}}
+			if _, err := BuildPublicationProviderCanonicalTagPatch(context); err == nil {
+				t.Fatal("expected accepted non-string scalar to be rejected")
+			}
+		})
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchNeverDeletesReleaseScalars(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Release.Fields = json.RawMessage(`{"barcode":"","country":null}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"barcode": {}, "country": {}, "status": {}}
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patch) != 0 {
+		t.Fatalf("patch for empty, null, and missing scalars = %#v, want empty", patch)
+	}
+	current := map[string][]string{
+		"BARCODE": {"existing barcode"}, "RELEASECOUNTRY": {"existing country"}, "RELEASESTATUS": {"existing status"},
+	}
+	updated, err := publication.ApplyProviderTagPatch(current, patch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(updated, current) {
+		t.Fatalf("current tags after empty scalar patch = %#v, want %#v", updated, current)
 	}
 }
 
@@ -211,18 +272,18 @@ func TestBuildPublicationProviderCanonicalTagPatchOmitsUnsupportedEmptyAndNullVa
 
 func TestBuildPublicationProviderTagProtectionCoversAddedProviderTagFootprints(t *testing.T) {
 	context := &PublicationProviderTagContext{}
-	context.ReleaseOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"release","desired":{"release_date":{"state":"value","value":"2000","authority":"manual","provenance":{"kind":"manual"}},"release_group_mbid":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`)
+	context.ReleaseOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"release","desired":{"release_date":{"state":"value","value":"2000","authority":"manual","provenance":{"kind":"manual"}},"release_group_mbid":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}},"barcode":{"state":"value","value":"0123","authority":"manual","provenance":{"kind":"manual"}},"release_country":{"state":"value","value":"XW","authority":"manual","provenance":{"kind":"manual"}},"release_status":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`)
 	context.RecordingOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"recording","desired":{"recording_mbid":{"state":"value","value":"33333333-3333-4333-8333-333333333333","authority":"manual","provenance":{"kind":"manual"}},"isrc":{"state":"value","value":["USAAA0000001"],"authority":"manual","provenance":{"kind":"manual"}}}}}`)
 
 	protection, err := BuildPublicationProviderTagProtection(context)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"DATE", "ISRC", "MUSICBRAINZ_RELEASEGROUPID", "MUSICBRAINZ_TRACKID"}
+	want := []string{"BARCODE", "DATE", "ISRC", "MUSICBRAINZ_RELEASEGROUPID", "MUSICBRAINZ_TRACKID", "RELEASECOUNTRY", "RELEASESTATUS"}
 	if !reflect.DeepEqual(protection.Keys, want) {
 		t.Fatalf("protected keys = %#v, want %#v", protection.Keys, want)
 	}
-	if !reflect.DeepEqual(protection.ManualAbsentFields, []string{"release_group_mbid"}) {
+	if !reflect.DeepEqual(protection.ManualAbsentFields, []string{"release_group_mbid", "release_status"}) {
 		t.Fatalf("manual absent fields = %#v", protection.ManualAbsentFields)
 	}
 }

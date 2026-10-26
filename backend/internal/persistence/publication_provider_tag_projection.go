@@ -32,6 +32,25 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 			values.ReleaseDate = date
 		}
 	}
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{name: "barcode", value: &values.Barcode},
+		{name: "country", value: &values.ReleaseCountry},
+		{name: "status", value: &values.ReleaseStatus},
+	} {
+		if !hasProviderFieldEvidence(context.Release.FieldEvidence, field.name) {
+			continue
+		}
+		value, present, decodeErr := acceptedProviderString(releaseFields, field.name)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if present {
+			*field.value = value
+		}
+	}
 	values.ReleaseMBID, _ = canonicalProviderMBID(context.Release.ProviderKey)
 	if hasProviderFieldEvidence(context.Release.FieldEvidence, "release-group") {
 		group, present, decodeErr := acceptedProviderObject(releaseFields, "release-group")

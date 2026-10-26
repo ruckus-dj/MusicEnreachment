@@ -365,6 +365,18 @@ func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, boo
 		if scope == librarymetadata.ScopeRelease {
 			return []string{"ALBUMARTISTSORT"}, true
 		}
+	case "barcode":
+		if scope == librarymetadata.ScopeRelease {
+			return []string{"BARCODE"}, true
+		}
+	case "release_country":
+		if scope == librarymetadata.ScopeRelease {
+			return []string{"RELEASECOUNTRY"}, true
+		}
+	case "release_status":
+		if scope == librarymetadata.ScopeRelease {
+			return []string{"RELEASESTATUS"}, true
+		}
 	case "artist_sort_names":
 		if scope == librarymetadata.ScopePosition {
 			return []string{"ARTISTSORT"}, true
