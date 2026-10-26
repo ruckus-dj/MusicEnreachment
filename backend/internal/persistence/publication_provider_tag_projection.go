@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/google/uuid"
@@ -20,6 +21,43 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 	if hasProviderFieldEvidence(context.Release.FieldEvidence, "title") {
 		if title := jsonString(releaseFields["title"]); strings.TrimSpace(title) != "" {
 			values.ReleaseTitle = &title
+		}
+	}
+	if hasProviderFieldEvidence(context.Release.FieldEvidence, "date") {
+		date, present, decodeErr := acceptedProviderString(releaseFields, "date")
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if present {
+			values.ReleaseDate = date
+		}
+	}
+	values.ReleaseMBID, _ = canonicalProviderMBID(context.Release.ProviderKey)
+	if hasProviderFieldEvidence(context.Release.FieldEvidence, "release-group") {
+		group, present, decodeErr := acceptedProviderObject(releaseFields, "release-group")
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if present {
+			groupID, _, decodeErr := acceptedProviderString(group, "id")
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			if id, ok := canonicalProviderMBID(groupID); ok {
+				values.ReleaseGroupMBID = id
+			}
+			values.OriginalDate, _, decodeErr = acceptedProviderString(group, "first-release-date")
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			values.ReleaseType, _, decodeErr = acceptedProviderString(group, "primary-type")
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			values.ReleaseTypes, _, decodeErr = acceptedProviderStringList(group, "secondary-types")
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
 		}
 	}
 	if hasProviderFieldEvidence(context.Release.FieldEvidence, "artist-credit") {
@@ -75,7 +113,73 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 			values.PositionCredits = canonicalCredits(credits, context.ArtistEntities)
 		}
 	}
+	if context.RecordingBound && context.Recording != nil && context.Recording.Kind == "recording" &&
+		strings.EqualFold(context.Recording.ProviderKey, context.Position.RecordingProviderKey) {
+		if recordingMBID, valid := canonicalProviderMBID(context.Recording.ProviderKey); valid {
+			values.RecordingMBID = recordingMBID
+			if hasProviderFieldEvidence(decodeEvidence(context.Recording.FieldEvidence), "isrcs") {
+				recordingFields, decodeErr := decodeFrozenObject(context.Recording.Fields)
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+				values.ISRCs, _, decodeErr = acceptedProviderStringList(recordingFields, "isrcs")
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+			}
+		}
+	}
 	return publication.RenderProviderCanonicalTagValues(values), nil
+}
+
+func canonicalProviderMBID(value string) (string, bool) {
+	parsed, err := uuid.Parse(value)
+	if err != nil || !strings.EqualFold(value, parsed.String()) {
+		return "", false
+	}
+	return parsed.String(), true
+}
+
+func acceptedProviderObject(fields map[string]json.RawMessage, key string) (map[string]json.RawMessage, bool, error) {
+	raw, exists := fields[key]
+	if !exists || len(raw) == 0 || string(raw) == "null" {
+		return nil, false, nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return nil, false, err
+	}
+	if object == nil {
+		return nil, false, nil
+	}
+	return object, true, nil
+}
+
+func acceptedProviderString(fields map[string]json.RawMessage, key string) (string, bool, error) {
+	raw, exists := fields[key]
+	if !exists || len(raw) == 0 || string(raw) == "null" {
+		return "", false, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false, err
+	}
+	return value, true, nil
+}
+
+func acceptedProviderStringList(fields map[string]json.RawMessage, key string) ([]string, bool, error) {
+	raw, exists := fields[key]
+	if !exists || len(raw) == 0 || string(raw) == "null" {
+		return nil, false, nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, false, err
+	}
+	if values == nil {
+		return nil, false, nil
+	}
+	return values, true, nil
 }
 
 func hasProviderFieldEvidence(evidence map[string]ProviderFieldEvidence, field string) bool {

@@ -41,6 +41,108 @@ func TestBuildPublicationProviderCanonicalTagPatchUsesRecordingFieldsNotNameFall
 	}
 }
 
+func TestBuildPublicationProviderCanonicalTagPatchProjectsAcceptedReleaseAndRecordingFields(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Release.ProviderKey = "11111111-1111-4111-8111-111111111111"
+	context.Release.Fields = json.RawMessage(`{"date":"1999-02-03","release-group":{"id":"22222222-2222-4222-8222-222222222222","first-release-date":"1998","primary-type":"Album","secondary-types":["Compilation","Live"]}}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"date": {}, "release-group": {}}
+	context.Position.RecordingProviderKey = "33333333-3333-4333-8333-333333333333"
+	context.RecordingBound = true
+	context.Recording = &MatchingProjectionEntity{
+		Kind: "recording", ProviderKey: context.Position.RecordingProviderKey,
+		Fields:        json.RawMessage(`{"isrcs":["USAAA9900001","USAAA9900002"]}`),
+		FieldEvidence: json.RawMessage(`{"isrcs":{}}`),
+	}
+
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		"DATE":                       {"1999-02-03"},
+		"MUSICBRAINZ_ALBUMID":        {"11111111-1111-4111-8111-111111111111"},
+		"MUSICBRAINZ_RELEASEGROUPID": {"22222222-2222-4222-8222-222222222222"},
+		"ORIGINALDATE":               {"1998"},
+		"RELEASETYPE":                {"Album"},
+		"RELEASETYPES":               {"Compilation", "Live"},
+		"MUSICBRAINZ_TRACKID":        {"33333333-3333-4333-8333-333333333333"},
+		"ISRC":                       {"USAAA9900001", "USAAA9900002"},
+	}
+	if !reflect.DeepEqual(patch, want) {
+		t.Fatalf("patch = %#v, want %#v", patch, want)
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchRequiresEvidenceAndBoundValidRecording(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Release.ProviderKey = "11111111-1111-4111-8111-111111111111"
+	context.Release.Fields = json.RawMessage(`{"date":"2001","release-group":{"id":"22222222-2222-4222-8222-222222222222"}}`)
+	context.Recording = &MatchingProjectionEntity{
+		Kind: "recording", ProviderKey: "33333333-3333-4333-8333-333333333333", Fields: json.RawMessage(`{"isrcs":["USAAA0100001"]}`),
+		FieldEvidence: json.RawMessage(`{"isrcs":{}}`),
+	}
+	context.Position.RecordingProviderKey = context.Recording.ProviderKey
+	context.RecordingBound = false
+
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{"MUSICBRAINZ_ALBUMID": {context.Release.ProviderKey}}
+	if !reflect.DeepEqual(patch, want) {
+		t.Fatalf("patch with unbound recording and no field evidence = %#v, want %#v", patch, want)
+	}
+
+	context.Release.ProviderKey = "not-an-mbid"
+	patch, err = BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patch) != 0 {
+		t.Fatalf("patch with invalid accepted release identity = %#v, want no identity tags", patch)
+	}
+
+	context.Release.ProviderKey = "11111111-1111-4111-8111-111111111111"
+	context.Position.RecordingProviderKey = "not-an-mbid"
+	context.Recording.ProviderKey = "not-an-mbid"
+	context.RecordingBound = true
+	patch, err = BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = map[string][]string{"MUSICBRAINZ_ALBUMID": {context.Release.ProviderKey}}
+	if !reflect.DeepEqual(patch, want) {
+		t.Fatalf("patch with invalid bound recording identity = %#v, want %#v", patch, want)
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchRejectsMalformedAcceptedFieldShapes(t *testing.T) {
+	tests := []struct {
+		name      string
+		fields    json.RawMessage
+		evidence  map[string]ProviderFieldEvidence
+		recording *MatchingProjectionEntity
+	}{
+		{name: "release date", fields: json.RawMessage(`{"date":42}`), evidence: map[string]ProviderFieldEvidence{"date": {}}},
+		{name: "release group", fields: json.RawMessage(`{"release-group":[]}`), evidence: map[string]ProviderFieldEvidence{"release-group": {}}},
+		{name: "isrcs", fields: json.RawMessage(`{}`), recording: &MatchingProjectionEntity{Kind: "recording", ProviderKey: "33333333-3333-4333-8333-333333333333", Fields: json.RawMessage(`{"isrcs":{"bad":true}}`), FieldEvidence: json.RawMessage(`{"isrcs":{}}`)}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			context := publicationTagProjectionFixture()
+			context.Release.Fields = test.fields
+			context.Release.FieldEvidence = test.evidence
+			context.Position.RecordingProviderKey = "33333333-3333-4333-8333-333333333333"
+			context.RecordingBound = test.recording != nil
+			context.Recording = test.recording
+			_, err := BuildPublicationProviderCanonicalTagPatch(context)
+			if err == nil {
+				t.Fatal("expected malformed accepted field shape to be rejected")
+			}
+		})
+	}
+}
+
 func TestBuildPublicationProviderCanonicalTagPatchDoesNotUseUnboundRecording(t *testing.T) {
 	context := publicationTagProjectionFixture()
 	context.Recording = &MatchingProjectionEntity{Kind: "recording", ProviderKey: "recording-key", Fields: json.RawMessage(`{"title":"accepted recording title"}`), FieldEvidence: json.RawMessage(`{"title":{}}`)}
@@ -104,6 +206,24 @@ func TestBuildPublicationProviderCanonicalTagPatchOmitsUnsupportedEmptyAndNullVa
 	}
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("builder mutated its accepted context")
+	}
+}
+
+func TestBuildPublicationProviderTagProtectionCoversAddedProviderTagFootprints(t *testing.T) {
+	context := &PublicationProviderTagContext{}
+	context.ReleaseOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"release","desired":{"release_date":{"state":"value","value":"2000","authority":"manual","provenance":{"kind":"manual"}},"release_group_mbid":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`)
+	context.RecordingOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"recording","desired":{"recording_mbid":{"state":"value","value":"33333333-3333-4333-8333-333333333333","authority":"manual","provenance":{"kind":"manual"}},"isrc":{"state":"value","value":["USAAA0000001"],"authority":"manual","provenance":{"kind":"manual"}}}}}`)
+
+	protection, err := BuildPublicationProviderTagProtection(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"DATE", "ISRC", "MUSICBRAINZ_RELEASEGROUPID", "MUSICBRAINZ_TRACKID"}
+	if !reflect.DeepEqual(protection.Keys, want) {
+		t.Fatalf("protected keys = %#v, want %#v", protection.Keys, want)
+	}
+	if !reflect.DeepEqual(protection.ManualAbsentFields, []string{"release_group_mbid"}) {
+		t.Fatalf("manual absent fields = %#v", protection.ManualAbsentFields)
 	}
 }
 
