@@ -113,7 +113,7 @@ func TestPublicationTagKeysForFieldUsesApprovedMappingFootprints(t *testing.T) {
 		{"position contributor footprint", librarymetadata.ScopePosition, "contributors", []string{"COMPOSER", "LYRICIST", "CONDUCTOR", "ARRANGER", "ENGINEER", "PRODUCER", "REMIXER", "DJMIXER", "MIXER"}},
 		{"release content advisory footprint", librarymetadata.ScopeRelease, "content_advisory", []string{"ITUNESADVISORY"}},
 		{"position content advisory footprint", librarymetadata.ScopePosition, "content_advisory", []string{"ITUNESADVISORY"}},
-		{"release artist sort names remains unsupported", librarymetadata.ScopeRelease, "artist_sort_names", nil},
+		{"release artist sort names inherits position footprint", librarymetadata.ScopeRelease, "artist_sort_names", []string{"ARTISTSORT"}},
 		{"unsupported registered field", librarymetadata.ScopePosition, "album_artist_credit", nil},
 		{"unregistered field", librarymetadata.ScopePosition, "lyrics", nil},
 	}

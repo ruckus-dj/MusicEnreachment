@@ -22,6 +22,9 @@ type ProviderCanonicalTagValues struct {
 	Barcode          string
 	ReleaseCountry   string
 	ReleaseStatus    string
+	Labels           []string
+	CatalogNumbers   []string
+	Genres           []string
 	RecordingMBID    string
 	ISRCs            []string
 }
@@ -47,6 +50,9 @@ func RenderProviderCanonicalTagValues(values ProviderCanonicalTagValues) map[str
 	setProviderStringTag(tags, "RELEASESTATUS", values.ReleaseStatus)
 	setProviderStringTag(tags, "MUSICBRAINZ_TRACKID", values.RecordingMBID)
 	setProviderListTag(tags, "RELEASETYPES", values.ReleaseTypes)
+	setProviderListTag(tags, "LABEL", values.Labels)
+	setProviderListTag(tags, "CATALOGNUMBER", values.CatalogNumbers)
+	setProviderListTag(tags, "GENRE", values.Genres)
 	setProviderListTag(tags, "ISRC", values.ISRCs)
 	if len(values.ReleaseCredits) != 0 {
 		setCredits(tags, fields, "album_artist_credit", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", values.ReleaseCredits)

@@ -51,6 +51,18 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 			*field.value = value
 		}
 	}
+	if hasProviderFieldEvidence(context.Release.FieldEvidence, "label-info") {
+		values.Labels, values.CatalogNumbers, err = acceptedReleaseLabelInfo(releaseFields["label-info"])
+		if err != nil {
+			return nil, err
+		}
+	}
+	if hasProviderFieldEvidence(context.Release.FieldEvidence, "genres") {
+		values.Genres, err = acceptedReleaseGenres(releaseFields["genres"])
+		if err != nil {
+			return nil, err
+		}
+	}
 	values.ReleaseMBID, _ = canonicalProviderMBID(context.Release.ProviderKey)
 	if hasProviderFieldEvidence(context.Release.FieldEvidence, "release-group") {
 		group, present, decodeErr := acceptedProviderObject(releaseFields, "release-group")
@@ -149,6 +161,63 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 		}
 	}
 	return publication.RenderProviderCanonicalTagValues(values), nil
+}
+
+func acceptedReleaseLabelInfo(raw json.RawMessage) ([]string, []string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil, nil
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, nil, err
+	}
+	var labels, catalogNumbers []string
+	for _, entry := range entries {
+		object, err := decodeFrozenObject(entry)
+		if err != nil {
+			return nil, nil, err
+		}
+		label, present, err := acceptedProviderObject(object, "label")
+		if err != nil {
+			return nil, nil, err
+		}
+		if present {
+			name, _, err := acceptedProviderString(label, "name")
+			if err != nil {
+				return nil, nil, err
+			}
+			labels = append(labels, name)
+		}
+		catalog, _, err := acceptedProviderString(object, "catalog-number")
+		if err != nil {
+			return nil, nil, err
+		}
+		catalogNumbers = append(catalogNumbers, catalog)
+	}
+	return labels, catalogNumbers, nil
+}
+
+func acceptedReleaseGenres(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, err
+	}
+	genres := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		object, err := decodeFrozenObject(entry)
+		if err != nil {
+			return nil, err
+		}
+		name, _, err := acceptedProviderString(object, "name")
+		if err != nil {
+			return nil, err
+		}
+		genres = append(genres, name)
+	}
+	return genres, nil
 }
 
 func canonicalProviderMBID(value string) (string, bool) {

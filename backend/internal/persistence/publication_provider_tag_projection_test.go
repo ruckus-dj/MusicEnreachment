@@ -75,6 +75,65 @@ func TestBuildPublicationProviderCanonicalTagPatchProjectsAcceptedReleaseAndReco
 	}
 }
 
+func TestBuildPublicationProviderCanonicalTagPatchProjectsOrderedAcceptedLabelCatalogAndGenres(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Release.Fields = json.RawMessage(`{"label-info":[{"label":{"name":"Label B"},"catalog-number":"CAT-2"},{"catalog-number":"CAT-1"},{"label":{"name":"Label B"},"catalog-number":"CAT-2"}],"genres":[{"name":"Genre B","count":1},{"name":"Genre A","count":99},{"name":"Genre B","count":2}]}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"label-info": {}, "genres": {}}
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		"LABEL":         {"Label B", "Label B"},
+		"CATALOGNUMBER": {"CAT-2", "CAT-1", "CAT-2"},
+		"GENRE":         {"Genre B", "Genre A", "Genre B"},
+	}
+	if !reflect.DeepEqual(patch, want) {
+		t.Fatalf("patch = %#v, want %#v", patch, want)
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchRequiresTopLevelEvidenceForLabelAndGenres(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Release.Fields = json.RawMessage(`{"label-info":[{"label":{"name":"Unaccepted"},"catalog-number":"UNACCEPTED"}],"genres":[{"name":"Unaccepted"}]}`)
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patch) != 0 {
+		t.Fatalf("patch without top-level field evidence = %#v, want empty", patch)
+	}
+
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"label-info": {}, "genres": {}}
+	context.Release.Fields = json.RawMessage(`{"label-info":null,"genres":null}`)
+	patch, err = BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patch) != 0 {
+		t.Fatalf("patch for accepted null optional fields = %#v, want empty", patch)
+	}
+}
+
+func TestBuildPublicationProviderCanonicalTagPatchRejectsMalformedLabelAndGenreShapes(t *testing.T) {
+	for _, fields := range []string{
+		`{"label-info":{}}`,
+		`{"label-info":[{"label":{"name":42}}]}`,
+		`{"label-info":[{"catalog-number":42}]}`,
+		`{"genres":{}}`,
+		`{"genres":[{"name":42}]}`,
+	} {
+		t.Run(fields, func(t *testing.T) {
+			context := publicationTagProjectionFixture()
+			context.Release.Fields = json.RawMessage(fields)
+			context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"label-info": {}, "genres": {}}
+			if _, err := BuildPublicationProviderCanonicalTagPatch(context); err == nil {
+				t.Fatal("expected malformed accepted field shape to be rejected")
+			}
+		})
+	}
+}
+
 func TestBuildPublicationProviderCanonicalTagPatchProjectsOnlyAcceptedReleaseBarcodeCountryAndStatus(t *testing.T) {
 	context := publicationTagProjectionFixture()
 	context.Release.Fields = json.RawMessage(`{"barcode":"  0123456789  ","country":"XW","status":"non-official"}`)

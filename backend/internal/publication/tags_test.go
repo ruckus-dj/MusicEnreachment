@@ -214,6 +214,29 @@ func TestProjectTagsOptionalMappingsAbsentAndExplicitEmpty(t *testing.T) {
 	}
 }
 
+func TestProjectTagsReleaseArtistSortNameUsesArtistSortNotAlbumArtistSort(t *testing.T) {
+	release := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease,
+		Desired: map[string]librarymetadata.FieldValue{
+			"artist_sort_names":       librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"The Artist"}, false),
+			"album_artist_sort_names": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"Sort Album Artist"}, false),
+		},
+	}
+	result, err := ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &release},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.Tags["ARTISTSORT"], []string{"The Artist"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ARTISTSORT = %#v, want %#v", got, want)
+	}
+	if got, want := result.Tags["ALBUMARTISTSORT"], []string{"Sort Album Artist"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ALBUMARTISTSORT = %#v, want %#v", got, want)
+	}
+}
+
 func TestProjectTagsReleaseBarcodeCountryAndStatusStates(t *testing.T) {
 	for _, test := range []struct {
 		name       string

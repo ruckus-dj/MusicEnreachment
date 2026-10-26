@@ -378,7 +378,7 @@ func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, boo
 			return []string{"RELEASESTATUS"}, true
 		}
 	case "artist_sort_names":
-		if scope == librarymetadata.ScopePosition {
+		if scope == librarymetadata.ScopePosition || scope == librarymetadata.ScopeRelease {
 			return []string{"ARTISTSORT"}, true
 		}
 	case "movement":
@@ -433,9 +433,6 @@ func normalizedTagKey(scope librarymetadata.Scope, field string) (string, bool) 
 	}
 	if field == "artist_mbid" && scope == librarymetadata.ScopeRelease {
 		return "MUSICBRAINZ_ALBUMARTISTID", true
-	}
-	if field == "artist_sort_names" && scope == librarymetadata.ScopeRelease {
-		return "", false
 	}
 	key, ok := keys[field]
 	return key, ok

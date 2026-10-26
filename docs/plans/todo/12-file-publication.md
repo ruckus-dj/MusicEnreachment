@@ -45,6 +45,15 @@ commit и повторная работа допустимы. Внутрення
 
 ## Краткий текущий статус
 
+**Уточнение трактовки scope 2026-10-26:** повторная сверка с утверждённой
+optional inheritance (`position > track > recording > release`) не подтвердила
+необходимость нового решения владельца для release `artist_sort_names`: это
+fallback ARTISTSORT, а не конкурент ALBUMARTISTSORT. Аналогично перенос доступных
+provider label/catalog/genre names списками не требует выбора победителя или
+жанрового порога: ranking/weights не добавляются, counts остаются provider
+evidence. Прежние записи о «неразрешённых правилах» ниже отражают прежнюю оценку,
+не новое продуктовое ограничение. Завершение этих mappings ещё проверяется.
+
 **Уточнение 2026-10-26, после format acceptance:** MP3 source-format publication
 через public local confirm завершилась успешно: release
 `31ef6c43-c5c1-44dd-917b-25d18f15859f`, position

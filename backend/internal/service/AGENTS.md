@@ -76,6 +76,19 @@ encoded payload preservation separately instead of treating that estimate as an
 audio mutation. Receipt-carry fixtures must establish the actual desired metadata
 revision before asserting generation continuity.
 
+First-audio artwork topology must cover actual FFmpeg representations: MP4/M4A
+`covr` images appear as `video` with `attached_pic=1`, as do recognized Matroska
+image attachments. Require the verified embedded MIME/codec and exact image count;
+only Matroska additionally requires attachment filename/MIME tags. A synthetic
+FLAC probe cannot establish M4A or Matroska support; retain native ffprobe coverage.
+For real-tool upgrade fixtures, replace synthetic tools and source facts before
+first admission. Establish any legacy multiimage CURRENT fixture before upgrade
+admission, then let the production service capture its witness. Do not handcraft
+the frozen upgrade inputs or replace real command/probe results to make it pass.
+Stale pending-input proof rejection preserves the worker's claimed `dispatched`
+event; it need not create a `pending` event. Assert retained dirty scope, live
+delivery ownership and absence of a false park/ACK rather than an invented state.
+
 ## ANTI-PATTERNS
 - Empty safe error messages in Operations.Fail (enforced at runtime)
 - Passing full operation inputs in River job args (args = ID only, reload from snapshot)
