@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiResponseError, errorMessage } from "../../api/client/errors";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import { retryOperation } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { errorMessage, setupError } from "./setupApi";
 
 export function OperationProgress({
   id,
@@ -41,7 +41,7 @@ export function OperationProgress({
         await onSuccess();
         onFinished(id, next);
       } catch (reason) {
-        setRefreshError(errorMessage(reason));
+        setRefreshError(errorMessage(reason, "Неизвестная ошибка."));
       } finally {
         refreshing.current = false;
         setPending(false);
@@ -65,8 +65,8 @@ export function OperationProgress({
       }
     },
     onHttpError: (response) =>
-      setupError({ status: response.status, data: response.data ?? {} }),
-    onError: (reason) => setError(errorMessage(reason)),
+      apiResponseError({ status: response.status, data: response.data ?? {} }),
+    onError: (reason) => setError(errorMessage(reason, "Неизвестная ошибка.")),
     onStreamError: (reason) => setError(reason.message),
   });
   useEffect(() => {
@@ -89,10 +89,10 @@ export function OperationProgress({
     setError("");
     try {
       const response = await retryOperation(id);
-      if (response.status !== 200) throw setupError(response);
+      if (response.status !== 200) throw apiResponseError(response);
       acceptSnapshot(response.data, "action", true);
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, "Неизвестная ошибка."));
     } finally {
       setPending(false);
     }

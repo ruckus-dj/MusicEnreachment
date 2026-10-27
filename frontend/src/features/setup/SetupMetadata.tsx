@@ -9,6 +9,7 @@ import {
   RadioGroup,
   TextField,
 } from "react-aria-components";
+import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   checkMusicbrainz,
   saveSetupLrclib,
@@ -19,7 +20,6 @@ import type {
   UpdateMusicBrainzBodyMode,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { errorMessage, setupError } from "./setupApi";
 
 type Props = {
   state: SetupStateBody;
@@ -57,16 +57,16 @@ export function SetupMetadata({ state, refresh, onContinue }: Props) {
         !state.settings.musicbrainz_verified_at
       ) {
         const saved = await saveSetupMusicbrainz({ mode, base_url: url });
-        if (saved.status !== 204) throw setupError(saved);
+        if (saved.status !== 204) throw apiResponseError(saved);
       }
       const response = await checkMusicbrainz();
-      if (response.status !== 200) throw setupError(response);
+      if (response.status !== 200) throw apiResponseError(response);
       if (!response.data.success)
         throw new Error(response.data.error || "MusicBrainz недоступен.");
       await refresh();
       setNotice("MusicBrainz проверен.");
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, "Неизвестная ошибка."));
     } finally {
       setPending(false);
     }
@@ -87,11 +87,11 @@ export function SetupMetadata({ state, refresh, onContinue }: Props) {
           "Сохраните и проверьте MusicBrainz после изменения конфигурации.",
         );
       const response = await saveSetupLrclib({ enabled: lrclib });
-      if (response.status !== 204) throw setupError(response);
+      if (response.status !== 204) throw apiResponseError(response);
       await refresh();
       onContinue();
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, "Неизвестная ошибка."));
     } finally {
       setPending(false);
     }

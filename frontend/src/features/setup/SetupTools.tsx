@@ -8,6 +8,7 @@ import {
   Select,
   SelectValue,
 } from "react-aria-components";
+import { apiResponseError, errorMessage } from "../../api/client/errors";
 import { listInstallations, listOperations } from "../../api/generated/client";
 import type {
   CatalogBody,
@@ -23,7 +24,6 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { OperationProgress } from "./OperationProgress";
-import { errorMessage, setupError } from "./setupApi";
 
 type Kind = ManagedToolKind;
 const kinds: readonly Kind[] = ["ffmpeg", "fpcalc"];
@@ -88,7 +88,7 @@ export function SetupTools({
     setOperationsError("");
     try {
       const response = await listOperations();
-      if (response.status !== 200) throw setupError(response);
+      if (response.status !== 200) throw apiResponseError(response);
       if (!mounted.current) return;
       const active = (response.data.operations || []).filter(
         (item) =>
@@ -107,7 +107,8 @@ export function SetupTools({
       window.localStorage.setItem(operationKey, initialIds.current.join(","));
       setIds([...initialIds.current]);
     } catch (reason) {
-      if (mounted.current) setOperationsError(errorMessage(reason));
+      if (mounted.current)
+        setOperationsError(errorMessage(reason, "Неизвестная ошибка."));
     } finally {
       if (mounted.current) setDiscovering(false);
     }
@@ -123,7 +124,7 @@ export function SetupTools({
 
   const loadInstallations = useCallback(async () => {
     const response = await listInstallations();
-    if (response.status !== 200) throw setupError(response);
+    if (response.status !== 200) throw apiResponseError(response);
     setInstallations(response.data.installations || []);
   }, []);
   const forget = useCallback((id: string, snapshot: OperationResponse) => {
@@ -146,12 +147,12 @@ export function SetupTools({
       ]);
       if (installedResult.status === "rejected") throw installedResult.reason;
       const installed = installedResult.value;
-      if (installed.status !== 200) throw setupError(installed);
+      if (installed.status !== 200) throw apiResponseError(installed);
       setInstallations(installed.data.installations || []);
       if (catalogsResult.status === "rejected") throw catalogsResult.reason;
       setCatalog(catalogsResult.value);
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, "Неизвестная ошибка."));
     } finally {
       setPending(false);
     }
@@ -187,7 +188,7 @@ export function SetupTools({
       if (plan.conflicts?.length) setPreflight({ kind, plan });
       else await start(plan, kind);
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, "Неизвестная ошибка."));
     } finally {
       setPending(false);
     }
@@ -199,7 +200,7 @@ export function SetupTools({
     try {
       await start(preflight.plan, preflight.kind);
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, "Неизвестная ошибка."));
     } finally {
       setPending(false);
     }

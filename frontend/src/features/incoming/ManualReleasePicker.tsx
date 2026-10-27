@@ -1,10 +1,17 @@
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
-  getOperation,
+  getGetIncomingGroupMatchingQueryKey,
+  getGetIncomingGroupsQueryKey,
   startIncomingGroupManualReleaseSelection,
 } from "../../api/generated/client";
+import type { OperationResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import {
+  errorAfterSnapshotRead,
+  type IncomingOperationError,
+  IncomingOperationFollower,
+} from "./IncomingOperationFollower";
 
 type Props = {
   groupId: string;
@@ -41,7 +48,14 @@ export function ManualReleasePicker({
 }: Props) {
   const queryClient = useQueryClient();
   const [states, setStates] = useState<Record<string, GroupState>>({});
+  const [snapshots, setSnapshots] = useState<Record<string, OperationResponse>>(
+    {},
+  );
+  const [operationErrors, setOperationErrors] = useState<
+    Record<string, IncomingOperationError>
+  >({});
   const currentGroupRef = useRef(groupId);
+  const refreshers = useRef<Record<string, () => Promise<void>>>({});
   currentGroupRef.current = groupId;
   const currentRevisionsRef = useRef({ groupRevision, evaluationRevision });
   currentRevisionsRef.current = { groupRevision, evaluationRevision };
@@ -59,38 +73,10 @@ export function ManualReleasePicker({
       },
     }));
   }, [groupId, searchRelease]);
-  const operationQueries = useQueries({
-    queries: Object.entries(states)
-      .flatMap(([, item]) =>
-        item.operationId ? [{ operationId: item.operationId }] : [],
-      )
-      .map(({ operationId }) => ({
-        queryKey: ["manual-release-operation", operationId],
-        queryFn: async ({ signal }: { signal: AbortSignal }) => {
-          const response = await getOperation(operationId, {
-            signal,
-            cache: "no-store",
-          });
-          if (response.status !== 200)
-            throw new Error(
-              response.data.detail ||
-                "Не удалось прочитать состояние операции.",
-            );
-          return response.data;
-        },
-        refetchInterval: (query: { state: { data?: { state: string } } }) =>
-          query.state.data?.state === "queued" ||
-          query.state.data?.state === "running"
-            ? 1000
-            : false,
-      })),
-  });
   const operations = Object.entries(states).filter(
     ([, item]) => item.operationId,
   );
-  const operationQuery =
-    operationQueries[operations.findIndex(([id]) => id === groupId)];
-  const operation = operationQuery?.data;
+  const operation = snapshots[state.operationId ?? ""];
   const operationPending =
     Boolean(state.admitting) ||
     (Boolean(state.operationId) &&
@@ -99,8 +85,8 @@ export function ManualReleasePicker({
         operation.state === "running"));
 
   useEffect(() => {
-    for (const [index, [submittedGroupId, submitted]] of operations.entries()) {
-      const result = operationQueries[index]?.data;
+    for (const [submittedGroupId, submitted] of operations) {
+      const result = snapshots[submitted.operationId ?? ""];
       if (
         !result ||
         result.state === "queued" ||
@@ -110,10 +96,10 @@ export function ManualReleasePicker({
         continue;
       if (result.state === "succeeded") {
         void queryClient.invalidateQueries({
-          queryKey: ["/api/incoming-groups"],
+          queryKey: getGetIncomingGroupsQueryKey(),
         });
         void queryClient.invalidateQueries({
-          queryKey: [`/api/incoming-groups/${submittedGroupId}/matching`],
+          queryKey: getGetIncomingGroupMatchingQueryKey(submittedGroupId),
         });
         const selected = submitted.body?.selected_release;
         const releaseID = selected?.includes("/")
@@ -156,7 +142,7 @@ export function ManualReleasePicker({
         }));
       }
     }
-  }, [onPrepared, operationQueries, operations, queryClient]);
+  }, [onPrepared, operations, queryClient, snapshots]);
 
   async function submit() {
     if (!state.value.trim() || operationPending) return;
@@ -231,6 +217,54 @@ export function ManualReleasePicker({
       className="rounded border border-stone-300 bg-white p-4"
       aria-labelledby="manual-release-title"
     >
+      {operations.map(([, item]) => (
+        <IncomingOperationFollower
+          key={item.operationId}
+          operationId={item.operationId as string}
+          refreshers={refreshers}
+          onSnapshot={(snapshot) => {
+            setSnapshots((current) => ({
+              ...current,
+              [snapshot.id]: snapshot,
+            }));
+          }}
+          onSnapshotRead={(_snapshot, source) =>
+            setOperationErrors((current) => {
+              const error = errorAfterSnapshotRead(
+                current[item.operationId as string],
+                source,
+              );
+              if (error === current[item.operationId as string]) return current;
+              const next = { ...current };
+              if (error) next[item.operationId as string] = error;
+              else delete next[item.operationId as string];
+              return next;
+            })
+          }
+          onError={(error) =>
+            setOperationErrors((current) =>
+              current[item.operationId as string]?.kind === "stream"
+                ? current
+                : {
+                    ...current,
+                    [item.operationId as string]: {
+                      message: error.message,
+                      kind: "rest",
+                    },
+                  },
+            )
+          }
+          onStreamError={(error) =>
+            setOperationErrors((current) => ({
+              ...current,
+              [item.operationId as string]: {
+                message: error.message,
+                kind: "stream",
+              },
+            }))
+          }
+        />
+      ))}
       <h2 id="manual-release-title" className="font-semibold">
         Выбрать издание по MBID или ссылке
       </h2>
@@ -272,7 +306,7 @@ export function ManualReleasePicker({
       {state.operationId &&
       (operation?.state === "queued" ||
         operation?.state === "running" ||
-        operationQuery?.isLoading) ? (
+        !operation) ? (
         <p role="status" className="mt-2">
           Подготовка издания…
         </p>
@@ -287,13 +321,17 @@ export function ManualReleasePicker({
           Издание подготовлено.
         </p>
       ) : null}
-      {state.operationId && operationQuery?.isError ? (
-        <p role="alert">{operationQuery.error.message}</p>
-      ) : null}
-      {state.operationId && operationQuery?.isError ? (
-        <AppButton onPress={() => void operationQuery.refetch()}>
-          Обновить состояние операции
-        </AppButton>
+      {state.operationId && operationErrors[state.operationId] ? (
+        <div role="alert" className="mt-2 space-y-2">
+          <p>{operationErrors[state.operationId].message}</p>
+          <AppButton
+            onPress={() =>
+              void refreshers.current[state.operationId as string]?.()
+            }
+          >
+            Обновить состояние операции
+          </AppButton>
+        </div>
       ) : null}
     </section>
   );

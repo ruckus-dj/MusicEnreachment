@@ -7,6 +7,7 @@ import {
   RadioGroup,
   TextField,
 } from "react-aria-components";
+import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   checkSetupPaths,
   completeSetup,
@@ -20,7 +21,6 @@ import type {
 import { AppButton } from "../../components/AppButton";
 import { SetupMetadata } from "./SetupMetadata";
 import { SetupTools } from "./SetupTools";
-import { errorMessage, setupError } from "./setupApi";
 import "./setup.css";
 
 const steps = [
@@ -94,7 +94,7 @@ export function SetupManager({
   }, [error]);
   async function refresh() {
     const response = await getSetupState({ cache: "no-store" });
-    if (response.status !== 200) throw setupError(response);
+    if (response.status !== 200) throw apiResponseError(response);
     setState(response.data);
     setToolsDirectory(response.data.settings.tools_directory);
     setOutputDirectory(response.data.settings.output_directory);
@@ -117,12 +117,12 @@ export function SetupManager({
           tools_directory: toolsDirectory,
           output_directory: outputDirectory,
         });
-        if (checked.status !== 200) throw setupError(checked);
+        if (checked.status !== 200) throw apiResponseError(checked);
         const saved = await saveSetupRuntime({
           tools_directory: toolsDirectory,
           output_directory: outputDirectory,
         });
-        if (saved.status !== 204) throw setupError(saved);
+        if (saved.status !== 204) throw apiResponseError(saved);
         await refresh();
       }
       if (step === 2) {
@@ -136,7 +136,7 @@ export function SetupManager({
       if (step === 3) {
         if (!format) throw new Error("Выберите формат публикации.");
         const saved = await saveSetupRuntime({ publication_format: format });
-        if (saved.status !== 204) throw setupError(saved);
+        if (saved.status !== 204) throw apiResponseError(saved);
         await refresh();
       }
       if (step === 5) {
@@ -147,14 +147,14 @@ export function SetupManager({
               "Настройка не готова.",
           );
         const completed = await completeSetup();
-        if (completed.status !== 204) throw setupError(completed);
+        if (completed.status !== 204) throw apiResponseError(completed);
         window.localStorage.removeItem(stepKey);
         onCompleted();
         return;
       }
       navigate(step + 1);
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, "Неизвестная ошибка."));
     } finally {
       setPending(false);
     }
@@ -367,7 +367,7 @@ export function SetupManager({
       await refresh();
       setNotice("Состояние сервера обновлено.");
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason, "Неизвестная ошибка."));
     } finally {
       setPending(false);
     }

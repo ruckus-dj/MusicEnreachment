@@ -5,6 +5,14 @@ import { expect, it, vi } from "vitest";
 import { server } from "../../test/server";
 import { ManualReleasePicker } from "./ManualReleasePicker";
 
+class PickerEventSource extends EventTarget {
+  close = vi.fn();
+  constructor(readonly url: string) {
+    super();
+  }
+}
+vi.stubGlobal("EventSource", PickerEventSource);
+
 it("retries an uncertain admission with the identical request and reports the selected release", async () => {
   const onPrepared = vi.fn();
   const bodies: unknown[] = [];

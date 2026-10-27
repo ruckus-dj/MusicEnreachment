@@ -1,12 +1,20 @@
 import { useQueries } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
+  getGetIncomingGroupManualPickerSearchQueryKey,
   getIncomingGroupManualPickerSearch,
-  getOperation,
   startIncomingGroupManualPickerSearch,
 } from "../../api/generated/client";
-import type { ManualPickerSearchBody } from "../../api/generated/client.schemas";
+import type {
+  ManualPickerSearchBody,
+  OperationResponse,
+} from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import {
+  errorAfterSnapshotRead,
+  type IncomingOperationError,
+  IncomingOperationFollower,
+} from "./IncomingOperationFollower";
 
 type Props = {
   groupId: string;
@@ -97,6 +105,13 @@ export function ManualSearchPicker({
   onSelectRelease,
 }: Props) {
   const [states, setStates] = useState<Record<string, GroupState>>({});
+  const [snapshots, setSnapshots] = useState<Record<string, OperationResponse>>(
+    {},
+  );
+  const [operationErrors, setOperationErrors] = useState<
+    Record<string, IncomingOperationError>
+  >({});
+  const refreshers = useRef<Record<string, () => Promise<void>>>({});
   const state = states[groupId] ?? {
     entity: "artist",
     query: "",
@@ -106,36 +121,16 @@ export function ManualSearchPicker({
   const operations = Object.entries(states).filter(
     ([, item]) => item.operationId,
   );
-  const operationQueries = useQueries({
-    queries: operations.map(([, item]) => ({
-      queryKey: ["manual-picker-search-operation", item.operationId],
-      queryFn: async ({ signal }: { signal: AbortSignal }) => {
-        const response = await getOperation(item.operationId as string, {
-          signal,
-          cache: "no-store",
-        });
-        if (response.status !== 200)
-          throw new Error(
-            response.data.detail || "Не удалось прочитать состояние поиска.",
-          );
-        return response.data;
-      },
-      refetchInterval: (query: { state: { data?: { state: string } } }) =>
-        query.state.data?.state === "queued" ||
-        query.state.data?.state === "running"
-          ? 1000
-          : false,
-    })),
-  });
   const resultQueries = useQueries({
-    queries: operations.map(([key, item], index) => ({
+    queries: operations.map(([key, item]) => ({
       queryKey: [
-        "manual-picker-search-result",
-        key,
+        ...getGetIncomingGroupManualPickerSearchQueryKey(
+          key,
+          item.operationId as string,
+        ),
         item.body?.request_id,
-        item.operationId,
       ],
-      enabled: operationQueries[index]?.data?.state === "succeeded",
+      enabled: snapshots[item.operationId as string]?.state === "succeeded",
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const response = await getIncomingGroupManualPickerSearch(
           key,
@@ -164,7 +159,8 @@ export function ManualSearchPicker({
     })),
   });
   const currentIndex = operations.findIndex(([key]) => key === groupId);
-  const operation = operationQueries[currentIndex]?.data;
+  const currentOperationId = operations[currentIndex]?.[1].operationId;
+  const operation = snapshots[currentOperationId ?? ""];
   const resultQuery = resultQueries[currentIndex];
   const pageLimit = Number(state.limit);
   const pending = Boolean(
@@ -292,6 +288,54 @@ export function ManualSearchPicker({
       className="rounded border border-stone-300 bg-white p-4"
       aria-labelledby="manual-search-title"
     >
+      {operations.map(([, item]) => (
+        <IncomingOperationFollower
+          key={item.operationId}
+          operationId={item.operationId as string}
+          refreshers={refreshers}
+          onSnapshot={(snapshot) => {
+            setSnapshots((current) => ({
+              ...current,
+              [snapshot.id]: snapshot,
+            }));
+          }}
+          onSnapshotRead={(_snapshot, source) =>
+            setOperationErrors((current) => {
+              const error = errorAfterSnapshotRead(
+                current[item.operationId as string],
+                source,
+              );
+              if (error === current[item.operationId as string]) return current;
+              const next = { ...current };
+              if (error) next[item.operationId as string] = error;
+              else delete next[item.operationId as string];
+              return next;
+            })
+          }
+          onError={(error) =>
+            setOperationErrors((current) =>
+              current[item.operationId as string]?.kind === "stream"
+                ? current
+                : {
+                    ...current,
+                    [item.operationId as string]: {
+                      message: error.message,
+                      kind: "rest",
+                    },
+                  },
+            )
+          }
+          onStreamError={(error) =>
+            setOperationErrors((current) => ({
+              ...current,
+              [item.operationId as string]: {
+                message: error.message,
+                kind: "stream",
+              },
+            }))
+          }
+        />
+      ))}
       <h2 id="manual-search-title" className="font-semibold">
         Поиск MusicBrainz
       </h2>
@@ -400,11 +444,11 @@ export function ManualSearchPicker({
             "Не удалось выполнить поиск."}
         </p>
       ) : null}
-      {state.operationId && operationQueries[currentIndex]?.isError ? (
+      {currentOperationId && operationErrors[currentOperationId] ? (
         <div role="alert" className="mt-2 space-y-2">
-          <p>{operationQueries[currentIndex]?.error?.message}</p>
+          <p>{operationErrors[currentOperationId].message}</p>
           <AppButton
-            onPress={() => void operationQueries[currentIndex]?.refetch()}
+            onPress={() => void refreshers.current[currentOperationId]?.()}
           >
             Повторить чтение
           </AppButton>

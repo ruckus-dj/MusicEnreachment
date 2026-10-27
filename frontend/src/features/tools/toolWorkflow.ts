@@ -1,4 +1,4 @@
-import { apiResponseError } from "../../api/client/errors";
+import { successful } from "../../api/client/response";
 import {
   listToolCatalog,
   preflightToolInstall,
@@ -12,14 +12,6 @@ import type {
 } from "../../api/generated/client.schemas";
 
 export type ManagedToolKind = InstallationActionInputBodyPackageKind;
-
-function successful<T extends { status: number }, S extends T["status"]>(
-  response: T,
-  status: S,
-): Extract<T, { status: S }> {
-  if (response.status !== status) throw apiResponseError(response);
-  return response as Extract<T, { status: S }>;
-}
 
 export async function loadManagedToolCatalogs(): Promise<
   Record<ManagedToolKind, CatalogBody>

@@ -7,6 +7,27 @@ import { server } from "../../test/server";
 import { ManualReleasePicker } from "./ManualReleasePicker";
 import { ManualSearchPicker } from "./ManualSearchPicker";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+class PickerEventSource extends EventTarget {
+  static instances: PickerEventSource[] = [];
+  close = vi.fn();
+  constructor(readonly url: string) {
+    super();
+    PickerEventSource.instances.push(this);
+  }
+  wake() {
+    this.dispatchEvent(new Event("operation-changed"));
+  }
+}
+vi.stubGlobal("EventSource", PickerEventSource);
+
 it("browses releases for the explicitly selected artist and passes any chosen release to the direct picker", async () => {
   const searchBodies: Record<string, unknown>[] = [];
   let operation = 0;
@@ -25,9 +46,9 @@ it("browses releases for the explicitly selected artist and passes any chosen re
         );
       },
     ),
-    http.get("*/operations/:operationId", () =>
+    http.get("*/operations/:operationId", ({ params }) =>
       HttpResponse.json({
-        id: "search",
+        id: params.operationId,
         kind: "provider_artist_search",
         state: "succeeded",
         stage: "complete",
@@ -179,9 +200,9 @@ it("defaults to an editable page size of ten and submits the chosen offset and l
         );
       },
     ),
-    http.get("*/operations/:operationId", () =>
+    http.get("*/operations/:operationId", ({ params }) =>
       HttpResponse.json({
-        id: "page",
+        id: params.operationId,
         kind: "provider_release_search",
         state: "succeeded",
         stage: "complete",
@@ -298,6 +319,10 @@ it("keeps an admitted search tracked across a group revision change without show
       { status: 202 },
     ) as Response,
   );
+  await waitFor(() =>
+    expect(PickerEventSource.instances.length).toBeGreaterThan(0),
+  );
+  PickerEventSource.instances.at(-1)?.wake();
   await waitFor(() => expect(operationReads).toBeGreaterThan(0));
   await waitFor(() =>
     expect(screen.queryByText("Old revision result")).toBeNull(),
@@ -305,17 +330,9 @@ it("keeps an admitted search tracked across a group revision change without show
   expect(screen.getByLabelText("Количество результатов")).toHaveValue(10);
 });
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 it("locks edits while operation state is unknown and restores them on success", async () => {
-  const operationRead = deferred<Response>();
   const bodies: Record<string, unknown>[] = [];
+  let operationReads = 0;
   server.use(
     http.post(
       "*/incoming-groups/:groupId/manual-search",
@@ -327,7 +344,18 @@ it("locks edits while operation state is unknown and restores them on success", 
         );
       },
     ),
-    http.get("*/operations/slow-search", () => operationRead.promise),
+    http.get("*/operations/slow-search", () => {
+      operationReads += 1;
+      return HttpResponse.json({
+        id: "slow-search",
+        kind: "provider_artist_search",
+        state: operationReads === 1 ? "queued" : "succeeded",
+        stage: operationReads === 1 ? "queued" : "complete",
+        bytes_completed: 0,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: `2026-01-01T00:00:0${operationReads}Z`,
+      });
+    }),
     http.get("*/incoming-groups/group-a/manual-search/slow-search", () =>
       HttpResponse.json({
         group_id: "group-a",
@@ -368,18 +396,13 @@ it("locks edits while operation state is unknown and restores them on success", 
   expect(screen.getByLabelText("Количество результатов")).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Искать" }));
   expect(bodies).toHaveLength(1);
-  operationRead.resolve(
-    HttpResponse.json({
-      id: "slow-search",
-      kind: "provider_artist_search",
-      state: "succeeded",
-      stage: "complete",
-      bytes_completed: 0,
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    }) as Response,
+  await waitFor(() => expect(operationReads).toBe(1));
+  expect(PickerEventSource.instances.at(-1)?.url).toContain(
+    "slow-search/events",
   );
+  PickerEventSource.instances.at(-1)?.wake();
   expect(await screen.findByText("Frozen result")).toBeInTheDocument();
+  expect(operationReads).toBe(2);
   await waitFor(() => expect(query).toBeEnabled());
   expect(screen.getByLabelText("Тип поиска")).toBeEnabled();
   expect(screen.getByLabelText("Количество результатов")).toBeEnabled();
@@ -626,4 +649,63 @@ it("uses the edited page size in a fresh request after a completed search", asyn
     offset: 0,
   });
   expect(bodies[1].request_id).not.toBe(bodies[0].request_id);
+});
+
+it("keeps a stream disconnect notice through a failed fallback and a successful manual reread", async () => {
+  let operationReads = 0;
+  server.use(
+    http.post("*/incoming-groups/:groupId/manual-search", () =>
+      HttpResponse.json({ operation_id: "streamer" }, { status: 202 }),
+    ),
+    http.get("*/operations/streamer", () => {
+      operationReads += 1;
+      if (operationReads === 2)
+        return HttpResponse.json({ detail: "unavailable" }, { status: 500 });
+      return HttpResponse.json({
+        id: "streamer",
+        kind: "provider_artist_search",
+        state: "queued",
+        stage: "queued",
+        bytes_completed: 0,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      });
+    }),
+  );
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ManualSearchPicker
+        groupId="group-a"
+        groupRevision="revision-a"
+        onSelectRelease={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  fireEvent.change(screen.getByLabelText("Поисковый запрос"), {
+    target: { value: "stream query" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Искать" }));
+  await waitFor(() => expect(operationReads).toBe(1));
+  const events = PickerEventSource.instances.at(-1);
+  expect(events?.url).toContain("streamer/events");
+  events?.dispatchEvent(new Event("error"));
+  await waitFor(() => expect(operationReads).toBe(2));
+  expect(
+    await screen.findByText("Operation event stream disconnected."),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Повторить чтение" }));
+  await waitFor(() => expect(operationReads).toBe(3));
+  expect(
+    screen.getByText("Operation event stream disconnected."),
+  ).toBeInTheDocument();
+  events?.wake();
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Operation event stream disconnected."),
+    ).toBeNull(),
+  );
 });

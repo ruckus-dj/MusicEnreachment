@@ -9,6 +9,7 @@ import {
   apiResponseError,
   errorMessage as sharedErrorMessage,
 } from "../../api/client/errors";
+import { successful } from "../../api/client/response";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
   activateToolInstallation,
@@ -166,17 +167,6 @@ const sameMusicBrainz = (
 
 function message(reason: unknown): string {
   return sharedErrorMessage(reason, "Не удалось выполнить запрос.");
-}
-function apiError(response: { status: number; data?: { detail?: string } }) {
-  return apiResponseError(response);
-}
-function successful<T extends { status: number }, S extends T["status"]>(
-  response: T,
-  status: S,
-): Extract<T, { status: S }> {
-  if (response.status !== status)
-    throw apiError(response as { status: number; data?: { detail?: string } });
-  return response as Extract<T, { status: S }>;
 }
 function activeOperation(operation: OperationResponse) {
   return (
@@ -2003,7 +1993,7 @@ function OperationRow({
     onSnapshotRead: (_snapshot, _source, accepted) => {
       if (!accepted) setError("");
     },
-    onHttpError: apiError,
+    onHttpError: apiResponseError,
     onError: (reason) => setError(message(reason)),
     onStreamError: (reason) => setError(reason.message),
     refreshOnStreamError: true,
