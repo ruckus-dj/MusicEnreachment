@@ -46,8 +46,8 @@ func TestPublicationOperationsRequireTypedSnapshotsAndOwnersPostgreSQL(t *testin
 				return err
 			}
 			if withAttempt {
-				_, err := tx.NewRaw(`INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal)
-					VALUES (?,?,?,?,'audio','queued','{}'::jsonb,'{}'::jsonb,'[]'::jsonb)`, id, position, epoch, uuid.New()).Exec(ctx)
+				_, err := tx.NewRaw(`INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest)
+					VALUES (?,?,?,?,'audio','queued','{}'::jsonb,'{}'::jsonb)`, id, position, epoch, uuid.New()).Exec(ctx)
 				return err
 			}
 			return nil
@@ -87,7 +87,7 @@ func TestPublicationOperationsRequireTypedSnapshotsAndOwnersPostgreSQL(t *testin
 		if _, err := tx.NewRaw(`INSERT INTO operation(id,kind,state,stage,input_snapshot) VALUES (?,'publish_track_v1','queued','queued',?::jsonb)`, id, makeSnapshot("publish_track_v1", attemptEpoch)).Exec(ctx); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal) VALUES (?,?,?,?,'audio','queued','{}'::jsonb,'{}'::jsonb,'[]'::jsonb)`, id, position, attemptEpoch, uuid.New()).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest) VALUES (?,?,?,?,'audio','queued','{}'::jsonb,'{}'::jsonb)`, id, position, attemptEpoch, uuid.New()).Exec(ctx); err != nil {
 			return err
 		}
 		_, err := tx.NewRaw(`DELETE FROM track_publication_attempt WHERE operation_id=?`, id).Exec(ctx)
@@ -100,7 +100,7 @@ func TestPublicationOperationsRequireTypedSnapshotsAndOwnersPostgreSQL(t *testin
 		if _, err := tx.NewRaw(`INSERT INTO operation(id,kind,state,stage,input_snapshot) VALUES (?,'publish_track_v1','queued','queued',?::jsonb)`, id, makeSnapshot("publish_track_v1", cancelEpoch)).Exec(ctx); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal) VALUES (?,?,?,?,'audio','queued','{}'::jsonb,'{}'::jsonb,'[]'::jsonb)`, id, position, cancelEpoch, uuid.New()).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest) VALUES (?,?,?,?,'audio','queued','{}'::jsonb,'{}'::jsonb)`, id, position, cancelEpoch, uuid.New()).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`UPDATE operation SET state='failed',stage='cancelled',safe_error='cancelled',finished_at=now() WHERE id=?`, id).Exec(ctx); err != nil {
@@ -117,7 +117,7 @@ func TestPublicationOperationsRequireTypedSnapshotsAndOwnersPostgreSQL(t *testin
 		if _, err := tx.NewRaw(`INSERT INTO operation(id,kind,state,stage,input_snapshot) VALUES (?,'publish_track_v1','queued','queued',?::jsonb)`, id, makeSnapshot("publish_track_v1", epoch)).Exec(ctx); err != nil {
 			return err
 		}
-		_, err := tx.NewRaw(`INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal) VALUES (?,?,?,?,'audio','queued','{}'::jsonb,'{}'::jsonb,'[]'::jsonb)`, id, position, wrongEpoch, uuid.New()).Exec(ctx)
+		_, err := tx.NewRaw(`INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest) VALUES (?,?,?,?,'audio','queued','{}'::jsonb,'{}'::jsonb)`, id, position, wrongEpoch, uuid.New()).Exec(ctx)
 		return err
 	}); err == nil || !strings.Contains(err.Error(), "active publication operation requires a matching attempt") {
 		t.Fatalf("mismatched epoch constraint = %v", err)

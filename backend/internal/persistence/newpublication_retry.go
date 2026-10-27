@@ -61,7 +61,6 @@ func (repository *SetupManagerRepository) RetryPublicationOperationAndEnqueue(ct
 			operation.Attempt != captured.Attempt || !sameScanJobID(operation.RiverJobID, captured.RiverJobID) ||
 			attempt.PositionID != positionID || attempt.Epoch != epoch ||
 			(attempt.IntentKind != "audio" && attempt.IntentKind != "rewrite") ||
-			attempt.Phase == "committed" || attempt.Phase == "cleaning" || attempt.Phase == "cleanup_pending" ||
 			len(attempt.FrozenInputs) == 0 || len(attempt.NamespaceManifest) == 0 {
 			return errors.New("retry publication: failed attempt is not a retryable simple publication")
 		}

@@ -125,7 +125,7 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 			// River returns interrupted jobs at the same attempt after shutdown, so
 			// an equal attempt is a legitimate redelivery; only an older attempt is
 			// stale. The River row was locked and matched to guard above.
-			if op.State != "running" || attempt.Phase == "committed" || attempt.Phase == "cleaning" || attempt.Phase == "cleanup_pending" ||
+			if op.State != "running" ||
 				claim.ApplicationAttempt != guard.ApplicationAttempt ||
 				claim.RiverJobID != guard.RiverJobID || claim.RiverAttempt > guard.RiverAttempt || claim.Epoch != guard.Epoch ||
 				len(attempt.FrozenInputs) == 0 {

@@ -46,3 +46,11 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 
 ## NOTES
 Startup migration coupling means you cannot skip migrations or run an old binary against a new schema. Deploy rollback requires explicit `migrate:rollback` before reverting binary.
+
+The publication journal retirement migration refuses nonempty attempt journals or
+retired attempt phases; it never deletes or normalizes retained execution evidence.
+Resolve such evidence explicitly before retrying the upgrade. Stop the old server
+before upgrading or rolling back: mixed versions cannot share the removed column.
+Current source-cleanup recovery claims and the output-reset journal are unrelated
+and remain intact. Rollback restores only empty publication-attempt journals, which
+the forward migration proved contained no recovery evidence.

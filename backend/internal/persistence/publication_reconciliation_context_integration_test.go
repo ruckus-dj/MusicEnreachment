@@ -48,7 +48,7 @@ func TestResolvePublicationReconciliationContextReportsRetainedFailedAttemptPost
 	if _, err := repo.db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,safe_error,finished_at) VALUES (?,'publish_track_v1','failed','failed',jsonb_build_object('version',1,'position_id',?::text,'output_epoch',?::text,'intent_kind','audio'),'fixture',now())`, publicationID, position, epoch); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.db.ExecContext(ctx, `INSERT INTO track_publication_attempt(position_id,operation_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal) VALUES (?,?,?,?,'audio','recovery_required','{}'::jsonb,'{}'::jsonb,'[]'::jsonb)`, position, publicationID, epoch, generation); err != nil {
+	if _, err := repo.db.ExecContext(ctx, `INSERT INTO track_publication_attempt(position_id,operation_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest) VALUES (?,?,?,?,'audio','preparing','{}'::jsonb,'{}'::jsonb)`, position, publicationID, epoch, generation); err != nil {
 		t.Fatal(err)
 	}
 	assertContext(true)
@@ -99,7 +99,7 @@ func TestPublicationReconciliationDispatcherWakesSettledBusyAttemptPostgreSQL(t 
 	if _, err := repo.db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,safe_error,finished_at) VALUES (?,'publish_track_v1','failed','failed',jsonb_build_object('version',1,'position_id',?::text,'output_epoch',?::text,'intent_kind','audio'),'fixture',now())`, publicationID, position, epoch); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.db.ExecContext(ctx, `INSERT INTO track_publication_attempt(position_id,operation_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal) VALUES (?,?,?,?,'audio','recovery_required','{}'::jsonb,'{}'::jsonb,'[]'::jsonb)`, position, publicationID, epoch, generation); err != nil {
+	if _, err := repo.db.ExecContext(ctx, `INSERT INTO track_publication_attempt(position_id,operation_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest) VALUES (?,?,?,?,'audio','preparing','{}'::jsonb,'{}'::jsonb)`, position, publicationID, epoch, generation); err != nil {
 		t.Fatal(err)
 	}
 	if parked, err := repo.ParkPublicationReconciliationBusyAttempt(ctx, guard, 1, PublicationReconciliationBusyAttemptReason); err != nil || !parked {

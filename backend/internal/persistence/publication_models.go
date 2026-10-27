@@ -61,7 +61,6 @@ type TrackPublicationAttempt struct {
 	Phase               string          `bun:"phase"`
 	FrozenInputs        json.RawMessage `bun:"frozen_inputs,type:jsonb,nullzero"`
 	NamespaceManifest   json.RawMessage `bun:"namespace_manifest,type:jsonb"`
-	MutationJournal     json.RawMessage `bun:"mutation_journal,type:jsonb"`
 }
 
 // PublicationExecutionClaim fences one durable operation delivery.

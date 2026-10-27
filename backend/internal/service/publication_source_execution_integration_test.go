@@ -176,7 +176,7 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		t.Fatal(err)
 	}
 	manifest, _ := json.Marshal(map[string]any{"version": 1, "nodes": []persistence.PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "track.flac", RelativePath: "track.flac", NodeKind: "file"}}})
-	if _, err := db.ExecContext(ctx, `INSERT INTO track_publication_attempt(operation_id,position_id,epoch,expected_generation,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal) VALUES (?,?,?,NULL,?,'audio','queued',?::jsonb,?::jsonb,'[]')`, operationID, positionID, epoch, candidateID, string(frozen), string(manifest)); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO track_publication_attempt(operation_id,position_id,epoch,expected_generation,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest) VALUES (?,?,?,NULL,?,'audio','queued',?::jsonb,?::jsonb)`, operationID, positionID, epoch, candidateID, string(frozen), string(manifest)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE operation SET state='queued', finished_at=NULL WHERE id=?`, operationID); err != nil {

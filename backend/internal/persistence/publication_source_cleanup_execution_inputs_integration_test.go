@@ -227,8 +227,8 @@ func TestValidatePublicationSourceCleanupExecutionInputsPostgreSQL(t *testing.T)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal)
-			VALUES (?,?,?,?,'audio','queued',?::jsonb,?::jsonb,'[]'::jsonb)`, operationID, positionID, epoch, candidateGeneration, string(frozenInputs), string(namespaceManifest)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest)
+			VALUES (?,?,?,?,'audio','queued',?::jsonb,?::jsonb)`, operationID, positionID, epoch, candidateGeneration, string(frozenInputs), string(namespaceManifest)); err != nil {
 			return err
 		}
 		for _, node := range namespaceNodes {

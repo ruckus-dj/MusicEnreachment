@@ -284,7 +284,6 @@ func checkResetAllowed(ctx context.Context, queryer interface {
 				LEFT JOIN track_publication_attempt attempt ON attempt.operation_id=operation.id
 				LEFT JOIN river_job job ON job.id=operation.river_job_id
 				WHERE operation.state <> 'queued' OR attempt.operation_id IS NULL OR attempt.phase <> 'queued'
-				OR attempt.mutation_journal <> '[]'::jsonb
 				OR job.id IS NULL OR job.state NOT IN ('available','pending','retryable','scheduled')
 				OR job.attempted_at IS NOT NULL
 				OR EXISTS (SELECT 1 FROM publication_execution_claim claim WHERE claim.operation_id=operation.id)
@@ -292,7 +291,7 @@ func checkResetAllowed(ctx context.Context, queryer interface {
 		EXISTS (
 			SELECT 1 FROM track_publication_attempt attempt
 			LEFT JOIN operation operation ON operation.id=attempt.operation_id
-			WHERE attempt.phase <> 'queued' OR attempt.mutation_journal <> '[]'::jsonb
+			WHERE attempt.phase <> 'queued'
 				OR operation.id IS NULL OR operation.state <> 'queued'
 		) OR
 		EXISTS (
@@ -601,7 +600,7 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 		USING operation operation, track_publication_attempt attempt, river_job job
 		WHERE hold.operation_id=operation.id AND attempt.operation_id=operation.id
 			AND job.id=operation.river_job_id AND operation.state='queued'
-			AND attempt.phase='queued' AND attempt.mutation_journal='[]'::jsonb
+			AND attempt.phase='queued'
 			AND job.state IN ('available','pending','retryable','scheduled') AND job.attempted_at IS NULL
 			AND NOT EXISTS (SELECT 1 FROM publication_execution_claim claim WHERE claim.operation_id=operation.id)`); err != nil {
 		return fmt.Errorf("release untouched queued publication source holds: %w", err)
@@ -609,11 +608,11 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	if _, err := tx.ExecContext(ctx, `UPDATE river_job job SET state='cancelled',finalized_at=now()
 			FROM track_publication_attempt attempt JOIN operation operation ON operation.id=attempt.operation_id
 			WHERE operation.river_job_id=job.id AND operation.state='queued'
-				AND attempt.phase='queued' AND attempt.mutation_journal='[]'::jsonb
+				AND attempt.phase='queued'
 				AND job.state IN ('available','pending','retryable','scheduled')`); err != nil {
 		return fmt.Errorf("cancel untouched publication deliveries: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM track_publication_attempt WHERE phase='queued' AND mutation_journal='[]'::jsonb`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM track_publication_attempt WHERE phase='queued'`); err != nil {
 		return fmt.Errorf("remove untouched publication attempts: %w", err)
 	}
 	var ids []uuid.UUID

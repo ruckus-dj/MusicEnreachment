@@ -20,8 +20,8 @@ func TestOutputResetCancelsAttemptedPublicationDeliveryOnlyPostgreSQL(t *testing
 		t.Fatal(err)
 	}
 	if _, err := f.db.NewRaw(`INSERT INTO track_publication_attempt
-		(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal)
-		VALUES (?,?,?,?,'audio','queued','{}','{}','[]')`, f.operation, f.position, f.epoch, uuid.New()).Exec(ctx); err != nil {
+		(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest)
+		VALUES (?,?,?,?,'audio','queued','{}','{}')`, f.operation, f.position, f.epoch, uuid.New()).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var unrelatedJob int64
@@ -69,12 +69,13 @@ func TestOutputResetRejectsUnsafePublicationAttemptsPostgreSQL(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		phase    string
-		journal  string
 		terminal bool
 	}{
-		{"execution started", "preparing", "[]", false},
-		{"journaled queued mutation", "queued", "[{}]", false},
-		{"terminal operation retains intent", "queued", "[]", true},
+		{"execution started", "preparing", false},
+		{"candidate staged", "staged", false},
+		{"candidate validated", "validated", false},
+		{"candidate exposing", "exposing", false},
+		{"terminal operation retains intent", "queued", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newPublicationResetFixture(t)
@@ -85,8 +86,8 @@ func TestOutputResetRejectsUnsafePublicationAttemptsPostgreSQL(t *testing.T) {
 				}
 			}
 			if _, err := f.db.NewRaw(`INSERT INTO track_publication_attempt
-				(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal)
-				VALUES (?,?,?,?,'audio',?,'{}','{}',?::jsonb)`, f.operation, f.position, f.epoch, uuid.New(), test.phase, test.journal).Exec(ctx); err != nil {
+				(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest)
+				VALUES (?,?,?,?,'audio',?,'{}','{}')`, f.operation, f.position, f.epoch, uuid.New(), test.phase).Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := f.reset(); err == nil {

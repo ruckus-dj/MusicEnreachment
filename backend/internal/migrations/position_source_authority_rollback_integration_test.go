@@ -59,7 +59,7 @@ func TestPositionSourceAuthorityRollbackRefusesLiveStatePostgreSQL(t *testing.T)
 					if _, err := tx.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot) VALUES (?,'publish_track_v1','queued','queued',jsonb_build_object('version',1,'position_id',?::text,'output_epoch',?::text,'intent_kind','audio'))`, operationID, positionID, epoch); err != nil {
 						return err
 					}
-					_, err := tx.ExecContext(ctx, `INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal) VALUES (?,?,?,?,'audio','queued','{"source_authority_mode":"manual"}','{}','[]')`, operationID, positionID, epoch, uuid.New())
+					_, err := tx.ExecContext(ctx, `INSERT INTO track_publication_attempt(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest) VALUES (?,?,?,?,'audio','queued','{"source_authority_mode":"manual"}','{}')`, operationID, positionID, epoch, uuid.New())
 					return err
 				}); err != nil {
 					t.Fatal(err)

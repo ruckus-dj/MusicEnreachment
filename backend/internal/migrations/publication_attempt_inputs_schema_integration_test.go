@@ -29,14 +29,13 @@ func TestPublicationAttemptInputsFollowUnfinishedLifecyclePostgreSQL(t *testing.
 			t.Fatal(err)
 		}
 	}
-	for _, phase := range []string{"queued", "preparing", "staged", "validated", "exposing", "recovery_required", "committed", "cleaning", "cleanup_pending"} {
+	for _, phase := range []string{"queued", "preparing", "staged", "validated", "exposing"} {
 		for _, inputs := range []any{nil, `{}`, `[]`, `null`} {
 			t.Run(phase+"/"+publicationInputsTestName(inputs), func(t *testing.T) {
-				finished := phase == "committed" || phase == "cleaning" || phase == "cleanup_pending"
-				wantValid := (finished && inputs == nil) || (!finished && inputs == `{}`)
+				wantValid := inputs == `{}`
 				_, err := database.NewRaw(`INSERT INTO track_publication_attempt
-					(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal)
-					VALUES (?,?,?,?,'audio',?,?::jsonb,'{}'::jsonb,'[]'::jsonb)`,
+					(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest)
+					VALUES (?,?,?,?,'audio',?,?::jsonb,'{}'::jsonb)`,
 					operationID, positionID, uuid.New(), uuid.New(), phase, inputs).Exec(ctx)
 				if !wantValid {
 					if err == nil || !strings.Contains(err.Error(), "track_publication_attempt_frozen_inputs_phase_check") {
@@ -52,6 +51,17 @@ func TestPublicationAttemptInputsFollowUnfinishedLifecyclePostgreSQL(t *testing.
 				}
 			})
 		}
+	}
+	for _, phase := range []string{"committed", "cleaning", "cleanup_pending", "recovery_required"} {
+		t.Run("retired/"+phase, func(t *testing.T) {
+			_, err := database.NewRaw(`INSERT INTO track_publication_attempt
+				(operation_id,position_id,epoch,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest)
+				VALUES (?,?,?,?,'audio',?,'{}'::jsonb,'{}'::jsonb)`,
+				operationID, positionID, uuid.New(), uuid.New(), phase).Exec(ctx)
+			if err == nil || !strings.Contains(err.Error(), "track_publication_attempt_phase_check") {
+				t.Fatalf("retired phase %s: expected phase constraint, got %v", phase, err)
+			}
+		})
 	}
 }
 

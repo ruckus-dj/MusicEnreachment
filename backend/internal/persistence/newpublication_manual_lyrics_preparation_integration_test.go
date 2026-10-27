@@ -31,7 +31,7 @@ func preparingManualLyricsFLACFixture(t *testing.T) (publicationExecutionFixture
 	}
 	currentAudio := mustJSON(PublicationCurrentAudio{Version: 1, Facts: input.Rewrite.AudioFacts})
 	if err := f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE track_publication_attempt SET phase='preparing', mutation_journal='[]'::jsonb, frozen_inputs=?::jsonb WHERE operation_id=?`, string(mustJSON(input)), f.guard.OperationID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE track_publication_attempt SET phase='preparing', frozen_inputs=?::jsonb WHERE operation_id=?`, string(mustJSON(input)), f.guard.OperationID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE operation SET stage='preparing' WHERE id=?`, f.guard.OperationID); err != nil {

@@ -56,8 +56,8 @@ func newPublicationExecutionFixture(t *testing.T) publicationExecutionFixture {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO track_publication_attempt
-		(operation_id,position_id,epoch,expected_generation,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal)
-		VALUES (?,?,?,NULL,?,'audio','queued',?::jsonb,'{}','[]')`, operationID, positionID, epoch, candidateID, string(frozenInputs)); err != nil {
+		(operation_id,position_id,epoch,expected_generation,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest)
+		VALUES (?,?,?,NULL,?,'audio','queued',?::jsonb,'{}')`, operationID, positionID, epoch, candidateID, string(frozenInputs)); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -236,9 +236,9 @@ func TestPublicationDeliveryRetryReplacesExecutingClaimAndRestartsPreparationPos
 	if previousClaimState != "executing" {
 		t.Fatalf("prior claim state = %q, want executing", previousClaimState)
 	}
-	var frozenInputs, manifest, journal string
-	if err := f.db.NewRaw(`SELECT frozen_inputs, namespace_manifest, mutation_journal FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).
-		Scan(ctx, &frozenInputs, &manifest, &journal); err != nil {
+	var frozenInputs, manifest string
+	if err := f.db.NewRaw(`SELECT frozen_inputs, namespace_manifest FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).
+		Scan(ctx, &frozenInputs, &manifest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.db.ExecContext(ctx, `UPDATE operation SET stage='validated' WHERE id=?`, f.guard.OperationID); err != nil {
@@ -285,13 +285,13 @@ func TestPublicationDeliveryRetryReplacesExecutingClaimAndRestartsPreparationPos
 		claim.RiverAttempt != retry.RiverAttempt || claim.ClaimUUID != retry.ClaimUUID || riverAttempt != retry.RiverAttempt {
 		t.Fatalf("retry state = operation:%s/%s attempt:%s claim:%+v river-attempt:%d", operationState, stage, phase, claim, riverAttempt)
 	}
-	var afterInputs, afterManifest, afterJournal string
-	if err := f.db.NewRaw(`SELECT frozen_inputs, namespace_manifest, mutation_journal FROM track_publication_attempt WHERE operation_id=?`, retry.OperationID).
-		Scan(ctx, &afterInputs, &afterManifest, &afterJournal); err != nil {
+	var afterInputs, afterManifest string
+	if err := f.db.NewRaw(`SELECT frozen_inputs, namespace_manifest FROM track_publication_attempt WHERE operation_id=?`, retry.OperationID).
+		Scan(ctx, &afterInputs, &afterManifest); err != nil {
 		t.Fatal(err)
 	}
-	if string(afterInputs) != string(frozenInputs) || string(afterManifest) != string(manifest) || string(afterJournal) != string(journal) {
-		t.Fatal("retry changed frozen inputs, namespace manifest, or mutation journal")
+	if afterInputs != frozenInputs || afterManifest != manifest {
+		t.Fatal("retry changed frozen inputs or namespace manifest")
 	}
 }
 
