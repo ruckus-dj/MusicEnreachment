@@ -1,0 +1,5 @@
+/data/
+/config/
+/appdata/
+/.env
+.DS_Store
