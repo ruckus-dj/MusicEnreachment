@@ -102,6 +102,10 @@ delivery ownership and absence of a false park/ACK rather than an invented state
 - Publication fixture edits must read the current metadata revision rather than
   assume zero after admission. Insert tool read holds and set `tools_read_required`
   in one transaction: deferred consistency checks reject either half alone.
+- Replacement tests capture pre-replace identity with `File.Stat` on an open
+  handle, then close it before replacement. On Windows, `os.Stat` may defer the
+  identity lookup until `os.SameFile`, accidentally observing the replacement
+  instead of the original file.
 
 ## NOTES
 Operations.Progress allows partial updates (e.g., download progress) without changing state. Subscribe returns a channel that closes on operation completion or error, never sends intermediate data.

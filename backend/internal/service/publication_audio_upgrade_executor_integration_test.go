@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -192,6 +193,25 @@ func TestAudioUpgradeExecutorRetriesAfterInstalledResultRollbackPostgreSQL(t *te
 		if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=2 WHERE id=?`, jobID); err != nil {
 			t.Fatal(err)
 		}
+		// The failed result transaction left the candidate installed. The retry
+		// must rebuild it and pass through native replacement even though its
+		// resulting bytes are identical to the already-installed candidate.
+		installedBeforeRetry, err := os.ReadFile(destination)
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeRetryFile, err := os.Open(destination)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// File.Stat captures the handle's identity eagerly on Windows; os.Stat
+		// may defer that lookup until SameFile, after the target was replaced.
+		beforeRetryInfo, statErr := beforeRetryFile.Stat()
+		closeErr := beforeRetryFile.Close()
+		if err := errors.Join(statErr, closeErr); err != nil {
+			t.Fatal(err)
+		}
+		beforeRetryDigest := sha256.Sum256(installedBeforeRetry)
 		if err := executor.ExecutePublicationDelivery(ctx, operationID, jobID, 2); err != nil {
 			t.Fatalf("upgrade retry after installed result rollback: %v", err)
 		}
@@ -214,7 +234,17 @@ func TestAudioUpgradeExecutorRetriesAfterInstalledResultRollbackPostgreSQL(t *te
 		if err != nil {
 			t.Fatal(err)
 		}
+		afterRetryInfo, err := os.Stat(destination)
+		if err != nil {
+			t.Fatal(err)
+		}
 		installedDigest := sha256.Sum256(installed)
+		if installedDigest != beforeRetryDigest {
+			t.Fatalf("retry candidate changed bytes: before=%x after=%x", beforeRetryDigest, installedDigest)
+		}
+		if os.SameFile(beforeRetryInfo, afterRetryInfo) {
+			t.Fatal("retry did not replace the byte-identical installed candidate")
+		}
 		if settled.Current.Ownership.Identity.SHA256 != hex.EncodeToString(installedDigest[:]) {
 			t.Fatal("successful CURRENT ownership differs from installed output")
 		}

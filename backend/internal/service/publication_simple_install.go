@@ -261,26 +261,18 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			_ = currentFile.Close()
 			return statErr
 		}
-		currentDigest, digestErr := digestRegular(ctx, currentFile)
-		closeErr := currentFile.Close()
-		if digestErr != nil || closeErr != nil {
-			return errors.Join(digestErr, closeErr)
+		if err := currentFile.Close(); err != nil {
+			return err
 		}
-		if currentDigest == observation.PayloadSHA256 {
-			// A prior delivery may have installed this exact validated candidate and
-			// then lost its database acknowledgement. Recommit its observation.
-			_ = currentInfo
-		} else {
-			if err := executor.checkPublicationResultCurrent(ctx, guard); err != nil {
-				return err
-			}
-			replacer, ok := targetParent.(sourcefs.OutputAtomicReplace)
-			if !ok {
-				return errors.New("native atomic publication replacement is unavailable")
-			}
-			if err := replacer.AtomicReplaceExisting(ctx, candidateRoot, tempName, candidateInfo, targetName, currentInfo); err != nil {
-				return fmt.Errorf("atomically replace current publication: %w", err)
-			}
+		if err := executor.checkPublicationResultCurrent(ctx, guard); err != nil {
+			return err
+		}
+		replacer, ok := targetParent.(sourcefs.OutputAtomicReplace)
+		if !ok {
+			return errors.New("native atomic publication replacement is unavailable")
+		}
+		if err := replacer.AtomicReplaceExisting(ctx, candidateRoot, tempName, candidateInfo, targetName, currentInfo); err != nil {
+			return fmt.Errorf("atomically replace current publication: %w", err)
 		}
 	} else if errors.Is(currentErr, fs.ErrNotExist) || errors.Is(currentErr, os.ErrNotExist) {
 		if err := executor.checkPublicationResultCurrent(ctx, guard); err != nil {
