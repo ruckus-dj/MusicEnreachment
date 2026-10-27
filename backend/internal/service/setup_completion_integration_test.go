@@ -243,7 +243,8 @@ func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 			case "musicbrainz identity":
 				err = registry.SetMusicBrainzConfig(ctx, "self-hosted", server.URL+"/different/ws/2")
 			case "runtime setting":
-				err = registry.SetPublicationFormat(ctx, "source")
+				format := "source"
+				err = setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{PublicationFormat: &format})
 			case "active installation verification":
 				_, err = database.ExecContext(ctx, "UPDATE tool_installation SET executable_versions = '{}' WHERE package_kind = 'ffmpeg'")
 			case "output directory changed":

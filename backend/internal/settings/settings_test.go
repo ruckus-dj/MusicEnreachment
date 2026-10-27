@@ -130,8 +130,9 @@ func TestMusicBrainzSelfHostedThrottleSettingsDefaultAndValidation(t *testing.T)
 	if enabled || delay != 0.5 {
 		t.Fatalf("defaults = (%t, %v), want (false, 0.5)", enabled, delay)
 	}
+	throttle := true
 	for _, value := range []float64{0, 0.125, 60} {
-		if err := registry.SetMusicBrainzProviderSettings(ctx, true, value); err != nil {
+		if err := registry.UpdateMusicBrainzProviderSettings(ctx, &throttle, &value); err != nil {
 			t.Fatalf("save valid delay %v: %v", value, err)
 		}
 		gotEnabled, gotDelay, err := registry.GetMusicBrainzProviderSettings(ctx)
@@ -139,9 +140,14 @@ func TestMusicBrainzSelfHostedThrottleSettingsDefaultAndValidation(t *testing.T)
 			t.Fatalf("read delay %v = (%t, %v, %v)", value, gotEnabled, gotDelay, err)
 		}
 	}
+	throttle = false
 	for _, value := range []float64{-0.01, 60.01, math.NaN(), math.Inf(1)} {
-		if err := registry.SetMusicBrainzProviderSettings(ctx, false, value); err == nil {
+		if err := registry.UpdateMusicBrainzProviderSettings(ctx, &throttle, &value); err == nil {
 			t.Errorf("accepted invalid delay %v", value)
+		}
+		gotEnabled, gotDelay, err := registry.GetMusicBrainzProviderSettings(ctx)
+		if err != nil || !gotEnabled || gotDelay != 60 {
+			t.Fatalf("invalid delay partially updated settings: enabled=%t delay=%v err=%v", gotEnabled, gotDelay, err)
 		}
 	}
 }
@@ -303,14 +309,17 @@ func TestOutputDirectoryProbesFilesystemSemantics(t *testing.T) {
 		t.Fatalf("set output directory: %v", err)
 	}
 
-	semantics, err := registry.GetOutputFilesystemSemantics(ctx)
+	runtimeSettings, err := registry.ReadRuntimeSettings(ctx)
 	if err != nil {
-		t.Fatalf("get filesystem semantics: %v", err)
+		t.Fatalf("read runtime settings: %v", err)
+	}
+	if runtimeSettings.OutputCaseSensitive == nil {
+		t.Fatal("output filesystem case sensitivity was not probed")
 	}
 
 	// Verify probed values are reasonable
-	if semantics.UnicodeNormalization != "none" && semantics.UnicodeNormalization != "nfc" && semantics.UnicodeNormalization != "nfd" {
-		t.Errorf("unexpected unicode normalization: %q", semantics.UnicodeNormalization)
+	if runtimeSettings.OutputUnicodeNormalization != "none" && runtimeSettings.OutputUnicodeNormalization != "nfc" && runtimeSettings.OutputUnicodeNormalization != "nfd" {
+		t.Errorf("unexpected unicode normalization: %q", runtimeSettings.OutputUnicodeNormalization)
 	}
 }
 
@@ -437,12 +446,12 @@ func TestPublicationFormatValidation(t *testing.T) {
 	registry := settings.New(store, nil)
 	ctx := context.Background()
 
-	if err := registry.SetPublicationFormat(ctx, "invalid"); err == nil {
+	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{PublicationFormat: pointer("invalid")}); err == nil {
 		t.Fatal("accepted invalid format")
 	}
 
 	for _, format := range []string{"source", "mka", "m4a"} {
-		if err := registry.SetPublicationFormat(ctx, format); err != nil {
+		if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{PublicationFormat: &format}); err != nil {
 			t.Fatalf("set format %q: %v", format, err)
 		}
 
@@ -458,33 +467,34 @@ func TestPublicationSettingsDefaultAndRoundTrip(t *testing.T) {
 	registry := settings.New(store, nil)
 	ctx := context.Background()
 
-	template, err := registry.GetPublicationPathTemplate(ctx)
-	if err != nil || template != publication.DefaultTemplate {
-		t.Fatalf("default publication path template = %q, %v; want %q", template, err, publication.DefaultTemplate)
+	runtimeSettings, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	removeSources, err := registry.GetPublicationRemoveSources(ctx)
-	if err != nil || removeSources {
-		t.Fatalf("default publication source removal = %v, %v; want false", removeSources, err)
+	if runtimeSettings.PublicationPathTemplate != publication.DefaultTemplate {
+		t.Fatalf("default publication path template = %q; want %q", runtimeSettings.PublicationPathTemplate, publication.DefaultTemplate)
 	}
-	if got, err := registry.ReadRuntimeSettings(ctx); err != nil || got.PublicationPathTemplate != publication.DefaultTemplate || got.PublicationRemoveSources {
-		t.Fatalf("runtime publication settings = %+v, %v", got, err)
+	if runtimeSettings.PublicationRemoveSources {
+		t.Fatalf("default publication source removal = %v; want false", runtimeSettings.PublicationRemoveSources)
 	}
 
 	customTemplate := `{ALBUM_NAME}/{TRACK_NAME}.{EXT}`
-	removeSources = true
+	removeSources := true
 	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{
 		PublicationPathTemplate:  &customTemplate,
 		PublicationRemoveSources: &removeSources,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	gotTemplate, err := registry.GetPublicationPathTemplate(ctx)
-	if err != nil || gotTemplate != customTemplate {
-		t.Fatalf("saved publication path template = %q, %v", gotTemplate, err)
+	runtimeSettings, err = registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	gotRemoveSources, err := registry.GetPublicationRemoveSources(ctx)
-	if err != nil || !gotRemoveSources {
-		t.Fatalf("saved publication source removal = %v, %v", gotRemoveSources, err)
+	if runtimeSettings.PublicationPathTemplate != customTemplate {
+		t.Fatalf("saved publication path template = %q; want %q", runtimeSettings.PublicationPathTemplate, customTemplate)
+	}
+	if !runtimeSettings.PublicationRemoveSources {
+		t.Fatalf("saved publication source removal = %v; want true", runtimeSettings.PublicationRemoveSources)
 	}
 }
 
@@ -517,18 +527,18 @@ func TestUpdateRuntimePublicationRemoveSourcesPersistsUnlessExplicitlyChanged(t 
 	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{PublicationFormat: &format}); err != nil {
 		t.Fatalf("update publication format: %v", err)
 	}
-	gotRemoveSources, err := registry.GetPublicationRemoveSources(ctx)
-	if err != nil || !gotRemoveSources {
-		t.Fatalf("omitted source removal = %v, %v; want true preserved", gotRemoveSources, err)
+	gotRuntime, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil || !gotRuntime.PublicationRemoveSources {
+		t.Fatalf("omitted source removal = %v, %v; want true preserved", gotRuntime.PublicationRemoveSources, err)
 	}
 
 	removeSources = false
 	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{PublicationRemoveSources: &removeSources}); err != nil {
 		t.Fatalf("disable source removal: %v", err)
 	}
-	gotRemoveSources, err = registry.GetPublicationRemoveSources(ctx)
-	if err != nil || gotRemoveSources {
-		t.Fatalf("explicitly disabled source removal = %v, %v; want false", gotRemoveSources, err)
+	gotRuntime, err = registry.ReadRuntimeSettings(ctx)
+	if err != nil || gotRuntime.PublicationRemoveSources {
+		t.Fatalf("explicitly disabled source removal = %v, %v; want false", gotRuntime.PublicationRemoveSources, err)
 	}
 }
 
@@ -631,26 +641,6 @@ func TestUpdateRuntimeWritesSuppliedFieldsTogetherAndLeavesNilFields(t *testing.
 }
 
 func pointer[T any](value T) *T { return &value }
-
-func TestConfigurationHealthChecksAllRequirements(t *testing.T) {
-	store := newMemoryStore()
-	registry := settings.New(store, nil)
-	ctx := context.Background()
-
-	platform := settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}
-	health, err := registry.ComputeConfigurationHealth(ctx, platform)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if health.Healthy {
-		t.Fatal("empty configuration reported as healthy")
-	}
-
-	if len(health.Problems) == 0 {
-		t.Fatal("no problems reported for empty configuration")
-	}
-}
 
 func TestLRCLIBEnabledDefaultsToTrue(t *testing.T) {
 	store := newMemoryStore()

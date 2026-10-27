@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"runtime"
 	"strconv"
 	"strings"
@@ -499,49 +498,9 @@ func runtimeUpdateValues(update RuntimeUpdate) (map[string]string, error) {
 	return values, nil
 }
 
-// GetOutputFilesystemSemantics returns the probed filesystem characteristics.
-func (r *Registry) GetOutputFilesystemSemantics(ctx context.Context) (FilesystemSemantics, error) {
-	caseSensitive, csExists, err := readSetting(ctx, r.store, outputCaseSetting)
-	if err != nil {
-		return FilesystemSemantics{}, err
-	}
-	unicodeNorm, unExists, err := readSetting(ctx, r.store, outputUnicodeSetting)
-	if err != nil {
-		return FilesystemSemantics{}, err
-	}
-	if !csExists || !unExists {
-		return FilesystemSemantics{}, fmt.Errorf("filesystem semantics not probed")
-	}
-	return FilesystemSemantics{
-		CaseSensitive:        caseSensitive,
-		UnicodeNormalization: unicodeNorm,
-	}, nil
-}
-
 // GetPublicationFormat returns "source" or "mka".
 func (r *Registry) GetPublicationFormat(ctx context.Context) (string, bool, error) {
 	return readSetting(ctx, r.store, publicationSetting)
-}
-
-// SetPublicationFormat validates and stores the publication format.
-func (r *Registry) SetPublicationFormat(ctx context.Context, format string) error {
-	value, err := serializeSetting(publicationSetting, format)
-	if err != nil {
-		return err
-	}
-	return r.store.Set(ctx, PublicationFormatKey, value)
-}
-
-// GetPublicationPathTemplate returns the saved publication path template, or its approved default.
-func (r *Registry) GetPublicationPathTemplate(ctx context.Context) (string, error) {
-	value, _, err := readSetting(ctx, r.store, publicationPathTemplateSetting)
-	return value, err
-}
-
-// GetPublicationRemoveSources returns whether publication source removal is enabled.
-func (r *Registry) GetPublicationRemoveSources(ctx context.Context) (bool, error) {
-	value, _, err := readSetting(ctx, r.store, publicationRemoveSourcesSetting)
-	return value, err
 }
 
 // GetMusicBrainzConfig returns the current MusicBrainz configuration.
@@ -869,30 +828,6 @@ func ParsePublicationPlanningValues(values map[string]string) (RuntimeSettings, 
 	}, nil
 }
 
-// GetAcoustIDApplicationKey returns the saved secret for internal provider use.
-func (r *Registry) GetAcoustIDApplicationKey(ctx context.Context) (string, bool, error) {
-	return r.store.Get(ctx, AcoustIDApplicationKey)
-}
-
-// SetMusicBrainzProviderSettings stores the self-hosted request budget controls.
-func (r *Registry) SetMusicBrainzProviderSettings(ctx context.Context, throttle bool, delaySeconds float64) error {
-	if math.IsNaN(delaySeconds) || math.IsInf(delaySeconds, 0) || delaySeconds < 0 || delaySeconds > 60 {
-		return fmt.Errorf("self-hosted MusicBrainz delay must be between 0 and 60 seconds")
-	}
-	throttleValue, err := serializeSetting(musicBrainzSelfHostedThrottleSetting, throttle)
-	if err != nil {
-		return err
-	}
-	delayValue, err := serializeSetting(musicBrainzSelfHostedDelaySetting, delaySeconds)
-	if err != nil {
-		return err
-	}
-	return r.store.SetMany(ctx, map[string]string{
-		MusicBrainzSelfHostedThrottleKey: throttleValue,
-		MusicBrainzSelfHostedDelayKey:    delayValue,
-	})
-}
-
 // UpdateMusicBrainzProviderSettings atomically stores only the supplied fields,
 // preserving concurrent updates to the other optional field.
 func (r *Registry) UpdateMusicBrainzProviderSettings(ctx context.Context, throttle *bool, delaySeconds *float64) error {
@@ -945,47 +880,6 @@ func (r *Registry) SetSHA256Enabled(ctx context.Context, enabled bool) error {
 		return err
 	}
 	return r.store.Set(ctx, SHA256EnabledKey, value)
-}
-
-// ComputeConfigurationHealth checks all required settings and returns health status.
-func (r *Registry) ComputeConfigurationHealth(ctx context.Context, platform PlatformState) (ConfigurationHealth, error) {
-	health := ConfigurationHealth{Healthy: true}
-
-	if platform.Diagnostic {
-		health.Healthy = false
-		health.Problems = append(health.Problems, platform.Reason)
-	}
-
-	requiredKeys := []string{
-		ToolsDirectoryKey,
-		OutputDirectoryKey,
-		PublicationFormatKey,
-		ActiveFFmpegInstallationKey,
-		ActiveFPCalcInstallationKey,
-	}
-
-	for _, key := range requiredKeys {
-		value, exists, err := r.store.Get(ctx, key)
-		if err != nil {
-			return ConfigurationHealth{}, fmt.Errorf("read setting %q: %w", key, err)
-		}
-		if !exists || value == "" {
-			health.Healthy = false
-			health.Problems = append(health.Problems, fmt.Sprintf("missing or invalid %s", key))
-		}
-	}
-
-	// MusicBrainz must have recent successful verification
-	mbConfig, err := r.GetMusicBrainzConfig(ctx)
-	if err != nil {
-		return ConfigurationHealth{}, fmt.Errorf("read MusicBrainz configuration: %w", err)
-	}
-	if mbConfig.VerifiedAt == nil {
-		health.Healthy = false
-		health.Problems = append(health.Problems, "musicbrainz not verified")
-	}
-
-	return health, nil
 }
 
 func parseLogLevel(value string) (slog.Level, bool) {

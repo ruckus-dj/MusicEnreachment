@@ -38,7 +38,8 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	if err := registry.SetOutputDirectory(ctx, outputPath, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.SetPublicationFormat(ctx, "mka"); err != nil {
+	format := "mka"
+	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{PublicationFormat: &format}); err != nil {
 		t.Fatal(err)
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
