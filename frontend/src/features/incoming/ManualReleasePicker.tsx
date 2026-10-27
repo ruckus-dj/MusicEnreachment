@@ -221,12 +221,23 @@ export function ManualReleasePicker({
         <IncomingOperationFollower
           key={item.operationId}
           operationId={item.operationId as string}
+          enabled={
+            snapshots[item.operationId as string]?.state !== "succeeded" &&
+            snapshots[item.operationId as string]?.state !== "failed"
+          }
           refreshers={refreshers}
           onSnapshot={(snapshot) => {
             setSnapshots((current) => ({
               ...current,
               [snapshot.id]: snapshot,
             }));
+            if (snapshot.state === "succeeded" || snapshot.state === "failed")
+              setOperationErrors((current) => {
+                if (current[snapshot.id]?.kind !== "stream") return current;
+                const next = { ...current };
+                delete next[snapshot.id];
+                return next;
+              });
           }}
           onSnapshotRead={(_snapshot, source) =>
             setOperationErrors((current) => {

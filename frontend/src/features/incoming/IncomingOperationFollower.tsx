@@ -24,8 +24,10 @@ export function IncomingOperationFollower({
   onError,
   onStreamError,
   refreshers,
+  enabled = true,
 }: {
   operationId: string;
+  enabled?: boolean;
   onSnapshot: (
     snapshot: OperationResponse,
     source: OperationSnapshotSource,
@@ -40,6 +42,7 @@ export function IncomingOperationFollower({
   refreshers: MutableRefObject<Record<string, () => Promise<void>>>;
 }) {
   const { refresh } = useOperationFollower(operationId, {
+    enabled,
     onSnapshot,
     onSnapshotRead,
     onError: (error) => onError(error),
@@ -47,10 +50,14 @@ export function IncomingOperationFollower({
     refreshOnStreamError: true,
   });
   useEffect(() => {
+    if (!enabled) {
+      delete refreshers.current[operationId];
+      return;
+    }
     refreshers.current[operationId] = refresh;
     return () => {
       delete refreshers.current[operationId];
     };
-  }, [operationId, refresh, refreshers]);
+  }, [enabled, operationId, refresh, refreshers]);
   return null;
 }

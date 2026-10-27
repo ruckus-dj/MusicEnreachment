@@ -57,6 +57,10 @@ must first update the feature's selected operation. Keep disconnect notices unti
 the stream reconnects; a fallback REST success alone is not a reconnect. Compare
 RFC3339 timestamps by instant without losing sub-millisecond precision, and retain
 equal-timestamp progress and terminal/retry regression coverage.
+Retaining completed search results must not retain an active SSE subscription:
+disable terminal followers while preserving their snapshots and result queries.
+Follower test fixtures must return the admitted operation ID and explicitly emit
+SSE wake-ups; do not rely on former polling or accept mismatched snapshot IDs.
 
 **Managed tool catalog failures**: Setup must retain a successfully loaded tool
 inventory even if catalog requests fail; ready-package restrictions and duplicate

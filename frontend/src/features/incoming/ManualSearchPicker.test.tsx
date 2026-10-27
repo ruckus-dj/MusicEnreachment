@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { useState } from "react";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { server } from "../../test/server";
 import { ManualReleasePicker } from "./ManualReleasePicker";
 import { ManualSearchPicker } from "./ManualSearchPicker";
@@ -27,6 +27,10 @@ class PickerEventSource extends EventTarget {
   }
 }
 vi.stubGlobal("EventSource", PickerEventSource);
+
+beforeEach(() => {
+  PickerEventSource.instances = [];
+});
 
 it("browses releases for the explicitly selected artist and passes any chosen release to the direct picker", async () => {
   const searchBodies: Record<string, unknown>[] = [];
@@ -406,6 +410,85 @@ it("locks edits while operation state is unknown and restores them on success", 
   await waitFor(() => expect(query).toBeEnabled());
   expect(screen.getByLabelText("Тип поиска")).toBeEnabled();
   expect(screen.getByLabelText("Количество результатов")).toBeEnabled();
+});
+
+it("stops following completed searches across groups and follows a new search", async () => {
+  let operation = 0;
+  server.use(
+    http.post("*/incoming-groups/:groupId/manual-search", () => {
+      operation += 1;
+      return HttpResponse.json(
+        { operation_id: `terminal-${operation}` },
+        { status: 202 },
+      );
+    }),
+    http.get("*/operations/:operationId", ({ params }) =>
+      HttpResponse.json({
+        id: params.operationId,
+        kind: "provider_artist_search",
+        state: params.operationId === "terminal-2" ? "failed" : "succeeded",
+        stage: "complete",
+        bytes_completed: 0,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      }),
+    ),
+    http.get("*/incoming-groups/:groupId/manual-search/:operationId", () =>
+      HttpResponse.json({
+        group_id: "group-a",
+        operation_id: "terminal",
+        kind: "artist_search",
+        payload: { count: 0, offset: 0, artists: [] },
+        payload_sha256: "hash",
+      }),
+    ),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  function GroupPicker() {
+    const [groupId, setGroupId] = useState("group-a");
+    return (
+      <QueryClientProvider client={client}>
+        <button type="button" onClick={() => setGroupId("group-a")}>
+          Group A
+        </button>
+        <button type="button" onClick={() => setGroupId("group-b")}>
+          Group B
+        </button>
+        <ManualSearchPicker
+          groupId={groupId}
+          groupRevision="revision-a"
+          onSelectRelease={() => {}}
+        />
+      </QueryClientProvider>
+    );
+  }
+  render(<GroupPicker />);
+
+  fireEvent.change(screen.getByLabelText("Поисковый запрос"), {
+    target: { value: "first search" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Искать" }));
+  await waitFor(() => expect(PickerEventSource.instances).toHaveLength(1));
+  await waitFor(() =>
+    expect(PickerEventSource.instances[0].close).toHaveBeenCalled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Group B" }));
+  fireEvent.change(screen.getByLabelText("Поисковый запрос"), {
+    target: { value: "second search" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Искать" }));
+  await waitFor(() => expect(PickerEventSource.instances).toHaveLength(2));
+  await waitFor(() =>
+    expect(PickerEventSource.instances[1].close).toHaveBeenCalled(),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Group A" }));
+  fireEvent.click(screen.getByRole("button", { name: "Group B" }));
+  expect(PickerEventSource.instances).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "Искать" }));
+  await waitFor(() => expect(PickerEventSource.instances).toHaveLength(3));
 });
 
 it("creates a fresh request id and revision when resubmitting the same query", async () => {
