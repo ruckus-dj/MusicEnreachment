@@ -449,7 +449,7 @@ func Run(ctx context.Context, config Config) error {
 	installOperations := service.NewInstallOperations(setupManagerRepository, catalog, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	}, riverClient, registry)
-	installations := service.NewInstallations(setupManagerRepository, platform.Platform, registry, tools.NewLifecycle(nil), registry)
+	installations := service.NewInstallations(persistence.NewToolInstallationRepository(db), platform.Platform, registry, tools.NewLifecycle(nil), registry)
 	moveTools := service.NewMoveTools(setupManagerRepository, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	}, riverClient)

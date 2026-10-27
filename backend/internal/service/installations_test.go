@@ -12,6 +12,8 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
+var _ service.InstallationRepository = (*persistence.ToolInstallationRepository)(nil)
+
 type installationRepositoryFixture struct {
 	installation *persistence.ToolInstallation
 	activated    bool
