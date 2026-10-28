@@ -145,6 +145,103 @@ async function selectVersion(
 }
 
 describe("SetupManager", () => {
+  it.each([
+    true,
+    false,
+  ])("loads and saves the persisted source cleanup choice (%s)", async (removeSources) => {
+    localStorage.setItem("melotrove.setup.step", "3");
+    const savedBodies: unknown[] = [];
+    let persisted = state({
+      ...published,
+      publication_remove_sources: removeSources,
+    });
+    server.use(
+      http.put("/api/setup/runtime", async ({ request }) => {
+        const body = (await request.json()) as {
+          publication_remove_sources: boolean;
+        };
+        savedBodies.push(body);
+        persisted = state({
+          ...published,
+          publication_remove_sources: body.publication_remove_sources,
+        });
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/setup", () => HttpResponse.json(persisted)),
+    );
+
+    const { unmount } = renderSetup(persisted);
+    const cleanup = screen.getByRole("checkbox", {
+      name: /Удалять исходники после успешной публикации/,
+    });
+    expect(cleanup).toHaveProperty("checked", removeSources);
+    expect(
+      screen.getByText(/Если флажок снят, исходники останутся/),
+    ).toBeVisible();
+
+    fireEvent.click(cleanup);
+    const requestedValue = !removeSources;
+    expect(cleanup).toHaveProperty("checked", requestedValue);
+    await click("Продолжить");
+    await waitFor(() => expect(heading("Провайдеры метаданных")).toBeVisible());
+    expect(savedBodies).toEqual([
+      {
+        publication_format: "source",
+        publication_remove_sources: requestedValue,
+      },
+    ]);
+
+    await click("Назад");
+    expect(
+      screen.getByRole("checkbox", {
+        name: /Удалять исходники после успешной публикации/,
+      }),
+    ).toHaveProperty("checked", requestedValue);
+    unmount();
+    renderSetup(persisted);
+    expect(
+      screen.getByRole("checkbox", {
+        name: /Удалять исходники после успешной публикации/,
+      }),
+    ).toHaveProperty("checked", requestedValue);
+  });
+
+  it("keeps the publication draft and step after a failed save so it can be retried", async () => {
+    localStorage.setItem("melotrove.setup.step", "3");
+    let attempts = 0;
+    const bodies: unknown[] = [];
+    const persisted = state({
+      ...published,
+      publication_remove_sources: false,
+    });
+    server.use(
+      http.put("/api/setup/runtime", async ({ request }) => {
+        bodies.push(await request.json());
+        attempts += 1;
+        return new HttpResponse(null, { status: attempts === 1 ? 500 : 204 });
+      }),
+      http.get("/api/setup", () => HttpResponse.json(persisted)),
+    );
+    renderSetup(persisted);
+    const cleanup = screen.getByRole("checkbox", {
+      name: /Удалять исходники после успешной публикации/,
+    });
+    fireEvent.click(cleanup);
+
+    await click("Продолжить");
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(heading("Публикация")).toBeVisible();
+    expect(localStorage.getItem("melotrove.setup.step")).toBe("3");
+    expect(cleanup).toBeChecked();
+
+    await click("Продолжить");
+    await waitFor(() => expect(heading("Провайдеры метаданных")).toBeVisible());
+    expect(bodies).toEqual([
+      { publication_format: "source", publication_remove_sources: true },
+      { publication_format: "source", publication_remove_sources: true },
+    ]);
+  });
+
   it("starts with platform, recovers stored step against server progress and moves focus", async () => {
     localStorage.setItem("melotrove.setup.step", "5");
     server.use(
@@ -206,7 +303,7 @@ describe("SetupManager", () => {
     ).toBeVisible();
   });
 
-  it("requires an explicit publication choice and submits only the chosen format", async () => {
+  it("requires an explicit format and submits the current publication settings", async () => {
     let current = state(installed);
     const saved = vi.fn((_body: unknown) => {
       current = state(published);
@@ -227,7 +324,10 @@ describe("SetupManager", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Исходный формат" }));
     await click("Продолжить");
     await waitFor(() => expect(heading("Провайдеры метаданных")).toBeVisible());
-    expect(saved).toHaveBeenCalledWith({ publication_format: "source" });
+    expect(saved).toHaveBeenCalledWith({
+      publication_format: "source",
+      publication_remove_sources: false,
+    });
   });
 
   it("shows the initial M4A selection and saves it as the publication format", async () => {
@@ -247,7 +347,10 @@ describe("SetupManager", () => {
     expect(screen.getByRole("radio", { name: "M4A" })).toBeChecked();
     await click("Продолжить");
     await waitFor(() => expect(heading("Провайдеры метаданных")).toBeVisible());
-    expect(saved).toHaveBeenCalledWith({ publication_format: "m4a" });
+    expect(saved).toHaveBeenCalledWith({
+      publication_format: "m4a",
+      publication_remove_sources: false,
+    });
     await click("Назад");
     expect(screen.getByRole("radio", { name: "M4A" })).toBeChecked();
   });
@@ -283,7 +386,10 @@ describe("SetupManager", () => {
     );
     await click("Продолжить");
     await waitFor(() => expect(heading("Провайдеры метаданных")).toBeVisible());
-    expect(saved).toHaveBeenCalledWith({ publication_format: "m4a" });
+    expect(saved).toHaveBeenCalledWith({
+      publication_format: "m4a",
+      publication_remove_sources: false,
+    });
   });
 
   it("checks MusicBrainz before completion and does not invalidate a verified config on advance", async () => {

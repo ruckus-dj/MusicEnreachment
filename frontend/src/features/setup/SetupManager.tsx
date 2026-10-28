@@ -77,6 +77,9 @@ export function SetupManager({
   const [format, setFormat] = useState<SaveRuntimeBodyPublicationFormat | "">(
     knownFormat(initialState.settings.publication_format) ?? "",
   );
+  const [removeSources, setRemoveSources] = useState(
+    initialState.settings.publication_remove_sources,
+  );
   const [pending, setPending] = useState(false);
   const [toolsBlocked, setToolsBlocked] = useState(false);
   const [error, setError] = useState("");
@@ -108,6 +111,7 @@ export function SetupManager({
     setOutputDirectory(response.data.settings.output_directory);
     const freshFormat = knownFormat(response.data.settings.publication_format);
     if (freshFormat) setFormat(freshFormat);
+    setRemoveSources(response.data.settings.publication_remove_sources);
     return response.data;
   }
   async function advance() {
@@ -140,7 +144,10 @@ export function SetupManager({
       }
       if (step === 3) {
         if (!format) throw new Error("Выберите формат публикации.");
-        const saved = await saveSetupRuntime({ publication_format: format });
+        const saved = await saveSetupRuntime({
+          publication_format: format,
+          publication_remove_sources: removeSources,
+        });
         if (saved.status !== 204) throw apiResponseError(saved);
         await refresh();
       }
@@ -221,24 +228,44 @@ export function SetupManager({
             />
           )}
           {step === 3 && (
-            <RadioGroup
-              value={format}
-              onChange={(value) => {
-                if (value === "source" || value === "mka" || value === "m4a")
-                  setFormat(value);
-              }}
-            >
-              <Label>Publication format</Label>
-              <RadioField value="source">
-                <RadioButton>Исходный формат</RadioButton>
-              </RadioField>
-              <RadioField value="mka">
-                <RadioButton>MKA remux</RadioButton>
-              </RadioField>
-              <RadioField value="m4a">
-                <RadioButton>M4A</RadioButton>
-              </RadioField>
-            </RadioGroup>
+            <div>
+              <RadioGroup
+                isDisabled={pending}
+                value={format}
+                onChange={(value) => {
+                  if (value === "source" || value === "mka" || value === "m4a")
+                    setFormat(value);
+                }}
+              >
+                <Label>Publication format</Label>
+                <RadioField value="source">
+                  <RadioButton>Исходный формат</RadioButton>
+                </RadioField>
+                <RadioField value="mka">
+                  <RadioButton>MKA remux</RadioButton>
+                </RadioField>
+                <RadioField value="m4a">
+                  <RadioButton>M4A</RadioButton>
+                </RadioField>
+              </RadioGroup>
+              <label className="mt-4 flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={removeSources}
+                  disabled={pending}
+                  onChange={(event) => setRemoveSources(event.target.checked)}
+                />
+                <span>
+                  <span className="block">
+                    Удалять исходники после успешной публикации
+                  </span>
+                  <span className="block text-sm">
+                    Если флажок снят, исходники останутся. Удаление выполняется
+                    только после успешной публикации, не при ошибке.
+                  </span>
+                </span>
+              </label>
+            </div>
           )}
           {step === 4 && (
             <SetupMetadata
