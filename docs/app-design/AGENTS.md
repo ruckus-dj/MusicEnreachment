@@ -8,6 +8,7 @@ Static HTML/JS design prototype with screenshots. NOT part of the React app; run
 ## WHERE TO LOOK
 - index.html - standalone prototype entry (not served by React app)
 - prototype.js, catalog-data.js, theme.js - prototype logic and data
+- manual-release-proposal.js - manual-release form mounted by the main hash router
 - styles.css - prototype styling
 - 01-product-and-flows.md, 02-screens.md, 03-data-and-evidence.md - design docs
 - DESIGN.md, QA.md, README.md - prototype documentation
@@ -22,8 +23,10 @@ Static HTML/JS design prototype with screenshots. NOT part of the React app; run
 
 ## STRUCTURE
 index.html is a standalone single-page app with:
-- catalog-data.js: mock data for prototype
+- catalog-data.js: mock catalog data for prototype
 - prototype.js: UI state and interaction logic
+- manual-release-demo-data.js: manual-form options derived from the shared mock catalog
+- manual-release-proposal.js: manual form mounted into the main `#view`
 - theme.js: color palette and design tokens
 - styles.css: prototype-specific styling
 

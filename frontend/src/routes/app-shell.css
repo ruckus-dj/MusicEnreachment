@@ -1,0 +1,310 @@
+.app-shell {
+  min-height: 100dvh;
+  color: var(--ink);
+  background: var(--canvas);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.app-shell.settings-screen,
+.app-shell.sources-screen {
+  min-height: 100dvh;
+  padding: 0;
+}
+
+:root[data-theme="light"] .settings-screen,
+:root[data-theme="light"] .setup-shell {
+  --settings-canvas: var(--canvas);
+  --settings-line: var(--line);
+  --settings-surface: var(--surface);
+  --settings-raised: var(--raised);
+  --settings-ink: var(--ink);
+  --settings-muted: var(--muted);
+  --settings-control: var(--control);
+  --settings-accent: var(--accent);
+  --settings-accent-soft: var(--accent-soft);
+  --settings-error: var(--error);
+  --settings-error-soft: var(--error-soft);
+  --setup-canvas: var(--canvas);
+  --setup-surface: var(--surface);
+  --setup-raised: var(--raised);
+  --setup-ink: var(--ink);
+  --setup-muted: var(--muted);
+  --setup-line: var(--line);
+  --setup-control: var(--control);
+  --setup-accent: var(--accent);
+  --setup-accent-soft: var(--accent-soft);
+  --setup-error: var(--error);
+  --setup-error-soft: var(--error-soft);
+}
+
+:root[data-theme="dark"] .settings-screen,
+:root[data-theme="dark"] .setup-shell {
+  --settings-canvas: var(--canvas);
+  --settings-line: var(--line);
+  --settings-surface: var(--surface);
+  --settings-raised: var(--raised);
+  --settings-ink: var(--ink);
+  --settings-muted: var(--muted);
+  --settings-control: var(--control);
+  --settings-accent: var(--accent);
+  --settings-accent-soft: var(--accent-soft);
+  --settings-error: var(--error);
+  --settings-error-soft: var(--error-soft);
+  --setup-canvas: var(--canvas);
+  --setup-surface: var(--surface);
+  --setup-raised: var(--raised);
+  --setup-ink: var(--ink);
+  --setup-muted: var(--muted);
+  --setup-line: var(--line);
+  --setup-control: var(--control);
+  --setup-accent: var(--accent);
+  --setup-accent-soft: var(--accent-soft);
+  --setup-error: var(--error);
+  --setup-error-soft: var(--error-soft);
+}
+
+:root[data-theme="light"] .setup-select-popover {
+  --select-surface: var(--surface);
+  --select-ink: var(--ink);
+  --select-line: var(--line);
+  --select-highlight: var(--accent-soft);
+}
+
+:root[data-theme="dark"] .setup-select-popover {
+  --select-surface: var(--surface);
+  --select-ink: var(--ink);
+  --select-line: var(--line);
+  --select-highlight: var(--accent-soft);
+}
+
+:root[data-theme="light"] .sources-screen,
+:root[data-theme="dark"] .sources-screen {
+  --sources-surface: var(--surface);
+  --sources-canvas: var(--canvas);
+  --sources-raised: var(--raised);
+  --sources-ink: var(--ink);
+  --sources-muted: var(--muted);
+  --sources-line: var(--line);
+  --sources-control: var(--control);
+  --sources-accent: var(--accent);
+  --sources-accent-soft: var(--accent-soft);
+  --sources-warning: var(--warning);
+  --sources-error: var(--error);
+  --sources-error-soft: var(--error-soft);
+}
+
+.app-shell:not(.setup-shell) {
+  display: grid;
+  grid-template-columns: 174px minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-sidebar {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 18px;
+  padding: 12px 8px;
+  color: var(--ink);
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+
+.app-brand {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-brand strong {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.app-brand span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.app-navigation {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.app-navigation a {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.app-navigation a:hover {
+  background: var(--raised);
+}
+
+.app-navigation a[aria-current="page"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--line);
+  font-weight: 600;
+}
+
+.app-navigation a:focus-visible,
+.app-brand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app-workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 42px minmax(0, 1fr);
+}
+
+.app-topbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 4px 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.app-brand--compact,
+.app-mobile-nav {
+  display: none;
+}
+
+.app-topbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.app-topbar select {
+  min-height: 30px;
+  padding: 3px 7px;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--control);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.app-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.app-content > :first-child {
+  margin-top: 0;
+}
+
+.app-shell > .app-setup-header {
+  margin: 0;
+}
+
+.app-shell.setup-shell {
+  display: block;
+  overflow: auto;
+  padding: 12px;
+}
+
+.app-content--setup {
+  padding: 12px 0 0;
+}
+
+@media (max-width: 899px) and (min-width: 600px) {
+  .app-shell:not(.setup-shell) {
+    grid-template-columns: 150px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 599px) {
+  .app-shell:not(.setup-shell) {
+    display: flex;
+    height: auto;
+    min-height: 100dvh;
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .app-sidebar {
+    display: none;
+  }
+
+  .app-workspace {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .app-topbar {
+    min-height: 48px;
+    justify-content: space-between;
+    padding: 4px 8px;
+  }
+
+  .app-brand--compact {
+    display: flex;
+    padding: 2px;
+  }
+
+  .app-topbar label {
+    gap: 4px;
+  }
+
+  .app-topbar select {
+    min-height: 40px;
+  }
+
+  .app-mobile-nav {
+    display: block;
+    padding: 4px 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .app-mobile-nav .app-navigation {
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .app-mobile-nav .app-navigation a {
+    min-height: 40px;
+    flex: 0 0 auto;
+    justify-content: center;
+    padding: 7px 10px;
+    white-space: nowrap;
+  }
+
+  .app-content {
+    overflow: visible;
+    padding: 10px;
+  }
+
+  .app-shell.setup-shell {
+    padding: 8px;
+  }
+}

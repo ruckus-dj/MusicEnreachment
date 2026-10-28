@@ -45,6 +45,11 @@ frontend/
 
 **Tests colocated**: *.test.tsx next to components. Vitest + React Testing Library + MSW.
 
+**Query context and browser fixtures**: Shell integration tests must exercise the
+production query-provider composition, not rely on a test-only provider that can
+hide missing production wiring. Theme tests supply an explicit in-memory Storage
+fixture: Node 24 may not expose `window.localStorage` in the test environment.
+
 **Dev proxy**: Vite proxies /api and /health to 127.0.0.1:8080 for same-origin during dev.
 
 **Build output**: Vite builds to ../build/frontend; tools/stage-frontend.mjs stages it; backend embeds it via internal/static.

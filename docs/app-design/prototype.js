@@ -1,21 +1,21 @@
 /// <reference path="./catalog-data.js" />
 const view = document.querySelector('#view');
 const dialog = document.querySelector('#confirmation');
-const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, notice: '', toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false };
+const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, manualDraft: null, manualReleaseCount: 0, notice: '', toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false };
 let confirmAction = null;
 let draggedFile = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
 const badge = (text, tone = '') => `<span class="status ${tone}">${esc(text)}</span>`;
 const button = (action, text, attrs = '', primary = false) => `<button type="button" data-action="${action}" ${attrs} class="${primary ? 'primary' : ''}">${text}</button>`;
 const link = (route, text, className = '') => `<a href="#${route}" class="${className}">${esc(text)}</a>`;
-const duration = seconds => `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, '0')}`;
+const duration = seconds => Number.isFinite(seconds) ? `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, '0')}` : '—';
 const cover = (release, size = '') => `<span class="cover ${release.color || 'clay'} ${size}" aria-hidden="true">${esc(release.title?.[0] || release.name?.[0] || 'M')}</span>`;
 const panel = (title, content, extra = '') => `<section class="panel"><div class="panel-heading"><h2>${title}</h2>${extra}</div>${content}</section>`;
 const note = (text, tone = '') => `<div class="note ${tone}">${text}</div>`;
 const header = (title, description, actions = '') => `<div class="page-header"><div><h1 tabindex="-1">${esc(title)}</h1><p class="muted">${description}</p></div><div class="actions">${actions}</div></div>`;
 const table = (heads, rows, className = '') => `<div class="table-wrap ${className}"><table><thead><tr>${heads.map(head => `<th scope="col">${head}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map(row => `<tr>${row.map((cell, i) => `<td data-label="${esc(heads[i].replace(/<[^>]*>/g, ''))}">${cell}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${heads.length}"><div class="empty">Нет результатов. Измените запрос или фильтр.</div></td></tr>`}</tbody></table></div>`;
 const facts = items => `<dl class="facts">${items.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${value}</dd></div>`).join('')}</dl>`;
-const artistName = id => demoArtist(id)?.name || 'Неизвестный артист';
+const artistName = id => demoArtist(id)?.name || 'Артист не указан';
 const allTracks = () => localReleases.flatMap(release => release.tracks.map(track => ({ release, track })));
 const group = () => incomingGroups.find(item => item.id === ui.groupId);
 const localRelease = id => localReleases.find(release => release.id === id);
@@ -175,48 +175,123 @@ function catalogRows() {
   const query = normalized(ui.libraryQuery);
   const publicationMatches = track => ui.publicationFilter === 'all' || (ui.publicationFilter === 'published' ? Boolean(track.published) : !track.published);
   if (ui.libraryView === 'artists') {
-    const artists = demoArtists.filter(artist => normalized(`${artist.name} ${artist.genre}`).includes(query) && localReleases.some(release => release.artistId === artist.id && release.tracks.some(publicationMatches)));
+    const artists = demoArtists.filter(artist => normalized(`${artist.name} ${artist.genre}`).includes(query) && localReleases.some(release => (release.credits?.some(credit => credit.artistId === artist.id) || release.artistId === artist.id) && (release.tracks.some(publicationMatches) || !release.tracks.length && ui.publicationFilter === 'all')));
     return `<div class="artist-grid">${artists.length ? artists.map(artist => {
-      const releases = localReleases.filter(release => release.artistId === artist.id);
+      const releases = localReleases.filter(release => release.credits?.some(credit => credit.artistId === artist.id) || release.artistId === artist.id);
       const tracks = releases.flatMap(release => release.tracks);
       return `<a class="artist-card" href="#artist/${artist.id}">${cover(artist, 'medium')}<span><strong>${esc(artist.name)}</strong><span class="sub">${releases.length} релизов · ${tracks.length} позиций</span><span class="sub">${tracks.filter(track => track.published).length} опубликовано · ${esc(artist.genre)}</span></span></a>`;
     }).join('') : '<div class="empty">Артистов не найдено.</div>'}</div>`;
   }
   if (ui.libraryView === 'albums') {
-    const releases = localReleases.filter(release => normalized(`${release.title} ${artistName(release.artistId)} ${release.catalog}`).includes(query) && release.tracks.some(publicationMatches));
-    return table(['Альбом', 'Артист', 'Год / издание', 'Позиции', 'Аудио', 'Публикация', 'Провайдер'], releases.map(release => [`<div class="entity">${cover(release)}${link(`release/${release.id}`, release.title)}</div>`, link(`artist/${release.artistId}`, artistName(release.artistId)), `${release.year} · ${release.country || 'Локальный'}<span class="sub">${esc(release.catalog)}</span>`, release.tracks.length, `${release.tracks.filter(track => track.sourceId).length} доступно`, `${release.tracks.filter(track => track.published).length} / ${release.tracks.length}`, release.providerId ? badge('MusicBrainz', 'success') : badge('Локальный сборник')]));
+    const releases = localReleases.filter(release => normalized(`${release.title} ${release.credits?.map(credit => credit.credit || credit.name).join(' ') || artistName(release.artistId)} ${release.catalog}`).includes(query) && (release.tracks.some(publicationMatches) || !release.tracks.length && ui.publicationFilter === 'all'));
+    return table(['Альбом', 'Артист', 'Год / издание', 'Позиции', 'Исходники', 'Доступно', 'Провайдер'], releases.map(release => {
+      const published = release.tracks.filter(track => track.published).length;
+      const provider = providerReleases.find(item => item.id === release.providerId);
+      return [`<div class="entity">${cover(release)}${link(`release/${release.id}`, release.title || 'Без названия')}</div>`, release.credits?.length ? release.credits.map(credit => credit.artistId ? link(`artist/${credit.artistId}`, credit.credit || credit.name) : esc(credit.credit || credit.name || 'Не указан')).join(', ') : artistIdLink(release), `${release.year || 'Дата не указана'} · ${release.country || 'Локальный'}<span class="sub">${esc(release.catalog || '—')}</span>`, release.tracks.length, `${release.tracks.filter(track => track.sourceId).length} выбрано`, provider ? `${published} / ${provider.tracks.length}` : `${published} опубликовано`, release.providerId ? badge('MusicBrainz', 'success') : badge('Локальный сборник')];
+    }));
   }
   const tracks = allTracks().filter(({ release, track }) => normalized(`${track.title} ${artistName(track.artistId)} ${release.title}`).includes(query) && publicationMatches(track));
   return trackTable(tracks, true);
 }
 
+function artistIdLink(release) { return release.artistId ? link(`artist/${release.artistId}`, artistName(release.artistId)) : 'Артист не указан'; }
+
 function library() {
   const all = allTracks();
-  return header('Медиатека', `${demoArtists.length} артистов · ${localReleases.length} релизов · ${all.length} позиций · ${all.filter(({ track }) => track.published).length} опубликовано`, link('review', 'Разобрать входящие', 'button')) +
+  return header('Медиатека', `${demoArtists.length} артистов · ${localReleases.length} релизов · ${all.length} позиций · ${all.filter(({ track }) => track.published).length} опубликовано`, `${link('create-release', 'Создать вручную', 'button primary')}${link('review', 'Разобрать входящие', 'button')}`) +
     `<div class="catalog-toolbar"><div class="segments" aria-label="Вид медиатеки">${[['artists', 'Артисты'], ['albums', 'Все альбомы'], ['tracks', 'Все треки']].map(([id, title]) => `<button data-library-view="${id}" aria-pressed="${ui.libraryView === id}">${title}</button>`).join('')}</div><label class="search-label"><span class="sr-only">Поиск в медиатеке</span><input type="search" id="library-search" value="${esc(ui.libraryQuery)}" placeholder="Артист, альбом, трек…"></label><label class="inline-field">Публикация<select id="publication-filter"><option value="all">Все</option><option value="published" ${ui.publicationFilter === 'published' ? 'selected' : ''}>Опубликованные</option><option value="unpublished" ${ui.publicationFilter === 'unpublished' ? 'selected' : ''}>Не опубликованные</option></select></label></div><div id="catalog-content">${catalogRows()}</div>`;
 }
 
+function trackNumberLabel(release, track) {
+  if (track.displayedNumber) return track.displayedNumber;
+  const multiMedium = (release.media?.length || 0) > 1 || new Set(release.tracks.map(item => item.medium).filter(Boolean)).size > 1;
+  if (multiMedium && track.mediumPosition) return `${track.medium}.${String(track.mediumPosition).padStart(2, '0')}`;
+  return String(track.mediumPosition || track.position).padStart(2, '0');
+}
+
 function trackTable(items, withAlbum = false) {
-  const heads = ['№', 'Композиция', ...(withAlbum ? ['Альбом / артист'] : []), 'Длит.', 'Источник', 'Параметры', 'Файл', 'Публикация', ''];
+  const withMedium = items.some(({ release }) => (release.media?.length || 1) > 1);
+  const heads = [...(withMedium ? ['Носитель'] : []), '№', 'Композиция', ...(withAlbum ? ['Альбом / артист'] : []), 'Длит.', 'Источник', 'Параметры', 'Файл', 'Публикация', ''];
   return table(heads, items.map(({ release, track }) => {
     const file = demoFiles[track.sourceId];
-    return [String(track.position).padStart(2, '0'), `${link(`track/${track.id}`, track.title)}<span class="sub">${artistName(track.artistId)}</span>`, ...(withAlbum ? [`${link(`release/${release.id}`, release.title)}<span class="sub">${artistName(release.artistId)} · ${release.year}</span>`] : []), `<span class="mono">${duration(track.duration)}</span>`, file ? badge(file.codec, file.codec === 'FLAC' ? 'success' : '') : badge('Нет файла', 'warning'), file ? `<span class="mono">${file.codec === 'FLAC' ? '24 / 48k' : '320 kbps'}</span>` : '—', `<span class="filename">${esc(file?.name || '—')}</span>`, track.published ? badge(`${track.published.container} · ${track.published.codec}`, 'success') : badge('Нет'), link(`track/${track.id}`, 'Теги')];
+    const sourceNames = (track.sourceIds || (track.sourceId ? [track.sourceId] : [])).map(id => demoFiles[id]?.name).filter(Boolean).join(', ');
+    const recordingLabel = track.recordingTitle ? ` · ${esc(track.recordingTitle)}${track.localRecordingId ? ' · новый recording (демо)' : ''}` : '';
+    return [...(withMedium ? [esc(release.media?.[(track.medium || 1) - 1]?.title || track.medium || 1)] : []), trackNumberLabel(release, track), `${link(`track/${track.id}`, track.title)}<span class="sub">${artistName(track.artistId)}${recordingLabel}</span>`, ...(withAlbum ? [`${link(`release/${release.id}`, release.title)}<span class="sub">${artistName(release.artistId)} · ${release.year}</span>`] : []), `<span class="mono">${duration(track.duration)}</span>`, file ? badge(file.codec, file.codec === 'FLAC' ? 'success' : '') : badge(sourceNames ? 'Источник не выбран' : 'Нет файла', 'warning'), file ? `<span class="mono">${file.codec === 'FLAC' ? '24 / 48k' : '320 kbps'}</span>` : '—', `<span class="filename">${esc(sourceNames || file?.name || '—')}</span>`, track.published ? badge(`${track.published.container} · ${track.published.codec}`, 'success') : badge('Нет'), link(`track/${track.id}`, 'Теги')];
   }));
 }
 
 function artistPage(id) {
-  const artist = demoArtist(id) || demoArtists[0];
-  const releases = localReleases.filter(release => release.artistId === artist.id);
+  const artist = demoArtist(id);
+  if (!artist) return header('Артист не найден', 'Эта ссылка не соответствует артисту медиатеки.', link('library', 'Вся медиатека', 'button'));
+  const releases = localReleases.filter(release => release.credits?.some(credit => credit.artistId === artist.id) || release.artistId === artist.id);
   return header(artist.name, `${releases.length} релизов · ${releases.reduce((sum, release) => sum + release.tracks.length, 0)} позиций · ${artist.genre}`, link('library', 'Вся медиатека', 'button')) +
-    releases.map((release, index) => `<details class="album-disclosure" ${index === 0 ? 'open' : ''}><summary><span class="entity">${cover(release)}<span><strong>${esc(release.title)}</strong><span class="sub">${release.year} · ${release.tracks.length} позиций · ${release.label || 'Локальный'} · ${release.catalog}</span></span></span><span>${badge(`${release.tracks.filter(track => track.published).length}/${release.tracks.length} опубликовано`, 'success')}</span></summary><div class="album-actions">${link(`release/${release.id}`, 'Открыть альбом', 'button')}${link(`tags/${release.tracks[0].id}/artist`, 'Сравнить теги артиста', 'button')}${link(`tags/${release.tracks[0].id}/release`, 'Теги альбома', 'button')}</div>${trackTable(release.tracks.map(track => ({ release, track })))}</details>`).join('');
+    releases.map((release, index) => `<details class="album-disclosure" ${index === 0 ? 'open' : ''}><summary><span class="entity">${cover(release)}<span><strong>${esc(release.title)}</strong><span class="sub">${release.year} · ${release.tracks.length} позиций · ${release.label || 'Локальный'} · ${release.catalog}</span></span></span><span>${badge(release.manual ? `${release.tracks.filter(track => track.published).length} опубликовано` : `${release.tracks.filter(track => track.published).length}/${release.tracks.length} опубликовано`, 'success')}</span></summary><div class="album-actions">${link(`release/${release.id}`, 'Открыть альбом', 'button')}${release.tracks.length ? `${link(`tags/${release.tracks[0].id}/artist`, 'Сравнить теги артиста', 'button')}${link(`tags/${release.tracks[0].id}/release`, 'Теги альбома', 'button')}` : ''}</div>${release.tracks.length ? trackTable(release.tracks.map(track => ({ release, track }))) : '<div class="empty">Позиции не добавлены.</div>'}</details>`).join('');
 }
 
 function releasePage(id) {
   const release = localRelease(id) || localReleases[0];
   const tracks = release.tracks;
-  return `<div class="release-header">${cover(release, 'large')}<div><h1 tabindex="-1">${esc(release.title)}</h1><p>${link(`artist/${release.artistId}`, artistName(release.artistId))} · ${release.year} · ${release.country || 'Локальный сборник'} · ${esc(release.label)} · ${esc(release.catalog)}</p><div class="inline-summary">${badge(release.providerId ? `MusicBrainz · ${release.providerId}` : 'Нет provider-релиза', release.providerId ? 'success' : '')}<span>${tracks.length} позиций</span><span>${tracks.filter(track => track.sourceId).length} источников</span><span>${tracks.filter(track => track.published).length} опубликовано</span></div></div><div class="actions">${button('preview-release', 'План публикации', `data-release="${release.id}"`, true)}${link(`tags/${tracks[0].id}/release`, 'Сравнить теги', 'button')}</div></div>` +
-    panel('Треки · носитель 1', trackTable(tracks.map(track => ({ release, track }))), badge(`${duration(tracks.reduce((sum, track) => sum + track.duration, 0))} всего`)) +
-    panel('Метаданные: исходник / провайдер / локально / публикация', `<div class="panel-foot">${link(`tags/${tracks[0].id}/release`, 'Открыть подробное сравнение альбома')} · Для опубликованных тегов выбран конкретный файл, а не усреднённое значение.</div>${tagMatrix(release, tracks[0], demoFiles[tracks[0].sourceId], findProviderTrack(tracks[0].providerTrackId), tracks[0].published)}`);
+  const sourceCount = tracks.reduce((count, track) => count + (track.sourceIds?.length ?? Number(Boolean(track.sourceId))), 0);
+  const pubCount = tracks.filter(track => track.published).length;
+  const manualLink = release.manual ? link('create-release', 'Вернуться к черновику', 'button') : '';
+  const publicationSummary = release.manual ? `${pubCount} опубликовано` : `${pubCount} / ${tracks.length} опубликовано`;
+  const creditLinks = release.credits?.length ? release.credits.map(credit => credit.artistId ? link(`artist/${credit.artistId}`, credit.credit || credit.name) : esc(credit.credit || credit.name || 'Не указан')).join(', ') : artistIdLink(release);
+  const totalDuration = tracks.every(track => Number.isFinite(track.duration)) ? tracks.reduce((sum, track) => sum + track.duration, 0) : null;
+  return `<div class="release-header">${cover(release, 'large')}<div><h1 tabindex="-1">${esc(release.title || 'Локальный релиз без названия')}</h1><p>${creditLinks} · ${release.year || 'Дата не указана'} · ${release.country || 'Страна не указана'} · ${esc(release.label || 'Локальный')} · ${esc(release.catalog || '—')}</p><div class="inline-summary">${badge(release.providerId ? `MusicBrainz · ${release.providerId}` : 'Нет provider-релиза', release.providerId ? 'success' : '')}<span>${tracks.length} позиций</span><span>${sourceCount} назначений исходников</span><span>${publicationSummary}</span></div></div><div class="actions">${manualLink}${tracks.length ? `${button('preview-release', 'План публикации', `data-release="${release.id}"`, true)}${link(`tags/${tracks[0].id}/release`, 'Сравнить теги', 'button')}` : ''}</div></div>` +
+    panel(`Треки · ${release.manual ? `${release.media.length} носителя` : 'носитель 1'}`, tracks.length ? trackTable(tracks.map(track => ({ release, track }))) : '<div class="empty">Позиции не добавлены.</div>', tracks.length && totalDuration !== null ? badge(`${duration(totalDuration)} всего`) : '') +
+    (tracks.length ? panel('Метаданные: исходник / провайдер / локально / публикация', `${release.manual ? `<div class="panel-foot">Тип: ${esc(release.metadata.type || '—')} · Credits: ${release.credits.map(item => esc(item.credit || item.name)).filter(Boolean).join(', ') || 'не указаны'}</div>` : ''}<div class="panel-foot">${link(`tags/${tracks[0].id}/release`, 'Открыть подробное сравнение альбома')} · Для опубликованных тегов выбран конкретный файл, а не усреднённое значение.</div>${tagMatrix(release, tracks[0], demoFiles[tracks[0].sourceId], findProviderTrack(tracks[0].providerTrackId), tracks[0].published)}`) : '');
+}
+
+function manualReleasePage() {
+  return `<div class="proposal-layout manual-release"><div class="page-header"><div><h1 tabindex="-1">Создать локальный релиз</h1><p class="muted">Интерактивный прототип на демонстрационных данных. Изменения остаются в памяти этой вкладки.</p></div></div>
+    <div class="state-note"><strong>Только демо.</strong> Создание добавляет релиз в текущую in-memory медиатеку. Никаких запросов, сохранения на сервере или публикации нет.</div>
+    <div id="editor-view">
+      <section class="panel" aria-labelledby="release-heading"><div class="panel-heading"><h2 id="release-heading">Релиз</h2><span class="small muted">Поля необязательны; неполный релиз допустим</span></div><div class="release-fields">
+        <div class="field"><label for="release-title">Название релиза</label><input id="release-title" autocomplete="off"></div><div class="field"><label for="release-date">Дата релиза</label><input id="release-date" placeholder="Необязательно"></div><div class="field"><label for="release-country">Страна</label><input id="release-country" autocomplete="off"></div><div class="field"><label for="release-label">Лейбл</label><input id="release-label" autocomplete="off"></div><div class="field"><label for="release-catalog">Номер каталога</label><input id="release-catalog" autocomplete="off"></div><div class="field"><label for="release-type">Тип / уточнение</label><input id="release-type" autocomplete="off"></div>
+      </div></section>
+      <section class="panel"><div class="panel-heading"><div><h2>Артисты релиза</h2><span class="sub">Выберите существующего артиста или укажите новое имя; credit можно уточнить.</span></div><button type="button" data-action="add-artist">Добавить credit</button></div><div id="artists-list" class="repeat-list"></div></section>
+      <section class="panel"><div class="panel-heading"><div><h2>Носители и позиции</h2><span class="sub">Порядок носителей и позиций изменяется независимо.</span></div><button type="button" data-action="add-medium">Добавить носитель</button></div><div id="media-list" class="repeat-list"></div></section>
+      <section class="panel"><div class="panel-heading"><div><h2>Источники и обложка</h2><span class="sub">Демонстрационные исходники; один вариант можно связать с несколькими позициями.</span></div></div><div class="explain">Назначение исходника не публикует позицию. Можно связать несколько вариантов; замена набора подтверждается отдельно.</div><div id="assets-status" class="state-note" aria-live="polite"></div><div class="panel-heading"><h3>Обложка (необязательно)</h3><button type="button" data-action="clear-cover">Снять выбор</button></div><div id="covers-list" class="cover-grid"></div></section>
+      <section class="panel"><div class="actions-footer"><button type="button" data-action="reset-demo">Восстановить демо-черновик</button><button type="button" class="primary" data-action="create-release">Создать демо-релиз</button></div></section>
+      <p class="small muted">«Доступно» означает только опубликованные позиции. У локального релиза нет provider total; знаменатель не показывается.</p>
+    </div></div>`;
+}
+
+function addManualRelease(draft) {
+  ui.manualDraft = structuredClone(draft);
+  const id = `manual-${++ui.manualReleaseCount}`;
+  const credits = draft.artists.map((credit, index) => {
+    const name = credit.name;
+    if (!name) return { ...credit, artistId: null };
+    const existing = demoArtists.find(artist => normalized(artist.name) === normalized(name));
+    const artistId = credit.artistId || existing?.id || `${id}-artist-${index + 1}`;
+    if (!existing && !credit.artistId) demoArtists.push({ id: artistId, name, genre: 'Демо', color: 'slate' });
+    return { ...credit, artistId };
+  });
+  const primaryCredit = credits.find(credit => credit.artistId);
+  const artistId = primaryCredit?.artistId || null;
+  const cover = window.manualReleaseDemoData.covers.find(item => item.id === draft.coverId);
+  let positionIndex = 0;
+  const tracks = draft.media.flatMap((medium, mediumIndex) => medium.positions.map((position, mediumPositionIndex) => {
+    const durationMatch = /^(\d+):(\d{1,2})$/.exec(position.duration || '');
+    const durationSeconds = durationMatch && Number(durationMatch[2]) < 60 ? Number(durationMatch[1]) * 60 + Number(durationMatch[2]) : null;
+    positionIndex += 1;
+    return {
+      id: `${id}-m${mediumIndex + 1}-p${mediumPositionIndex + 1}`, position: positionIndex, mediumPosition: mediumPositionIndex + 1, displayedNumber: position.number || '', medium: mediumIndex + 1,
+      title: position.title || '', duration: durationSeconds,
+      artistId, recordingId: position.recordingMode === 'existing' ? position.recordingId || null : null,
+      localRecordingId: position.recordingMode === 'existing' ? null : `${id}-recording-${mediumIndex + 1}-${mediumPositionIndex + 1}`,
+      recordingTitle: position.recordingTitle || '', sourceIds: [...position.sourceIds], sourceId: position.selectedSourceId || null,
+      providerTrackId: null, published: null
+    };
+  }));
+  const release = {
+    id, title: draft.title || '', artistId, year: draft.metadata.date || '', country: draft.metadata.country || '', label: draft.metadata.label || '', catalog: draft.metadata.catalogNumber || '',
+    color: cover?.style === 'blue' ? 'slate' : cover?.style === 'gold' ? 'sand' : 'clay', providerId: null, manual: true,
+    metadata: structuredClone(draft.metadata), credits, media: structuredClone(draft.media), coverId: draft.coverId || '', tracks
+  };
+  localReleases.push(release);
+  location.hash = `release/${id}`;
 }
 
 function tagsPage(trackId, scope) {
@@ -332,18 +407,19 @@ function render(resetScroll = true) {
   if (name === 'match' && incomingGroups.some(item => item.id === id) && ui.groupId !== id) {
     ui.groupId = id; ui.selectedTarget = null; ui.selectedFile = null; ui.recordingTarget = null; ui.providerResults = null; ui.providerQuery = group().mode === 'provider' ? currentTarget().title : '';
   }
-  const renderers = { review, match, library, artist: () => artistPage(id), release: () => releasePage(id), track: () => trackPage(id), tags: () => tagsPage(id, scope), sources, publications, operations, settings, setup, components };
+  const renderers = { review, match, library, artist: () => artistPage(id), release: () => releasePage(id), 'create-release': manualReleasePage, track: () => trackPage(id), tags: () => tagsPage(id, scope), sources, publications, operations, settings, setup, components };
   const page = Object.hasOwn(renderers, name) ? name : 'review';
   const activeElement = document.activeElement;
   const focusId = activeElement?.id;
   const focusSelector = activeElement instanceof HTMLElement && view.contains(activeElement) ? [...activeElement.attributes].filter(attribute => attribute.name.startsWith('data-')).map(attribute => `[${attribute.name}="${CSS.escape(attribute.value)}"]`).join('') : '';
   const focusRow = activeElement instanceof Element ? activeElement.closest('[data-drop]')?.getAttribute('data-drop') : null;
   view.innerHTML = renderers[page]();
+  if (page === 'create-release') window.initManualReleaseForm(view.querySelector('#editor-view'), ui.manualDraft, addManualRelease, draft => { ui.manualDraft = structuredClone(draft); }, confirm);
   document.querySelector('#notice').textContent = ui.notice;
   const heading = view.querySelector('h1');
   document.title = `${heading.textContent} · MeloTrove · макет v2`;
   document.querySelector('#breadcrumb').textContent = `${page === 'match' ? 'Входящие / ' : ''}${heading.textContent}`;
-  const section = ['artist', 'release', 'track', 'tags'].includes(page) ? 'library' : page === 'match' ? 'review' : page;
+  const section = ['artist', 'release', 'track', 'tags', 'create-release'].includes(page) ? 'library' : page === 'match' ? 'review' : page;
   document.querySelectorAll('[data-nav]').forEach(item => {
     if (item.dataset.nav === section) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
   });

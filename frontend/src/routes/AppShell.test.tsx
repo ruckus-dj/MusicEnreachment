@@ -9,12 +9,12 @@ import {
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { App } from "../App";
 import type {
   SetupStateBody,
   SourceRootResponse,
 } from "../api/generated/client.schemas";
 import { server } from "../test/server";
-import { AppShell } from "./AppShell";
 
 const state: SetupStateBody = {
   completed: false,
@@ -93,7 +93,7 @@ describe("AppShell gates", () => {
       );
     });
     window.location.hash = "/settings";
-    render(<AppShell />);
+    render(<App />);
     expect(screen.getByRole("status")).toHaveTextContent("Загрузка");
     expect(screen.queryByText("Managed tools")).not.toBeInTheDocument();
     await request;
@@ -129,7 +129,7 @@ describe("AppShell gates", () => {
           : HttpResponse.json(state),
       ),
     );
-    render(<AppShell />);
+    render(<App />);
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
         "database unavailable",
@@ -157,9 +157,9 @@ describe("AppShell gates", () => {
       ),
       http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
     );
-    render(<AppShell />);
+    render(<App />);
     await waitFor(() => expect(window.location.hash).toBe("#/"));
-    fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
+    fireEvent.click(screen.getAllByRole("link", { name: "Настройки" })[0]);
     await waitFor(() =>
       expect(screen.getByText("Managed tools")).toBeVisible(),
     );
@@ -178,7 +178,7 @@ describe("AppShell gates", () => {
         }),
       ),
     );
-    render(<AppShell />);
+    render(<App />);
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "Диагностика платформы" }),
@@ -210,7 +210,7 @@ describe("AppShell sources routing", () => {
       ),
     );
     window.location.hash = "/sources/root-1/locations/file-1";
-    render(<AppShell />);
+    render(<App />);
     expect(await screen.findByText("direct.flac")).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "Инспектор файла" }),
@@ -224,7 +224,7 @@ describe("AppShell sources routing", () => {
   it("keeps an incomplete Setup redirecting away from #/sources", async () => {
     server.use(http.get("/api/setup", () => HttpResponse.json(state)));
     window.location.hash = "/sources";
-    render(<AppShell />);
+    render(<App />);
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "Первый запуск" }),
@@ -233,7 +233,7 @@ describe("AppShell sources routing", () => {
     await waitFor(() => expect(window.location.hash).toBe("#/setup"));
     expect(screen.queryByText(/Входящие/)).not.toBeInTheDocument();
   });
-  it("lists source roots at #/sources once Setup is complete", async () => {
+  it("loads source roots through the production App root without a supplied query context", async () => {
     server.use(
       http.get("/api/setup", () => HttpResponse.json(completedState)),
       http.get("/api/sources", () =>
@@ -241,7 +241,7 @@ describe("AppShell sources routing", () => {
       ),
     );
     window.location.hash = "/sources";
-    render(<AppShell />);
+    render(<App />);
     expect(
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
     ).toBeVisible();
@@ -257,7 +257,7 @@ describe("AppShell sources routing", () => {
       }),
     );
     window.location.hash = "/sources/root-1";
-    render(<AppShell />);
+    render(<App />);
     expect(
       await screen.findByRole("heading", { level: 1, name: "Входящие" }),
     ).toBeVisible();
@@ -265,7 +265,7 @@ describe("AppShell sources routing", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(window.location.hash).toBe("#/sources/root-1");
   });
-  it("keeps the default landing and navigates the header to Sources and Settings", async () => {
+  it("offers source setup on an empty landing and navigates to Sources and Settings", async () => {
     server.use(
       http.get("/api/setup", () => HttpResponse.json(completedState)),
       http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
@@ -275,12 +275,18 @@ describe("AppShell sources routing", () => {
       ),
       http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
     );
-    render(<AppShell />);
+    render(<App />);
     expect(
-      await screen.findByText("Приложение готово к настройке."),
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Добавьте музыкальный каталог",
+      }),
     ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Перейти к источникам" }),
+    ).toHaveAttribute("href", "#/sources");
 
-    fireEvent.click(screen.getByRole("button", { name: "Источники" }));
+    fireEvent.click(screen.getAllByRole("link", { name: "Источники" })[0]);
     await waitFor(() => expect(window.location.hash).toBe("#/sources"));
     expect(
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
@@ -289,9 +295,85 @@ describe("AppShell sources routing", () => {
       await screen.findByText("Ни один каталог не зарегистрирован."),
     ).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
+    fireEvent.click(screen.getAllByRole("link", { name: "Настройки" })[0]);
     await waitFor(() => expect(window.location.hash).toBe("#/settings"));
     expect(await screen.findByText("Managed tools")).toBeVisible();
+  });
+
+  it("offers incoming work and source configuration when sources exist", async () => {
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources", () =>
+        HttpResponse.json({ sources: [sourceRoot] }),
+      ),
+    );
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Медиатека готова к работе",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Открыть входящие" }),
+    ).toHaveAttribute("href", "#/incoming-groups");
+    expect(
+      screen.getByRole("link", { name: "Настроить источники" }),
+    ).toHaveAttribute("href", "#/sources");
+  });
+
+  it("shows source loading while the root list is pending", async () => {
+    let respond: (response: Response) => void = () => {};
+    const request = new Promise<void>((resolve) => {
+      server.use(
+        http.get("/api/setup", () => HttpResponse.json(completedState)),
+        http.get(
+          "/api/sources",
+          () =>
+            new Promise<Response>((done) => {
+              respond = done;
+              resolve();
+            }),
+        ),
+      );
+    });
+    render(<App />);
+
+    expect(await screen.findByText("Загрузка источников…")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    await request;
+    respond(HttpResponse.json({ sources: [] }));
+  });
+
+  it("retries a failed source list request on the landing", async () => {
+    let fail = true;
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources", () =>
+        fail
+          ? HttpResponse.json(
+              { detail: "sources unavailable" },
+              { status: 503 },
+            )
+          : HttpResponse.json({ sources: [] }),
+      ),
+    );
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "sources unavailable",
+    );
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Повторить загрузку" }));
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Добавьте музыкальный каталог",
+      }),
+    ).toBeVisible();
   });
 });
 describe("AppShell library routing", () => {
@@ -313,11 +395,60 @@ describe("AppShell library routing", () => {
       ),
     );
     window.location.hash = `/library/releases/${releaseId}`;
-    render(<AppShell />);
+    render(<App />);
     expect(
       await screen.findByRole("heading", { level: 1, name: "Local release" }),
     ).toBeVisible();
     expect(window.location.hash).toBe(`#/library/releases/${releaseId}`);
+  });
+});
+describe("AppShell operations routing", () => {
+  it("renders the empty and list operations states at #/operations from real requests", async () => {
+    let operations: unknown[] = [];
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/operations", () => HttpResponse.json({ operations })),
+    );
+    window.location.hash = "/operations";
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Текущие операции",
+      }),
+    ).toBeVisible();
+    expect(await screen.findByText("Нет текущих операций")).toBeVisible();
+    const navs = screen.getAllByRole("navigation", {
+      name: "Разделы приложения",
+    });
+    for (const nav of navs) {
+      expect(nav.querySelector('a[href="#/operations"]')).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    }
+
+    operations = [
+      {
+        id: "scan-id",
+        kind: "scan_source",
+        state: "failed",
+        stage: "scan_files",
+        bytes_completed: 12,
+        bytes_total: 30,
+        target_identity: "/music",
+        safe_error: "Permission denied",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:01:00Z",
+      },
+    ];
+    fireEvent.click(screen.getByRole("button", { name: "Обновить" }));
+
+    expect(await screen.findByText("Permission denied")).toBeVisible();
+    expect(screen.getByText("12 / 30 байт")).toBeVisible();
+    expect(screen.queryByText("Нет текущих операций")).not.toBeInTheDocument();
+    expect(window.location.hash).toBe("#/operations");
   });
 });
 describe("AppShell themed shell", () => {
@@ -331,21 +462,26 @@ describe("AppShell themed shell", () => {
       ),
       http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
     );
-    render(<AppShell />);
+    render(<App />);
     await screen.findByText("Managed tools");
     const main = screen.getByRole("main");
     expect(main).toHaveClass("settings-screen", "settings-shell");
     expect(main).not.toHaveClass("bg-stone-100");
   });
   it("uses the themed Settings shell for the completed landing route", async () => {
-    server.use(http.get("/api/setup", () => HttpResponse.json(completedState)));
-    render(<AppShell />);
-    await screen.findByText("Приложение готово к настройке.");
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
+    );
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: "Добавьте музыкальный каталог",
+    });
     expect(screen.getByRole("main")).toHaveClass("settings-shell");
   });
   it("keeps the setup shell for an incomplete instance", async () => {
     server.use(http.get("/api/setup", () => HttpResponse.json(state)));
-    render(<AppShell />);
+    render(<App />);
     await screen.findByRole("heading", { name: "Первый запуск" });
     const main = screen.getByRole("main");
     expect(main).toHaveClass("setup-shell");
@@ -357,10 +493,57 @@ describe("AppShell themed shell", () => {
       http.get("/api/setup", () => HttpResponse.json(completedState)),
       http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
     );
-    render(<AppShell />);
+    render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Источники" });
     const main = screen.getByRole("main");
     expect(main).toHaveClass("sources-screen", "sources-shell");
     expect(main).not.toHaveClass("settings-shell");
+  });
+
+  it("renders accessible navigation only for working destinations and marks the active route", async () => {
+    window.location.hash = "/sources";
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
+    );
+    render(<App />);
+
+    const navs = await screen.findAllByRole("navigation", {
+      name: "Разделы приложения",
+    });
+    expect(navs).toHaveLength(2);
+    for (const nav of navs) {
+      expect(nav.querySelectorAll("a")).toHaveLength(4);
+      expect(nav.querySelector('a[href="#/sources"]')).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(
+        nav.querySelector('a[href="#/incoming-groups"]'),
+      ).toBeInTheDocument();
+      expect(nav.querySelector('a[href="#/operations"]')).toBeInTheDocument();
+      expect(nav.querySelector('a[href="#/settings"]')).toBeInTheDocument();
+      expect(nav.querySelectorAll('a[href="#/library"]')).toHaveLength(0);
+      expect(nav.querySelectorAll('a[href="#/publications"]')).toHaveLength(0);
+    }
+    expect(
+      screen.getByRole("combobox", { name: "Тема интерфейса" }),
+    ).toBeVisible();
+    expect(window.location.hash).toBe("#/sources");
+  });
+
+  it("keeps the current root route as the source-first landing without redirecting", async () => {
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
+    );
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Добавьте музыкальный каталог",
+      }),
+    ).toBeVisible();
+    expect(window.location.hash).toBe("");
   });
 });

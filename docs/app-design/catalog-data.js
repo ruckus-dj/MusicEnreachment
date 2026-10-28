@@ -19,15 +19,16 @@ function demoArtist(id) { return demoArtists.find(artist => artist.id === id); }
 
 function providerTags(album, track) {
   const artist = demoArtist(track.artistId || album.artistId);
+  const artistNameValue = artist?.name || '';
   return {
-    TITLE: [track.title], ARTIST: [artist.name], ARTISTSORT: [artist.name],
-    ALBUM: [album.title], ALBUMARTIST: [demoArtist(album.artistId).name],
+    TITLE: track.title ? [track.title] : [], ARTIST: artistNameValue ? [artistNameValue] : [], ARTISTSORT: artistNameValue ? [artistNameValue] : [],
+    ALBUM: album.title ? [album.title] : [], ALBUMARTIST: album.credits?.length ? album.credits.map(credit => credit.credit || credit.name).filter(Boolean) : (demoArtist(album.artistId)?.name ? [demoArtist(album.artistId).name] : []),
     DATE: [album.year], COUNTRY: album.country ? [album.country] : [],
     LABEL: album.label ? [album.label] : [], CATALOGNUMBER: album.catalog ? [album.catalog] : [],
-    TRACKNUMBER: [String(track.position)], DISCNUMBER: ['1'], GENRE: [artist.genre],
-    MUSICBRAINZ_ARTISTID: [`demo-artist-${artist.id}`],
+    TRACKNUMBER: [String(track.displayedNumber || track.mediumPosition || track.position)], DISCNUMBER: [String(track.medium ?? 1)], GENRE: artist?.genre ? [artist.genre] : [],
+    MUSICBRAINZ_ARTISTID: album.manual ? [] : artist ? [`demo-artist-${artist.id}`] : [],
     MUSICBRAINZ_ALBUMID: album.providerId ? [album.providerId] : [],
-    MUSICBRAINZ_TRACKID: track.recordingId ? [track.recordingId] : [],
+    MUSICBRAINZ_TRACKID: album.manual ? [] : track.recordingId ? [track.recordingId] : [],
     COMMENT: []
   };
 }
