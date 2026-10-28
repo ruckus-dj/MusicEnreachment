@@ -122,3 +122,106 @@
     padding: 10px;
   }
 }
+.library-release-navigation,
+.library-release-credits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+}
+
+.library-release-credits {
+  margin: .25rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-release-credit-role {
+  color: color-mix(in srgb, currentColor 68%, transparent);
+}
+
+.library-release-credit-identity {
+  color: color-mix(in srgb, currentColor 68%, transparent);
+  font-size: .85em;
+}
+
+.library-release-facts,
+.library-release-position-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: .5rem;
+  margin: .5rem 0;
+}
+
+.library-release-facts > div,
+.library-release-position-facts > div {
+  min-width: 0;
+  padding: .5rem;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: .35rem;
+}
+
+.library-release-facts dt,
+.library-release-position-facts dt {
+  font-size: .8rem;
+  color: color-mix(in srgb, currentColor 68%, transparent);
+}
+
+.library-release-facts dd,
+.library-release-position-facts dd,
+.library-release-location-list {
+  overflow-wrap: anywhere;
+}
+
+.library-release-media h2,
+.library-release-sources h3 {
+  margin: .5rem 0;
+  font-weight: 650;
+}
+
+.library-release-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.library-release-table-scroll:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.library-release-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .875rem;
+}
+
+.library-release-table-scroll th,
+.library-release-table-scroll td {
+  padding: .45rem .55rem;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  text-align: start;
+  vertical-align: top;
+}
+
+.library-release-position-links,
+.library-release-location-list {
+  display: grid;
+  gap: .3rem;
+  margin: 0;
+  padding-inline-start: 1rem;
+}
+
+.library-release-position-links a,
+.library-release-location-list a {
+  text-decoration: underline;
+}
+
+.library-release-sources {
+  max-width: 100%;
+}
+
+@media (max-width: 40rem) {
+  .library-release-table-scroll table {
+    min-width: 42rem;
+  }
+}

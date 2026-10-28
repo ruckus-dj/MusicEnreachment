@@ -45,6 +45,11 @@ frontend/
 
 **Tests colocated**: *.test.tsx next to components. Vitest + React Testing Library + MSW.
 
+**Local-time assertions**: UI timestamps use the browser's time zone. Test the
+original `<time datetime>` instant and derive expected display text with the
+same locale/options in the test environment; do not hard-code the developer's
+UTC offset. CI runs in different time zones on all supported platforms.
+
 **Query context and browser fixtures**: Shell integration tests must exercise the
 production query-provider composition, not rely on a test-only provider that can
 hide missing production wiring. Theme tests supply an explicit in-memory Storage

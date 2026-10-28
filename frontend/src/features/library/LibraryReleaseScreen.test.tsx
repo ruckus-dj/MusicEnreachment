@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -30,6 +31,317 @@ afterEach(() => {
   // effects otherwise subscribe to an operation after unstubAllGlobals().
   cleanup();
   vi.unstubAllGlobals();
+});
+
+it("shows saved release facts, ordered credits, media and read-only source evidence", async () => {
+  server.use(
+    http.get("*/api/library/releases/read-only", () =>
+      HttpResponse.json({
+        id: "read-only",
+        title: "Saved album",
+        metadata: {
+          local_metadata: {
+            version: 1,
+            scope: "release",
+            desired: {
+              release_date: {
+                state: "value",
+                value: "2024-02-03",
+                authority: "manual",
+              },
+              release_country: { state: "explicit_empty", authority: "manual" },
+              label: {
+                state: "value",
+                value: ["Label One", "Label Two"],
+                authority: "manual",
+              },
+              catalog_number: {
+                state: "value",
+                value: "CAT-7",
+                authority: "manual",
+              },
+              release_primary_type: {
+                state: "value",
+                value: "album",
+                authority: "manual",
+              },
+            },
+          },
+        },
+        metadata_revision: 1,
+        metadata_version: 1,
+        can_refresh_musicbrainz: false,
+        primary_artist: { selected_artist_id: "artist-a" },
+        artists: [
+          {
+            artist_id: "artist-a",
+            artist_name: "Identity",
+            credit_name: "Credit Name",
+            join_phrase: " & ",
+            role: "main",
+          },
+          {
+            artist_id: "artist-b",
+            artist_name: "Second Identity",
+            credit_name: "",
+            join_phrase: " feat. ",
+            role: "guest",
+          },
+        ],
+        media: [
+          { id: "medium-1", medium: 1, title: "Disc One", format: "CD" },
+          { id: "medium-2", medium: 2, title: "Empty Disc", format: "Vinyl" },
+        ],
+        tracks: [
+          {
+            id: "position-zero",
+            local_track_id: "track-zero",
+            title: "Position title",
+            displayed_number: "",
+            medium: 1,
+            medium_id: "medium-1",
+            position: 4,
+            duration_ms: 0,
+            recording_id: "recording-zero",
+            recording_title: "Recording title",
+            metadata: {},
+            metadata_revision: 1,
+            metadata_version: 1,
+            track_metadata_revision: 1,
+            primary_artist: { selected_artist_id: null },
+            artists: [],
+            sources: [
+              {
+                media_variant_id: "variant-offline",
+                selected: true,
+                compatible: true,
+                decision_method: "manual",
+                policy_version: "p1",
+                metadata: {},
+                locations: [
+                  {
+                    location_id: "location-offline",
+                    root_id: "root-offline",
+                    root_status: "unavailable",
+                    root_enabled: false,
+                    probe_status: "offline",
+                    relative_path: "album/song.flac",
+                    mtime: "2024-01-02T03:04:05Z",
+                    size_bytes: 4096,
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            id: "position-null",
+            local_track_id: "track-null",
+            title: "No duration",
+            displayed_number: "2",
+            medium: 1,
+            medium_id: "medium-1",
+            position: 2,
+            duration_ms: null,
+            recording_id: null,
+            recording_title: "Independent recording title",
+            metadata: {},
+            metadata_revision: 1,
+            metadata_version: 1,
+            track_metadata_revision: 1,
+            primary_artist: { selected_artist_id: null },
+            artists: [],
+            sources: [],
+          },
+        ],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/read-only/positions/:positionId/metadata",
+      () =>
+        HttpResponse.json({
+          revision: 1,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/read-only/positions/:positionId/publication",
+      ({ params }) =>
+        HttpResponse.json({
+          release_id: "read-only",
+          position_id: params.positionId,
+          can_apply_manual_lyrics: false,
+        }),
+    ),
+  );
+
+  render(<LibraryReleaseScreen releaseId="read-only" />);
+
+  expect(await screen.findByText("Saved album")).toBeInTheDocument();
+  expect(screen.getByText("2024-02-03")).toBeInTheDocument();
+  expect(screen.getByText("Явно очищено")).toBeInTheDocument();
+  expect(screen.getByText("Label One, Label Two")).toBeInTheDocument();
+  expect(screen.getByText("CAT-7")).toBeInTheDocument();
+  expect(screen.getByText("album")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Credit Name" })).toHaveAttribute(
+    "href",
+    "#/library/artists/artist-a",
+  );
+  expect(screen.getByText("Identity")).toBeInTheDocument();
+  expect(screen.getByText("main", { exact: false })).toBeInTheDocument();
+  expect(screen.getByText("Empty Disc")).toBeInTheDocument();
+  expect(screen.getByText("Позиции не указаны")).toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: "4 · Position title" }),
+  ).toHaveAttribute(
+    "href",
+    "#/library/releases/read-only/positions/position-zero",
+  );
+  expect(screen.getByText("0:00")).toBeInTheDocument();
+  expect(screen.getByText("Не указана")).toBeInTheDocument();
+  expect(screen.getByText("Recording title")).toBeInTheDocument();
+  expect(screen.getByText("Independent recording title")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "Для этой позиции нет сохранённых сведений об источниках.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Выбран · manual")).toBeInTheDocument();
+  expect(screen.getByText("Совместим")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "album/song.flac" })).toHaveAttribute(
+    "href",
+    "#/sources/root-offline",
+  );
+  expect(screen.getByText(/unavailable/)).toBeInTheDocument();
+  expect(screen.getAllByLabelText("Сохранённый текст песни")).toHaveLength(2);
+  expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+});
+
+it("shows every ordered position credit with canonical identity, roles and joins", async () => {
+  server.use(
+    http.get("*/api/library/releases/position-credits", () =>
+      HttpResponse.json({
+        id: "position-credits",
+        title: "Position credit album",
+        metadata: {},
+        metadata_revision: 1,
+        metadata_version: 1,
+        primary_artist: { selected_artist_id: "artist-a" },
+        artists: [],
+        tracks: [
+          {
+            id: "solo-position",
+            local_track_id: "solo-track",
+            title: "Solo song",
+            displayed_number: "1",
+            medium: 1,
+            position: 1,
+            metadata: {},
+            metadata_revision: 1,
+            metadata_version: 1,
+            track_metadata_revision: 1,
+            primary_artist: { selected_artist_id: null },
+            recording_id: "solo-recording",
+            artists: [
+              {
+                artist_id: "artist-solo",
+                artist_name: "Solo Identity",
+                credit_name: "Solo Credit",
+                join_phrase: "",
+                role: "composer",
+              },
+            ],
+            sources: [],
+          },
+          {
+            id: "repeated-position",
+            local_track_id: "repeated-track",
+            title: "Repeated song",
+            displayed_number: "2",
+            medium: 1,
+            position: 2,
+            metadata: {},
+            metadata_revision: 1,
+            metadata_version: 1,
+            track_metadata_revision: 1,
+            primary_artist: { selected_artist_id: "artist-a" },
+            recording_id: "repeated-recording",
+            artists: [
+              {
+                artist_id: "artist-a",
+                artist_name: "Canonical Identity",
+                credit_name: "First Credit",
+                join_phrase: " & ",
+                role: "main",
+              },
+              {
+                artist_id: "artist-a",
+                artist_name: "Canonical Identity",
+                credit_name: "Second Credit",
+                join_phrase: " feat. ",
+                role: "guest",
+              },
+            ],
+            sources: [],
+          },
+        ],
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/position-credits/positions/:positionId/metadata",
+      () =>
+        HttpResponse.json({
+          revision: 1,
+          publication_applied: false,
+          envelope: { scope: "position", version: 1, desired: {} },
+        }),
+    ),
+    http.get(
+      "*/api/library/releases/position-credits/positions/:positionId/publication",
+      ({ params }) =>
+        HttpResponse.json({
+          release_id: "position-credits",
+          position_id: params.positionId,
+          can_apply_manual_lyrics: false,
+        }),
+    ),
+  );
+
+  render(<LibraryReleaseScreen releaseId="position-credits" />);
+
+  expect(
+    await screen.findByRole("heading", { name: "Position credit album" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Solo Credit" })).toHaveAttribute(
+    "href",
+    "#/library/artists/artist-solo",
+  );
+  expect(screen.getByText("Solo Identity")).toBeInTheDocument();
+  expect(screen.getByText("composer", { exact: false })).toBeInTheDocument();
+  expect(
+    screen.queryByLabelText("Основной исполнитель композиции 1"),
+  ).not.toBeInTheDocument();
+
+  const repeatedArticle = screen
+    .getByRole("heading", { name: "2. Repeated song" })
+    .closest("article");
+  expect(repeatedArticle).not.toBeNull();
+  const rows = within(repeatedArticle as HTMLElement).getAllByRole("listitem");
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toHaveTextContent(
+    "First Credit (Canonical Identity) & · main",
+  );
+  expect(rows[1]).toHaveTextContent(
+    "Second Credit (Canonical Identity) feat. · guest",
+  );
+  expect(
+    within(repeatedArticle as HTMLElement).getAllByText("Canonical Identity"),
+  ).toHaveLength(2);
+  expect(
+    within(repeatedArticle as HTMLElement).getByRole("link", {
+      name: "Second Credit",
+    }),
+  ).toHaveAttribute("href", "#/library/artists/artist-a");
 });
 
 it("shows read-back tags and submits revision-fenced primary artist selections", async () => {

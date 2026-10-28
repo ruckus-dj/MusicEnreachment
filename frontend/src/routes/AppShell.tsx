@@ -272,18 +272,17 @@ function RootLanding() {
 
 function ShellNavigation({ route }: { route: Route }) {
   const items = [
-    { label: "Главная", href: "#/", active: route === "/" },
     {
       label: "Входящие",
       href: "#/incoming-groups",
       active: route === "/incoming-groups",
     },
-    { label: "Источники", href: "#/sources", active: route === "/sources" },
     {
       label: "Медиатека",
       href: "#/library",
       active: route === "/library" || route.startsWith("/library/"),
     },
+    { label: "Источники", href: "#/sources", active: route === "/sources" },
     {
       label: "Публикации",
       href: "#/publications",

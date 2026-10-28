@@ -23,6 +23,13 @@ import type {
 } from "../../api/generated/client.schemas";
 import "./library.css";
 import { FirstPublicationPreview } from "./FirstPublicationPreview";
+import {
+  PositionIdentity,
+  PositionSources,
+  ReleaseCreditList,
+  ReleaseMediaSummary,
+  ReleaseMetadataFacts,
+} from "./LibraryReleaseFacts";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
 
 const initialLyricsSourceLabels: Record<string, string> = {
@@ -1320,22 +1327,22 @@ export function LibraryReleaseScreen({
     : (release.tracks ?? []);
   return (
     <section className="library-release-screen mx-auto max-w-5xl space-y-6">
-      <button
-        type="button"
-        className="underline"
-        onClick={() => {
-          window.location.hash = "/incoming-groups";
-        }}
+      <nav
+        className="library-release-navigation"
+        aria-label="Навигация по медиатеке"
       >
-        ← К входящим
-      </button>
+        <a className="underline" href="#/library">
+          ← Каталог медиатеки
+        </a>
+        {positionId ? (
+          <a className="underline" href="#/incoming-groups">
+            Входящие
+          </a>
+        ) : null}
+      </nav>
       <header>
         <h1 className="text-2xl font-semibold">{release.title}</h1>
-        <p>
-          {release.artists
-            ?.map((artist) => artist.credit_name || artist.artist_name)
-            .join(", ")}
-        </p>
+        <ReleaseCreditList credits={release.artists} />
         {(release.artists?.length ?? 0) > 1 && (
           <label className="block">
             Основной исполнитель релиза
@@ -1390,6 +1397,8 @@ export function LibraryReleaseScreen({
           </div>
         )}
       </header>
+      <ReleaseMetadataFacts metadata={release.metadata} />
+      <ReleaseMediaSummary release={release} />
       {positionId && (
         <a className="underline" href={`#/library/releases/${releaseId}`}>
           ← Полный релиз
@@ -1467,8 +1476,10 @@ export function LibraryReleaseScreen({
             className="space-y-3 rounded border border-stone-300 p-4"
           >
             <h2 className="font-semibold">
-              {track.displayed_number}. {track.title}
+              {track.displayed_number.trim() || track.position}. {track.title}
             </h2>
+            <PositionIdentity track={track} />
+            <ReleaseCreditList credits={credits} />
             {credits.length > 1 && (
               <label className="block">
                 Основной исполнитель композиции
@@ -1492,6 +1503,7 @@ export function LibraryReleaseScreen({
                 </select>
               </label>
             )}
+            <PositionSources track={track} />
             <label className="block">
               Сохранённый текст песни
               <textarea

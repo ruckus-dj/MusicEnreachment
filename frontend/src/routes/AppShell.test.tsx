@@ -689,16 +689,15 @@ describe("AppShell themed shell", () => {
     });
     expect(navs).toHaveLength(2);
     for (const nav of navs) {
-      expect(nav.querySelectorAll("a")).toHaveLength(7);
+      expect(nav.querySelectorAll("a")).toHaveLength(6);
       expect(
         Array.from(nav.querySelectorAll("a"), (link) =>
           link.getAttribute("href"),
         ),
       ).toEqual([
-        "#/",
         "#/incoming-groups",
-        "#/sources",
         "#/library",
+        "#/sources",
         "#/publications",
         "#/operations",
         "#/settings",
@@ -712,7 +711,9 @@ describe("AppShell themed shell", () => {
       ).toBeInTheDocument();
       expect(nav.querySelector('a[href="#/operations"]')).toBeInTheDocument();
       expect(nav.querySelector('a[href="#/settings"]')).toBeInTheDocument();
-      expect(nav.querySelector('a[href="#/"]')).toHaveTextContent("Главная");
+      expect(
+        nav.querySelector('a[href="#/incoming-groups"]'),
+      ).toHaveTextContent("Входящие");
       expect(nav.querySelector('a[href="#/library"]')).toHaveTextContent(
         "Медиатека",
       );

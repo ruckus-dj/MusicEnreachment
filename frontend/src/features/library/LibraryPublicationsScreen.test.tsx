@@ -110,7 +110,14 @@ it("shows publication facts from the current endpoint without implying a freshne
   expect(
     screen.getByText("Анна/Синий альбом/02 - Открытие.mka"),
   ).toBeInTheDocument();
-  expect(screen.getByText("20 окт. 2026 г., 15:30")).toBeInTheDocument();
+  const expectedTime = new Intl.DateTimeFormat("ru", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date("2026-10-20T12:30:00Z"));
+  expect(screen.getByText(expectedTime)).toHaveAttribute(
+    "datetime",
+    "2026-10-20T12:30:00Z",
+  );
   expect(
     screen.getByRole("navigation", { name: "Страницы публикаций" }),
   ).toHaveTextContent("1–1 из 1");
