@@ -60,7 +60,7 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 	installationID := uuid.New()
 	verified := time.Now().UTC()
 	versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
-	installation := &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", State: "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}
+	installation := &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}
 	separatorPath := "ffmpeg/release-1"
 	if runtime.GOOS == "windows" {
 		separatorPath = `ffmpeg\release-1`
@@ -71,8 +71,8 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 		t.Fatal(err)
 	}
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffmpeg", Version: installation.Version, VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffprobe", Version: installation.Version, VersionBanner: ffprobeBanner},
 	}
 	manifest := []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/file", RelativePath: "root/file", NodeKind: "file"}}
 	input := publicationInputsFixture(t, "rewrite")

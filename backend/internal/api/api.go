@@ -16,14 +16,22 @@ func New(router chi.Router) huma.API {
 }
 
 func redactAcoustIDKeyErrors(ctx huma.Context, status string, response any) (any, error) {
-	if ctx.Operation().OperationID != "set-acoustid-application-key" || len(status) != 3 || status[0] != '4' {
+	operation := ctx.Operation().OperationID
+	if operation != "set-acoustid-application-key" && operation != "set-github-token" || len(status) != 3 || status[0] != '4' {
 		return response, nil
 	}
 	errorResponse, ok := response.(*huma.ErrorModel)
 	if !ok {
 		return response, nil
 	}
-	errorResponse.Detail = "invalid AcoustID application key request"
+	if operation == "set-github-token" && len(errorResponse.Errors) == 0 {
+		return response, nil
+	}
+	if operation == "set-github-token" {
+		errorResponse.Detail = "invalid GitHub token request"
+	} else {
+		errorResponse.Detail = "invalid AcoustID application key request"
+	}
 	errorResponse.Errors = nil
 	return errorResponse, nil
 }

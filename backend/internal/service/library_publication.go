@@ -429,25 +429,24 @@ func selectedFFmpegPairFromInstallation(installation *persistence.ToolInstallati
 		installation.VerifiedAt == nil || installation.PlatformGOOS != platform.GOOS || installation.PlatformGOARCH != platform.GOARCH || !platform.Supported() {
 		return nil, errors.New("active managed ffmpeg installation is not verified for this platform")
 	}
-	var versions map[string]string
-	if err := json.Unmarshal(installation.ExecutableVersions, &versions); err != nil {
+	var evidence map[string]string
+	if err := json.Unmarshal(installation.ExecutableVerificationOutput, &evidence); err != nil {
 		return nil, errors.New("active managed ffmpeg installation has invalid verified versions")
+	}
+	version := installation.Version
+	if version == "" {
+		return nil, errors.New("active managed ffmpeg installation has invalid version")
 	}
 	selections := make([]persistence.SourceAnalysisToolSelection, 0, 2)
 	for _, executable := range []string{"ffmpeg", "ffprobe"} {
-		banner, ok := tools.VerifiedExecutableVersion(versions, tools.PackageFFmpeg, executable, installation.PlatformGOOS)
+		banner, ok := tools.VerifiedExecutableVersion(evidence, tools.PackageFFmpeg, executable, installation.PlatformGOOS)
 		if !ok {
 			return nil, fmt.Errorf("active managed %s executable has no verified version", executable)
-		}
-		line, _, _ := strings.Cut(banner, "\n")
-		parts := strings.Fields(line)
-		if len(parts) < 3 || parts[0] != executable || parts[1] != "version" {
-			return nil, fmt.Errorf("active managed %s executable has an invalid verified version", executable)
 		}
 		selections = append(selections, persistence.SourceAnalysisToolSelection{
 			PackageKind: string(tools.PackageFFmpeg), InstallationID: installation.ID,
 			RelativePath: filepath.ToSlash(installation.RelativePath), Executable: executable,
-			Version: parts[2], VersionBanner: banner,
+			Version: version, VersionBanner: banner,
 		})
 	}
 	return selections, nil

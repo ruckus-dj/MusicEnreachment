@@ -106,7 +106,8 @@ func automaticAdmissionFixture(t *testing.T) (*automaticAdmissionServiceReposito
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		RelativePath: "ffmpeg", State: "ready", VerifiedAt: &verifiedAt,
-		ExecutableVersions: json.RawMessage(`{"ffmpeg":"ffmpeg version 7.0.0 verified","ffprobe":"ffprobe version 7.0.0 verified"}`),
+		Version:                      "ffmpeg 7.0.0 + ffprobe 7.0.0",
+		ExecutableVerificationOutput: json.RawMessage(`{"ffmpeg":"ffmpeg version 7.0.0 verified","ffprobe":"ffprobe version 7.0.0 verified"}`),
 	}
 	makeSource := func(location, variant uuid.UUID, codec string, lossless bool, streamCount int) persistence.FirstPublicationSource {
 		channels := 2
@@ -209,8 +210,8 @@ func TestManualFirstAdmissionRemainsOnPublicConfirmationPath(t *testing.T) {
 	preview, err := buildFirstPublicationPreviewSelected(repository.snapshot, settings.RuntimeSettings{
 		PublicationFormat: runtime.format, PublicationPathTemplate: runtime.template, OutputDirectory: runtime.output,
 		OutputCaseSensitive: &runtime.caseSensitive, ActiveFFmpegInstallation: runtime.ffmpeg, ActiveFPCalcInstallation: runtime.fpcalc,
-	}, []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: repository.installation.ID, RelativePath: "ffmpeg", Executable: "ffmpeg", Version: "7.0.0", VersionBanner: "ffmpeg version 7.0.0 verified"},
-		{PackageKind: "ffmpeg", InstallationID: repository.installation.ID, RelativePath: "ffmpeg", Executable: "ffprobe", Version: "7.0.0", VersionBanner: "ffprobe version 7.0.0 verified"}}, releaseID, positionID, &choice)
+	}, []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: repository.installation.ID, RelativePath: "ffmpeg", Executable: "ffmpeg", Version: "ffmpeg 7.0.0 + ffprobe 7.0.0", VersionBanner: "ffmpeg version 7.0.0 verified"},
+		{PackageKind: "ffmpeg", InstallationID: repository.installation.ID, RelativePath: "ffmpeg", Executable: "ffprobe", Version: "ffmpeg 7.0.0 + ffprobe 7.0.0", VersionBanner: "ffprobe version 7.0.0 verified"}}, releaseID, positionID, &choice)
 	if err != nil {
 		t.Fatal(err)
 	}

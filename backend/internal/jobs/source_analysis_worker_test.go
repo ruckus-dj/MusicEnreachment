@@ -82,7 +82,7 @@ func TestSourceAnalysisWorkerPreparerConfigRejectsInvalidPinnedTool(t *testing.T
 		wantErr bool
 	}{
 		{name: "path escapes managed root", tool: persistence.SourceAnalysisToolSelection{Executable: "ffprobe", RelativePath: "../../outside", Version: "8.0"}, wantErr: true},
-		{name: "malformed fpcalc banner", tool: persistence.SourceAnalysisToolSelection{Executable: "fpcalc", RelativePath: "fpcalc/1.2.3", Version: "1.2.3", VersionBanner: "not a version"}, wantErr: true},
+		{name: "missing canonical fpcalc version", tool: persistence.SourceAnalysisToolSelection{Executable: "fpcalc", RelativePath: "fpcalc/1.2.3", VersionBanner: "not a version"}, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

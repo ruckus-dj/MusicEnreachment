@@ -3,16 +3,27 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
+)
+
+var (
+	ErrGitHubTokenMalformed             = errors.New("GitHub token is malformed")
+	ErrGitHubTokenRejected              = errors.New("GitHub rejected the token")
+	ErrGitHubTokenValidationUnavailable = errors.New("GitHub token validation is unavailable")
+	ErrGitHubTokenRateLimited           = errors.New("GitHub token validation was rate limited")
 )
 
 type SetupState struct {
@@ -37,6 +48,31 @@ func (s *SetupService) DeleteAcoustIDApplicationKey(ctx context.Context) error {
 	return nil
 }
 
+func (s *SetupService) SetGitHubToken(ctx context.Context, token string) error {
+	if len(token) == 0 || len(token) > 512 || token != strings.TrimSpace(token) || strings.IndexFunc(token, unicode.IsControl) >= 0 || strings.ContainsAny(token, " \t") {
+		return ErrGitHubTokenMalformed
+	}
+	checker := s.githubTokenChecker
+	if checker == nil {
+		checker = tools.NewGitHubTokenChecker(nil)
+	}
+	if err := checker.Check(ctx, token); err != nil {
+		if errors.Is(err, tools.ErrGitHubTokenRejected) {
+			return ErrGitHubTokenRejected
+		}
+		var rateLimit *tools.GitHubRateLimitError
+		if errors.As(err, &rateLimit) {
+			return fmt.Errorf("%w: %v", ErrGitHubTokenRateLimited, rateLimit)
+		}
+		return ErrGitHubTokenValidationUnavailable
+	}
+	return s.registry.SetGitHubToken(ctx, token)
+}
+
+func (s *SetupService) DeleteGitHubToken(ctx context.Context) error {
+	return s.registry.DeleteGitHubToken(ctx)
+}
+
 type PathValidation struct {
 	ToolsDirectory             string
 	OutputDirectory            string
@@ -44,13 +80,32 @@ type PathValidation struct {
 	OutputUnicodeNormalization string
 }
 
+type DirectoryListing struct {
+	CurrentPath string
+	ParentPath  string
+	Roots       []string
+	Directories []string
+	Offset      int
+	NextOffset  *int
+}
+
 type SetupService struct {
-	store             settings.Store
-	registry          *settings.Registry
-	platform          settings.PlatformState
-	musicbrainzClient musicbrainz.Checker
-	installations     InstallationLookup
-	outputReset       *OutputReset
+	store              settings.Store
+	registry           *settings.Registry
+	platform           settings.PlatformState
+	musicbrainzClient  musicbrainz.Checker
+	installations      InstallationLookup
+	outputReset        *OutputReset
+	githubTokenChecker GitHubTokenChecker
+}
+
+type GitHubTokenChecker interface {
+	Check(context.Context, string) error
+}
+
+func (s *SetupService) WithGitHubTokenChecker(checker GitHubTokenChecker) *SetupService {
+	s.githubTokenChecker = checker
+	return s
 }
 
 func (s *SetupService) WithOutputReset(outputReset *OutputReset) *SetupService {
@@ -80,6 +135,135 @@ func NewSetup(store settings.Store, registry *settings.Registry, platform settin
 }
 func (s *SetupService) State(ctx context.Context) (SetupState, error) {
 	return s.state(ctx, false)
+}
+
+// BrowseDirectories lists existing directories only. It never creates
+// directories and never probes paths for writability.
+func (s *SetupService) BrowseDirectories(ctx context.Context, path string, offset, limit int) (listing DirectoryListing, resultErr error) {
+	if offset < 0 || limit < 1 || limit > 200 {
+		return DirectoryListing{}, fmt.Errorf("invalid directory listing page")
+	}
+	if err := ctx.Err(); err != nil {
+		return DirectoryListing{}, err
+	}
+	if path == "" {
+		root, err := defaultBrowseRoot()
+		if err != nil {
+			return DirectoryListing{}, err
+		}
+		path = root
+	}
+	if !filepath.IsAbs(path) {
+		return DirectoryListing{}, fmt.Errorf("path must be absolute")
+	}
+	current, err := settings.NormalizePath(path)
+	if err != nil {
+		return DirectoryListing{}, fmt.Errorf("normalize directory: %w", err)
+	}
+	info, err := os.Stat(current)
+	if err != nil || !info.IsDir() {
+		return DirectoryListing{}, fmt.Errorf("directory is unavailable")
+	}
+	directory, err := os.Open(current)
+	if err != nil {
+		return DirectoryListing{}, fmt.Errorf("read directory: %w", err)
+	}
+	defer func() {
+		if err := directory.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close directory: %w", err))
+		}
+	}()
+	const scanLimit = 1000
+	const batchSize = 100
+	remainingOffset := offset
+	for remainingOffset > 0 {
+		if err := ctx.Err(); err != nil {
+			return DirectoryListing{}, err
+		}
+		batch, readErr := directory.ReadDir(min(batchSize, remainingOffset))
+		remainingOffset -= len(batch)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return DirectoryListing{}, fmt.Errorf("read directory: %w", readErr)
+		}
+		if errors.Is(readErr, io.EOF) && remainingOffset > 0 {
+			return DirectoryListing{}, fmt.Errorf("directory listing offset is unavailable")
+		}
+		if len(batch) == 0 && remainingOffset > 0 {
+			return DirectoryListing{}, fmt.Errorf("directory listing offset is unavailable")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return DirectoryListing{}, err
+	}
+	directories := make([]string, 0, limit)
+	scanned := 0
+	var next *int
+	for scanned < scanLimit && len(directories) < limit {
+		if err := ctx.Err(); err != nil {
+			return DirectoryListing{}, err
+		}
+		batch, readErr := directory.ReadDir(min(batchSize, scanLimit-scanned))
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return DirectoryListing{}, fmt.Errorf("read directory: %w", readErr)
+		}
+		for _, entry := range batch {
+			scanned++
+			child := filepath.Join(current, entry.Name())
+			isDirectory := entry.IsDir()
+			if !isDirectory && entry.Type()&os.ModeSymlink != 0 {
+				if err := ctx.Err(); err != nil {
+					return DirectoryListing{}, err
+				}
+				info, statErr := os.Stat(child)
+				isDirectory = statErr == nil && info.IsDir()
+			}
+			if isDirectory {
+				directories = append(directories, child)
+			}
+			if len(directories) == limit {
+				break
+			}
+		}
+		if len(directories) == limit {
+			n := offset + scanned
+			next = &n
+			break
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+	}
+	if next == nil && scanned == scanLimit {
+		n := offset + scanned
+		next = &n
+	}
+	parent := filepath.Dir(current)
+	roots := []string{string(filepath.Separator)}
+	if runtime.GOOS == "windows" {
+		roots = roots[:0]
+		for drive := 'A'; drive <= 'Z'; drive++ {
+			root := string(drive) + ":\\"
+			if _, err := os.Stat(root); err == nil {
+				roots = append(roots, root)
+			}
+		}
+	}
+	return DirectoryListing{CurrentPath: current, ParentPath: parent, Roots: roots, Directories: directories, Offset: offset, NextOffset: next}, nil
+}
+
+// defaultBrowseRoot returns the top of the native filesystem: the bare
+// separator on Unix-like systems and the working directory's volume on Windows,
+// where a bare separator is not an absolute path.
+func defaultBrowseRoot() (string, error) {
+	separator := string(filepath.Separator)
+	if runtime.GOOS != "windows" {
+		return separator, nil
+	}
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("determine default directory: %w", err)
+	}
+	return filepath.VolumeName(workingDirectory) + separator, nil
 }
 
 func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, error) {
@@ -150,7 +334,7 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 			continue
 		}
 		var versions map[string]string
-		if installation.VerifiedAt == nil || json.Unmarshal(installation.ExecutableVersions, &versions) != nil {
+		if installation.VerifiedAt == nil || json.Unmarshal(installation.ExecutableVerificationOutput, &versions) != nil {
 			health.Healthy = false
 			health.Problems = append(health.Problems, "active "+required.packageKind+" installation has no verified executables")
 			continue

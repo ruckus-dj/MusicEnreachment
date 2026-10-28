@@ -258,7 +258,7 @@ func publicationTestDependencies(t *testing.T, projection *persistence.LibraryPu
 	verifiedAt := time.Now()
 	versions, _ := json.Marshal(map[string]string{"ffmpeg": "ffmpeg version 7.0\n", "ffprobe": "ffprobe version 7.0\n"})
 	repository := &libraryPublicationsTestRepository{projection: projection, installation: &persistence.ToolInstallation{
-		ID: id, PackageKind: string(tools.PackageFFmpeg), PlatformGOOS: "darwin", PlatformGOARCH: "arm64", RelativePath: "ffmpeg/7", State: "ready", VerifiedAt: &verifiedAt, ExecutableVersions: versions,
+		ID: id, PackageKind: string(tools.PackageFFmpeg), PlatformGOOS: "darwin", PlatformGOARCH: "arm64", RelativePath: "ffmpeg/7", Version: "ffmpeg 7.0 + ffprobe 7.0", State: "ready", VerifiedAt: &verifiedAt, ExecutableVerificationOutput: versions,
 	}}
 	return repository, libraryPublicationsTestSettings{activeID: id.String()}
 }

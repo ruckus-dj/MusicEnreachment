@@ -200,7 +200,7 @@ func (worker *InstallationWorker) resumeInstallPublication(ctx context.Context, 
 		}
 		return worker.rollbackInstallPublication(ctx, operation, installation, root, staging, publication)
 	}
-	versions, err := worker.lifecycle.VerifyInstallation(ctx, root, installation.RelativePath, snapshot.PackageKind, snapshot.ReleaseIdentity, worker.platform.GOOS)
+	verified, err := worker.lifecycle.VerifyInstallationVerified(ctx, root, installation.RelativePath, snapshot.PackageKind, snapshot.ReleaseIdentity, worker.platform.GOOS)
 	if err != nil {
 		if ctx.Err() != nil {
 			return err
@@ -214,14 +214,9 @@ func (worker *InstallationWorker) resumeInstallPublication(ctx context.Context, 
 	if err := worker.operations.RunningForDelivery(ctx, operation, "files_materialized"); err != nil {
 		return err
 	}
-	versionsJSON, err := json.Marshal(versions)
-	if err != nil {
-		return err
-	}
-	installation.ExecutableVersions = versionsJSON
 	verifiedAt := time.Now().UTC()
 	installation.VerifiedAt = &verifiedAt
-	return worker.finish(ctx, operation, installation, root, snapshot)
+	return worker.finish(ctx, operation, installation, root, snapshot, verified)
 }
 
 func (worker *InstallationWorker) publishInstallFiles(ctx context.Context, staging string, publication *installPublication) error {

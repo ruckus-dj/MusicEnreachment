@@ -235,8 +235,9 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 		installation := &persistence.ToolInstallation{
 			ID: id, PackageKind: string(tools.PackageFPCalc), PlatformGOOS: platform.Platform.GOOS,
 			PlatformGOARCH: platform.Platform.GOARCH, SourceName: "api-test", ReleaseIdentity: release,
-			RelativePath: filepath.ToSlash(relativePath), State: "ready", ExecutableVersions: json.RawMessage(fmt.Sprintf(`{%q:%q}`, tools.ExpectedExecutables(tools.PackageFPCalc, platform.Platform.GOOS)[0], "fpcalc version "+version)),
-			ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
+			RelativePath: filepath.ToSlash(relativePath), State: "ready", Version: version,
+			ExecutableVerificationOutput: json.RawMessage(fmt.Sprintf(`{%q:%q}`, tools.ExpectedExecutables(tools.PackageFPCalc, platform.Platform.GOOS)[0], "fpcalc version "+version)),
+			ArtifactIdentities:           json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
 		}
 		if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
 			t.Fatalf("insert fpcalc %s: %v", version, err)
@@ -409,8 +410,9 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 	ffmpeg := &persistence.ToolInstallation{
 		ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: platform.Platform.GOOS, PlatformGOARCH: platform.Platform.GOARCH,
 		SourceName: "api-test", ReleaseIdentity: "ffmpeg-api-test", RelativePath: filepath.ToSlash(ffmpegPath), State: "ready",
-		ExecutableVersions: json.RawMessage(fmt.Sprintf(`{%q:%q,%q:%q}`, tools.ExpectedExecutables(tools.PackageFFmpeg, platform.Platform.GOOS)[0], "ffmpeg version 6.1.1", tools.ExpectedExecutables(tools.PackageFFmpeg, platform.Platform.GOOS)[1], "ffprobe version 6.1.1")),
-		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
+		Version:                      "ffmpeg 6.1.1 + ffprobe 6.1.1",
+		ExecutableVerificationOutput: json.RawMessage(fmt.Sprintf(`{%q:%q,%q:%q}`, tools.ExpectedExecutables(tools.PackageFFmpeg, platform.Platform.GOOS)[0], "ffmpeg version 6.1.1", tools.ExpectedExecutables(tools.PackageFFmpeg, platform.Platform.GOOS)[1], "ffprobe version 6.1.1")),
+		ArtifactIdentities:           json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
 	}
 	if _, err := database.NewInsert().Model(ffmpeg).Exec(ctx); err != nil {
 		t.Fatal(err)

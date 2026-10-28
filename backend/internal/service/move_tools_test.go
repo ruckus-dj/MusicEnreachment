@@ -73,7 +73,7 @@ func TestMovePreflightConfirmsExactConflictsAndRevalidatesSnapshot(t *testing.T)
 	}
 	repository := &moveRepositoryFixture{installations: []persistence.ToolInstallation{{
 		ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "btbn", ReleaseIdentity: "8.0", RelativePath: "ffmpeg/8.0", State: "ready",
+		SourceName: "btbn", ReleaseIdentity: "8.0", RelativePath: "ffmpeg/8.0", Version: "ffmpeg 8.0 + ffprobe 8.0", State: "ready",
 	}}}
 	moveService := service.NewMoveTools(repository, settings.New(store, nil), tools.Platform{GOOS: "linux", GOARCH: "amd64"}, unusedMoveRiverClient{})
 
@@ -128,7 +128,7 @@ func TestMovePreflightRejectsStaleSourceIdentity(t *testing.T) {
 	}
 	repository := &moveRepositoryFixture{installations: []persistence.ToolInstallation{{
 		ID: uuid.New(), PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: "fpcalc/1.6.1", State: "ready",
+		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: "fpcalc/1.6.1", Version: "1.6.1", State: "ready",
 	}}}
 	moveService := service.NewMoveTools(repository, settings.New(store, nil), tools.Platform{GOOS: "linux", GOARCH: "amd64"}, unusedMoveRiverClient{})
 	plan, err := moveService.Preflight(ctx, newRoot, true)

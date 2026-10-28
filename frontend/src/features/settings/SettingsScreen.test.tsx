@@ -45,35 +45,35 @@ const settings = {
     output_case_sensitive: true,
     output_unicode_normalization: "none",
     has_acoustid_application_key: false,
+    has_github_token: false,
   },
 };
 const activeFF = {
   id: "ff-active",
   package_kind: "ffmpeg",
-  release_identity: "ff-1",
+  version: "ffmpeg 8.0 + ffprobe 8.0",
   source_name: "fixture",
   state: "ready",
   active: true,
-  executable_versions: {},
   created_at: "2026-01-01T00:00:00Z",
 };
 const inactiveFF = {
   ...activeFF,
   id: "ff-old",
-  release_identity: "ff-0",
+  version: "ffmpeg 7.0 + ffprobe 7.0",
   active: false,
 };
 const failedFF = {
   ...inactiveFF,
   id: "ff-failed",
-  release_identity: "ff-failed",
+  version: "ffmpeg failed + ffprobe failed",
   state: "failed",
 };
 const activeFP = {
   ...activeFF,
   id: "fp-active",
   package_kind: "fpcalc",
-  release_identity: "fp-1",
+  version: "1.6.0",
 };
 const operation = {
   id: "op-1",
@@ -1812,7 +1812,7 @@ describe("SettingsScreen", () => {
     );
     await waitFor(() => expect(install).toHaveBeenCalled());
     expect(await screen.findByText(/install: queued/)).toBeTruthy();
-    expect(screen.getByText("ff-1 — активна")).toBeTruthy();
+    expect(screen.getByText("ffmpeg 8.0 + ffprobe 8.0 — активна")).toBeTruthy();
   });
 
   it("keeps an installation preflight refusal on the screen and focuses its screen alert", async () => {
@@ -2349,14 +2349,14 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     const activateButton = await screen.findByRole("button", {
-      name: "Активировать ff-0",
+      name: "Активировать ffmpeg 7.0 + ffprobe 7.0",
     });
     await waitFor(() => expect(activateButton).not.toBeDisabled());
     fireEvent.click(activateButton);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Проверка версии не прошла",
     );
-    expect(screen.getByText("ff-1 — активна")).toBeTruthy();
+    expect(screen.getByText("ffmpeg 8.0 + ffprobe 8.0 — активна")).toBeTruthy();
   });
 
   it("rejects active and operation-busy deletion", async () => {
@@ -2376,13 +2376,21 @@ describe("SettingsScreen", () => {
         screen.getByRole("button", { name: "Обновить состояние" }),
       ).not.toBeDisabled(),
     );
-    const activeDelete = screen.getByRole("button", { name: "Удалить ff-1" });
+    const activeDelete = screen.getByRole("button", {
+      name: "Удалить ffmpeg 8.0 + ffprobe 8.0",
+    });
     expect(activeDelete).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Активировать ff-1" }),
+      screen.getByRole("button", {
+        name: "Активировать ffmpeg 8.0 + ffprobe 8.0",
+      }),
     ).toBeDisabled();
     await screen.findByRole("group", { name: "Операция op-1" });
-    expect(screen.getByRole("button", { name: "Удалить ff-0" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Удалить ffmpeg 7.0 + ffprobe 7.0",
+      }),
+    ).toBeDisabled();
     expect(remove).not.toHaveBeenCalled();
   });
 
@@ -2397,7 +2405,7 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     const remove = await screen.findByRole("button", {
-      name: "Удалить ff-failed",
+      name: "Удалить ffmpeg failed + ffprobe failed",
     });
     await waitFor(() => expect(remove).not.toBeDisabled());
     fireEvent.click(remove);
@@ -2424,7 +2432,9 @@ describe("SettingsScreen", () => {
     render(<SettingsScreen />);
     await screen.findByRole("group", { name: "Операция op-1" });
     expect(
-      screen.getByRole("button", { name: "Удалить ff-failed" }),
+      screen.getByRole("button", {
+        name: "Удалить ffmpeg failed + ffprobe failed",
+      }),
     ).toBeDisabled();
   });
 
@@ -2787,8 +2797,8 @@ describe("SettingsScreen", () => {
     expect(settingsReads).toBe(2);
     expect(installationReads).toEqual({ ffmpeg: 2, fpcalc: 2 });
     expect(operationReads).toBe(2);
-    expect(screen.getByText("ff-1 — активна")).toBeTruthy();
-    expect(screen.getByText("fp-1 — активна")).toBeTruthy();
+    expect(screen.getByText("ffmpeg 8.0 + ffprobe 8.0 — активна")).toBeTruthy();
+    expect(screen.getByText("1.6.0 — активна")).toBeTruthy();
   });
 
   it("preserves tools root and active installations after a move worker failure", async () => {
@@ -2859,8 +2869,8 @@ describe("SettingsScreen", () => {
     expect(
       screen.getByText("Текущий Tools directory:").parentElement,
     ).toHaveTextContent("/srv/tools");
-    expect(screen.getByText("ff-1 — активна")).toBeTruthy();
-    expect(screen.getByText("fp-1 — активна")).toBeTruthy();
+    expect(screen.getByText("ffmpeg 8.0 + ffprobe 8.0 — активна")).toBeTruthy();
+    expect(screen.getByText("1.6.0 — активна")).toBeTruthy();
   });
 
   it("recovers operation snapshots on SSE wake-up and exposes Retry and Dismiss", async () => {

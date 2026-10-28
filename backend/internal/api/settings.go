@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -63,11 +64,53 @@ type UpdateAcoustIDApplicationKeyBody struct {
 	Key string `json:"key"`
 }
 
+type SetGitHubTokenInput struct {
+	Body SetGitHubTokenBody `json:"body"`
+}
+type SetGitHubTokenBody struct {
+	Token string `json:"token" maxLength:"512"`
+}
+
 type CheckSettingsMusicBrainzOutput struct {
 	Body CheckMusicBrainzBody `json:"body"`
 }
 
 func registerSettings(api huma.API, setup *service.SetupService) {
+	huma.Register(api, huma.Operation{OperationID: "set-github-token", Method: http.MethodPut, Path: "/settings/github/token", Summary: "Set GitHub token", Tags: []string{"Settings"}}, func(ctx context.Context, input *SetGitHubTokenInput) (*struct{}, error) {
+		if setup == nil {
+			return nil, huma.Error503ServiceUnavailable("settings service is unavailable")
+		}
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := setup.SetGitHubToken(ctx, input.Body.Token); err != nil {
+			switch {
+			case errors.Is(err, service.ErrGitHubTokenMalformed):
+				return nil, huma.Error400BadRequest("GitHub token has an invalid format")
+			case errors.Is(err, service.ErrGitHubTokenRejected):
+				return nil, huma.Error401Unauthorized("GitHub rejected the token; check that it is valid")
+			case errors.Is(err, service.ErrGitHubTokenValidationUnavailable):
+				return nil, huma.Error502BadGateway("GitHub token validation is temporarily unavailable")
+			case errors.Is(err, service.ErrGitHubTokenRateLimited):
+				return nil, huma.Error502BadGateway(err.Error())
+			default:
+				return nil, huma.Error500InternalServerError("failed to save GitHub token")
+			}
+		}
+		return nil, nil
+	})
+	huma.Register(api, huma.Operation{OperationID: "delete-github-token", Method: http.MethodDelete, Path: "/settings/github/token", Summary: "Delete GitHub token", Tags: []string{"Settings"}}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
+		if setup == nil {
+			return nil, huma.Error503ServiceUnavailable("settings service is unavailable")
+		}
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := setup.DeleteGitHubToken(ctx); err != nil {
+			return nil, huma.Error500InternalServerError("failed to delete GitHub token")
+		}
+		return nil, nil
+	})
 	huma.Register(api, huma.Operation{
 		OperationID: "get-settings", Method: http.MethodGet, Path: "/settings",
 		Summary: "Read runtime settings and health", Tags: []string{"Settings"},
@@ -199,14 +242,11 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		OperationID: "set-acoustid-application-key", Method: http.MethodPut, Path: "/settings/acoustid/application-key",
 		Summary: "Set the AcoustID application key", Tags: []string{"Settings"},
 	}, func(ctx context.Context, input *UpdateAcoustIDApplicationKeyInput) (*struct{}, error) {
-		if err := requireSetupComplete(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
 			return nil, err
 		}
 		if len(input.Body.Key) == 0 || len(input.Body.Key) > 4096 {
 			return nil, huma.Error422UnprocessableEntity("invalid AcoustID application key request")
-		}
-		if setup == nil {
-			return nil, huma.Error503ServiceUnavailable("settings service is unavailable")
 		}
 		if err := setup.SetAcoustIDApplicationKey(ctx, input.Body.Key); err != nil {
 			return nil, huma.Error400BadRequest("AcoustID application key could not be saved")
@@ -218,11 +258,8 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		OperationID: "delete-acoustid-application-key", Method: http.MethodDelete, Path: "/settings/acoustid/application-key",
 		Summary: "Delete the AcoustID application key", Tags: []string{"Settings"},
 	}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
-		if err := requireSetupComplete(ctx, setup); err != nil {
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
 			return nil, err
-		}
-		if setup == nil {
-			return nil, huma.Error503ServiceUnavailable("settings service is unavailable")
 		}
 		if err := setup.DeleteAcoustIDApplicationKey(ctx); err != nil {
 			return nil, huma.Error500InternalServerError("AcoustID application key could not be deleted")

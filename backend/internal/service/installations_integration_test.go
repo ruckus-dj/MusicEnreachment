@@ -77,7 +77,7 @@ func TestDeleteReadyInstallationRemovesOnlyManagedTargetsWithPostgreSQL(t *testi
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.MarkInstallationReady(ctx, installation.ID, []byte(`{"ffmpeg":"8.0","ffprobe":"8.0"}`), time.Now()); err != nil {
+	if err := repository.MarkInstallationReady(ctx, installation.ID, []byte(`{"ffmpeg":"ffmpeg version 8.0 build","ffprobe":"ffprobe version 8.0 build"}`), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()

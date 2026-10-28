@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	managedtools "github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
@@ -121,26 +120,16 @@ func (repository *SourceInventoryRepository) StartNormalizedSourceAnalysisDelive
 				return fmt.Errorf("start source analysis delivery: current %s installation is unavailable", required.kind)
 			}
 			var versions map[string]string
-			if err := json.Unmarshal(installation.ExecutableVersions, &versions); err != nil {
+			if err := json.Unmarshal(installation.ExecutableVerificationOutput, &versions); err != nil {
 				return fmt.Errorf("start source analysis delivery: decode current executable versions: %w", err)
 			}
 			banner, ok := managedtools.VerifiedExecutableVersion(versions, managedtools.PackageKind(required.kind), required.executable, installation.PlatformGOOS)
 			if !ok {
 				return fmt.Errorf("start source analysis delivery: current %s executable is not verified", required.kind)
 			}
-			version := ""
-			if required.executable == "fpcalc" {
-				parsed, err := managedtools.ParseFPCalcVersion(banner)
-				if err != nil {
-					return fmt.Errorf("start source analysis delivery: invalid fpcalc version: %w", err)
-				}
-				version, banner = parsed.Version, parsed.Banner
-			} else {
-				fields := strings.Fields(banner)
-				if len(fields) < 3 || fields[0] != "ffprobe" || fields[1] != "version" {
-					return fmt.Errorf("start source analysis delivery: invalid ffprobe version")
-				}
-				version = fields[2]
+			version := installation.Version
+			if version == "" {
+				return fmt.Errorf("start source analysis delivery: current %s version is invalid", required.kind)
 			}
 			selections[selectionIndex] = SourceAnalysisToolSelection{PackageKind: required.kind, InstallationID: id, RelativePath: installation.RelativePath, Executable: required.executable, Version: version, VersionBanner: banner}
 		}

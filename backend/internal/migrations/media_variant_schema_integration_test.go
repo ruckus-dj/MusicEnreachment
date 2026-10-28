@@ -418,8 +418,8 @@ func newVariantInstallation(t *testing.T, ctx context.Context, database *bun.DB,
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		SourceName: "variant-test", ReleaseIdentity: identity, RelativePath: "ffmpeg/" + identity,
-		State: "ready", ExecutableVersions: json.RawMessage(`{}`),
-		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &now,
+		State: "ready", ExecutableVerificationOutput: json.RawMessage(`{}`),
+		Version: "ffmpeg 7.1 + ffprobe 7.1", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &now,
 	}
 	if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
 		t.Fatalf("insert tool installation %s: %v", identity, err)

@@ -152,8 +152,8 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 	}
 	installationID := uuid.New()
 	tools := []persistence.SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "1", VersionBanner: "ffmpeg version 1"},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffmpeg", Executable: "ffprobe", Version: "1", VersionBanner: "ffprobe version 1"},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "ffmpeg 1 + ffprobe 1", VersionBanner: "ffmpeg version 1"},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: "bin/ffmpeg", Executable: "ffprobe", Version: "ffmpeg 1 + ffprobe 1", VersionBanner: "ffprobe version 1"},
 	}
 	inputs := persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", InitialLyrics: &persistence.PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}, Format: "source", DesiredTags: map[string][]string{}, Tools: tools, Audio: &persistence.PublicationAudioInput{
 		WorkID: workID, RootID: rootID, LocationID: locationID, MediaVariantID: variantID, ProbeResultID: variantID,
@@ -216,7 +216,7 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		if err != nil {
 			t.Fatal(err)
 		}
-		installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "1", RelativePath: filepath.Join("ffmpeg", "1"), State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVersions: executableVersions}
+		installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "1", RelativePath: filepath.Join("ffmpeg", "1"), Version: "ffmpeg 1 + ffprobe 1", State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVerificationOutput: executableVersions}
 		registry := settings.New(persistence.NewSettingsRepository(db), nil)
 		if err := registry.SetToolsDirectory(ctx, toolsRoot, ""); err != nil {
 			t.Fatal(err)

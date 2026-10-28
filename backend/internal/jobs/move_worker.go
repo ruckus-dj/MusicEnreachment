@@ -171,6 +171,9 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 			installation.PackageKind != string(file.PackageKind) || installation.ReleaseIdentity != file.ReleaseIdentity {
 			return worker.fail(ctx, operation, fmt.Errorf("move snapshot does not match managed installation identity"))
 		}
+		if file.Version != "" && file.Version != installation.Version {
+			return worker.fail(ctx, operation, fmt.Errorf("move snapshot does not match managed installation version"))
+		}
 		targets[filepath.Clean(file.TargetPath)] = struct{}{}
 	}
 	if len(targets) != len(expectedTargets) {
@@ -234,7 +237,8 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 		if _, done := verified[file.InstallationID]; done {
 			continue
 		}
-		if _, err := worker.lifecycle.VerifyInstallation(ctx, payloadRoot, file.RelativePath, file.PackageKind, file.ReleaseIdentity, worker.platform.GOOS); err != nil {
+		installation := expectedTargets[filepath.Clean(file.TargetPath)]
+		if err := worker.verifyInstallationVersion(ctx, payloadRoot, file, installation.Version); err != nil {
 			return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, err)
 		}
 		verified[file.InstallationID] = struct{}{}
@@ -809,15 +813,50 @@ func restoreMoveConflictBackup(backup, target string, operationID uuid.UUID, ind
 }
 
 func (worker *MoveWorker) verifyTargets(ctx context.Context, snapshot service.MoveSnapshot) error {
+	installations, err := worker.repository.ListInstallations(ctx, "", worker.platform.GOOS, worker.platform.GOARCH)
+	if err != nil {
+		return err
+	}
+	byID := make(map[uuid.UUID]persistence.ToolInstallation, len(installations))
+	for _, installation := range installations {
+		if installation.State == "ready" {
+			byID[installation.ID] = installation
+		}
+	}
 	verified := make(map[uuid.UUID]struct{})
 	for _, file := range snapshot.Files {
 		if _, done := verified[file.InstallationID]; done {
 			continue
 		}
-		if _, err := worker.lifecycle.VerifyInstallation(ctx, snapshot.NewRoot, file.RelativePath, file.PackageKind, file.ReleaseIdentity, worker.platform.GOOS); err != nil {
+		installation, ok := byID[file.InstallationID]
+		if !ok || filepath.Clean(installation.RelativePath) != filepath.Clean(file.RelativePath) || installation.PackageKind != string(file.PackageKind) || installation.ReleaseIdentity != file.ReleaseIdentity {
+			return fmt.Errorf("move snapshot does not match managed installation identity")
+		}
+		if file.Version != "" && file.Version != installation.Version {
+			return fmt.Errorf("move snapshot does not match managed installation version")
+		}
+		if err := worker.verifyInstallationVersion(ctx, snapshot.NewRoot, file, installation.Version); err != nil {
 			return err
 		}
 		verified[file.InstallationID] = struct{}{}
+	}
+	return nil
+}
+
+func (worker *MoveWorker) verifyInstallationVersion(ctx context.Context, root string, file service.MoveFileIdentity, installedVersion string) error {
+	verified, err := worker.lifecycle.VerifyInstallationVerified(ctx, root, file.RelativePath, file.PackageKind, file.ReleaseIdentity, worker.platform.GOOS)
+	if err != nil {
+		return err
+	}
+	expected := file.Version
+	if expected == "" {
+		// Older retained move snapshots did not freeze Version. Their exact
+		// installation ID/path/release identity is checked against the current
+		// row before reaching here, so use that row's stored canonical version.
+		expected = installedVersion
+	}
+	if expected == "" || verified.Version != expected {
+		return fmt.Errorf("verified managed installation canonical version changed")
 	}
 	return nil
 }

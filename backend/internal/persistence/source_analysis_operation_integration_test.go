@@ -5,7 +5,6 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -408,7 +407,8 @@ func insertAnalysisFPCalcFixture(t *testing.T, ctx context.Context, database *bu
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		SourceName: "analysis-test", ReleaseIdentity: releaseIdentity, RelativePath: relativePath,
-		State: "ready", ExecutableVersions: verifiedExecutableVersionMetadata(t, tools.PackageFPCalc, "darwin", version),
+		State: "ready", ExecutableVerificationOutput: verifiedExecutableVersionMetadata(t, tools.PackageFPCalc, "darwin", version),
+		Version:            canonicalVerifiedFixtureVersion(t, tools.PackageFPCalc, version),
 		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &now,
 	}
 	if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
@@ -588,7 +588,7 @@ func normalizedToolSelection(t *testing.T, ctx context.Context, database *bun.DB
 		t.Fatalf("read pinned test installation: %v", err)
 	}
 	var versions map[string]string
-	if err := json.Unmarshal(installation.ExecutableVersions, &versions); err != nil {
+	if err := json.Unmarshal(installation.ExecutableVerificationOutput, &versions); err != nil {
 		t.Fatalf("decode pinned test installation versions: %v", err)
 	}
 	if versions == nil {
@@ -601,20 +601,19 @@ func normalizedToolSelection(t *testing.T, ctx context.Context, database *bun.DB
 		if err != nil {
 			t.Fatalf("encode verified test installation versions: %v", err)
 		}
-		if _, err := database.NewRaw(`UPDATE tool_installation SET executable_versions=?::jsonb WHERE id=?`, string(encoded), installationID).Exec(ctx); err != nil {
+		if _, err := database.NewRaw(`UPDATE tool_installation SET executable_verification_output=?::jsonb WHERE id=?`, string(encoded), installationID).Exec(ctx); err != nil {
 			t.Fatalf("set verified test executable metadata: %v", err)
 		}
-		installation.ExecutableVersions = encoded
+		installation.ExecutableVerificationOutput = encoded
 	}
 	banner, ok := versions[executable]
 	if !ok {
 		t.Fatalf("test installation does not verify %s", executable)
 	}
-	version := strings.TrimSpace(strings.TrimPrefix(banner, executable+" version"))
 	return persistence.SourceAnalysisToolSelection{
 		PackageKind: installation.PackageKind, InstallationID: installation.ID,
 		RelativePath: installation.RelativePath, Executable: executable,
-		Version: version, VersionBanner: banner,
+		Version: installation.Version, VersionBanner: banner,
 	}
 }
 

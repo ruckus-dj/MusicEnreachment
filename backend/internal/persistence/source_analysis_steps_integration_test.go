@@ -716,11 +716,12 @@ func insertVerifiedAnalysisTool(t *testing.T, ctx context.Context, database *bun
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: packageKind, PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		SourceName: "analysis-test", ReleaseIdentity: releaseIdentity, RelativePath: relativePath,
-		State: "ready", ExecutableVersions: verifiedExecutableVersionMetadata(t, kind, "darwin", version),
+		State: "ready", ExecutableVerificationOutput: verifiedExecutableVersionMetadata(t, kind, "darwin", version),
+		Version:            canonicalVerifiedFixtureVersion(t, kind, version),
 		ArtifactIdentities: json.RawMessage(`{}`),
 	}
 	var versions map[string]string
-	if err := json.Unmarshal(installation.ExecutableVersions, &versions); err != nil {
+	if err := json.Unmarshal(installation.ExecutableVerificationOutput, &versions); err != nil {
 		t.Fatalf("decode verified executable metadata: %v", err)
 	}
 	versions[executable] = banner
@@ -728,7 +729,7 @@ func insertVerifiedAnalysisTool(t *testing.T, ctx context.Context, database *bun
 	if err != nil {
 		t.Fatalf("encode verified executable metadata: %v", err)
 	}
-	installation.ExecutableVersions = executableVersions
+	installation.ExecutableVerificationOutput = executableVersions
 	verifiedAt := time.Now().UTC()
 	installation.VerifiedAt = &verifiedAt
 	if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
@@ -736,7 +737,7 @@ func insertVerifiedAnalysisTool(t *testing.T, ctx context.Context, database *bun
 	}
 	return persistence.SourceAnalysisToolSelection{
 		PackageKind: packageKind, InstallationID: installation.ID, RelativePath: installation.RelativePath,
-		Executable: executable, Version: version, VersionBanner: banner,
+		Executable: executable, Version: installation.Version, VersionBanner: banner,
 	}
 }
 

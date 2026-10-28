@@ -25,6 +25,8 @@ import type {
 
 import type {
   ApplyManualLyricsInputBody,
+  BrowseDirectoriesBody,
+  BrowseServerDirectoriesParams,
   CatalogBody,
   CheckMusicBrainzBody,
   CheckPathsBody,
@@ -77,6 +79,7 @@ import type {
   RerunSourceFingerprintBody,
   RetrySourceAnalysisStepBody,
   SaveRuntimeBody,
+  SetGitHubTokenBody,
   SetupStateBody,
   SourceArtifactCleanupBody,
   SourceArtifactCleanupCandidatesBody,
@@ -5166,6 +5169,220 @@ export const useSetAcoustidApplicationKey = <TError = ErrorModel,
       return useMutation(getSetAcoustidApplicationKeyMutationOptions(options), queryClient);
     }
 
+export type deleteGithubTokenResponse204 = {
+  data: void
+  status: 204
+}
+
+export type deleteGithubTokenResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type deleteGithubTokenResponseSuccess = (deleteGithubTokenResponse204) & {
+  headers: Headers;
+};
+export type deleteGithubTokenResponseError = (deleteGithubTokenResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteGithubTokenResponse = (deleteGithubTokenResponseSuccess | deleteGithubTokenResponseError)
+
+export const getDeleteGithubTokenUrl = () => {
+
+
+
+
+  return `/api/settings/github/token`
+}
+
+/**
+ * @summary Delete GitHub token
+ */
+export const deleteGithubToken = async ( options?: RequestInit): Promise<deleteGithubTokenResponse> => {
+
+  const res = await fetch(getDeleteGithubTokenUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteGithubTokenResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as deleteGithubTokenResponse
+}
+
+
+
+
+
+export const getDeleteGithubTokenMutationKey = () => ['deleteGithubToken'] as const;
+
+export const getDeleteGithubTokenMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGithubToken>>, TError,void, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteGithubToken>>, TError,void, TContext> => {
+
+const mutationKey = getDeleteGithubTokenMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteGithubToken>>, void> = () => {
+
+
+          return  deleteGithubToken(fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteGithubTokenMutationResult = NonNullable<Awaited<ReturnType<typeof deleteGithubToken>>>
+
+    export type DeleteGithubTokenMutationError = ErrorModel
+
+
+    /**
+ * @summary Delete GitHub token
+ */
+export const useDeleteGithubToken = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGithubToken>>, TError,void, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteGithubToken>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDeleteGithubTokenMutationOptions(options), queryClient);
+    }
+
+export type setGithubTokenResponse204 = {
+  data: void
+  status: 204
+}
+
+export type setGithubTokenResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type setGithubTokenResponseSuccess = (setGithubTokenResponse204) & {
+  headers: Headers;
+};
+export type setGithubTokenResponseError = (setGithubTokenResponseDefault) & {
+  headers: Headers;
+};
+
+export type setGithubTokenResponse = (setGithubTokenResponseSuccess | setGithubTokenResponseError)
+
+export const getSetGithubTokenUrl = () => {
+
+
+
+
+  return `/api/settings/github/token`
+}
+
+/**
+ * @summary Set GitHub token
+ */
+export const setGithubToken = async (setGitHubTokenBody: NonReadonly<SetGitHubTokenBody>, options?: RequestInit): Promise<setGithubTokenResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getSetGithubTokenUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(setGitHubTokenBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: setGithubTokenResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as setGithubTokenResponse
+}
+
+
+
+
+
+export const getSetGithubTokenMutationKey = () => ['setGithubToken'] as const;
+
+export const getSetGithubTokenMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGithubToken>>, TError,SetGithubTokenMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof setGithubToken>>, TError,SetGithubTokenMutationVariables, TContext> => {
+
+const mutationKey = getSetGithubTokenMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setGithubToken>>, SetGithubTokenMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  setGithubToken(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetGithubTokenMutationResult = NonNullable<Awaited<ReturnType<typeof setGithubToken>>>
+    export type SetGithubTokenMutationBody = NonReadonly<SetGitHubTokenBody>
+    export type SetGithubTokenMutationError = ErrorModel
+    export type SetGithubTokenMutationVariables = {data: NonReadonly<SetGitHubTokenBody>}
+
+    /**
+ * @summary Set GitHub token
+ */
+export const useSetGithubToken = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGithubToken>>, TError,SetGithubTokenMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setGithubToken>>,
+        TError,
+        SetGithubTokenMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSetGithubTokenMutationOptions(options), queryClient);
+    }
+
 export type updateLogLevelResponse204 = {
   data: void
   status: 204
@@ -6162,6 +6379,140 @@ export const useCompleteSetup = <TError = ErrorModel,
       > => {
       return useMutation(getCompleteSetupMutationOptions(options), queryClient);
     }
+
+export type browseServerDirectoriesResponse200 = {
+  data: BrowseDirectoriesBody
+  status: 200
+}
+
+export type browseServerDirectoriesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type browseServerDirectoriesResponseSuccess = (browseServerDirectoriesResponse200) & {
+  headers: Headers;
+};
+export type browseServerDirectoriesResponseError = (browseServerDirectoriesResponseDefault) & {
+  headers: Headers;
+};
+
+export type browseServerDirectoriesResponse = (browseServerDirectoriesResponseSuccess | browseServerDirectoriesResponseError)
+
+export const getBrowseServerDirectoriesUrl = (params?: BrowseServerDirectoriesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/setup/directories?${stringifiedParams}` : `/api/setup/directories`
+}
+
+/**
+ * @summary Browse existing server directories
+ */
+export const browseServerDirectories = async (params?: BrowseServerDirectoriesParams, options?: RequestInit): Promise<browseServerDirectoriesResponse> => {
+
+  const res = await fetch(getBrowseServerDirectoriesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: browseServerDirectoriesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as browseServerDirectoriesResponse
+}
+
+
+
+
+
+export const getBrowseServerDirectoriesQueryKey = (params?: BrowseServerDirectoriesParams,) => {
+    return [
+    `/api/setup/directories`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getBrowseServerDirectoriesQueryOptions = <TData = Awaited<ReturnType<typeof browseServerDirectories>>, TError = ErrorModel>(params?: BrowseServerDirectoriesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof browseServerDirectories>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getBrowseServerDirectoriesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof browseServerDirectories>>> = ({ signal }) => browseServerDirectories(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof browseServerDirectories>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type BrowseServerDirectoriesQueryResult = NonNullable<Awaited<ReturnType<typeof browseServerDirectories>>>
+export type BrowseServerDirectoriesQueryError = ErrorModel
+
+
+export function useBrowseServerDirectories<TData = Awaited<ReturnType<typeof browseServerDirectories>>, TError = ErrorModel>(
+ params: undefined |  BrowseServerDirectoriesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof browseServerDirectories>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof browseServerDirectories>>,
+          TError,
+          Awaited<ReturnType<typeof browseServerDirectories>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useBrowseServerDirectories<TData = Awaited<ReturnType<typeof browseServerDirectories>>, TError = ErrorModel>(
+ params?: BrowseServerDirectoriesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof browseServerDirectories>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof browseServerDirectories>>,
+          TError,
+          Awaited<ReturnType<typeof browseServerDirectories>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useBrowseServerDirectories<TData = Awaited<ReturnType<typeof browseServerDirectories>>, TError = ErrorModel>(
+ params?: BrowseServerDirectoriesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof browseServerDirectories>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Browse existing server directories
+ */
+
+export function useBrowseServerDirectories<TData = Awaited<ReturnType<typeof browseServerDirectories>>, TError = ErrorModel>(
+ params?: BrowseServerDirectoriesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof browseServerDirectories>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getBrowseServerDirectoriesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type getConfigurationHealthResponse200 = {
   data: SetupStateBody

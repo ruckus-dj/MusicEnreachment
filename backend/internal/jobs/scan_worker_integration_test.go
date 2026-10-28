@@ -343,7 +343,7 @@ func writeScanDispatchFFmpeg(t *testing.T, ctx context.Context, database *bun.DB
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFFmpeg), PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH,
 		SourceName: "btbn", ReleaseIdentity: "1.6.1", RelativePath: testInstallationRelativePath(runtime.GOOS, "ffmpeg", "1.6.1"),
-		State: "ready", ExecutableVersions: versions, VerifiedAt: &verifiedAt,
+		State: "ready", Version: "ffmpeg 1.6.1 + ffprobe 1.6.1", ExecutableVerificationOutput: versions, VerifiedAt: &verifiedAt,
 	}
 	if err := persistence.NewSetupManagerRepository(database).CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create the managed ffmpeg installation: %v", err)

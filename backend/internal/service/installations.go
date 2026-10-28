@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -20,7 +19,7 @@ type InstallationRepository interface {
 }
 
 type InstallationVerifier interface {
-	VerifyInstallation(context.Context, string, string, tools.PackageKind, string, string) (map[string]string, error)
+	VerifyInstallationVerified(context.Context, string, string, tools.PackageKind, string, string) (tools.VerificationResult, error)
 }
 
 type ToolsDirectoryReader interface {
@@ -32,15 +31,15 @@ type RuntimeSettingsReader interface {
 }
 
 type InstallationView struct {
-	ID                 uuid.UUID
-	PackageKind        string
-	SourceName         string
-	ReleaseIdentity    string
-	State              string
-	Active             bool
-	ExecutableVersions map[string]string
-	CreatedAt          time.Time
-	VerifiedAt         *time.Time
+	ID              uuid.UUID
+	PackageKind     string
+	SourceName      string
+	ReleaseIdentity string
+	Version         string
+	State           string
+	Active          bool
+	CreatedAt       time.Time
+	VerifiedAt      *time.Time
 }
 
 type Installations struct {
@@ -90,8 +89,12 @@ func (s *Installations) Activate(ctx context.Context, packageKind string, id uui
 	if !exists || root == "" {
 		return fmt.Errorf("tools directory is not configured")
 	}
-	if _, err := s.verifier.VerifyInstallation(ctx, root, installation.RelativePath, kind, installation.ReleaseIdentity, s.platform.GOOS); err != nil {
+	verified, err := s.verifier.VerifyInstallationVerified(ctx, root, installation.RelativePath, kind, installation.ReleaseIdentity, s.platform.GOOS)
+	if err != nil {
 		return fmt.Errorf("verify installation before activation: %w", err)
+	}
+	if verified.Version == "" || verified.Version != installation.Version {
+		return fmt.Errorf("verify installation before activation: canonical version changed")
 	}
 	return s.repository.ActivateInstallation(ctx, id, packageKind, s.platform.GOOS, s.platform.GOARCH, setting)
 }
@@ -137,20 +140,14 @@ func (s *Installations) List(ctx context.Context, packageKind string) ([]Install
 	}
 	result := make([]InstallationView, 0, len(installations))
 	for _, installation := range installations {
-		versions := make(map[string]string)
-		if len(installation.ExecutableVersions) > 0 {
-			if err := json.Unmarshal(installation.ExecutableVersions, &versions); err != nil {
-				return nil, fmt.Errorf("decode executable verification results: %w", err)
-			}
-		}
 		activeID := runtimeSettings.ActiveFFmpegInstallation
 		if installation.PackageKind == string(tools.PackageFPCalc) {
 			activeID = runtimeSettings.ActiveFPCalcInstallation
 		}
 		result = append(result, InstallationView{
 			ID: installation.ID, PackageKind: installation.PackageKind, SourceName: installation.SourceName,
-			ReleaseIdentity: installation.ReleaseIdentity, State: installation.State,
-			Active: activeID == installation.ID.String(), ExecutableVersions: versions,
+			ReleaseIdentity: installation.ReleaseIdentity, Version: installation.Version, State: installation.State,
+			Active:    activeID == installation.ID.String(),
 			CreatedAt: installation.CreatedAt, VerifiedAt: installation.VerifiedAt,
 		})
 	}

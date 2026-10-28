@@ -139,6 +139,56 @@ func TestMoveWorkerCopiesOnlyManagedFilesAndKeepsUnknownData(t *testing.T) {
 	}
 }
 
+func TestMoveWorkerRejectsChangedCanonicalVersionBeforeSwitch(t *testing.T) {
+	t.Parallel()
+	oldRoot, _, operation, installation, snapshot := newMoveFixture(t, false, false)
+	installation.Version = "7.9"
+	for i := range snapshot.Files {
+		snapshot.Files[i].Version = installation.Version
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.InputSnapshot = raw
+	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
+	worker := jobs.NewMoveWorker(repository, service.NewOperations(repository), moveWorkerSettings{root: oldRoot},
+		tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(moveCommandRunner{}))
+	if err := worker.Work(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	if repository.root != oldRoot || operation.State != "failed" {
+		t.Fatalf("changed canonical version switched or retained operation: root=%s state=%s", repository.root, operation.State)
+	}
+	for _, file := range snapshot.Files {
+		if _, err := os.Lstat(file.TargetPath); !os.IsNotExist(err) {
+			t.Errorf("rejected move left target %s: %v", file.TargetPath, err)
+		}
+	}
+}
+
+func TestMoveWorkerAcceptsLegacySnapshotUsingStoredInstallationVersion(t *testing.T) {
+	t.Parallel()
+	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, false)
+	for i := range snapshot.Files {
+		snapshot.Files[i].Version = ""
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.InputSnapshot = raw
+	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
+	worker := jobs.NewMoveWorker(repository, service.NewOperations(repository), moveWorkerSettings{root: oldRoot},
+		tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(moveCommandRunner{}))
+	if err := worker.Work(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	if repository.root != newRoot || operation.State != "succeeded" {
+		t.Fatalf("legacy move did not use stored canonical version: root=%s state=%s", repository.root, operation.State)
+	}
+}
+
 func TestMoveWorkerMatchesEquivalentNativeRelativePathSeparators(t *testing.T) {
 	t.Parallel()
 	if filepath.Separator != '\\' {
@@ -1756,7 +1806,7 @@ func newMoveFixture(t *testing.T, confirmed, removeOld bool) (string, string, *p
 	}
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "btbn", ReleaseIdentity: "8.0", RelativePath: "ffmpeg/8.0", State: "ready",
+		SourceName: "btbn", ReleaseIdentity: "8.0", Version: "ffmpeg 8.0 + ffprobe 8.0", RelativePath: "ffmpeg/8.0", State: "ready",
 	}
 	sourceDir := filepath.Join(oldRoot, installation.RelativePath)
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
@@ -1775,6 +1825,7 @@ func newMoveFixture(t *testing.T, confirmed, removeOld bool) (string, string, *p
 		}
 		files = append(files, service.MoveFileIdentity{
 			InstallationID: installation.ID, PackageKind: tools.PackageFFmpeg, ReleaseIdentity: "8.0",
+			Version:      installation.Version,
 			RelativePath: installation.RelativePath, Executable: name,
 			SourcePath: source, TargetPath: filepath.Join(newRoot, installation.RelativePath, name),
 			Size: int64(len(content)), SHA256: digest,

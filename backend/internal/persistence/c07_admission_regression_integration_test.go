@@ -37,7 +37,7 @@ func TestC07AdmissionAllowsOneInitialVersionPerPackage(t *testing.T) {
 	if first == nil {
 		t.Fatal("first initial package admission was refused")
 	}
-	if err := repo.MarkInstallationReady(ctx, *first.TargetInstallationID, json.RawMessage(`{"ffmpeg":"8.0"}`), time.Now().UTC()); err != nil {
+	if err := repo.MarkInstallationReady(ctx, *first.TargetInstallationID, json.RawMessage(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`), time.Now().UTC()); err != nil {
 		t.Fatalf("mark synthetic installation ready: %v", err)
 	}
 	if activated, err := repo.ActivateInstallationDuringSetup(ctx, *first.TargetInstallationID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey); err != nil || !activated {

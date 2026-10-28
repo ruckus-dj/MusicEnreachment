@@ -8,6 +8,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
+	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 )
 
 type CatalogInput struct {
@@ -75,15 +76,15 @@ type InstallationsBody struct {
 }
 
 type InstallationResponse struct {
-	ID                 uuid.UUID         `json:"id"`
-	PackageKind        string            `json:"package_kind"`
-	SourceName         string            `json:"source_name"`
-	ReleaseIdentity    string            `json:"release_identity"`
-	State              string            `json:"state"`
-	Active             bool              `json:"active"`
-	ExecutableVersions map[string]string `json:"executable_versions"`
-	CreatedAt          time.Time         `json:"created_at"`
-	VerifiedAt         *time.Time        `json:"verified_at,omitempty"`
+	ID              uuid.UUID  `json:"id"`
+	PackageKind     string     `json:"package_kind"`
+	SourceName      string     `json:"source_name"`
+	ReleaseIdentity string     `json:"release_identity"`
+	State           string     `json:"state"`
+	Active          bool       `json:"active"`
+	Version         string     `json:"version"`
+	CreatedAt       time.Time  `json:"created_at"`
+	VerifiedAt      *time.Time `json:"verified_at,omitempty"`
 }
 
 type InstallationActionInput struct {
@@ -136,7 +137,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		}
 		result, err := dependencies.Catalog.ListWithNotice(ctx, input.PackageKind)
 		if err != nil {
-			return nil, huma.Error502BadGateway("upstream tool catalog is unavailable")
+			return nil, huma.Error502BadGateway(service.ToolCatalogErrorMessage(err))
 		}
 		response := make([]ReleaseResponse, 0, len(result.Releases))
 		for _, release := range result.Releases {
@@ -219,7 +220,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 			response = append(response, InstallationResponse{
 				ID: installation.ID, PackageKind: installation.PackageKind, SourceName: installation.SourceName,
 				ReleaseIdentity: installation.ReleaseIdentity, State: installation.State, Active: installation.Active,
-				ExecutableVersions: installation.ExecutableVersions, CreatedAt: installation.CreatedAt,
+				Version: installation.Version, CreatedAt: installation.CreatedAt,
 				VerifiedAt: installation.VerifiedAt,
 			})
 		}

@@ -389,11 +389,11 @@ func validatePinnedInstallations(ctx context.Context, tx bun.Tx, tools []SourceA
 			return fmt.Errorf("pinned tool installation metadata changed")
 		}
 		var versions executableVersions
-		if err := json.Unmarshal(installation.ExecutableVersions, &versions); err != nil {
+		if err := json.Unmarshal(installation.ExecutableVerificationOutput, &versions); err != nil {
 			return fmt.Errorf("decode verified executable versions: %w", err)
 		}
 		banner, ok := managedtools.VerifiedExecutableVersion(versions, managedtools.PackageKind(selected.PackageKind), selected.Executable, installation.PlatformGOOS)
-		if !ok || banner != selected.VersionBanner || selected.Version == "" || !strings.Contains(selected.VersionBanner, selected.Version) {
+		if !ok || banner != selected.VersionBanner || installation.Version == "" || selected.Version != installation.Version {
 			return fmt.Errorf("pinned executable version does not match verified installation metadata")
 		}
 	}

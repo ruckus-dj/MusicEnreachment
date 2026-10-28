@@ -40,6 +40,7 @@ const state: SetupStateBody = {
     log_level: "info",
     source_file_concurrency: 4,
     has_acoustid_application_key: false,
+    has_github_token: false,
   },
   configuration_health: { healthy: false, problems: ["setup incomplete"] },
 };

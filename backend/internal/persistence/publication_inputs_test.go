@@ -24,8 +24,8 @@ func publicationInputsFixture(t *testing.T, intent string) PublicationInputs {
 		Format:      publication.AudioFormatMKA,
 		DesiredTags: map[string][]string{"title": {"Track"}, "comment": {}},
 		Tools: []SourceAnalysisToolSelection{
-			{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7.1", VersionBanner: "ffmpeg version 7.1"},
-			{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7.1", VersionBanner: "ffprobe version 7.1"},
+			{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "ffmpeg 7.1 + ffprobe 7.1", VersionBanner: "ffmpeg version 7.1"},
+			{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "ffmpeg 7.1 + ffprobe 7.1", VersionBanner: "ffprobe version 7.1"},
 		},
 	}
 	facts := PersistedAudioFacts{StreamIndex: 1, Codec: "flac", Lossless: &lossless, Channels: &channels, BitDepth: &bitDepth, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}

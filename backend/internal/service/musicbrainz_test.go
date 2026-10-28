@@ -169,8 +169,8 @@ func TestComplete_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 	installations := testInstallationLookup{items: map[uuid.UUID]*persistence.ToolInstallation{
-		ffmpegID: {ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready", VerifiedAt: new(time.Time), ExecutableVersions: []byte(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`)},
-		fpcalcID: {ID: fpcalcID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready", VerifiedAt: new(time.Time), ExecutableVersions: []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)},
+		ffmpegID: {ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready", VerifiedAt: new(time.Time), ExecutableVerificationOutput: []byte(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`)},
+		fpcalcID: {ID: fpcalcID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready", VerifiedAt: new(time.Time), ExecutableVerificationOutput: []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)},
 	}}
 	setupService := service.NewSetup(store, registry, settings.PlatformState{
 		Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"},

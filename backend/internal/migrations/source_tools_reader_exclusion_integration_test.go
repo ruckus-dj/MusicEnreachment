@@ -33,9 +33,9 @@ func TestSourceToolsReaderExclusionWithPostgreSQL(t *testing.T) {
 	if _, err := database.ExecContext(ctx, `
 		INSERT INTO tool_installation (
 			id, package_kind, platform_goos, platform_goarch, source_name,
-			release_identity, relative_path, state, verified_at, executable_versions
+			release_identity, relative_path, state, verified_at, executable_verification_output, version
 		) VALUES (?, 'ffmpeg', 'linux', 'amd64', 'test', '7.1', 'ffmpeg/7.1', 'ready', now(),
-		'{"ffmpeg":"ffmpeg version 7.1","ffprobe":"ffprobe version 7.1"}'::jsonb)`,
+		'{"ffmpeg":"ffmpeg version 7.1","ffprobe":"ffprobe version 7.1"}'::jsonb, 'ffmpeg 7.1 + ffprobe 7.1')`,
 		installationID); err != nil {
 		t.Fatalf("insert tool installation: %v", err)
 	}

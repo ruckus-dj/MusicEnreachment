@@ -26,6 +26,7 @@ type MoveFileIdentity struct {
 	InstallationID  uuid.UUID         `json:"installation_id"`
 	PackageKind     tools.PackageKind `json:"package_kind"`
 	ReleaseIdentity string            `json:"release_identity"`
+	Version         string            `json:"version,omitempty"`
 	RelativePath    string            `json:"relative_path"`
 	Executable      string            `json:"executable"`
 	SourcePath      string            `json:"source_path"`
@@ -101,6 +102,9 @@ func (service *MoveTools) Preflight(ctx context.Context, newRoot string, removeO
 		if installation.State != "ready" {
 			continue
 		}
+		if installation.Version == "" {
+			return MovePreflight{}, fmt.Errorf("managed installation has no canonical version")
+		}
 		kind := tools.PackageKind(installation.PackageKind)
 		relative, err := tools.ManagedRelativePath(kind, installation.ReleaseIdentity)
 		if err != nil || filepath.Clean(installation.RelativePath) != relative {
@@ -137,6 +141,7 @@ func (service *MoveTools) Preflight(ctx context.Context, newRoot string, removeO
 			snapshot.Files = append(snapshot.Files, MoveFileIdentity{
 				InstallationID: installation.ID,
 				PackageKind:    kind, ReleaseIdentity: installation.ReleaseIdentity,
+				Version:      installation.Version,
 				RelativePath: relative, Executable: executable,
 				SourcePath: source, TargetPath: target, Size: info.Size(), SHA256: digest,
 			})

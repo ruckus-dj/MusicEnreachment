@@ -228,7 +228,7 @@ func (a *GitHubAdapter) List(ctx context.Context, platform Platform) ([]Release,
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("release catalog returned %s", response.Status)
+		return nil, githubResponseError(response)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
 	if err != nil {

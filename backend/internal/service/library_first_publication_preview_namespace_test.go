@@ -21,7 +21,7 @@ func TestBuildFirstPublicationPreviewChecksSharedNamespaceLayouts(t *testing.T) 
 		},
 		ReleasePrimaryCredits: []librarymetadata.ArtistCredit{{ArtistID: artistID.String(), ArtistName: "Artist"}},
 	}
-	selectedTools := []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: uuid.New(), Executable: "ffmpeg", Version: "7.0.0"}}
+	selectedTools := []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: uuid.New(), Executable: "ffmpeg", Version: "ffmpeg 7.0.0 + ffprobe 7.0.0"}}
 
 	defaultPreview, err := buildFirstPublicationPreview(snapshot, settings.RuntimeSettings{
 		PublicationFormat: "mka", PublicationPathTemplate: publication.DefaultTemplate,

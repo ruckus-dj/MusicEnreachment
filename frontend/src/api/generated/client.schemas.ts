@@ -18,6 +18,19 @@ export interface ArtifactResponse {
   name: string;
 }
 
+export interface BrowseDirectoriesBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  current_path: string;
+  /** @nullable */
+  directories: string[] | null;
+  next_offset?: number;
+  offset: number;
+  parent_path: string;
+  /** @nullable */
+  roots: string[] | null;
+}
+
 export interface PlatformResponse {
   diagnostic: boolean;
   goarch: string;
@@ -320,18 +333,16 @@ export interface InstallationActionInputBody {
   package_kind: InstallationActionInputBodyPackageKind;
 }
 
-export type InstallationResponseExecutableVersions = {[key: string]: string};
-
 export interface InstallationResponse {
   active: boolean;
   created_at: string;
-  executable_versions: InstallationResponseExecutableVersions;
   id: string;
   package_kind: string;
   release_identity: string;
   source_name: string;
   state: string;
   verified_at?: string;
+  version: string;
 }
 
 export interface InstallationsBody {
@@ -1006,6 +1017,7 @@ export interface RuntimeSettingsResponse {
   active_ffmpeg_installation_id?: string;
   active_fpcalc_installation_id?: string;
   has_acoustid_application_key: boolean;
+  has_github_token: boolean;
   log_level: string;
   lrclib_enabled: boolean;
   musicbrainz_base_url: string;
@@ -1046,6 +1058,13 @@ export interface SaveRuntimeBody {
   source_file_concurrency?: number;
   /** @maxLength 4096 */
   tools_directory?: string;
+}
+
+export interface SetGitHubTokenBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 512 */
+  token: string;
 }
 
 export interface SetupStateBody {
@@ -1476,6 +1495,11 @@ export const ListOperationsState = {
   running: 'running',
   failed: 'failed',
 } as const;
+
+export type BrowseServerDirectoriesParams = {
+path?: string;
+offset?: number;
+};
 
 export type ListSourceLocationsParams = {
 /**

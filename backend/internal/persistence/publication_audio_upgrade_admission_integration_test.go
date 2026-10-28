@@ -128,14 +128,14 @@ func TestValidateAudioUpgradeAdmissionAgainstCurrentAndSourceUniversePostgreSQL(
 	if err := repo.CreateInstallation(ctx, &ToolInstallation{
 		ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH,
 		SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: installPath, State: "ready",
-		ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified,
+		ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	installPath = filepath.ToSlash(installPath)
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installPath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installPath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installPath, Executable: "ffmpeg", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installPath, Executable: "ffprobe", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffprobeBanner},
 	}
 	settings := NewSettingsRepository(f.db)
 	for key, value := range map[string]string{"publication_format": string(publication.AudioFormatSource), "active_ffmpeg_installation_id": installationID.String()} {

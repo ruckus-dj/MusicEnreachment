@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import {
@@ -41,6 +42,7 @@ const settings: SetupStateBody["settings"] = {
   log_level: "info",
   source_file_concurrency: 4,
   has_acoustid_application_key: false,
+  has_github_token: false,
 };
 function state(
   overrides: Partial<SetupStateBody["settings"]> = {},
@@ -228,6 +230,62 @@ describe("SetupManager", () => {
     expect(saved).toHaveBeenCalledWith({ publication_format: "source" });
   });
 
+  it("shows the initial M4A selection and saves it as the publication format", async () => {
+    localStorage.setItem("melotrove.setup.step", "3");
+    let current = state({ ...installed, publication_format: "m4a" });
+    const saved = vi.fn((_body: unknown) => {
+      current = state({ ...published, publication_format: "m4a" });
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.put("/api/setup/runtime", async ({ request }) =>
+        saved(await request.json()),
+      ),
+    );
+    renderSetup(current);
+    expect(screen.getByRole("radio", { name: "M4A" })).toBeChecked();
+    await click("Продолжить");
+    await waitFor(() => expect(heading("Провайдеры метаданных")).toBeVisible());
+    expect(saved).toHaveBeenCalledWith({ publication_format: "m4a" });
+    await click("Назад");
+    expect(screen.getByRole("radio", { name: "M4A" })).toBeChecked();
+  });
+
+  it("accepts M4A from a server refresh before saving it", async () => {
+    let current = state(installed);
+    const saved = vi.fn(
+      (_body: unknown) => new HttpResponse(null, { status: 204 }),
+    );
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(current)),
+      http.put("/api/setup/runtime", async ({ request }) =>
+        saved(await request.json()),
+      ),
+      http.get("/api/tools/installations", () =>
+        HttpResponse.json({ installations: [] }),
+      ),
+      http.get("/api/tools/catalog", ({ request }) =>
+        HttpResponse.json({
+          package_kind: new URL(request.url).searchParams.get("package_kind"),
+          releases: [],
+          platform: state().platform,
+        }),
+      ),
+    );
+    renderSetup(current);
+    expect(screen.getByRole("radio", { name: "M4A" })).not.toBeChecked();
+    await click("Назад");
+    current = state({ ...installed, publication_format: "m4a" });
+    await click("Продолжить");
+    await waitFor(() =>
+      expect(screen.getByRole("radio", { name: "M4A" })).toBeChecked(),
+    );
+    await click("Продолжить");
+    await waitFor(() => expect(heading("Провайдеры метаданных")).toBeVisible());
+    expect(saved).toHaveBeenCalledWith({ publication_format: "m4a" });
+  });
+
   it("checks MusicBrainz before completion and does not invalidate a verified config on advance", async () => {
     let current = state(published);
     const save = vi.fn(() => {
@@ -264,8 +322,38 @@ describe("SetupManager", () => {
     await click("Продолжить");
     await waitFor(() => expect(heading("Итог")).toHaveFocus());
     expect(save).toHaveBeenCalledTimes(1);
-    await click("Завершить Setup");
+    await click("Завершить настройку");
     await waitFor(() => expect(done).toHaveBeenCalledOnce());
+  });
+
+  it("renders metadata step five navigation in the shared footer after errors", async () => {
+    localStorage.setItem("melotrove.setup.step", "4");
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(state(published))),
+    );
+    const { container } = renderSetup(state(published));
+    const navigation = container.querySelector(".setup-navigation");
+    if (!(navigation instanceof HTMLElement))
+      throw new Error("Metadata navigation footer must render");
+    expect(container.querySelectorAll(".setup-navigation")).toHaveLength(1);
+    expect(
+      within(navigation).getByRole("button", { name: "Назад" }),
+    ).toBeVisible();
+    expect(
+      within(navigation).getByRole("button", { name: "Продолжить" }),
+    ).toBeVisible();
+    await click("Продолжить");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Сохраните и проверьте MusicBrainz");
+    expect(
+      alert.compareDocumentPosition(navigation) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(navigation).getByRole("button", { name: "Продолжить" }),
+    ).toBeVisible();
+    await click("Назад");
+    expect(heading("Публикация")).toBeVisible();
   });
 
   it("shows per-action server errors, focus, and retry on directory validation", async () => {
@@ -456,7 +544,7 @@ describe("SetupManager", () => {
         active: boolean;
         created_at: string;
         source_name: string;
-        executable_versions: Record<string, string>;
+        version: string;
       }
     > = {};
     let installing = "";
@@ -561,7 +649,7 @@ describe("SetupManager", () => {
         active: true,
         created_at: "2026-09-28T00:00:00Z",
         source_name: "trusted",
-        executable_versions: { [kind]: "1.0" },
+        version: kind === "ffmpeg" ? "ffmpeg 1.0 + ffprobe 1.0" : "1.0",
       };
       current = state({
         ...current.settings,
@@ -574,9 +662,13 @@ describe("SetupManager", () => {
         TestEventSource.instances.at(-1)?.dispatchEvent(new Event("open"));
       });
       await waitFor(() =>
-        expect(screen.getAllByText("1.0: Активна")).toHaveLength(
-          kind === "ffmpeg" ? 1 : 2,
-        ),
+        expect(
+          screen.getAllByText(
+            kind === "ffmpeg"
+              ? "ffmpeg 1.0 + ffprobe 1.0: Активна"
+              : "1.0: Активна",
+          ),
+        ).toHaveLength(1),
       );
       expect(
         screen.queryByRole("button", { name: /Активировать/ }),
@@ -592,8 +684,10 @@ describe("SetupManager", () => {
     await waitFor(() => expect(screen.getByText(/Проверено:/)).toBeVisible());
     await click("Продолжить");
     await waitFor(() => expect(heading("Итог")).toBeVisible());
-    expect(screen.getByText("Серверная проверка: Готово")).toBeVisible();
-    await click("Завершить Setup");
+    expect(
+      screen.getByRole("heading", { name: "Готово к работе" }),
+    ).toBeVisible();
+    await click("Завершить настройку");
     await waitFor(() => expect(done).toHaveBeenCalledOnce());
     expect(completed).toHaveBeenCalledOnce();
     expect(current.settings.publication_format).toBe("mka");
@@ -687,6 +781,9 @@ describe("SetupManager", () => {
   it("blocks summary completion on server validation or completion conflict", async () => {
     let healthy = false;
     server.use(
+      http.get("/api/tools/installations", () =>
+        HttpResponse.json({ installations: [] }),
+      ),
       http.get("/api/setup", () => HttpResponse.json(state(verified, healthy))),
       http.post("/api/setup/complete", () =>
         HttpResponse.json({ detail: "requirements changed" }, { status: 409 }),
@@ -694,12 +791,14 @@ describe("SetupManager", () => {
     );
     const done = vi.fn();
     renderSetup(state(verified, true), done);
-    await click("Завершить Setup");
+    await click("Завершить настройку");
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent("setup incomplete"),
+      expect(
+        screen.getByText("setup incomplete", { selector: 'p[role="alert"]' }),
+      ).toBeVisible(),
     );
     healthy = true;
-    await click("Завершить Setup");
+    await click("Завершить настройку");
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
         "requirements changed",
@@ -778,7 +877,7 @@ describe("SetupManager", () => {
                   release_identity: "8.0",
                   source_name: "trusted",
                   created_at: operation.created_at,
-                  executable_versions: { ffmpeg: "8.0" },
+                  version: "ffmpeg 8.0 + ffprobe 8.0",
                 },
               ]
             : [],
@@ -833,7 +932,9 @@ describe("SetupManager", () => {
     await act(async () => {
       stream.dispatchEvent(new Event("operation-changed"));
     });
-    expect(await screen.findByText("8.0: Активна")).toBeVisible();
+    expect(
+      await screen.findByText("ffmpeg 8.0 + ffprobe 8.0: Активна"),
+    ).toBeVisible();
     expect(localStorage.getItem("melotrove.setup.operations")).toBe("");
     expect(stream.close).toHaveBeenCalled();
   });
@@ -1117,7 +1218,7 @@ describe("SetupManager", () => {
       release_identity: "8.0",
       source_name: "trusted",
       created_at: operation.created_at,
-      executable_versions: { ffmpeg: "8.0" },
+      version: "ffmpeg 8.0 + ffprobe 8.0",
     };
     server.use(
       http.get("/api/tools/installations", () => {
@@ -1161,7 +1262,7 @@ describe("SetupManager", () => {
       operation.id,
     );
     fireEvent.click(retryRefresh);
-    await screen.findByText("8.0: Активна");
+    await screen.findByText("ffmpeg 8.0 + ffprobe 8.0: Активна");
     expect(installationRequests).toBe(3);
     expect(localStorage.getItem("melotrove.setup.operations")).toBe("");
     expect(TestEventSource.instances[0].close).toHaveBeenCalledOnce();
@@ -1196,7 +1297,7 @@ describe("SetupManager", () => {
                     release_identity: "8.0",
                     source_name: "trusted",
                     created_at: operation.created_at,
-                    executable_versions: { ffmpeg: "8.0" },
+                    version: "ffmpeg 8.0 + ffprobe 8.0",
                   },
                 ],
         });
@@ -1228,7 +1329,7 @@ describe("SetupManager", () => {
     first.unmount();
     renderSetup(state(paths));
     expect(TestEventSource.instances).toHaveLength(2);
-    await screen.findByText("8.0: Активна");
+    await screen.findByText("ffmpeg 8.0 + ffprobe 8.0: Активна");
     expect(localStorage.getItem("melotrove.setup.operations")).toBe("");
   });
 

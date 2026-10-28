@@ -93,7 +93,7 @@ func queuedToolAnalysis(
 	}
 	selection := persistence.SourceAnalysisToolSelection{
 		PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath,
-		Executable: "ffprobe", Version: "7.1.2", VersionBanner: "ffprobe version 7.1.2",
+		Executable: "ffprobe", Version: installation.Version, VersionBanner: "ffprobe version 7.1.2",
 	}
 	if err := persistence.NewSettingsRepository(database).Set(ctx, "active_ffmpeg_installation_id", installationID.String()); err != nil {
 		t.Fatalf("select admission ffmpeg installation: %v", err)

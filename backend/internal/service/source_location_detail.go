@@ -260,20 +260,17 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 }
 
 func activeFPCalcVersion(installation *persistence.ToolInstallation) *string {
-	if installation == nil || len(installation.ExecutableVersions) == 0 {
+	if installation == nil || installation.Version == "" || len(installation.ExecutableVerificationOutput) == 0 {
 		return nil
 	}
 	var executableVersions map[string]string
-	if err := json.Unmarshal(installation.ExecutableVersions, &executableVersions); err != nil {
+	if err := json.Unmarshal(installation.ExecutableVerificationOutput, &executableVersions); err != nil {
 		return nil
 	}
-	banner, ok := tools.VerifiedExecutableVersion(executableVersions, tools.PackageFPCalc, "fpcalc", installation.PlatformGOOS)
+	_, ok := tools.VerifiedExecutableVersion(executableVersions, tools.PackageFPCalc, "fpcalc", installation.PlatformGOOS)
 	if !ok {
 		return nil
 	}
-	version, err := tools.ParseFPCalcVersion(banner)
-	if err != nil {
-		return nil
-	}
-	return &version.Version
+	version := installation.Version
+	return &version
 }

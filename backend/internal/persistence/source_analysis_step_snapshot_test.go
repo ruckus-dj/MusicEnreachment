@@ -65,7 +65,7 @@ func TestProjectSourceAnalysisStepSnapshotPinsOnlyRelevantInputs(t *testing.T) {
 	fingerprint.TargetStep = &step
 	rerun = true
 	fingerprint.RerunTarget = &rerun
-	otherTool := SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/r1", Executable: "ffprobe", Version: "7", VersionBanner: "ffprobe version 7"}
+	otherTool := SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/r1", Executable: "ffprobe", Version: "ffmpeg 7 + ffprobe 7", VersionBanner: "ffprobe version 7"}
 	fingerprint.Tools = append(append([]SourceAnalysisToolSelection(nil), snapshot.Tools...), otherTool)
 	projected, err = ProjectSourceAnalysisStepSnapshot(fingerprint, workID, SourceStepFingerprint)
 	if err != nil {

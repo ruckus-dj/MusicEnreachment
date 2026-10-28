@@ -88,7 +88,7 @@ func TestC07OldFailedRetryRefusedAfterDifferentReadyVersion(t *testing.T) {
 	if ready == nil {
 		t.Fatal("new version was not admitted after failed installation")
 	}
-	if err := repo.MarkInstallationReady(ctx, *ready.TargetInstallationID, json.RawMessage(`{"ffmpeg":"8.1"}`), time.Now().UTC()); err != nil {
+	if err := repo.MarkInstallationReady(ctx, *ready.TargetInstallationID, json.RawMessage(`{"ffmpeg":"ffmpeg version 8.1","ffprobe":"ffprobe version 8.1"}`), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	var beforeState string
@@ -163,7 +163,7 @@ func TestC07LegacyMultipleReadyInstallationsPreservedAndBlockAdmission(t *testin
 			t.Fatalf("legacy ready installation %s changed/deleted: %#v, %v", expected.id, actual, err)
 		}
 	}
-	if _, err := repo.FinalizeInstallation(ctx, delivery.ID, delivery.Attempt, *delivery.RiverJobID, *delivery.TargetInstallationID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, json.RawMessage(`{"ffmpeg":"synthetic"}`), time.Now().UTC()); err == nil {
+	if _, err := repo.FinalizeInstallation(ctx, delivery.ID, delivery.Attempt, *delivery.RiverJobID, *delivery.TargetInstallationID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, tools.VerificationResult{Version: "ffmpeg synthetic + ffprobe synthetic", Evidence: map[string]string{"ffmpeg": "ffmpeg version synthetic", "ffprobe": "ffprobe version synthetic"}}, time.Now().UTC()); err == nil {
 		t.Fatal("finalization selected among multiple legacy ready installations")
 	}
 	assertC07OnlyRows(t, ctx, db, 3, 1)
@@ -180,12 +180,12 @@ func c07SeedLegacyReadyInstallation(t *testing.T, ctx context.Context, repo *per
 	installation := &persistence.ToolInstallation{
 		ID: id, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "legacy-test", ReleaseIdentity: version, RelativePath: relative,
-		State: "preparing", ExecutableVersions: json.RawMessage(`{"ffmpeg":"synthetic"}`), ArtifactIdentities: json.RawMessage(`[]`),
+		State: "preparing", ExecutableVerificationOutput: json.RawMessage(`{"ffmpeg":"ffmpeg version ` + version + `","ffprobe":"ffprobe version ` + version + `"}`), ArtifactIdentities: json.RawMessage(`[]`),
 	}
 	if err := repo.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("seed synthetic legacy installation: %v", err)
 	}
-	if err := repo.MarkInstallationReady(ctx, id, json.RawMessage(`{"ffmpeg":"synthetic"}`), time.Now().UTC()); err != nil {
+	if err := repo.MarkInstallationReady(ctx, id, json.RawMessage(`{"ffmpeg":"ffmpeg version `+version+`","ffprobe":"ffprobe version `+version+`"}`), time.Now().UTC()); err != nil {
 		t.Fatalf("mark synthetic legacy installation ready: %v", err)
 	}
 	return id

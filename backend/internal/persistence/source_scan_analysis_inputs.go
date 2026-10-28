@@ -18,10 +18,10 @@ import (
 // SourceScanToolHold describes the executable resolved while the tools-root
 // reader gate and installation hold are both active.
 type SourceScanToolHold struct {
-	ToolsRoot          string
-	ExecutablePath     string
-	Installation       ToolInstallation
-	ExecutableVersions map[string]string
+	ToolsRoot                    string
+	ExecutablePath               string
+	Installation                 ToolInstallation
+	ExecutableVerificationOutput map[string]string
 }
 
 // GetInstallation loads verified managed-tool metadata for the durable scan
@@ -153,14 +153,17 @@ func (repository *SourceInventoryRepository) AcquireSourceScanToolHold(
 			return fmt.Errorf("pinned managed executable is missing or not a regular file")
 		}
 		var versions map[string]string
-		if json.Unmarshal(installation.ExecutableVersions, &versions) != nil || strings.TrimSpace(versions[executableName]) != selection.VersionBanner && strings.TrimSpace(versions[selection.Executable]) != selection.VersionBanner {
+		if json.Unmarshal(installation.ExecutableVerificationOutput, &versions) != nil || strings.TrimSpace(versions[executableName]) != selection.VersionBanner && strings.TrimSpace(versions[selection.Executable]) != selection.VersionBanner {
+			return fmt.Errorf("pinned executable version no longer matches verified installation metadata")
+		}
+		if installation.Version == "" || selection.Version != installation.Version {
 			return fmt.Errorf("pinned executable version no longer matches verified installation metadata")
 		}
 		heldTool = SourceScanToolHold{
-			ToolsRoot:          normalizedRoot,
-			ExecutablePath:     executablePath,
-			Installation:       *installation,
-			ExecutableVersions: versions,
+			ToolsRoot:                    normalizedRoot,
+			ExecutablePath:               executablePath,
+			Installation:                 *installation,
+			ExecutableVerificationOutput: versions,
 		}
 		var held bool
 		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM operation_tool_read_hold WHERE operation_id=? AND installation_id=?)`, operationID, selection.InstallationID).Scan(ctx, &held); err != nil {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -291,31 +290,20 @@ func (s *SourceAnalysisOperations) selectedTools(ctx context.Context, step persi
 		return nil, fmt.Errorf("selected source analysis installation is not verified for this platform: %w", ErrSourceAnalysisToolUnavailable)
 	}
 	var versions map[string]string
-	if json.Unmarshal(installation.ExecutableVersions, &versions) != nil {
+	if json.Unmarshal(installation.ExecutableVerificationOutput, &versions) != nil {
 		return nil, fmt.Errorf("selected source analysis executable has no verified version: %w", ErrSourceAnalysisToolUnavailable)
 	}
 	banner, ok := tools.VerifiedExecutableVersion(versions, tools.PackageKind(packageKind), executable, installation.PlatformGOOS)
 	if !ok {
 		return nil, fmt.Errorf("selected source analysis executable has no verified version: %w", ErrSourceAnalysisToolUnavailable)
 	}
-	version := ""
-	if executable == "fpcalc" {
-		parsed, parseErr := tools.ParseFPCalcVersion(banner)
-		if parseErr != nil {
-			return nil, fmt.Errorf("selected fpcalc version is invalid: %w", ErrSourceAnalysisToolUnavailable)
-		}
-		version, banner = parsed.Version, parsed.Banner
-	} else {
-		fields := strings.Fields(banner)
-		if len(fields) < 3 || fields[0] != "ffprobe" || fields[1] != "version" {
-			return nil, fmt.Errorf("selected ffprobe version is invalid: %w", ErrSourceAnalysisToolUnavailable)
-		}
-		version = fields[2]
+	if installation.Version == "" {
+		return nil, fmt.Errorf("selected source analysis installation has no canonical version: %w", ErrSourceAnalysisToolUnavailable)
 	}
 	return []persistence.SourceAnalysisToolSelection{{
 		PackageKind: packageKind, InstallationID: id,
 		RelativePath: installation.RelativePath, Executable: executable,
-		Version: version, VersionBanner: banner,
+		Version: installation.Version, VersionBanner: banner,
 	}}, nil
 }
 

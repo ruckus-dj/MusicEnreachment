@@ -110,12 +110,16 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 		if err != nil {
 			t.Fatalf("verify copied managed ffmpeg installation: %v", err)
 		}
+		canonicalVersion, err := tools.CanonicalPackageVersion(lifecycleVersions, tools.PackageFFmpeg, runtime.GOOS)
+		if err != nil {
+			t.Fatalf("derive canonical version from fresh managed verification: %v", err)
+		}
 		versionsJSON, err := json.Marshal(lifecycleVersions)
 		if err != nil {
 			t.Fatal(err)
 		}
 		verifiedAt := time.Now().UTC()
-		if _, err := db.ExecContext(ctx, `UPDATE tool_installation SET release_identity=?,relative_path=?,executable_versions=?::jsonb,verified_at=?,artifact_identities='{}'::jsonb WHERE id=?`, version, relative, string(versionsJSON), verifiedAt, installationID); err != nil {
+		if _, err := db.ExecContext(ctx, `UPDATE tool_installation SET release_identity=?,relative_path=?,executable_verification_output=?::jsonb,version=?,verified_at=?,artifact_identities='{}'::jsonb WHERE id=?`, version, relative, string(versionsJSON), canonicalVersion, verifiedAt, installationID); err != nil {
 			t.Fatalf("record actual managed executable verification: %v", err)
 		}
 		if err := settingsRepo.Set(ctx, settings.ActiveFFmpegInstallationKey, installationID.String()); err != nil {

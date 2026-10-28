@@ -29,6 +29,12 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
   `baseline_river_integration_test.go` for any new tables, including transient
   staging tables. Keep these assertions exact; do not remove them to pass a gate.
 - Transactional migrations (.tx prefix) ensure atomicity
+- Canonical tool versions are captured once from fresh executable output; ready
+  tool fixtures must supply the canonical version and complete member evidence.
+  Upgrade fixtures create publication operations and attempts in one transaction.
+  In dollar-quoted SQL regexes, keep the end anchor separate from the closing
+  delimiter and use a distinct outer DO delimiter; test populated upgrades, not
+  only empty schemas. Scan scalar JSONB as `::text` into a string.
 - Migration version = timestamp (YYYYMMDDHHMMSS)
 - Applied migrations tracked in bun_migrations table
 - WithMarkAppliedOnSuccess(true) marks migration complete only after successful application

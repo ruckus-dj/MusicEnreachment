@@ -82,11 +82,14 @@ func TestExplicitActivationRequiresSetupCompletionPostgreSQL(t *testing.T) {
 		t.Fatalf("activation changed installation state to %q", persisted.State)
 	}
 	var versions map[string]string
-	if err := json.Unmarshal(persisted.ExecutableVersions, &versions); err != nil {
+	if err := json.Unmarshal(persisted.ExecutableVerificationOutput, &versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions[tools.ExpectedExecutables(tools.PackageFPCalc, platform.Platform.GOOS)[0]] != "verified" {
+	if versions[tools.ExpectedExecutables(tools.PackageFPCalc, platform.Platform.GOOS)[0]] != "fpcalc version 1.6.1" {
 		t.Fatalf("persisted executable versions = %#v", versions)
+	}
+	if persisted.Version != "1.6.1" {
+		t.Fatalf("persisted canonical version = %q want %q", persisted.Version, "1.6.1")
 	}
 	if filepath.IsAbs(persisted.RelativePath) {
 		t.Fatalf("fixture installation path is not managed-relative: %q", persisted.RelativePath)

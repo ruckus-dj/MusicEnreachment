@@ -179,7 +179,7 @@ func validSingleStepSnapshotWithTool() SourceAnalysisOperationSnapshot {
 	snapshot.ToolsReadRequired = true
 	snapshot.Tools = []SourceAnalysisToolSelection{{
 		PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/r1",
-		Executable: "ffprobe", Version: "7.1", VersionBanner: "ffprobe version 7.1",
+		Executable: "ffprobe", Version: "ffmpeg 7.1 + ffprobe 7.1", VersionBanner: "ffprobe version 7.1",
 	}}
 	return snapshot
 }

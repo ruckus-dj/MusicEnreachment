@@ -50,8 +50,8 @@ func completionFixture(t *testing.T, database *bun.DB, endpoint string, clock fu
 		kind, key string
 		versions  json.RawMessage
 	}{
-		{"ffmpeg", settings.ActiveFFmpegInstallationKey, json.RawMessage(`{"ffmpeg":"8.0","ffprobe":"8.0"}`)},
-		{"fpcalc", settings.ActiveFPCalcInstallationKey, json.RawMessage(`{"fpcalc":"1.6"}`)},
+		{"ffmpeg", settings.ActiveFFmpegInstallationKey, json.RawMessage(`{"ffmpeg":"ffmpeg version 8.0 build","ffprobe":"ffprobe version 8.0 build"}`)},
+		{"fpcalc", settings.ActiveFPCalcInstallationKey, json.RawMessage(`{"fpcalc":"fpcalc version 1.6.0 build"}`)},
 	} {
 		installation := &persistence.ToolInstallation{
 			ID: uuid.New(), PackageKind: required.kind, PlatformGOOS: "linux", PlatformGOARCH: "amd64",
@@ -246,7 +246,7 @@ func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 				format := "source"
 				err = setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{PublicationFormat: &format})
 			case "active installation verification":
-				_, err = database.ExecContext(ctx, "UPDATE tool_installation SET executable_versions = '{}' WHERE package_kind = 'ffmpeg'")
+				_, err = database.ExecContext(ctx, "UPDATE tool_installation SET executable_verification_output = '{}' WHERE package_kind = 'ffmpeg'")
 			case "output directory changed":
 				newOutput := filepath.Join(t.TempDir(), "new-output")
 				err = setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{OutputDirectory: &newOutput})

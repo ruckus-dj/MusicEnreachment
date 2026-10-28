@@ -46,7 +46,8 @@ func TestSourceLocationDetailKeepsCanonicalAndSelectedProbeIdentityAndActiveVers
 				ID: selectedID, FFProbeJSON: []byte(`{"format":{},"streams":[]}`),
 			},
 			ActiveFPCalcInstallation: &persistence.ToolInstallation{
-				ExecutableVersions: []byte(`{"fpcalc":"fpcalc version 1.6.0 (FFmpeg Lavc62.11.100)"}`),
+				Version:                      "1.6.0",
+				ExecutableVerificationOutput: []byte(`{"fpcalc":"fpcalc version 1.6.0 (FFmpeg Lavc62.11.100)"}`),
 			},
 		},
 	}).Read(context.Background(), rootID, locationID)
@@ -67,8 +68,8 @@ func TestSourceLocationDetailKeepsCanonicalAndSelectedProbeIdentityAndActiveVers
 func TestSourceLocationDetailDoesNotInventActiveFPCalcVersion(t *testing.T) {
 	for _, installation := range []*persistence.ToolInstallation{
 		nil,
-		{ExecutableVersions: []byte(`{"fpcalc":"fpcalc version ???"}`)},
-		{ExecutableVersions: []byte(`{invalid json`)},
+		{ExecutableVerificationOutput: []byte(`{"fpcalc":"fpcalc version ???"}`)},
+		{ExecutableVerificationOutput: []byte(`{invalid json`)},
 	} {
 		rootID, locationID := uuid.New(), uuid.New()
 		detail, err := service.NewSourceLocationDetails(sourceLocationDetailRepositoryFixture{

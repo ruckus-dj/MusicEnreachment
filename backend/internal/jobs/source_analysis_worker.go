@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -839,16 +838,49 @@ func (worker *SourceAnalysisWorker) preparerConfig(ctx context.Context, snapshot
 			if filepath.IsAbs(executable) && pathInside(root, executable) {
 				config.ProbeExecutable = executable
 				config.ProbeFactory = func(path string) (service.SourceAnalysisProbe, error) {
-					verify := worker.verifyFFProbeVersion
-					if verify == nil {
-						verify = func(ctx context.Context, executable string) (string, error) {
-							output, err := (tools.SystemRunner{}).Run(ctx, executable, "-version")
-							return strings.TrimSpace(string(output)), err
-						}
+					ffmpegPath := filepath.Join(base, "ffmpeg")
+					if worker.platform.Platform.GOOS == "windows" {
+						ffmpegPath += ".exe"
 					}
-					banner, err := verify(ctx, path)
-					if err != nil || !pinnedFFProbeVersionMatches(banner, selection.Version) {
-						return nil, fmt.Errorf("managed ffprobe version does not match pinned selection")
+					runner := tools.CommandRunner(tools.SystemRunner{})
+					if worker.verifyFFProbeVersion != nil {
+						// Preserve the test seam for probe output while still verifying ffmpeg freshly.
+						probeOutput, err := worker.verifyFFProbeVersion(ctx, path)
+						if err != nil {
+							return nil, fmt.Errorf("verify managed ffprobe version: %w", err)
+						}
+						ffmpegOutput, err := runner.Run(ctx, ffmpegPath, "-version")
+						if err != nil {
+							return nil, fmt.Errorf("verify managed ffmpeg version: %w", err)
+						}
+						evidence := map[string]string{"ffmpeg": string(ffmpegOutput), "ffprobe": probeOutput}
+						if worker.platform.Platform.GOOS == "windows" {
+							evidence["ffmpeg.exe"], evidence["ffprobe.exe"] = evidence["ffmpeg"], evidence["ffprobe"]
+						}
+						verification := tools.VerificationResult{Evidence: evidence}
+						canonical, err := tools.CanonicalPackageVersion(verification.Evidence, tools.PackageFFmpeg, worker.platform.Platform.GOOS)
+						verification.Version = canonical
+						if err != nil || verification.Version != selection.Version {
+							return nil, fmt.Errorf("managed ffmpeg package version does not match pinned selection")
+						}
+					} else {
+						verification := tools.VerificationResult{Evidence: make(map[string]string, 2)}
+						for name, executable := range map[string]string{"ffmpeg": ffmpegPath, "ffprobe": path} {
+							output, err := runner.Run(ctx, executable, "-version")
+							if err != nil {
+								return nil, fmt.Errorf("verify managed %s version: %w", name, err)
+							}
+							key := name
+							if worker.platform.Platform.GOOS == "windows" {
+								key += ".exe"
+							}
+							verification.Evidence[key] = string(output)
+						}
+						canonical, err := tools.CanonicalPackageVersion(verification.Evidence, tools.PackageFFmpeg, worker.platform.Platform.GOOS)
+						verification.Version = canonical
+						if err != nil || verification.Version != selection.Version {
+							return nil, fmt.Errorf("managed ffmpeg package version does not match pinned selection")
+						}
 					}
 					return tools.NewFFProbe(path)
 				}
@@ -876,9 +908,9 @@ func (worker *SourceAnalysisWorker) preparerConfig(ctx context.Context, snapshot
 			if worker.platform.Platform.GOOS == "windows" {
 				executable += ".exe"
 			}
-			version, parseErr := tools.ParseFPCalcVersion(selection.VersionBanner)
-			if filepath.IsAbs(executable) && pathInside(root, executable) && parseErr == nil && version.Version == selection.Version {
-				config.FPCalcExecutable, config.FPCalcVersion = executable, version
+			if filepath.IsAbs(executable) && pathInside(root, executable) && selection.Version != "" {
+				config.FPCalcExecutable = executable
+				config.FPCalcVersion = tools.FPCalcVersion{Version: selection.Version, Banner: selection.VersionBanner}
 				config.FingerprinterFactory = func(path string) (service.SourceAnalysisFingerprinter, error) { return tools.NewFPCalc(path) }
 				config.FingerprintResult = persistence.SourceFingerprintResult{ID: uuid.New(), VersionBanner: selection.VersionBanner, FPCalcVersion: selection.Version, AlgorithmNamespace: "chromaprint", ParserContractVersion: 1, AppliedOperationID: operationID}
 			} else if !needsProbe {
@@ -887,14 +919,6 @@ func (worker *SourceAnalysisWorker) preparerConfig(ctx context.Context, snapshot
 		}
 	}
 	return config, nil
-}
-
-func pinnedFFProbeVersionMatches(banner, version string) bool {
-	if version == "" {
-		return false
-	}
-	pattern := regexp.MustCompile(`(?:^|[^0-9A-Za-z.+-])` + regexp.QuoteMeta(version) + `(?:$|[^0-9A-Za-z.+-])`)
-	return pattern.MatchString(banner)
 }
 
 func (worker *SourceAnalysisWorker) failStep(ctx context.Context, operation *persistence.Operation, execution persistence.SourceAnalysisExecution, step persistence.SourceStepName, attempt int, jobID int64, safe string) error {

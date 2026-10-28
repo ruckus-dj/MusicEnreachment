@@ -40,14 +40,14 @@ func TestPublicationReconciliationToolsAcquireCheckReleasePostgreSQL(t *testing.
 	versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
 	installation := &ToolInstallation{ID: id, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH,
 		SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: filepath.Join("ffmpeg", "release-1"),
-		State: "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}
+		State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}
 	if err := repo.CreateInstallation(ctx, installation); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.ToSlash(installation.RelativePath)
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: id, RelativePath: path, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
-		{PackageKind: "ffmpeg", InstallationID: id, RelativePath: path, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
+		{PackageKind: "ffmpeg", InstallationID: id, RelativePath: path, Executable: "ffmpeg", Version: installation.Version, VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: id, RelativePath: path, Executable: "ffprobe", Version: installation.Version, VersionBanner: ffprobeBanner},
 	}
 	snapshot, acquired, err := repo.AcquirePublicationReconciliationTools(ctx, guard, selections)
 	if err != nil || !acquired {

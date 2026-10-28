@@ -33,7 +33,8 @@ func (repository firstPreviewRepository) GetInstallation(_ context.Context, id u
 	return &persistence.ToolInstallation{
 		ID: id, PackageKind: "ffmpeg", PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		RelativePath: "ffmpeg", State: "ready", VerifiedAt: &verifiedAt,
-		ExecutableVersions: json.RawMessage(fmt.Sprintf(`{"ffmpeg":"ffmpeg version %s verified","ffprobe":"ffprobe version %s verified"}`, version, version)),
+		Version:                      "ffmpeg " + version + " + ffprobe " + version,
+		ExecutableVerificationOutput: json.RawMessage(fmt.Sprintf(`{"ffmpeg":"ffmpeg version %s verified","ffprobe":"ffprobe version %s verified"}`, version, version)),
 	}, nil
 }
 func (firstPreviewRepository) AdmitManualLyricsRewrite(context.Context, persistence.ManualLyricsAdmission, persistence.RiverInserter) (uuid.UUID, error) {

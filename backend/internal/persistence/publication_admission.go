@@ -536,26 +536,21 @@ func validatePublicationInstallation(installation *ToolInstallation, selections 
 		return fmt.Errorf("admit publication: pinned ffmpeg installation is not ready and verified for this platform")
 	}
 	var versions map[string]string
-	if json.Unmarshal(installation.ExecutableVersions, &versions) != nil {
+	if json.Unmarshal(installation.ExecutableVerificationOutput, &versions) != nil {
 		return fmt.Errorf("admit publication: invalid verified executable versions")
+	}
+	version := installation.Version
+	if version == "" {
+		return fmt.Errorf("admit publication: pinned ffmpeg installation has invalid version")
 	}
 	for _, selection := range selections {
 		banner, ok := tools.VerifiedExecutableVersion(versions, tools.PackageFFmpeg, selection.Executable, installation.PlatformGOOS)
 		if !ok || filepath.ToSlash(selection.RelativePath) != filepath.ToSlash(installation.RelativePath) ||
-			banner != strings.TrimSpace(selection.VersionBanner) || !publicationBannerMatchesVersion(banner, selection.Executable, selection.Version) {
+			banner != strings.TrimSpace(selection.VersionBanner) || selection.Version != version {
 			return fmt.Errorf("admit publication: pinned executable version does not match verified installation metadata")
 		}
 	}
 	return nil
-}
-
-func publicationBannerMatchesVersion(banner, executable, version string) bool {
-	if strings.TrimSpace(version) == "" {
-		return false
-	}
-	firstLine, _, _ := strings.Cut(banner, "\n")
-	fields := strings.Fields(firstLine)
-	return len(fields) >= 3 && fields[0] == executable && fields[1] == "version" && fields[2] == version
 }
 
 func samePublicationTools(left, right []SourceAnalysisToolSelection) bool {

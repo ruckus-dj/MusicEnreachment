@@ -834,7 +834,13 @@ func (runner *dispatchRunner) Run(ctx context.Context, executable string, args .
 			return nil, err
 		}
 	}
-	return []byte(filepath.Base(executable) + " version " + filepath.Base(filepath.Dir(executable))), nil
+	base := filepath.Base(executable)
+	for _, logicalName := range []string{"ffmpeg", "ffprobe", "fpcalc"} {
+		if strings.Contains(base, logicalName) {
+			return []byte(logicalName + " version " + filepath.Base(filepath.Dir(executable))), nil
+		}
+	}
+	return nil, fmt.Errorf("unexpected executable %q", base)
 }
 
 type dispatchBarrier struct {
@@ -905,8 +911,8 @@ func (repository *riverBoundaryRepository) TransitionOperationForDelivery(ctx co
 	return changed, err
 }
 
-func (repository *riverBoundaryRepository) FinalizeInstallation(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, installationID uuid.UUID, packageKind, goos, goarch, activeSetting string, versions json.RawMessage, verifiedAt time.Time) (bool, error) {
-	finalized, err := repository.SetupManagerRepository.FinalizeInstallation(ctx, operationID, attempt, riverJobID, installationID, packageKind, goos, goarch, activeSetting, versions, verifiedAt)
+func (repository *riverBoundaryRepository) FinalizeInstallation(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, installationID uuid.UUID, packageKind, goos, goarch, activeSetting string, verification tools.VerificationResult, verifiedAt time.Time) (bool, error) {
+	finalized, err := repository.SetupManagerRepository.FinalizeInstallation(ctx, operationID, attempt, riverJobID, installationID, packageKind, goos, goarch, activeSetting, verification, verifiedAt)
 	if err != nil || !finalized {
 		return finalized, err
 	}

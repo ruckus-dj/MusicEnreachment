@@ -104,7 +104,7 @@ func TestLibraryPublicationsApplySavedLyricsPostgreSQL(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "1", RelativePath: filepath.Join("ffmpeg", "1"), State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVersions: executableVersions}
+			installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "1", RelativePath: filepath.Join("ffmpeg", "1"), Version: "ffmpeg 1 + ffprobe 1", State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVerificationOutput: executableVersions}
 			if err := repo.CreateInstallation(ctx, installation); err != nil {
 				t.Fatal(err)
 			}

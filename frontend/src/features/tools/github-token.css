@@ -1,0 +1,26 @@
+.github-token {
+  margin-block: 1.5rem;
+  border: 1px solid #a8a29e;
+  border-radius: 0.375rem;
+  padding: 1rem;
+}
+
+.github-token h2 {
+  margin-top: 0;
+}
+
+.github-token input {
+  display: block;
+  width: min(100%, 36rem);
+  margin-top: 0.25rem;
+  border: 1px solid #a8a29e;
+  border-radius: 0.25rem;
+  padding: 0.5rem;
+}
+
+.github-token-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}

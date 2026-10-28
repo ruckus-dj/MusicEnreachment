@@ -210,7 +210,7 @@ func (fixture *analysisDispatchFixture) installAnalysisDispatchFPCalc(t *testing
 		PlatformGOOS: fixture.platform.Platform.GOOS, PlatformGOARCH: fixture.platform.Platform.GOARCH,
 		SourceName: "analysis-dispatch-test", ReleaseIdentity: release,
 		RelativePath: testInstallationRelativePath(fixture.platform.Platform.GOOS, "fpcalc", release), State: "ready",
-		ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
+		Version: release, ExecutableVerificationOutput: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
 	}
 	if err := fixture.setup.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create managed fpcalc installation: %v", err)
@@ -280,7 +280,7 @@ func (fixture *analysisDispatchFixture) startWithScheduleAndReset(t *testing.T, 
 	tool := persistence.SourceAnalysisToolSelection{
 		PackageKind: "ffmpeg", InstallationID: fixture.installationID,
 		RelativePath: testInstallationRelativePath(fixture.platform.Platform.GOOS, "ffmpeg", analysisDispatchRelease), Executable: "ffprobe",
-		Version: analysisDispatchRelease, VersionBanner: "ffprobe version " + analysisDispatchRelease,
+		Version: "ffmpeg " + analysisDispatchRelease + " + ffprobe " + analysisDispatchRelease, VersionBanner: "ffprobe version " + analysisDispatchRelease,
 	}
 	selectedTools := []persistence.SourceAnalysisToolSelection{tool}
 	if fixture.fpcalcID != uuid.Nil {

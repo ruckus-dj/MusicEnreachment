@@ -95,7 +95,7 @@ func TestSourceAnalysisStartupRecoveryPostgreSQL(t *testing.T) {
 		if len(operation.SourceAnalysisTools) != 1 || operation.SourceAnalysisTools[0].InstallationID != fixture.installationID ||
 			operation.SourceAnalysisTools[0].PackageKind != "ffmpeg" || operation.SourceAnalysisTools[0].Executable != "ffprobe" ||
 			operation.SourceAnalysisTools[0].RelativePath != filepath.Join("ffmpeg", analysisDispatchRelease) ||
-			operation.SourceAnalysisTools[0].Version != analysisDispatchRelease ||
+			operation.SourceAnalysisTools[0].Version != "ffmpeg "+analysisDispatchRelease+" + ffprobe "+analysisDispatchRelease ||
 			operation.SourceAnalysisTools[0].VersionBanner != "ffprobe version "+analysisDispatchRelease {
 			t.Fatalf("live runtime admission selectors = %+v, want the selected ffprobe installation", operation.SourceAnalysisTools)
 		}
@@ -131,7 +131,7 @@ func (fixture *analysisDispatchFixture) createOrphanAnalysis(t *testing.T, ctx c
 	probe := persistence.SourceAnalysisToolSelection{
 		PackageKind: "ffmpeg", InstallationID: fixture.installationID,
 		RelativePath: testInstallationRelativePath(fixture.platform.Platform.GOOS, "ffmpeg", analysisDispatchRelease), Executable: "ffprobe",
-		Version: analysisDispatchRelease, VersionBanner: "ffprobe version " + analysisDispatchRelease,
+		Version: "ffmpeg " + analysisDispatchRelease + " + ffprobe " + analysisDispatchRelease, VersionBanner: "ffprobe version " + analysisDispatchRelease,
 	}
 	snapshot, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
 		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,

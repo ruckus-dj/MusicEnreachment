@@ -68,9 +68,6 @@ func TestSettingsSHA256DefaultAndRoundTrip(t *testing.T) {
 func TestAcoustIDApplicationKeyWriteOnlyLifecycle(t *testing.T) {
 	store := apiSettingsStore{}
 	registry := settings.New(store, nil)
-	if err := registry.CompleteSetup(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
 	handler := api.HandlerWithSetup(setup)
 	secret := " arbitrary:key value "
@@ -84,6 +81,16 @@ func TestAcoustIDApplicationKeyWriteOnlyLifecycle(t *testing.T) {
 	}
 	if store[settings.AcoustIDApplicationKey] != secret {
 		t.Fatalf("stored key=%q, want exact supplied value", store[settings.AcoustIDApplicationKey])
+	}
+	if err := registry.CompleteSetup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPut, "/settings/acoustid/application-key", strings.NewReader(`{"key":" arbitrary:key value "}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("set key after setup status=%d body=%s", response.Code, response.Body.String())
 	}
 
 	response = httptest.NewRecorder()

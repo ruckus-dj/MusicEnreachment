@@ -439,13 +439,16 @@ func (l *Lifecycle) Materialize(ctx context.Context, staging, root string, kind 
 		if err != nil {
 			return "", nil, versionFailure("verify "+name, output, err)
 		}
-		versions[name] = strings.TrimSpace(string(output))
-		if !matchesReleaseVersion(versions[name], version) {
-			return "", nil, fmt.Errorf("%s version does not match release %q", name, version)
+		if !matchesReleaseVersion(string(output), version) {
+			return "", nil, fmt.Errorf("verify %s: executable version does not match release identity", name)
 		}
+		versions[name] = string(output)
 		stagedFiles[target] = tempPath
 	}
 
+	if _, err := CanonicalPackageVersion(versions, kind, options.GOOS); err != nil {
+		return "", nil, err
+	}
 	type replacement struct {
 		target string
 		backup string
@@ -546,13 +549,40 @@ func (l *Lifecycle) VerifyInstallation(ctx context.Context, root, relative strin
 		if err != nil {
 			return nil, versionFailure("verify managed executable "+name, output, err)
 		}
-		verified := strings.TrimSpace(string(output))
-		if !matchesReleaseVersion(verified, version) {
-			return nil, fmt.Errorf("managed executable %s does not match release %q", name, version)
+		if !matchesReleaseVersion(string(output), version) {
+			return nil, fmt.Errorf("verify managed executable %s: executable version does not match release identity", name)
 		}
-		versions[name] = verified
+		versions[name] = string(output)
 	}
 	return versions, nil
+}
+
+// MaterializeVerified materializes a package and returns canonical identity
+// together with the exact verification output captured for every executable.
+func (l *Lifecycle) MaterializeVerified(ctx context.Context, staging, root string, kind PackageKind, releaseIdentity string, options MaterializeOptions) (string, VerificationResult, error) {
+	relative, evidence, err := l.Materialize(ctx, staging, root, kind, releaseIdentity, options)
+	if err != nil {
+		return "", VerificationResult{}, err
+	}
+	canonical, err := CanonicalPackageVersion(evidence, kind, options.GOOS)
+	if err != nil {
+		return "", VerificationResult{}, err
+	}
+	return relative, VerificationResult{Version: canonical, Evidence: evidence}, nil
+}
+
+// VerifyInstallationVerified performs a fresh verification of every package
+// executable and returns its canonical package identity plus raw evidence.
+func (l *Lifecycle) VerifyInstallationVerified(ctx context.Context, root, relative string, kind PackageKind, releaseIdentity, goos string) (VerificationResult, error) {
+	evidence, err := l.VerifyInstallation(ctx, root, relative, kind, releaseIdentity, goos)
+	if err != nil {
+		return VerificationResult{}, err
+	}
+	canonical, err := CanonicalPackageVersion(evidence, kind, goos)
+	if err != nil {
+		return VerificationResult{}, err
+	}
+	return VerificationResult{Version: canonical, Evidence: evidence}, nil
 }
 
 func matchesReleaseVersion(output, release string) bool {

@@ -20,13 +20,15 @@ import type {
   UpdateMusicBrainzBodyMode,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { AcoustIDKeyForm } from "./AcoustIDKeyForm";
 
 type Props = {
   state: SetupStateBody;
   refresh: () => Promise<SetupStateBody>;
   onContinue: () => void;
+  onBack: () => void;
 };
-export function SetupMetadata({ state, refresh, onContinue }: Props) {
+export function SetupMetadata({ state, refresh, onContinue, onBack }: Props) {
   const [mode, setMode] = useState<UpdateMusicBrainzBodyMode>(
     state.settings.musicbrainz_mode === "self-hosted"
       ? "self-hosted"
@@ -35,6 +37,7 @@ export function SetupMetadata({ state, refresh, onContinue }: Props) {
   const [baseURL, setBaseURL] = useState(state.settings.musicbrainz_base_url);
   const [lrclib, setLrclib] = useState(state.settings.lrclib_enabled);
   const [pending, setPending] = useState(false);
+  const [keyPending, setKeyPending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const alert = useRef<HTMLParagraphElement>(null);
@@ -97,7 +100,7 @@ export function SetupMetadata({ state, refresh, onContinue }: Props) {
     }
   }
   return (
-    <div>
+    <div className="setup-metadata">
       <RadioGroup
         aria-label="MusicBrainz"
         value={mode}
@@ -122,7 +125,7 @@ export function SetupMetadata({ state, refresh, onContinue }: Props) {
       <CheckboxField isSelected={lrclib} onChange={setLrclib}>
         <CheckboxButton>LRCLIB включён</CheckboxButton>
       </CheckboxField>
-      <AppButton isDisabled={pending} onPress={check}>
+      <AppButton isDisabled={pending || keyPending} onPress={check}>
         Проверить MusicBrainz
       </AppButton>
       <p>
@@ -132,9 +135,13 @@ export function SetupMetadata({ state, refresh, onContinue }: Props) {
             ? `Проверено: ${state.settings.musicbrainz_verified_at}`
             : "Соединение ещё не проверено."}
       </p>
-      <AppButton isDisabled={pending} onPress={continueStep}>
-        Продолжить
-      </AppButton>
+      {state.platform.supported && !state.platform.diagnostic && (
+        <AcoustIDKeyForm
+          hasKey={state.settings.has_acoustid_application_key}
+          onChanged={refresh}
+          onBusyChange={setKeyPending}
+        />
+      )}
       {error && (
         <p role="alert" ref={alert} tabIndex={-1}>
           {error}
@@ -142,6 +149,14 @@ export function SetupMetadata({ state, refresh, onContinue }: Props) {
       )}
       {notice && <p role="status">{notice}</p>}
       {pending && <p role="status">Выполняется запрос…</p>}
+      <div className="setup-navigation">
+        <AppButton isDisabled={pending || keyPending} onPress={onBack}>
+          Назад
+        </AppButton>
+        <AppButton isDisabled={pending || keyPending} onPress={continueStep}>
+          Продолжить
+        </AppButton>
+      </div>
     </div>
   );
 }

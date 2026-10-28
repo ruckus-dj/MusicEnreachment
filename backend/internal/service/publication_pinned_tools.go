@@ -105,14 +105,18 @@ func (resolver *PublicationPinnedToolsResolver) resolveHeldSnapshot(ctx context.
 		return PublicationToolExecutables{}, false, fmt.Errorf("pinned publication installation is not ready for this platform")
 	}
 	var versions map[string]string
-	if err := json.Unmarshal(installation.ExecutableVersions, &versions); err != nil {
+	if err := json.Unmarshal(installation.ExecutableVerificationOutput, &versions); err != nil {
 		return PublicationToolExecutables{}, false, fmt.Errorf("pinned publication installation metadata is invalid: %w", err)
+	}
+	version := installation.Version
+	if version == "" {
+		return PublicationToolExecutables{}, false, fmt.Errorf("pinned publication installation canonical version is invalid")
 	}
 	// Both members must be one package installation; the repository holds its
 	// package fence while fetching the selection snapshot.
 	for _, selection := range frozen {
 		banner, ok := tools.VerifiedExecutableVersion(versions, tools.PackageFFmpeg, selection.Executable, resolver.platform.GOOS)
-		if selection.InstallationID != installation.ID || selection.PackageKind != "ffmpeg" || selection.RelativePath != filepath.ToSlash(installation.RelativePath) || selection.Executable != "ffmpeg" && selection.Executable != "ffprobe" || !ok || banner != strings.TrimSpace(selection.VersionBanner) {
+		if selection.InstallationID != installation.ID || selection.PackageKind != "ffmpeg" || selection.RelativePath != filepath.ToSlash(installation.RelativePath) || selection.Executable != "ffmpeg" && selection.Executable != "ffprobe" || !ok || banner != strings.TrimSpace(selection.VersionBanner) || selection.Version != version {
 			return PublicationToolExecutables{}, false, fmt.Errorf("invalid frozen publication executable")
 		}
 	}
@@ -120,15 +124,13 @@ func (resolver *PublicationPinnedToolsResolver) resolveHeldSnapshot(ctx context.
 	// name. Verify the whole pair before returning either path.
 	paths := make(map[string]string, 2)
 	identities := make(map[string]os.FileInfo, 2)
+	evidence := make(map[string]string, 2)
 	var packageIdentity os.FileInfo
 	for _, selection := range frozen {
 		if selection.InstallationID != frozen[0].InstallationID {
 			return PublicationToolExecutables{}, false, fmt.Errorf("frozen publication executables use different installations")
 		}
-		name := selection.Executable
-		if resolver.platform.GOOS == "windows" {
-			name += ".exe"
-		}
+		name := publicationExecutableFileName(selection.Executable, resolver.platform.GOOS)
 		if filepath.IsAbs(selection.RelativePath) || filepath.Clean(filepath.FromSlash(selection.RelativePath)) != filepath.FromSlash(selection.RelativePath) || strings.HasPrefix(filepath.Clean(filepath.FromSlash(selection.RelativePath)), ".."+string(filepath.Separator)) {
 			return PublicationToolExecutables{}, false, fmt.Errorf("invalid frozen installation path")
 		}
@@ -169,12 +171,19 @@ func (resolver *PublicationPinnedToolsResolver) resolveHeldSnapshot(ctx context.
 		if err != nil {
 			return PublicationToolExecutables{}, false, fmt.Errorf("verify managed publication executable: %w", err)
 		}
-		if strings.TrimSpace(string(output)) != strings.TrimSpace(selection.VersionBanner) || !publicationExecutableBannerMatches(string(output), selection.Executable, selection.Version) {
+		if strings.TrimSpace(string(output)) != strings.TrimSpace(selection.VersionBanner) {
 			return PublicationToolExecutables{}, false, fmt.Errorf("managed publication executable version does not match frozen metadata")
 		}
+		// Fresh verification evidence uses the same platform-native keys as the
+		// stored installation metadata that CanonicalPackageVersion consumes.
+		evidence[publicationExecutableFileName(selection.Executable, resolver.platform.GOOS)] = string(output)
 		if !publicationExecutableIdentity(root, selection, resolver.platform.GOOS, packageIdentity, identities[selection.Executable]) {
 			return PublicationToolExecutables{}, false, fmt.Errorf("managed publication executable changed during verification")
 		}
+	}
+	canonical, err := tools.CanonicalPackageVersion(evidence, tools.PackageFFmpeg, resolver.platform.GOOS)
+	if err != nil || canonical != version {
+		return PublicationToolExecutables{}, false, fmt.Errorf("managed publication package version does not match frozen metadata")
 	}
 	stillValid, err := checkAlive(ctx)
 	if err != nil || !stillValid {
@@ -188,11 +197,15 @@ func (resolver *PublicationPinnedToolsResolver) resolveHeldSnapshot(ctx context.
 	return PublicationToolExecutables{FFmpeg: paths["ffmpeg"], FFprobe: paths["ffprobe"]}, true, nil
 }
 
-func publicationExecutableIdentity(root string, selection persistence.SourceAnalysisToolSelection, goos string, expectedDir, expectedFile os.FileInfo) bool {
-	name := selection.Executable
+func publicationExecutableFileName(executable, goos string) string {
 	if goos == "windows" {
-		name += ".exe"
+		return executable + ".exe"
 	}
+	return executable
+}
+
+func publicationExecutableIdentity(root string, selection persistence.SourceAnalysisToolSelection, goos string, expectedDir, expectedFile os.FileInfo) bool {
+	name := publicationExecutableFileName(selection.Executable, goos)
 	directory := filepath.Join(root, filepath.FromSlash(selection.RelativePath))
 	if tools.HasSymlinkAncestors(root, directory) != nil {
 		return false
@@ -208,12 +221,6 @@ func publicationExecutableIdentity(root string, selection persistence.SourceAnal
 func samePublicationFileInfo(current, expected os.FileInfo) bool {
 	return current != nil && expected != nil && os.SameFile(current, expected) &&
 		current.Size() == expected.Size() && current.ModTime().Equal(expected.ModTime()) && current.Mode() == expected.Mode()
-}
-
-func publicationExecutableBannerMatches(output, executable, version string) bool {
-	line, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
-	fields := strings.Fields(line)
-	return len(fields) >= 3 && fields[0] == executable && fields[1] == "version" && fields[2] == version
 }
 
 func samePublicationToolSelections(left, right []persistence.SourceAnalysisToolSelection) bool {

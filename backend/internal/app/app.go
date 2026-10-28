@@ -277,7 +277,7 @@ func Run(ctx context.Context, config Config) error {
 	if err != nil {
 		return err
 	}
-	catalog := tools.NewDefaultCatalog(nil)
+	catalog := tools.NewDefaultCatalog(tools.NewGitHubTokenHTTPClient(registry))
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	}, tools.NewLifecycle(nil))

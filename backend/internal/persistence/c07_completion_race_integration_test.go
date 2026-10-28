@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
@@ -77,7 +78,7 @@ func TestC07CompletionSerializesPostSetupFinalization(t *testing.T) {
 	go func() {
 		_, err := fixture.repo.FinalizeInstallation(ctx, op.ID, op.Attempt, *op.RiverJobID,
 			*op.TargetInstallationID, "fpcalc", "linux", "amd64", settings.ActiveFPCalcInstallationKey,
-			json.RawMessage(`{"fpcalc":"synthetic"}`), time.Now().UTC())
+			tools.VerificationResult{Version: "synthetic", Evidence: map[string]string{"fpcalc": "fpcalc version synthetic"}}, time.Now().UTC())
 		finalized <- err
 	}()
 	awaitAnyPostgresLockWait(t, ctx, db)
@@ -118,7 +119,7 @@ func TestC07InitialFinalizationBeforeCompletionUsesFreshActiveIDs(t *testing.T) 
 	go func() {
 		_, err := fixture.repo.FinalizeInstallation(ctx, op.ID, op.Attempt, *op.RiverJobID,
 			*op.TargetInstallationID, "fpcalc", "linux", "amd64", settings.ActiveFPCalcInstallationKey,
-			json.RawMessage(`{"fpcalc":"synthetic"}`), time.Now().UTC())
+			tools.VerificationResult{Version: "synthetic", Evidence: map[string]string{"fpcalc": "fpcalc version synthetic"}}, time.Now().UTC())
 		finalized <- err
 	}()
 	awaitSignal(t, gate.entered, "initial finalization to update its installation")
@@ -164,7 +165,7 @@ type c07CompletionFixture struct {
 func newC07CompletionFixture(t *testing.T, ctx context.Context, db *bun.DB) c07CompletionFixture {
 	t.Helper()
 	fixture := newC07CompletionFixtureWithoutFPCalc(t, ctx, db)
-	fpcalc := c07VerifiedReadyInstallation(t, ctx, fixture.repo, "fpcalc", "1.6", json.RawMessage(`{"fpcalc":"1.6"}`))
+	fpcalc := c07VerifiedReadyInstallation(t, ctx, fixture.repo, "fpcalc", "1.6", json.RawMessage(`{"fpcalc":"fpcalc version 1.6"}`))
 	activated, err := fixture.repo.ActivateInstallationDuringSetup(ctx, fpcalc.ID, "fpcalc", "linux", "amd64", settings.ActiveFPCalcInstallationKey)
 	if err != nil || !activated {
 		t.Fatalf("activate initial fpcalc: activated=%t err=%v", activated, err)
@@ -195,7 +196,7 @@ func newC07CompletionFixtureWithoutFPCalc(t *testing.T, ctx context.Context, db 
 			t.Fatalf("seed %s: %v", key, err)
 		}
 	}
-	ffmpeg := c07VerifiedReadyInstallation(t, ctx, repo, "ffmpeg", "8.0", json.RawMessage(`{"ffmpeg":"8.0","ffprobe":"8.0"}`))
+	ffmpeg := c07VerifiedReadyInstallation(t, ctx, repo, "ffmpeg", "8.0", json.RawMessage(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`))
 	activated, err := repo.ActivateInstallationDuringSetup(ctx, ffmpeg.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey)
 	if err != nil || !activated {
 		t.Fatalf("activate initial ffmpeg: activated=%t err=%v", activated, err)

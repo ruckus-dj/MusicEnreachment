@@ -37,8 +37,8 @@ func (directory testToolsDirectory) GetToolsDirectory(context.Context) (string, 
 
 type acceptingInstallationVerifier struct{}
 
-func (acceptingInstallationVerifier) VerifyInstallation(context.Context, string, string, tools.PackageKind, string, string) (map[string]string, error) {
-	return map[string]string{"ffmpeg": "ffmpeg version 7.1", "ffprobe": "ffprobe version 7.1"}, nil
+func (acceptingInstallationVerifier) VerifyInstallationVerified(context.Context, string, string, tools.PackageKind, string, string) (tools.VerificationResult, error) {
+	return tools.VerificationResult{Version: "ffmpeg 7.1 + ffprobe 7.1"}, nil
 }
 
 type transactionTestArgs struct{}
@@ -84,7 +84,7 @@ func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 		t.Fatalf("get installation by identity: %v", err)
 	}
 	verifiedAt := time.Now().UTC()
-	if err := repository.MarkInstallationReady(ctx, installation.ID, json.RawMessage(`{"ffmpeg":"7.1","ffprobe":"7.1"}`), verifiedAt); err != nil {
+	if err := repository.MarkInstallationReady(ctx, installation.ID, json.RawMessage(`{"ffmpeg":"ffmpeg version 7.1","ffprobe":"ffprobe version 7.1"}`), verifiedAt); err != nil {
 		t.Fatalf("mark installation ready: %v", err)
 	}
 	ready, err := repository.GetInstallation(ctx, installation.ID)
@@ -1257,7 +1257,11 @@ func createReadyInstallation(t *testing.T, ctx context.Context, repository *pers
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create installation: %v", err)
 	}
-	if err := repository.MarkInstallationReady(ctx, installation.ID, json.RawMessage(`{"tool":"version"}`), time.Now().UTC()); err != nil {
+	versions := json.RawMessage(`{"fpcalc":"fpcalc version 1.5.1"}`)
+	if packageKind == "ffmpeg" {
+		versions = json.RawMessage(`{"ffmpeg":"ffmpeg version 7.1","ffprobe":"ffprobe version 7.1"}`)
+	}
+	if err := repository.MarkInstallationReady(ctx, installation.ID, versions, time.Now().UTC()); err != nil {
 		t.Fatalf("mark installation ready: %v", err)
 	}
 	return installation

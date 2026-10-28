@@ -90,8 +90,8 @@ func testSimpleAutomaticLyricsRetryDelivery(t *testing.T, mismatch, authorityRac
 		Version: persistence.PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
 		IntentKind: "rewrite", Format: "source", DesiredTags: map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}},
 		Tools: []persistence.SourceAnalysisToolSelection{
-			{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: toolRelative, Executable: "ffmpeg", Version: "7.0", VersionBanner: "ffmpeg version 7.0 build"},
-			{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: toolRelative, Executable: "ffprobe", Version: "7.0", VersionBanner: "ffprobe version 7.0 build"},
+			{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: toolRelative, Executable: "ffmpeg", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: "ffmpeg version 7.0 build"},
+			{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: toolRelative, Executable: "ffprobe", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: "ffprobe version 7.0 build"},
 		},
 		Rewrite: &persistence.PublicationRewriteInput{
 			CurrentGeneration: uuid.New(), RelativePath: "current.flac",
@@ -215,7 +215,7 @@ func testSimpleAutomaticLyricsRetryDelivery(t *testing.T, mismatch, authorityRac
 		t.Fatal(err)
 	}
 	verified := time.Now().UTC()
-	if err := repository.CreateInstallation(ctx, &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "integration fixture", ReleaseIdentity: "7.0", RelativePath: filepath.FromSlash(toolRelative), State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVersions: versionJSON}); err != nil {
+	if err := repository.CreateInstallation(ctx, &persistence.ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "integration fixture", ReleaseIdentity: "7.0", RelativePath: filepath.FromSlash(toolRelative), Version: "ffmpeg 7.0 + ffprobe 7.0", State: "ready", VerifiedAt: &verified, ArtifactIdentities: json.RawMessage(`{}`), ExecutableVerificationOutput: versionJSON}); err != nil {
 		t.Fatal(err)
 	}
 	holdTx, err := db.BeginTx(ctx, nil)

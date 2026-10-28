@@ -142,13 +142,13 @@ func TestPublicationProviderTagAuthorityLifecyclePostgreSQL(t *testing.T) {
 	versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
 	installationID := uuid.New()
 	verifiedAt := time.Now().UTC()
-	installation := &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: filepath.Join("ffmpeg", "release-1"), State: "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt}
+	installation := &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: filepath.Join("ffmpeg", "release-1"), State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt}
 	if err := repo.CreateInstallation(ctx, installation); err != nil {
 		t.Fatal(err)
 	}
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(installation.RelativePath), Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(installation.RelativePath), Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(installation.RelativePath), Executable: "ffmpeg", Version: installation.Version, VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(installation.RelativePath), Executable: "ffprobe", Version: installation.Version, VersionBanner: ffprobeBanner},
 	}
 	current := projection.Current
 	if _, err := f.db.ExecContext(ctx, `INSERT INTO app_setting(setting_name,setting_value) VALUES ('publication_format','source') ON CONFLICT(setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`); err != nil {

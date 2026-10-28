@@ -1,0 +1,20 @@
+.setup-acoustid-key {
+  display: grid;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}
+
+.setup-acoustid-key h2,
+.setup-acoustid-key p {
+  margin: 0;
+}
+
+.setup-acoustid-key input {
+  max-width: 32rem;
+}
+
+.setup-acoustid-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

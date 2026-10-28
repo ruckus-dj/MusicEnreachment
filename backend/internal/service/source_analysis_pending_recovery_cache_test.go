@@ -181,8 +181,8 @@ func TestPendingSourceAnalysisAdmitsOneBatchPerWorkWithExactSteps(t *testing.T) 
 	}
 	base.installation = &persistence.ToolInstallation{
 		ID: tool.InstallationID, PackageKind: tool.PackageKind, State: "ready", RelativePath: tool.RelativePath,
-		PlatformGOOS: "linux", PlatformGOARCH: "amd64", VerifiedAt: new(time.Now()),
-		ExecutableVersions: []byte(`{"fpcalc":"fpcalc version 1.5.0"}`),
+		PlatformGOOS: "linux", PlatformGOARCH: "amd64", Version: tool.Version, VerifiedAt: new(time.Now()),
+		ExecutableVerificationOutput: []byte(`{"fpcalc":"fpcalc version 1.5.0"}`),
 	}
 	fixture := &pendingBatchAdmissionFixture{pendingRecoveryCacheRepositoryFixture: base}
 	wantSteps := map[uuid.UUID]persistence.SourceStepName{}
@@ -239,8 +239,8 @@ func TestRetainedRecoveryUsesCurrentToolsAndAdmitsOneRemainingStep(t *testing.T)
 	}
 	rootID, ownerID := uuid.New(), uuid.New()
 	rawSHA := sha256.Sum256([]byte("same source digest"))
-	toolProbe := persistence.SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/8", Executable: "ffprobe", Version: "8", VersionBanner: "ffprobe version 8"}
-	toolFP := persistence.SourceAnalysisToolSelection{PackageKind: "fpcalc", InstallationID: uuid.New(), RelativePath: "fpcalc/1.5", Executable: "fpcalc", Version: "1.5", VersionBanner: "fpcalc version 1.5"}
+	toolProbe := persistence.SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/8", Executable: "ffprobe", Version: "ffmpeg 8 + ffprobe 8", VersionBanner: "ffprobe version 8"}
+	toolFP := persistence.SourceAnalysisToolSelection{PackageKind: "fpcalc", InstallationID: uuid.New(), RelativePath: "fpcalc/1.5", Executable: "fpcalc", Version: "1.5.0", VersionBanner: "fpcalc version 1.5.0"}
 	fixture := &pendingRecoveryCacheRepositoryFixture{
 		sourceAnalysisStartRepositoryFixture: sourceAnalysisStartRepositoryFixture{operations: map[uuid.UUID]*persistence.Operation{}},
 		steps:                                map[uuid.UUID][]persistence.SourceAnalysisStep{}, details: map[uuid.UUID]*persistence.SourceLocationDetailSnapshot{},
@@ -289,7 +289,7 @@ func TestRetainedRecoveryUsesCurrentToolsAndAdmitsOneRemainingStep(t *testing.T)
 	fixture.normalizedLocation = &fixture.works[0].Location
 	fixture.probeCacheHit = false
 	fixture.installation = &persistence.ToolInstallation{ID: toolProbe.InstallationID, PackageKind: "ffmpeg", State: "ready", RelativePath: toolProbe.RelativePath,
-		PlatformGOOS: "linux", PlatformGOARCH: "amd64", VerifiedAt: new(time.Now()), ExecutableVersions: []byte(`{"ffprobe":"ffprobe version 8"}`)}
+		PlatformGOOS: "linux", PlatformGOARCH: "amd64", Version: "ffmpeg 8 + ffprobe 8", VerifiedAt: new(time.Now()), ExecutableVerificationOutput: []byte(`{"ffmpeg":"ffmpeg version 8","ffprobe":"ffprobe version 8"}`)}
 	service := NewSourceAnalysisOperations(fixture, sourceAnalysisStartSetupFixture(true), sourceAnalysisStartRuntimeFixture(settings.RuntimeSettings{
 		ActiveFFmpegInstallation: toolProbe.InstallationID.String(), ActiveFPCalcInstallation: toolFP.InstallationID.String(),
 	}), settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, sourceAnalysisStartRiverFixture{})
@@ -352,13 +352,13 @@ func TestRetainedRecoverySkipsBusyWorkAndAdmitsIndependentSibling(t *testing.T) 
 		t.Fatal(err)
 	}
 	rootID, ownerID := uuid.New(), uuid.New()
-	toolProbe := persistence.SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/8", Executable: "ffprobe", Version: "8", VersionBanner: "ffprobe version 8"}
+	toolProbe := persistence.SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/8", Executable: "ffprobe", Version: "ffmpeg 8 + ffprobe 8", VersionBanner: "ffprobe version 8"}
 	base := &pendingRecoveryCacheRepositoryFixture{
 		sourceAnalysisStartRepositoryFixture: sourceAnalysisStartRepositoryFixture{operations: map[uuid.UUID]*persistence.Operation{}},
 		steps:                                map[uuid.UUID][]persistence.SourceAnalysisStep{}, details: map[uuid.UUID]*persistence.SourceLocationDetailSnapshot{},
 	}
 	base.installation = &persistence.ToolInstallation{ID: toolProbe.InstallationID, PackageKind: "ffmpeg", State: "ready", RelativePath: toolProbe.RelativePath,
-		PlatformGOOS: "linux", PlatformGOARCH: "amd64", VerifiedAt: new(time.Now()), ExecutableVersions: []byte(`{"ffprobe":"ffprobe version 8"}`)}
+		PlatformGOOS: "linux", PlatformGOARCH: "amd64", Version: "ffmpeg 8 + ffprobe 8", VerifiedAt: new(time.Now()), ExecutableVerificationOutput: []byte(`{"ffmpeg":"ffmpeg version 8","ffprobe":"ffprobe version 8"}`)}
 	fixture := &busyRetainedSiblingFixture{pendingRecoveryCacheRepositoryFixture: base}
 	var busyWorkID uuid.UUID
 	for index := 0; index < 2; index++ {

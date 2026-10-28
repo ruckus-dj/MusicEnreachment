@@ -23,7 +23,7 @@ import (
 type installRepository interface {
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
-	FinalizeInstallation(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string, string, string, json.RawMessage, time.Time) (bool, error)
+	FinalizeInstallation(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string, string, string, tools.VerificationResult, time.Time) (bool, error)
 	FailInstallationDelivery(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string) (bool, error)
 }
 
@@ -139,17 +139,14 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	}
 
 	if installation.State == "ready" {
-		versions, err := worker.lifecycle.VerifyInstallation(ctx, root, installation.RelativePath, snapshot.PackageKind, snapshot.ReleaseIdentity, worker.platform.GOOS)
+		verified, err := worker.lifecycle.VerifyInstallationVerified(ctx, root, installation.RelativePath, snapshot.PackageKind, snapshot.ReleaseIdentity, worker.platform.GOOS)
 		if err != nil {
 			return worker.failWithStaging(ctx, operation, installation, "verify", err, snapshot.ToolsRoot)
 		}
-		installation.ExecutableVersions, err = json.Marshal(versions)
-		if err != nil {
-			return err
+		if installation.Version != verified.Version {
+			return worker.failWithStaging(ctx, operation, installation, "verify", fmt.Errorf("ready installation canonical version changed"), snapshot.ToolsRoot)
 		}
-		verifiedAt := time.Now().UTC()
-		installation.VerifiedAt = &verifiedAt
-		return worker.finish(ctx, operation, installation, root, snapshot)
+		return worker.finish(ctx, operation, installation, root, snapshot, verified)
 	}
 	staging, err := tools.EnsureOperationStaging(root, operation.ID)
 	if err != nil {
@@ -272,7 +269,7 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 		return err
 	}
 	candidateRoot := filepath.Join(staging, "candidate")
-	_, _, err = worker.lifecycle.Materialize(ctx, extracted, candidateRoot, snapshot.PackageKind, snapshot.ReleaseIdentity, tools.MaterializeOptions{
+	_, _, err = worker.lifecycle.MaterializeVerified(ctx, extracted, candidateRoot, snapshot.PackageKind, snapshot.ReleaseIdentity, tools.MaterializeOptions{
 		GOOS: worker.platform.GOOS, GOARCH: worker.platform.GOARCH,
 		Progress: func(copied int64) {
 			_ = worker.operations.ProgressForDelivery(ctx, operation, "materialize", downloadedBytes+copied, nil)
@@ -288,7 +285,7 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	return worker.resumeInstallPublication(ctx, operation, installation, snapshot, root, staging, publication)
 }
 
-func (worker *InstallationWorker) finish(ctx context.Context, operation *persistence.Operation, installation *persistence.ToolInstallation, root string, snapshot service.InstallInputSnapshot) error {
+func (worker *InstallationWorker) finish(ctx context.Context, operation *persistence.Operation, installation *persistence.ToolInstallation, root string, snapshot service.InstallInputSnapshot, verification tools.VerificationResult) error {
 	activeSetting := settings.ActiveFFmpegInstallationKey
 	if snapshot.PackageKind == tools.PackageFPCalc {
 		activeSetting = settings.ActiveFPCalcInstallationKey
@@ -302,7 +299,7 @@ func (worker *InstallationWorker) finish(ctx context.Context, operation *persist
 	}
 	finalized, err := worker.repository.FinalizeInstallation(ctx, operation.ID, operation.Attempt, *operation.RiverJobID,
 		installation.ID, string(snapshot.PackageKind), worker.platform.GOOS, worker.platform.GOARCH,
-		activeSetting, installation.ExecutableVersions, verifiedAt)
+		activeSetting, verification, verifiedAt)
 	if err != nil {
 		return err
 	}

@@ -77,12 +77,12 @@ func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 		separatorPath = `ffmpeg\release-1`
 	}
 	frozenRelativePath := filepath.ToSlash(separatorPath)
-	if err := NewSetupManagerRepository(db).CreateInstallation(ctx, &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: separatorPath, State: "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}); err != nil {
+	if err := NewSetupManagerRepository(db).CreateInstallation(ctx, &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: separatorPath, State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}); err != nil {
 		t.Fatal(err)
 	}
 	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffmpeg", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffprobe", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffprobeBanner},
 	}
 	newRewriteRequest := func(position uuid.UUID, path string) PublicationAdmission {
 		input := publicationInputsFixture(t, "rewrite")

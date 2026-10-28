@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -191,25 +192,28 @@ func insertScanHoldInstallation(t *testing.T, ctx context.Context, database *bun
 		t.Fatalf("create protected executable fixture: %v", err)
 	}
 	verified := time.Now().UTC()
-	versions, err := json.Marshal(map[string]string{executableName: banner})
-	if err != nil {
-		t.Fatalf("encode verified executable versions: %v", err)
-	}
-	installation := &persistence.ToolInstallation{
-		ID: uuid.New(), PackageKind: kind, PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH,
-		SourceName: "scan-hold-test", ReleaseIdentity: release, RelativePath: relativePath,
-		State: "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified,
-	}
-	if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
-		t.Fatalf("insert verified %s installation: %v", kind, err)
-	}
 	version := "7.1.2"
 	if kind == "fpcalc" {
 		version = "1.5.0"
 	}
+	versions := verifiedExecutableVersionMetadata(t, tools.PackageKind(kind), runtime.GOOS, version)
+	installation := &persistence.ToolInstallation{
+		ID: uuid.New(), PackageKind: kind, PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH,
+		SourceName: "scan-hold-test", ReleaseIdentity: release, RelativePath: relativePath,
+		State: "ready", ExecutableVerificationOutput: versions,
+		Version:            canonicalVerifiedFixtureVersion(t, tools.PackageKind(kind), version),
+		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified,
+	}
+	if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
+		t.Fatalf("insert verified %s installation: %v", kind, err)
+	}
+	selectionVersion := version
+	if kind == "ffmpeg" {
+		selectionVersion = canonicalVerifiedFixtureVersion(t, tools.PackageFFmpeg, version)
+	}
 	return persistence.SourceAnalysisToolSelection{
 		PackageKind: kind, InstallationID: installation.ID, RelativePath: relativePath,
-		Executable: executableName, Version: version, VersionBanner: banner,
+		Executable: executableName, Version: selectionVersion, VersionBanner: banner,
 	}
 }
 

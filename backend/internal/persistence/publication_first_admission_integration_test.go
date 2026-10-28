@@ -114,11 +114,11 @@ func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 			if runtime.GOOS == "windows" {
 				installPath = `ffmpeg\release-1`
 			}
-			if err := repo.CreateInstallation(ctx, &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: installPath, State: "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}); err != nil {
+			if err := repo.CreateInstallation(ctx, &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: installPath, State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}); err != nil {
 				t.Fatal(err)
 			}
 			frozenPath := filepath.ToSlash(installPath)
-			selections := []SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner}, {PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner}}
+			selections := []SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffmpeg", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffmpegBanner}, {PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffprobe", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffprobeBanner}}
 			lossless, channels := true, 2
 			audioFacts := PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Channels: &channels, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}
 			input := PublicationInputs{Version: PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", InitialLyrics: &PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}, Audio: &PublicationAudioInput{WorkID: workID, RootID: rootID, LocationID: locationID, MediaVariantID: variantID, ProbeResultID: variantID, ConfiguredRootPath: rootPath, InventoryRootPath: rootPath, RelativePath: relative, SizeBytes: 42, MTime: now, AnalysisPolicyVersion: 1, FFProbeVersion: "ffprobe 1", AudioFacts: audioFacts}, Format: publication.AudioFormatSource, DesiredTags: map[string][]string{"TITLE": {"Fixture"}}, Tools: selections}
@@ -232,7 +232,7 @@ func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 			}
 			if scenario == "detached callback input" {
 				original, err := DecodePublicationInputs(request.FrozenInputs)
-				if err != nil || original.Tools[0].Version != "7.0" {
+				if err != nil || original.Tools[0].Version != "ffmpeg 7.0 + ffprobe 7.0" {
 					t.Fatalf("original frozen inputs mutated: %+v %v", original, err)
 				}
 			}

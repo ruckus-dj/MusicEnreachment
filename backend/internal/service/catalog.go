@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
@@ -15,6 +16,15 @@ type Catalog interface {
 type CatalogService struct {
 	catalog  Catalog
 	platform tools.Platform
+}
+
+// ToolCatalogErrorMessage exposes only classified, secret-free upstream diagnostics.
+func ToolCatalogErrorMessage(err error) string {
+	var rateLimit *tools.GitHubRateLimitError
+	if errors.As(err, &rateLimit) {
+		return rateLimit.Error()
+	}
+	return "upstream tool catalog is unavailable"
 }
 
 type ReleaseOption struct {

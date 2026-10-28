@@ -161,7 +161,8 @@ func TestSourceRootAndInstallationRowCoordination(t *testing.T) {
 	installation := &ToolInstallation{
 		ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "test", ReleaseIdentity: "release-1", RelativePath: "ffmpeg/release-1", State: "ready",
-		ExecutableVersions: json.RawMessage(`{"ffmpeg":"ffmpeg version 7.1","ffprobe":"ffprobe version 7.1"}`), ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
+		ExecutableVerificationOutput: json.RawMessage(`{"ffmpeg":"ffmpeg version 7.1","ffprobe":"ffprobe version 7.1"}`), ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
+		Version: "ffmpeg 7.1 + ffprobe 7.1",
 	}
 	if err := NewSetupManagerRepository(database).CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create installation: %v", err)

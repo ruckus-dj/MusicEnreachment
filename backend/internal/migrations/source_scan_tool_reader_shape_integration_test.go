@@ -33,8 +33,8 @@ func insertSourceScanReaderOperation(t *testing.T, ctx context.Context, database
 		installationID = uuid.New()
 		releaseIdentity := uuid.NewString()
 		if _, err := database.ExecContext(ctx, `INSERT INTO tool_installation
-			(id, package_kind, platform_goos, platform_goarch, source_name, release_identity, relative_path, state, verified_at)
-			VALUES (?, 'ffmpeg', 'linux', 'amd64', 'test', ?, ?, 'ready', ?)`,
+			(id, package_kind, platform_goos, platform_goarch, source_name, release_identity, relative_path, state, verified_at, version)
+			VALUES (?, 'ffmpeg', 'linux', 'amd64', 'test', ?, ?, 'ready', ?, 'ffmpeg 7.1 + ffprobe 7.1')`,
 			installationID, releaseIdentity, "ffmpeg/"+releaseIdentity, time.Now().UTC()); err != nil {
 			t.Fatalf("insert source scan reader tool installation: %v", err)
 		}

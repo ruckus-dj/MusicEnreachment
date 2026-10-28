@@ -73,3 +73,11 @@
 .setup-shell .setup-summary dt { color: var(--setup-muted); }
 .setup-shell .setup-summary dd { overflow-wrap: anywhere; }
 @media (max-width: 699px) { .setup-shell .setup-layout { grid-template-columns: minmax(0, 1fr); } }
+
+.setup-shell .setup-navigation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 20px; }
+.setup-shell .setup-metadata { display: grid; align-content: start; gap: 10px; }
+.setup-shell .setup-metadata > button, .setup-shell .setup-metadata > .react-aria-CheckboxField, .setup-shell .setup-metadata > .react-aria-RadioGroup { justify-self: start; }
+.setup-shell .setup-metadata .react-aria-TextField { width: 100%; }
+.setup-shell .setup-metadata .react-aria-TextField input { width: 100%; }
+.setup-shell .setup-metadata > .setup-navigation { justify-self: stretch; margin-top: 10px; }
+@media (max-width: 599px) { .setup-shell .setup-navigation { gap: 6px; } }

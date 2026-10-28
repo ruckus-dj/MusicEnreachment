@@ -380,7 +380,8 @@ func insertAnalysisInstallation(t *testing.T, ctx context.Context, database *bun
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		SourceName: "analysis-test", ReleaseIdentity: identity, RelativePath: relativePath,
-		State: "ready", ExecutableVersions: verifiedExecutableVersionMetadata(t, tools.PackageFFmpeg, "darwin", "7.1.2"),
+		State: "ready", ExecutableVerificationOutput: verifiedExecutableVersionMetadata(t, tools.PackageFFmpeg, "darwin", "7.1.2"),
+		Version:            canonicalVerifiedFixtureVersion(t, tools.PackageFFmpeg, "7.1.2"),
 		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &now,
 	}
 	if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
@@ -417,6 +418,22 @@ func verifiedExecutableVersionMetadata(t *testing.T, kind tools.PackageKind, goo
 		t.Fatalf("encode verified executable metadata: %v", err)
 	}
 	return encoded
+}
+
+// canonicalVerifiedFixtureVersion pairs explicit fixture evidence with the
+// canonical version expected for that same fixture. It does not synthesize
+// production metadata or fill missing installation values.
+func canonicalVerifiedFixtureVersion(t *testing.T, kind tools.PackageKind, version string) string {
+	t.Helper()
+	switch kind {
+	case tools.PackageFFmpeg:
+		return "ffmpeg " + version + " + ffprobe " + version
+	case tools.PackageFPCalc:
+		return version
+	default:
+		t.Fatalf("unsupported verified tool fixture kind %q", kind)
+		return ""
+	}
 }
 
 func insertMediaVariantRow(t *testing.T, ctx context.Context, database *bun.DB, sizeBytes int64, appliedOperationID uuid.UUID) uuid.UUID {

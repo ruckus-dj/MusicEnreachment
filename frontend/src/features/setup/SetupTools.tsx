@@ -17,6 +17,7 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { GitHubTokenForm } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
   type ManagedToolKind,
@@ -37,8 +38,12 @@ function savedIds(): string[] {
 
 export function SetupTools({
   onBlockedChange,
+  hasGitHubToken = false,
+  onGitHubTokenChanged,
 }: {
   onBlockedChange?: (blocked: boolean) => void;
+  hasGitHubToken?: boolean;
+  onGitHubTokenChanged?: () => void | Promise<void>;
 }) {
   const [ids, setIds] = useState(savedIds);
   const initialIds = useRef(ids);
@@ -218,7 +223,7 @@ export function SetupTools({
           {legacyConflict ? null : readyByKind(kind).length ? (
             readyByKind(kind).map((item) => (
               <p key={item.id} role="status">
-                {item.release_identity}: {item.active ? "Активна" : "Готова"}
+                {item.version}: {item.active ? "Активна" : "Готова"}
               </p>
             ))
           ) : (
@@ -317,6 +322,10 @@ export function SetupTools({
       )}
       {discovering && <p role="status">Загрузка операций…</p>}
       {pending && <p role="status">Выполняется запрос…</p>}
+      <GitHubTokenForm
+        hasToken={hasGitHubToken}
+        onChanged={onGitHubTokenChanged}
+      />
     </div>
   );
 }

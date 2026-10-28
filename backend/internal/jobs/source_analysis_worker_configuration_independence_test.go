@@ -23,10 +23,10 @@ func TestSourceAnalysisWorkerCombinedConfigFailuresStayStepLocal(t *testing.T) {
 	work := &persistence.SourceAnalysisWork{SizeBytes: 12}
 	operationID := uuid.New()
 
-	t.Run("invalid fpcalc metadata preserves probe config and fingerprint cache version", func(t *testing.T) {
+	t.Run("missing fpcalc canonical version preserves probe config and fingerprint step locality", func(t *testing.T) {
 		snapshot := persistence.SourceAnalysisOperationSnapshot{Tools: []persistence.SourceAnalysisToolSelection{
-			{InstallationID: uuid.New(), Executable: "ffprobe", RelativePath: "ffmpeg/8.0", Version: "8.0", VersionBanner: "ffprobe version 8.0"},
-			{InstallationID: uuid.New(), Executable: "fpcalc", RelativePath: "chromaprint/1.2.3", Version: "1.2.3", VersionBanner: "invalid banner"},
+			{InstallationID: uuid.New(), PackageKind: "ffmpeg", Executable: "ffprobe", RelativePath: "ffmpeg/8.0", Version: "ffmpeg 8.0 + ffprobe 8.0", VersionBanner: "ffprobe version 8.0"},
+			{InstallationID: uuid.New(), PackageKind: "fpcalc", Executable: "fpcalc", RelativePath: "chromaprint/1.2.3", VersionBanner: "invalid banner"},
 		}}
 		config, err := worker.preparerConfig(context.Background(), snapshot, work, operationID, 1, 2, persistence.SourceStepProbe, persistence.SourceStepFingerprint)
 		if err != nil {
@@ -35,8 +35,8 @@ func TestSourceAnalysisWorkerCombinedConfigFailuresStayStepLocal(t *testing.T) {
 		if config.ProbeExecutable == "" || config.ProbeFactory == nil || config.FFProbeVersion != "ffprobe version 8.0" {
 			t.Fatalf("valid probe config was lost: %+v", config)
 		}
-		if config.FPCalcVersion.Version != "1.2.3" || config.FingerprinterFactory == nil {
-			t.Fatalf("fingerprint cache/factory config unavailable: %+v", config)
+		if config.FPCalcVersion.Version != "" || config.FingerprinterFactory == nil {
+			t.Fatalf("missing canonical fingerprint authority was not kept step-local: %+v", config)
 		}
 		if _, err := config.FingerprinterFactory(config.FPCalcExecutable); err == nil {
 			t.Fatal("invalid fpcalc metadata unexpectedly allowed a runner")
@@ -45,8 +45,8 @@ func TestSourceAnalysisWorkerCombinedConfigFailuresStayStepLocal(t *testing.T) {
 
 	t.Run("invalid ffprobe path preserves fingerprint config", func(t *testing.T) {
 		snapshot := persistence.SourceAnalysisOperationSnapshot{Tools: []persistence.SourceAnalysisToolSelection{
-			{InstallationID: uuid.New(), Executable: "ffprobe", RelativePath: "../../outside", Version: "8.0"},
-			{InstallationID: uuid.New(), Executable: "fpcalc", RelativePath: "chromaprint/1.2.3", Version: "1.2.3", VersionBanner: "fpcalc version 1.2.3"},
+			{InstallationID: uuid.New(), PackageKind: "ffmpeg", Executable: "ffprobe", RelativePath: "../../outside", Version: "ffmpeg 8.0 + ffprobe 8.0"},
+			{InstallationID: uuid.New(), PackageKind: "fpcalc", Executable: "fpcalc", RelativePath: "chromaprint/1.2.3", Version: "1.2.3", VersionBanner: "fpcalc version 1.2.3"},
 		}}
 		config, err := worker.preparerConfig(context.Background(), snapshot, work, operationID, 1, 2, persistence.SourceStepProbe, persistence.SourceStepFingerprint)
 		if err != nil {

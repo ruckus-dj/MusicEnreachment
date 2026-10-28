@@ -36,11 +36,15 @@ func (failingSettingsStore) SetMany(context.Context, map[string]string) error {
 }
 
 func (store failingSettingsStore) Set(ctx context.Context, key, value string) error {
-	if key == settings.MusicBrainzVerifiedAtKey {
+	if key == settings.MusicBrainzVerifiedAtKey || key == settings.GitHubTokenKey {
 		return fmt.Errorf("database secret: private-credential")
 	}
 	return store.apiSettingsStore.Set(ctx, key, value)
 }
+
+type githubTokenCheckerFunc func(context.Context, string) error
+
+func (f githubTokenCheckerFunc) Check(ctx context.Context, token string) error { return f(ctx, token) }
 
 type successfulMusicBrainzChecker struct{}
 
@@ -133,6 +137,130 @@ func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 			t.Errorf("post-completion %s %s status=%d, want %d: %s", test.method, test.path, response.Code, http.StatusNotFound, response.Body.String())
 		}
 	}
+}
+
+func TestGitHubTokenValidationStorageAndSettingsResponse(t *testing.T) {
+	const oldToken, candidate, sentinel = "old-token", "candidate-token", "database secret: private-credential"
+	store := failingSettingsStore{apiSettingsStore{settings.GitHubTokenKey: oldToken}}
+	registry := settings.New(store, nil)
+	checks := 0
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil).
+		WithGitHubTokenChecker(githubTokenCheckerFunc(func(context.Context, string) error { checks++; return nil }))
+	handler := api.HandlerWithSetup(setup)
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	for _, path := range []string{"/settings/github/token"} {
+		response := request(http.MethodPut, path, `{"token":"`+candidate+`"}`)
+		if response.Code != http.StatusInternalServerError || strings.Contains(response.Body.String(), sentinel) || strings.Contains(response.Body.String(), candidate) {
+			t.Fatalf("save failure response = %d %s", response.Code, response.Body.String())
+		}
+		if store.apiSettingsStore[settings.GitHubTokenKey] != oldToken {
+			t.Fatalf("failed save changed prior token to %q", store.apiSettingsStore[settings.GitHubTokenKey])
+		}
+	}
+	if checks != 1 {
+		t.Fatalf("checker called %d times, want once", checks)
+	}
+	for _, path := range []string{"/settings", "/setup"} {
+		response := request(http.MethodGet, path, "")
+		if response.Code != http.StatusOK || strings.Contains(response.Body.String(), oldToken) || strings.Contains(response.Body.String(), `"token"`) {
+			t.Errorf("%s exposed token or failed: %d %s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestGitHubTokenEndpointValidationAndRateLimitResponses(t *testing.T) {
+	const secret = "candidate-secret-value"
+	store := apiSettingsStore{settings.GitHubTokenKey: "preserved-token"}
+	registry := settings.New(store, nil)
+	checks := 0
+	var checkErr error
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil).
+		WithGitHubTokenChecker(githubTokenCheckerFunc(func(context.Context, string) error { checks++; return checkErr }))
+	handler := api.HandlerWithSetup(setup)
+	send := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPut, "/settings/github/token", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	for _, body := range []string{`{"token":17}`, `{"token":"` + secret + `","unexpected":true}`, `{"token":"` + secret} {
+		response := send(body)
+		if response.Code < 400 || checks != 0 || store[settings.GitHubTokenKey] != "preserved-token" {
+			t.Fatalf("invalid request %q: status=%d checks=%d token=%q response=%s", body, response.Code, checks, store[settings.GitHubTokenKey], response.Body.String())
+		}
+		if strings.Contains(response.Body.String(), secret) {
+			t.Fatalf("invalid request leaked token: %s", response.Body.String())
+		}
+	}
+	for _, token := range []string{"", " token", "token value", strings.Repeat("x", 513)} {
+		response := send(`{"token":` + mustJSON(t, token) + `}`)
+		wantStatus := http.StatusBadRequest
+		if len(token) > 512 {
+			wantStatus = http.StatusUnprocessableEntity
+		}
+		if response.Code != wantStatus || checks != 0 || store[settings.GitHubTokenKey] != "preserved-token" {
+			t.Fatalf("malformed token %q: status=%d checks=%d response=%s", token, response.Code, checks, response.Body.String())
+		}
+	}
+	checkErr = &tools.GitHubRateLimitError{RetryAfter: "rate limit resets at 2030-01-01T00:00:00Z"}
+	response := send(`{"token":"` + secret + `"}`)
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "rate limit resets") || strings.Contains(response.Body.String(), secret) || store[settings.GitHubTokenKey] != "preserved-token" {
+		t.Fatalf("rate-limit response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestGitHubTokenOnlyReplacesStoredTokenAfterValidation(t *testing.T) {
+	store := apiSettingsStore{settings.GitHubTokenKey: "old-token"}
+	registry := settings.New(store, nil)
+	var checkerErr error
+	var checked string
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil).
+		WithGitHubTokenChecker(githubTokenCheckerFunc(func(_ context.Context, token string) error { checked = token; return checkerErr }))
+	handler := api.HandlerWithSetup(setup)
+	send := func(token string) *httptest.ResponseRecorder {
+		body, err := json.Marshal(map[string]string{"token": token})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodPut, "/settings/github/token", strings.NewReader(string(body)))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	checkerErr = tools.ErrGitHubTokenRejected
+	response := send("rejected-candidate")
+	if response.Code != http.StatusUnauthorized || checked != "rejected-candidate" || store[settings.GitHubTokenKey] != "old-token" {
+		t.Fatalf("rejected candidate: status=%d checked=%q stored=%q body=%s", response.Code, checked, store[settings.GitHubTokenKey], response.Body.String())
+	}
+	checkerErr = nil
+	response = send("validated-candidate")
+	if response.Code != http.StatusNoContent || checked != "validated-candidate" || store[settings.GitHubTokenKey] != "validated-candidate" {
+		t.Fatalf("validated candidate: status=%d checked=%q stored=%q body=%s", response.Code, checked, store[settings.GitHubTokenKey], response.Body.String())
+	}
+	if err := registry.CompleteSetup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	response = send("post-setup-candidate")
+	if response.Code != http.StatusNoContent || store[settings.GitHubTokenKey] != "post-setup-candidate" {
+		t.Fatalf("post-setup token update: status=%d stored=%q body=%s", response.Code, store[settings.GitHubTokenKey], response.Body.String())
+	}
+}
+
+func mustJSON(t *testing.T, value string) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestSaveRuntimeDistinguishesOmittedAndEmptyOutputDirectory(t *testing.T) {

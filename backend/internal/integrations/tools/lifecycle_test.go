@@ -28,6 +28,16 @@ func (runner fixedVersionRunner) Run(_ context.Context, _ string, _ ...string) (
 	return []byte(runner), nil
 }
 
+type executableVersionRunner struct{}
+
+func (executableVersionRunner) Run(_ context.Context, executable string, _ ...string) ([]byte, error) {
+	name := filepath.Base(executable)
+	if strings.Contains(name, "ffprobe") {
+		return []byte("ffprobe version 8.0"), nil
+	}
+	return []byte("ffmpeg version 8.0"), nil
+}
+
 func TestMaterializeRejectsSubstringVersionBeforeWritingTargets(t *testing.T) {
 	staging, root := t.TempDir(), t.TempDir()
 	writeExecutables(t, staging, "linux")
@@ -222,7 +232,7 @@ func TestMaterializeRequiresExactConflictConfirmationAndPreservesUnknownFiles(t 
 	}
 	writeExecutables(t, staging, "linux")
 
-	lifecycle := NewLifecycle(versionRunner{})
+	lifecycle := NewLifecycle(executableVersionRunner{})
 	if _, _, err := lifecycle.Materialize(context.Background(), staging, root, PackageFFmpeg, "8.0", MaterializeOptions{GOOS: "linux", GOARCH: "amd64"}); err == nil {
 		t.Fatal("materialization replaced an unknown target without confirmation")
 	}

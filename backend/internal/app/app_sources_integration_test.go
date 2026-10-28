@@ -448,7 +448,8 @@ func (fixture sourceApplicationFixture) provisionManagedFFprobe(t *testing.T) {
 		ID: uuid.New(), PackageKind: string(tools.PackageFFmpeg),
 		PlatformGOOS: fixture.platform.Platform.GOOS, PlatformGOARCH: fixture.platform.Platform.GOARCH,
 		SourceName: "btbn", ReleaseIdentity: release, RelativePath: testInstallationRelativePath(fixture.platform.Platform.GOOS, "ffmpeg", release),
-		State: "ready", ExecutableVersions: versions, VerifiedAt: &verifiedAt,
+		State: "ready", Version: "ffmpeg " + release + " + ffprobe " + release,
+		ExecutableVerificationOutput: versions, VerifiedAt: &verifiedAt,
 	}
 	if err := fixture.installer.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create the managed ffmpeg installation: %v", err)

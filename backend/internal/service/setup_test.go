@@ -73,13 +73,13 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	}
 	verifiedAt := time.Now().UTC()
 	installations.items[ffmpegID].VerifiedAt = &verifiedAt
-	installations.items[ffmpegID].ExecutableVersions = []byte(`{"ffmpeg":"ffmpeg version 8.0"}`)
+	installations.items[ffmpegID].ExecutableVerificationOutput = []byte(`{"ffmpeg":"ffmpeg version 8.0"}`)
 	installations.items[fpcalcID].VerifiedAt = &verifiedAt
-	installations.items[fpcalcID].ExecutableVersions = []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)
+	installations.items[fpcalcID].ExecutableVerificationOutput = []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)
 	if err := setup.Complete(ctx); err == nil {
 		t.Fatal("complete accepted FFmpeg without a verified ffprobe")
 	}
-	installations.items[ffmpegID].ExecutableVersions = []byte(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`)
+	installations.items[ffmpegID].ExecutableVerificationOutput = []byte(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`)
 	savedCaseSensitivity := store.data[settings.OutputCaseSensitiveKey]
 	if savedCaseSensitivity == "true" {
 		store.data[settings.OutputCaseSensitiveKey] = "false"

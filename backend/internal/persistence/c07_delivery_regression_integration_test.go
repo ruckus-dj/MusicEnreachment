@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
@@ -29,7 +30,7 @@ func TestC07ExplicitActivationRequiresCompletionAndReadyTarget(t *testing.T) {
 	if err := repo.ActivateInstallation(ctx, id, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey); err == nil {
 		t.Fatal("explicit activation before completion succeeded")
 	}
-	if err := repo.MarkInstallationReady(ctx, id, json.RawMessage(`{"ffmpeg":"synthetic"}`), time.Now().UTC()); err != nil {
+	if err := repo.MarkInstallationReady(ctx, id, json.RawMessage(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.NewInsert().Model(&persistence.AppSetting{Name: "setup_completed_at", Value: "done"}).Exec(ctx); err != nil {
@@ -59,7 +60,7 @@ func TestC07FinalizeActivatesOnlyBeforeSetupCompletion(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			settled, err := repo.FinalizeInstallation(ctx, op.ID, op.Attempt, *op.RiverJobID, *op.TargetInstallationID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, json.RawMessage(`{"ffmpeg":"synthetic"}`), time.Now().UTC())
+			settled, err := repo.FinalizeInstallation(ctx, op.ID, op.Attempt, *op.RiverJobID, *op.TargetInstallationID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, tools.VerificationResult{Version: "ffmpeg synthetic + ffprobe synthetic", Evidence: map[string]string{"ffmpeg": "ffmpeg version synthetic", "ffprobe": "ffprobe version synthetic"}}, time.Now().UTC())
 			if err != nil {
 				t.Fatalf("finalize: %v", err)
 			}
@@ -103,7 +104,7 @@ func TestC07StaleDeliveryCannotFailOrFinalizeRetryTarget(t *testing.T) {
 	if err != nil || changed {
 		t.Fatalf("stale fail changed=%v err=%v", changed, err)
 	}
-	activated, err := repo.FinalizeInstallation(ctx, op.ID, oldAttempt, oldJob, *op.TargetInstallationID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, json.RawMessage(`{"ffmpeg":"synthetic"}`), time.Now().UTC())
+	activated, err := repo.FinalizeInstallation(ctx, op.ID, oldAttempt, oldJob, *op.TargetInstallationID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, tools.VerificationResult{Version: "ffmpeg synthetic + ffprobe synthetic", Evidence: map[string]string{"ffmpeg": "ffmpeg version synthetic", "ffprobe": "ffprobe version synthetic"}}, time.Now().UTC())
 	if err == nil || activated {
 		t.Fatalf("stale finalize activated=%v err=%v", activated, err)
 	}

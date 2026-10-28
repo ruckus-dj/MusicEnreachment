@@ -126,7 +126,7 @@ func TestToolStepsUseOnlyTheirSelectedManagedExecutableTransiently(t *testing.T)
 		step, packageKind, executable, banner, version string
 		runtimeKey                                     func(uuid.UUID) settings.RuntimeSettings
 	}{
-		{step: "probe", packageKind: "ffmpeg", executable: "ffprobe", banner: "ffprobe version 8.0 Copyright", version: "8.0", runtimeKey: func(id uuid.UUID) settings.RuntimeSettings {
+		{step: "probe", packageKind: "ffmpeg", executable: "ffprobe", banner: "ffprobe version 8.0 Copyright", version: "ffmpeg 8.0 + ffprobe 8.0", runtimeKey: func(id uuid.UUID) settings.RuntimeSettings {
 			return settings.RuntimeSettings{ActiveFFmpegInstallation: id.String(), ActiveFPCalcInstallation: uuid.NewString()}
 		}},
 		{step: "fingerprint", packageKind: "fpcalc", executable: "fpcalc", banner: "fpcalc version 1.6.1 (FFmpeg Lavc62.11.100)", version: "1.6.1", runtimeKey: func(id uuid.UUID) settings.RuntimeSettings {
@@ -140,10 +140,14 @@ func TestToolStepsUseOnlyTheirSelectedManagedExecutableTransiently(t *testing.T)
 			root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
 			location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
 			work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, CurrentLocationID: &locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime, SHA256Enabled: true}
+			evidence := map[string]string{test.executable: test.banner}
+			if test.packageKind == "ffmpeg" {
+				evidence["ffmpeg"] = "ffmpeg version 8.0 Copyright"
+			}
 			installation := &persistence.ToolInstallation{
 				ID: installationID, PackageKind: test.packageKind, State: "ready", RelativePath: "managed/package-root",
-				PlatformGOOS: "linux", PlatformGOARCH: "amd64", VerifiedAt: new(time.Now()),
-				ExecutableVersions: mustJSON(t, map[string]string{test.executable: test.banner}),
+				PlatformGOOS: "linux", PlatformGOARCH: "amd64", Version: test.version, VerifiedAt: new(time.Now()),
+				ExecutableVerificationOutput: mustJSON(t, evidence),
 			}
 			repository := &sourceAnalysisStartRepositoryFixture{
 				detail: &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Work: work,
@@ -199,7 +203,7 @@ func TestFingerprintRetryAndRerunDoNotDependOnProbeOrMatchingEligibility(t *test
 			root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
 			location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime, ProbeStatus: persistence.SourceProbeStatusNoAudio}
 			work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, CurrentLocationID: &locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
-			installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "fpcalc", State: "ready", RelativePath: "fpcalc/1.6.1", PlatformGOOS: "linux", PlatformGOARCH: "amd64", VerifiedAt: new(time.Now()), ExecutableVersions: []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)}
+			installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "fpcalc", State: "ready", RelativePath: "fpcalc/1.6.1", PlatformGOOS: "linux", PlatformGOARCH: "amd64", Version: "1.6.1", VerifiedAt: new(time.Now()), ExecutableVerificationOutput: []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)}
 			repository := &sourceAnalysisStartRepositoryFixture{detail: &persistence.SourceLocationDetailSnapshot{
 				Root: root, Location: location, Work: work, MatchingEligible: false,
 				Steps: []persistence.SourceAnalysisStep{{WorkID: workID, Step: "probe", State: "failed"}, {WorkID: workID, Step: "fingerprint", State: test.priorFingerprintState}},
@@ -233,7 +237,7 @@ func TestRetryOperationUsesCurrentToolsWithoutPersistingToolPins(t *testing.T) {
 	step := string(persistence.SourceStepFingerprint)
 	rerun, shaEnabled, cacheOnly := false, true, false
 	tool := persistence.SourceAnalysisToolSelection{PackageKind: "fpcalc", InstallationID: oldToolID, RelativePath: "fpcalc/old", Executable: "fpcalc", Version: "1.5.1", VersionBanner: "fpcalc version 1.5.1"}
-	probeTool := persistence.SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/old", Executable: "ffprobe", Version: "7.1", VersionBanner: "ffprobe version 7.1"}
+	probeTool := persistence.SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/old", Executable: "ffprobe", Version: "ffmpeg 7.1 + ffprobe 7.1", VersionBanner: "ffprobe version 7.1"}
 	raw, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
 		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion, Mode: persistence.SourceAnalysisModeSingleStep,
 		WorkIDs: []uuid.UUID{workID}, TargetWorkID: &workID, TargetStep: &step,
@@ -257,7 +261,7 @@ func TestRetryOperationUsesCurrentToolsWithoutPersistingToolPins(t *testing.T) {
 		normalizedWork: work, normalizedLocation: location,
 		detail: &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Work: work},
 		installation: &persistence.ToolInstallation{ID: currentToolID, PackageKind: "fpcalc", State: "ready", RelativePath: currentTool.RelativePath,
-			PlatformGOOS: "linux", PlatformGOARCH: "amd64", VerifiedAt: new(time.Now()), ExecutableVersions: []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)},
+			PlatformGOOS: "linux", PlatformGOARCH: "amd64", Version: "1.6.1", VerifiedAt: new(time.Now()), ExecutableVerificationOutput: []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)},
 	}
 	changedCurrent := sourceAnalysisStartRuntimeFixture(settings.RuntimeSettings{ActiveFPCalcInstallation: currentToolID.String(), ActiveFFmpegInstallation: uuid.NewString()})
 	analysis := NewSourceAnalysisOperations(repository, sourceAnalysisStartSetupFixture(true), changedCurrent, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, sourceAnalysisStartRiverFixture{})

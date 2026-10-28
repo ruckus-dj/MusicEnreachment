@@ -19,7 +19,9 @@ import type {
   SetupStateBody,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { DirectoryPicker } from "../../components/DirectoryPicker";
 import { SetupMetadata } from "./SetupMetadata";
+import { SetupSummary } from "./SetupSummary";
 import { SetupTools } from "./SetupTools";
 import "./setup.css";
 
@@ -49,6 +51,13 @@ function restoredStep(state: SetupStateBody) {
     ? Math.min(step, earliest(state))
     : earliest(state);
 }
+function knownFormat(
+  value: string,
+): SaveRuntimeBodyPublicationFormat | undefined {
+  return value === "source" || value === "mka" || value === "m4a"
+    ? value
+    : undefined;
+}
 
 export function SetupManager({
   onCompleted,
@@ -66,15 +75,14 @@ export function SetupManager({
     initialState.settings.output_directory,
   );
   const [format, setFormat] = useState<SaveRuntimeBodyPublicationFormat | "">(
-    initialState.settings.publication_format === "source" ||
-      initialState.settings.publication_format === "mka"
-      ? initialState.settings.publication_format
-      : "",
+    knownFormat(initialState.settings.publication_format) ?? "",
   );
   const [pending, setPending] = useState(false);
   const [toolsBlocked, setToolsBlocked] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
+  const [browseField, setBrowseField] = useState<"tools" | "output">();
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
   const updateToolsBlocked = useCallback((blocked: boolean) => {
@@ -98,11 +106,8 @@ export function SetupManager({
     setState(response.data);
     setToolsDirectory(response.data.settings.tools_directory);
     setOutputDirectory(response.data.settings.output_directory);
-    if (
-      response.data.settings.publication_format === "source" ||
-      response.data.settings.publication_format === "mka"
-    )
-      setFormat(response.data.settings.publication_format);
+    const freshFormat = knownFormat(response.data.settings.publication_format);
+    if (freshFormat) setFormat(freshFormat);
     return response.data;
   }
   async function advance() {
@@ -190,22 +195,37 @@ export function SetupManager({
                 <Label>Tools directory</Label>
                 <Input className="block w-full border p-2" />
               </TextField>
+              <button type="button" onClick={() => setBrowseField("tools")}>
+                Выбрать Tools directory
+              </button>
               <TextField value={outputDirectory} onChange={setOutputDirectory}>
                 <Label>Output directory</Label>
                 <Input className="block w-full border p-2" />
               </TextField>
+              <button type="button" onClick={() => setBrowseField("output")}>
+                Выбрать Output directory
+              </button>
               <p>
                 Пути относятся к серверу, а не к этому компьютеру. Output
                 directory должен быть пустым.
               </p>
             </div>
           )}
-          {step === 2 && <SetupTools onBlockedChange={updateToolsBlocked} />}
+          {step === 2 && (
+            <SetupTools
+              onBlockedChange={updateToolsBlocked}
+              hasGitHubToken={state.settings.has_github_token}
+              onGitHubTokenChanged={async () => {
+                await refresh();
+              }}
+            />
+          )}
           {step === 3 && (
             <RadioGroup
               value={format}
               onChange={(value) => {
-                if (value === "source" || value === "mka") setFormat(value);
+                if (value === "source" || value === "mka" || value === "m4a")
+                  setFormat(value);
               }}
             >
               <Label>Publication format</Label>
@@ -215,6 +235,9 @@ export function SetupManager({
               <RadioField value="mka">
                 <RadioButton>MKA remux</RadioButton>
               </RadioField>
+              <RadioField value="m4a">
+                <RadioButton>M4A</RadioButton>
+              </RadioField>
             </RadioGroup>
           )}
           {step === 4 && (
@@ -222,65 +245,12 @@ export function SetupManager({
               state={state}
               refresh={refresh}
               onContinue={() => navigate(5)}
+              onBack={() => navigate(3)}
             />
           )}
           {step === 5 && (
             <div>
-              <dl className="setup-summary">
-                <div>
-                  <dt>Платформа</dt>
-                  <dd>
-                    {state.platform.goos}/{state.platform.goarch}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Инструменты</dt>
-                  <dd>{state.settings.tools_directory}</dd>
-                </div>
-                <div>
-                  <dt>Публикация</dt>
-                  <dd>{state.settings.output_directory}</dd>
-                </div>
-                <div>
-                  <dt>Формат</dt>
-                  <dd>{state.settings.publication_format}</dd>
-                </div>
-                <div>
-                  <dt>FFmpeg</dt>
-                  <dd>
-                    {state.settings.active_ffmpeg_installation_id ||
-                      "Не активен"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>fpcalc</dt>
-                  <dd>
-                    {state.settings.active_fpcalc_installation_id ||
-                      "Не активен"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>MusicBrainz</dt>
-                  <dd>
-                    {state.settings.musicbrainz_verified_at || "Не проверен"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>LRCLIB</dt>
-                  <dd>
-                    {state.settings.lrclib_enabled ? "Включён" : "Выключен"}
-                  </dd>
-                </div>
-              </dl>
-              <p>
-                Серверная проверка:{" "}
-                {state.configuration_health.healthy ? "Готово" : "Не готово"}
-              </p>
-              <ul>
-                {state.configuration_health.problems?.map((problem) => (
-                  <li key={problem}>{problem}</li>
-                ))}
-              </ul>
+              <SetupSummary key={summaryRefreshToken} state={state} />
               <AppButton
                 isDisabled={pending}
                 onPress={() => {
@@ -298,22 +268,22 @@ export function SetupManager({
           )}
           {notice && <p role="status">{notice}</p>}
           {pending && <p role="status">Выполняется запрос…</p>}
-          <div className="mt-5 flex justify-between">
-            <AppButton
-              isDisabled={step === 0 || pending}
-              onPress={() => navigate(step - 1)}
-            >
-              Назад
-            </AppButton>
-            {step !== 4 && (
+          {step !== 4 && (
+            <div className="setup-navigation">
+              <AppButton
+                isDisabled={step === 0 || pending}
+                onPress={() => navigate(step - 1)}
+              >
+                Назад
+              </AppButton>
               <AppButton
                 isDisabled={pending || (step === 2 && toolsBlocked)}
                 onPress={advance}
               >
-                {step === 5 ? "Завершить Setup" : "Продолжить"}
+                {step === 5 ? "Завершить настройку" : "Продолжить"}
               </AppButton>
-            )}
-          </div>
+            </div>
+          )}
         </div>
         <aside className="setup-panel setup-help" aria-label="О текущем шаге">
           <h2>Важно знать</h2>
@@ -340,7 +310,9 @@ export function SetupManager({
           {step === 3 && (
             <p>
               Исходный формат сохраняет контейнер. MKA выполняет remux без
-              перекодирования.
+              перекодирования. M4A сохраняет AAC и ALAC без перекодирования;
+              другие lossless кодируются в ALAC, другие lossy — в AAC с
+              потерями.
             </p>
           )}
           {step === 4 && (
@@ -358,6 +330,16 @@ export function SetupManager({
           )}
         </aside>
       </div>
+      <DirectoryPicker
+        open={browseField !== undefined}
+        initialPath={browseField === "tools" ? toolsDirectory : outputDirectory}
+        onSelect={(path) =>
+          browseField === "tools"
+            ? setToolsDirectory(path)
+            : setOutputDirectory(path)
+        }
+        onClose={() => setBrowseField(undefined)}
+      />
     </section>
   );
   async function verifySummary() {
@@ -365,6 +347,7 @@ export function SetupManager({
     setError("");
     try {
       await refresh();
+      setSummaryRefreshToken((token) => token + 1);
       setNotice("Состояние сервера обновлено.");
     } catch (reason) {
       setError(errorMessage(reason, "Неизвестная ошибка."));

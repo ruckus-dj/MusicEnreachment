@@ -204,10 +204,10 @@ func pinnedRepoFor(root, dir string) *pinnedToolRepo {
 	now := time.Now()
 	return &pinnedToolRepo{
 		root: root, valid: true,
-		installation: &persistence.ToolInstallation{ID: id, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", RelativePath: "ffmpeg/release-1", State: "ready", VerifiedAt: &now, ExecutableVersions: versions},
+		installation: &persistence.ToolInstallation{ID: id, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", RelativePath: "ffmpeg/release-1", Version: "ffmpeg 7.0 + ffprobe 7.0", State: "ready", VerifiedAt: &now, ExecutableVerificationOutput: versions},
 		selections: []persistence.SourceAnalysisToolSelection{
-			{PackageKind: "ffmpeg", InstallationID: id, RelativePath: "ffmpeg/release-1", Executable: "ffmpeg", Version: "7.0", VersionBanner: "ffmpeg version 7.0 build"},
-			{PackageKind: "ffmpeg", InstallationID: id, RelativePath: "ffmpeg/release-1", Executable: "ffprobe", Version: "7.0", VersionBanner: "ffprobe version 7.0 build"},
+			{PackageKind: "ffmpeg", InstallationID: id, RelativePath: "ffmpeg/release-1", Executable: "ffmpeg", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: "ffmpeg version 7.0 build"},
+			{PackageKind: "ffmpeg", InstallationID: id, RelativePath: "ffmpeg/release-1", Executable: "ffprobe", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: "ffprobe version 7.0 build"},
 		},
 	}
 }

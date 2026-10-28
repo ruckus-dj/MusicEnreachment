@@ -144,7 +144,7 @@ func (repository *workerRepository) MarkInstallationReady(_ context.Context, id 
 		return err
 	}
 	installation.State = "ready"
-	installation.ExecutableVersions = versions
+	installation.ExecutableVerificationOutput = versions
 	installation.VerifiedAt = &verifiedAt
 	return repository.readyCommittedError
 }
@@ -158,7 +158,7 @@ func (repository *workerRepository) MarkInstallationFailed(_ context.Context, id
 	return nil
 }
 
-func (repository *workerRepository) FinalizeInstallation(_ context.Context, operationID uuid.UUID, attempt int, jobID int64, installationID uuid.UUID, _, _, _, _ string, versions json.RawMessage, verifiedAt time.Time) (bool, error) {
+func (repository *workerRepository) FinalizeInstallation(_ context.Context, operationID uuid.UUID, attempt int, jobID int64, installationID uuid.UUID, _, _, _, _ string, verification tools.VerificationResult, verifiedAt time.Time) (bool, error) {
 	if repository.operation == nil || repository.operation.ID != operationID || repository.operation.Kind != "install" || repository.operation.Attempt != attempt ||
 		repository.operation.RiverJobID == nil || *repository.operation.RiverJobID != jobID ||
 		repository.operation.TargetInstallationID == nil || *repository.operation.TargetInstallationID != installationID {
@@ -177,8 +177,13 @@ func (repository *workerRepository) FinalizeInstallation(_ context.Context, oper
 	if err != nil {
 		return false, err
 	}
+	versions, err := verification.MarshalEvidence()
+	if err != nil {
+		return false, err
+	}
 	installation.State = "ready"
-	installation.ExecutableVersions = versions
+	installation.ExecutableVerificationOutput = versions
+	installation.Version = verification.Version
 	installation.VerifiedAt = &verifiedAt
 	if repository.readyCommittedError != nil {
 		return false, repository.readyCommittedError
@@ -644,7 +649,13 @@ func (ffmpegWorkerRunner) Run(_ context.Context, executable string, args ...stri
 	if len(args) != 1 || args[0] != "-version" {
 		return nil, errors.New("unexpected command arguments")
 	}
-	return []byte(filepath.Base(executable) + " version 8.0"), nil
+	base := filepath.Base(executable)
+	for _, logicalName := range []string{"ffmpeg", "ffprobe"} {
+		if strings.Contains(base, logicalName) {
+			return []byte(logicalName + " version 8.0"), nil
+		}
+	}
+	return nil, fmt.Errorf("unexpected executable %q", base)
 }
 
 func TestInstallationWorkerResumesPartiallyPublishedFFmpeg(t *testing.T) {

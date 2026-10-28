@@ -188,7 +188,7 @@ func incomingMatchFingerprintTool(t *testing.T, ctx context.Context, db *bun.DB)
 		return insertVerifiedAnalysisTool(t, ctx, db, "fpcalc", "fpcalc", "1.5.1", "fpcalc version 1.5.1")
 	}
 	var versions map[string]string
-	if err := json.Unmarshal(installation.ExecutableVersions, &versions); err != nil {
+	if err := json.Unmarshal(installation.ExecutableVerificationOutput, &versions); err != nil {
 		t.Fatalf("decode verified fpcalc installation metadata: %v", err)
 	}
 	return persistence.SourceAnalysisToolSelection{

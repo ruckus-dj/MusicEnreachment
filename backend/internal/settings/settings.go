@@ -36,6 +36,7 @@ const (
 	SetupCompletedAtKey              = "setup_completed_at"
 	SourceFileConcurrencyKey         = "source_file_concurrency"
 	AcoustIDApplicationKey           = "acoustid_application_key"
+	GitHubTokenKey                   = "github_token"
 	MusicBrainzSelfHostedThrottleKey = "musicbrainz_self_hosted_throttle"
 	MusicBrainzSelfHostedDelayKey    = "musicbrainz_self_hosted_delay_seconds"
 )
@@ -118,8 +119,32 @@ type RuntimeSettings struct {
 	OutputCaseSensitive               *bool
 	OutputUnicodeNormalization        string
 	HasAcoustIDApplicationKey         bool
+	HasGitHubToken                    bool
 	MusicBrainzSelfHostedThrottle     bool
 	MusicBrainzSelfHostedDelaySeconds float64
+}
+
+func (r *Registry) ReadGitHubToken(ctx context.Context) (string, bool, error) {
+	return r.store.Get(ctx, GitHubTokenKey)
+}
+
+func (r *Registry) HasGitHubToken(ctx context.Context) (bool, error) {
+	_, present, err := r.ReadGitHubToken(ctx)
+	return present, err
+}
+
+func (r *Registry) SetGitHubToken(ctx context.Context, token string) error {
+	return r.store.Set(ctx, GitHubTokenKey, token)
+}
+
+func (r *Registry) DeleteGitHubToken(ctx context.Context) error {
+	store, ok := r.store.(interface {
+		Delete(context.Context, string) error
+	})
+	if !ok {
+		return fmt.Errorf("delete GitHub token is unavailable")
+	}
+	return store.Delete(ctx, GitHubTokenKey)
 }
 
 // RuntimeUpdate selects the validated runtime values to change in one write.
@@ -741,6 +766,10 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	hasGitHubToken, err := r.HasGitHubToken(ctx)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	selfHostedThrottle, _, err := readSetting(ctx, r.store, musicBrainzSelfHostedThrottleSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
@@ -766,6 +795,7 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 		OutputCaseSensitive:               caseSensitive,
 		OutputUnicodeNormalization:        unicodeNormalization,
 		HasAcoustIDApplicationKey:         hasAcoustIDKey,
+		HasGitHubToken:                    hasGitHubToken,
 		MusicBrainzSelfHostedThrottle:     selfHostedThrottle,
 		MusicBrainzSelfHostedDelaySeconds: selfHostedDelay,
 	}, nil

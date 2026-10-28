@@ -23,7 +23,7 @@ type interruptedOperationRepository interface {
 	ListOperations(context.Context, ...string) ([]persistence.Operation, error)
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
-	FinalizeInstallation(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string, string, string, json.RawMessage, time.Time) (bool, error)
+	FinalizeInstallation(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string, string, string, tools.VerificationResult, time.Time) (bool, error)
 	FailInstallationDelivery(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string) (bool, error)
 }
 
@@ -648,7 +648,7 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 			return true, worker.rollbackInstallPublication(ctx, operation, installation, root, staging, publication)
 		}
 	}
-	versions, err := lifecycle.VerifyInstallation(ctx, root, installation.RelativePath, tools.PackageKind(installation.PackageKind), installation.ReleaseIdentity, installation.PlatformGOOS)
+	verified, err := lifecycle.VerifyInstallationVerified(ctx, root, installation.RelativePath, tools.PackageKind(installation.PackageKind), installation.ReleaseIdentity, installation.PlatformGOOS)
 	if err != nil {
 		if ctx.Err() != nil || publication == nil {
 			return false, err
@@ -659,11 +659,6 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 		}
 		return true, worker.rollbackInstallPublication(ctx, operation, installation, root, staging, publication)
 	}
-	versionsJSON, err := json.Marshal(versions)
-	if err != nil {
-		return false, err
-	}
-	installation.ExecutableVersions = versionsJSON
 	verifiedAt := time.Now().UTC()
 	if installation.VerifiedAt != nil {
 		verifiedAt = *installation.VerifiedAt
@@ -677,7 +672,7 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 	}
 	finalized, err := repository.FinalizeInstallation(ctx, operation.ID, operation.Attempt, *operation.RiverJobID,
 		installation.ID, string(snapshot.PackageKind), installation.PlatformGOOS, installation.PlatformGOARCH,
-		activeSetting, versionsJSON, verifiedAt)
+		activeSetting, verified, verifiedAt)
 	if err != nil {
 		return false, err
 	}

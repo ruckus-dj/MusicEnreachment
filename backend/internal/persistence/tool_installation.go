@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/uptrace/bun"
 )
 
@@ -256,16 +258,45 @@ func (repository *ToolInstallationRepository) MarkInstallationFailed(ctx context
 // platform and updates its package's active setting in the same transaction.
 
 func (repository *ToolInstallationRepository) MarkInstallationReady(ctx context.Context, id uuid.UUID, versions json.RawMessage, verifiedAt time.Time) error {
-	result, err := repository.db.NewUpdate().Model((*ToolInstallation)(nil)).
-		Set("state = 'ready'").Set("executable_versions = ?", versions).Set("verified_at = ?", verifiedAt).
-		Set("updated_at = ?", verifiedAt).Where("id = ?", id).Where("state = 'preparing'").Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("mark tool installation ready: %w", err)
+	var evidence map[string]string
+	if err := json.Unmarshal(versions, &evidence); err != nil {
+		return fmt.Errorf("mark tool installation ready: decode fresh verification output: %w", err)
 	}
-	if count, _ := result.RowsAffected(); count != 1 {
-		return fmt.Errorf("mark tool installation ready: installation must exist and be preparing")
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		installation, err := repository.GetInstallationForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		canonical, err := tools.CanonicalPackageVersion(evidence, tools.PackageKind(installation.PackageKind), installation.PlatformGOOS)
+		if err != nil {
+			return fmt.Errorf("mark tool installation ready: %w", err)
+		}
+		if installation.State == "ready" {
+			if installation.Version != canonical || !sameVerificationEvidence(installation.ExecutableVerificationOutput, versions) {
+				return fmt.Errorf("mark tool installation ready: ready installation canonical identity changed")
+			}
+			return nil
+		}
+		if installation.State != "preparing" {
+			return fmt.Errorf("mark tool installation ready: installation must be preparing or ready")
+		}
+		if _, err := tx.NewUpdate().Model((*ToolInstallation)(nil)).
+			Set("state = 'ready'").Set("executable_verification_output = ?", versions).Set("version = ?", canonical).Set("verified_at = ?", verifiedAt).
+			Set("updated_at = ?", verifiedAt).Where("id = ?", id).Where("state = 'preparing'").Exec(ctx); err != nil {
+			return fmt.Errorf("mark tool installation ready: %w", err)
+		}
+		return nil
+	})
+}
+
+func sameVerificationEvidence(left, right json.RawMessage) bool {
+	var leftEvidence, rightEvidence map[string]string
+	if json.Unmarshal(left, &leftEvidence) != nil || json.Unmarshal(right, &rightEvidence) != nil {
+		return false
 	}
-	return nil
+	leftCanonical, leftErr := json.Marshal(leftEvidence)
+	rightCanonical, rightErr := json.Marshal(rightEvidence)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftCanonical, rightCanonical)
 }
 
 func (repository *ToolInstallationRepository) UpdateInstallation(ctx context.Context, installation *ToolInstallation) error {

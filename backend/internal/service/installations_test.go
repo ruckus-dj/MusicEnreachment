@@ -50,9 +50,9 @@ type installationVerifierFixture struct {
 	calls int
 }
 
-func (verifier *installationVerifierFixture) VerifyInstallation(context.Context, string, string, tools.PackageKind, string, string) (map[string]string, error) {
+func (verifier *installationVerifierFixture) VerifyInstallationVerified(context.Context, string, string, tools.PackageKind, string, string) (tools.VerificationResult, error) {
 	verifier.calls++
-	return nil, verifier.err
+	return tools.VerificationResult{}, verifier.err
 }
 
 func TestActivationDoesNotChangeActiveSelectionWhenBinaryVerificationFails(t *testing.T) {

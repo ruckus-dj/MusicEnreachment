@@ -230,19 +230,19 @@ func (c transitionCatalog) Resolve(_ context.Context, _ tools.PackageKind, _ too
 
 type transitionVerifier struct{}
 
-func (transitionVerifier) VerifyInstallation(_ context.Context, root, relative string, _ tools.PackageKind, _ string, _ string) (map[string]string, error) {
+func (transitionVerifier) VerifyInstallationVerified(_ context.Context, root, relative string, _ tools.PackageKind, _ string, _ string) (tools.VerificationResult, error) {
 	executable := "fpcalc"
 	if runtime.GOOS == "windows" {
 		executable += ".exe"
 	}
 	info, err := os.Stat(filepath.Join(root, relative, executable))
 	if err != nil {
-		return nil, err
+		return tools.VerificationResult{}, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, os.ErrInvalid
+		return tools.VerificationResult{}, os.ErrInvalid
 	}
-	return map[string]string{executable: "verified"}, nil
+	return tools.VerificationResult{Version: "1.6.1"}, nil
 }
 
 func createTransitionInstallation(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, root, packageKind, release string, active bool) *persistence.ToolInstallation {
@@ -259,7 +259,7 @@ func createTransitionInstallation(t *testing.T, ctx context.Context, repository 
 	if runtime.GOOS == "windows" {
 		executable += ".exe"
 	}
-	versions, err := json.Marshal(map[string]string{executable: "verified"})
+	versions, err := json.Marshal(map[string]string{executable: "fpcalc version 1.6.1"})
 	if err != nil {
 		t.Fatal(err)
 	}

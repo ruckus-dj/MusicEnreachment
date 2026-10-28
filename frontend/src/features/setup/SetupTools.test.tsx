@@ -21,12 +21,12 @@ function installation(
   return {
     id,
     package_kind: packageKind,
-    release_identity: "1.0",
+    release_identity: "release-1.0",
     source_name: "trusted",
     state: "ready",
     active,
+    version: "1.0",
     created_at: "2026-09-28T00:00:00Z",
-    executable_versions: {},
   };
 }
 

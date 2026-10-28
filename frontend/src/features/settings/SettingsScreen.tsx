@@ -44,6 +44,8 @@ import type {
   UpdateSettingsBodyPublicationFormat,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { DirectoryPicker } from "../../components/DirectoryPicker";
+import { GitHubTokenForm } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
   preflightManagedToolInstall,
@@ -209,6 +211,7 @@ export function SettingsScreen() {
   const [installDialog, setInstallDialog] = useState<InstallPlan>();
   const [moveDialog, setMoveDialog] = useState(false);
   const [outputDialog, setOutputDialog] = useState(false);
+  const [directoryPicker, setDirectoryPicker] = useState<"output" | "move">();
   const [moveDirectory, setMoveDirectory] = useState("");
   const [removeOld, setRemoveOld] = useState(false);
   const [movePlan, setMovePlan] = useState<MovePlan>();
@@ -867,7 +870,7 @@ export function SettingsScreen() {
         204,
       );
       await Promise.all([refreshState(), refreshInstallations()]);
-      setNotice(`${kind} ${item.release_identity} активирован.`);
+      setNotice(`${kind} ${item.version} активирован.`);
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -895,7 +898,7 @@ export function SettingsScreen() {
         204,
       );
       await Promise.all([refreshState(), refreshInstallations()]);
-      setNotice(`${kind} ${item.release_identity} удалён.`);
+      setNotice(`${kind} ${item.version} удалён.`);
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -1098,6 +1101,9 @@ export function SettingsScreen() {
                   }
                 />
               </label>
+              <AppButton onPress={() => setDirectoryPicker("output")}>
+                Обзор каталогов сервера
+              </AppButton>
               <label>
                 Publication format
                 <select
@@ -1598,6 +1604,12 @@ export function SettingsScreen() {
             aria-labelledby="managed-title"
             className="setup-panel settings-panel"
           >
+            <GitHubTokenForm
+              hasToken={state.settings.has_github_token}
+              onChanged={async () => {
+                await refreshState();
+              }}
+            />
             <h2 id="managed-title">Managed tools</h2>
             <p>Последняя успешная проверка каталога: {persistedTime}</p>
             {catalogError && (
@@ -1634,9 +1646,7 @@ export function SettingsScreen() {
                       {installed
                         .filter((item) => item.active)
                         .map((item) => (
-                          <li key={item.id}>
-                            {item.release_identity} — активна
-                          </li>
+                          <li key={item.id}>{item.version} — активна</li>
                         ))}
                       {!installed.some((item) => item.active) && (
                         <li>Нет активной версии</li>
@@ -1646,7 +1656,7 @@ export function SettingsScreen() {
                     <ul>
                       {installed.map((item) => (
                         <li key={item.id}>
-                          {item.release_identity} ({item.state}){" "}
+                          {item.version} ({item.state}){" "}
                           {item.active && "— активна"}
                           <AppButton
                             isDisabled={
@@ -1658,7 +1668,7 @@ export function SettingsScreen() {
                             }
                             onPress={() => void activate(item, kind)}
                           >
-                            Активировать {item.release_identity}
+                            Активировать {item.version}
                           </AppButton>
                           <AppButton
                             isDisabled={
@@ -1669,7 +1679,7 @@ export function SettingsScreen() {
                             }
                             onPress={() => void remove(item, kind)}
                           >
-                            Удалить {item.release_identity}
+                            Удалить {item.version}
                           </AppButton>
                         </li>
                       ))}
@@ -1873,6 +1883,9 @@ export function SettingsScreen() {
               onChange={(event) => setMoveDirectoryValue(event.target.value)}
             />
           </label>
+          <AppButton onPress={() => setDirectoryPicker("move")}>
+            Обзор каталогов сервера
+          </AppButton>
           <label className="settings-inline">
             <input
               type="checkbox"
@@ -1921,6 +1934,20 @@ export function SettingsScreen() {
           </AppButton>
         </dialog>
       )}
+      <DirectoryPicker
+        open={directoryPicker !== undefined}
+        initialPath={
+          directoryPicker === "move"
+            ? moveDirectory
+            : (outputDirectory.value ?? state?.settings.output_directory ?? "")
+        }
+        onSelect={(path) =>
+          directoryPicker === "move"
+            ? setMoveDirectoryValue(path)
+            : outputDirectory.update(path)
+        }
+        onClose={() => setDirectoryPicker(undefined)}
+      />
     </section>
   );
 }

@@ -110,8 +110,8 @@ func TestReadSourceLocationDetailIncludesSelectedAnalysisAndBatchHoldWithPostgre
 	}
 	newActiveFPCalc := readyFPCalc(t, "fpcalc-next", "1.7.0")
 	newActiveFPCalcID := newActiveFPCalc.ID
-	if _, err := writer.ExecContext(ctx, `INSERT INTO tool_installation(id,package_kind,platform_goos,platform_goarch,source_name,release_identity,relative_path,state,executable_versions,artifact_identities,verified_at)
-		VALUES(?, 'fpcalc', 'darwin', 'arm64', 'analysis-test', ?, ?, 'ready', ?::jsonb, '{}'::jsonb, ?)`, newActiveFPCalcID, newActiveFPCalc.ReleaseIdentity, newActiveFPCalc.RelativePath, newActiveFPCalc.ExecutableVersions, newActiveFPCalc.VerifiedAt); err != nil {
+	if _, err := writer.ExecContext(ctx, `INSERT INTO tool_installation(id,package_kind,platform_goos,platform_goarch,source_name,release_identity,relative_path,state,executable_verification_output,artifact_identities,verified_at,version)
+		VALUES(?, 'fpcalc', 'darwin', 'arm64', 'analysis-test', ?, ?, 'ready', ?::jsonb, '{}'::jsonb, ?, ?)`, newActiveFPCalcID, newActiveFPCalc.ReleaseIdentity, newActiveFPCalc.RelativePath, newActiveFPCalc.ExecutableVerificationOutput, newActiveFPCalc.VerifiedAt, newActiveFPCalc.Version); err != nil {
 		_ = writer.Rollback()
 		t.Fatalf("insert uncommitted active fpcalc installation: %v", err)
 	}
@@ -201,7 +201,8 @@ func readyFPCalc(t *testing.T, releaseIdentity, version string) *persistence.Too
 	return &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		SourceName: "analysis-test", ReleaseIdentity: releaseIdentity, RelativePath: relativePath,
-		State: "ready", ExecutableVersions: verifiedExecutableVersionMetadata(t, tools.PackageFPCalc, "darwin", version),
+		State: "ready", ExecutableVerificationOutput: verifiedExecutableVersionMetadata(t, tools.PackageFPCalc, "darwin", version),
+		Version:            canonicalVerifiedFixtureVersion(t, tools.PackageFPCalc, version),
 		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
 	}
 }

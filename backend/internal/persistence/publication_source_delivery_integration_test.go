@@ -74,8 +74,8 @@ func TestCheckPublicationSourceHoldForDeliveryRequiresLiveAnchoredHoldPostgreSQL
 	frozen = PublicationInputs{
 		Version: PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", InitialLyrics: &PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}, DesiredTags: map[string][]string{},
 		Format: "source", Tools: []SourceAnalysisToolSelection{
-			{PackageKind: "ffmpeg", InstallationID: uuid.New(), Executable: "ffmpeg", RelativePath: "bin/ffmpeg", Version: "1", VersionBanner: "ffmpeg version 1"},
-			{PackageKind: "ffmpeg", InstallationID: uuid.New(), Executable: "ffprobe", RelativePath: "bin/ffprobe", Version: "1", VersionBanner: "ffprobe version 1"},
+			{PackageKind: "ffmpeg", InstallationID: uuid.New(), Executable: "ffmpeg", RelativePath: "bin/ffmpeg", Version: "ffmpeg 1 + ffprobe 1", VersionBanner: "ffmpeg version 1"},
+			{PackageKind: "ffmpeg", InstallationID: uuid.New(), Executable: "ffprobe", RelativePath: "bin/ffprobe", Version: "ffmpeg 1 + ffprobe 1", VersionBanner: "ffprobe version 1"},
 		},
 	}
 	// Frozen selectors and factual stream evidence are required by strict decoding.

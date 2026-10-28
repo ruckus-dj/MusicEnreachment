@@ -951,7 +951,7 @@ func (r *SettingsRepository) CompleteSetupIfCurrent(ctx context.Context, expecte
 				return fmt.Errorf("active %s installation is not verified and ready for this platform", required.kind)
 			}
 			var versions map[string]string
-			if err := json.Unmarshal(installation.ExecutableVersions, &versions); err != nil {
+			if err := json.Unmarshal(installation.ExecutableVerificationOutput, &versions); err != nil {
 				return fmt.Errorf("read active %s executable verification: %w", required.kind, err)
 			}
 			for _, executable := range required.executables {

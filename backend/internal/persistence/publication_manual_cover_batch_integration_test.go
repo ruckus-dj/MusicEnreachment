@@ -53,12 +53,12 @@ func TestReleaseCoverBatchAdmissionAtomicFanoutPostgreSQL(t *testing.T) {
 			versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
 			verified := time.Now().UTC()
 			path := filepath.Join("ffmpeg", "release-1")
-			if err := repository.CreateInstallation(ctx, &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: path, State: "ready", ExecutableVersions: versions, ArtifactIdentities: mustJSON(map[string]any{}), VerifiedAt: &verified}); err != nil {
+			if err := repository.CreateInstallation(ctx, &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: path, State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: mustJSON(map[string]any{}), VerifiedAt: &verified}); err != nil {
 				t.Fatal(err)
 			}
 			tools := []SourceAnalysisToolSelection{
-				{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(path), Executable: "ffmpeg", Version: "7.0", VersionBanner: ffmpegBanner},
-				{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(path), Executable: "ffprobe", Version: "7.0", VersionBanner: ffprobeBanner},
+				{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(path), Executable: "ffmpeg", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffmpegBanner},
+				{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: filepath.ToSlash(path), Executable: "ffprobe", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffprobeBanner},
 			}
 			positions := make([]uuid.UUID, 3)
 			for index := range positions {

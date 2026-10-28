@@ -24,7 +24,7 @@ func TestValidateSourceAnalysisOperationContractPinsSelectors(t *testing.T) {
 		ToolsReadRequired: true,
 		Tools: []SourceAnalysisToolSelection{{
 			PackageKind: "ffmpeg", InstallationID: toolID, RelativePath: "ffmpeg/r1",
-			Executable: "ffprobe", Version: "7.1", VersionBanner: "ffprobe version 7.1",
+			Executable: "ffprobe", Version: "ffmpeg 7.1 + ffprobe 7.1", VersionBanner: "ffprobe version 7.1",
 		}},
 	}
 	raw, err := json.Marshal(snapshot)

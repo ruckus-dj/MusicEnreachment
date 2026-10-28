@@ -13,7 +13,7 @@ func TestRetainedRecoveryKeepsExactIntentAndAdmitsOneStepAtATime(t *testing.T) {
 	shaEnabled, rerun, cacheOnly := true, false, false
 	ffprobe := persistence.SourceAnalysisToolSelection{
 		PackageKind: "ffmpeg", InstallationID: uuid.New(), RelativePath: "ffmpeg/original",
-		Executable: "ffprobe", Version: "7.0", VersionBanner: "ffprobe version 7.0",
+		Executable: "ffprobe", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: "ffprobe version 7.0",
 	}
 	fpcalc := persistence.SourceAnalysisToolSelection{
 		PackageKind: "fpcalc", InstallationID: uuid.New(), RelativePath: "fpcalc/original",

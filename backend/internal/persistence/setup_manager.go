@@ -18,25 +18,27 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/uptrace/bun"
 )
 
 type ToolInstallation struct {
 	bun.BaseModel `bun:"table:tool_installation"`
 
-	ID                 uuid.UUID       `bun:"id,pk,type:uuid"`
-	PackageKind        string          `bun:"package_kind"`
-	PlatformGOOS       string          `bun:"platform_goos"`
-	PlatformGOARCH     string          `bun:"platform_goarch"`
-	SourceName         string          `bun:"source_name"`
-	ReleaseIdentity    string          `bun:"release_identity"`
-	RelativePath       string          `bun:"relative_path"`
-	State              string          `bun:"state"`
-	ExecutableVersions json.RawMessage `bun:"executable_versions,type:jsonb"`
-	ArtifactIdentities json.RawMessage `bun:"artifact_identities,type:jsonb"`
-	CreatedAt          time.Time       `bun:"created_at,nullzero"`
-	VerifiedAt         *time.Time      `bun:"verified_at,nullzero"`
-	UpdatedAt          time.Time       `bun:"updated_at,nullzero"`
+	ID                           uuid.UUID       `bun:"id,pk,type:uuid"`
+	PackageKind                  string          `bun:"package_kind"`
+	PlatformGOOS                 string          `bun:"platform_goos"`
+	PlatformGOARCH               string          `bun:"platform_goarch"`
+	SourceName                   string          `bun:"source_name"`
+	ReleaseIdentity              string          `bun:"release_identity"`
+	RelativePath                 string          `bun:"relative_path"`
+	State                        string          `bun:"state"`
+	ExecutableVerificationOutput json.RawMessage `bun:"executable_verification_output,type:jsonb"`
+	Version                      string          `bun:"version"`
+	ArtifactIdentities           json.RawMessage `bun:"artifact_identities,type:jsonb"`
+	CreatedAt                    time.Time       `bun:"created_at,nullzero"`
+	VerifiedAt                   *time.Time      `bun:"verified_at,nullzero"`
+	UpdatedAt                    time.Time       `bun:"updated_at,nullzero"`
 }
 
 type Operation struct {
@@ -553,9 +555,16 @@ func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(
 	})
 }
 
-func (repository *SetupManagerRepository) FinalizeInstallation(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, installationID uuid.UUID, packageKind, goos, goarch, activeSetting string, versions json.RawMessage, verifiedAt time.Time) (bool, error) {
+func (repository *SetupManagerRepository) FinalizeInstallation(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, installationID uuid.UUID, packageKind, goos, goarch, activeSetting string, verification tools.VerificationResult, verifiedAt time.Time) (bool, error) {
+	versions, err := verification.MarshalEvidence()
+	if err != nil {
+		return false, fmt.Errorf("finalize installation: encode verification evidence: %w", err)
+	}
+	if verification.Version == "" {
+		return false, fmt.Errorf("finalize installation: verified canonical version is required")
+	}
 	settled := false
-	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err = repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
 			return fmt.Errorf("finalize installation: lock tools move gate: %w", err)
 		}
@@ -596,12 +605,14 @@ func (repository *SetupManagerRepository) FinalizeInstallation(ctx context.Conte
 		}
 		if installation.State == "preparing" {
 			if _, err := tx.NewUpdate().Model((*ToolInstallation)(nil)).
-				Set("state = 'ready'").Set("executable_versions = ?", versions).Set("verified_at = ?", verifiedAt).
+				Set("state = 'ready'").Set("executable_verification_output = ?", versions).Set("version = ?", verification.Version).Set("verified_at = ?", verifiedAt).
 				Set("updated_at = ?", verifiedAt).Where("id = ?", installationID).Where("state = 'preparing'").Exec(ctx); err != nil {
 				return fmt.Errorf("mark installation ready: %w", err)
 			}
 		} else if installation.State != "ready" {
 			return fmt.Errorf("finalize installation: target is not preparing or ready")
+		} else if installation.Version != verification.Version || !sameVerificationEvidence(installation.ExecutableVerificationOutput, versions) {
+			return fmt.Errorf("finalize installation: ready installation canonical version changed")
 		}
 		if completionErr == sql.ErrNoRows {
 			var activeID string

@@ -34,13 +34,14 @@ func TestRetainedSourceAnalysisReadmissionAfterDismissalWithPostgreSQL(t *testin
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		SourceName: "analysis-test", ReleaseIdentity: "retained-release", RelativePath: relativePath,
-		State: "ready", ExecutableVersions: json.RawMessage(`{"ffprobe":"ffprobe version 7.1.2"}`),
+		State: "ready", ExecutableVerificationOutput: json.RawMessage(`{"ffmpeg":"ffmpeg version 7.1.2","ffprobe":"ffprobe version 7.1.2"}`),
+		Version:            "ffmpeg 7.1.2 + ffprobe 7.1.2",
 		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &now,
 	}
 	if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
 		t.Fatalf("insert pinned installation: %v", err)
 	}
-	tool := persistence.SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath, Executable: "ffprobe", Version: "7.1.2", VersionBanner: "ffprobe version 7.1.2"}
+	tool := persistence.SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath, Executable: "ffprobe", Version: installation.Version, VersionBanner: "ffprobe version 7.1.2"}
 	fpcalcInstallation := insertAnalysisFPCalcFixture(t, ctx, database, "retained-fpcalc-release", "1.5.1")
 	fpcalcTool := normalizedToolSelection(t, ctx, database, fpcalcInstallation.ID, "fpcalc")
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -46,6 +47,7 @@ type RuntimeSettingsResponse struct {
 	OutputCaseSensitive               *bool      `json:"output_case_sensitive,omitempty"`
 	OutputUnicodeNormalization        string     `json:"output_unicode_normalization,omitempty"`
 	HasAcoustIDApplicationKey         bool       `json:"has_acoustid_application_key"`
+	HasGitHubToken                    bool       `json:"has_github_token"`
 	MusicBrainzSelfHostedThrottle     bool       `json:"musicbrainz_self_hosted_throttle"`
 	MusicBrainzSelfHostedDelaySeconds float64    `json:"musicbrainz_self_hosted_delay_seconds"`
 }
@@ -99,7 +101,46 @@ type CheckMusicBrainzBody struct {
 
 type CompleteSetupInput struct{}
 
+type BrowseDirectoriesInput struct {
+	Path   string `query:"path"`
+	Offset int    `query:"offset"`
+}
+
+type BrowseDirectoriesBody struct {
+	CurrentPath string   `json:"current_path"`
+	ParentPath  string   `json:"parent_path"`
+	Roots       []string `json:"roots"`
+	Directories []string `json:"directories"`
+	Offset      int      `json:"offset"`
+	NextOffset  *int     `json:"next_offset,omitempty"`
+}
+
+type BrowseDirectoriesOutput struct {
+	Body BrowseDirectoriesBody `json:"body"`
+}
+
 func RegisterSetup(api huma.API, setup *service.SetupService) {
+	huma.Register(api, huma.Operation{
+		OperationID: "browse-server-directories",
+		Method:      http.MethodGet,
+		Path:        "/setup/directories",
+		Summary:     "Browse existing server directories",
+		Tags:        []string{"Setup"},
+	}, func(ctx context.Context, input *BrowseDirectoriesInput) (*BrowseDirectoriesOutput, error) {
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
+		listing, err := setup.BrowseDirectories(ctx, input.Path, input.Offset, 200)
+		if err != nil {
+			return nil, huma.Error400BadRequest("directory is unavailable or invalid")
+		}
+		return &BrowseDirectoriesOutput{Body: BrowseDirectoriesBody{
+			CurrentPath: listing.CurrentPath, ParentPath: listing.ParentPath,
+			Roots: listing.Roots, Directories: listing.Directories,
+			Offset: listing.Offset, NextOffset: listing.NextOffset,
+		}}, nil
+	})
+
 	huma.Register(api, huma.Operation{
 		OperationID: "get-setup-state",
 		Method:      http.MethodGet,
@@ -296,6 +337,7 @@ func setupStateOutput(state service.SetupState) *SetupStateOutput {
 				OutputCaseSensitive:               state.Runtime.OutputCaseSensitive,
 				OutputUnicodeNormalization:        state.Runtime.OutputUnicodeNormalization,
 				HasAcoustIDApplicationKey:         state.Runtime.HasAcoustIDApplicationKey,
+				HasGitHubToken:                    state.Runtime.HasGitHubToken,
 				MusicBrainzSelfHostedThrottle:     state.Runtime.MusicBrainzSelfHostedThrottle,
 				MusicBrainzSelfHostedDelaySeconds: state.Runtime.MusicBrainzSelfHostedDelaySeconds,
 			},
@@ -340,7 +382,11 @@ func requireSupportedPlatform(ctx context.Context, setup *service.SetupService) 
 		return huma.Error500InternalServerError("failed to read platform state")
 	}
 	if state.Platform.Diagnostic || !state.Platform.Platform.Supported() {
-		return huma.Error503ServiceUnavailable("product operations are unavailable for this instance platform")
+		reason := state.Platform.Reason
+		if reason == "" {
+			reason = fmt.Sprintf("unsupported instance platform %s/%s", state.Platform.Platform.GOOS, state.Platform.Platform.GOARCH)
+		}
+		return huma.Error503ServiceUnavailable("product operations are unavailable for this instance platform: " + reason)
 	}
 	return nil
 }
