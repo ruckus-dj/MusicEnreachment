@@ -4,7 +4,17 @@ import type { SetupStateBody } from "../api/generated/client.schemas";
 import { AppButton } from "../components/AppButton";
 import { ThemeSelect } from "../components/ThemeSelect";
 import { IncomingGroupReviewScreen } from "../features/incoming/IncomingGroupReviewScreen";
+import { LibraryArtistScreen } from "../features/library/LibraryArtistScreen";
+import { LibraryPublicationsScreen } from "../features/library/LibraryPublicationsScreen";
 import { LibraryReleaseScreen } from "../features/library/LibraryReleaseScreen";
+import { LibraryScreen } from "../features/library/LibraryScreen";
+import {
+  parseLibraryArtistRoute,
+  parseLibraryPositionRoute,
+  parseLibraryReleaseRoute,
+  parseLibraryRoute,
+} from "../features/library/libraryRoute";
+import { NewLibraryReleaseScreen } from "../features/library/NewLibraryReleaseScreen";
 import { OperationsScreen } from "../features/operations/OperationsScreen";
 import "../features/incoming/incoming.css";
 import "./app-shell.css";
@@ -21,21 +31,33 @@ type Route =
   | "/sources"
   | "/incoming-groups"
   | "/operations"
-  | `/library/releases/${string}`;
+  | "/publications"
+  | "/library"
+  | "/library/create"
+  | `/library/artists/${string}`
+  | `/library/releases/${string}`
+  | `/library/releases/${string}/positions/${string}`;
 
-// The local release editor is addressed by the release UUID only. The backend
-// validates the identifier, so the shell accepts a plain canonical UUID and
-// leaves any other #/library/releases value to the landing fallback.
-const libraryReleaseRoute =
-  /^#\/library\/releases\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 function currentRoute(hash: string, isSourcesRoute: boolean): Route {
+  const pathname = (hash.startsWith("#") ? hash.slice(1) : hash).split(
+    "?",
+    1,
+  )[0];
   if (hash === "#/settings") return "/settings";
   if (hash === "#/setup") return "/setup";
   if (isSourcesRoute) return "/sources";
   if (hash === "#/incoming-groups") return "/incoming-groups";
   if (hash === "#/operations") return "/operations";
-  const libraryRelease = libraryReleaseRoute.exec(hash);
-  if (libraryRelease) return `/library/releases/${libraryRelease[1]}`;
+  if (pathname === "/publications") return "/publications";
+  if (parseLibraryRoute(hash)) return "/library";
+  if (pathname === "/library/create") return "/library/create";
+  const libraryArtist = parseLibraryArtistRoute(hash);
+  if (libraryArtist) return `/library/artists/${libraryArtist.artistId}`;
+  const libraryPosition = parseLibraryPositionRoute(hash);
+  if (libraryPosition)
+    return `/library/releases/${libraryPosition.releaseId}/positions/${libraryPosition.positionId}`;
+  const libraryRelease = parseLibraryReleaseRoute(hash);
+  if (libraryRelease) return `/library/releases/${libraryRelease.releaseId}`;
   return "/";
 }
 export function AppShell() {
@@ -175,9 +197,20 @@ export function AppShell() {
       <IncomingGroupReviewScreen />
     ) : state && route === "/operations" ? (
       <OperationsScreen />
+    ) : state && route === "/publications" ? (
+      <LibraryPublicationsScreen />
+    ) : state && route === "/library" ? (
+      <LibraryScreen />
+    ) : state && route === "/library/create" ? (
+      <NewLibraryReleaseScreen />
+    ) : state && route.startsWith("/library/artists/") ? (
+      <LibraryArtistScreen
+        artistId={parseLibraryArtistRoute(hash)?.artistId ?? ""}
+      />
     ) : state && route.startsWith("/library/releases/") ? (
       <LibraryReleaseScreen
         releaseId={decodeURIComponent(route.split("/")[3] ?? "")}
+        positionId={parseLibraryPositionRoute(hash)?.positionId}
       />
     ) : state ? (
       <RootLanding />
@@ -239,12 +272,23 @@ function RootLanding() {
 
 function ShellNavigation({ route }: { route: Route }) {
   const items = [
+    { label: "Главная", href: "#/", active: route === "/" },
     {
       label: "Входящие",
       href: "#/incoming-groups",
       active: route === "/incoming-groups",
     },
     { label: "Источники", href: "#/sources", active: route === "/sources" },
+    {
+      label: "Медиатека",
+      href: "#/library",
+      active: route === "/library" || route.startsWith("/library/"),
+    },
+    {
+      label: "Публикации",
+      href: "#/publications",
+      active: route === "/publications",
+    },
     {
       label: "Операции",
       href: "#/operations",

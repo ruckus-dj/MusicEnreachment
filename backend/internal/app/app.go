@@ -232,6 +232,11 @@ func Run(ctx context.Context, config Config) error {
 	matchingManual := service.NewMatchingManualService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingLocal := service.NewMatchingLocalService(persistence.NewIncomingMatchCandidateRepository(db))
 	libraryRepository := persistence.NewLibraryRepository(db)
+	libraryCatalog := service.NewLibraryCatalog(libraryRepository)
+	libraryReleaseCreation := service.NewLibraryReleaseCreation(libraryRepository)
+	libraryReleaseOptions := service.NewLibraryReleaseOptions(libraryRepository)
+	libraryPublicationsList := service.NewLibraryPublicationsList(libraryRepository)
+	libraryRecordingSearch := service.NewLibraryRecordingSearch(providerFetch, setupManagerRepository, libraryRepository)
 	libraryReleaseDetails := service.NewLibraryReleaseDetails(libraryRepository)
 	libraryProviderRefresh := service.NewLibraryProviderRefresh(libraryRepository, providerFetch)
 	libraryPrimaryArtists := service.NewLibraryPrimaryArtists(libraryRepository)
@@ -471,15 +476,20 @@ func Run(ctx context.Context, config Config) error {
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
 		SourceArtifactCleanup: artifactCleanup, SourceCleanupRetries: sourceCleanupRetries,
 		IncomingGroups: incomingGroups, MatchingReview: matchingReview, MatchingManual: matchingManual, MatchingAuthority: matchingAuthority,
-		MatchingLocal:          matchingLocal,
-		ManualReleaseSelection: manualReleaseSelection,
-		ManualPickerSearch:     manualPickerSearch,
-		LibraryReleaseDetails:  libraryReleaseDetails,
-		LibraryProviderRefresh: libraryProviderRefresh,
-		LibraryPrimaryArtists:  libraryPrimaryArtists,
-		LibraryMetadata:        libraryMetadata,
-		LibraryReleaseCovers:   libraryReleaseCovers,
-		LibraryPublications:    libraryPublications,
+		MatchingLocal:           matchingLocal,
+		ManualReleaseSelection:  manualReleaseSelection,
+		ManualPickerSearch:      manualPickerSearch,
+		LibraryReleaseDetails:   libraryReleaseDetails,
+		LibraryCatalog:          libraryCatalog,
+		LibraryReleaseCreation:  libraryReleaseCreation,
+		LibraryReleaseOptions:   libraryReleaseOptions,
+		LibraryPublicationsList: libraryPublicationsList,
+		LibraryRecordingSearch:  libraryRecordingSearch,
+		LibraryProviderRefresh:  libraryProviderRefresh,
+		LibraryPrimaryArtists:   libraryPrimaryArtists,
+		LibraryMetadata:         libraryMetadata,
+		LibraryReleaseCovers:    libraryReleaseCovers,
+		LibraryPublications:     libraryPublications,
 	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{

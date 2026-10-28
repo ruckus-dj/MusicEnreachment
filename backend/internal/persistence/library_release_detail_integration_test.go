@@ -35,11 +35,13 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 		{`INSERT INTO local_release(id,title,metadata,metadata_version) VALUES (?,?,'{"year":2024}',3)`, []any{localOnlyID, "Album"}},
 		{`INSERT INTO local_release(id,title) VALUES (?,?)`, []any{linkedID, "Provider linked"}},
 		{`INSERT INTO local_artist(id,name) VALUES (?,?),(?,?)`, []any{artistA, "Artist A", artistB, "Artist B"}},
-		{`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,?,?,?,?),(?,?,?,?,?)`, []any{localOnlyID, 0, artistA, "A credit", " & ", localOnlyID, 1, artistB, "B credit", ""}},
+		{`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase,role) VALUES (?,?,?,?,?,?),(?,?,?,?,?,?)`, []any{localOnlyID, 0, artistA, "A credit", " & ", "performer", localOnlyID, 1, artistB, "B credit", "", "composer"}},
 		{`INSERT INTO local_track(id,title,metadata,metadata_version) VALUES (?,?,'{"genre":"rock"}',7)`, []any{trackID, "Song"}},
 		{`INSERT INTO local_recording(id,title) VALUES (?,?)`, []any{recordingID, "Recording"}},
-		{`INSERT INTO release_track(id,release_id,track_id,recording_id,medium,position,displayed_number) VALUES (?,?,?,?,0,0,'A1'),(?,?,?,?,1,0,'B1')`, []any{positionA, localOnlyID, trackID, recordingID, positionB, localOnlyID, trackID, recordingID}},
-		{`INSERT INTO track_artist(track_id,position,artist_id,name,name_join_phrase) VALUES (?,?,?,?,?)`, []any{trackID, 0, artistA, "Track credit", ""}},
+		{`INSERT INTO release_track(id,release_id,track_id,recording_id,medium,position,displayed_number,duration_ms) VALUES (?,?,?,?,0,0,'A1',NULL),(?,?,?,?,1,0,'B1',0)`, []any{positionA, localOnlyID, trackID, recordingID, positionB, localOnlyID, trackID, recordingID}},
+		{`INSERT INTO track_artist(track_id,position,artist_id,name,name_join_phrase,role) VALUES (?,?,?,?,?,?)`, []any{trackID, 0, artistA, "Track credit", "", "vocalist"}},
+		{`INSERT INTO recording_artist(recording_id,position,artist_id,name,name_join_phrase,role) VALUES (?,?,?,?,?,?)`, []any{recordingID, 0, artistA, "Recording credit", "", "producer"}},
+		{`INSERT INTO release_medium(id,release_id,medium,title,format) VALUES (?, ?, 5, 'Bonus disc', 'CD')`, []any{uuid.New(), linkedID}},
 		{`INSERT INTO media_variant(id,size_bytes) VALUES (?,1024),(?,2048)`, []any{variantA, variantB}},
 		{`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,metadata) VALUES (?,?,?,true,true,'automatic','policy-v1','{"source":"one"}'),(?,?,?,false,false,'manual',NULL,'{}')`, []any{uuid.New(), trackID, variantA, uuid.New(), trackID, variantB}},
 		{`INSERT INTO source_root(id,configured_path,display_name,status,enabled,scan_generation,inventory_path) VALUES (?,?,'Library','available',false,1,?)`, []any{rootID, "/srv/library", "/srv/library"}},
@@ -63,7 +65,7 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read local release detail: %v", err)
 	}
-	if detail.Title != "Album" || detail.MetadataVersion != 3 || len(detail.Artists) != 2 || detail.Artists[0].CreditName != "A credit" || detail.Artists[1].CreditName != "B credit" {
+	if detail.Title != "Album" || detail.MetadataVersion != 3 || len(detail.Artists) != 2 || detail.Artists[0].CreditName != "A credit" || detail.Artists[1].CreditName != "B credit" || detail.Artists[0].Role != "performer" || detail.Artists[0].JoinPhrase != " & " {
 		t.Fatalf("release detail metadata/credits = %+v", detail)
 	}
 	if detail.PrimaryArtistMBIDs[artistA] == nil || *detail.PrimaryArtistMBIDs[artistA] != artistAMbid || detail.PrimaryArtistMBIDs[artistB] == nil || *detail.PrimaryArtistMBIDs[artistB] != artistBMbid {
@@ -81,11 +83,15 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 	if !firstOK || !secondOK || first.ID == second.ID {
 		t.Fatalf("release positions = %+v", detail.Tracks)
 	}
-	if first.LocalTrackID != trackID || second.LocalTrackID != trackID || first.RecordingID == nil || *first.RecordingID != recordingID || first.Medium != 1 || first.Position != 1 || second.Medium != 2 || second.Position != 1 {
+	if first.LocalTrackID != trackID || second.LocalTrackID != trackID || first.RecordingID == nil || *first.RecordingID != recordingID || first.RecordingTitle == nil || *first.RecordingTitle != "Recording" || first.MediumID == uuid.Nil || second.MediumID == uuid.Nil || first.MediumID == second.MediumID || first.Medium != 1 || first.Position != 1 || first.DurationMS.Valid || second.Medium != 2 || second.Position != 1 || !second.DurationMS.Valid || second.DurationMS.Int64 != 0 {
 		t.Fatalf("one-based track positions/identity = %+v %+v", first, second)
 	}
+	var blankMediumTitle, blankMediumFormat string
+	if err := db.NewRaw(`SELECT title,format FROM release_medium WHERE id=?`, first.MediumID).Scan(ctx, &blankMediumTitle, &blankMediumFormat); err != nil || blankMediumTitle != "" || blankMediumFormat != "" {
+		t.Fatalf("legacy release_track writer medium defaults = %q/%q, %v; want blank values", blankMediumTitle, blankMediumFormat, err)
+	}
 	assertDuplicateOccurrence := func(label string, track persistence.LibraryReleaseTrackDetail) {
-		if len(track.Artists) != 1 || track.Artists[0].ArtistID != artistA || track.Artists[0].CreditName != "Track credit" {
+		if len(track.Artists) != 1 || track.Artists[0].ArtistID != artistA || track.Artists[0].CreditName != "Track credit" || track.Artists[0].Role != "vocalist" {
 			t.Fatalf("%s duplicate position credits = %+v", label, track.Artists)
 		}
 		sources := make(map[uuid.UUID]persistence.LibraryTrackSourceDetail, len(track.Sources))
@@ -110,6 +116,12 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 	}
 	if !linked.CanRefreshMusicBrainz || detail.CanRefreshMusicBrainz {
 		t.Fatalf("MusicBrainz refresh capability local=%t linked=%t, want false/true", detail.CanRefreshMusicBrainz, linked.CanRefreshMusicBrainz)
+	}
+	if len(linked.Media) != 1 || linked.Media[0].Medium != 5 || linked.Media[0].Title != "Bonus disc" || linked.Media[0].Format != "CD" || len(linked.Tracks) != 0 {
+		t.Fatalf("empty medium detail = %+v; expected retained zero-based persistence coordinate and no positions", linked)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM release_medium WHERE release_id=? AND medium=0`, localOnlyID); err == nil {
+		t.Fatal("deleting a medium with a release position succeeded; expected restrictive FK")
 	}
 	if _, err := persistence.NewLibraryRepository(db).ReadReleaseDetail(ctx, uuid.New()); err == nil || !errors.Is(err, persistence.ErrLibraryReleaseNotFound) {
 		t.Fatalf("unknown release error = %v, want not found", err)

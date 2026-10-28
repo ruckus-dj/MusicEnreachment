@@ -377,6 +377,74 @@ describe("AppShell sources routing", () => {
   });
 });
 describe("AppShell library routing", () => {
+  it("routes the library query to its real catalog screen and marks navigation active", async () => {
+    window.location.hash =
+      "/library?view=artists&q=blue&publication=unpublished&offset=50";
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/library/artists", ({ request }) => {
+        const url = new URL(request.url);
+        expect(url.searchParams.get("q")).toBe("blue");
+        expect(url.searchParams.get("publication")).toBe("unpublished");
+        expect(url.searchParams.get("offset")).toBe("50");
+        return HttpResponse.json({
+          items: [],
+          total: 0,
+          summary: {
+            artist_count: 0,
+            release_count: 0,
+            position_count: 0,
+            published_position_count: 0,
+          },
+        });
+      }),
+    );
+    render(<App />);
+    await screen.findByRole("heading", { name: "Медиатека" });
+    expect(
+      await screen.findByRole("heading", { name: "Ничего не найдено" }),
+    ).toBeVisible();
+    expect(
+      screen.getAllByRole("link", { name: "Медиатека" })[0],
+    ).toHaveAttribute("aria-current", "page");
+  });
+
+  it("routes artist details with preserved query and the manual-release creator", async () => {
+    const artistId = "123e4567-e89b-42d3-a456-426614174000";
+    window.location.hash = `/library/artists/${artistId}?view=albums&q=blue&publication=published&offset=25`;
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get(`/api/library/artists/${artistId}`, () =>
+        HttpResponse.json({
+          id: artistId,
+          name: "Blue Artist",
+          disambiguation: "",
+          release_count: 0,
+          position_count: 0,
+          published_position_count: 0,
+          genres: [],
+        }),
+      ),
+      http.get("/api/library/releases", ({ request }) => {
+        const url = new URL(request.url);
+        expect(url.searchParams.get("artist_id")).toBe(artistId);
+        expect(url.searchParams.get("q")).toBe("blue");
+        expect(url.searchParams.get("publication")).toBe("published");
+        expect(url.searchParams.get("offset")).toBe("25");
+        return HttpResponse.json({ items: [], total: 0 });
+      }),
+    );
+    render(<App />);
+    await screen.findByRole("heading", { name: "Blue Artist" });
+    expect(screen.getByRole("link", { name: "← Медиатека" })).toHaveAttribute(
+      "href",
+      "#/library?view=albums&q=blue&publication=published&offset=25",
+    );
+
+    window.location.hash = "/library/create";
+    await screen.findByRole("heading", { name: "Создать локальный релиз" });
+  });
+
   it("opens the local release editor from a #/library/releases/{uuid} link once Setup is complete", async () => {
     const releaseId = "3f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
     server.use(
@@ -400,6 +468,114 @@ describe("AppShell library routing", () => {
       await screen.findByRole("heading", { level: 1, name: "Local release" }),
     ).toBeVisible();
     expect(window.location.hash).toBe(`#/library/releases/${releaseId}`);
+  });
+
+  it("opens only the selected position from a direct library hash", async () => {
+    const releaseId = "3f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
+    const positionId = "4f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
+    const otherPositionId = "5f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get(`*/api/library/releases/${releaseId}`, () =>
+        HttpResponse.json({
+          id: releaseId,
+          title: "Direct release",
+          metadata: {},
+          metadata_revision: 1,
+          metadata_version: 1,
+          primary_artist: {},
+          artists: [],
+          tracks: [positionId, otherPositionId].map((id, index) => ({
+            id,
+            title: index === 0 ? "Selected song" : "Other song",
+            displayed_number: String(index + 1),
+            primary_artist: {},
+            artists: [],
+            sources: [],
+          })),
+        }),
+      ),
+      http.get(`*/api/library/releases/${releaseId}/cover`, () =>
+        HttpResponse.json({
+          release_id: releaseId,
+          revision: 1,
+          mode: "automatic",
+        }),
+      ),
+      http.get(
+        `*/api/library/releases/${releaseId}/positions/:positionId/metadata`,
+        () =>
+          HttpResponse.json({
+            revision: 1,
+            publication_applied: false,
+            envelope: { scope: "position", version: 1, desired: {} },
+          }),
+      ),
+      http.get(
+        `*/api/library/releases/${releaseId}/positions/:positionId/publication`,
+        ({ params }) =>
+          HttpResponse.json({
+            release_id: releaseId,
+            position_id: params.positionId,
+            can_apply_manual_lyrics: false,
+          }),
+      ),
+    );
+    window.location.hash = `/library/releases/${releaseId}/positions/${positionId}`;
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "1. Selected song" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Other song" })).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Direct release" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "← Полный релиз" }),
+    ).toHaveAttribute("href", `#/library/releases/${releaseId}`);
+    expect(window.location.hash).toBe(
+      `#/library/releases/${releaseId}/positions/${positionId}`,
+    );
+  });
+
+  it("shows an alert instead of another position when a direct position is unknown", async () => {
+    const releaseId = "3f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
+    const positionId = "4f1c8e59-2a4b-4c7d-9e0f-1a2b3c4d5e6f";
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get(`*/api/library/releases/${releaseId}`, () =>
+        HttpResponse.json({
+          id: releaseId,
+          title: "Direct release",
+          metadata: {},
+          metadata_revision: 1,
+          metadata_version: 1,
+          primary_artist: {},
+          artists: [],
+          tracks: [],
+        }),
+      ),
+      http.get(`*/api/library/releases/${releaseId}/cover`, () =>
+        HttpResponse.json({
+          release_id: releaseId,
+          revision: 1,
+          mode: "automatic",
+        }),
+      ),
+    );
+    window.location.hash = `/library/releases/${releaseId}/positions/${positionId}`;
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Позиция не найдена в этом релизе.",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Direct release" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Добавьте музыкальный каталог" }),
+    ).toBeNull();
   });
 });
 describe("AppShell operations routing", () => {
@@ -513,7 +689,20 @@ describe("AppShell themed shell", () => {
     });
     expect(navs).toHaveLength(2);
     for (const nav of navs) {
-      expect(nav.querySelectorAll("a")).toHaveLength(4);
+      expect(nav.querySelectorAll("a")).toHaveLength(7);
+      expect(
+        Array.from(nav.querySelectorAll("a"), (link) =>
+          link.getAttribute("href"),
+        ),
+      ).toEqual([
+        "#/",
+        "#/incoming-groups",
+        "#/sources",
+        "#/library",
+        "#/publications",
+        "#/operations",
+        "#/settings",
+      ]);
       expect(nav.querySelector('a[href="#/sources"]')).toHaveAttribute(
         "aria-current",
         "page",
@@ -523,8 +712,13 @@ describe("AppShell themed shell", () => {
       ).toBeInTheDocument();
       expect(nav.querySelector('a[href="#/operations"]')).toBeInTheDocument();
       expect(nav.querySelector('a[href="#/settings"]')).toBeInTheDocument();
-      expect(nav.querySelectorAll('a[href="#/library"]')).toHaveLength(0);
-      expect(nav.querySelectorAll('a[href="#/publications"]')).toHaveLength(0);
+      expect(nav.querySelector('a[href="#/"]')).toHaveTextContent("Главная");
+      expect(nav.querySelector('a[href="#/library"]')).toHaveTextContent(
+        "Медиатека",
+      );
+      expect(nav.querySelector('a[href="#/publications"]')).toHaveTextContent(
+        "Публикации",
+      );
     }
     expect(
       screen.getByRole("combobox", { name: "Тема интерфейса" }),

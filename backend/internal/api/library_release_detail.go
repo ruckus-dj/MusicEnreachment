@@ -51,7 +51,15 @@ type LibraryReleaseDetailResponse struct {
 	CanRefreshMusicBrainz bool                            `json:"can_refresh_musicbrainz"`
 	PrimaryArtist         service.LibraryArtistResolution `json:"primary_artist"`
 	Artists               []LibraryArtistCreditResponse   `json:"artists"`
+	Media                 []LibraryReleaseMediumResponse  `json:"media,omitempty"`
 	Tracks                []LibraryReleaseTrackResponse   `json:"tracks"`
+}
+
+type LibraryReleaseMediumResponse struct {
+	ID     uuid.UUID `json:"id"`
+	Medium int       `json:"medium"`
+	Title  string    `json:"title"`
+	Format string    `json:"format"`
 }
 
 type LibraryArtistCreditResponse struct {
@@ -59,14 +67,18 @@ type LibraryArtistCreditResponse struct {
 	ArtistName *string   `json:"artist_name,omitempty"`
 	CreditName string    `json:"credit_name"`
 	JoinPhrase string    `json:"join_phrase"`
+	Role       string    `json:"role,omitempty"`
 }
 
 type LibraryReleaseTrackResponse struct {
 	ID                        uuid.UUID                       `json:"id"`
 	LocalTrackID              uuid.UUID                       `json:"local_track_id"`
-	RecordingID               *uuid.UUID                      `json:"recording_id"`
+	RecordingID               *string                         `json:"recording_id" nullable:"true"`
+	RecordingTitle            *string                         `json:"recording_title,omitempty"`
+	MediumID                  *uuid.UUID                      `json:"medium_id,omitempty"`
 	Medium                    int                             `json:"medium"`
 	Position                  int                             `json:"position"`
+	DurationMS                *int64                          `json:"duration_ms"`
 	DisplayedNumber           string                          `json:"displayed_number"`
 	Title                     string                          `json:"title"`
 	Metadata                  json.RawMessage                 `json:"metadata"`
@@ -175,15 +187,20 @@ func libraryReleaseDetailResponse(detail service.LibraryReleaseDetail) LibraryRe
 		MetadataRevision: detail.MetadataRevision, PrimaryArtist: detail.PrimaryArtist,
 		CanRefreshMusicBrainz: detail.CanRefreshMusicBrainz,
 		Artists:               make([]LibraryArtistCreditResponse, 0, len(detail.Artists)),
+		Media:                 make([]LibraryReleaseMediumResponse, 0, len(detail.Media)),
 		Tracks:                make([]LibraryReleaseTrackResponse, 0, len(detail.Tracks)),
+	}
+	for _, medium := range detail.Media {
+		response.Media = append(response.Media, LibraryReleaseMediumResponse{ID: medium.ID, Medium: medium.Medium, Title: medium.Title, Format: medium.Format})
 	}
 	for _, artist := range detail.Artists {
 		response.Artists = append(response.Artists, libraryArtistCreditResponse(artist))
 	}
 	for _, track := range detail.Tracks {
 		item := LibraryReleaseTrackResponse{
-			ID: track.ID, LocalTrackID: track.LocalTrackID, RecordingID: track.RecordingID,
-			Medium: track.Medium, Position: track.Position, DisplayedNumber: track.DisplayedNumber,
+			ID: track.ID, LocalTrackID: track.LocalTrackID, RecordingID: apiUUIDString(track.RecordingID),
+			RecordingTitle: track.RecordingTitle, MediumID: track.MediumID,
+			Medium: track.Medium, Position: track.Position, DurationMS: track.DurationMS, DisplayedNumber: track.DisplayedNumber,
 			Title: track.Title, Metadata: track.Metadata, MetadataVersion: track.MetadataVersion,
 			MetadataRevision: track.MetadataRevision, TrackMetadataRevision: track.TrackMetadataRevision,
 			RecordingMetadataRevision: track.RecordingMetadataRevision, PrimaryArtist: track.PrimaryArtist,
@@ -219,6 +236,6 @@ func libraryReleaseDetailResponse(detail service.LibraryReleaseDetail) LibraryRe
 
 func libraryArtistCreditResponse(artist service.LibraryArtistCredit) LibraryArtistCreditResponse {
 	return LibraryArtistCreditResponse{
-		ArtistID: artist.ArtistID, ArtistName: artist.ArtistName, CreditName: artist.CreditName, JoinPhrase: artist.JoinPhrase,
+		ArtistID: artist.ArtistID, ArtistName: artist.ArtistName, CreditName: artist.CreditName, JoinPhrase: artist.JoinPhrase, Role: artist.Role,
 	}
 }

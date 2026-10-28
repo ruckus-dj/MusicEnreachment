@@ -30,7 +30,15 @@ type LibraryReleaseDetail struct {
 	CanRefreshMusicBrainz bool
 	PrimaryArtist         LibraryArtistResolution
 	Artists               []LibraryArtistCredit
+	Media                 []LibraryReleaseMediumDetail
 	Tracks                []LibraryReleaseTrackDetail
+}
+
+type LibraryReleaseMediumDetail struct {
+	ID     uuid.UUID
+	Medium int
+	Title  string
+	Format string
 }
 
 type LibraryArtistCredit struct {
@@ -38,14 +46,18 @@ type LibraryArtistCredit struct {
 	ArtistName *string
 	CreditName string
 	JoinPhrase string
+	Role       string
 }
 
 type LibraryReleaseTrackDetail struct {
 	ID                        uuid.UUID
 	LocalTrackID              uuid.UUID
 	RecordingID               *uuid.UUID
+	MediumID                  *uuid.UUID
 	Medium                    int
 	Position                  int
+	DurationMS                *int64
+	RecordingTitle            *string
 	DisplayedNumber           string
 	Title                     string
 	Metadata                  json.RawMessage
@@ -120,16 +132,21 @@ func (service *LibraryReleaseDetails) Read(ctx context.Context, id uuid.UUID) (L
 		ID: detail.ID, Title: detail.Title, Metadata: detail.Metadata, MetadataVersion: detail.MetadataVersion, MetadataRevision: detail.MetadataRevision,
 		CanRefreshMusicBrainz: detail.CanRefreshMusicBrainz,
 		PrimaryArtist:         resolveLibraryArtist(detail.PrimaryArtistID, detail.PrimaryArtistCandidates, detail.PrimaryArtistMBIDs),
-		Artists:               make([]LibraryArtistCredit, 0, len(detail.Artists)), Tracks: make([]LibraryReleaseTrackDetail, 0, len(detail.Tracks)),
+		Artists:               make([]LibraryArtistCredit, 0, len(detail.Artists)), Media: make([]LibraryReleaseMediumDetail, 0, len(detail.Media)), Tracks: make([]LibraryReleaseTrackDetail, 0, len(detail.Tracks)),
+	}
+	for _, medium := range detail.Media {
+		result.Media = append(result.Media, LibraryReleaseMediumDetail{ID: medium.ID, Medium: medium.Medium + 1, Title: medium.Title, Format: medium.Format})
 	}
 	for _, artist := range detail.Artists {
 		result.Artists = append(result.Artists, libraryArtistCredit(artist))
 	}
 	for _, track := range detail.Tracks {
+		mediumID := track.MediumID
 		item := LibraryReleaseTrackDetail{
 			ID: track.ID, LocalTrackID: track.LocalTrackID, RecordingID: track.RecordingID,
-			Medium: track.Medium, Position: track.Position, DisplayedNumber: track.DisplayedNumber,
-			Title: track.Title, Metadata: track.Metadata, MetadataVersion: track.MetadataVersion,
+			MediumID: &mediumID, Medium: track.Medium, Position: track.Position, RecordingTitle: track.RecordingTitle,
+			DisplayedNumber: track.DisplayedNumber,
+			Title:           track.Title, Metadata: track.Metadata, MetadataVersion: track.MetadataVersion,
 			MetadataRevision: track.MetadataRevision, TrackMetadataRevision: track.TrackMetadataRevision,
 			RecordingMetadataRevision: track.RecordingMetadataRevision,
 			PrimaryArtist:             resolveLibraryArtist(track.PrimaryArtistID, track.PrimaryArtistCandidates, track.PrimaryArtistMBIDs),
@@ -138,6 +155,10 @@ func (service *LibraryReleaseDetails) Read(ctx context.Context, id uuid.UUID) (L
 		}
 		for _, artist := range track.Artists {
 			item.Artists = append(item.Artists, libraryArtistCredit(artist))
+		}
+		if track.DurationMS.Valid {
+			duration := track.DurationMS.Int64
+			item.DurationMS = &duration
 		}
 		for _, source := range track.Sources {
 			locationList := make([]LibrarySourceLocationDetail, 0, len(source.Locations))
@@ -202,6 +223,6 @@ func unambiguousArtistMBID(artistID uuid.UUID, candidates []uuid.UUID, mbids map
 
 func libraryArtistCredit(artist persistence.LibraryArtistCredit) LibraryArtistCredit {
 	return LibraryArtistCredit{
-		ArtistID: artist.ArtistID, ArtistName: artist.ArtistName, CreditName: artist.CreditName, JoinPhrase: artist.JoinPhrase,
+		ArtistID: artist.ArtistID, ArtistName: artist.ArtistName, CreditName: artist.CreditName, JoinPhrase: artist.JoinPhrase, Role: artist.Role,
 	}
 }

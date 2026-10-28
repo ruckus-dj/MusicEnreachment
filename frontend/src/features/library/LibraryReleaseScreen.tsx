@@ -21,6 +21,7 @@ import type {
   LibraryReleaseDetailResponse,
   OperationResponse,
 } from "../../api/generated/client.schemas";
+import "./library.css";
 import { FirstPublicationPreview } from "./FirstPublicationPreview";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
 
@@ -76,7 +77,13 @@ function isTerminalOperation(state: string) {
   return ["succeeded", "failed", "cancelled"].includes(state);
 }
 
-export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
+export function LibraryReleaseScreen({
+  releaseId,
+  positionId,
+}: {
+  releaseId: string;
+  positionId?: string;
+}) {
   const scope = useRef({ releaseId, generation: 0 });
   if (scope.current.releaseId !== releaseId) {
     scope.current = { releaseId, generation: scope.current.generation + 1 };
@@ -1303,8 +1310,16 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
     );
   if (!release || loadedReleaseID !== releaseId)
     return <p role="status">Загрузка релиза…</p>;
+  const selectedTrack = positionId
+    ? (release.tracks ?? []).find((track) => track.id === positionId)
+    : undefined;
+  const visibleTracks = positionId
+    ? selectedTrack
+      ? [selectedTrack]
+      : []
+    : (release.tracks ?? []);
   return (
-    <section className="mx-auto max-w-5xl space-y-6">
+    <section className="library-release-screen mx-auto max-w-5xl space-y-6">
       <button
         type="button"
         className="underline"
@@ -1375,6 +1390,11 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
           </div>
         )}
       </header>
+      {positionId && (
+        <a className="underline" href={`#/library/releases/${releaseId}`}>
+          ← Полный релиз
+        </a>
+      )}
       <ReleaseCoverEditor
         releaseId={releaseId}
         epoch={
@@ -1401,7 +1421,10 @@ export function LibraryReleaseScreen({ releaseId }: { releaseId: string }) {
           });
         }}
       />
-      {(release.tracks ?? []).map((track) => {
+      {positionId && !selectedTrack ? (
+        <p role="alert">Позиция не найдена в этом релизе.</p>
+      ) : null}
+      {visibleTracks.map((track) => {
         const renderScope = scope.current;
         const position = positions[track.id];
         const publication = position?.publication;

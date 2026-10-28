@@ -38,6 +38,15 @@ type LocalRelease struct {
 	UpdatedAt       time.Time       `bun:"updated_at"`
 }
 
+type LocalReleaseMedium struct {
+	bun.BaseModel `bun:"table:release_medium"`
+	ID            uuid.UUID `bun:"id,pk,type:uuid"`
+	ReleaseID     uuid.UUID `bun:"release_id,type:uuid"`
+	Medium        int       `bun:"medium"`
+	Title         string    `bun:"title"`
+	Format        string    `bun:"format"`
+}
+
 type LocalRecording struct {
 	bun.BaseModel   `bun:"table:local_recording"`
 	ID              uuid.UUID       `bun:"id,pk,type:uuid"`

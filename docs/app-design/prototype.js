@@ -343,11 +343,36 @@ function publications() {
   const changed = active.filter(row => row.action !== 'Без изменений');
   const g = plan.groupId && incomingGroups.find(item => item.id === plan.groupId);
   const kept = g ? g.fileIds.filter(id => !active.some(row => row.file.id === id)).length : 0;
-  return header(`План: ${plan.target.title}`, 'Частичный релиз допустим. Выбранные позиции публикуются, остальные файлы и позиции не изменяются.', link(plan.groupId ? `match/${plan.groupId}` : `release/${plan.localReleaseId}`, 'Вернуться к назначениям', 'button')) +
+  return header(`План: ${plan.target.title}`, 'Частичный релиз допустим. Выбранные позиции публикуются, остальные файлы и позиции не изменяются.', `${link(plan.groupId ? `match/${plan.groupId}` : `release/${plan.localReleaseId}`, 'Вернуться к назначениям', 'button')}${link('publication-list', 'Проект списка текущих публикаций', 'button')}`) +
     `<div class="inline-summary">${badge(`${active.length} / ${plan.target.tracks.length} выбрано`, 'success')}<span>${changed.length} изменений</span><span>${kept} файлов без публикации останутся во входящих</span><span>MKA · remux без перекодирования</span></div>` +
     panel('Позиции и последствия', table(['Включить', '№ / трек', 'Источник', 'Сейчас опубликовано', 'Будет записано', 'Действие'], rows.map(row => [`<input type="checkbox" data-plan-include="${row.targetTrack.id}" aria-label="Включить ${esc(row.targetTrack.title)}" ${row.assignment?.included ? 'checked' : ''} ${!row.file ? 'disabled' : ''}>`, `${row.targetTrack.position} · ${esc(row.targetTrack.title)}`, row.file ? `${esc(row.file.name)}<span class="sub">${row.file.codec}</span>` : 'Нет файла', row.previous ? `${row.previous.codec}<span class="sub">${showTag(row.previous.tags.TITLE)}</span>` : 'Нет публикации', `${showTag(row.nextTags.TITLE)}<span class="sub">${showTag(row.nextTags.ALBUM)}</span>`, badge(row.action, row.action === 'Пропустить' ? '' : 'info')]))) +
     note(`<strong>Исходники сохранятся.</strong> ${plan.target.tracks.length - active.length} позиций не включены. Их существующие публикации, если есть, тоже сохранятся. Неразмеченные файлы не удаляются и не считаются обработанными.`) +
     `<div class="panel-foot mono">Целевой каталог: /srv/music/${esc(artistName(plan.target.artistId))}/${esc(plan.target.year)} - ${esc(plan.target.title)}/<br>Имена: 01 - название.mka · В этом макете файлы на диске не создаются.</div><div class="commit-bar"><div><strong>${changed.length} файлов изменится</strong><span class="sub">${active.length - changed.length} выбранных позиций уже актуальны.</span></div>${button('publish-plan', 'Подтвердить публикацию', changed.length ? '' : 'disabled', true)}</div>`;
+}
+
+function publicationList() {
+  const published = localReleases.flatMap(release => release.tracks
+    .filter(track => track.published)
+    .map(track => ({ release, track })));
+  const totalPositions = localReleases.reduce((count, release) => count + release.tracks.length, 0);
+  const rows = published.map(({ release, track }) => {
+    const provider = release.providerId && providerReleases.find(item => item.id === release.providerId);
+    const providerPosition = track.providerTrackId && findProviderTrack(track.providerTrackId);
+    const providerCount = provider && providerPosition ? `${provider.tracks.length} позиций` : '—';
+    const tags = track.published.tags || {};
+    return [
+      `${link(`release/${release.id}`, release.title)}<span class="sub">${link(`artist/${release.artistId}`, artistName(release.artistId))}</span>`,
+      link(`track/${track.id}`, `${String(track.position).padStart(2, '0')} · ${track.title}`),
+      provider ? `${esc(provider.title)}<span class="sub">${providerCount}</span>` : 'Без provider-связи',
+      `${esc(track.published.codec)} · ${esc(track.published.container)}`,
+      `<span class="mono">${esc(track.published.path)}</span>`,
+      `${esc(tags.TITLE?.[0] || track.title)}<span class="sub">${esc(tags.ALBUM?.[0] || release.title)}</span>`
+    ];
+  });
+  return header('Текущие публикации', 'Проект списка текущих публикаций · обсуждение', link('publications', 'К плану публикации', 'button')) +
+    note('<strong>Изменились — нужен ли здесь отдельный фильтр?</strong> Критерий ещё не согласован.') +
+    `<div class="inline-summary">${badge(`${published.length} опубликовано`, 'success')}<span>${totalPositions} позиций в демо-медиатеке</span></div>` +
+    panel('Сохранённые публикации', table(['Релиз / артист', 'Позиция', 'Связь с провайдером', 'Формат', 'Опубликованный путь', 'Снимок метаданных'], rows));
 }
 
 function applyPlan(plan, automatic = false) {
@@ -407,7 +432,7 @@ function render(resetScroll = true) {
   if (name === 'match' && incomingGroups.some(item => item.id === id) && ui.groupId !== id) {
     ui.groupId = id; ui.selectedTarget = null; ui.selectedFile = null; ui.recordingTarget = null; ui.providerResults = null; ui.providerQuery = group().mode === 'provider' ? currentTarget().title : '';
   }
-  const renderers = { review, match, library, artist: () => artistPage(id), release: () => releasePage(id), 'create-release': manualReleasePage, track: () => trackPage(id), tags: () => tagsPage(id, scope), sources, publications, operations, settings, setup, components };
+  const renderers = { review, match, library, artist: () => artistPage(id), release: () => releasePage(id), 'create-release': manualReleasePage, track: () => trackPage(id), tags: () => tagsPage(id, scope), sources, publications, 'publication-list': publicationList, operations, settings, setup, components };
   const page = Object.hasOwn(renderers, name) ? name : 'review';
   const activeElement = document.activeElement;
   const focusId = activeElement?.id;
@@ -419,7 +444,7 @@ function render(resetScroll = true) {
   const heading = view.querySelector('h1');
   document.title = `${heading.textContent} · MeloTrove · макет v2`;
   document.querySelector('#breadcrumb').textContent = `${page === 'match' ? 'Входящие / ' : ''}${heading.textContent}`;
-  const section = ['artist', 'release', 'track', 'tags', 'create-release'].includes(page) ? 'library' : page === 'match' ? 'review' : page;
+  const section = ['artist', 'release', 'track', 'tags', 'create-release'].includes(page) ? 'library' : page === 'match' ? 'review' : page === 'publication-list' ? 'publications' : page;
   document.querySelectorAll('[data-nav]').forEach(item => {
     if (item.dataset.nav === section) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
   });

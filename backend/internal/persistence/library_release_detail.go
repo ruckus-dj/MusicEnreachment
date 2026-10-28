@@ -26,7 +26,15 @@ type LibraryReleaseDetail struct {
 	PrimaryArtistCandidates []uuid.UUID
 	PrimaryArtistMBIDs      map[uuid.UUID]*uuid.UUID
 	Artists                 []LibraryArtistCredit
+	Media                   []LibraryReleaseMediumDetail
 	Tracks                  []LibraryReleaseTrackDetail
+}
+
+type LibraryReleaseMediumDetail struct {
+	ID     uuid.UUID
+	Medium int
+	Title  string
+	Format string
 }
 
 type LibraryArtistCredit struct {
@@ -34,14 +42,18 @@ type LibraryArtistCredit struct {
 	ArtistName *string
 	CreditName string
 	JoinPhrase string
+	Role       string
 }
 
 type LibraryReleaseTrackDetail struct {
 	ID                        uuid.UUID
 	LocalTrackID              uuid.UUID
 	RecordingID               *uuid.UUID
+	MediumID                  uuid.UUID
 	Medium                    int
 	Position                  int
+	DurationMS                sql.NullInt64
+	RecordingTitle            *string
 	DisplayedNumber           string
 	Title                     string
 	Metadata                  json.RawMessage
@@ -142,9 +154,13 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 			return fmt.Errorf("read library MusicBrainz release binding: %w", bindingErr)
 		}
 		result.CanRefreshMusicBrainz = mbid != ""
+		result.Media = make([]LibraryReleaseMediumDetail, 0)
+		if err := tx.NewRaw(`SELECT id,medium,title,format FROM release_medium WHERE release_id=? ORDER BY medium`, id).Scan(ctx, &result.Media); err != nil {
+			return fmt.Errorf("read library release media: %w", err)
+		}
 
 		result.Artists = make([]LibraryArtistCredit, 0)
-		if err := tx.NewRaw(`SELECT credit.artist_id,artist.name AS artist_name,credit.name AS credit_name,credit.name_join_phrase AS join_phrase
+		if err := tx.NewRaw(`SELECT credit.artist_id,artist.name AS artist_name,credit.name AS credit_name,credit.name_join_phrase AS join_phrase,credit.role
 				FROM release_artist credit LEFT JOIN local_artist artist ON artist.id=credit.artist_id
 				WHERE credit.release_id=? ORDER BY credit.position`, id).
 			Scan(ctx, &result.Artists); err != nil {
@@ -155,10 +171,11 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 		}
 
 		result.Tracks = make([]LibraryReleaseTrackDetail, 0)
-		if err := tx.NewRaw(`SELECT rt.id,rt.track_id AS local_track_id,rt.recording_id,rt.medium,rt.position,rt.displayed_number,
+		if err := tx.NewRaw(`SELECT rt.id,rt.track_id AS local_track_id,rt.recording_id,rtm.id AS medium_id,rt.medium,rt.position,rt.duration_ms,recording.title AS recording_title,rt.displayed_number,
 				track.title,track.metadata,track.metadata_version,rt.metadata_revision,track.metadata_revision AS track_metadata_revision,
 				recording.metadata_revision AS recording_metadata_revision,rt.primary_artist_id
-				FROM release_track rt JOIN local_track track ON track.id=rt.track_id LEFT JOIN local_recording recording ON recording.id=rt.recording_id
+				FROM release_track rt JOIN release_medium rtm ON rtm.release_id=rt.release_id AND rtm.medium=rt.medium
+				JOIN local_track track ON track.id=rt.track_id LEFT JOIN local_recording recording ON recording.id=rt.recording_id
 			WHERE rt.release_id=? ORDER BY rt.medium,rt.position`, id).Scan(ctx, &result.Tracks); err != nil {
 			return fmt.Errorf("read library release tracks: %w", err)
 		}
@@ -223,7 +240,7 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 			LibraryArtistCredit
 		}
 		if err := tx.NewRaw(`SELECT credit.track_id,credit.artist_id,artist.name AS artist_name,credit.name AS credit_name,
-			credit.name_join_phrase AS join_phrase FROM track_artist credit LEFT JOIN local_artist artist ON artist.id=credit.artist_id
+			credit.name_join_phrase AS join_phrase,credit.role FROM track_artist credit LEFT JOIN local_artist artist ON artist.id=credit.artist_id
 			WHERE credit.track_id IN (?) ORDER BY credit.track_id,credit.position`, bun.List(trackIDs)).Scan(ctx, &credits); err != nil {
 			return fmt.Errorf("read library release track artists: %w", err)
 		}

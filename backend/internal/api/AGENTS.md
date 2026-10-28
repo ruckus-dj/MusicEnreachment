@@ -21,6 +21,13 @@ HTTP API layer: Huma v2 on chi router via humachi adapter. Health endpoints, mid
 
 **Generated OpenAPI contract**: backend/cmd/openapi exports schema -> frontend/openapi.json -> Orval generates TS client. `task generate` enforces sync.
 
+**Nullable identities**: UUID custom schemas can ignore pointer nullability.
+For optional response identities, verify the generated schema as well as runtime
+JSON; use nullable strings at the API boundary when necessary. OpenAPI 3.1
+expresses a nullable string as `type: ["string", "null"]`, not the older
+`nullable: true`. Schema tests must inspect these semantic types rather than
+searching JSON text for one serialization.
+
 **Error responses**: Huma standard error format, service layer provides safe error messages.
 
 **Artwork uploads**: Huma defaults JSON request bodies to 1 MiB, including

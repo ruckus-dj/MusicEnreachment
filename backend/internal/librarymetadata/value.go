@@ -112,6 +112,7 @@ type ArtistCredit struct {
 	ArtistName string  `json:"artist_name"`
 	CreditName string  `json:"credit_name"`
 	JoinPhrase string  `json:"join_phrase"`
+	Role       string  `json:"role,omitempty"`
 	MBID       *string `json:"mbid,omitempty"`
 }
 
@@ -263,9 +264,14 @@ func validateTypedValue(valueType ValueType, value any) error {
 			}
 		}
 	case TypeArtistCredit:
-		return validateObjectList(value, map[string]bool{"artist_id": true, "artist_name": true, "credit_name": true, "join_phrase": true, "mbid": true}, func(item map[string]any) error {
+		return validateObjectList(value, map[string]bool{"artist_id": true, "artist_name": true, "credit_name": true, "join_phrase": true, "role": true, "mbid": true}, func(item map[string]any) error {
 			if err := requiredStringFields(item, "artist_id", "artist_name", "credit_name", "join_phrase"); err != nil {
 				return err
+			}
+			if role, exists := item["role"]; exists {
+				if _, ok := role.(string); !ok {
+					return fmt.Errorf("role must be a string")
+				}
 			}
 			if err := validateUUIDString(item["artist_id"], "artist_id"); err != nil {
 				return err

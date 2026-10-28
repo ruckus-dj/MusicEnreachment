@@ -26,22 +26,27 @@ type Dependencies struct {
 	// SourceLocationDetails serves the read-only inspector of one location. It
 	// never probes the source, so it stays available while the platform is
 	// diagnostic or Setup is unfinished.
-	SourceLocationDetails  *service.SourceLocationDetails
-	SourceArtifactCleanup  *service.SourceAnalysisArtifactCleanup
-	SourceCleanupRetries   *service.SourceCleanupRetries
-	IncomingGroups         *service.IncomingGroups
-	MatchingReview         *service.MatchingReviewService
-	MatchingManual         *service.MatchingManualService
-	MatchingLocal          *service.MatchingLocalService
-	MatchingAuthority      *service.MatchingAuthorityService
-	ManualReleaseSelection *service.ManualReleaseSelectionService
-	ManualPickerSearch     *service.ManualPickerSearchService
-	LibraryReleaseDetails  *service.LibraryReleaseDetails
-	LibraryProviderRefresh *service.LibraryProviderRefresh
-	LibraryPrimaryArtists  *service.LibraryPrimaryArtists
-	LibraryMetadata        *service.LibraryMetadataService
-	LibraryReleaseCovers   *service.ReleaseCovers
-	LibraryPublications    LibraryPublicationService
+	SourceLocationDetails   *service.SourceLocationDetails
+	SourceArtifactCleanup   *service.SourceAnalysisArtifactCleanup
+	SourceCleanupRetries    *service.SourceCleanupRetries
+	IncomingGroups          *service.IncomingGroups
+	MatchingReview          *service.MatchingReviewService
+	MatchingManual          *service.MatchingManualService
+	MatchingLocal           *service.MatchingLocalService
+	MatchingAuthority       *service.MatchingAuthorityService
+	ManualReleaseSelection  *service.ManualReleaseSelectionService
+	ManualPickerSearch      *service.ManualPickerSearchService
+	LibraryReleaseDetails   *service.LibraryReleaseDetails
+	LibraryCatalog          *service.LibraryCatalog
+	LibraryReleaseCreation  *service.LibraryReleaseCreation
+	LibraryReleaseOptions   *service.LibraryReleaseOptions
+	LibraryRecordingSearch  *service.LibraryRecordingSearch
+	LibraryPublicationsList *service.LibraryPublicationsList
+	LibraryProviderRefresh  *service.LibraryProviderRefresh
+	LibraryPrimaryArtists   *service.LibraryPrimaryArtists
+	LibraryMetadata         *service.LibraryMetadataService
+	LibraryReleaseCovers    *service.ReleaseCovers
+	LibraryPublications     LibraryPublicationService
 }
 
 // LibraryPublicationService is the API's narrow boundary to publication state.

@@ -1,0 +1,124 @@
+.library-release-screen {
+  width: min(100%, 64rem);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.library-release-screen > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 12px;
+}
+
+.library-release-screen h1 {
+  font-size: 20px;
+  line-height: 26px;
+}
+
+.library-release-screen h2 {
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.library-release-screen h3,
+.library-release-screen h4 {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.library-release-screen article,
+.library-release-screen > section,
+.library-release-screen fieldset {
+  min-width: 0;
+  border-color: var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+.library-release-screen article {
+  padding: 12px;
+}
+
+.library-release-screen article > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 8px;
+}
+
+.library-release-screen fieldset {
+  padding: 8px 10px;
+}
+
+.library-release-screen input,
+.library-release-screen select,
+.library-release-screen textarea {
+  max-width: 100%;
+  color: var(--ink);
+  background: var(--raised);
+  border-color: var(--control);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.library-release-screen select {
+  display: block;
+  width: min(100%, 32rem);
+  min-height: 30px;
+  margin-top: 4px;
+  padding: 4px 8px;
+}
+
+.library-release-screen textarea {
+  min-height: 10rem;
+  padding: 8px;
+}
+
+.library-release-screen button {
+  min-height: 30px;
+  padding: 4px 8px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--control);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.library-release-screen button:hover:not(:disabled) {
+  background: var(--raised);
+  border-color: var(--accent);
+}
+
+.library-release-screen button:disabled {
+  color: var(--muted);
+  background: var(--raised);
+  border-color: var(--line);
+}
+
+.library-release-screen .bg-white,
+.library-release-screen .bg-amber-50 {
+  background: var(--raised);
+}
+
+.library-release-screen .border-stone-300,
+.library-release-screen .border-amber-300 {
+  border-color: var(--line);
+}
+
+.library-release-screen [role="alert"] {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+
+.library-release-screen code {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 599px) {
+  .library-release-screen input,
+  .library-release-screen select,
+  .library-release-screen textarea,
+  .library-release-screen button {
+    min-height: 40px;
+  }
+
+  .library-release-screen article {
+    padding: 10px;
+  }
+}

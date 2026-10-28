@@ -71,7 +71,7 @@ func TestDecodeEnvelopeValidatesPositionValuesAndPreservesEmptyAndFalse(t *testi
 
 func TestDecodeEnvelopeValidatesIdentityContributorWorkAndMovementValues(t *testing.T) {
 	data := `{"version":1,"scope":"position","desired":{
-		"artist_credit":{"state":"value","value":[{"artist_id":"123e4567-e89b-12d3-a456-426614174000","artist_name":"Artist","credit_name":"A","join_phrase":" & ","mbid":"123e4567-e89b-12d3-a456-426614174001"},{"artist_id":"123e4567-e89b-12d3-a456-426614174000","artist_name":"Artist","credit_name":"Artist","join_phrase":""}],"authority":"automatic","provenance":{"kind":"provider"}},
+		"artist_credit":{"state":"value","value":[{"artist_id":"123e4567-e89b-12d3-a456-426614174000","artist_name":"Artist","credit_name":"A","join_phrase":" & ","role":"performer","mbid":"123e4567-e89b-12d3-a456-426614174001"},{"artist_id":"123e4567-e89b-12d3-a456-426614174000","artist_name":"Artist","credit_name":"Artist","join_phrase":""}],"authority":"automatic","provenance":{"kind":"provider"}},
 		"recording_mbid":{"state":"value","value":"123e4567-e89b-12d3-a456-426614174002","authority":"automatic","provenance":{"kind":"provider"}},
 		"contributors":{"state":"value","value":[{"name":"Composer","role":"composer"},{"name":"Performer","role":"vocals","artist_id":"123e4567-e89b-12d3-a456-426614174000"}],"authority":"automatic","provenance":{"kind":"source_metadata"}},
 		"works":{"state":"value","value":[{"name":"Work","mbid":"123e4567-e89b-12d3-a456-426614174003"}],"authority":"automatic","provenance":{"kind":"provider"}},

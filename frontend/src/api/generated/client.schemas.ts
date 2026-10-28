@@ -92,6 +92,29 @@ export interface CoverEmbeddingResponse {
   warning_code?: string;
 }
 
+export interface CreateLibraryReleaseMediaResult {
+  media_id: string;
+  media_key: string;
+}
+
+export interface CreateLibraryReleasePositionResult {
+  position_id: string;
+  position_key: string;
+  /** @nullable */
+  recording_id: string | null;
+  track_id: string;
+}
+
+export interface CreateLibraryReleaseResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  media: CreateLibraryReleaseMediaResult[] | null;
+  /** @nullable */
+  positions: CreateLibraryReleasePositionResult[] | null;
+  release_id: string;
+}
+
 export type CreateSourceBodyProcessingMode = typeof CreateSourceBodyProcessingMode[keyof typeof CreateSourceBodyProcessingMode];
 
 
@@ -357,6 +380,44 @@ export interface LibraryArtistCreditResponse {
   artist_name?: string;
   credit_name: string;
   join_phrase: string;
+  role?: string;
+}
+
+export interface LibraryProviderLinkResponse {
+  method: string;
+  provider_code: string;
+  provider_key: string;
+}
+
+export interface LibraryArtistSummary {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  disambiguation: string | null;
+  genres: string[];
+  id: string;
+  name: string;
+  position_count: number;
+  provider_links: LibraryProviderLinkResponse[];
+  published_position_count: number;
+  release_count: number;
+}
+
+export interface LibraryCatalogSummary {
+  artist_count: number;
+  position_count: number;
+  published_position_count: number;
+  release_count: number;
+}
+
+export interface LibraryArtistPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: LibraryArtistSummary[];
+  limit: number;
+  offset: number;
+  summary: LibraryCatalogSummary;
+  total: number;
 }
 
 export interface LibraryArtistResolution {
@@ -366,6 +427,19 @@ export interface LibraryArtistResolution {
   effective_artist_mbid: string;
   selected_artist_id: string;
   status: string;
+}
+
+export interface LibraryCoverCandidateOption {
+  /** @nullable */
+  height: number | null;
+  label: string;
+  media_variant_id: string;
+  metadata_result_id: string;
+  mime: string;
+  sha256: string;
+  size: number;
+  /** @nullable */
+  width: number | null;
 }
 
 export interface LibraryFirstPublicationAdmissionInputBody {
@@ -429,6 +503,66 @@ export interface LibraryMetadataResponse {
   revision: number;
 }
 
+export interface PublicationAudioResponse {
+  alac_capabilities_verified: boolean;
+  bit_depth?: number;
+  bitrate?: number;
+  channels?: number;
+  codec: string;
+  container: string;
+  /** @nullable */
+  lossless: boolean | null;
+  sample_rate?: number;
+  stream_index: number;
+  supported_source_container: boolean;
+}
+
+/**
+ * @nullable
+ */
+export type LibraryPositionPublicationResponse = {
+  audio: PublicationAudioResponse;
+  epoch: string;
+  generation: string;
+  relative_path: string;
+  validated_at: string;
+} | null;
+
+export interface LibraryPositionReleaseResponse {
+  artists: LibraryArtistCreditResponse[];
+  id: string;
+  title: string;
+}
+
+export interface LibraryPositionSummary {
+  artists: LibraryArtistCreditResponse[];
+  displayed_number: string;
+  id: string;
+  local_track_id: string;
+  medium: number;
+  position: number;
+  /** @nullable */
+  provider_duration_ms: number | null;
+  publication: LibraryPositionPublicationResponse | null;
+  /** @nullable */
+  recording_id: string | null;
+  release: LibraryPositionReleaseResponse;
+  /** @nullable */
+  selected_media_variant_id: string | null;
+  source_variant_count: number;
+  title: string;
+}
+
+export interface LibraryPositionPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: LibraryPositionSummary[];
+  limit: number;
+  offset: number;
+  summary: LibraryCatalogSummary;
+  total: number;
+}
+
 export interface LibraryPrimaryArtistBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -443,6 +577,24 @@ export interface LibraryPrimaryArtistResponse {
   readonly $schema?: string;
   publication_applied: boolean;
   revision: number;
+}
+
+export interface LibraryPublicationListItemResponse {
+  artists: LibraryArtistCreditResponse[];
+  audio: PublicationAudioResponse;
+  displayed_number: string;
+  generation: string;
+  medium: number;
+  output_epoch: string;
+  /** @nullable */
+  output_root: string | null;
+  position: number;
+  position_id: string;
+  relative_path: string;
+  release_id: string;
+  release_title: string;
+  title: string;
+  validated_at: string;
 }
 
 export interface LibraryPublicationManualLyrics {
@@ -485,20 +637,6 @@ export interface PublicationAssetsResponse {
   cover: PublicationCoverResponse;
   lyrics: PublicationLyricsResponse;
   version: number;
-}
-
-export interface PublicationAudioResponse {
-  alac_capabilities_verified: boolean;
-  bit_depth?: number;
-  bitrate?: number;
-  channels?: number;
-  codec: string;
-  container: string;
-  /** @nullable */
-  lossless: boolean | null;
-  sample_rate?: number;
-  stream_index: number;
-  supported_source_container: boolean;
 }
 
 export type PublicationMetadataResponseTags = {[key: string]: string[] | null};
@@ -549,6 +687,89 @@ export interface LibraryPublicationResponse {
   source_cleanup_warnings?: LibraryPublicationSourceCleanupWarning[] | null;
 }
 
+export interface LibraryPublicationsListResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: LibraryPublicationListItemResponse[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface LibraryReleaseOptionCredit {
+  artist_id: string;
+  join_phrase: string;
+  name: string;
+}
+
+export interface LibraryReleaseOptionProviderLink {
+  provider_code: string;
+  provider_key: string;
+}
+
+export interface LibraryRecordingOption {
+  artists: LibraryReleaseOptionCredit[];
+  /** @nullable */
+  duration_ms: number | null;
+  id: string;
+  provider_links: LibraryReleaseOptionProviderLink[];
+  title: string;
+}
+
+export interface LibraryRecordingSearchArtistOutput {
+  join_phrase: string;
+  name: string;
+  /** @nullable */
+  provider_artist_id: string | null;
+}
+
+export interface LibraryRecordingSearchBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  limit: number;
+  /** @minimum 0 */
+  offset: number;
+  /** @minLength 1 */
+  query: string;
+}
+
+export interface LibraryRecordingSearchItemOutput {
+  artists: LibraryRecordingSearchArtistOutput[];
+  /** @nullable */
+  duration_ms: number | null;
+  /** @nullable */
+  local_recording_id: string | null;
+  provider_id: string;
+  provider_key: string;
+  provider_recording_id: string;
+  provider_source_id: string;
+  title: string;
+}
+
+export interface LibraryRecordingSearchResultOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  configuration_identity: string;
+  items: LibraryRecordingSearchItemOutput[];
+  limit: number;
+  offset: number;
+  operation_id: string;
+  provider_source_id: string;
+  total: number;
+}
+
+export interface LibraryReleaseCountsResponse {
+  available_position_count: number;
+  position_count: number;
+  /** @nullable */
+  provider_position_count: number | null;
+  published_position_count: number;
+}
+
 export interface LibraryReleaseCoverApplyInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -565,6 +786,111 @@ export interface LibraryReleaseCoverSaveBody {
   expected_revision: number;
   image: string;
   mime: string;
+}
+
+export interface LibraryReleaseCreateArtist {
+  key: string;
+  name?: string;
+}
+
+export interface LibraryReleaseCreateArtistRef {
+  /** @nullable */
+  id?: string | null;
+  key?: string;
+  kind: string;
+}
+
+/**
+ * @nullable
+ */
+export type LibraryReleaseCreateCover = {
+  expected_sha256: string;
+  metadata_result_id: string;
+} | null;
+
+export interface LibraryReleaseCreateCredit {
+  artist_ref: LibraryReleaseCreateArtistRef;
+  credit_name?: string;
+  join_phrase?: string;
+  role?: string;
+}
+
+/**
+ * @nullable
+ */
+export type LibraryReleaseCreateRecordingRef = {
+  configuration_identity?: string;
+  /** @nullable */
+  id?: string | null;
+  key?: string;
+  kind: string;
+  /** @nullable */
+  provider_id?: string | null;
+  /** @nullable */
+  provider_recording_id?: string | null;
+  /** @nullable */
+  provider_source_id?: string | null;
+} | null;
+
+export interface LibraryReleaseCreateSource {
+  media_variant_id: string;
+  /** @nullable */
+  metadata_result_id?: string | null;
+}
+
+export interface LibraryReleaseCreatePosition {
+  displayed_number?: string;
+  /** @nullable */
+  duration_ms?: number | null;
+  key: string;
+  recording_ref?: LibraryReleaseCreateRecordingRef | null;
+  /** @nullable */
+  selected_media_variant_id?: string | null;
+  /** @nullable */
+  sources?: LibraryReleaseCreateSource[] | null;
+  title?: string;
+}
+
+export interface LibraryReleaseCreateMedium {
+  format?: string;
+  key: string;
+  /** @nullable */
+  positions?: LibraryReleaseCreatePosition[] | null;
+  title?: string;
+}
+
+export interface LibraryReleaseCreateRecording {
+  key: string;
+  title?: string;
+}
+
+export interface LibraryReleaseCreateRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  catalog_number?: string;
+  country?: string;
+  cover?: LibraryReleaseCreateCover | null;
+  /** @nullable */
+  credits?: LibraryReleaseCreateCredit[] | null;
+  label?: string;
+  /** @nullable */
+  media?: LibraryReleaseCreateMedium[] | null;
+  /** @nullable */
+  new_artists?: LibraryReleaseCreateArtist[] | null;
+  /** @nullable */
+  new_recordings?: LibraryReleaseCreateRecording[] | null;
+  release_date?: string;
+  /** @nullable */
+  release_id?: string | null;
+  release_type?: string;
+  title?: string;
+}
+
+export interface LibraryReleaseMediumResponse {
+  format: string;
+  id: string;
+  medium: number;
+  title: string;
 }
 
 export interface LibrarySourceLocationResponse {
@@ -593,16 +919,21 @@ export interface LibraryReleaseTrackResponse {
   /** @nullable */
   artists: LibraryArtistCreditResponse[] | null;
   displayed_number: string;
+  /** @nullable */
+  duration_ms: number | null;
   id: string;
   local_track_id: string;
   medium: number;
+  medium_id?: string;
   metadata: unknown;
   metadata_revision: number;
   metadata_version: number;
   position: number;
   primary_artist: LibraryArtistResolution;
-  recording_id: string;
+  /** @nullable */
+  recording_id: string | null;
   recording_metadata_revision?: number;
+  recording_title?: string;
   /** @nullable */
   sources: LibraryTrackSourceResponse[] | null;
   title: string;
@@ -616,6 +947,8 @@ export interface LibraryReleaseDetailResponse {
   artists: LibraryArtistCreditResponse[] | null;
   can_refresh_musicbrainz: boolean;
   id: string;
+  /** @nullable */
+  media?: LibraryReleaseMediumResponse[] | null;
   metadata: unknown;
   metadata_revision: number;
   metadata_version: number;
@@ -623,6 +956,108 @@ export interface LibraryReleaseDetailResponse {
   title: string;
   /** @nullable */
   tracks: LibraryReleaseTrackResponse[] | null;
+}
+
+export interface LibraryReleaseEditionResponse {
+  catalog_numbers: string[];
+  /** @nullable */
+  country: string | null;
+  /** @nullable */
+  disambiguation: string | null;
+  labels: string[];
+  /** @nullable */
+  original_release_date: string | null;
+  /** @nullable */
+  primary_type: string | null;
+  /** @nullable */
+  release_date: string | null;
+  secondary_types: string[];
+}
+
+export interface LibraryReleaseOptionsPageLibraryCoverCandidateOption {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: LibraryCoverCandidateOption[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface LibraryReleaseOptionsPageLibraryRecordingOption {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: LibraryRecordingOption[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface LibrarySourceVariantLocation {
+  location_id: string;
+  relative_path: string;
+  root_display_name: string;
+  root_enabled: boolean;
+  root_status: string;
+  source_root_id: string;
+}
+
+export interface LibrarySourceVariantOption {
+  codec: string;
+  container: string;
+  /** @nullable */
+  duration_ms: number | null;
+  filename: string;
+  locations: LibrarySourceVariantLocation[];
+  media_variant_id: string;
+  /** @nullable */
+  metadata_result_id: string | null;
+  title: string;
+}
+
+export interface LibraryReleaseOptionsPageLibrarySourceVariantOption {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: LibrarySourceVariantOption[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface ReleaseCoverSummary {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  mode: string;
+  pending_generation?: string;
+  pending_mime?: string;
+  pending_sha256?: string;
+  pending_size?: number;
+  release_id: string;
+  revision: number;
+  selected_generation?: string;
+  selected_mime?: string;
+  selected_sha256?: string;
+  selected_size?: number;
+  warning?: string;
+}
+
+export interface LibraryReleaseSummary {
+  artists: LibraryArtistCreditResponse[];
+  counts: LibraryReleaseCountsResponse;
+  cover: ReleaseCoverSummary;
+  edition: LibraryReleaseEditionResponse;
+  id: string;
+  provider_links: LibraryProviderLinkResponse[];
+  title: string;
+}
+
+export interface LibraryReleasePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: LibraryReleaseSummary[];
+  limit: number;
+  offset: number;
+  summary: LibraryCatalogSummary;
+  total: number;
 }
 
 export type ManualPickerSearchBodyEntity = typeof ManualPickerSearchBodyEntity[keyof typeof ManualPickerSearchBodyEntity];
@@ -967,23 +1402,6 @@ export interface ReleaseCoverBatch {
   release_id: string;
   revision: number;
   selected_generation: string;
-}
-
-export interface ReleaseCoverSummary {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  mode: string;
-  pending_generation?: string;
-  pending_mime?: string;
-  pending_sha256?: string;
-  pending_size?: number;
-  release_id: string;
-  revision: number;
-  selected_generation?: string;
-  selected_mime?: string;
-  selected_sha256?: string;
-  selected_size?: number;
-  warning?: string;
 }
 
 export interface RerunSourceFingerprintBody {
@@ -1477,10 +1895,141 @@ export interface UpdateSourceBody {
   processing_mode?: UpdateSourceBodyProcessingMode;
 }
 
+export type ListLibraryArtistsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+q?: string;
+publication?: ListLibraryArtistsPublication;
+};
+
+export type ListLibraryArtistsPublication = typeof ListLibraryArtistsPublication[keyof typeof ListLibraryArtistsPublication];
+
+
+export const ListLibraryArtistsPublication = {
+  all: 'all',
+  published: 'published',
+  unpublished: 'unpublished',
+} as const;
+
+export type ListLibraryCoverCandidatesParams = {
+q?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit: number;
+/**
+ * @minimum 0
+ */
+offset: number;
+};
+
+export type GetLibraryCoverCandidateImageParams = {
+/**
+ * @pattern ^[0-9a-f]{64}$
+ */
+expected_sha256: string;
+};
+
+export type ListLibraryPositionsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+q?: string;
+publication?: ListLibraryPositionsPublication;
+artist_id?: string;
+release_id?: string;
+};
+
+export type ListLibraryPositionsPublication = typeof ListLibraryPositionsPublication[keyof typeof ListLibraryPositionsPublication];
+
+
+export const ListLibraryPositionsPublication = {
+  all: 'all',
+  published: 'published',
+  unpublished: 'unpublished',
+} as const;
+
+export type ListLibraryPublicationsParams = {
+q?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListLibraryRecordingsParams = {
+q?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit: number;
+/**
+ * @minimum 0
+ */
+offset: number;
+};
+
+export type ListLibraryReleasesParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+q?: string;
+publication?: ListLibraryReleasesPublication;
+artist_id?: string;
+};
+
+export type ListLibraryReleasesPublication = typeof ListLibraryReleasesPublication[keyof typeof ListLibraryReleasesPublication];
+
+
+export const ListLibraryReleasesPublication = {
+  all: 'all',
+  published: 'published',
+  unpublished: 'unpublished',
+} as const;
+
 export type GetLibraryFirstPublicationPreviewParams = {
 location_id?: string;
 media_variant_id?: string;
 stream_index?: string;
+};
+
+export type ListLibrarySourceVariantsParams = {
+q?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit: number;
+/**
+ * @minimum 0
+ */
+offset: number;
 };
 
 export type ListOperationsParams = {
