@@ -13,6 +13,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
@@ -120,6 +121,12 @@ type workerSettingsStore struct {
 	root string
 }
 
+type appPublicationExecutorFunc func(context.Context, uuid.UUID, int64, int) error
+
+func (executor appPublicationExecutorFunc) ExecutePublicationDelivery(ctx context.Context, operationID uuid.UUID, jobID int64, attempt int) error {
+	return executor(ctx, operationID, jobID, attempt)
+}
+
 func (store workerSettingsStore) Get(_ context.Context, key string) (string, bool, error) {
 	if key == settings.ToolsDirectoryKey {
 		return store.root, true, nil
@@ -167,6 +174,26 @@ func TestWorkerTransitionWakesAPISubscriber(t *testing.T) {
 	case <-other:
 		t.Fatal("unrelated operation subscriber was woken")
 	default:
+	}
+
+	// The publication worker uses the same Operations instance exposed to the API.
+	publicationID := uuid.New()
+	publicationChanged, unsubscribePublication := apiOperations.Subscribe(publicationID)
+	defer unsubscribePublication()
+	publicationWorker := jobs.NewPublicationWorker(appPublicationExecutorFunc(func(context.Context, uuid.UUID, int64, int) error {
+		return nil
+	}), workerOperations)
+	publicationJob := &river.Job[publication.TrackArgs]{
+		JobRow: &rivertype.JobRow{ID: 2, Attempt: 1},
+		Args:   publication.TrackArgs{OperationID: publicationID},
+	}
+	if err := publicationWorker.Work(ctx, publicationJob); err != nil {
+		t.Fatalf("publication worker: %v", err)
+	}
+	select {
+	case <-publicationChanged:
+	case <-ctx.Done():
+		t.Fatal("publication worker did not wake the API subscriber")
 	}
 }
 

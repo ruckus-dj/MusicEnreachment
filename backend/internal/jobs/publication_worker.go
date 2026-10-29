@@ -15,15 +15,20 @@ type PublicationDeliveryExecutor interface {
 	ExecutePublicationDelivery(context.Context, uuid.UUID, int64, int) error
 }
 
+type publicationOperationNotifier interface {
+	Notify(uuid.UUID)
+}
+
 // PublicationWorker dispatches the source-free River identity to the service
 // executor; it must not perform settlement or retries independently.
 type PublicationWorker struct {
 	river.WorkerDefaults[publication.TrackArgs]
-	executor PublicationDeliveryExecutor
+	executor   PublicationDeliveryExecutor
+	operations publicationOperationNotifier
 }
 
-func NewPublicationWorker(executor PublicationDeliveryExecutor) *PublicationWorker {
-	return &PublicationWorker{executor: executor}
+func NewPublicationWorker(executor PublicationDeliveryExecutor, operations publicationOperationNotifier) *PublicationWorker {
+	return &PublicationWorker{executor: executor, operations: operations}
 }
 
 func (worker *PublicationWorker) Work(ctx context.Context, job *river.Job[publication.TrackArgs]) error {
@@ -33,7 +38,11 @@ func (worker *PublicationWorker) Work(ctx context.Context, job *river.Job[public
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := worker.executor.ExecutePublicationDelivery(ctx, job.Args.OperationID, job.ID, job.Attempt); err != nil {
+	err := worker.executor.ExecutePublicationDelivery(ctx, job.Args.OperationID, job.ID, job.Attempt)
+	if worker.operations != nil {
+		worker.operations.Notify(job.Args.OperationID)
+	}
+	if err != nil {
 		return fmt.Errorf("execute publication delivery: %w", err)
 	}
 	return nil

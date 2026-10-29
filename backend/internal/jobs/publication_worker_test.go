@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
+	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 )
 
 type publicationExecutorFunc func(context.Context, uuid.UUID, int64, int) error
@@ -26,7 +28,7 @@ func TestPublicationWorkerDispatchesIdentity(t *testing.T) {
 			t.Fatalf("unexpected delivery identity: %s %d %d", gotID, jobID, attempt)
 		}
 		return nil
-	}))
+	}), nil)
 	if err := worker.Work(context.Background(), publicationWorkerTestJob(opID, 44, 2)); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +39,7 @@ func TestPublicationWorkerDispatchesIdentity(t *testing.T) {
 
 func TestPublicationWorkerReturnsExecutorError(t *testing.T) {
 	want := errors.New("executor failed")
-	worker := NewPublicationWorker(publicationExecutorFunc(func(context.Context, uuid.UUID, int64, int) error { return want }))
+	worker := NewPublicationWorker(publicationExecutorFunc(func(context.Context, uuid.UUID, int64, int) error { return want }), nil)
 	err := worker.Work(context.Background(), publicationWorkerTestJob(uuid.New(), 44, 2))
 	if !errors.Is(err, want) {
 		t.Fatalf("Work() error = %v, want %v", err, want)
@@ -46,12 +48,21 @@ func TestPublicationWorkerReturnsExecutorError(t *testing.T) {
 
 func TestPublicationWorkerHonorsCancellation(t *testing.T) {
 	called := false
-	worker := NewPublicationWorker(publicationExecutorFunc(func(context.Context, uuid.UUID, int64, int) error { called = true; return nil }))
+	operations := service.NewOperations(nil)
+	operationID := uuid.New()
+	changed, unsubscribe := operations.Subscribe(operationID)
+	defer unsubscribe()
+	worker := NewPublicationWorker(publicationExecutorFunc(func(context.Context, uuid.UUID, int64, int) error { called = true; return nil }), operations)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := worker.Work(ctx, publicationWorkerTestJob(uuid.New(), 44, 2))
+	err := worker.Work(ctx, publicationWorkerTestJob(operationID, 44, 2))
 	if !errors.Is(err, context.Canceled) || called {
 		t.Fatalf("Work() = %v, called = %v", err, called)
+	}
+	select {
+	case <-changed:
+		t.Fatal("cancelled delivery woke operation subscriber")
+	default:
 	}
 }
 
@@ -77,14 +88,17 @@ func TestPublicationWorkerRejectsIncompleteIdentity(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
+			operations := service.NewOperations(nil)
+			changed, unsubscribe := operations.Subscribe(opID)
+			defer unsubscribe()
 			worker := NewPublicationWorker(publicationExecutorFunc(func(context.Context, uuid.UUID, int64, int) error {
 				calls++
 				return nil
-			}))
+			}), operations)
 			if test.nilWorker {
 				worker = nilWorker
 			} else if test.nilExecutor {
-				worker = NewPublicationWorker(nil)
+				worker = NewPublicationWorker(nil, operations)
 			}
 			var err error
 			func() {
@@ -100,6 +114,60 @@ func TestPublicationWorkerRejectsIncompleteIdentity(t *testing.T) {
 			}
 			if calls != 0 {
 				t.Fatalf("executor calls = %d, want 0", calls)
+			}
+			select {
+			case <-changed:
+				t.Fatal("invalid delivery woke operation subscriber")
+			default:
+			}
+		})
+	}
+}
+
+func TestPublicationWorkerNotifiesAfterExecutorReturns(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		executorErr error
+	}{
+		{name: "success"},
+		{name: "error", executorErr: errors.New("executor failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			operationID, unrelatedID := uuid.New(), uuid.New()
+			operations := service.NewOperations(nil)
+			changed, unsubscribe := operations.Subscribe(operationID)
+			defer unsubscribe()
+			other, unsubscribeOther := operations.Subscribe(unrelatedID)
+			defer unsubscribeOther()
+			started, release := make(chan struct{}), make(chan struct{})
+			worker := NewPublicationWorker(publicationExecutorFunc(func(context.Context, uuid.UUID, int64, int) error {
+				close(started)
+				<-release
+				return test.executorErr
+			}), operations)
+			done := make(chan error, 1)
+			go func() {
+				done <- worker.Work(context.Background(), publicationWorkerTestJob(operationID, 44, 2))
+			}()
+			<-started
+			select {
+			case <-changed:
+				t.Fatal("subscriber woke before executor returned")
+			default:
+			}
+			close(release)
+			if err := <-done; !errors.Is(err, test.executorErr) {
+				t.Fatalf("Work() error = %v, want %v", err, test.executorErr)
+			}
+			select {
+			case <-changed:
+			case <-time.After(time.Second):
+				t.Fatal("operation subscriber was not woken after executor returned")
+			}
+			select {
+			case <-other:
+				t.Fatal("unrelated operation subscriber was woken")
+			default:
 			}
 		})
 	}

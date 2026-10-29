@@ -268,7 +268,7 @@ func Run(ctx context.Context, config Config) error {
 		tools.Platform{GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH},
 		publicationCoordinator, publicationBootUUID, publicationCommands,
 	)
-	publicationWorker := jobs.NewPublicationWorker(publicationExecutor)
+	publicationWorker := jobs.NewPublicationWorker(publicationExecutor, operationService)
 	obsoleteOutputCleanupRunner := service.NewObsoletePublicationOutputCleanupRunner(setupManagerRepository, registry, publicationCoordinator, nil)
 	obsoleteOutputCleanupWorker := jobs.NewObsoletePublicationOutputCleanupWorker(obsoleteOutputCleanupRunner)
 	publicationReconciliationWorker := jobs.NewPublicationReconciliationWorker(setupManagerRepository, libraryPublications, operationService)
