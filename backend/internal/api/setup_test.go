@@ -716,3 +716,74 @@ func TestOperationSSEEmitsOnlyWakeupAndSnapshotCanBeRefetched(t *testing.T) {
 		t.Fatalf("REST snapshot status = %d", snapshotResponse.StatusCode)
 	}
 }
+
+func TestSharedOperationSSEWakesForAnyOperationWithConstantDataAndCancels(t *testing.T) {
+	firstID, changedID := uuid.New(), uuid.New()
+	repository := &operationRepositoryFixture{operations: map[uuid.UUID]*persistence.Operation{
+		firstID:   {ID: firstID, Kind: "install", State: "queued", Stage: "queued"},
+		changedID: {ID: changedID, Kind: "install", State: "queued", Stage: "queued"},
+	}}
+	operations := service.NewOperations(repository)
+	server := httptest.NewServer(api.HandlerWithDependencies(api.Dependencies{Operations: operations}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/operations/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
+		_ = response.Body.Close()
+		t.Fatalf("shared SSE response status=%d headers=%v", response.StatusCode, response.Header)
+	}
+
+	lines := make(chan string, 4)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scanner := bufio.NewScanner(response.Body)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+	}()
+	if err := operations.Running(ctx, changedID, "download"); err != nil {
+		cancel()
+		_ = response.Body.Close()
+		t.Fatal(err)
+	}
+	select {
+	case line := <-lines:
+		if line != "event: operation-changed" {
+			t.Fatalf("shared SSE event = %q", line)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for shared operation wake-up")
+	}
+	select {
+	case line := <-lines:
+		if line != "data: {}" {
+			t.Fatalf("shared SSE data frame = %q", line)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for shared SSE data frame")
+	}
+	select {
+	case line := <-lines:
+		if line != "" {
+			t.Fatalf("shared SSE event terminator = %q", line)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for shared SSE event terminator")
+	}
+	cancel()
+	_ = response.Body.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shared SSE handler did not cancel")
+	}
+}

@@ -287,7 +287,7 @@ describe("source inspector step controls", () => {
       await screen.findByText("Выполняется этап анализа файла."),
     ).toBeVisible();
     await waitFor(() => expect(InspectorStream.instances).toHaveLength(1));
-    expect(stream().url).toBe("/api/operations/new-rerun-operation/events");
+    expect(stream().url).toBe("/api/operations/events");
     expect(screen.getByText("stored-fingerprint")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "detail reload unavailable",

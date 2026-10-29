@@ -190,7 +190,7 @@ describe("source scan lifecycle", () => {
     expect(scans).toHaveBeenCalledTimes(1);
     const stream = await created;
     expect(TestEventSource.instances).toHaveLength(1);
-    expect(stream.url).toBe(`/api/operations/${current.id}/events`);
+    expect(stream.url).toBe("/api/operations/events");
 
     current = scan({ state: "running", stage: "traversing" });
     await act(async () => {
@@ -407,9 +407,7 @@ describe("source scan lifecycle", () => {
     await next;
     expect(TestEventSource.instances).toHaveLength(2);
     expect(first.close).toHaveBeenCalled();
-    expect(TestEventSource.instances[1].url).toBe(
-      "/api/operations/scan-op-2/events",
-    );
+    expect(TestEventSource.instances[1].url).toBe("/api/operations/events");
   });
 
   it("re-reads REST on a stream error and shows the notice from known state", async () => {
@@ -512,7 +510,7 @@ describe("source scan lifecycle", () => {
     fireEvent.click(startButton());
     const request = await started;
     const stream = await created;
-    expect(stream.url).toBe(`/api/operations/${current.id}/events`);
+    expect(stream.url).toBe("/api/operations/events");
     const aborted = new Promise<void>((resolve) => {
       request.signal.addEventListener("abort", () => resolve(), { once: true });
     });
@@ -547,9 +545,7 @@ describe("source scan lifecycle", () => {
     expect(scans).not.toHaveBeenCalled();
     await created;
     expect(TestEventSource.instances).toHaveLength(1);
-    expect(TestEventSource.instances[0].url).toBe(
-      `/api/operations/${current.id}/events`,
-    );
+    expect(TestEventSource.instances[0].url).toBe("/api/operations/events");
   });
 
   it("ignores other roots, finished scans and non-scan operations", async () => {
@@ -627,10 +623,7 @@ describe("source scan lifecycle", () => {
     expect(await screen.findByText(applyingText)).toBeVisible();
     expect(
       TestEventSource.instances.map((source) => source.url).sort(),
-    ).toEqual([
-      "/api/operations/scan-root-1/events",
-      "/api/operations/scan-root-2/events",
-    ]);
+    ).toEqual(["/api/operations/events"]);
     for (const button of screen.getAllByRole("button", {
       name: "Сканировать",
     })) {

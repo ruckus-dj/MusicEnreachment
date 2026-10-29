@@ -6,6 +6,7 @@ import {
 } from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { DirectoryPathField } from "../../components/DirectoryPathField";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
@@ -239,13 +240,13 @@ function SourceListScreen() {
                   onChange={(event) => setName(event.target.value)}
                 />
               </label>
-              <label>
-                Путь на сервере
-                <input
-                  value={path}
-                  onChange={(event) => setPath(event.target.value)}
-                />
-              </label>
+              <DirectoryPathField
+                id="source-create-path"
+                label="Путь на сервере"
+                value={path}
+                onSelect={setPath}
+                disabled={busy}
+              />
               <label>
                 Режим обработки
                 <select

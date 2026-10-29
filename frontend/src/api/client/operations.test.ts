@@ -51,6 +51,9 @@ function watch(withMissingHandler = false) {
   const onSnapshot = vi.fn<(value: OperationResponse) => void>();
   const onError = vi.fn<(error: Error) => void>();
   const onMissing = vi.fn<(error: Error) => void>();
+  const ready = new Promise<OperationResponse>((resolve) => {
+    onSnapshot.mockImplementation(resolve);
+  });
   const close = subscribeToOperation(
     operationId,
     onSnapshot,
@@ -60,7 +63,7 @@ function watch(withMissingHandler = false) {
   onTestFinished(close);
   const source = TestEventSource.instances[0];
   if (!source) throw new Error("EventSource was not created");
-  return { source, onSnapshot, onError, onMissing, close };
+  return { source, onSnapshot, onError, onMissing, close, ready };
 }
 
 function snapshotAfter(watcher: ReturnType<typeof watch>, event: Event) {
@@ -82,8 +85,10 @@ describe("operation SSE snapshots", () => {
       }),
     );
     const watcher = watch();
+    watcher.source.dispatchEvent(new Event("open"));
 
-    expect(watcher.source.url).toBe(`/api/operations/${operationId}/events`);
+    await expect(watcher.ready).resolves.toEqual(snapshot);
+    expect(watcher.source.url).toBe("/api/operations/events");
     expect(await snapshotAfter(watcher, new Event("open"))).toEqual(snapshot);
     watcher.source.dispatchEvent(new Event("error"));
     current = { ...snapshot, bytes_completed: 70 };
@@ -100,6 +105,7 @@ describe("operation SSE snapshots", () => {
     expect(watcher.source.close).not.toHaveBeenCalled();
     expect(watcher.onError).toHaveBeenCalledTimes(1);
     expect(requests.map((request) => request.cache)).toEqual([
+      "no-store",
       "no-store",
       "no-store",
       "no-store",
@@ -249,5 +255,73 @@ describe("operation SSE snapshots", () => {
     expect(watcher.source.close).toHaveBeenCalled();
     expect(watcher.onSnapshot).not.toHaveBeenCalled();
     expect(watcher.onError).not.toHaveBeenCalled();
+  });
+
+  it("shares one stream across many operations, wakes all, and closes after the last unsubscribe", async () => {
+    const ids = Array.from({ length: 24 }, (_, index) => `operation-${index}`);
+    const reads = new Map<string, number>();
+    server.use(
+      http.get("/api/operations/:id", ({ params }) => {
+        const id = String(params.id);
+        reads.set(id, (reads.get(id) ?? 0) + 1);
+        return HttpResponse.json({ ...snapshot, id });
+      }),
+    );
+
+    const watchers = ids.map((id) => {
+      const onSnapshot = vi.fn<(value: OperationResponse) => void>();
+      const ready = new Promise<OperationResponse>((resolve) => {
+        onSnapshot.mockImplementationOnce(resolve);
+      });
+      const close = subscribeToOperation(id, onSnapshot, vi.fn());
+      onTestFinished(close);
+      return { id, onSnapshot, ready, close };
+    });
+    const source = TestEventSource.instances[0];
+    if (!source) throw new Error("Shared EventSource was not created");
+    source.dispatchEvent(new Event("open"));
+    await Promise.all(watchers.map(({ ready }) => ready));
+    expect(TestEventSource.instances).toHaveLength(1);
+    expect(source.url).toBe("/api/operations/events");
+
+    const lateID = "late-subscriber";
+    const lateOnSnapshot = vi.fn<(value: OperationResponse) => void>();
+    const lateReady = new Promise<OperationResponse>((resolve) => {
+      lateOnSnapshot.mockImplementationOnce(resolve);
+    });
+    const closeLate = subscribeToOperation(lateID, lateOnSnapshot, vi.fn());
+    onTestFinished(closeLate);
+    expect(await lateReady).toMatchObject({ id: lateID });
+    expect(TestEventSource.instances).toHaveLength(1);
+
+    const afterWake = watchers.map(({ id, onSnapshot }) => {
+      let resolve!: (value: OperationResponse) => void;
+      const ready = new Promise<OperationResponse>((done) => {
+        resolve = done;
+      });
+      onSnapshot.mockImplementationOnce(resolve);
+      return { id, ready };
+    });
+    let resolveLateWake!: (value: OperationResponse) => void;
+    const lateWake = new Promise<OperationResponse>((resolve) => {
+      resolveLateWake = resolve;
+    });
+    lateOnSnapshot.mockImplementationOnce(resolveLateWake);
+    source.dispatchEvent(new Event("operation-changed"));
+    const snapshots = await Promise.all([
+      ...afterWake.map(({ ready }) => ready),
+      lateWake,
+    ]);
+    expect(snapshots).toHaveLength(25);
+    expect(snapshots.map(({ id }) => id).sort()).toEqual(
+      [...ids, lateID].sort(),
+    );
+
+    watchers[0]?.close();
+    expect(source.close).not.toHaveBeenCalled();
+    for (const watcher of watchers.slice(1)) watcher.close();
+    expect(source.close).not.toHaveBeenCalled();
+    closeLate();
+    expect(source.close).toHaveBeenCalledTimes(1);
   });
 });

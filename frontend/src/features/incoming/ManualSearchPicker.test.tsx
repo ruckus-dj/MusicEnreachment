@@ -401,8 +401,8 @@ it("locks edits while operation state is unknown and restores them on success", 
   fireEvent.click(screen.getByRole("button", { name: "Искать" }));
   expect(bodies).toHaveLength(1);
   await waitFor(() => expect(operationReads).toBe(1));
-  expect(PickerEventSource.instances.at(-1)?.url).toContain(
-    "slow-search/events",
+  expect(PickerEventSource.instances.at(-1)?.url).toBe(
+    "/api/operations/events",
   );
   PickerEventSource.instances.at(-1)?.wake();
   expect(await screen.findByText("Frozen result")).toBeInTheDocument();
@@ -774,7 +774,7 @@ it("keeps a stream disconnect notice through a failed fallback and a successful 
   fireEvent.click(screen.getByRole("button", { name: "Искать" }));
   await waitFor(() => expect(operationReads).toBe(1));
   const events = PickerEventSource.instances.at(-1);
-  expect(events?.url).toContain("streamer/events");
+  expect(events?.url).toBe("/api/operations/events");
   events?.dispatchEvent(new Event("error"));
   await waitFor(() => expect(operationReads).toBe(2));
   expect(

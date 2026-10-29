@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Input,
   Label,
   RadioButton,
   RadioField,
   RadioGroup,
-  TextField,
 } from "react-aria-components";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
@@ -19,7 +17,7 @@ import type {
   SetupStateBody,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { DirectoryPicker } from "../../components/DirectoryPicker";
+import { DirectoryPathField } from "../../components/DirectoryPathField";
 import { SetupMetadata } from "./SetupMetadata";
 import { SetupSummary } from "./SetupSummary";
 import { SetupTools } from "./SetupTools";
@@ -85,7 +83,6 @@ export function SetupManager({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
-  const [browseField, setBrowseField] = useState<"tools" | "output">();
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
   const updateToolsBlocked = useCallback((blocked: boolean) => {
@@ -198,21 +195,23 @@ export function SetupManager({
           )}
           {step === 1 && (
             <div className="grid gap-3">
-              <TextField value={toolsDirectory} onChange={setToolsDirectory}>
-                <Label>Tools directory</Label>
-                <Input className="block w-full border p-2" />
-              </TextField>
-              <button type="button" onClick={() => setBrowseField("tools")}>
-                Выбрать Tools directory
-              </button>
-              <TextField value={outputDirectory} onChange={setOutputDirectory}>
-                <Label>Output directory</Label>
-                <Input className="block w-full border p-2" />
-              </TextField>
-              <button type="button" onClick={() => setBrowseField("output")}>
-                Выбрать Output directory
-              </button>
-              <p>
+              <DirectoryPathField
+                id="setup-tools-directory"
+                label="Tools directory"
+                value={toolsDirectory}
+                onSelect={setToolsDirectory}
+                disabled={pending}
+                aria-describedby="setup-directory-help"
+              />
+              <DirectoryPathField
+                id="setup-output-directory"
+                label="Output directory"
+                value={outputDirectory}
+                onSelect={setOutputDirectory}
+                disabled={pending}
+                aria-describedby="setup-directory-help"
+              />
+              <p id="setup-directory-help">
                 Пути относятся к серверу, а не к этому компьютеру. Output
                 directory должен быть пустым.
               </p>
@@ -357,16 +356,6 @@ export function SetupManager({
           )}
         </aside>
       </div>
-      <DirectoryPicker
-        open={browseField !== undefined}
-        initialPath={browseField === "tools" ? toolsDirectory : outputDirectory}
-        onSelect={(path) =>
-          browseField === "tools"
-            ? setToolsDirectory(path)
-            : setOutputDirectory(path)
-        }
-        onClose={() => setBrowseField(undefined)}
-      />
     </section>
   );
   async function verifySummary() {

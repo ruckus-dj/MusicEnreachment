@@ -1188,11 +1188,12 @@ it("starts source cleanup only explicitly and excludes duplicate pending clicks"
   });
   await waitFor(() =>
     expect(
-      FakeEventSource.instances.some((entry) =>
-        entry.url.includes("cleanup-recovery"),
+      FakeEventSource.instances.some(
+        (entry) => entry.url === "/api/operations/events",
       ),
     ).toBe(true),
   );
+  act(() => FakeEventSource.instances[0]?.emit("open"));
   expect(posts).toBe(1);
 });
 
@@ -1265,10 +1266,11 @@ it("retires a missing cleanup watcher without hiding its retained warning", asyn
   expect(
     await screen.findByText(cleanupWarningFixture.safe_error),
   ).toBeTruthy();
+  act(() => FakeEventSource.instances[0]?.emit("open"));
   await waitFor(() =>
     expect(
-      FakeEventSource.instances.some((entry) =>
-        entry.url.includes("cleanup-recovery"),
+      FakeEventSource.instances.some(
+        (entry) => entry.url === "/api/operations/events",
       ),
     ).toBe(true),
   );
@@ -1445,9 +1447,7 @@ it("saves explicit manual lyrics before applying with the current publication re
   );
   await waitFor(() => expect(applyBodies).toHaveLength(1));
   await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
-  expect(FakeEventSource.instances[0].url).toBe(
-    "/api/operations/operation-1/events",
-  );
+  expect(FakeEventSource.instances[0].url).toBe("/api/operations/events");
   expect(applyBodies[0]).toEqual({
     expected_epoch: "epoch-1",
     expected_generation: "generation-1",

@@ -258,6 +258,42 @@ func TestOperationTransitionsAndRetry(t *testing.T) {
 	}
 }
 
+func TestSubscribeAllReceivesCoalescedNotificationsAndCleansUp(t *testing.T) {
+	operations := NewOperations(&memoryOperations{})
+	first, cancelFirst := operations.SubscribeAll()
+	second, cancelSecond := operations.SubscribeAll()
+
+	operations.Notify(uuid.New())
+	operations.Notify(uuid.New())
+	for name, channel := range map[string]<-chan struct{}{"first": first, "second": second} {
+		select {
+		case <-channel:
+		default:
+			t.Fatalf("%s global subscriber missed operation notification", name)
+		}
+	}
+	for name, channel := range map[string]<-chan struct{}{"first": first, "second": second} {
+		select {
+		case <-channel:
+			t.Fatalf("%s global subscriber received duplicate buffered notification", name)
+		default:
+		}
+	}
+
+	cancelFirst()
+	if _, ok := <-first; ok {
+		t.Fatal("canceled global subscriber channel remained open")
+	}
+	operations.Notify(uuid.New())
+	select {
+	case <-second:
+	default:
+		t.Fatal("remaining global subscriber missed notification")
+	}
+	cancelSecond()
+	operations.Notify(uuid.New())
+}
+
 // TestOperationSnapshotExposesTheScanTargetSourceRootID pins the correlation
 // contract a root page needs: a scan exposes the source root it traverses, so a
 // page opened for one root can tell its scan apart from a scan of another root,

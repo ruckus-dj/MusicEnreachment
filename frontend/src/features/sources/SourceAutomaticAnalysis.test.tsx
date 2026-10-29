@@ -41,9 +41,12 @@ class ControlledEventSource extends EventTarget {
 }
 
 function source(url: string) {
-  const stream = ControlledEventSource.instances.find(
-    (instance) => new URL(instance.url, window.location.href).pathname === url,
-  );
+  const stream = [...ControlledEventSource.instances]
+    .reverse()
+    .find(
+      (instance) =>
+        new URL(instance.url, window.location.href).pathname === url,
+    );
   if (!stream) throw new Error(`No EventSource for ${url}`);
   return stream;
 }
@@ -238,9 +241,12 @@ describe("automatic source analysis after a successful scan", () => {
       await screen.findByText("Сканирование поставлено в очередь."),
     ).toBeVisible();
     await waitFor(() => expect(scanRequests).toHaveBeenCalledTimes(1));
-    const scanStream = await waitFor(() =>
-      source(`/api/operations/${scanId}/events`),
-    );
+    const scanStream = await waitFor(() => source("/api/operations/events"));
+    const initialScanRead = nextResponse(`/api/operations/${scanId}`);
+    await act(async () => {
+      scanStream.dispatchEvent(new Event("open"));
+      await initialScanRead;
+    });
 
     // The successful scan publishes a new generation and its fresh location.
     generation = 1;
@@ -267,7 +273,7 @@ describe("automatic source analysis after a successful scan", () => {
       await screen.findByText("Этап анализа поставлен в очередь."),
     ).toBeVisible();
     const analysisStream = await waitFor(() =>
-      source(`/api/operations/${analysisId}/events`),
+      source("/api/operations/events"),
     );
     expect(analysisStarts).not.toHaveBeenCalled();
     expect(
@@ -286,7 +292,7 @@ describe("automatic source analysis after a successful scan", () => {
     const runningOperation = nextResponse(`/api/operations/${analysisId}`);
     const runningDetail = nextResponse(locationPath);
     await act(async () => {
-      analysisStream.dispatchEvent(new Event("operation-changed"));
+      analysisStream.dispatchEvent(new Event("open"));
       await Promise.all([runningOperation, runningDetail]);
     });
     expect(await screen.findByText("Состояние: Выполняется")).toBeVisible();

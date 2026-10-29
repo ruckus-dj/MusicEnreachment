@@ -13,6 +13,7 @@ import type {
   SourceLocationResponse,
   SourceRootResponse,
 } from "../../api/generated/client.schemas";
+import { selectDirectoryPath } from "../../test/selectDirectoryPath";
 import { server } from "../../test/server";
 import { SourcesScreen } from "./SourcesScreen";
 
@@ -344,9 +345,7 @@ describe("source root creation", () => {
     fireEvent.change(screen.getByLabelText("Имя каталога"), {
       target: { value: "Диск" },
     });
-    fireEvent.change(screen.getByLabelText("Путь на сервере"), {
-      target: { value: "/srv/disk" },
-    });
+    await selectDirectoryPath("Путь на сервере", "/srv/disk");
     expect(screen.getByLabelText("Режим обработки")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Режим обработки"), {
       target: { value: "staged" },
@@ -405,9 +404,7 @@ describe("source root creation", () => {
     fireEvent.change(screen.getByLabelText("Имя каталога"), {
       target: { value: "Сохранённый" },
     });
-    fireEvent.change(screen.getByLabelText("Путь на сервере"), {
-      target: { value: "/srv/retained" },
-    });
+    await selectDirectoryPath("Путь на сервере", "/srv/retained");
     fireEvent.change(screen.getByLabelText("Режим обработки"), {
       target: { value: "in_place" },
     });
@@ -446,9 +443,7 @@ describe("source root creation", () => {
     fireEvent.change(screen.getByLabelText("Имя каталога"), {
       target: { value: "Диск" },
     });
-    fireEvent.change(screen.getByLabelText("Путь на сервере"), {
-      target: { value: "/srv/missing" },
-    });
+    await selectDirectoryPath("Путь на сервере", "/srv/missing");
     fireEvent.change(screen.getByLabelText("Режим обработки"), {
       target: { value: "in_place" },
     });
@@ -582,9 +577,7 @@ describe("source root detail", () => {
     fireEvent.change(screen.getByLabelText("Имя каталога"), {
       target: { value: "Входящие 2" },
     });
-    fireEvent.change(screen.getByLabelText("Путь на сервере"), {
-      target: { value: "/srv/inbox2" },
-    });
+    await selectDirectoryPath("Путь на сервере", "/srv/inbox2");
     fireEvent.change(screen.getByLabelText("Режим обработки"), {
       target: { value: "staged" },
     });

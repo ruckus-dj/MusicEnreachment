@@ -12,6 +12,7 @@ import {
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OperationResponse } from "../../api/generated/client.schemas";
+import { selectDirectoryPath } from "../../test/selectDirectoryPath";
 import { nextResponse, server } from "../../test/server";
 import { SettingsScreen } from "./SettingsScreen";
 
@@ -168,7 +169,7 @@ function common({
 }
 
 beforeEach(() => {
-  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+  Object.defineProperty(window.HTMLDialogElement.prototype, "showModal", {
     configurable: true,
     value(this: HTMLDialogElement) {
       this.setAttribute("open", "");
@@ -177,7 +178,7 @@ beforeEach(() => {
       )?.focus();
     },
   });
-  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+  Object.defineProperty(window.HTMLDialogElement.prototype, "close", {
     configurable: true,
     value(this: HTMLDialogElement) {
       this.removeAttribute("open");
@@ -269,8 +270,8 @@ describe("SettingsScreen", () => {
 
   it("traps output-dialog keyboard focus and restores it after Escape", async () => {
     render(<SettingsScreen />);
-    const output = await screen.findByLabelText("Output directory");
-    fireEvent.change(output, { target: { value: "/new-output" } });
+    await screen.findByLabelText("Output directory");
+    await selectDirectoryPath("Output directory", "/new-output");
     const trigger = screen.getByRole("button", { name: "Сменить output" });
     fireEvent.click(trigger);
     const dialog = screen.getByRole("dialog", {
@@ -305,6 +306,148 @@ describe("SettingsScreen", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("selecting a directory closes only the picker and returns focus to its opener", async () => {
+    server.use(
+      http.get("/api/setup/directories", ({ request }) => {
+        const path = new URL(request.url).searchParams.get("path") ?? "/";
+        return json({
+          current_path: path,
+          parent_path: path,
+          roots: [],
+          directories: [],
+          offset: 0,
+        });
+      }),
+    );
+    render(<SettingsScreen />);
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    const move = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    const opener = within(move).getByRole("button", { name: "Выбрать папку" });
+    opener.focus();
+    fireEvent.click(opener);
+    const picker = screen.getByRole("dialog", { name: "Папка на сервере" });
+    await within(picker).findByText("В этой папке нет подпапок.");
+    fireEvent.click(
+      within(picker).getByRole("button", { name: "Выбрать папку" }),
+    );
+
+    expect(
+      screen.getByRole("dialog", { name: "Перенос Tools directory" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Папка на сервере" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Новый Tools directory")).toHaveValue(
+      "/srv/tools",
+    );
+    expect(opener).toHaveFocus();
+  });
+
+  it.each([
+    "Отмена-кнопка",
+    "крестик",
+    "cancel event",
+  ])("picker %s closes without changing the move value or outer dialog", async (closeMethod) => {
+    server.use(
+      http.get("/api/setup/directories", ({ request }) => {
+        const path = new URL(request.url).searchParams.get("path") ?? "/";
+        return json({
+          current_path: path,
+          parent_path: path,
+          roots: [],
+          directories: [],
+          offset: 0,
+        });
+      }),
+    );
+    render(<SettingsScreen />);
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    const move = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    const opener = within(move).getByRole("button", { name: "Выбрать папку" });
+    opener.focus();
+    fireEvent.click(opener);
+    const picker = screen.getByRole("dialog", { name: "Папка на сервере" });
+    if (closeMethod === "Отмена-кнопка")
+      fireEvent.click(within(picker).getByRole("button", { name: "Отмена" }));
+    else if (closeMethod === "крестик")
+      fireEvent.click(within(picker).getByRole("button", { name: "Закрыть" }));
+    else fireEvent(picker, new Event("cancel", { cancelable: true }));
+
+    expect(
+      screen.getByRole("dialog", { name: "Перенос Tools directory" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Папка на сервере" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Новый Tools directory")).toHaveValue(
+      "/srv/tools",
+    );
+    expect(opener).toHaveFocus();
+  });
+
+  it("submits a path from the nested picker without closing the dialogs or starting move preflight", async () => {
+    const preflight = vi.fn();
+    server.use(
+      http.get("/api/setup/directories", ({ request }) => {
+        const path = new URL(request.url).searchParams.get("path") ?? "/";
+        return json({
+          current_path: path,
+          parent_path: path,
+          roots: [],
+          directories: [],
+          offset: 0,
+        });
+      }),
+      http.post("/api/tools/move/preflight", preflight),
+    );
+    render(<SettingsScreen />);
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    const move = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    fireEvent.click(
+      within(move).getByRole("button", { name: "Выбрать папку" }),
+    );
+    const picker = screen.getByRole("dialog", { name: "Папка на сервере" });
+    await within(picker).findByText("В этой папке нет подпапок.");
+    fireEvent.click(
+      within(picker).getByRole("button", { name: "Изменить путь: /srv/tools" }),
+    );
+    const path = within(picker).getByRole("textbox", { name: "Путь к папке" });
+    fireEvent.change(path, { target: { value: "/srv/new-tools" } });
+    fireEvent.keyDown(path, { key: "Enter", code: "Enter" });
+    await waitFor(() =>
+      expect(
+        within(picker).getByRole("button", { name: "Выбрать папку" }),
+      ).toBeEnabled(),
+    );
+
+    expect(
+      screen.getByRole("dialog", { name: "Перенос Tools directory" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Папка на сервере" }),
+    ).toBeInTheDocument();
+    expect(path).toHaveValue("/srv/new-tools");
+    expect(preflight).not.toHaveBeenCalled();
   });
 
   it("loads typed settings, health, and separate package inventories without redirecting", async () => {
@@ -519,9 +662,7 @@ describe("SettingsScreen", () => {
       }),
     );
     render(<SettingsScreen />);
-    fireEvent.change(await screen.findByLabelText("Output directory"), {
-      target: { value: "/new" },
-    });
+    await selectDirectoryPath("Output directory", "/new");
     await screen.findByRole("option", { name: /ffmpeg-release/ });
     fireEvent.change(screen.getByLabelText("Publication format"), {
       target: { value: "source" },
@@ -742,7 +883,7 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     const output = await screen.findByLabelText("Output directory");
-    fireEvent.change(output, { target: { value: "/unsaved-output" } });
+    await selectDirectoryPath("Output directory", "/unsaved-output");
     fireEvent.change(screen.getByLabelText("Publication format"), {
       target: { value: "source" },
     });
@@ -787,7 +928,7 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     const output = await screen.findByLabelText("Output directory");
-    fireEvent.change(output, { target: { value: "/saved-output" } });
+    await selectDirectoryPath("Output directory", "/saved-output");
     fireEvent.change(screen.getByLabelText("Publication format"), {
       target: { value: "source" },
     });
@@ -900,7 +1041,7 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     const output = await screen.findByLabelText("Output directory");
-    fireEvent.change(output, { target: { value: "/accepted-output" } });
+    await selectDirectoryPath("Output directory", "/accepted-output");
     fireEvent.click(screen.getByRole("button", { name: "Сменить output" }));
     let dialog = screen.getByRole("dialog", {
       name: "Сменить каталог публикации?",
@@ -940,7 +1081,7 @@ describe("SettingsScreen", () => {
     server.use(http.put("/api/settings/runtime", save));
     render(<SettingsScreen />);
     const output = await screen.findByLabelText("Output directory");
-    fireEvent.change(output, { target: { value: "/new-output" } });
+    await selectDirectoryPath("Output directory", "/new-output");
     const trigger = screen.getByRole("button", { name: "Сменить output" });
     fireEvent.click(trigger);
     const dialog = screen.getByRole("dialog", {
@@ -965,9 +1106,7 @@ describe("SettingsScreen", () => {
     });
     server.use(http.put("/api/settings/runtime", save));
     render(<SettingsScreen />);
-    fireEvent.change(await screen.findByLabelText("Output directory"), {
-      target: { value: "/new-output" },
-    });
+    await selectDirectoryPath("Output directory", "/new-output");
     fireEvent.click(screen.getByRole("button", { name: "Сменить output" }));
     const dialog = screen.getByRole("dialog", {
       name: "Сменить каталог публикации?",
@@ -999,9 +1138,7 @@ describe("SettingsScreen", () => {
       ),
     );
     render(<SettingsScreen />);
-    fireEvent.change(await screen.findByLabelText("Output directory"), {
-      target: { value: "/new-output" },
-    });
+    await selectDirectoryPath("Output directory", "/new-output");
     const trigger = screen.getByRole("button", { name: "Сменить output" });
     await waitFor(() => expect(trigger).toBeEnabled());
     fireEvent.click(trigger);
@@ -1268,9 +1405,7 @@ describe("SettingsScreen", () => {
       ),
     );
     render(<SettingsScreen />);
-    fireEvent.change(await screen.findByLabelText("Output directory"), {
-      target: { value: "/draft-output" },
-    });
+    await selectDirectoryPath("Output directory", "/draft-output");
     fireEvent.click(screen.getByLabelText("LRCLIB включён"));
     fireEvent.click(screen.getByRole("button", { name: "Сохранить LRCLIB" }));
     await waitFor(() =>
@@ -1341,7 +1476,7 @@ describe("SettingsScreen", () => {
       await screen.findByRole("button", { name: "Перенести каталог" }),
     );
     const path = screen.getByLabelText("Новый Tools directory");
-    fireEvent.change(path, { target: { value: "/srv/unsaved-tools" } });
+    await selectDirectoryPath("Новый Tools directory", "/srv/unsaved-tools");
     const removeOld = screen.getByLabelText(
       "Удалить прежние управляемые файлы после успешного переноса",
     );
@@ -1429,7 +1564,10 @@ describe("SettingsScreen", () => {
     await initialOperationSnapshot;
     await screen.findByText(/install: running/);
     const path = screen.getByLabelText("Новый Tools directory");
-    fireEvent.change(path, { target: { value: "/srv/destination-draft" } });
+    await selectDirectoryPath(
+      "Новый Tools directory",
+      "/srv/destination-draft",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
     await pendingPreflight;
 
@@ -1627,7 +1765,7 @@ describe("SettingsScreen", () => {
     await operationRefreshRequest;
 
     const output = screen.getByLabelText("Output directory");
-    fireEvent.change(output, { target: { value: "/unsaved-output" } });
+    await selectDirectoryPath("Output directory", "/unsaved-output");
     fireEvent.change(screen.getByLabelText("Log level"), {
       target: { value: "debug" },
     });
@@ -1869,7 +2007,7 @@ describe("SettingsScreen", () => {
       name: "Перенос Tools directory",
     });
     const path = within(dialog).getByLabelText("Новый Tools directory");
-    fireEvent.change(path, { target: { value: "/srv/move-retry" } });
+    await selectDirectoryPath("Новый Tools directory", "/srv/move-retry");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Проверить перенос" }),
     );
@@ -1880,7 +2018,7 @@ describe("SettingsScreen", () => {
     expect(alert.closest("dialog")).toBe(dialog);
     expect(path).toHaveValue("/srv/move-retry");
 
-    fireEvent.change(path, { target: { value: "/srv/move-fixed" } });
+    await selectDirectoryPath("Новый Tools directory", "/srv/move-fixed");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Проверить перенос" }),
     );
@@ -1993,7 +2131,7 @@ describe("SettingsScreen", () => {
       name: "Перенос Tools directory",
     });
     const path = within(dialog).getByLabelText("Новый Tools directory");
-    fireEvent.change(path, { target: { value: "/srv/new-tools" } });
+    await selectDirectoryPath("Новый Tools directory", "/srv/new-tools");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Проверить перенос" }),
     );
@@ -2022,9 +2160,7 @@ describe("SettingsScreen", () => {
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     expect(reopenedPath).toHaveValue("/srv/new-tools");
 
-    fireEvent.change(reopenedPath, {
-      target: { value: "/srv/new-tools-fixed" },
-    });
+    await selectDirectoryPath("Новый Tools directory", "/srv/new-tools-fixed");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Проверить перенос" }),
     );
@@ -2461,9 +2597,7 @@ describe("SettingsScreen", () => {
     });
     await waitFor(() => expect(moveButton).not.toBeDisabled());
     fireEvent.click(moveButton);
-    fireEvent.change(screen.getByLabelText("Новый Tools directory"), {
-      target: { value: "/srv/new-tools" },
-    });
+    await selectDirectoryPath("Новый Tools directory", "/srv/new-tools");
     fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
     await screen.findByText("Управляемых файлов: 2");
     const confirmMoveButton = screen.getByRole("button", {
@@ -2533,9 +2667,8 @@ describe("SettingsScreen", () => {
     const dialog = screen.getByRole("dialog", {
       name: "Перенос Tools directory",
     });
-    const path = within(dialog).getByLabelText("Новый Tools directory");
     const removeOld = within(dialog).getByRole("checkbox");
-    fireEvent.change(path, { target: { value: "/srv/new-tools" } });
+    await selectDirectoryPath("Новый Tools directory", "/srv/new-tools");
     fireEvent.click(removeOld);
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Проверить перенос" }),
@@ -2559,8 +2692,8 @@ describe("SettingsScreen", () => {
     ).not.toBeInTheDocument();
 
     // Editing the path and reverting it also requires a brand-new preflight.
-    fireEvent.change(path, { target: { value: "/srv/other-tools" } });
-    fireEvent.change(path, { target: { value: "/srv/new-tools" } });
+    await selectDirectoryPath("Новый Tools directory", "/srv/other-tools");
+    await selectDirectoryPath("Новый Tools directory", "/srv/new-tools");
     expect(
       screen.queryByRole("button", { name: "Подтвердить перенос" }),
     ).not.toBeInTheDocument();
@@ -2625,14 +2758,13 @@ describe("SettingsScreen", () => {
     let dialog = screen.getByRole("dialog", {
       name: "Перенос Tools directory",
     });
-    const path = within(dialog).getByLabelText("Новый Tools directory");
-    fireEvent.change(path, { target: { value: "/srv/first" } });
+    await selectDirectoryPath("Новый Tools directory", "/srv/first");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Проверить перенос" }),
     );
     await waitFor(() => expect(requests).toHaveLength(1));
 
-    fireEvent.change(path, { target: { value: "/srv/second" } });
+    await selectDirectoryPath("Новый Tools directory", "/srv/second");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Проверить перенос" }),
     );
@@ -2669,7 +2801,7 @@ describe("SettingsScreen", () => {
     ).not.toBeInTheDocument();
 
     // A valid response from a prior opening must not populate a reopened dialog.
-    fireEvent.change(path, { target: { value: "/srv/third" } });
+    await selectDirectoryPath("Новый Tools directory", "/srv/third");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Проверить перенос" }),
     );
@@ -2749,9 +2881,7 @@ describe("SettingsScreen", () => {
     });
     await waitFor(() => expect(moveButton).not.toBeDisabled());
     fireEvent.click(moveButton);
-    fireEvent.change(screen.getByLabelText("Новый Tools directory"), {
-      target: { value: "/srv/new-tools" },
-    });
+    await selectDirectoryPath("Новый Tools directory", "/srv/new-tools");
     fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
     await screen.findByText("Управляемых файлов: 2");
     const confirm = screen.getByRole("button", { name: "Подтвердить перенос" });
@@ -2761,9 +2891,7 @@ describe("SettingsScreen", () => {
     expect(
       screen.getByText("Текущий Tools directory:").parentElement,
     ).toHaveTextContent("/srv/tools");
-    const stream = TestEventSource.instances.find((item) =>
-      item.url.includes("move-success"),
-    );
+    const stream = TestEventSource.instances[0];
     expect(stream).toBeTruthy();
 
     toolsDirectory = "/srv/new-tools";
@@ -2821,18 +2949,14 @@ describe("SettingsScreen", () => {
     });
     await waitFor(() => expect(moveButton).not.toBeDisabled());
     fireEvent.click(moveButton);
-    fireEvent.change(screen.getByLabelText("Новый Tools directory"), {
-      target: { value: "/srv/new-tools" },
-    });
+    await selectDirectoryPath("Новый Tools directory", "/srv/new-tools");
     fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
     await screen.findByText("Управляемых файлов: 2");
     const confirm = screen.getByRole("button", { name: "Подтвердить перенос" });
     await waitFor(() => expect(confirm).not.toBeDisabled());
     fireEvent.click(confirm);
     expect(await screen.findByText(/move: queued/)).toBeTruthy();
-    const stream = TestEventSource.instances.find((item) =>
-      item.url.includes("move-failure"),
-    );
+    const stream = TestEventSource.instances[0];
     expect(stream).toBeTruthy();
 
     snapshot = {
@@ -2873,17 +2997,12 @@ describe("SettingsScreen", () => {
     expect(screen.getByText("1.6.0 — активна")).toBeTruthy();
   });
 
-  it("recovers operation snapshots on SSE wake-up and exposes Retry and Dismiss", async () => {
+  it("keeps failed operation retry and dismiss controls without subscribing", async () => {
     const failed = { ...operation, state: "failed", safe_error: "disk full" };
     common({ operations: [failed] });
-    let reads = 0;
     const retry = vi.fn();
     const dismiss = vi.fn();
     server.use(
-      http.get("/api/operations/:id", () => {
-        reads++;
-        return json(failed);
-      }),
       http.post("/api/operations/:id/retry", () => {
         retry();
         return json(failed);
@@ -2895,26 +3014,7 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     await screen.findByRole("button", { name: "Повторить операцию op-1" });
-    const stream = await waitFor(() => {
-      const found = TestEventSource.instances.find((item) =>
-        item.url.includes("op-1"),
-      );
-      expect(found).toBeTruthy();
-      return found as TestEventSource;
-    });
-    const woke = nextResponseFor("/api/operations/op-1", "GET");
-    await act(async () => {
-      stream?.dispatchEvent(new Event("open"));
-      await woke;
-    });
-    expect(reads).toBeGreaterThan(1);
-    const readsBeforeError = reads;
-    const reconnected = nextResponseFor("/api/operations/op-1", "GET");
-    await act(async () => {
-      stream?.dispatchEvent(new Event("error"));
-      await reconnected;
-    });
-    expect(reads).toBeGreaterThan(readsBeforeError);
+    expect(TestEventSource.instances).toHaveLength(0);
     const retried = nextResponseFor("/api/operations/op-1/retry", "POST");
     await act(async () => {
       fireEvent.click(

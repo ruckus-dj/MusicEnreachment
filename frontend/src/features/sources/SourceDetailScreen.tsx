@@ -12,6 +12,7 @@ import {
 } from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { DirectoryPathField } from "../../components/DirectoryPathField";
 import { SourceLocations } from "./SourceLocations";
 import { SourceScanControl } from "./SourceScanControl";
 import {
@@ -280,15 +281,13 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                     }
                   />
                 </label>
-                <label>
-                  Путь на сервере
-                  <input
-                    value={form.path}
-                    onChange={(event) =>
-                      setForm({ ...form, path: event.target.value })
-                    }
-                  />
-                </label>
+                <DirectoryPathField
+                  id="source-edit-path"
+                  label="Путь на сервере"
+                  value={form.path}
+                  onSelect={(path) => setForm({ ...form, path })}
+                  disabled={busy}
+                />
                 <label>
                   Режим обработки
                   <select

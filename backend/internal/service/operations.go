@@ -117,6 +117,7 @@ type Operations struct {
 	river         persistence.RiverInserter
 	mu            sync.Mutex
 	watchers      map[uuid.UUID]map[chan struct{}]struct{}
+	allWatchers   map[chan struct{}]struct{}
 	now           func() time.Time
 }
 
@@ -127,7 +128,7 @@ func (s *Operations) SetPendingDispatcher(dispatcher sourceAnalysisPendingAdmitt
 }
 
 func NewOperations(repository OperationRepository) *Operations {
-	return &Operations{repository: repository, watchers: map[uuid.UUID]map[chan struct{}]struct{}{}, now: time.Now}
+	return &Operations{repository: repository, watchers: map[uuid.UUID]map[chan struct{}]struct{}{}, allWatchers: map[chan struct{}]struct{}{}, now: time.Now}
 }
 
 // NewOperationsWithRiver makes production operation creation and retry atomic
@@ -561,6 +562,21 @@ func (s *Operations) Subscribe(id uuid.UUID) (<-chan struct{}, func()) {
 	}
 }
 
+// SubscribeAll wakes for changes to any operation. Like Subscribe, it carries
+// no operation data; clients must re-read snapshots through REST.
+func (s *Operations) SubscribeAll() (<-chan struct{}, func()) {
+	channel := make(chan struct{}, 1)
+	s.mu.Lock()
+	s.allWatchers[channel] = struct{}{}
+	s.mu.Unlock()
+	return channel, func() {
+		s.mu.Lock()
+		delete(s.allWatchers, channel)
+		close(channel)
+		s.mu.Unlock()
+	}
+}
+
 func (s *Operations) Notify(id uuid.UUID) {
 	s.notify(id)
 }
@@ -569,6 +585,12 @@ func (s *Operations) notify(id uuid.UUID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for channel := range s.watchers[id] {
+		select {
+		case channel <- struct{}{}:
+		default:
+		}
+	}
+	for channel := range s.allWatchers {
 		select {
 		case channel <- struct{}{}:
 		default:

@@ -44,22 +44,36 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 }
 
 func registerOperationEvents(router chi.Router, operations *service.Operations) {
-	router.Get("/operations/{operation_id}/events", func(writer http.ResponseWriter, request *http.Request) {
+	router.Get("/operations/events", operationEventsHandler(operations, false))
+	router.Get("/operations/{operation_id}/events", operationEventsHandler(operations, true))
+}
+
+func operationEventsHandler(operations *service.Operations, perOperation bool) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
 		if operations == nil {
 			http.Error(writer, "operation service is unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		id, err := uuid.Parse(chi.URLParam(request, "operation_id"))
-		if err != nil {
-			http.Error(writer, "invalid operation ID", http.StatusBadRequest)
-			return
+		var id uuid.UUID
+		var events <-chan struct{}
+		var cancel func()
+		if perOperation {
+			var err error
+			id, err = uuid.Parse(chi.URLParam(request, "operation_id"))
+			if err != nil {
+				http.Error(writer, "invalid operation ID", http.StatusBadRequest)
+				return
+			}
+			events, cancel = operations.Subscribe(id)
+			if _, err := operations.Snapshot(request.Context(), id); err != nil {
+				cancel()
+				http.Error(writer, "operation not found", http.StatusNotFound)
+				return
+			}
+		} else {
+			events, cancel = operations.SubscribeAll()
 		}
-		events, cancel := operations.Subscribe(id)
 		defer cancel()
-		if _, err := operations.Snapshot(request.Context(), id); err != nil {
-			http.Error(writer, "operation not found", http.StatusNotFound)
-			return
-		}
 		flusher, ok := writer.(http.Flusher)
 		if !ok {
 			http.Error(writer, "streaming is unavailable", http.StatusInternalServerError)
@@ -75,11 +89,15 @@ func registerOperationEvents(router chi.Router, operations *service.Operations) 
 			case <-request.Context().Done():
 				return
 			case <-events:
-				if _, err := fmt.Fprintf(writer, "event: operation-changed\ndata: %s\n\n", id); err != nil {
+				if perOperation {
+					if _, err := fmt.Fprintf(writer, "event: operation-changed\ndata: %s\n\n", id); err != nil {
+						return
+					}
+				} else if _, err := fmt.Fprint(writer, "event: operation-changed\ndata: {}\n\n"); err != nil {
 					return
 				}
 				flusher.Flush()
 			}
 		}
-	})
+	}
 }

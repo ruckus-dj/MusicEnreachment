@@ -23,6 +23,7 @@ import type {
   OperationResponse,
   SetupStateBody,
 } from "../../api/generated/client.schemas";
+import { selectDirectoryPath } from "../../test/selectDirectoryPath";
 import { server } from "../../test/server";
 import { SetupManager } from "./SetupManager";
 
@@ -97,6 +98,18 @@ class TestEventSource extends EventTarget {
   }
 }
 beforeEach(() => {
+  Object.defineProperty(window.HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  Object.defineProperty(window.HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = false;
+    },
+  });
   vi.stubGlobal(
     "localStorage",
     new JSDOM("", { url: "http://localhost" }).window.localStorage,
@@ -254,12 +267,8 @@ describe("SetupManager", () => {
     );
     renderSetup(state({ tools_directory: paths.tools_directory }));
     expect(heading("Каталоги")).toHaveFocus();
-    fireEvent.change(screen.getByLabelText("Tools directory"), {
-      target: { value: paths.tools_directory },
-    });
-    fireEvent.change(screen.getByLabelText("Output directory"), {
-      target: { value: paths.output_directory },
-    });
+    await selectDirectoryPath("Tools directory", paths.tools_directory);
+    await selectDirectoryPath("Output directory", paths.output_directory);
     await click("Продолжить");
     await waitFor(() => expect(heading("Инструменты")).toHaveFocus());
     expect(localStorage.getItem("melotrove.setup.step")).toBe("2");
@@ -477,12 +486,8 @@ describe("SetupManager", () => {
       http.get("/api/setup", () => HttpResponse.json(state(paths))),
     );
     renderSetup(state({ tools_directory: paths.tools_directory }));
-    fireEvent.change(screen.getByLabelText("Tools directory"), {
-      target: { value: paths.tools_directory },
-    });
-    fireEvent.change(screen.getByLabelText("Output directory"), {
-      target: { value: paths.output_directory },
-    });
+    await selectDirectoryPath("Tools directory", paths.tools_directory);
+    await selectDirectoryPath("Output directory", paths.output_directory);
     await click("Продолжить");
     await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
     expect(screen.getByRole("alert")).toHaveTextContent("invalid paths");
@@ -612,7 +617,7 @@ describe("SetupManager", () => {
     renderSetup(state(paths));
     await waitFor(() => expect(TestEventSource.instances).toHaveLength(1));
     const source = TestEventSource.instances[0];
-    expect(source.url).toContain(`${operation.id}/events`);
+    expect(source.url).toBe("/api/operations/events");
     await act(async () => {
       source.dispatchEvent(new Event("open"));
     });
@@ -731,12 +736,8 @@ describe("SetupManager", () => {
     expect(heading("Платформа")).toHaveFocus();
     await click("Продолжить");
     expect(heading("Каталоги")).toHaveFocus();
-    fireEvent.change(screen.getByLabelText("Tools directory"), {
-      target: { value: paths.tools_directory },
-    });
-    fireEvent.change(screen.getByLabelText("Output directory"), {
-      target: { value: paths.output_directory },
-    });
+    await selectDirectoryPath("Tools directory", paths.tools_directory);
+    await selectDirectoryPath("Output directory", paths.output_directory);
     await click("Продолжить");
     await waitFor(() => expect(heading("Инструменты")).toBeVisible());
     for (const kind of ["ffmpeg", "fpcalc"]) {
@@ -1120,18 +1121,13 @@ describe("SetupManager", () => {
     mounted.unmount();
     expect(
       TestEventSource.instances
-        .slice(0, 2)
+        .slice(0, 1)
         .every((source) => source.close.mock.calls.length === 1),
     ).toBe(true);
     renderSetup(state(paths));
-    await waitFor(() => expect(TestEventSource.instances).toHaveLength(4));
-    const ff = [...TestEventSource.instances]
-      .reverse()
-      .find((source) => source.url.includes(ids.ffmpeg));
-    const fp = [...TestEventSource.instances]
-      .reverse()
-      .find((source) => source.url.includes(ids.fpcalc));
-    if (!ff || !fp) throw new Error("Both operation streams must reconnect");
+    await waitFor(() => expect(TestEventSource.instances).toHaveLength(2));
+    const shared = TestEventSource.instances[1];
+    if (!shared) throw new Error("The shared operation stream must reconnect");
     snapshots[ids.ffmpeg] = {
       ...operation,
       id: ids.ffmpeg,
@@ -1139,8 +1135,7 @@ describe("SetupManager", () => {
       safe_error: "ffmpeg failure",
     };
     await act(async () => {
-      ff.dispatchEvent(new Event("open"));
-      fp.dispatchEvent(new Event("open"));
+      shared.dispatchEvent(new Event("open"));
     });
     await waitFor(() =>
       expect(screen.getByText(/ffmpeg failure/)).toBeVisible(),
@@ -1158,7 +1153,7 @@ describe("SetupManager", () => {
       stage: "verified",
     };
     await act(async () => {
-      ff.dispatchEvent(new Event("operation-changed"));
+      shared.dispatchEvent(new Event("operation-changed"));
     });
     await waitFor(() =>
       expect(screen.getByText(/Операция 26092c63.*succeeded/)).toBeVisible(),
@@ -1171,7 +1166,7 @@ describe("SetupManager", () => {
       safe_error: "fpcalc failure",
     };
     await act(async () => {
-      fp.dispatchEvent(new Event("operation-changed"));
+      shared.dispatchEvent(new Event("operation-changed"));
     });
     await waitFor(() =>
       expect(screen.getByText(/fpcalc failure/)).toBeVisible(),
@@ -1228,7 +1223,7 @@ describe("SetupManager", () => {
     );
     const subscribed = new Promise<void>((resolve) => {
       TestEventSource.onCreated = () => {
-        if (TestEventSource.instances.length === 2) {
+        if (TestEventSource.instances.length === 1) {
           TestEventSource.onCreated = undefined;
           resolve();
         }
@@ -1239,7 +1234,7 @@ describe("SetupManager", () => {
     expect(screen.getByText(/Операция 36092c63.*running/)).toBeVisible();
     expect(listed).toHaveBeenCalledExactlyOnceWith("");
     await subscribed;
-    expect(TestEventSource.instances).toHaveLength(2);
+    expect(TestEventSource.instances).toHaveLength(1);
     expect(
       localStorage.getItem("melotrove.setup.operations")?.split(","),
     ).toEqual([ffmpeg.id, fpcalc.id]);
@@ -1252,9 +1247,7 @@ describe("SetupManager", () => {
       state: "failed",
       safe_error: "fpcalc download failed",
     };
-    const fpcalcStream = TestEventSource.instances.find((source) =>
-      source.url.includes(fpcalc.id),
-    );
+    const fpcalcStream = TestEventSource.instances[0];
     if (!fpcalcStream) throw new Error("fpcalc stream must remain subscribed");
     await act(async () => {
       fpcalcStream.dispatchEvent(new Event("operation-changed"));
@@ -1264,7 +1257,7 @@ describe("SetupManager", () => {
     await screen.findByText(/Операция 36092c63.*queued/);
     expect(fpcalcRetry).toHaveBeenCalledOnce();
     expect(screen.getByText(/Операция 26092c63.*queued/)).toBeVisible();
-    expect(TestEventSource.instances).toHaveLength(2);
+    expect(TestEventSource.instances).toHaveLength(1);
   });
 
   it("keeps saved operations and the catalog usable when discovery fails", async () => {
@@ -1303,7 +1296,7 @@ describe("SetupManager", () => {
     );
     expect(listed).toHaveBeenCalledOnce();
     await selectVersion("ffmpeg", "8.0");
-    expect(TestEventSource.instances).toHaveLength(2);
+    expect(TestEventSource.instances).toHaveLength(1);
     expect(
       localStorage.getItem("melotrove.setup.operations")?.split(","),
     ).toEqual([operation.id, otherId]);

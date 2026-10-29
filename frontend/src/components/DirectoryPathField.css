@@ -1,0 +1,73 @@
+.directory-path-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.directory-path-field > label {
+  font-weight: 600;
+}
+
+.directory-path-field__control {
+  display: flex;
+  min-width: 0;
+}
+
+.directory-path-field__control input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 9px;
+  border: 1px solid var(--control);
+  border-right: 0;
+  border-radius: 5px 0 0 5px;
+  color: var(--ink);
+  background: var(--raised);
+  font: inherit;
+}
+
+.directory-path-field__control input:disabled {
+  color: var(--muted);
+}
+
+.directory-path-field__control button {
+  min-height: 36px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid var(--control);
+  border-radius: 0 5px 5px 0;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  white-space: nowrap;
+}
+
+.directory-path-field__control button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--raised);
+}
+
+.directory-path-field__control :focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.directory-path-field__control button:disabled {
+  color: var(--muted);
+  background: var(--raised);
+}
+
+.directory-path-field p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 599px) {
+  .directory-path-field__control input,
+  .directory-path-field__control button {
+    min-height: 40px;
+  }
+}

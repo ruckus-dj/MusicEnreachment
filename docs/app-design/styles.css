@@ -285,6 +285,12 @@ dialog p { margin-bottom:10px; }
 .field { margin:0; }
 .field label,.field-label { font-size:11px; font-weight:600; }
 .field input,.field select { width:100%; }
+.path-field-control { display:flex; min-width:0; }
+.path-field-control input { flex:1 1 auto; width:auto; min-height:30px; border-right:0; border-radius:var(--control-radius) 0 0 var(--control-radius); cursor:default; }
+.path-field-control button { flex:0 0 auto; min-height:30px; white-space:nowrap; border-radius:0 var(--control-radius) var(--control-radius) 0; }
+.path-field-control:focus-within { outline:2px solid var(--accent); outline-offset:1px; border-radius:var(--control-radius); }
+.path-field-control :focus-visible { outline:none; }
+@media (max-width:599px) { .path-field-control input,.path-field-control button { min-height:40px; } }
 .repeat-list { display:grid; gap:8px; padding:10px; }
 .repeat-item { border:1px solid var(--line); border-radius:var(--radius); padding:8px; background:var(--raised); }
 .repeat-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }

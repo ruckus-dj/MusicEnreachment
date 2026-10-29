@@ -44,7 +44,7 @@ import type {
   UpdateSettingsBodyPublicationFormat,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { DirectoryPicker } from "../../components/DirectoryPicker";
+import { DirectoryPathField } from "../../components/DirectoryPathField";
 import { GitHubTokenForm } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
@@ -211,7 +211,6 @@ export function SettingsScreen() {
   const [installDialog, setInstallDialog] = useState<InstallPlan>();
   const [moveDialog, setMoveDialog] = useState(false);
   const [outputDialog, setOutputDialog] = useState(false);
-  const [directoryPicker, setDirectoryPicker] = useState<"output" | "move">();
   const [moveDirectory, setMoveDirectory] = useState("");
   const [removeOld, setRemoveOld] = useState(false);
   const [movePlan, setMovePlan] = useState<MovePlan>();
@@ -747,6 +746,11 @@ export function SettingsScreen() {
     event: React.KeyboardEvent<HTMLDialogElement>,
     close: () => void,
   ) {
+    if (
+      event.target instanceof Element &&
+      event.target.closest("dialog") !== event.currentTarget
+    )
+      return;
     if (event.key === "Escape") {
       event.preventDefault();
       close();
@@ -1092,18 +1096,13 @@ export function SettingsScreen() {
               className="setup-panel settings-panel"
             >
               <h2 id="runtime-title">Публикация</h2>
-              <label>
-                Output directory
-                <input
-                  value={outputDirectory.value ?? ""}
-                  onChange={(event) =>
-                    outputDirectory.update(event.target.value)
-                  }
-                />
-              </label>
-              <AppButton onPress={() => setDirectoryPicker("output")}>
-                Обзор каталогов сервера
-              </AppButton>
+              <DirectoryPathField
+                id="settings-output-directory"
+                label="Output directory"
+                value={outputDirectory.value ?? ""}
+                onSelect={outputDirectory.update}
+                disabled={busy}
+              />
               <label>
                 Publication format
                 <select
@@ -1876,16 +1875,12 @@ export function SettingsScreen() {
           }}
         >
           <h2 id="move-dialog-title">Перенос Tools directory</h2>
-          <label>
-            Новый Tools directory
-            <input
-              value={moveDirectory}
-              onChange={(event) => setMoveDirectoryValue(event.target.value)}
-            />
-          </label>
-          <AppButton onPress={() => setDirectoryPicker("move")}>
-            Обзор каталогов сервера
-          </AppButton>
+          <DirectoryPathField
+            id="settings-move-tools-directory"
+            label="Новый Tools directory"
+            value={moveDirectory}
+            onSelect={setMoveDirectoryValue}
+          />
           <label className="settings-inline">
             <input
               type="checkbox"
@@ -1934,20 +1929,6 @@ export function SettingsScreen() {
           </AppButton>
         </dialog>
       )}
-      <DirectoryPicker
-        open={directoryPicker !== undefined}
-        initialPath={
-          directoryPicker === "move"
-            ? moveDirectory
-            : (outputDirectory.value ?? state?.settings.output_directory ?? "")
-        }
-        onSelect={(path) =>
-          directoryPicker === "move"
-            ? setMoveDirectoryValue(path)
-            : outputDirectory.update(path)
-        }
-        onClose={() => setDirectoryPicker(undefined)}
-      />
     </section>
   );
 }
@@ -2011,6 +1992,7 @@ function OperationRow({
   const [error, setError] = useState("");
   const errorRef = useRef<HTMLParagraphElement>(null);
   useOperationFollower(operation.id, {
+    enabled: operation.state === "queued" || operation.state === "running",
     initialSnapshot: operation,
     onSnapshot: (snapshot) => {
       setOperation(snapshot);

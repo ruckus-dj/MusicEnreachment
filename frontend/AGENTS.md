@@ -45,6 +45,14 @@ frontend/
 
 **Tests colocated**: *.test.tsx next to components. Vitest + React Testing Library + MSW.
 
+**Nested directory dialogs**: Stop picker `close`/`cancel` propagation so closing
+the picker cannot close its owning settings dialog. Host Escape/Tab handlers
+must ignore events from nested dialogs. Path editing must not use a nested form
+or submit the owner. Tests that replace `window` with a JSDOM fixture must stub
+that window's `HTMLDialogElement`, not another realm's constructor. Shared test
+helpers import Vitest assertions explicitly; query the path editor as a textbox
+because its navigation landmark also has a path label.
+
 **Local-time assertions**: UI timestamps use the browser's time zone. Test the
 original `<time datetime>` instant and derive expected display text with the
 same locale/options in the test environment; do not hard-code the developer's
@@ -71,6 +79,16 @@ Retaining completed search results must not retain an active SSE subscription:
 disable terminal followers while preserving their snapshots and result queries.
 Follower test fixtures must return the admitted operation ID and explicitly emit
 SSE wake-ups; do not rely on former polling or accept mismatched snapshot IDs.
+
+Operation followers share one reference-counted `/api/operations/events`
+transport: one persistent stream per row can exhaust HTTP/1 browser connections
+and block unrelated requests, including directory browsing. Shared notifications
+only trigger REST reads; they are not snapshots or history. Reconnection refreshes
+all followers, and joining an already-open stream must also read immediately.
+The final unsubscribe closes the shared transport. SSE frames need a `data:`
+line to dispatch in native EventSource; mock listener calls alone cannot verify
+framing. Failed Settings rows retain their controls and snapshots without an
+active follower; queued/running rows continue following.
 
 **Managed tool catalog failures**: Setup must retain a successfully loaded tool
 inventory even if catalog requests fail; ready-package restrictions and duplicate
