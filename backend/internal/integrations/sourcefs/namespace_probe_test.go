@@ -219,10 +219,6 @@ type namespaceProbeOutput struct {
 	hooks *namespaceProbeHooks
 }
 
-func (d *namespaceProbeOutput) namespaceScopeDirectory() OutputDirectory {
-	return unwrapNamespaceProbeOutput(d.OutputDirectory)
-}
-
 func (d *namespaceProbeOutput) CreateDirExclusive(ctx context.Context, name string) (OutputDirectory, error) {
 	child, err := d.OutputDirectory.CreateDirExclusive(ctx, name)
 	if err == nil && d.hooks.rootPath != "" && d.hooks.scratchPath == "" {

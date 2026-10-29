@@ -20,10 +20,10 @@ func NativeCompareComponents(ctx context.Context, parent OutputDirectory, a, b s
 	return nativeCompareComponentsIn(ctx, parent, parent, a, b)
 }
 
-// NativeCompareComponentsIn compares names using namespaceParent's rules while
-// creating and cleaning its private scratch directory only beneath technicalParent.
-// The platform scope check still compares the scratch directory with
-// namespaceParent, so an incompatible technical area fails closed.
+// NativeCompareComponentsIn compares names empirically in a private scratch
+// directory created and cleaned only beneath technicalParent. The application
+// uses a shared physical output root for technical and media data; no separate
+// mount or platform-specific namespace capability check is required.
 func NativeCompareComponentsIn(ctx context.Context, namespaceParent, technicalParent OutputDirectory, a, b string) (bool, error) {
 	return nativeCompareComponentsIn(ctx, namespaceParent, technicalParent, a, b)
 }
@@ -67,7 +67,7 @@ func nativeCompareComponentsIn(ctx context.Context, namespaceParent, technicalPa
 		return false, fmt.Errorf("sourcefs: unable to allocate private namespace probe directory")
 	}
 
-	return compareInOwnedScratch(ctx, namespaceParent, technicalParent, cleanup, scratchName, technicalParentID, scratch, a, b)
+	return compareInOwnedScratch(ctx, technicalParent, cleanup, scratchName, technicalParentID, scratch, a, b)
 }
 
 func validateNamespaceProbeComponent(name string) error {
@@ -77,7 +77,7 @@ func validateNamespaceProbeComponent(name string) error {
 	return nil
 }
 
-func compareInOwnedScratch(ctx context.Context, namespaceParent, technicalParent OutputDirectory, parentCleanup OutputCleanup, scratchName string, parentID DirectoryIdentity, scratch OutputDirectory, a, b string) (equivalent bool, resultErr error) {
+func compareInOwnedScratch(ctx context.Context, technicalParent OutputDirectory, parentCleanup OutputCleanup, scratchName string, parentID DirectoryIdentity, scratch OutputDirectory, a, b string) (equivalent bool, resultErr error) {
 	var scratchID DirectoryIdentity
 	identityReady := false
 	cleanup, cleanupOK := scratch.(OutputCleanup)
@@ -123,10 +123,6 @@ func compareInOwnedScratch(ctx context.Context, namespaceParent, technicalParent
 	if !cleanupOK {
 		return false, ErrUnsupported
 	}
-	if err := verifyNamespaceProbeScope(ctx, namespaceParent, scratch); err != nil {
-		return false, err
-	}
-
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
