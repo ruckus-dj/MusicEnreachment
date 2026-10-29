@@ -185,12 +185,13 @@ dialog p { margin-bottom:10px; }
 .dialog-actions { justify-content:end; margin-top:16px; }
 #folder-picker { width:min(640px,calc(100% - 24px)); max-height:min(760px,calc(100dvh - 24px)); padding:0; overflow:hidden; }
 #folder-picker-content { display:flex; flex-direction:column; max-height:min(760px,calc(100dvh - 24px)); }
-.folder-picker-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 18px 8px; }
-.folder-picker-title { display:flex; align-items:center; gap:8px; min-width:0; }
+.folder-picker-head { position:relative; display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:52px; padding:12px 58px 8px 18px; }
+.folder-picker-title { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-width:0; }
 .folder-picker-head h2 { margin:0; font-size:17px; }
 .icon-close { min-width:32px; min-height:32px; padding:0; font-size:22px; line-height:1; }
+.folder-picker-head .icon-close { position:absolute; top:9px; right:14px; min-width:34px; min-height:34px; }
 .folder-picker-help { padding:0 18px 10px; color:var(--muted); font-size:12px; }
-.folder-navigation { display:flex; align-items:center; gap:8px; min-width:0; padding:0 18px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:var(--raised); }
+.folder-navigation { display:flex; align-items:center; gap:8px; min-width:0; padding:6px 18px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:var(--raised); }
 .folder-up { width:34px; height:34px; min-width:34px; padding:0; font-size:18px; }
 .folder-breadcrumbs { display:flex; align-items:center; gap:5px; min-width:0; flex:1; padding:4px 0; overflow-x:auto; overscroll-behavior-x:contain; white-space:nowrap; color:var(--muted); font:11px var(--mono); scrollbar-width:thin; }
 .folder-breadcrumbs button { flex:none; min-height:26px; padding:2px 5px; border-color:transparent; background:transparent; color:var(--accent); font:inherit; }
@@ -201,8 +202,8 @@ dialog p { margin-bottom:10px; }
 .folder-path-form[hidden] { display:none; }
 .folder-path-form input { width:100%; font-family:var(--mono); font-size:12px; }
 .folder-listing { min-height:120px; flex:1 1 auto; overflow:auto; overscroll-behavior:contain; }
-.folder-list { display:grid; padding:4px 10px; }
-.folder-row { display:flex; justify-content:start; min-height:46px; gap:10px; padding:8px 9px; border:0; border-bottom:1px solid var(--line); border-radius:0; text-align:left; }
+.folder-list { display:grid; gap:8px; padding:12px 10px 4px; }
+.folder-row { display:flex; align-items:center; justify-content:start; min-height:44px; gap:10px; padding:8px 10px; border:0; border-radius:4px; text-align:left; }
 .folder-row:hover { background:var(--accent-soft); }
 .folder-glyph { color:var(--accent); font-size:15px; }
 .folder-name { min-width:0; flex:1; overflow-wrap:anywhere; }
@@ -270,7 +271,8 @@ dialog p { margin-bottom:10px; }
   .album-disclosure summary > span:last-of-type { max-width:100px; }
   #folder-picker { width:calc(100% - 16px); max-height:calc(100dvh - 16px); }
   #folder-picker-content { max-height:calc(100dvh - 16px); }
-  .folder-picker-head { padding:12px 12px 6px; }
+  .folder-picker-head { min-height:48px; padding:10px 52px 8px 12px; }
+  .folder-picker-head .icon-close { top:8px; right:10px; }
   .folder-picker-help { padding:0 12px 10px; }
   .folder-navigation { padding-left:12px; padding-right:12px; }
   .folder-path-form { padding-left:12px; padding-right:12px; }
