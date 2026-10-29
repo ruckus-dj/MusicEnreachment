@@ -1,5 +1,6 @@
 import { JSDOM } from "jsdom";
 import "@testing-library/jest-dom/vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
   fireEvent,
@@ -10,11 +11,13 @@ import {
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
+import { getListSourcesQueryKey } from "../api/generated/client";
 import type {
   SetupStateBody,
   SourceRootResponse,
 } from "../api/generated/client.schemas";
 import { server } from "../test/server";
+import { AppShell } from "./AppShell";
 
 const state: SetupStateBody = {
   completed: false,
@@ -66,6 +69,40 @@ const sourceRoot: SourceRootResponse = {
   created_at: "2026-09-01T00:00:00Z",
   updated_at: "2026-09-26T10:20:00Z",
 };
+
+function cachedSourcesClient() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  client.setQueryData(getListSourcesQueryKey(), {
+    data: { sources: [sourceRoot] },
+    status: 200,
+    headers: new Headers(),
+  });
+  return client;
+}
+
+function pendingSourcesRequest() {
+  let respond: (response: Response) => void = () => {};
+  let startedResolve: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    startedResolve = resolve;
+  });
+  server.use(
+    http.get(
+      "/api/sources",
+      () =>
+        new Promise<Response>((done) => {
+          respond = done;
+          startedResolve();
+        }),
+    ),
+  );
+  return {
+    started,
+    respond: (response: Response) => respond(response),
+  };
+}
 beforeEach(() => {
   window.location.hash = "";
   vi.stubGlobal(
@@ -265,7 +302,7 @@ describe("AppShell sources routing", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(window.location.hash).toBe("#/sources/root-1");
   });
-  it("offers source setup on an empty landing and navigates to Sources and Settings", async () => {
+  it("offers actionable source setup on an empty landing and opens the real registration form", async () => {
     server.use(
       http.get("/api/setup", () => HttpResponse.json(completedState)),
       http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
@@ -279,14 +316,13 @@ describe("AppShell sources routing", () => {
     expect(
       await screen.findByRole("heading", {
         level: 1,
-        name: "Добавьте музыкальный каталог",
+        name: "Для начала работы необходимо добавить источник",
       }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Перейти к источникам" }),
-    ).toHaveAttribute("href", "#/sources");
+    const addSource = screen.getByRole("link", { name: "Добавить источник" });
+    expect(addSource).toHaveAttribute("href", "#/sources");
 
-    fireEvent.click(screen.getAllByRole("link", { name: "Источники" })[0]);
+    fireEvent.click(addSource);
     await waitFor(() => expect(window.location.hash).toBe("#/sources"));
     expect(
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
@@ -295,16 +331,25 @@ describe("AppShell sources routing", () => {
       await screen.findByText("Ни один каталог не зарегистрирован."),
     ).toBeVisible();
 
+    fireEvent.click(screen.getByRole("button", { name: "Добавить каталог" }));
+    expect(
+      screen.getByRole("heading", { name: "Новый каталог" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Имя каталога")).toBeVisible();
+
     fireEvent.click(screen.getAllByRole("link", { name: "Настройки" })[0]);
     await waitFor(() => expect(window.location.hash).toBe("#/settings"));
     expect(await screen.findByText("Managed tools")).toBeVisible();
   });
 
-  it("offers incoming work and source configuration when sources exist", async () => {
+  it("opens Incoming directly from the root when sources exist", async () => {
     server.use(
       http.get("/api/setup", () => HttpResponse.json(completedState)),
       http.get("/api/sources", () =>
         HttpResponse.json({ sources: [sourceRoot] }),
+      ),
+      http.get("/api/incoming-groups", () =>
+        HttpResponse.json({ epoch: 1, revision: "", groups: [], files: [] }),
       ),
     );
     render(<App />);
@@ -312,15 +357,99 @@ describe("AppShell sources routing", () => {
     expect(
       await screen.findByRole("heading", {
         level: 1,
-        name: "Медиатека готова к работе",
+        name: "Разбор входящих групп",
+      }),
+    ).toBeVisible();
+    await waitFor(() => expect(window.location.hash).toBe("#/incoming-groups"));
+    expect(screen.queryByText("Медиатека готова к работе")).toBeNull();
+    expect(screen.queryByText("Выберите, с чего продолжить.")).toBeNull();
+    for (const nav of screen.getAllByRole("navigation", {
+      name: "Разделы приложения",
+    })) {
+      expect(nav.querySelector('a[href="#/incoming-groups"]')).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    }
+  });
+
+  it("waits for the current mount source fetch before redirecting from cached non-empty data", async () => {
+    const pending = pendingSourcesRequest();
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/incoming-groups", () =>
+        HttpResponse.json({ epoch: 1, revision: "", groups: [], files: [] }),
+      ),
+    );
+    render(
+      <QueryClientProvider client={cachedSourcesClient()}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    await pending.started;
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Загрузка источников…",
+    );
+    expect(window.location.hash).toBe("");
+
+    pending.respond(HttpResponse.json({ sources: [sourceRoot] }));
+    expect(
+      await screen.findByRole("heading", {
+        name: "Разбор входящих групп",
+      }),
+    ).toBeVisible();
+    await waitFor(() => expect(window.location.hash).toBe("#/incoming-groups"));
+  });
+
+  it("shows the current mount source error instead of redirecting from cached non-empty data", async () => {
+    const pending = pendingSourcesRequest();
+    server.use(http.get("/api/setup", () => HttpResponse.json(completedState)));
+    render(
+      <QueryClientProvider client={cachedSourcesClient()}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    await pending.started;
+    expect(window.location.hash).toBe("");
+
+    pending.respond(
+      HttpResponse.json({ detail: "sources unavailable" }, { status: 503 }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "sources unavailable",
+    );
+    expect(window.location.hash).toBe("");
+    expect(
+      screen.queryByRole("heading", {
+        name: "Для начала работы необходимо добавить источник",
+      }),
+    ).toBeNull();
+  });
+
+  it("shows the empty source action instead of redirecting from cached non-empty data", async () => {
+    const pending = pendingSourcesRequest();
+    server.use(http.get("/api/setup", () => HttpResponse.json(completedState)));
+    render(
+      <QueryClientProvider client={cachedSourcesClient()}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    await pending.started;
+    expect(window.location.hash).toBe("");
+
+    pending.respond(HttpResponse.json({ sources: [] }));
+    expect(
+      await screen.findByRole("heading", {
+        name: "Для начала работы необходимо добавить источник",
       }),
     ).toBeVisible();
     expect(
-      screen.getByRole("link", { name: "Открыть входящие" }),
-    ).toHaveAttribute("href", "#/incoming-groups");
-    expect(
-      screen.getByRole("link", { name: "Настроить источники" }),
+      screen.getByRole("link", { name: "Добавить источник" }),
     ).toHaveAttribute("href", "#/sources");
+    expect(window.location.hash).toBe("");
   });
 
   it("shows source loading while the root list is pending", async () => {
@@ -366,12 +495,13 @@ describe("AppShell sources routing", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "sources unavailable",
     );
+    expect(window.location.hash).toBe("");
     fail = false;
     fireEvent.click(screen.getByRole("button", { name: "Повторить загрузку" }));
     expect(
       await screen.findByRole("heading", {
         level: 1,
-        name: "Добавьте музыкальный каталог",
+        name: "Для начала работы необходимо добавить источник",
       }),
     ).toBeVisible();
   });
@@ -574,7 +704,9 @@ describe("AppShell library routing", () => {
       screen.getByRole("heading", { name: "Direct release" }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("heading", { name: "Добавьте музыкальный каталог" }),
+      screen.queryByRole("heading", {
+        name: "Для начала работы необходимо добавить источник",
+      }),
     ).toBeNull();
   });
 });
@@ -651,7 +783,7 @@ describe("AppShell themed shell", () => {
     );
     render(<App />);
     await screen.findByRole("heading", {
-      name: "Добавьте музыкальный каталог",
+      name: "Для начала работы необходимо добавить источник",
     });
     expect(screen.getByRole("main")).toHaveClass("settings-shell");
   });
@@ -736,7 +868,7 @@ describe("AppShell themed shell", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Добавьте музыкальный каталог",
+        name: "Для начала работы необходимо добавить источник",
       }),
     ).toBeVisible();
     expect(window.location.hash).toBe("");

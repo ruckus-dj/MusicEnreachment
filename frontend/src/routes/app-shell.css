@@ -220,6 +220,28 @@
   margin-top: 0;
 }
 
+.root-landing-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 6px 14px;
+  border: 1px solid var(--button);
+  border-radius: 4px;
+  color: var(--button-text);
+  background: var(--button);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.root-landing-action:hover {
+  opacity: 0.9;
+}
+
+.root-landing-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .app-shell > .app-setup-header {
   margin: 0;
 }

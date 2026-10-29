@@ -1,7 +1,8 @@
 /// <reference path="./catalog-data.js" />
 const view = document.querySelector('#view');
 const dialog = document.querySelector('#confirmation');
-const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, manualDraft: null, manualReleaseCount: 0, notice: '', toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false };
+const folderDialog = document.querySelector('#folder-picker');
+const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, manualDraft: null, manualReleaseCount: 0, notice: '', toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false, sourceAddOpen: false, sourceRoots: null, sourcePath: '/mnt/music', folderPicker: null };
 let confirmAction = null;
 let draggedFile = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
@@ -396,8 +397,91 @@ function applyPlan(plan, automatic = false) {
   return changed;
 }
 
+const demoDirectories = {
+  '/': ['mnt', 'srv', 'var'],
+  '/mnt': ['archive', 'audio', 'backup', 'inbox', 'music', 'projects', 'samples', 'shared', 'staging'],
+  '/mnt/archive': [],
+  '/mnt/inbox': ['Northern Lines', 'Road Notes', 'Small Hours'],
+  '/mnt/audio': ['incoming', 'masters'],
+  '/mnt/music': ['Albums', 'Compilations'],
+  '/mnt/music/Albums': ['Artist A', 'Artist B'],
+  '/mnt/music/Compilations': ['Road Notes'],
+  '/srv': ['media', 'music'],
+  '/srv/media': ['library'],
+  '/srv/music': ['Albums', 'Compilations'],
+  '/srv/music/Albums': ['Northern Lines', 'Small Hours'],
+  '/srv/music/Compilations': ['Road Notes'],
+  '/var': ['lib'],
+  '/var/lib': ['melotrove'],
+  '/var/lib/melotrove': ['cache', 'tools'],
+  '/var/lib/melotrove/tools': []
+};
+const demoUnreadableDirectories = new Set(['/mnt/archive']);
+const folderPageSize = 6;
+
+function parentDirectory(path) {
+  if (path === '/') return '/';
+  const parts = path.split('/').filter(Boolean);
+  parts.pop();
+  return `/${parts.join('/')}` || '/';
+}
+
+function setPickerPath(path, remember = true) {
+  const picker = ui.folderPicker;
+  if (!picker) return;
+  if (remember && picker.path !== path) picker.back.push(picker.path);
+  picker.path = path;
+  picker.visible = folderPageSize;
+  picker.error = '';
+  picker.requestedPath = '';
+  renderFolderPicker();
+}
+
+function renderFolderPicker() {
+  const picker = ui.folderPicker;
+  if (!picker) return;
+  const restoreDialogFocus = folderDialog.open && folderDialog.contains(document.activeElement);
+  const path = picker.path;
+  const folders = demoDirectories[path];
+  const pieces = path === '/' ? [] : path.split('/').filter(Boolean);
+  const crumbs = [`<button type="button" data-folder-action="path" data-path="/" aria-current="${path === '/' ? 'location' : 'false'}">Сервер</button>`, ...pieces.map((piece, index) => {
+    const crumbPath = `/${pieces.slice(0, index + 1).join('/')}`;
+    return `<span aria-hidden="true">/</span><button type="button" data-folder-action="path" data-path="${esc(crumbPath)}" ${crumbPath === path ? 'aria-current="location"' : ''}>${esc(piece)}</button>`;
+  })].join('');
+  let listing;
+  if (demoUnreadableDirectories.has(path)) {
+    listing = `<div class="folder-state error-state"><strong>Каталог недоступен</strong><span>Демо-ответ: сервер не может прочитать этот каталог. Выберите другой путь или вернитесь назад.</span></div>`;
+  } else if (!folders) {
+    listing = `<div class="folder-state error-state"><strong>Путь не найден</strong><span>В демонстрационном дереве такого каталога нет. Проверьте путь или выберите папку из списка.</span></div>`;
+  } else if (!folders.length) {
+    listing = `<div class="folder-state"><strong>В этой папке нет вложенных каталогов</strong><span>Вы можете выбрать текущую папку.</span></div>`;
+  } else {
+    const shown = folders.slice(0, picker.visible);
+    listing = `<div class="folder-list" role="list" aria-label="Подкаталоги">${shown.map(folder => {
+      const childPath = `${path === '/' ? '' : path}/${folder}`;
+      return `<button class="folder-row" type="button" role="listitem" data-folder-action="path" data-path="${esc(childPath)}"><span class="folder-glyph" aria-hidden="true">▰</span><span class="folder-name">${esc(folder)}</span><span class="folder-chevron" aria-hidden="true">›</span></button>`;
+    }).join('')}</div>${folders.length > shown.length ? `<div class="folder-more">${button('folder-more', `Показать ещё ${folders.length - shown.length}`)}</div>` : ''}`;
+  }
+  const canChoose = Boolean(folders) && !demoUnreadableDirectories.has(path) && !picker.error;
+  document.querySelector('#folder-picker-content').innerHTML = `<header class="folder-picker-head"><div><p class="eyebrow">ДЕМО · ТЕСТОВОЕ ДЕРЕВО</p><h2 id="folder-picker-title">Выбрать папку на сервере</h2></div><button type="button" class="icon-close" data-folder-action="cancel" aria-label="Закрыть выбор папки">×</button></header><p id="folder-picker-help" class="folder-picker-help">Это каталоги на сервере MeloTrove, не файлы на устройстве с браузером. Демо не обращается к файловой системе или сети.</p><div class="folder-toolbar">${button('folder-back', '‹ Назад', picker.back.length ? '' : 'disabled')}${button('folder-up', '↑ Вверх', path !== '/' ? '' : 'disabled')}</div><form id="folder-path-form" class="folder-path-form"><label for="folder-path">Абсолютный серверный путь</label><div class="input-action"><input id="folder-path" name="path" value="${esc(picker.requestedPath || path)}" autocomplete="off" spellcheck="false" aria-invalid="${picker.error ? 'true' : 'false'}"><button type="submit" class="primary">Перейти</button></div></form><nav class="folder-breadcrumbs" aria-label="Путь к папке">${crumbs}</nav><div class="folder-listing" aria-live="polite">${picker.error ? `<div class="folder-state error-state"><strong>Путь не найден</strong><span>${esc(picker.error)}</span></div>` : listing}</div><footer class="folder-picker-foot"><div><strong>Текущая папка</strong><code>${esc(path)}</code></div><div class="actions">${button('folder-cancel', 'Отмена')}${button('folder-choose', 'Выбрать эту папку', canChoose ? '' : 'disabled', true)}</div></footer>`;
+  if (restoreDialogFocus) document.querySelector('#folder-path').focus();
+}
+
+function openFolderPicker(target, currentPath) {
+  const startPath = typeof currentPath === 'string' && demoDirectories[currentPath] ? currentPath : '/';
+  ui.folderPicker = { target, path: startPath, back: [], visible: folderPageSize, error: '', requestedPath: '' };
+  renderFolderPicker();
+  folderDialog.showModal();
+  document.querySelector('#folder-path').focus();
+}
+
 function sources() {
-  return header('Источники', 'Серверные пути, только чтение. Файлы не загружаются через drag-and-drop.', button('source-scan', 'Сканировать · демо')) + panel('Подключённые каталоги', table(['Имя', 'Путь', 'Режим', 'Доступность', 'Последняя проверка', ''], [['Входящие', '<code>/mnt/inbox</code>', 'Read-only', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')], ['Архивный диск', '<code>/mnt/archive</code>', 'Read-only', badge('Отключён', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]])) + note('Недоступность исходного диска не удаляет существующие управляемые публикации.');
+  const roots = ui.sourceRoots || [
+    ['Входящие', '/mnt/inbox', 'Read-only', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')],
+    ['Архивный диск', '/mnt/archive', 'Read-only', badge('Отключён', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
+  ];
+  const addForm = ui.sourceAddOpen ? `<div class="padded source-add-form"><div class="two-columns"><label class="field" for="source-name">Имя источника<input id="source-name" value="${esc(ui.sourceName || '')}" placeholder="Например, Музыкальная библиотека"></label><label class="field" for="source-path">Каталог на сервере<input id="source-path" value="${esc(ui.sourcePath)}" aria-describedby="source-path-help"><span class="sub" id="source-path-help">Только каталог; файлы не загружаются.</span></label></div><div class="actions">${button('pick-source-path', 'Выбрать папку')}${button('save-source', 'Добавить источник', '', true)}${button('cancel-source', 'Отмена')}</div></div>` : '';
+  return header('Источники', 'Серверные пути, только чтение. Файлы не загружаются через drag-and-drop.', `${button('source-add', 'Добавить источник', '', true)}${button('source-scan', 'Сканировать · демо')}`) + (ui.sourceAddOpen ? panel('Новый источник', addForm) : '') + panel('Подключённые каталоги', table(['Имя', 'Путь', 'Режим', 'Доступность', 'Последняя проверка', ''], roots.map(([name, path, mode, availability, checked, action]) => [esc(name), `<code>${esc(path)}</code>`, mode, availability, checked, action]))) + note('Недоступность исходного диска не удаляет существующие управляемые публикации.');
 }
 
 function operations() {
@@ -406,13 +490,13 @@ function operations() {
 
 function settings() {
   return header('Настройки', 'Тема доступна в верхней панели. Рабочие настройки продукта сохраняются в БД; здесь демонстрация.', button('check-updates', 'Проверить обновления', '', true)) +
-    `<div class="two-columns">${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '--version']]) + `<div class="panel-foot"><code>/var/lib/melotrove/tools</code> · persistent directory<br>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Формула, веса и порог ещё не утверждены'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
+    `<div class="two-columns">${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '--version']]) + `<div class="panel-foot"><code>${esc(ui.toolsPath)}</code> · persistent directory<br>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${button('pick-tools-path', 'Изменить каталог')}${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Формула, веса и порог ещё не утверждены'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
 }
 
 function setup() {
   const steps = ['Каталог', 'Инструменты', 'Публикация', 'Итог'];
   const content = [
-    `<label class="field" for="tools-path">Persistent tools-directory<input id="tools-path" value="${esc(ui.toolsPath)}" aria-describedby="path-help"><span class="sub" id="path-help">Абсолютный путь на сервере, не на компьютере с браузером.</span></label>${button('check-path', 'Проверить путь')}`,
+    `<label class="field" for="tools-path">Persistent tools-directory<input id="tools-path" value="${esc(ui.toolsPath)}" aria-describedby="path-help"><span class="sub" id="path-help">Абсолютный путь на сервере, не на компьютере с браузером.</span></label><div class="actions">${button('pick-tools-path', 'Выбрать папку')}${button('check-path', 'Проверить путь')}</div>`,
     table(['Инструмент', 'Версия · демо', 'Проверка'], [['ffmpeg', '8.0', badge('Готов', 'success')], ['ffprobe', '8.0', badge('Готов', 'success')], ['fpcalc', '1.5.1', badge('Готов', 'success')]]) + note('В реальном Setup инструменты скачиваются автоматически после выбора каталога. В этом макете скачивания нет.'),
     facts([['Каталог', '<code>/srv/music</code>'], ['Режим примера', 'MKA remux · без перекодирования'], ['Исходники', 'Только чтение'], ['Граница продукта', 'Также предусмотрен исходный формат; макет демонстрирует MKA']]),
     facts([['MusicBrainz', 'Публичный сервис · поддержка self-hosted в спецификации'], ['LRCLIB', 'Тексты'], ['Авторизация', 'Внешний auth-proxy'], ['База данных', 'Подключена · демо'], ['Частичные релизы', 'Разрешены']])
@@ -478,6 +562,13 @@ document.addEventListener('click', event => {
   if (!(event.target instanceof Element)) return;
   const target = event.target.closest('button');
   if (!target) return;
+  if (target.dataset.folderAction) {
+    switch (target.dataset.folderAction) {
+      case 'cancel': folderDialog.close('cancel'); break;
+      case 'path': setPickerPath(target.dataset.path); break;
+    }
+    return;
+  }
   if (target.dataset.file) { ui.selectedFile = ui.selectedFile === target.dataset.file ? null : target.dataset.file; render(false); return; }
   if (target.dataset.candidate) { selectCandidate(target.dataset.candidate); return; }
   if (target.dataset.inspect || target.dataset.evidence) {
@@ -530,6 +621,44 @@ document.addEventListener('click', event => {
     }
     case 'source-scan': notify('Демо: сканирование поставлено в очередь. Перейдите во входящие; реальные каталоги не читались.'); break;
     case 'check-source': notify('Демо: /mnt/archive недоступен. Управляемые публикации сохранены.'); break;
+    case 'source-add': ui.sourceAddOpen = true; ui.sourceName = ''; ui.sourcePath = '/mnt/music'; render(false); document.querySelector('#source-name').focus(); break;
+    case 'pick-source-path': openFolderPicker('source', ui.sourcePath); break;
+    case 'cancel-source': ui.sourceAddOpen = false; render(false); break;
+    case 'save-source': {
+      const name = document.querySelector('#source-name').value.trim();
+      if (!name) { document.querySelector('#source-name').setAttribute('aria-invalid', 'true'); notify('Укажите имя источника.'); break; }
+      const roots = ui.sourceRoots || [
+        ['Входящие', '/mnt/inbox', 'Read-only', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')],
+        ['Архивный диск', '/mnt/archive', 'Read-only', badge('Отключён', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
+      ];
+      roots.push([name, ui.sourcePath, 'Read-only', badge('Демо · не проверен'), '—', badge('Требует проверки', 'warning')]);
+      ui.sourceRoots = roots;
+      ui.sourceAddOpen = false;
+      ui.notice = 'Демо: источник добавлен только в макет. Серверный каталог не открывался и не сканировался.';
+      render(false);
+      break;
+    }
+    case 'pick-tools-path': openFolderPicker('tools', ui.toolsPath); break;
+    case 'folder-back': {
+      const picker = ui.folderPicker;
+      if (picker?.back.length) { picker.path = picker.back.pop(); picker.visible = folderPageSize; picker.error = ''; picker.requestedPath = ''; renderFolderPicker(); }
+      break;
+    }
+    case 'folder-up': if (ui.folderPicker && ui.folderPicker.path !== '/') setPickerPath(parentDirectory(ui.folderPicker.path)); break;
+    case 'folder-more': if (ui.folderPicker) { ui.folderPicker.visible += folderPageSize; renderFolderPicker(); } break;
+    case 'folder-cancel': folderDialog.close('cancel'); break;
+    case 'folder-choose': {
+      const picker = ui.folderPicker;
+      if (!picker) break;
+      const returnAction = picker.target === 'tools' ? 'pick-tools-path' : 'pick-source-path';
+      const chosenPath = picker.path;
+      if (picker.target === 'tools') { ui.toolsPath = chosenPath; ui.pathChecked = false; ui.notice = 'Демо: выбран серверный каталог. Проверка прав и конфигурации не выполнялась.'; }
+      else { ui.sourcePath = chosenPath; ui.notice = 'Демо: путь источника выбран. Реальный каталог не проверялся.'; }
+      folderDialog.close('choose');
+      render(false);
+      document.querySelector(`[data-action="${returnAction}"]`)?.focus({ preventScroll: true });
+      break;
+    }
     case 'retry': notify('Демо: повтор остановлен на EACCES. Нужно восстановить права staging-каталога.'); break;
     case 'check-updates': ui.toolsChecked = true; ui.notice = 'Демо: есть обновление FFmpeg/ffprobe. Оно не установлено автоматически.'; render(false); break;
     case 'install-tools': confirm('Установить обновление инструментов?', '<p>Скачать из доверенного HTTPS-источника, проверить опубликованную upstream checksum при наличии и версию, затем активировать. Предыдущая версия останется для отката. Действие демонстрационное.</p>', () => { ui.toolsUpdated = true; render(false); }); break;
@@ -543,6 +672,25 @@ document.addEventListener('click', event => {
 
 document.addEventListener('submit', event => {
   if (!(event.target instanceof HTMLFormElement)) return;
+  if (event.target.id === 'folder-path-form') {
+    event.preventDefault();
+    const picker = ui.folderPicker;
+    if (!picker) return;
+    const requestedPath = document.querySelector('#folder-path').value.trim().replace(/\/+$/, '') || '/';
+    picker.requestedPath = requestedPath;
+    if (!requestedPath.startsWith('/')) picker.error = 'Путь должен быть абсолютным и начинаться с /.';
+    else if (!Object.hasOwn(demoDirectories, requestedPath)) picker.error = 'Такой путь отсутствует в локальном демо-дереве.';
+    else {
+      if (requestedPath !== picker.path) picker.back.push(picker.path);
+      picker.path = requestedPath;
+      picker.visible = folderPageSize;
+      picker.error = '';
+      picker.requestedPath = '';
+    }
+    renderFolderPicker();
+    document.querySelector('#folder-path').focus();
+    return;
+  }
   if (event.target.id === 'provider-search') {
     event.preventDefault(); ui.providerQuery = document.querySelector('#provider-query').value;
     const terms = normalized(ui.providerQuery).split(' ').filter(Boolean);
@@ -572,6 +720,8 @@ document.addEventListener('input', event => {
   if (!(target instanceof HTMLInputElement)) return;
   if (target.id === 'library-search') { ui.libraryQuery = target.value; document.querySelector('#catalog-content').innerHTML = catalogRows(); }
   if (target.id === 'tools-path') { ui.toolsPath = target.value; ui.pathChecked = false; document.querySelector('[data-action="setup-next"]').disabled = true; }
+  if (target.id === 'source-path') ui.sourcePath = target.value;
+  if (target.id === 'source-name') { ui.sourceName = target.value; target.removeAttribute('aria-invalid'); }
 });
 
 document.addEventListener('dragstart', event => {

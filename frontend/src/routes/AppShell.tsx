@@ -221,7 +221,7 @@ export function AppShell() {
 function RootLanding() {
   const sourcesQuery = useListSources({
     fetch: { cache: "no-store" },
-    query: { retry: false },
+    query: { retry: false, refetchOnMount: "always" },
   });
   const response = sourcesQuery.data;
   const sources = response?.status === 200 ? response.data.sources || [] : null;
@@ -231,8 +231,17 @@ function RootLanding() {
       : response && response.status !== 200
         ? response.data.detail || "Не удалось загрузить список источников."
         : "Не удалось загрузить список источников.";
+  const sourceCount = sources?.length ?? 0;
+  const currentFetchSettled =
+    sourcesQuery.isFetchedAfterMount && !sourcesQuery.isFetching;
 
-  if (sourcesQuery.isPending) return <p role="status">Загрузка источников…</p>;
+  useEffect(() => {
+    if (currentFetchSettled && !sourcesQuery.isError && sourceCount > 0)
+      window.location.hash = "/incoming-groups";
+  }, [currentFetchSettled, sourceCount, sourcesQuery.isError]);
+
+  if (sourcesQuery.isPending || !currentFetchSettled)
+    return <p role="status">Загрузка источников…</p>;
 
   if (sourcesQuery.isError || sources === null)
     return (
@@ -245,27 +254,18 @@ function RootLanding() {
       </section>
     );
 
-  return sources.length === 0 ? (
+  if (sources.length > 0) return <p role="status">Переход к входящим…</p>;
+
+  return (
     <section aria-labelledby="home-title">
-      <h1 id="home-title">Добавьте музыкальный каталог</h1>
+      <h1 id="home-title">Для начала работы необходимо добавить источник</h1>
       <p>
         Зарегистрируйте каталог с музыкой в разделе «Источники», чтобы начать
         работу с медиатекой. Это можно сделать сейчас или позже.
       </p>
-      <a href="#/sources">Перейти к источникам</a>
-    </section>
-  ) : (
-    <section aria-labelledby="home-title">
-      <h1 id="home-title">Медиатека готова к работе</h1>
-      <p>Выберите, с чего продолжить.</p>
-      <ul>
-        <li>
-          <a href="#/incoming-groups">Открыть входящие</a>
-        </li>
-        <li>
-          <a href="#/sources">Настроить источники</a>
-        </li>
-      </ul>
+      <a className="root-landing-action" href="#/sources">
+        Добавить источник
+      </a>
     </section>
   );
 }
