@@ -426,14 +426,14 @@ function parentDirectory(path) {
   return `/${parts.join('/')}` || '/';
 }
 
-function setPickerPath(path, remember = true) {
+function setPickerPath(path) {
   const picker = ui.folderPicker;
   if (!picker) return;
-  if (remember && picker.path !== path) picker.back.push(picker.path);
   picker.path = path;
   picker.visible = folderPageSize;
   picker.error = '';
   picker.requestedPath = '';
+  picker.editingPath = false;
   renderFolderPicker();
 }
 
@@ -444,9 +444,10 @@ function renderFolderPicker() {
   const path = picker.path;
   const folders = demoDirectories[path];
   const pieces = path === '/' ? [] : path.split('/').filter(Boolean);
-  const crumbs = [`<button type="button" data-folder-action="path" data-path="/" aria-current="${path === '/' ? 'location' : 'false'}">Сервер</button>`, ...pieces.map((piece, index) => {
+  const crumbs = [path === '/' ? `<button type="button" class="folder-current-path" data-folder-action="edit-path" aria-current="location" aria-label="Редактировать путь" title="Редактировать путь">Сервер <span aria-hidden="true">✎</span></button>` : `<button type="button" data-folder-action="path" data-path="/">Сервер</button>`, ...pieces.map((piece, index) => {
     const crumbPath = `/${pieces.slice(0, index + 1).join('/')}`;
-    return `<span aria-hidden="true">/</span><button type="button" data-folder-action="path" data-path="${esc(crumbPath)}" ${crumbPath === path ? 'aria-current="location"' : ''}>${esc(piece)}</button>`;
+    if (crumbPath === path) return `<span aria-hidden="true">/</span><button type="button" class="folder-current-path" data-folder-action="edit-path" aria-current="location" aria-label="Редактировать путь" title="Редактировать путь">${esc(piece)} <span aria-hidden="true">✎</span></button>`;
+    return `<span aria-hidden="true">/</span><button type="button" data-folder-action="path" data-path="${esc(crumbPath)}">${esc(piece)}</button>`;
   })].join('');
   let listing;
   if (demoUnreadableDirectories.has(path)) {
@@ -463,16 +464,20 @@ function renderFolderPicker() {
     }).join('')}</div>${folders.length > shown.length ? `<div class="folder-more">${button('folder-more', `Показать ещё ${folders.length - shown.length}`)}</div>` : ''}`;
   }
   const canChoose = Boolean(folders) && !demoUnreadableDirectories.has(path) && !picker.error;
-  document.querySelector('#folder-picker-content').innerHTML = `<header class="folder-picker-head"><div><p class="eyebrow">ДЕМО · ТЕСТОВОЕ ДЕРЕВО</p><h2 id="folder-picker-title">Выбрать папку на сервере</h2></div><button type="button" class="icon-close" data-folder-action="cancel" aria-label="Закрыть выбор папки">×</button></header><p id="folder-picker-help" class="folder-picker-help">Это каталоги на сервере MeloTrove, не файлы на устройстве с браузером. Демо не обращается к файловой системе или сети.</p><div class="folder-toolbar">${button('folder-back', '‹ Назад', picker.back.length ? '' : 'disabled')}${button('folder-up', '↑ Вверх', path !== '/' ? '' : 'disabled')}</div><form id="folder-path-form" class="folder-path-form"><label for="folder-path">Абсолютный серверный путь</label><div class="input-action"><input id="folder-path" name="path" value="${esc(picker.requestedPath || path)}" autocomplete="off" spellcheck="false" aria-invalid="${picker.error ? 'true' : 'false'}"><button type="submit" class="primary">Перейти</button></div></form><nav class="folder-breadcrumbs" aria-label="Путь к папке">${crumbs}</nav><div class="folder-listing" aria-live="polite">${picker.error ? `<div class="folder-state error-state"><strong>Путь не найден</strong><span>${esc(picker.error)}</span></div>` : listing}</div><footer class="folder-picker-foot"><div><strong>Текущая папка</strong><code>${esc(path)}</code></div><div class="actions">${button('folder-cancel', 'Отмена')}${button('folder-choose', 'Выбрать эту папку', canChoose ? '' : 'disabled', true)}</div></footer>`;
-  if (restoreDialogFocus) document.querySelector('#folder-path').focus();
+  const pathEditor = `<form id="folder-path-form" class="folder-path-form" ${picker.editingPath ? '' : 'hidden'}><label class="sr-only" for="folder-path">Абсолютный серверный путь</label><input id="folder-path" name="path" value="${esc(picker.requestedPath || path)}" autocomplete="off" spellcheck="false" aria-label="Абсолютный серверный путь" aria-invalid="${picker.error ? 'true' : 'false'}"></form>`;
+  document.querySelector('#folder-picker-content').innerHTML = `<header class="folder-picker-head"><div class="folder-picker-title"><h2 id="folder-picker-title">Папка на сервере</h2>${badge('Демо')}</div><button type="button" class="icon-close" data-folder-action="cancel" aria-label="Закрыть выбор папки">×</button></header><p id="folder-picker-help" class="folder-picker-help">Каталоги на сервере MeloTrove — не файлы устройства.</p><nav class="folder-navigation" aria-label="Навигация по каталогам"><button type="button" class="folder-up" data-folder-action="up" aria-label="На уровень выше" title="На уровень выше" ${path === '/' ? 'disabled' : ''}><span aria-hidden="true">↑</span></button><div class="folder-breadcrumbs" role="group" aria-label="Путь к папке">${crumbs}</div></nav>${pathEditor}<div class="folder-listing" aria-live="polite">${picker.error ? `<div class="folder-state error-state"><strong>Путь не найден</strong><span>${esc(picker.error)}</span></div>` : listing}</div><footer class="folder-picker-foot"><div class="actions">${button('folder-cancel', 'Отмена')}${button('folder-choose', 'Выбрать папку', canChoose ? '' : 'disabled', true)}</div></footer>`;
+  if (restoreDialogFocus) {
+    const focusTarget = picker.editingPath ? document.querySelector('#folder-path') : document.querySelector('.folder-up');
+    focusTarget?.focus({ preventScroll: true });
+  }
 }
 
 function openFolderPicker(target, currentPath) {
   const startPath = typeof currentPath === 'string' && demoDirectories[currentPath] ? currentPath : '/';
-  ui.folderPicker = { target, path: startPath, back: [], visible: folderPageSize, error: '', requestedPath: '' };
+  ui.folderPicker = { target, path: startPath, visible: folderPageSize, error: '', requestedPath: '', editingPath: false };
   renderFolderPicker();
   folderDialog.showModal();
-  document.querySelector('#folder-path').focus();
+  document.querySelector('.folder-current-path').focus();
 }
 
 function sources() {
@@ -566,6 +571,12 @@ document.addEventListener('click', event => {
     switch (target.dataset.folderAction) {
       case 'cancel': folderDialog.close('cancel'); break;
       case 'path': setPickerPath(target.dataset.path); break;
+      case 'edit-path': {
+        const picker = ui.folderPicker;
+        if (picker) { picker.editingPath = true; picker.requestedPath = picker.path; renderFolderPicker(); document.querySelector('#folder-path').focus(); document.querySelector('#folder-path').select(); }
+        break;
+      }
+      case 'up': if (ui.folderPicker && ui.folderPicker.path !== '/') setPickerPath(parentDirectory(ui.folderPicker.path)); break;
     }
     return;
   }
@@ -639,12 +650,6 @@ document.addEventListener('click', event => {
       break;
     }
     case 'pick-tools-path': openFolderPicker('tools', ui.toolsPath); break;
-    case 'folder-back': {
-      const picker = ui.folderPicker;
-      if (picker?.back.length) { picker.path = picker.back.pop(); picker.visible = folderPageSize; picker.error = ''; picker.requestedPath = ''; renderFolderPicker(); }
-      break;
-    }
-    case 'folder-up': if (ui.folderPicker && ui.folderPicker.path !== '/') setPickerPath(parentDirectory(ui.folderPicker.path)); break;
     case 'folder-more': if (ui.folderPicker) { ui.folderPicker.visible += folderPageSize; renderFolderPicker(); } break;
     case 'folder-cancel': folderDialog.close('cancel'); break;
     case 'folder-choose': {
@@ -681,14 +686,14 @@ document.addEventListener('submit', event => {
     if (!requestedPath.startsWith('/')) picker.error = 'Путь должен быть абсолютным и начинаться с /.';
     else if (!Object.hasOwn(demoDirectories, requestedPath)) picker.error = 'Такой путь отсутствует в локальном демо-дереве.';
     else {
-      if (requestedPath !== picker.path) picker.back.push(picker.path);
       picker.path = requestedPath;
       picker.visible = folderPageSize;
       picker.error = '';
       picker.requestedPath = '';
+      picker.editingPath = false;
     }
     renderFolderPicker();
-    document.querySelector('#folder-path').focus();
+    if (picker.editingPath) document.querySelector('#folder-path').focus();
     return;
   }
   if (event.target.id === 'provider-search') {
@@ -703,6 +708,18 @@ document.addEventListener('submit', event => {
     ui.recordingResults = providerReleases.flatMap(release => release.tracks.map(track => ({ release, track }))).filter(({ release, track }) => terms.every(term => normalized(`${track.title} ${artistName(track.artistId)} ${release.title}`).includes(term)));
     render(false); document.querySelector('#recording-query').focus({ preventScroll: true }); document.querySelector('#recording-search').parentElement.scrollIntoView({ block: 'start' });
   }
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || event.target?.id !== 'folder-path' || !ui.folderPicker?.editingPath) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const picker = ui.folderPicker;
+  picker.editingPath = false;
+  picker.requestedPath = '';
+  picker.error = '';
+  renderFolderPicker();
+  document.querySelector('.folder-current-path').focus();
 });
 
 document.addEventListener('change', event => {
