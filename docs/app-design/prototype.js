@@ -417,7 +417,6 @@ const demoDirectories = {
   '/var/lib/melotrove/tools': []
 };
 const demoUnreadableDirectories = new Set(['/mnt/archive']);
-const folderPageSize = 6;
 
 function parentDirectory(path) {
   if (path === '/') return '/';
@@ -430,7 +429,6 @@ function setPickerPath(path) {
   const picker = ui.folderPicker;
   if (!picker) return;
   picker.path = path;
-  picker.visible = folderPageSize;
   picker.error = '';
   picker.requestedPath = '';
   picker.editingPath = false;
@@ -457,11 +455,10 @@ function renderFolderPicker() {
   } else if (!folders.length) {
     listing = `<div class="folder-state"><strong>В этой папке нет вложенных каталогов</strong><span>Вы можете выбрать текущую папку.</span></div>`;
   } else {
-    const shown = folders.slice(0, picker.visible);
-    listing = `<div class="folder-list" role="list" aria-label="Подкаталоги">${shown.map(folder => {
+    listing = `<div class="folder-list" role="list" aria-label="Подкаталоги">${folders.map(folder => {
       const childPath = `${path === '/' ? '' : path}/${folder}`;
       return `<button class="folder-row" type="button" role="listitem" data-folder-action="path" data-path="${esc(childPath)}"><span class="folder-glyph" aria-hidden="true">▰</span><span class="folder-name">${esc(folder)}</span><span class="folder-chevron" aria-hidden="true">›</span></button>`;
-    }).join('')}</div>${folders.length > shown.length ? `<div class="folder-more">${button('folder-more', `Показать ещё ${folders.length - shown.length}`)}</div>` : ''}`;
+    }).join('')}</div>`;
   }
   const canChoose = Boolean(folders) && !demoUnreadableDirectories.has(path) && !picker.error;
   const pathEditor = `<form id="folder-path-form" class="folder-path-form" ${picker.editingPath ? '' : 'hidden'}><label class="sr-only" for="folder-path">Абсолютный серверный путь</label><input id="folder-path" name="path" value="${esc(picker.requestedPath || path)}" autocomplete="off" spellcheck="false" aria-label="Абсолютный серверный путь" aria-invalid="${picker.error ? 'true' : 'false'}"></form>`;
@@ -474,7 +471,7 @@ function renderFolderPicker() {
 
 function openFolderPicker(target, currentPath) {
   const startPath = typeof currentPath === 'string' && demoDirectories[currentPath] ? currentPath : '/';
-  ui.folderPicker = { target, path: startPath, visible: folderPageSize, error: '', requestedPath: '', editingPath: false };
+  ui.folderPicker = { target, path: startPath, error: '', requestedPath: '', editingPath: false };
   renderFolderPicker();
   folderDialog.showModal();
   document.querySelector('.folder-current-path').focus();
@@ -650,7 +647,6 @@ document.addEventListener('click', event => {
       break;
     }
     case 'pick-tools-path': openFolderPicker('tools', ui.toolsPath); break;
-    case 'folder-more': if (ui.folderPicker) { ui.folderPicker.visible += folderPageSize; renderFolderPicker(); } break;
     case 'folder-cancel': folderDialog.close('cancel'); break;
     case 'folder-choose': {
       const picker = ui.folderPicker;
@@ -687,7 +683,6 @@ document.addEventListener('submit', event => {
     else if (!Object.hasOwn(demoDirectories, requestedPath)) picker.error = 'Такой путь отсутствует в локальном демо-дереве.';
     else {
       picker.path = requestedPath;
-      picker.visible = folderPageSize;
       picker.error = '';
       picker.requestedPath = '';
       picker.editingPath = false;

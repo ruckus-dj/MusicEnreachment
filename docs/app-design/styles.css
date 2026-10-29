@@ -208,7 +208,6 @@ dialog p { margin-bottom:10px; }
 .folder-glyph { color:var(--accent); font-size:15px; }
 .folder-name { min-width:0; flex:1; overflow-wrap:anywhere; }
 .folder-chevron { color:var(--muted); font-size:18px; line-height:1; }
-.folder-more { display:flex; justify-content:center; padding:4px 10px 10px; }
 .folder-state { display:grid; gap:4px; padding:24px 18px; color:var(--muted); font-size:12px; text-align:center; }
 .folder-state strong { color:var(--ink); }
 .folder-state.error-state { color:var(--error); }
