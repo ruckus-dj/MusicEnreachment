@@ -377,6 +377,8 @@ dialog p { margin-bottom:10px; }
 .cover-art.blue { background:linear-gradient(135deg,#285b70,#80a99b); }
 .cover-art.gold { background:linear-gradient(135deg,#916b34,#d6bb77); }
 .state-note { margin:8px 10px; padding:8px; border-left:3px solid var(--accent); background:var(--raised); font-size:12px; }
+.delete-paths { max-height:180px; overflow:auto; padding:4px 8px 4px 28px; background:var(--raised); border:1px solid var(--line); }
+.delete-paths li { margin:5px 0; overflow-wrap:anywhere; }
 .hidden { display:none !important; }
 @media (max-width:800px) { .release-fields { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:560px) { .release-fields,.repeat-fields,.source-tools { grid-template-columns:1fr; } .repeat-head { align-items:start; flex-direction:column; } }

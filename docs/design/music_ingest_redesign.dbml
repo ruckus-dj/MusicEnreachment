@@ -7,6 +7,12 @@ Project music_ingest_redesign {
     История изменений и завершённые задания намеренно не хранятся.
     Ответы metadata providers являются долговременным локальным кэшем; остальные таблицы описывают только актуальные сущности,
     текущие проблемы и единственную действующую публикацию.
+    Provider catalog (включая Local) и local collection независимы: deletion одного
+    не удаляет записи другого. Collection deletion выполняется подтверждённой
+    асинхронной service operation, которая сначала безопасно удаляет принадлежащие
+    приложению managed output files и только затем удаляет publication/library
+    rows. DB cascade не является filesystem cleanup; FK владения collection и
+    publication используют RESTRICT против обхода workflow.
     Очереди, расписания и retries принадлежат River и хранятся в его внутренних таблицах;
     они намеренно не дублируются в этой domain-схеме.
   '''
@@ -329,7 +335,7 @@ Table collection_release {
     release_date
   }
 
-  Note: 'Локальный release существует без provider links. Выбранный artwork candidate обязан принадлежать этому collection release.'
+  Note: 'Локальный release существует без provider links. Выбранный artwork candidate обязан принадлежать этому collection release. Удаление release сначала обрабатывает managed publications его positions, затем удаляет positions и release; recordings, на которые ссылались positions, остаются самостоятельными.'
 }
 
 Table collection_release_artist {
@@ -531,7 +537,7 @@ Table release_publication {
   published_version integer [not null]
   published_at timestamptz [not null]
 
-  Note: 'Один текущий каталог публикации релиза. Уникальность публикации задаёт collection_release_id, а не directory_path: разные релизы могут использовать общий каталог, если полные пути их файлов не конфликтуют (решение владельца 2026-10-29). Artwork не является отдельным файлом публикации: оно встраивается в аудиофайл позиции. Конфликт полного имени файла разрешает существующий flow стабильного position suffix с закреплением имени и удлинением при повторном конфликте; публикация чужой позиции не перезаписывается.'
+  Note: 'Один текущий каталог публикации релиза. Уникальность публикации задаёт collection_release_id, а не directory_path: разные релизы могут использовать общий каталог, если полные пути их файлов не конфликтуют (решение владельца 2026-10-29). Удаление publication допускается только через async service operation: безопасное удаление принадлежащего приложению output file(s) предшествует удалению row; прямой SQL/cascade delete запрещён. Artwork не является отдельным файлом публикации: оно встраивается в аудиофайл позиции. Конфликт полного имени файла разрешает существующий flow стабильного position suffix с закреплением имени и удлинением при повторном конфликте; публикация чужой позиции не перезаписывается.'
 }
 
 Table track_publication {
@@ -555,7 +561,7 @@ Table track_publication {
     (collection_release_id, relative_audio_path) [unique]
   }
 
-  Note: 'Публикация актуальна, когда published_version равен collection_track.publication_version. published_size_bytes и published_mtime_ns — baseline фактического аудиофайла при регистрации; периодический stat сравнивает оба значения, помечает missing/drift и никогда не принимает произвольный файл как новый baseline. Artwork и lyrics встроены в аудиофайл; отдельные файлы публикации для них не проверяются. Недоступный output root не считается missing. Период проверки не задан. Добавление или удаление source само по себе версию не меняет. Уникальность (collection_release_id, relative_audio_path) относится к одному релизу и сама по себе не предотвращает конфликт полных путей файлов разных релизов в общей папке; правило запрета перезаписи чужой позиции действует и между релизами. Publication tables содержат только текущий зарегистрированный результат; отдельные step journals, backups, prepared-result records и receipts отсутствуют. Незавершённая operation восстанавливается по известному frozen target: сначала читаются tags и technical parameters без транскодирования/full preparation и проверяются против operation inputs и текущей authority; при несовпадении выполняется обычный полный retry. Время файла не является доказательством успеха. First-publication recovery также использует frozen target operation, когда publication row ещё отсутствует; неизвестные файлы автоматически не сопоставляются.'
+  Note: 'Публикация актуальна, когда published_version равен collection_track.publication_version. published_size_bytes и published_mtime_ns — baseline фактического аудиофайла при регистрации; периодический stat сравнивает оба значения, помечает missing/drift и никогда не принимает произвольный файл как новый baseline. Artwork и lyrics встроены в аудиофайл; отдельные файлы публикации для них не проверяются. Недоступный output root не считается missing. Период проверки не задан. Добавление или удаление source само по себе версию не меняет. Уникальность (collection_release_id, relative_audio_path) относится к одному релизу и сама по себе не предотвращает конфликт полных путей файлов разных релизов в общей папке; правило запрета перезаписи чужой позиции действует и между релизами. Publication tables содержат только текущий зарегистрированный результат; отдельные step journals, backups, prepared-result records и receipts отсутствуют. Удаление library entities выполняется async service operation, удаляющей managed output до строк публикаций; SQL/cascade delete не может удалять publication row. FK на collection_track и collection_release — RESTRICT. Незавершённая operation восстанавливается по известному frozen target: сначала читаются tags и technical parameters без транскодирования/full preparation и проверяются против operation inputs и текущей authority; при несовпадении выполняется обычный полный retry. Время файла не является доказательством успеха. First-publication recovery также использует frozen target operation, когда publication row ещё отсутствует; неизвестные файлы автоматически не сопоставляются.'
 }
 
 TableGroup provider_cache {
@@ -624,7 +630,7 @@ Ref: collection_release_artist.collection_release_id > collection_release.id [de
 Ref: collection_release_artist.collection_artist_id > collection_artist.id [delete: restrict]
 Ref: collection_recording_artist.collection_recording_id > collection_recording.id [delete: cascade]
 Ref: collection_recording_artist.collection_artist_id > collection_artist.id [delete: restrict]
-Ref: collection_track.collection_release_id > collection_release.id [delete: cascade]
+Ref: collection_track.collection_release_id > collection_release.id [delete: restrict]
 Ref: collection_track.collection_recording_id > collection_recording.id [delete: restrict]
 Ref: collection_track.selected_lyrics_id > lyrics_document.id [delete: set null]
 
@@ -645,8 +651,8 @@ Ref: lyrics_document.provider_id > provider.id [delete: restrict]
 Ref: recording_lyrics.collection_recording_id > collection_recording.id [delete: cascade]
 Ref: recording_lyrics.lyrics_document_id > lyrics_document.id [delete: cascade]
 
-Ref: release_publication.collection_release_id > collection_release.id [delete: cascade]
+Ref: release_publication.collection_release_id > collection_release.id [delete: restrict]
 Ref: release_publication.artwork_asset_id > artwork_asset.id [delete: set null]
-Ref: track_publication.collection_track_id > collection_track.id [delete: cascade]
-Ref: track_publication.collection_release_id > release_publication.collection_release_id [delete: cascade]
+Ref: track_publication.collection_track_id > collection_track.id [delete: restrict]
+Ref: track_publication.collection_release_id > release_publication.collection_release_id [delete: restrict]
 Ref: track_publication.lyrics_id > lyrics_document.id [delete: set null]

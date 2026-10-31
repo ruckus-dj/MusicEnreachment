@@ -116,8 +116,19 @@ media_variant
 collection-релиза. Обязательны только not-null бизнес-поля соответствующей
 таблицы DBML. Существующую сущность любого provider можно выбрать как ссылку,
 сохраняя её ownership и native key, без копирования в Local. Поиск не создаёт
-записи, а одинаковые имена не означают идентичность. Макет не задаёт удаления,
-распространения metadata или поведения публикации при правке.
+записи, а одинаковые имена не означают идентичность. Макет не задаёт удаления
+provider-записей или распространения metadata при правке. Provider и library
+независимы: удаление provider-записей никогда не удаляет local entities или
+managed publications; удаление library entities сохраняет provider records, но
+удаляет подтверждённые зависимые publications безопасной асинхронной операцией.
+
+Удаление library entities — отдельный подтверждаемый async service operation:
+publication удаляет только принадлежащий приложению managed file и publication
+row; release — его positions/publications, но не standalone recordings; artist —
+его связанные releases и напрямую связанные recordings, positions и publications.
+Позиции удаляемых recordings в сохраняемых releases также удаляются. Точное
+подтверждение перечисляет зависимости и output paths. Макет показывает очередь
+запроса, но не выполняет filesystem/DB mutations. См. `../design/decisions.md`.
 
 Для Local-релиза UI-модель содержит один носитель и упорядоченный массив позиций;
 каждая позиция ссылается на существующий `provider_recording`. Номер вычисляется

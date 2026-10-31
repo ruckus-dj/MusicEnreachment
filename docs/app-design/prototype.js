@@ -2,7 +2,7 @@
 const view = document.querySelector('#view');
 const dialog = document.querySelector('#confirmation');
 const folderDialog = document.querySelector('#folder-picker');
-const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, manualDraft: null, manualReleaseCount: 0, notice: '', toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false, sourceAddOpen: false, sourceRoots: null, sourcePath: '/mnt/music', folderPicker: null };
+const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, manualDraft: null, manualReleaseCount: 0, notice: '', demoDeleteOperations: [], toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false, sourceAddOpen: false, sourceRoots: null, sourcePath: '/mnt/music', folderPicker: null };
 let confirmAction = null;
 let draggedFile = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
@@ -248,7 +248,7 @@ function artistPage(id) {
   const artist = demoArtist(id);
   if (!artist) return header('Артист не найден', 'Эта ссылка не соответствует артисту медиатеки.', link('library', 'Вся медиатека', 'button'));
   const releases = localReleases.filter(release => release.credits?.some(credit => credit.artistId === artist.id) || release.artistId === artist.id);
-  return header(artist.name, `${releases.length} релизов · ${releases.reduce((sum, release) => sum + release.tracks.length, 0)} позиций · ${artist.genre}`, link('library', 'Вся медиатека', 'button')) +
+  return header(artist.name, `${releases.length} релизов · ${releases.reduce((sum, release) => sum + release.tracks.length, 0)} позиций · ${artist.genre}`, `${button('delete-library', 'Удалить', `data-kind="artist" data-id="${esc(artist.id)}"`)}${link('library', 'Вся медиатека', 'button')}`) +
     releases.map((release, index) => `<details class="album-disclosure" ${index === 0 ? 'open' : ''}><summary><span class="entity">${cover(release)}<span><strong>${esc(release.title)}</strong><span class="sub">${release.year} · ${release.tracks.length} позиций · ${release.label || 'Локальный'} · ${release.catalog}</span></span></span><span>${badge(release.manual ? `${release.tracks.filter(track => track.published).length} опубликовано` : `${release.tracks.filter(track => track.published).length}/${release.tracks.length} опубликовано`, 'success')}</span></summary><div class="album-actions">${link(`release/${release.id}`, 'Открыть альбом', 'button')}${release.tracks.length ? `${link(`tags/${release.tracks[0].id}/artist`, 'Сравнить теги артиста', 'button')}${link(`tags/${release.tracks[0].id}/release`, 'Теги альбома', 'button')}` : ''}</div>${release.tracks.length ? trackTable(release.tracks.map(track => ({ release, track }))) : '<div class="empty">Позиции не добавлены.</div>'}</details>`).join('');
 }
 
@@ -261,7 +261,7 @@ function releasePage(id) {
   const publicationSummary = release.manual ? `${pubCount} опубликовано` : `${pubCount} / ${tracks.length} опубликовано`;
   const creditLinks = release.credits?.length ? release.credits.map(credit => credit.artistId ? link(`artist/${credit.artistId}`, credit.credit || credit.name) : esc(credit.credit || credit.name || 'Не указан')).join(', ') : artistIdLink(release);
   const totalDuration = tracks.every(track => Number.isFinite(track.duration)) ? tracks.reduce((sum, track) => sum + track.duration, 0) : null;
-  return `<div class="release-header">${cover(release, 'large')}<div><h1 tabindex="-1">${esc(release.title || 'Локальный релиз без названия')}</h1><p>${creditLinks} · ${release.year || 'Дата не указана'} · ${release.country || 'Страна не указана'} · ${esc(release.label || 'Локальный')} · ${esc(release.catalog || '—')}</p><div class="inline-summary">${badge(release.providerId ? `MusicBrainz · ${release.providerId}` : 'Нет provider-релиза', release.providerId ? 'success' : '')}<span>${tracks.length} позиций</span><span>${sourceCount} назначений исходников</span><span>${publicationSummary}</span></div></div><div class="actions">${manualLink}${tracks.length ? `${button('preview-release', 'План публикации', `data-release="${release.id}"`, true)}${link(`tags/${tracks[0].id}/release`, 'Сравнить теги', 'button')}` : ''}</div></div>` +
+  return `<div class="release-header">${cover(release, 'large')}<div><h1 tabindex="-1">${esc(release.title || 'Локальный релиз без названия')}</h1><p>${creditLinks} · ${release.year || 'Дата не указана'} · ${release.country || 'Страна не указана'} · ${esc(release.label || 'Локальный')} · ${esc(release.catalog || '—')}</p><div class="inline-summary">${badge(release.providerId ? `MusicBrainz · ${release.providerId}` : 'Нет provider-релиза', release.providerId ? 'success' : '')}<span>${tracks.length} позиций</span><span>${sourceCount} назначений исходников</span><span>${publicationSummary}</span></div></div><div class="actions">${manualLink}${button('delete-library', 'Удалить', `data-kind="release" data-id="${esc(release.id)}"`)}${tracks.length ? `${button('preview-release', 'План публикации', `data-release="${release.id}"`, true)}${link(`tags/${tracks[0].id}/release`, 'Сравнить теги', 'button')}` : ''}</div></div>` +
     panel(`Треки · ${release.manual ? `${release.media.length} носителя` : 'носитель 1'}`, tracks.length ? trackTable(tracks.map(track => ({ release, track }))) : '<div class="empty">Позиции не добавлены.</div>', tracks.length && totalDuration !== null ? badge(`${duration(totalDuration)} всего`) : '') +
     (tracks.length ? panel('Метаданные: исходник / провайдер / локально / публикация', `${release.manual ? `<div class="panel-foot">Тип: ${esc(release.metadata.type || '—')} · Credits: ${release.credits.map(item => esc(item.credit || item.name)).filter(Boolean).join(', ') || 'не указаны'}</div>` : ''}<div class="panel-foot">${link(`tags/${tracks[0].id}/release`, 'Открыть подробное сравнение альбома')} · Для опубликованных тегов выбран конкретный файл, а не усреднённое значение.</div>${tagMatrix(release, tracks[0], demoFiles[tracks[0].sourceId], findProviderTrack(tracks[0].providerTrackId), tracks[0].published)}`) : '');
 }
@@ -337,7 +337,7 @@ function trackPage(id) {
     if (!source) return '';
     return `<label class="track-source-choice"><input type="radio" name="track-source-${esc(track.id)}" data-track-source="${esc(track.id)}" value="${esc(source.id)}" ${track.sourceId === source.id ? 'checked' : ''}><span><strong>${esc(source.name)}</strong><span class="sub">${esc(source.codec)} · ${duration(source.duration)} · ${esc(source.size)}</span></span></label>`;
   }).join('')}</div>` : '<div class="empty">Связанных вариантов нет.</div>';
-  return header(`${String(track.position).padStart(2, '0')} · ${track.title}`, `${artistName(track.artistId)} / ${release.title} · позиция релиза, не общая композиция`, link(`release/${release.id}`, 'К трек-листу', 'button')) +
+  return header(`${String(track.position).padStart(2, '0')} · ${track.title}`, `${artistName(track.artistId)} / ${release.title} · позиция релиза, не общая композиция`, `${track.published ? button('delete-library', 'Удалить', `data-kind="publication" data-id="${esc(track.id)}"`) : ''}${link(`release/${release.id}`, 'К трек-листу', 'button')}`) +
     `<div class="two-columns">${panel('Связанные аудиоварианты', `${sourceList}<div class="panel-foot">Радиокнопка явно выбирает один источник для публикации. Текущая публикация от этого выбора не меняется.</div>`)}${panel('Раздельные состояния', `${facts([['Выбранный путь', `<span class="mono">${esc(file?.path || 'Не выбран')}</span>`], ['Формат', file ? `${file.codec} · ${duration(file.duration)} · ${file.size}` : '—'], ['Композиция', esc(track.recordingId || 'Без provider-связи')], ['Фактическая публикация', track.published ? `${track.published.container} · ${track.published.codec} · ${esc(track.published.readAt)}` : 'Не опубликован']])}<div class="padded"><p>Исходник читается, локальные значения редактируются, публикация меняется только отдельной операцией.</p><div class="actions">${button('edit-title', 'Изменить локальное название', `data-track="${track.id}"`)}${button('preview-track', 'План этой позиции', `data-track="${track.id}"`, true)}</div></div>`)}</div>` + panel('Сравнение тегов', tagMatrix(release, track, file, findProviderTrack(track.providerTrackId), track.published));
 }
 
@@ -535,7 +535,77 @@ function sources() {
 }
 
 function operations() {
-  return header('Текущие операции', 'Только незавершённая работа. Завершённой истории здесь нет.') + panel('Требует внимания', table(['Объект', 'Операция', 'Фаза', 'Причина', 'Последствие', ''], [['Signals · позиция 06', 'Публикация track bundle', badge('failed', 'error'), 'EACCES: нет записи в staging', 'Текущая копия сохранена; остальные позиции не затронуты', button('retry', 'Повторить')]])) + note('Подготовка → staged → validated → exposed → cleaning. Повтор не должен создавать вторую управляемую копию.', 'warning');
+  const demoDeletes = ui.demoDeleteOperations.map(operation => [esc(operation.target), 'Удаление медиатеки', badge('queued · демо', 'warning'), esc(operation.scope), `${operation.publications} publication rows; ${operation.paths.length} принадлежащих приложению файлов в подтверждённом scope`, 'Ожидает · запрос не меняет fixture-данные']);
+  return header('Текущие операции', 'Незавершённая работа; завершённой истории здесь нет.') + panel('Требует внимания', table(['Объект', 'Операция', 'Фаза', 'Причина', 'Последствие', ''], [['Signals · позиция 06', 'Публикация track bundle', badge('failed', 'error'), 'EACCES: нет записи в staging', 'Текущая копия сохранена; остальные позиции не затронуты', button('retry', 'Повторить')]])) + panel('Удаление медиатеки · демонстрационные запросы', table(['Объект', 'Операция', 'Состояние', 'Подтверждённый scope', 'Файлы / публикации', 'Результат'], demoDeletes)) + note('Удаление в продукте выполняется асинхронной service operation: безопасное удаление принадлежащих приложению managed files → удаление publication rows и library entities. Этот статический прототип только показывает подтверждение и очередь; он не удаляет файлы или записи.', 'warning');
+}
+
+function libraryDeletionPlan(kind, id) {
+  if (kind === 'publication') {
+    const context = findLocalTrack(id);
+    if (!context?.track.published) return null;
+    const publication = context.track.published;
+    return {
+      target: `${context.release.title} · ${String(context.track.position).padStart(2, '0')} · ${context.track.title}`,
+      scope: 'Только выбранная публикация; позиция, release, recording, provider records и другие публикации сохраняются.',
+      publications: 1,
+      paths: [publication.path],
+      dependencies: []
+    };
+  }
+  if (kind === 'release') {
+    const release = localRelease(id);
+    if (!release) return null;
+    const publications = release.tracks.filter(track => track.published);
+    const recordings = [...new Map(release.tracks.filter(track => track.recordingId).map(track => [track.recordingId, { id: track.recordingId, title: track.title }])).values()];
+    return {
+      target: release.title || 'Релиз без названия',
+      scope: `${release.tracks.length} позиций релиза; самостоятельные recordings, provider records и публикации других релизов сохраняются.`,
+      publications: publications.length,
+      paths: publications.map(track => track.published.path),
+      dependencies: [
+        { title: 'Релиз (будет удалён)', items: [release.title || 'Релиз без названия'] },
+        { title: 'Recordings (сохраняются)', items: recordings.map(recording => `${recording.title} · ${recording.id}`) },
+        { title: 'Позиции релиза (будут удалены; включая неопубликованные)', items: release.tracks.map(track => `${release.title} · ${String(track.position).padStart(2, '0')} · ${track.title}${track.published ? ' · опубликована' : ' · без публикации'}`) }
+      ]
+    };
+  }
+  const artist = demoArtist(id);
+  if (!artist) return null;
+  const releases = localReleases.filter(release => release.artistId === id || release.credits?.some(credit => credit.artistId === id));
+  const directRecordingIds = new Set(allTracks().filter(({ track }) => track.artistId === id).map(({ track }) => track.recordingId).filter(Boolean));
+  const affectedTracks = new Map();
+  for (const release of releases) for (const track of release.tracks) affectedTracks.set(track.id, { release, track });
+  for (const item of allTracks()) if (directRecordingIds.has(item.track.recordingId)) affectedTracks.set(item.track.id, item);
+  const affected = [...affectedTracks.values()];
+  const publications = affected.filter(({ track }) => track.published);
+  const recordings = [...new Map(affected.filter(({ track }) => track.recordingId).map(({ track }) => [track.recordingId, { id: track.recordingId, title: track.title, delete: directRecordingIds.has(track.recordingId) }])).values()];
+  return {
+    target: artist.name,
+    scope: `${releases.length} связанных релизов; ${directRecordingIds.size} напрямую связанных recordings; ${affectedTracks.size} позиций (включая позиции этих recordings в сохраняемых релизах). Остальные library entities и все provider records сохраняются.`,
+    publications: publications.length,
+    paths: publications.map(({ track }) => track.published.path),
+    dependencies: [
+      { title: 'Релизы (будут удалены)', items: releases.map(release => release.title || 'Релиз без названия') },
+      { title: 'Recordings (напрямую связанные с артистом будут удалены; прочие сохраняются)', items: recordings.map(recording => `${recording.title} · ${recording.id} · ${recording.delete ? 'будет удалён' : 'сохранится'}`) },
+      ...releases.map(release => ({ title: `Позиции релиза «${release.title}» (будут удалены; включая неопубликованные)`, items: release.tracks.map(track => `${String(track.position).padStart(2, '0')} · ${track.title}${track.published ? ' · опубликована' : ' · без публикации'}`) })),
+      { title: 'Позиции удаляемых recordings в сохраняемых релизах (будут удалены)', items: affected.filter(({ release, track }) => !releases.includes(release) && directRecordingIds.has(track.recordingId)).map(({ release, track }) => `${release.title} · ${String(track.position).padStart(2, '0')} · ${track.title}${track.published ? ' · опубликована' : ' · без публикации'}`) }
+    ].filter(section => section.items.length)
+  };
+}
+
+function requestLibraryDeletion(kind, id) {
+  const plan = libraryDeletionPlan(kind, id);
+  if (!plan) return;
+  const paths = plan.paths.length
+    ? `<ul class="delete-paths">${plan.paths.map(path => `<li><code>${esc(path)}</code></li>`).join('')}</ul>`
+    : '<p>Текущих публикаций в этом scope нет.</p>';
+  const dependencies = (plan.dependencies || []).map(section => `<h3>${esc(section.title)}</h3><ul>${section.items.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`).join('');
+  const operation = { target: plan.target, scope: plan.scope, publications: plan.publications, paths: plan.paths };
+  confirm(`Удалить: ${plan.target}?`, `<p>${esc(plan.scope)}</p><p>Перед удалением строк будут безопасно удалены только файлы публикаций, принадлежащие приложению (${plan.publications}). После этого удаляются строки публикаций и указанные library entities. Provider records сохраняются; чужие/общие файлы не затрагиваются.</p>${dependencies}${paths}${note('Асинхронная операция. Прототип только ставит демонстрационный запрос в список операций: реальные файлы и fixture-записи не удаляются.')}`, () => {
+    ui.demoDeleteOperations.push(operation);
+    ui.notice = `Демо: запрос удаления «${plan.target}» принят как асинхронная операция. Данные прототипа и файлы не изменены.`;
+    location.hash = 'operations';
+  });
 }
 
 function settings() {
@@ -696,6 +766,7 @@ document.addEventListener('click', event => {
       const { track } = findLocalTrack(target.dataset.track);
       confirm('Изменить только локальные теги', `<label class="field" for="local-title">Название позиции<input id="local-title" value="${esc(track.title)}" required></label><p>Исходник, кэш провайдера и текущая публикация останутся прежними.</p>`, () => { track.title = document.querySelector('#local-title').value.trim() || track.title; ui.notice = 'Локальное название изменено. Сравните с текущей публикацией; её теги ещё прежние.'; render(false); }); break;
     }
+    case 'delete-library': requestLibraryDeletion(target.dataset.kind, target.dataset.id); break;
     case 'source-scan': notify('Демо: сканирование поставлено в очередь. Перейдите во входящие; реальные каталоги не читались.'); break;
     case 'check-source': notify('Демо: /mnt/archive недоступен. Управляемые публикации сохранены.'); break;
     case 'source-add': ui.sourceAddOpen = true; ui.sourceName = ''; ui.sourcePath = '/mnt/music'; render(false); document.querySelector('#source-name').focus(); break;
