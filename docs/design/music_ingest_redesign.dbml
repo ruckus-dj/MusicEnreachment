@@ -230,7 +230,7 @@ Table source_root {
   scan_generation bigint [not null, default: 0]
   last_successful_scan_at timestamptz
 
-  Note: 'Удаление root удаляет связанные source_location и source-инвентарь, но не физические файлы хоста, локальные entities или текущие publications. Удаление разрешено только после подтверждения точного configured_path и числа locations и при отсутствии активной операции root.'
+  Note: 'Отдельного enabled/disable у root нет: status отражает наблюдаемую физическую доступность (unknown/available/unavailable), а не пользовательское включение; root можно только добавить или удалить. Удаление root удаляет связанные source_location и source-инвентарь, но не физические файлы хоста, локальные entities или текущие publications. Удаление разрешено только после подтверждения точного configured_path и числа locations и при отсутствии активной операции root.'
 }
 
 Table media_variant {

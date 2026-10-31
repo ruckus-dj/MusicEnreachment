@@ -528,7 +528,7 @@ function openFolderPicker(target, currentPath) {
 function sources() {
   const roots = ui.sourceRoots || [
     ['Входящие', '/mnt/inbox', 'Read-only', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')],
-    ['Архивный диск', '/mnt/archive', 'Read-only', badge('Отключён', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
+    ['Архивный диск', '/mnt/archive', 'Read-only', badge('Недоступен', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
   ];
   const addForm = ui.sourceAddOpen ? `<div class="padded source-add-form"><div class="two-columns"><label class="field" for="source-name">Имя источника<input id="source-name" value="${esc(ui.sourceName || '')}" placeholder="Например, Музыкальная библиотека"></label><div class="field"><label for="source-path">Каталог на сервере</label><div class="path-field-control"><input id="source-path" value="${esc(ui.sourcePath)}" readonly aria-describedby="source-path-help">${button('pick-source-path', 'Выбрать папку')}</div><span class="sub" id="source-path-help">Только каталог; файлы не загружаются.</span></div></div><div class="actions">${button('save-source', 'Добавить источник', '', true)}${button('cancel-source', 'Отмена')}</div></div>` : '';
   return header('Источники', 'Серверные пути, только чтение. Файлы не загружаются через drag-and-drop.', `${button('source-add', 'Добавить источник', '', true)}${button('source-scan', 'Сканировать · демо')}`) + (ui.sourceAddOpen ? panel('Новый источник', addForm) : '') + panel('Подключённые каталоги', table(['Имя', 'Путь', 'Режим', 'Доступность', 'Последняя проверка', ''], roots.map(([name, path, mode, availability, checked, action]) => [esc(name), `<code>${esc(path)}</code>`, mode, availability, checked, action]))) + note('Недоступность исходного диска не удаляет существующие управляемые публикации.');
@@ -777,7 +777,7 @@ document.addEventListener('click', event => {
       if (!name) { document.querySelector('#source-name').setAttribute('aria-invalid', 'true'); notify('Укажите имя источника.'); break; }
       const roots = ui.sourceRoots || [
         ['Входящие', '/mnt/inbox', 'Read-only', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')],
-        ['Архивный диск', '/mnt/archive', 'Read-only', badge('Отключён', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
+        ['Архивный диск', '/mnt/archive', 'Read-only', badge('Недоступен', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
       ];
       roots.push([name, ui.sourcePath, 'Read-only', badge('Демо · не проверен'), '—', badge('Требует проверки', 'warning')]);
       ui.sourceRoots = roots;
