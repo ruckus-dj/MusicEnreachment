@@ -104,5 +104,5 @@ demoFiles['north-extra'] = { ...structuredClone(demoFiles['north-f1']), id: 'nor
 const incomingGroups = [
   { id: 'north', title: 'Northern Lines', artistId: 'mira', releaseId: 'north', fileIds: [...Array.from({ length: 8 }, (_, i) => `north-f${i + 1}`), 'north-extra'], candidateId: 'p-north', mode: 'provider', autoEligible: false, reason: 'Неполный релиз; одна спорная композиция', processed: false, drafts: {} },
   { id: 'hours', title: 'Small Hours', artistId: 'arden', releaseId: 'hours', fileIds: Array.from({ length: 8 }, (_, i) => `hours-f${i + 1}`), candidateId: 'p-hours', mode: 'provider', autoEligible: true, reason: '8 / 8: все назначения уверенные', processed: false, drafts: {} },
-  { id: 'mix', title: 'Road Notes — личный сборник', artistId: 'various', releaseId: 'mix', fileIds: Array.from({ length: 5 }, (_, i) => `mix-f${i + 1}`), candidateId: null, mode: 'local', autoEligible: false, reason: 'Релиза нет у провайдера; recordings из разных альбомов', processed: false, drafts: {} }
+  { id: 'mix', title: 'Road Notes — личный сборник', artistId: 'various', releaseId: 'mix', fileIds: Array.from({ length: 5 }, (_, i) => `mix-f${i + 1}`), candidateId: null, mode: 'local', autoEligible: false, reason: 'Релиза нет у провайдера; композиции из разных альбомов', processed: false, drafts: {} }
 ];

@@ -45,13 +45,13 @@ window.initManualReleaseForm = (root, initial, onCreate, onDraft, askConfirm) =>
         <div class="field"><label for="title-${id}">Название в этом релизе</label><input id="title-${id}" data-value="title" value="${escapeHTML(value.title)}"></div>
         <div class="field"><label for="duration-${id}">Длительность (если известна)</label><input id="duration-${id}" data-value="duration" value="${escapeHTML(value.duration)}" placeholder="Необязательно"></div>
       </div>
-      <span class="field-label">Recording</span>
-      <div class="choice-row" role="group" aria-label="Выбор recording">
-        <label><input type="radio" name="recording-mode-${id}" value="new" ${existing ? '' : 'checked'} data-mode> Новый recording</label>
-        <label><input type="radio" name="recording-mode-${id}" value="existing" ${existing ? 'checked' : ''} data-mode> Существующий recording</label>
+      <span class="field-label">Композиция</span>
+      <div class="choice-row" role="group" aria-label="Выбор композиции">
+        <label><input type="radio" name="recording-mode-${id}" value="new" ${existing ? '' : 'checked'} data-mode> Новая композиция</label>
+        <label><input type="radio" name="recording-mode-${id}" value="existing" ${existing ? 'checked' : ''} data-mode> Существующая композиция</label>
       </div>
-      <div class="field ${existing ? 'hidden' : ''}" data-new-recording><label for="new-recording-${id}">Название нового recording</label><input id="new-recording-${id}" data-value="newRecordingTitle" value="${escapeHTML(value.newRecordingTitle ?? (existing ? '' : value.title))}" placeholder="Можно оставить пустым"><span class="sub">Новый recording будет показан как черновая сущность, не сохранённая в приложении.</span></div>
-      <div class="field ${existing ? '' : 'hidden'}" data-existing-recording><label for="recording-search-${id}">Поиск по демонстрационному каталогу</label><input class="recording-search" id="recording-search-${id}" data-recording-search placeholder="Фильтр названий / артистов" value="${escapeHTML(value.recordingSearch)}"><select data-recording-select aria-label="Существующий recording"><option value="">Выберите recording…</option>${recordingOptions}</select><span class="sub" data-recording-identity>Выбран: ${escapeHTML(recordingName(value.recordingId) || 'не выбран')}</span></div>
+      <div class="field ${existing ? 'hidden' : ''}" data-new-recording><label for="new-recording-${id}">Название композиции</label><input id="new-recording-${id}" data-value="newRecordingTitle" value="${escapeHTML(value.newRecordingTitle ?? (existing ? '' : value.title))}" placeholder="Можно оставить пустым"><span class="sub">Новая композиция будет показана как черновая сущность, не сохранённая в приложении.</span></div>
+      <div class="field ${existing ? '' : 'hidden'}" data-existing-recording><label for="recording-search-${id}">Поиск по демонстрационному каталогу</label><input class="recording-search" id="recording-search-${id}" data-recording-search placeholder="Фильтр названий / артистов" value="${escapeHTML(value.recordingSearch)}"><select data-recording-select aria-label="Существующая композиция"><option value="">Выберите композицию…</option>${recordingOptions}</select><span class="sub" data-recording-identity>Выбрана: ${escapeHTML(recordingName(value.recordingId) || 'не выбрана')}</span></div>
       <div class="source-box" data-source-box>
         <div class="panel-heading"><h3>Связанные исходники</h3><span class="sub">Назначения M:N · можно использовать повторно</span></div>
         <div class="source-chips" data-source-chips></div>
@@ -113,7 +113,7 @@ window.initManualReleaseForm = (root, initial, onCreate, onDraft, askConfirm) =>
       const recording = byId(data.recordings, option.value);
       option.hidden = Boolean(option.value) && !option.selected && Boolean(needle) && !`${recording?.title} ${recording?.artists}`.toLocaleLowerCase().includes(needle);
     });
-    position.querySelector('[data-recording-identity]').textContent = `Выбран: ${recordingName(select.value) || 'не выбран'}${select.value ? ` · ${byId(data.recordings, select.value).artists}` : ''}`;
+    position.querySelector('[data-recording-identity]').textContent = `Выбрана: ${recordingName(select.value) || 'не выбрана'}${select.value ? ` · ${byId(data.recordings, select.value).artists}` : ''}`;
   }
 
   function setPositionSourceIds(position, ids) {

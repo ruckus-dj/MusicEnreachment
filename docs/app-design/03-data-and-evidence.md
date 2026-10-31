@@ -111,7 +111,7 @@ media_variant
 
 Утверждённый контракт ручных provider-записей описан в
 [`../design/local-provider.md`](../design/local-provider.md). Отдельная вкладка
-Local управляет `provider_artist`, `provider_release` и `provider_recording`;
+«Собственный каталог» управляет `provider_artist`, `provider_release` и `provider_recording`;
 она не является локальной provider-колонкой или расширением формы создания
 collection-релиза. Обязательны только not-null бизнес-поля соответствующей
 таблицы DBML. Существующую сущность любого provider можно выбрать как ссылку,
