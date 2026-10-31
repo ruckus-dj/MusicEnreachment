@@ -2,7 +2,7 @@
 const view = document.querySelector('#view');
 const dialog = document.querySelector('#confirmation');
 const folderDialog = document.querySelector('#folder-picker');
-const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, manualDraft: null, manualReleaseCount: 0, notice: '', demoDeleteOperations: [], toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false, sourceAddOpen: false, sourceRoots: null, sourcePath: '/mnt/music', folderPicker: null };
+const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, manualDraft: null, manualReleaseCount: 0, notice: '', demoDeleteOperations: [], toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false, sourceAddOpen: false, sourceRoots: null, sourcePath: '/mnt/music', sourceMode: '', sourceWorkDirectory: '', folderPicker: null };
 let confirmAction = null;
 let draggedFile = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
@@ -527,11 +527,13 @@ function openFolderPicker(target, currentPath) {
 
 function sources() {
   const roots = ui.sourceRoots || [
-    ['Входящие', '/mnt/inbox', 'Read-only', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')],
-    ['Архивный диск', '/mnt/archive', 'Read-only', badge('Недоступен', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
+    ['Входящие', '/mnt/inbox', 'staged', 'Только чтение', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')],
+    ['Архивный диск', '/mnt/archive', 'in_place', 'Только чтение', badge('Недоступен', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
   ];
-  const addForm = ui.sourceAddOpen ? `<div class="padded source-add-form"><div class="two-columns"><label class="field" for="source-name">Имя источника<input id="source-name" value="${esc(ui.sourceName || '')}" placeholder="Например, Музыкальная библиотека"></label><div class="field"><label for="source-path">Каталог на сервере</label><div class="path-field-control"><input id="source-path" value="${esc(ui.sourcePath)}" readonly aria-describedby="source-path-help">${button('pick-source-path', 'Выбрать папку')}</div><span class="sub" id="source-path-help">Только каталог; файлы не загружаются.</span></div></div><div class="actions">${button('save-source', 'Добавить источник', '', true)}${button('cancel-source', 'Отмена')}</div></div>` : '';
-  return header('Источники', 'Серверные пути, только чтение. Файлы не загружаются через drag-and-drop.', `${button('source-add', 'Добавить источник', '', true)}${button('source-scan', 'Сканировать · демо')}`) + (ui.sourceAddOpen ? panel('Новый источник', addForm) : '') + panel('Подключённые каталоги', table(['Имя', 'Путь', 'Режим', 'Доступность', 'Последняя проверка', ''], roots.map(([name, path, mode, availability, checked, action]) => [esc(name), `<code>${esc(path)}</code>`, mode, availability, checked, action]))) + note('Недоступность исходного диска не удаляет существующие управляемые публикации.');
+  const modeControl = (mode, index) => `<label class="sr-only" for="source-mode-${index}">Режим обработки: ${esc(roots[index][0])}</label><select id="source-mode-${index}" data-source-mode="${index}"><option value="in_place" ${mode === 'in_place' ? 'selected' : ''}>На месте</option><option value="staged" ${mode === 'staged' ? 'selected' : ''}>Через рабочую копию</option></select><span class="sub">Изменение влияет на будущую обработку.</span>${mode === 'staged' ? `<span class="sub">Общая рабочая папка: ${ui.sourceWorkDirectory ? `<code>${esc(ui.sourceWorkDirectory)}</code>` : '<span class="status warning">Не выбрана</span>'} · ${link('settings', 'Настроить')}</span>` : ''}`;
+  const addForm = ui.sourceAddOpen ? `<div class="padded source-add-form"><div class="two-columns"><label class="field" for="source-name">Имя источника<input id="source-name" value="${esc(ui.sourceName || '')}" placeholder="Например, Музыкальная библиотека"></label><div class="field"><label for="source-path">Каталог на сервере</label><div class="path-field-control"><input id="source-path" value="${esc(ui.sourcePath)}" readonly aria-describedby="source-path-help">${button('pick-source-path', 'Выбрать папку')}</div><span class="sub" id="source-path-help">Только каталог; файлы не загружаются.</span></div></div><fieldset class="field"><legend>Режим обработки · выберите явно</legend><label><input type="radio" name="source-mode" value="in_place" ${ui.sourceMode === 'in_place' ? 'checked' : ''}> На месте</label><p class="sub">Анализ выполняется по исходному файлу; сам источник остаётся только для чтения.</p><label><input type="radio" name="source-mode" value="staged" ${ui.sourceMode === 'staged' ? 'checked' : ''}> Через рабочую копию</label><p class="sub">Для обработки создаётся принадлежащая работе AUDIO-копия в общей рабочей папке сервера. Папка требуется до обработки, но не для добавления источника.</p></fieldset><p class="sub"><strong>Политика источника:</strong> только чтение — независимо от выбранного режима.</p><div class="actions">${button('save-source', 'Добавить источник', '', true)}${button('cancel-source', 'Отмена')}</div></div>` : '';
+  const rows = roots.map(([name, path, mode, readOnly, availability, checked, action], index) => [esc(name), `<code>${esc(path)}</code>`, modeControl(mode, index), esc(readOnly), availability, checked, `<div class="actions">${action}${button('process-source', 'Обработать · демо', `data-mode="${esc(mode)}" data-path="${esc(path)}"`)}</div>`]);
+  return header('Источники', 'Серверные пути, политика источника — только чтение. Режим обработки выбирается отдельно; файлы не загружаются через drag-and-drop.', `${button('source-add', 'Добавить источник', '', true)}${button('source-scan', 'Сканировать · демо')}`) + (ui.sourceAddOpen ? panel('Новый источник', addForm) : '') + panel('Подключённые каталоги', table(['Имя', 'Путь', 'Режим обработки', 'Политика источника', 'Доступность', 'Последняя проверка', ''], rows)) + note('Недоступность исходного диска не удаляет существующие управляемые публикации.') + note(`Общая рабочая папка staged-копий: ${ui.sourceWorkDirectory ? `<code>${esc(ui.sourceWorkDirectory)}</code>` : 'не выбрана'} · ${link('settings', 'Настроить в Настройках')}`, ui.sourceWorkDirectory ? '' : 'warning');
 }
 
 function operations() {
@@ -610,7 +612,7 @@ function requestLibraryDeletion(kind, id) {
 
 function settings() {
   return header('Настройки', 'Тема доступна в верхней панели. Рабочие настройки продукта сохраняются в БД; здесь демонстрация.', button('check-updates', 'Проверить обновления', '', true)) +
-    `<div class="two-columns">${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '-version']]) + `<div class="panel-foot"><div class="field"><label for="settings-tools-path">Persistent tools-directory</label><div class="path-field-control"><input id="settings-tools-path" value="${esc(ui.toolsPath)}" readonly aria-describedby="settings-tools-path-help">${button('pick-tools-path', 'Выбрать папку')}</div><span class="sub" id="settings-tools-path-help">Каталог на сервере для управляемых инструментов.</span></div>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Формула, веса и порог ещё не утверждены'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
+    `<div class="two-columns">${panel('Рабочая папка анализа источников', `<div class="padded"><div class="field"><label for="settings-source-work-path">Общая папка для staged AUDIO-копий</label><div class="path-field-control"><input id="settings-source-work-path" value="${esc(ui.sourceWorkDirectory)}" readonly aria-describedby="settings-source-work-help">${button('pick-source-work-path', 'Выбрать папку')}</div><span class="sub" id="settings-source-work-help">Серверный путь, общий для всех staged-источников; отдельный от output. ${ui.sourceWorkDirectory ? `Текущий выбор: <code>${esc(ui.sourceWorkDirectory)}</code>.` : 'Не задана.'}</span></div><p>Настройте её до начала staged-обработки. Setup и добавление источника не требуют выбора. В реальном продукте смена запрещена, пока папку используют операции или в ней остаются сохранённые копии; автоматического переноса нет.</p>${note('Статический макет не проверяет файловую систему и не моделирует занятые операции или сохранённые копии; путь не проверен.')}</div>`)}${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '-version']]) + `<div class="panel-foot"><div class="field"><label for="settings-tools-path">Persistent tools-directory</label><div class="path-field-control"><input id="settings-tools-path" value="${esc(ui.toolsPath)}" readonly aria-describedby="settings-tools-path-help">${button('pick-tools-path', 'Выбрать папку')}</div><span class="sub" id="settings-tools-path-help">Каталог на сервере для управляемых инструментов.</span></div>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Формула, веса и порог ещё не утверждены'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
 }
 
 function setup() {
@@ -767,33 +769,41 @@ document.addEventListener('click', event => {
       confirm('Изменить только локальные теги', `<label class="field" for="local-title">Название позиции<input id="local-title" value="${esc(track.title)}" required></label><p>Исходник, кэш провайдера и текущая публикация останутся прежними.</p>`, () => { track.title = document.querySelector('#local-title').value.trim() || track.title; ui.notice = 'Локальное название изменено. Сравните с текущей публикацией; её теги ещё прежние.'; render(false); }); break;
     }
     case 'delete-library': requestLibraryDeletion(target.dataset.kind, target.dataset.id); break;
-    case 'source-scan': notify('Демо: сканирование поставлено в очередь. Перейдите во входящие; реальные каталоги не читались.'); break;
+    case 'source-scan': notify('Демо: сканирование поставлено в очередь. Рабочая папка не требуется для перечисления файлов; копирование и анализ выполняются отдельно. Реальные каталоги не читались.'); break;
+    case 'process-source': {
+      if (target.dataset.mode === 'staged' && !ui.sourceWorkDirectory) { notify('Демо: обработка через рабочую копию не начата — сначала задайте общую рабочую папку в Настройках. Источники и файлы не читались.'); break; }
+      notify(`Демо: предпосылка выбора рабочей папки для ${target.dataset.path} выполнена. Реальные файлы, доступность источника и права не проверялись; копирование и анализ не запускались.`); break;
+    }
     case 'check-source': notify('Демо: /mnt/archive недоступен. Управляемые публикации сохранены.'); break;
-    case 'source-add': ui.sourceAddOpen = true; ui.sourceName = ''; ui.sourcePath = '/mnt/music'; render(false); document.querySelector('#source-name').focus(); break;
+    case 'source-add': ui.sourceAddOpen = true; ui.sourceName = ''; ui.sourcePath = '/mnt/music'; ui.sourceMode = ''; render(false); document.querySelector('#source-name').focus(); break;
     case 'pick-source-path': openFolderPicker('source', ui.sourcePath); break;
     case 'cancel-source': ui.sourceAddOpen = false; render(false); break;
     case 'save-source': {
       const name = document.querySelector('#source-name').value.trim();
       if (!name) { document.querySelector('#source-name').setAttribute('aria-invalid', 'true'); notify('Укажите имя источника.'); break; }
+      if (!ui.sourceMode) { notify('Явно выберите режим обработки: «На месте» или «Через рабочую копию».'); document.querySelector('input[name="source-mode"]')?.focus(); break; }
       const roots = ui.sourceRoots || [
-        ['Входящие', '/mnt/inbox', 'Read-only', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')],
-        ['Архивный диск', '/mnt/archive', 'Read-only', badge('Недоступен', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
+        ['Входящие', '/mnt/inbox', 'staged', 'Только чтение', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')],
+        ['Архивный диск', '/mnt/archive', 'in_place', 'Только чтение', badge('Недоступен', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
       ];
-      roots.push([name, ui.sourcePath, 'Read-only', badge('Демо · не проверен'), '—', badge('Требует проверки', 'warning')]);
+      roots.push([name, ui.sourcePath, ui.sourceMode, 'Только чтение', badge('Демо · не проверен'), '—', badge('Требует проверки', 'warning')]);
       ui.sourceRoots = roots;
       ui.sourceAddOpen = false;
-      ui.notice = 'Демо: источник добавлен только в макет. Серверный каталог не открывался и не сканировался.';
+      ui.notice = `Демо: источник добавлен только в макет, режим «${ui.sourceMode === 'staged' ? 'Через рабочую копию' : 'На месте'}». Серверный каталог не открывался и не сканировался; staged-папка требуется только перед обработкой.`;
+      ui.sourceMode = '';
       render(false);
       break;
     }
     case 'pick-tools-path': openFolderPicker('tools', ui.toolsPath); break;
+    case 'pick-source-work-path': openFolderPicker('source-work', ui.sourceWorkDirectory || undefined); break;
     case 'folder-cancel': folderDialog.close('cancel'); break;
     case 'folder-choose': {
       const picker = ui.folderPicker;
       if (!picker) break;
-      const returnAction = picker.target === 'tools' ? 'pick-tools-path' : 'pick-source-path';
+      const returnAction = picker.target === 'tools' ? 'pick-tools-path' : picker.target === 'source-work' ? 'pick-source-work-path' : 'pick-source-path';
       const chosenPath = picker.path;
       if (picker.target === 'tools') { ui.toolsPath = chosenPath; ui.pathChecked = false; ui.notice = 'Демо: выбран серверный каталог. Проверка прав и конфигурации не выполнялась.'; }
+      else if (picker.target === 'source-work') { ui.sourceWorkDirectory = chosenPath; ui.notice = 'Демо: общая рабочая папка выбрана и сохранена только в памяти макета. Использование и файлы не проверялись.'; }
       else { ui.sourcePath = chosenPath; ui.notice = 'Демо: путь источника выбран. Реальный каталог не проверялся.'; }
       folderDialog.close('choose');
       render(false);
@@ -879,6 +889,15 @@ document.addEventListener('change', event => {
   }
   if (target.dataset.include) { draft()[target.dataset.include].included = target.checked; render(false); }
   if (target.dataset.planInclude) { ui.plan.assignments[target.dataset.planInclude].included = target.checked; render(false); }
+  if (target.name === 'source-mode') { ui.sourceMode = target.value; render(false); }
+  if (target.dataset.sourceMode !== undefined) {
+    if (!ui.sourceRoots) ui.sourceRoots = [
+      ['Входящие', '/mnt/inbox', 'staged', 'Только чтение', badge('Доступен', 'success'), '26.09.2026 10:20', link('review', 'Разобрать группы', 'button')],
+      ['Архивный диск', '/mnt/archive', 'in_place', 'Только чтение', badge('Недоступен', 'warning'), '25.09.2026 18:40', button('check-source', 'Проверить')]
+    ];
+    const root = ui.sourceRoots?.[Number(target.dataset.sourceMode)];
+    if (root) { root[2] = target.value; ui.notice = 'Режим обработки изменён только в демо; он применяется к будущей обработке и не меняет read-only политику источника.'; render(false); }
+  }
   if (target.id === 'differences-only') { ui.differencesOnly = target.checked; render(false); }
   if (target.id === 'publication-filter') { ui.publicationFilter = target.value; document.querySelector('#catalog-content').innerHTML = catalogRows(); }
   if (target.id === 'tag-file') location.hash = `tags/${target.value}/${ui.tagScope}`;
