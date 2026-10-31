@@ -89,12 +89,12 @@ Table provider_release {
   provider_key text [not null]
   release_group_key text [note: 'Provider-specific ключ группы разных изданий, если provider поддерживает это понятие']
   release_group_title text [not null]
-  release_group_primary_type varchar(64)
-  release_group_secondary_types jsonb [not null, default: '[]']
+  release_group_primary_type varchar(64) [note: 'Для Local вводится в форме; это тип группы релизов, не жанр']
+  release_group_secondary_types jsonb [not null, default: '[]', note: 'Дополнительные типы; Local UI позволяет задать список']
   title text [not null]
   status varchar(64)
   packaging varchar(64)
-  language varchar(16)
+  language varchar(16) [note: 'Язык релиза; поле script в Local форме не вводится']
   script varchar(16)
   country_code varchar(2)
   release_date varchar(10)
@@ -154,13 +154,13 @@ Table provider_release_track {
   provider_key text [not null, note: 'Native track ID или детерминированный release/disc/position key']
   provider_release_id uuid [not null]
   provider_recording_id uuid [not null]
-  medium_number smallint [not null]
+  medium_number smallint [not null, note: 'Local поддерживает только один носитель (номер 1); это ограничение Local workflow, не общего provider-графа']
   medium_title text
   medium_format varchar(64)
-  track_position integer [not null]
-  track_number text [not null, note: 'Отображаемый номер; может быть A1, DVD1-3 и т.п.']
-  title_override text
-  duration_override_ms integer
+  track_position integer [not null, note: 'Для Local порядок позиции; UI пересчитывает 1..n после add/remove/reorder']
+  track_number text [not null, note: 'Отображаемый номер; может быть A1, DVD1-3 и т.п. Для Local равен автоматически вычисленному порядку 1..n']
+  title_override text [note: 'Для Local необязательное переопределение названия существующей композиции']
+  duration_override_ms integer [note: 'Для Local необязательное переопределение duration_ms существующей композиции; UI принимает секунды или М:СС']
   data_track boolean [not null, default: false]
   extra_data jsonb [not null, default: '{}']
 

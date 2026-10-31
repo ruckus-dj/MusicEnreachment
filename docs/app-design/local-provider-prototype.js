@@ -7,7 +7,7 @@ window.LocalProviderPrototype = (() => {
     { id: 'sp-artist-forma', key: 'sp-artist-forma', provider: 'Spotify', name: 'Forma', disambiguation: '', genres: 'Electronic', tags: '' }
   ];
   const releases = [
-    { id: 'local-release-north', key: '614b2168-70ab-47e3-b02b-e324bb11fd87', provider: 'Local', release_group_title: 'Northern Lines', title: 'Northern Lines', artistIds: ['local-artist-vale'], country_code: 'XE', release_date: '2021', label: 'Field Records', catalog_number: 'FR-021', status: '', packaging: '', barcode: '', disambiguation: '' },
+    { id: 'local-release-north', key: '614b2168-70ab-47e3-b02b-e324bb11fd87', provider: 'Local', release_group_title: 'Northern Lines', title: 'Northern Lines', artistIds: ['local-artist-vale'], country_code: 'XE', release_date: '2021', label: 'Field Records', catalog_number: 'FR-021', status: '', packaging: '', barcode: '', disambiguation: '', primaryType: 'Album', secondaryTypes: [], language: 'eng', tracks: [{ recordingId: 'local-recording-green', titleOverride: '', durationOverrideMs: '' }] },
     { id: 'mb-release-hours', key: 'mb-release-hours', provider: 'MusicBrainz', release_group_title: 'Small Hours', title: 'Small Hours', artistIds: ['mb-artist-forma'], country_code: 'GB', release_date: '2018-05-11', label: 'Room Tone', catalog_number: 'RT-018', status: 'Official', packaging: 'CD', barcode: '', disambiguation: '' }
   ];
   const recordings = [
@@ -27,8 +27,28 @@ window.LocalProviderPrototype = (() => {
   const localItems = type => type.items.filter(item => item.provider === 'Local');
   const selected = () => currentType().items.find(item => item.id === state.selectedId);
   const artistName = id => artists.find(artist => artist.id === id)?.name || 'Артист не указан';
+  const recording = id => recordings.find(item => item.id === id);
+  const formatDuration = milliseconds => milliseconds === '' || milliseconds === null || milliseconds === undefined ? '' : `${Math.floor(Number(milliseconds) / 60000)}:${String(Math.floor(Number(milliseconds) % 60000 / 1000)).padStart(2, '0')}`;
+  const parseDuration = value => {
+    const input = String(value ?? '').trim();
+    if (!input) return null;
+    if (/^\d+$/.test(input)) return Number(input) * 1000;
+    const match = /^(\d+):(\d{1,2})$/.exec(input);
+    if (!match || Number(match[2]) > 59) return NaN;
+    return (Number(match[1]) * 60 + Number(match[2])) * 1000;
+  };
   const providerArtistOptions = item => artists.map(artist => `<label class="local-provider-option"><input type="checkbox" name="artistIds" value="${esc(artist.id)}" ${item?.artistIds?.includes(artist.id) ? 'checked' : ''}><span>${esc(artist.name)} <span class="muted">· ${esc(artist.provider)}${artist.provider === 'Local' ? '' : ' · внешняя ссылка, только чтение'} · <code>${esc(artist.key)}</code></span></span></label>`).join('');
   const field = (label, name, value = '', required = false, type = 'text') => `<label class="field">${label}${required ? ' <span class="required">Обязательно</span>' : ' <span class="muted">необязательно</span>'}<input name="${name}" type="${type}" value="${esc(value)}" ${required ? 'required' : ''}></label>`;
+
+  function trackRows(item) {
+    const tracks = item?.tracks || [];
+    return `<div class="local-provider-tracklist"><div class="local-provider-tracklist-heading"><strong>Носитель 1 · позиции</strong><button type="button" data-local-action="add-track">Добавить позицию</button></div>${tracks.length ? tracks.map((track, index) => {
+      const selectedRecording = recording(track.recordingId);
+      const options = recordings.map(candidate => `<option value="${esc(candidate.id)}" ${candidate.id === track.recordingId ? 'selected' : ''}>${esc(candidate.title)} · ${esc(candidate.provider)} · ${esc(candidate.key)}</option>`).join('');
+      const durationOverride = track.durationInput ?? formatDuration(track.durationOverrideMs);
+      return `<fieldset class="local-provider-track" data-track-index="${index}"><legend>Позиция ${index + 1}</legend><div class="local-provider-track-actions"><button type="button" data-local-action="track-up" data-index="${index}" aria-label="Переместить позицию ${index + 1} выше" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-local-action="track-down" data-index="${index}" aria-label="Переместить позицию ${index + 1} ниже" ${index === tracks.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-local-action="remove-track" data-index="${index}" aria-label="Удалить позицию ${index + 1}">Удалить</button></div><label class="field">Существующая композиция <select name="trackRecording" required><option value="">Выберите композицию…</option>${options}</select></label><p class="local-provider-track-default">По умолчанию: <strong>${esc(selectedRecording?.title || 'Композиция не выбрана')}</strong> · ${formatDuration(selectedRecording?.duration_ms) || 'длительность не указана'} · ${esc(selectedRecording?.artistIds?.map(artistName).join(', ') || 'артисты не указаны')}</p><div class="local-provider-fields">${field('Название в этой позиции · override', 'trackTitleOverride', track.titleOverride || '')}${field('Длительность · override', 'trackDurationOverride', durationOverride)}</div><small>Номер позиции определяется порядком строки. Длительность: целые секунды или М:СС.</small></fieldset>`;
+    }).join('') : '<p class="empty">Позиции не добавлены. Пустой трек-лист допустим.</p>'}</div>`;
+  }
 
   function listMarkup() {
     const terms = state.query.normalize('NFKC').toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
@@ -49,7 +69,7 @@ window.LocalProviderPrototype = (() => {
     if (state.type === 'artists') {
       fields = `${field('Имя', 'name', value.name, true)}${field('Уточнение', 'disambiguation', value.disambiguation)}${field('Жанры · через запятую', 'genres', value.genres)}${field('Теги · через запятую', 'tags', value.tags)}`;
     } else if (state.type === 'releases') {
-      fields = `${field('Название группы релизов', 'release_group_title', value.release_group_title, true)}${field('Название издания', 'title', value.title, true)}<div class="local-provider-fields">${field('Страна', 'country_code', value.country_code)}${field('Дата', 'release_date', value.release_date)}${field('Статус', 'status', value.status)}${field('Упаковка', 'packaging', value.packaging)}${field('Лейбл', 'label', value.label)}${field('Каталожный номер', 'catalog_number', value.catalog_number)}${field('Штрихкод', 'barcode', value.barcode)}${field('Уточнение', 'disambiguation', value.disambiguation)}</div><fieldset class="local-provider-links"><legend>Артисты релиза · ссылки на существующие provider_artist</legend>${providerArtistOptions(value)}<small>Выбор сохраняет provider ownership и native key; копия записи не создаётся.</small></fieldset>`;
+      fields = `${field('Название группы релизов', 'release_group_title', value.release_group_title, true)}${field('Название издания', 'title', value.title, true)}<div class="local-provider-fields">${field('Основной тип группы релизов', 'primaryType', value.primaryType)}${field('Дополнительные типы · через запятую', 'secondaryTypes', (value.secondaryTypes || []).join(', '))}${field('Язык', 'language', value.language)}${field('Страна', 'country_code', value.country_code)}${field('Дата', 'release_date', value.release_date)}${field('Статус', 'status', value.status)}${field('Упаковка', 'packaging', value.packaging)}${field('Лейбл', 'label', value.label)}${field('Каталожный номер', 'catalog_number', value.catalog_number)}${field('Штрихкод', 'barcode', value.barcode)}${field('Уточнение', 'disambiguation', value.disambiguation)}</div><fieldset class="local-provider-links"><legend>Артисты релиза · ссылки на существующие provider_artist</legend>${providerArtistOptions(value)}<small>Выбор сохраняет provider ownership и native key; копия записи не создаётся.</small></fieldset>${trackRows(value)}<p class="muted">Script не вводится. Поля жанров отсутствуют до утверждения источника/словаря.</p>`;
     } else {
       fields = `${field('Название композиции', 'title', value.title, true)}${field('Длительность, мс', 'duration_ms', value.duration_ms, false, 'number')}${field('Уточнение', 'disambiguation', value.disambiguation)}<label class="field">Explicit <span class="muted">необязательно</span><select name="explicit"><option value="" ${value.explicit === '' ? 'selected' : ''}>Не указано</option><option value="true" ${value.explicit === 'true' ? 'selected' : ''}>Да</option><option value="false" ${value.explicit === 'false' ? 'selected' : ''}>Нет</option></select></label>${field('ISRC · через запятую', 'isrcs', value.isrcs)}${field('Жанры · через запятую', 'genres', value.genres)}${field('Теги · через запятую', 'tags', value.tags)}<fieldset class="local-provider-links"><legend>Исполнители · ссылки на существующие provider_artist</legend>${providerArtistOptions(value)}<small>Выбор сохраняет provider ownership и native key; копия записи не создаётся.</small></fieldset>`;
     }
@@ -61,7 +81,7 @@ window.LocalProviderPrototype = (() => {
     const title = state.type === 'artists' ? item.name : item.title;
     let detail;
     if (state.type === 'artists') detail = [['Жанры', item.genres || '—'], ['Теги', item.tags || '—'], ['Связанные релизы', releases.filter(release => release.artistIds.includes(item.id)).map(release => release.title).join(', ') || '—']];
-    else if (state.type === 'releases') detail = [['Группа релизов', item.release_group_title], ['Артисты', item.artistIds.map(artistName).join(', ') || '—'], ['Дата', item.release_date || '—'], ['Страна', item.country_code || '—'], ['Лейбл', item.label || '—'], ['Каталожный номер', item.catalog_number || '—']];
+    else if (state.type === 'releases') detail = [['Группа релизов', item.release_group_title], ['Артисты', item.artistIds.map(artistName).join(', ') || '—'], ['Основной тип', item.primaryType || '—'], ['Дополнительные типы', item.secondaryTypes?.join(', ') || '—'], ['Язык', item.language || '—'], ['Позиции · носитель 1', String(item.tracks?.length || 0)], ['Дата', item.release_date || '—'], ['Страна', item.country_code || '—'], ['Лейбл', item.label || '—'], ['Каталожный номер', item.catalog_number || '—']];
     else detail = [['Артисты', item.artistIds.map(artistName).join(', ') || '—'], ['Длительность', item.duration_ms ? `${item.duration_ms} мс` : '—'], ['ISRC', item.isrcs || '—'], ['Жанры', item.genres || '—']];
     return `<div class="local-provider-detail-heading"><div><span class="eyebrow">${esc(item.provider)} · ${esc(currentType().entity)}</span><h2>${esc(title)}</h2></div>${item.provider === 'Local' ? button('edit', 'Редактировать') : ''}</div><dl class="local-provider-facts">${detail.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}<div><dt>Provider key</dt><dd><code>${esc(item.key)}</code></dd></div></dl><div class="note">Редактирование metadata само по себе не запускает публикацию. Удаление и поведение зависимостей этим экраном не определяются.</div>`;
   }
@@ -109,7 +129,21 @@ window.LocalProviderPrototype = (() => {
     const item = creating ? { id: uuid(), key: uuid(), provider: 'Local' } : selected();
     const text = name => String(form.get(name) || '').trim();
     if (state.type === 'artists') Object.assign(item, { name: text('name'), disambiguation: text('disambiguation'), genres: text('genres'), tags: text('tags') });
-    if (state.type === 'releases') Object.assign(item, { release_group_title: text('release_group_title'), title: text('title'), country_code: text('country_code'), release_date: text('release_date'), status: text('status'), packaging: text('packaging'), label: text('label'), catalog_number: text('catalog_number'), barcode: text('barcode'), disambiguation: text('disambiguation'), artistIds: form.getAll('artistIds').map(String) });
+    if (state.type === 'releases') {
+      const trackRows = [...event.target.querySelectorAll('[data-track-index]')];
+      const tracks = trackRows.map(row => ({
+        recordingId: row.querySelector('[name="trackRecording"]').value,
+        titleOverride: row.querySelector('[name="trackTitleOverride"]').value.trim(),
+        durationOverrideMs: parseDuration(row.querySelector('[name="trackDurationOverride"]').value)
+      }));
+      const invalidDuration = trackRows.some(row => Number.isNaN(parseDuration(row.querySelector('[name="trackDurationOverride"]').value)));
+      if (invalidDuration) {
+        state.notice = 'Проверьте длительность override: используйте целые секунды или М:СС с секундами от 00 до 59.';
+        refresh();
+        return true;
+      }
+      Object.assign(item, { release_group_title: text('release_group_title'), title: text('title'), primaryType: text('primaryType'), secondaryTypes: text('secondaryTypes').split(',').map(value => value.trim()).filter(Boolean), language: text('language'), country_code: text('country_code'), release_date: text('release_date'), status: text('status'), packaging: text('packaging'), label: text('label'), catalog_number: text('catalog_number'), barcode: text('barcode'), disambiguation: text('disambiguation'), artistIds: form.getAll('artistIds').map(String), tracks });
+    }
     if (state.type === 'recordings') Object.assign(item, { title: text('title'), duration_ms: text('duration_ms'), disambiguation: text('disambiguation'), explicit: text('explicit'), isrcs: text('isrcs'), genres: text('genres'), tags: text('tags'), artistIds: form.getAll('artistIds').map(String) });
     if (state.creating) currentType().items.unshift(item);
     state.selectedId = item.id;
@@ -125,6 +159,32 @@ window.LocalProviderPrototype = (() => {
     if (event.target.id !== 'local-provider-search') return;
     state.query = event.target.value;
     refresh();
+  });
+  document.addEventListener('change', event => {
+    if (!(event.target instanceof HTMLSelectElement) || event.target.name !== 'trackRecording') return;
+    const selectedRecording = recording(event.target.value);
+    const summary = event.target.closest('[data-track-index]').querySelector('.local-provider-track-default');
+    summary.innerHTML = `По умолчанию: <strong>${esc(selectedRecording?.title || 'Композиция не выбрана')}</strong> · ${formatDuration(selectedRecording?.duration_ms) || 'длительность не указана'} · ${esc(selectedRecording?.artistIds?.map(artistName).join(', ') || 'артисты не указаны')}`;
+  });
+  document.addEventListener('click', event => {
+    if (!(event.target instanceof Element) || !location.hash.startsWith('#local')) return;
+    const target = event.target.closest('[data-local-action]');
+    if (!target || !state.editing || state.type !== 'releases') return;
+    const rows = [...document.querySelectorAll('#local-provider-form [data-track-index]')];
+    const tracks = rows.map(row => ({ recordingId: row.querySelector('[name="trackRecording"]').value, titleOverride: row.querySelector('[name="trackTitleOverride"]').value, durationInput: row.querySelector('[name="trackDurationOverride"]').value }));
+    const index = Number(target.dataset.index);
+    if (target.dataset.localAction === 'add-track') tracks.push({ recordingId: '', titleOverride: '', durationInput: '' });
+    else if (target.dataset.localAction === 'remove-track') tracks.splice(index, 1);
+    else if (target.dataset.localAction === 'track-up' && index > 0) [tracks[index - 1], tracks[index]] = [tracks[index], tracks[index - 1]];
+    else if (target.dataset.localAction === 'track-down' && index < tracks.length - 1) [tracks[index + 1], tracks[index]] = [tracks[index], tracks[index + 1]];
+    else return;
+    const form = document.querySelector('#local-provider-form');
+    const formData = new FormData(form);
+    const previewItem = { ...selected(), tracks };
+    const tracklist = form.querySelector('.local-provider-tracklist');
+    tracklist.outerHTML = trackRows(previewItem);
+    event.stopImmediatePropagation();
+    if (target.dataset.localAction === 'add-track') form.querySelector('[data-track-index]:last-of-type select')?.focus();
   });
   document.addEventListener('click', event => {
     if (!(event.target instanceof Element) || !location.hash.startsWith('#local')) return;
