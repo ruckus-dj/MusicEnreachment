@@ -165,8 +165,8 @@ Table provider_release_track {
   medium_format varchar(64)
   track_position integer [not null, note: 'Для Local порядок позиции; UI пересчитывает 1..n после add/remove/reorder']
   track_number text [not null, note: 'Отображаемый номер; может быть A1, DVD1-3 и т.п. Для Local равен автоматически вычисленному порядку 1..n']
-  title_override text [note: 'Для Local необязательное переопределение названия существующей композиции']
-  duration_override_ms integer [note: 'Для Local необязательное переопределение duration_ms существующей композиции; UI принимает секунды или М:СС']
+  title_override text [note: 'Nullable override названия provider_recording только для этой позиции; применяется для всех providers']
+  duration_override_ms integer [note: 'Nullable override duration_ms provider_recording только для этой позиции; применяется для всех providers. Local UI принимает секунды или М:СС']
   data_track boolean [not null, default: false]
   extra_data jsonb [not null, default: '{}']
 
@@ -177,6 +177,8 @@ Table provider_release_track {
     provider_release_id
     provider_recording_id
   }
+
+  Note: 'provider_recording — самостоятельная композиция; provider_release_track — её позиция в конкретном provider-релизе. На позиции только title_override и duration_override_ms могут переопределять одноимённые поля recording. Metadata release, включая ALBUMARTIST, принадлежат provider_release; metadata композиции, включая ARTIST, — provider_recording. Автоматическое наследование и explicit-empty semantics для genres, tags, explicit и ISRC отдельно не определены.'
 }
 
 Table artwork_asset {
@@ -403,7 +405,7 @@ Table collection_track {
     collection_recording_id
   }
 
-  Note: 'Для problem_flags миграция должна добавить CHECK (problem_flags >= 0) и partial indexes для часто используемых битов.'
+  Note: 'collection_recording — самостоятельная композиция; collection_track — её позиция в collection-релизе. Только nullable title_override и duration_override_ms позиции переопределяют одноимённые значения recording. Metadata релиза, включая ALBUMARTIST, принадлежат collection_release; metadata композиции, включая ARTIST, — collection_recording. Для problem_flags миграция должна добавить CHECK (problem_flags >= 0) и partial indexes для часто используемых битов.'
 }
 
 Table collection_artist_provider_link {
