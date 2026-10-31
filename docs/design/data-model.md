@@ -39,14 +39,16 @@ runtime-таблицы/worker или статус реализации соот�
   хранит номер носителя, позицию, отображаемый номер, возможные overrides и
   текущее состояние публикации.
 - Provider-модель соответствует этому разделению: `provider_recording` —
-  самостоятельная композиция, а `provider_release_track` — её позиция в
-  конкретном provider-релизе. Для всех providers только nullable
-  `title_override` и `duration_override_ms` placement переопределяют
-  одноимённые `title` и `duration_ms` recording. Это не универсальная цепочка
-  наследования. Metadata релиза, включая `ALBUMARTIST`, принадлежат release;
-  metadata композиции, включая `ARTIST`, — recording. Общие правила для genres,
-  tags, `explicit` и ISRC остаются отдельным открытым решением (см.
-  [уточнение владельца от 2026-10-31](./decisions.md#уточнение-владельца-от-2026-10-31-границы-metadata-между-release-recording-и-placement)).
+  самостоятельная композиция, а `provider_release_track` — конкретная позиция
+  трека в provider-релизе, а не отдельная сущность. Для названия и длительности
+  для всех providers действует приоритет «явный override позиции трека ->
+  recording»: nullable `title_override` и `duration_override_ms` на
+  `provider_release_track` переопределяют одноимённые `title` и `duration_ms`
+  recording. Release в этом приоритете не участвует. Это не универсальная
+  цепочка наследования. Metadata релиза, включая `ALBUMARTIST`, принадлежат
+  release; metadata композиции, включая `ARTIST`, — recording. Общие правила для
+  genres, tags, `explicit` и ISRC остаются отдельным открытым решением (см.
+  [уточнение владельца от 2026-10-31](./decisions.md#уточнение-владельца-от-2026-10-31-границы-metadata-между-release-recording-и-позицией-трека)).
 - Локальные сущности существуют и без provider-связей, поэтому поддерживают
   полностью ручную публикацию.
 
@@ -120,11 +122,13 @@ managed publications.
   провайдера, включая артистов и позиции треков.
 - У Local-релиза один носитель. Его позиции упорядочены, каждая ссылается на уже
   существующий `provider_recording`; `track_position` и отображаемый номер
-  автоматически равны порядку позиции 1..n. Как и для любого provider,
-  `title_override` и `duration_override_ms` на `provider_release_track` могут
-  переопределять одноимённые значения recording только в этой позиции. Один
-  носитель, автоматическая нумерация и формат ввода длительности — ограничения
-  Local workflow, не общего provider-графа.
+  автоматически равны порядку позиции 1..n. Как и для любого provider, для
+  названия и длительности действует приоритет «явный override позиции трека ->
+  recording»: `title_override` и `duration_override_ms` на
+  `provider_release_track` переопределяют одноимённые значения recording только
+  в этой позиции; release в этом приоритете не участвует. Один носитель,
+  автоматическая нумерация и формат ввода длительности — ограничения Local
+  workflow, не общего provider-графа.
 - Форма Local-релиза включает `release_group_primary_type`,
   `release_group_secondary_types` и `language`; поля `script` в ней нет.
   Источник/словарь жанров не утверждён, поэтому UI-пикер и свободный ввод жанров
