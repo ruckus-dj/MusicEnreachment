@@ -45,18 +45,9 @@ Enum lyrics_kind {
   synced
 }
 
-Enum publication_phase {
-  reserved
-  staged
-  validated
-  exposed
-  cleaning
-  failed
-}
-
 Table provider {
   id uuid [pk]
-  code varchar(64) [not null, unique, note: 'musicbrainz, spotify, discogs, deezer, apple_music, embedded, manual']
+  code varchar(64) [not null, unique, note: 'musicbrainz, spotify, discogs, deezer, apple_music, embedded, manual, local; Local reuses this provider model and adds no tables (see docs/design/local-provider.md)']
   display_name text [not null]
   capabilities jsonb [not null, default: '{}']
   enabled boolean [not null, default: true]
@@ -304,6 +295,8 @@ Table collection_artist {
   indexes {
     name
   }
+
+  Note: 'Решение владельца 2026-10-29: идентичность MusicBrainz задаётся уникальным MBID через provider_artist.provider_key и collection_artist_provider_link, а не отдельным credit. Позднейшее уточнение того же дня: уникальность имени отложена и обеспечивается оператором вручную; автоматическое объединение по имени и DB-ограничение уникальности имени сейчас не требуются. Разные MBID могут иметь одинаковое имя. ALBUMARTIST задаёт связи артистов релиза, ARTIST — связи исполнителей recording/позиции. Composer/lyricist/vocalist/instrumentalist и другие ролевые значения остаются метаданными и не создают artist entity или дополнительную artist-связь. Уникальность provider identity и не более одной связи с каждым provider сохраняются.'
 }
 
 Table collection_release {
@@ -530,11 +523,13 @@ Table recording_lyrics {
 
 Table release_publication {
   collection_release_id uuid [pk]
-  directory_path text [not null, unique]
+  directory_path text [not null]
   artwork_asset_id uuid
   published_artwork_version integer [not null]
   published_version integer [not null]
   published_at timestamptz [not null]
+
+  Note: 'Один текущий каталог публикации релиза. Уникальность публикации задаёт collection_release_id, а не directory_path: разные релизы могут использовать общий каталог, если полные пути их файлов не конфликтуют (решение владельца 2026-10-29). Artwork не является отдельным файлом публикации: оно встраивается в аудиофайл позиции. Конфликт полного имени файла разрешает существующий flow стабильного position suffix с закреплением имени и удлинением при повторном конфликте; публикация чужой позиции не перезаписывается.'
 }
 
 Table track_publication {
@@ -547,7 +542,10 @@ Table track_publication {
   relative_audio_path text [not null]
   output_container varchar(32) [not null]
   output_codec varchar(64) [not null]
-  output_digest varchar(128) [note: 'Digest управляемого файла для обнаружения внешних изменений; алгоритм задаётся приложением']
+  output_digest varchar(128) [note: 'Опциональный digest; периодическая проверка публикации не требует hash']
+  published_size_bytes bigint [not null, note: 'Размер файла при регистрации фактического результата; неизменяемая база для stat-проверки']
+  published_mtime_ns bigint [not null, note: 'mtime файла при регистрации фактического результата; неизменяемая база для stat-проверки']
+  filesystem_problem varchar(16) [note: 'NULL при отсутствии известного расхождения; missing или drift после проверки зарегистрированного результата. Недоступность output root не означает missing и не меняет baseline.']
   published_version integer [not null]
   published_at timestamptz [not null]
 
@@ -555,39 +553,7 @@ Table track_publication {
     (collection_release_id, relative_audio_path) [unique]
   }
 
-  Note: 'Публикация актуальна, когда published_version равен collection_track.publication_version. Добавление или удаление source само по себе версию не меняет.'
-}
-
-Table release_publication_attempt {
-  collection_release_id uuid [pk]
-  phase publication_phase [not null]
-  expected_publication_version integer [not null]
-  expected_artwork_version integer [not null]
-  expected_artwork_asset_id uuid
-  staging_directory text [not null]
-  target_directory text [not null]
-  files_json jsonb [not null, note: 'Album-level files: artwork и будущие assets; для каждого хранит staged, target, backup и digest']
-  failure_reason text
-  started_at timestamptz [not null]
-  updated_at timestamptz [not null]
-
-  Note: 'Незавершённый journal подготовки директории и album-level assets. Не затрагивает уже опубликованные tracks.'
-}
-
-Table track_publication_attempt {
-  collection_track_id uuid [pk]
-  phase publication_phase [not null]
-  expected_metadata_version integer [not null]
-  expected_track_source_id uuid [not null]
-  expected_lyrics_id uuid
-  staging_directory text [not null]
-  target_directory text [not null]
-  files_json jsonb [not null, note: 'Track bundle: audio, lyrics и будущие sidecars; для каждого хранит staged, target, backup и digest']
-  failure_reason text
-  started_at timestamptz [not null]
-  updated_at timestamptz [not null]
-
-  Note: 'Незавершённый journal добавления или замены одного track bundle. Остальные tracks релиза не перепубликуются.'
+  Note: 'Публикация актуальна, когда published_version равен collection_track.publication_version. published_size_bytes и published_mtime_ns — baseline фактического аудиофайла при регистрации; периодический stat сравнивает оба значения, помечает missing/drift и никогда не принимает произвольный файл как новый baseline. Artwork и lyrics встроены в аудиофайл; отдельные файлы публикации для них не проверяются. Недоступный output root не считается missing. Период проверки не задан. Добавление или удаление source само по себе версию не меняет. Уникальность (collection_release_id, relative_audio_path) относится к одному релизу и сама по себе не предотвращает конфликт полных путей файлов разных релизов в общей папке; правило запрета перезаписи чужой позиции действует и между релизами. Publication tables содержат только текущий зарегистрированный результат; отдельные step journals, backups, prepared-result records и receipts отсутствуют. Незавершённая operation восстанавливается по известному frozen target: сначала читаются tags и technical parameters без транскодирования/full preparation и проверяются против operation inputs и текущей authority; при несовпадении выполняется обычный полный retry. Время файла не является доказательством успеха. First-publication recovery также использует frozen target operation, когда publication row ещё отсутствует; неизвестные файлы автоматически не сопоставляются.'
 }
 
 TableGroup provider_cache {
@@ -628,8 +594,6 @@ TableGroup local_collection {
 TableGroup managed_publication {
   release_publication
   track_publication
-  release_publication_attempt
-  track_publication_attempt
 }
 
 Ref: provider_artist.provider_id > provider.id [delete: cascade]
@@ -641,8 +605,8 @@ Ref: provider_release_artist.provider_release_id > provider_release.id [delete: 
 Ref: provider_release_artist.provider_artist_id > provider_artist.id [delete: restrict]
 Ref: provider_recording_artist.provider_recording_id > provider_recording.id [delete: cascade]
 Ref: provider_recording_artist.provider_artist_id > provider_artist.id [delete: restrict]
-Ref: provider_release_track.(provider_release_id, provider_id) > provider_release.(id, provider_id) [delete: cascade]
-Ref: provider_release_track.(provider_recording_id, provider_id) > provider_recording.(id, provider_id) [delete: restrict]
+Ref: provider_release_track.provider_release_id > provider_release.id [delete: cascade]
+Ref: provider_release_track.provider_recording_id > provider_recording.id [delete: restrict]
 
 Ref: artwork_asset.provider_id > provider.id [delete: restrict]
 Ref: artwork_asset.source_media_variant_id > media_variant.id [delete: set null]
@@ -684,8 +648,3 @@ Ref: release_publication.artwork_asset_id > artwork_asset.id [delete: set null]
 Ref: track_publication.collection_track_id > collection_track.id [delete: cascade]
 Ref: track_publication.collection_release_id > release_publication.collection_release_id [delete: cascade]
 Ref: track_publication.lyrics_id > lyrics_document.id [delete: set null]
-Ref: release_publication_attempt.collection_release_id - collection_release.id [delete: cascade]
-Ref: release_publication_attempt.expected_artwork_asset_id > artwork_asset.id [delete: restrict]
-Ref: track_publication_attempt.collection_track_id - collection_track.id [delete: cascade]
-Ref: track_publication_attempt.expected_track_source_id > track_source.id [delete: restrict]
-Ref: track_publication_attempt.expected_lyrics_id > lyrics_document.id [delete: restrict]

@@ -74,6 +74,7 @@ for (const album of demoAlbums) {
       confidence: album.id === 'north' && track.position === 3 ? 'low' : 'high',
       fingerprint: album.id === 'north' && track.position === 3 ? 'Не найдено подтверждения' : 'Нет ответа AcoustID; fingerprint рассчитан'
     };
+    track.sourceIds = [fileId];
     track.sourceId = fileId;
     track.providerTrackId = album.providerId ? `${album.providerId}-t${track.position}` : null;
     if (album.id === 'rooms' || album.id === 'signals' || (album.id === 'north' && track.position <= 5)) {

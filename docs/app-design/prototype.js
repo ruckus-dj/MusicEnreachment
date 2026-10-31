@@ -41,12 +41,26 @@ function draft(g = group()) {
     const assignments = {};
     for (const track of target.tracks) {
       const file = g.fileIds.map(id => demoFiles[id]).find(item => g.mode === 'local' ? item.id === track.sourceId : item.providerTrackId === track.id && item.confidence === 'high');
-      if (file) assignments[track.id] = { fileId: file.id, method: g.mode === 'local' ? 'Из исходной группы' : 'Авто · тестовый verdict', confidence: file.confidence, providerTrackId: g.mode === 'local' ? track.providerTrackId : track.id, included: true };
+      if (file) {
+        const method = g.mode === 'local' ? 'Из исходной группы' : 'Авто · тестовый verdict';
+        assignments[track.id] = { sourceIds: [file.id], selectedSourceId: file.id, sourceMeta: { [file.id]: { method, confidence: file.confidence } }, method, confidence: file.confidence, providerTrackId: g.mode === 'local' ? track.providerTrackId : track.id, included: true };
+      }
     }
     g.drafts[key] = assignments;
   }
   return g.drafts[key];
 }
+
+const associatedSourceIds = assignment => assignment?.sourceIds || (assignment?.fileId ? [assignment.fileId] : []);
+const selectedSourceId = assignment => assignment?.selectedSourceId || assignment?.fileId || null;
+const assignmentMethod = assignment => {
+  const selected = selectedSourceId(assignment);
+  return selected ? assignment?.sourceMeta?.[selected]?.method || assignment?.method || '' : '';
+};
+const assignmentConfidence = assignment => {
+  const selected = selectedSourceId(assignment);
+  return selected && demoFiles[selected] ? demoFiles[selected].confidence : null;
+};
 
 function targetLocalRelease(g, target) {
   if (g.mode === 'local') return localRelease(g.releaseId);
@@ -83,7 +97,7 @@ function evidence(file, target, assignment) {
   const remoteArtist = artistName(target.artistId);
   const compare = (source, remote) => normalized(source) === normalized(remote) ? badge('Совпало после нормализации', 'success') : badge('Различается', 'warning');
   const delta = file.duration - target.duration;
-  return `<div class="evidence-summary">${badge(assignment?.method?.startsWith('Вручную') ? 'Назначено оператором' : file.confidence === 'high' ? 'Высокая уверенность · fixture' : 'Недостаточная уверенность · fixture', file.confidence === 'high' ? 'success' : 'warning')}<strong>Числовой score: не рассчитан</strong><span class="muted">Формула и веса не утверждены.</span></div>${table(['Признак', 'Исходное значение', 'Кандидат', 'Результат / отличие', 'Вес / вклад'], [
+  return `<div class="evidence-summary">${badge(assignmentMethod(assignment).startsWith('Вручную') ? 'Назначено оператором' : file.confidence === 'high' ? 'Высокая уверенность · fixture' : 'Недостаточная уверенность · fixture', file.confidence === 'high' ? 'success' : 'warning')}<strong>Числовой score: не рассчитан</strong><span class="muted">Формула и веса не утверждены.</span></div>${table(['Признак', 'Исходное значение', 'Кандидат', 'Результат / отличие', 'Вес / вклад'], [
     ['Название', esc(rawTitle), esc(target.title), compare(rawTitle, target.title), 'Не задан'],
     ['Артист', esc(rawArtist), esc(remoteArtist), compare(rawArtist, remoteArtist), 'Не задан'],
     ['Длительность', duration(file.duration), duration(target.duration), badge(`${delta > 0 ? '+' : ''}${delta} с`, delta ? 'warning' : 'success'), 'Не задан'],
@@ -97,9 +111,11 @@ function review() {
   const rows = incomingGroups.map(g => {
     const target = currentTarget(g);
     const assignments = draft(g);
-    const used = new Set(Object.values(assignments).map(item => item.fileId));
+    const used = new Set(Object.values(assignments).flatMap(associatedSourceIds));
     const published = targetLocalRelease(g, target)?.tracks.filter(track => track.published).length || 0;
-    return [`<div class="entity">${cover(localRelease(g.releaseId))}<div>${link(`match/${g.id}`, g.title)}<span class="sub">${artistName(g.artistId)} · <span class="mono">/mnt/inbox/${g.id}</span></span></div></div>`, `${g.fileIds.length} файлов`, `${Object.keys(assignments).length} / ${target.tracks.length}`, `${g.fileIds.length - used.size}`, badge(g.processed ? 'Опубликовано автоматически' : g.autoEligible ? 'Готов к автоматике' : 'Ручная обработка', g.processed || g.autoEligible ? 'success' : 'warning'), `${published} / ${target.tracks.length}`, `<span class="small">${esc(g.reason)}</span>`, link(`match/${g.id}`, 'Открыть', 'button')];
+    const fileCount = new Set(g.fileIds).size;
+    const assignedPositions = Object.values(assignments).filter(item => associatedSourceIds(item).length).length;
+    return [`<div class="entity">${cover(localRelease(g.releaseId))}<div>${link(`match/${g.id}`, g.title)}<span class="sub">${artistName(g.artistId)} · <span class="mono">/mnt/inbox/${g.id}</span></span></div></div>`, `${fileCount} файлов`, `${assignedPositions} / ${target.tracks.length}`, `${fileCount - used.size}`, badge(g.processed ? 'Опубликовано автоматически' : g.autoEligible ? 'Готов к автоматике' : 'Ручная обработка', g.processed || g.autoEligible ? 'success' : 'warning'), `${published} / ${target.tracks.length}`, `<span class="small">${esc(g.reason)}</span>`, link(`match/${g.id}`, 'Открыть', 'button')];
   });
   return header('Входящие альбомы', 'Группы из исходных тегов → поиск издания → назначения → публикация. Неполные данные допустимы.', button('run-auto', 'Запустить обработку · демо', '', true)) +
     `<div class="flow-strip"><span><b>1</b> Сгруппировать файлы</span><span><b>2</b> Сопоставить</span><span><b>3</b> Все позиции уверенные → автоматически</span><span><b>4</b> Иначе → ручной разбор, в том числе частичный</span></div>` +
@@ -122,18 +138,21 @@ function match() {
   const target = currentTarget(g);
   const assignments = draft(g);
   if (!target.tracks.some(track => track.id === ui.selectedTarget)) ui.selectedTarget = target.tracks[0].id;
-  const used = new Set(Object.values(assignments).map(item => item.fileId));
-  const free = g.fileIds.filter(id => !used.has(id));
-  const included = Object.values(assignments).filter(item => item.included).length;
+  const used = new Set(Object.values(assignments).flatMap(associatedSourceIds));
+  const free = [...new Set(g.fileIds)].filter(id => !used.has(id));
+  const included = Object.values(assignments).filter(item => item.included && demoFiles[selectedSourceId(item)]).length;
   const rows = target.tracks.map(track => {
     const assignment = assignments[track.id];
-    const file = assignment && demoFiles[assignment.fileId];
+    const sources = associatedSourceIds(assignment).map(id => demoFiles[id]).filter(Boolean);
+    const selectedId = selectedSourceId(assignment);
+    const file = demoFiles[selectedId];
     const remote = g.mode === 'local' ? findProviderTrack(assignment?.providerTrackId) : { release: target, track };
-    return `<tr class="drop-row ${track.id === ui.selectedTarget ? 'inspected' : ''} ${file ? 'assigned' : 'unassigned'}" data-drop="${track.id}"><td data-label="Выбор"><input type="checkbox" data-include="${track.id}" aria-label="Публиковать ${esc(track.title)}" ${assignment?.included ? 'checked' : ''} ${!assignment ? 'disabled' : ''}></td><td data-label="№" class="mono">${String(track.position).padStart(2, '0')}</td><td data-label="Композиция"><button class="text-button" data-inspect="${track.id}">${esc(track.title)}</button><span class="sub">${artistName(track.artistId)}${g.mode === 'local' ? ` · ${remote ? esc(remote.release.title) : 'Без provider-связи'}` : ''}</span></td><td data-label="Длительность" class="mono">${duration(track.duration)}</td><td data-label="Наш файл">${file ? `<div class="assigned-file">${fileChip(file, true)}${button('unassign', '×', `data-target="${track.id}" aria-label="Снять назначение ${esc(track.title)}"`)}</div>` : '<span class="drop-hint">Перетащите файл сюда</span>'}${ui.selectedFile ? button('assign-selected', file ? 'Заменить выбранным' : 'Назначить выбранный', `data-target="${track.id}"`) : ''}</td><td data-label="Score / доказательства">${file ? `<button class="score-button" data-evidence="${track.id}">${badge(assignment.method.startsWith('Вручную') ? 'Вручную' : assignment.confidence === 'high' ? 'Высокий*' : 'Низкий*', assignment.confidence === 'high' ? 'success' : 'warning')}<span class="sub">Детали</span></button>` : badge('Нет файла')}${g.mode === 'local' ? button('find-recording', 'Найти recording', `data-target="${track.id}"`) : ''}</td></tr>`;
+    const sourceChoices = sources.map(source => `<span class="linked-source"><input type="radio" name="selected-source-${esc(track.id)}" data-selected-source="${esc(track.id)}" value="${esc(source.id)}" aria-label="Выбрать ${esc(source.name)} для публикации" ${source.id === selectedId ? 'checked' : ''}>${fileChip(source, true)}${button('unassign-source', '×', `data-target="${esc(track.id)}" data-source="${esc(source.id)}" aria-label="Снять связь ${esc(source.name)} с ${esc(track.title)}"`)}</span>`).join('');
+    return `<tr class="drop-row ${track.id === ui.selectedTarget ? 'inspected' : ''} ${sources.length ? 'assigned' : 'unassigned'}" data-drop="${track.id}"><td data-label="Выбор"><input type="checkbox" data-include="${track.id}" aria-label="Публиковать ${esc(track.title)}" ${assignment?.included && file ? 'checked' : ''} ${!file ? 'disabled' : ''}></td><td data-label="№" class="mono">${String(track.position).padStart(2, '0')}</td><td data-label="Композиция"><button class="text-button" data-inspect="${track.id}">${esc(track.title)}</button><span class="sub">${artistName(track.artistId)}${g.mode === 'local' ? ` · ${remote ? esc(remote.release.title) : 'Без provider-связи'}` : ''}</span></td><td data-label="Длительность" class="mono">${duration(track.duration)}</td><td data-label="Наш файл">${sources.length ? `<div class="linked-sources">${sourceChoices}</div>` : '<span class="drop-hint">Перетащите файл сюда</span>'}${ui.selectedFile ? button('assign-selected', 'Добавить вариант', `data-target="${track.id}"`) : ''}</td><td data-label="Score / доказательства">${file ? `<button class="score-button" data-evidence="${track.id}">${badge(assignmentMethod(assignment).startsWith('Вручную') ? 'Вручную' : assignmentConfidence(assignment) === 'high' ? 'Высокий*' : 'Низкий*', assignmentConfidence(assignment) === 'high' ? 'success' : 'warning')}<span class="sub">Детали</span></button>` : badge(sources.length ? 'Выберите источник' : 'Нет файла')}${g.mode === 'local' ? button('find-recording', 'Найти recording', `data-target="${track.id}"`) : ''}</td></tr>`;
   }).join('');
   const inspected = target.tracks.find(track => track.id === ui.selectedTarget);
   const assignment = assignments[inspected.id];
-  const file = demoFiles[ui.selectedFile || assignment?.fileId];
+  const file = demoFiles[selectedSourceId(assignment)];
   const provider = g.mode === 'local' ? findProviderTrack(assignment?.providerTrackId) : { release: target, track: inspected };
   const existing = targetLocalRelease(g, target);
   const localTrack = existing?.tracks.find(track => track.position === inspected.position);
@@ -157,19 +176,23 @@ function assignFile(fileId, targetId) {
   const g = group();
   if (!g.fileIds.includes(fileId) || !demoFiles[fileId]?.available || !currentTarget().tracks.some(track => track.id === targetId)) return;
   const assignments = draft();
-  const previous = Object.entries(assignments).filter(([id, item]) => item.fileId === fileId && id !== targetId);
-  const occupied = assignments[targetId];
-  if (occupied?.fileId === fileId) return;
-  const apply = keepPrevious => {
-    if (!keepPrevious) for (const [id] of previous) delete assignments[id];
-    assignments[targetId] = { fileId, method: 'Вручную · drag/click', confidence: demoFiles[fileId].confidence, providerTrackId: g.mode === 'local' ? occupied?.providerTrackId || null : targetId, included: true };
-    ui.selectedFile = null; ui.selectedTarget = targetId;
-    ui.notice = `Назначен ${demoFiles[fileId].name}. Это черновик, публикация не изменена.`;
+  const assignment = assignments[targetId];
+  if (associatedSourceIds(assignment).includes(fileId)) {
+    ui.selectedFile = null;
+    ui.notice = `${demoFiles[fileId].name} уже связан с этой позицией; повтор не добавлен.`;
     render(false);
-  };
-  if (occupied || previous.length) {
-    confirm('Изменить назначение?', `<p>${occupied ? `Файл ${esc(demoFiles[occupied.fileId].name)} будет снят с этой позиции и вернётся в свободные, если больше нигде не назначен.` : 'Файл уже назначен другой позиции.'}</p>${previous.length ? '<label class="inline-check"><input id="keep-previous" type="checkbox">Использовать файл повторно, сохранив прежнее назначение</label><p class="small muted">Без флажка файл будет перенесён. Модель допускает использование одного варианта в нескольких позициях.</p>' : ''}`, () => apply(Boolean(document.querySelector('#keep-previous')?.checked)));
-  } else apply(false);
+    return;
+  }
+  assignments[targetId] = assignment || { sourceIds: [], selectedSourceId: null, sourceMeta: {}, method: 'Вручную · drag/click', confidence: null, providerTrackId: g.mode === 'local' ? null : targetId, included: false };
+  const current = assignments[targetId];
+  if (!current.sourceMeta) current.sourceMeta = Object.fromEntries(associatedSourceIds(current).map(id => [id, { method: current.method, confidence: demoFiles[id]?.confidence || null }]));
+  current.sourceMeta[fileId] = { method: 'Вручную · добавлен вариант', confidence: demoFiles[fileId].confidence };
+  current.sourceIds = [...associatedSourceIds(current), fileId];
+  current.method = assignmentMethod(current);
+  current.confidence = assignmentConfidence(current);
+  ui.selectedFile = null; ui.selectedTarget = targetId;
+  ui.notice = `К позиции добавлен вариант ${demoFiles[fileId].name}. Связь не меняет выбранный источник или публикацию.`;
+  render(false);
 }
 
 function catalogRows() {
@@ -308,8 +331,14 @@ function tagsPage(trackId, scope) {
 function trackPage(id) {
   const { release, track } = findLocalTrack(id) || allTracks()[0];
   const file = demoFiles[track.sourceId];
+  const sourceIds = track.sourceIds || (track.sourceId ? [track.sourceId] : []);
+  const sourceList = sourceIds.length ? `<div class="track-source-list">${sourceIds.map(sourceId => {
+    const source = demoFiles[sourceId];
+    if (!source) return '';
+    return `<label class="track-source-choice"><input type="radio" name="track-source-${esc(track.id)}" data-track-source="${esc(track.id)}" value="${esc(source.id)}" ${track.sourceId === source.id ? 'checked' : ''}><span><strong>${esc(source.name)}</strong><span class="sub">${esc(source.codec)} · ${duration(source.duration)} · ${esc(source.size)}</span></span></label>`;
+  }).join('')}</div>` : '<div class="empty">Связанных вариантов нет.</div>';
   return header(`${String(track.position).padStart(2, '0')} · ${track.title}`, `${artistName(track.artistId)} / ${release.title} · позиция релиза, не общий recording`, link(`release/${release.id}`, 'К трек-листу', 'button')) +
-    `<div class="two-columns">${panel('Аудиоисточник', facts([['Путь', `<span class="mono">${esc(file?.path || 'Не назначен')}</span>`], ['Формат', file ? `${file.codec} · ${duration(file.duration)} · ${file.size}` : '—'], ['Recording', esc(track.recordingId || 'Без provider-связи')], ['Фактическая публикация', track.published ? `${track.published.container} · ${track.published.codec} · ${esc(track.published.readAt)}` : 'Не опубликован']]))}${panel('Раздельные состояния', `<div class="padded"><p>Исходник читается, локальные значения редактируются, публикация меняется только отдельной операцией.</p><div class="actions">${button('edit-title', 'Изменить локальное название', `data-track="${track.id}"`)}${button('preview-track', 'План этой позиции', `data-track="${track.id}"`, true)}</div></div>`)}</div>` + panel('Сравнение тегов', tagMatrix(release, track, file, findProviderTrack(track.providerTrackId), track.published));
+    `<div class="two-columns">${panel('Связанные аудиоварианты', `${sourceList}<div class="panel-foot">Радиокнопка явно выбирает один источник для публикации. Текущая публикация от этого выбора не меняется.</div>`)}${panel('Раздельные состояния', `${facts([['Выбранный путь', `<span class="mono">${esc(file?.path || 'Не выбран')}</span>`], ['Формат', file ? `${file.codec} · ${duration(file.duration)} · ${file.size}` : '—'], ['Recording', esc(track.recordingId || 'Без provider-связи')], ['Фактическая публикация', track.published ? `${track.published.container} · ${track.published.codec} · ${esc(track.published.readAt)}` : 'Не опубликован']])}<div class="padded"><p>Исходник читается, локальные значения редактируются, публикация меняется только отдельной операцией.</p><div class="actions">${button('edit-title', 'Изменить локальное название', `data-track="${track.id}"`)}${button('preview-track', 'План этой позиции', `data-track="${track.id}"`, true)}</div></div>`)}</div>` + panel('Сравнение тегов', tagMatrix(release, track, file, findProviderTrack(track.providerTrackId), track.published));
 }
 
 function makeGroupPlan(g = group()) {
@@ -318,7 +347,7 @@ function makeGroupPlan(g = group()) {
 }
 
 function makeReleasePlan(release, trackId = null) {
-  return { mode: 'local', groupId: null, target: structuredClone(release), localReleaseId: release.id, assignments: Object.fromEntries(release.tracks.filter(track => track.sourceId).map(track => [track.id, { fileId: track.sourceId, providerTrackId: track.providerTrackId, method: 'Текущий выбранный источник', included: !trackId || track.id === trackId }])) };
+  return { mode: 'local', groupId: null, target: structuredClone(release), localReleaseId: release.id, assignments: Object.fromEntries(release.tracks.filter(track => track.sourceId).map(track => [track.id, { sourceIds: [...(track.sourceIds || [track.sourceId])], selectedSourceId: track.sourceId, providerTrackId: track.providerTrackId, method: 'Текущий выбранный источник', included: !trackId || track.id === trackId }])) };
 }
 
 function planRows(plan) {
@@ -326,7 +355,7 @@ function planRows(plan) {
   return plan.target.tracks.map(targetTrack => {
     const assignment = plan.assignments[targetTrack.id];
     const track = existing?.tracks.find(item => item.position === targetTrack.position);
-    const file = assignment && demoFiles[assignment.fileId];
+    const file = assignment && demoFiles[selectedSourceId(assignment)];
     const provider = assignment?.providerTrackId && findProviderTrack(assignment.providerTrackId);
     const nextTrack = plan.mode === 'local' ? { ...(track || targetTrack), recordingId: provider?.track.recordingId || track?.recordingId } : { ...targetTrack, sourceId: file?.id };
     const nextTags = tagsForLocal(plan.mode === 'local' ? existing || plan.target : plan.target, nextTrack);
@@ -336,19 +365,35 @@ function planRows(plan) {
   });
 }
 
+const trackSourceIds = track => [...new Set([...(track?.sourceIds || []), ...(track?.sourceId ? [track.sourceId] : [])])];
+
+function pendingSourceAssociations(plan, rows = planRows(plan)) {
+  const existing = localRelease(plan.localReleaseId);
+  return rows.filter(row => {
+    const assigned = associatedSourceIds(row.assignment);
+    if (!assigned.length) return false;
+    const track = existing?.tracks.find(item => item.position === row.targetTrack.position);
+    const persisted = new Set(trackSourceIds(track));
+    return assigned.some(id => !persisted.has(id));
+  });
+}
+
 function publications() {
   if (!ui.plan) ui.plan = makeGroupPlan();
   const plan = ui.plan;
   const rows = planRows(plan);
   const active = rows.filter(row => row.assignment?.included && row.file);
   const changed = active.filter(row => row.action !== 'Без изменений');
+  const linkChanges = pendingSourceAssociations(plan, rows).length;
   const g = plan.groupId && incomingGroups.find(item => item.id === plan.groupId);
-  const kept = g ? g.fileIds.filter(id => !active.some(row => row.file.id === id)).length : 0;
+  const publishedFileIds = new Set(active.map(row => row.file.id));
+  const kept = g ? [...new Set(g.fileIds)].filter(id => !publishedFileIds.has(id)).length : 0;
+  const canConfirm = changed.length > 0 || linkChanges > 0;
   return header(`План: ${plan.target.title}`, 'Частичный релиз допустим. Выбранные позиции публикуются, остальные файлы и позиции не изменяются.', `${link(plan.groupId ? `match/${plan.groupId}` : `release/${plan.localReleaseId}`, 'Вернуться к назначениям', 'button')}${link('publication-list', 'Проект списка текущих публикаций', 'button')}`) +
-    `<div class="inline-summary">${badge(`${active.length} / ${plan.target.tracks.length} выбрано`, 'success')}<span>${changed.length} изменений</span><span>${kept} файлов без публикации останутся во входящих</span><span>MKA · remux без перекодирования</span></div>` +
-    panel('Позиции и последствия', table(['Включить', '№ / трек', 'Источник', 'Сейчас опубликовано', 'Будет записано', 'Действие'], rows.map(row => [`<input type="checkbox" data-plan-include="${row.targetTrack.id}" aria-label="Включить ${esc(row.targetTrack.title)}" ${row.assignment?.included ? 'checked' : ''} ${!row.file ? 'disabled' : ''}>`, `${row.targetTrack.position} · ${esc(row.targetTrack.title)}`, row.file ? `${esc(row.file.name)}<span class="sub">${row.file.codec}</span>` : 'Нет файла', row.previous ? `${row.previous.codec}<span class="sub">${showTag(row.previous.tags.TITLE)}</span>` : 'Нет публикации', `${showTag(row.nextTags.TITLE)}<span class="sub">${showTag(row.nextTags.ALBUM)}</span>`, badge(row.action, row.action === 'Пропустить' ? '' : 'info')]))) +
+    `<div class="inline-summary">${badge(`${active.length} / ${plan.target.tracks.length} выбрано`, 'success')}<span>${changed.length} изменений</span>${linkChanges ? `<span>${linkChanges} позиций: сохранить связи</span>` : ''}<span>${kept} файлов без публикации останутся во входящих</span><span>MKA · remux без перекодирования</span></div>` +
+    panel('Позиции и последствия', table(['Включить', '№ / трек', 'Источник', 'Сейчас опубликовано', 'Будет записано', 'Действие'], rows.map(row => [`<input type="checkbox" data-plan-include="${row.targetTrack.id}" aria-label="Включить ${esc(row.targetTrack.title)}" ${row.assignment?.included && row.file ? 'checked' : ''} ${!row.file ? 'disabled' : ''}>`, `${row.targetTrack.position} · ${esc(row.targetTrack.title)}`, row.file ? `${esc(row.file.name)}<span class="sub">${row.file.codec}</span>` : 'Нет файла', row.previous ? `${row.previous.codec}<span class="sub">${showTag(row.previous.tags.TITLE)}</span>` : 'Нет публикации', `${showTag(row.nextTags.TITLE)}<span class="sub">${showTag(row.nextTags.ALBUM)}</span>`, badge(row.action, row.action === 'Пропустить' ? '' : 'info')]))) +
     note(`<strong>Исходники сохранятся.</strong> ${plan.target.tracks.length - active.length} позиций не включены. Их существующие публикации, если есть, тоже сохранятся. Неразмеченные файлы не удаляются и не считаются обработанными.`) +
-    `<div class="panel-foot mono">Целевой каталог: /srv/music/${esc(artistName(plan.target.artistId))}/${esc(plan.target.year)} - ${esc(plan.target.title)}/<br>Имена: 01 - название.mka · В этом макете файлы на диске не создаются.</div><div class="commit-bar"><div><strong>${changed.length} файлов изменится</strong><span class="sub">${active.length - changed.length} выбранных позиций уже актуальны.</span></div>${button('publish-plan', 'Подтвердить публикацию', changed.length ? '' : 'disabled', true)}</div>`;
+    `<div class="panel-foot mono">Целевой каталог: /srv/music/${esc(artistName(plan.target.artistId))}/${esc(plan.target.year)} - ${esc(plan.target.title)}/<br>Имена: 01 - название.mka · В этом макете файлы на диске не создаются.</div><div class="commit-bar"><div><strong>${changed.length ? `${changed.length} файлов изменится` : 'Аудиофайлы не изменятся'}</strong><span class="sub">${linkChanges ? `${linkChanges} позиций получат новые связи. ` : ''}${active.length ? `${active.length - changed.length} выбранных позиций уже актуальны.` : ''}</span></div>${button('publish-plan', !changed.length && linkChanges ? 'Подтвердить изменения' : 'Подтвердить публикацию', canConfirm ? '' : 'disabled', true)}</div>`;
 }
 
 function publicationList() {
@@ -385,10 +430,13 @@ function applyPlan(plan, automatic = false) {
   }
   let changed = 0;
   for (const row of rows) {
+    const track = release.tracks.find(item => item.position === row.targetTrack.position);
+    if (!track) continue;
+    const assigned = associatedSourceIds(row.assignment);
+    if (assigned.length) track.sourceIds = [...new Set([...trackSourceIds(track), ...assigned])];
     if (!row.assignment?.included || !row.file || row.action === 'Без изменений') continue;
     if (automatic && row.previous && !(row.previous.codec === 'MP3' && row.file.codec === 'FLAC')) continue;
-    const track = release.tracks.find(item => item.position === row.targetTrack.position);
-    track.sourceId = row.file.id;
+    track.sourceId = selectedSourceId(row.assignment);
     track.providerTrackId = row.assignment.providerTrackId || null;
     if (row.provider) track.recordingId = row.provider.track.recordingId;
     track.published = { tags: structuredClone(row.nextTags), codec: row.file.codec, container: 'MKA', sourceId: row.file.id, readAt: 'Только что · демо', path: `/srv/music/${artistName(release.artistId)}/${release.year} - ${release.title}/${String(track.position).padStart(2, '0')} - ${track.title}.mka` };
@@ -492,7 +540,7 @@ function operations() {
 
 function settings() {
   return header('Настройки', 'Тема доступна в верхней панели. Рабочие настройки продукта сохраняются в БД; здесь демонстрация.', button('check-updates', 'Проверить обновления', '', true)) +
-    `<div class="two-columns">${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '--version']]) + `<div class="panel-foot"><div class="field"><label for="settings-tools-path">Persistent tools-directory</label><div class="path-field-control"><input id="settings-tools-path" value="${esc(ui.toolsPath)}" readonly aria-describedby="settings-tools-path-help">${button('pick-tools-path', 'Выбрать папку')}</div><span class="sub" id="settings-tools-path-help">Каталог на сервере для управляемых инструментов.</span></div>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Формула, веса и порог ещё не утверждены'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
+    `<div class="two-columns">${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '-version']]) + `<div class="panel-foot"><div class="field"><label for="settings-tools-path">Persistent tools-directory</label><div class="path-field-control"><input id="settings-tools-path" value="${esc(ui.toolsPath)}" readonly aria-describedby="settings-tools-path-help">${button('pick-tools-path', 'Выбрать папку')}</div><span class="sub" id="settings-tools-path-help">Каталог на сервере для управляемых инструментов.</span></div>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Формула, веса и порог ещё не утверждены'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
 }
 
 function setup() {
@@ -518,11 +566,12 @@ function render(resetScroll = true) {
   if (name === 'match' && incomingGroups.some(item => item.id === id) && ui.groupId !== id) {
     ui.groupId = id; ui.selectedTarget = null; ui.selectedFile = null; ui.recordingTarget = null; ui.providerResults = null; ui.providerQuery = group().mode === 'provider' ? currentTarget().title : '';
   }
-  const renderers = { review, match, library, artist: () => artistPage(id), release: () => releasePage(id), 'create-release': manualReleasePage, track: () => trackPage(id), tags: () => tagsPage(id, scope), sources, publications, 'publication-list': publicationList, operations, settings, setup, components };
+  const renderers = { review, match, library, local: () => window.LocalProviderPrototype.render(), artist: () => artistPage(id), release: () => releasePage(id), 'create-release': manualReleasePage, track: () => trackPage(id), tags: () => tagsPage(id, scope), sources, publications, 'publication-list': publicationList, operations, settings, setup, components };
   const page = Object.hasOwn(renderers, name) ? name : 'review';
   const activeElement = document.activeElement;
   const focusId = activeElement?.id;
   const focusSelector = activeElement instanceof HTMLElement && view.contains(activeElement) ? [...activeElement.attributes].filter(attribute => attribute.name.startsWith('data-')).map(attribute => `[${attribute.name}="${CSS.escape(attribute.value)}"]`).join('') : '';
+  const focusRadio = activeElement instanceof HTMLInputElement && activeElement.type === 'radio' && view.contains(activeElement) ? `input[type="radio"][name="${CSS.escape(activeElement.name)}"][value="${CSS.escape(activeElement.value)}"]` : '';
   const focusRow = activeElement instanceof Element ? activeElement.closest('[data-drop]')?.getAttribute('data-drop') : null;
   view.innerHTML = renderers[page]();
   if (page === 'create-release') window.initManualReleaseForm(view.querySelector('#editor-view'), ui.manualDraft, addManualRelease, draft => { ui.manualDraft = structuredClone(draft); }, confirm);
@@ -537,7 +586,7 @@ function render(resetScroll = true) {
   document.querySelector('#review-count').textContent = String(incomingGroups.filter(item => !item.processed).length);
   if (resetScroll) { document.querySelector('main').scrollTop = 0; heading.focus({ preventScroll: true }); }
   else {
-    const focusTarget = (focusId && document.getElementById(focusId)) || (focusSelector && view.querySelector(focusSelector)) || (focusRow && view.querySelector(`[data-drop="${CSS.escape(focusRow)}"] button`));
+    const focusTarget = (focusId && document.getElementById(focusId)) || (focusRadio && view.querySelector(focusRadio)) || (focusSelector && view.querySelector(focusSelector)) || (focusRow && view.querySelector(`[data-drop="${CSS.escape(focusRow)}"] button`));
     if (focusTarget instanceof HTMLElement) focusTarget.focus({ preventScroll: true });
   }
 }
@@ -595,14 +644,25 @@ document.addEventListener('click', event => {
       for (const g of incomingGroups) {
         const assignments = draft(g);
         const targetRelease = currentTarget(g);
-        if (!g.autoEligible || g.processed || g.mode !== 'provider' || targetRelease.tracks.length !== g.fileIds.length || !targetRelease.tracks.every(track => assignments[track.id]?.confidence === 'high' && assignments[track.id]?.included && assignments[track.id]?.method.startsWith('Авто'))) continue;
+        if (!g.autoEligible || g.processed || g.mode !== 'provider' || targetRelease.tracks.length !== g.fileIds.length || !targetRelease.tracks.every(track => assignmentConfidence(assignments[track.id]) === 'high' && assignments[track.id]?.included && assignmentMethod(assignments[track.id]).startsWith('Авто'))) continue;
         count += applyPlan(makeGroupPlan(g), true); g.processed = true;
       }
       ui.notice = count ? `Демо: автоматически опубликовано ${count} позиций Small Hours. Неполные группы остались в ручном разборе. Файловые операции не выполнялись.` : 'Нет новых полностью уверенных релизов. Автопубликация не повторяет и не понижает качество.';
       render(false); break;
     }
     case 'local-mode': group().mode = 'local'; ui.selectedTarget = null; ui.selectedFile = null; ui.recordingTarget = null; render(false); break;
-    case 'unassign': delete draft()[target.dataset.target]; ui.notice = 'Назначение снято в черновике. Существующая публикация сохранена.'; render(false); break;
+    case 'unassign-source': {
+      const assignments = draft();
+      const assignment = assignments[target.dataset.target];
+      if (!assignment) break;
+      assignment.sourceIds = associatedSourceIds(assignment).filter(id => id !== target.dataset.source);
+      if (selectedSourceId(assignment) === target.dataset.source) assignment.selectedSourceId = null;
+      assignment.method = assignmentMethod(assignment);
+      assignment.confidence = assignmentConfidence(assignment);
+      if (!assignment.sourceIds.length) delete assignments[target.dataset.target];
+      ui.notice = 'Связь снята в черновике. Выбор другого источника или публикации не выполняется.';
+      render(false); break;
+    }
     case 'assign-selected': if (ui.selectedFile) assignFile(ui.selectedFile, target.dataset.target); break;
     case 'find-recording': ui.recordingTarget = target.dataset.target; ui.recordingQuery = currentTarget().tracks.find(track => track.id === ui.recordingTarget).title; ui.recordingResults = null; render(false); document.querySelector('#recording-query').focus(); break;
     case 'close-recording': ui.recordingTarget = null; render(false); break;
@@ -610,6 +670,8 @@ document.addEventListener('click', event => {
       const assignment = draft()[ui.recordingTarget];
       if (!assignment) { notify('Сначала назначьте аудиофайл этой локальной позиции.'); break; }
       assignment.providerTrackId = target.dataset.recording; assignment.method = 'Вручную · recording';
+      const selected = selectedSourceId(assignment);
+      if (selected && assignment.sourceMeta?.[selected]) assignment.sourceMeta[selected].method = assignment.method;
       ui.selectedTarget = ui.recordingTarget; ui.recordingTarget = null;
       ui.notice = 'Связь recording добавлена в черновик. Название и порядок локального сборника сохранены.';
       render(false); break;
@@ -619,9 +681,16 @@ document.addEventListener('click', event => {
     case 'preview-track': { const context = findLocalTrack(target.dataset.track); ui.plan = makeReleasePlan(context.release, context.track.id); location.hash = 'publications'; break; }
     case 'publish-plan': {
       const rows = planRows(ui.plan).filter(row => row.assignment?.included && row.file && row.action !== 'Без изменений');
-      if (!rows.length) break;
+      const links = pendingSourceAssociations(ui.plan);
+      if (!rows.length && !links.length) break;
       const downgrade = rows.some(row => row.downgrade);
-      confirm(`Опубликовать ${rows.length} позиций?`, `<p>${esc(ui.plan.target.title)}. Будут изменены только выбранные строки плана. Остальные позиции и существующие файлы сохраняются.</p>${downgrade ? '<label class="inline-check"><input type="checkbox" id="confirm-downgrade" required>Подтверждаю замену lossless на lossy</label>' : ''}<p>Неразмеченные файлы останутся во входящих. Все исходники сохраняются.</p>${note('Демонстрация: запись аудиофайлов не выполняется.')}`, () => { const count = applyPlan(ui.plan); ui.notice = `Демо: ${count} позиций опубликовано. Невыбранные позиции и неразмеченные файлы не изменены.`; render(false); }); break;
+      const title = rows.length ? `Опубликовать ${rows.length} позиций?` : `Сохранить связи ${links.length} позиций?`;
+      confirm(title, `<p>${esc(ui.plan.target.title)}. ${rows.length ? 'Будут изменены только выбранные строки плана. Остальные позиции и существующие файлы сохраняются.' : 'Аудиофайлы и текущие публикации не изменяются.'}</p>${links.length ? `<p>${links.length} позиций получат новые связи с источниками; выбранный источник и текущая публикация сохраняются.</p>` : ''}${downgrade ? '<label class="inline-check"><input type="checkbox" id="confirm-downgrade" required>Подтверждаю замену lossless на lossy</label>' : ''}<p>Неразмеченные файлы останутся во входящих. Все исходники сохраняются.</p>${note('Демонстрация: запись аудиофайлов не выполняется.')}`, () => {
+        const linkCount = pendingSourceAssociations(ui.plan).length;
+        const count = applyPlan(ui.plan);
+        ui.notice = count ? `Демо: ${count} позиций опубликовано.${linkCount ? ` Связи ${linkCount} позиций сохранены.` : ''} Невыбранные позиции и неразмеченные файлы не изменены.` : `Демо: связи ${linkCount} позиций сохранены. Аудиофайлы и текущие публикации не изменены.`;
+        render(false);
+      }); break;
     }
     case 'edit-title': {
       const { track } = findLocalTrack(target.dataset.track);
@@ -720,6 +789,23 @@ document.addEventListener('keydown', event => {
 document.addEventListener('change', event => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+  if (target.dataset.trackSource) {
+    const context = findLocalTrack(target.dataset.trackSource);
+    if (context && trackSourceIds(context.track).includes(target.value)) {
+      context.track.sourceId = target.value;
+      ui.notice = 'Выбран источник для следующей публикации. Текущая публикация не изменена.';
+      render(false);
+    }
+  }
+  if (target.dataset.selectedSource) {
+    const assignment = draft()[target.dataset.selectedSource];
+    if (assignment) {
+      assignment.selectedSourceId = target.value;
+      assignment.method = assignmentMethod(assignment);
+      assignment.confidence = assignmentConfidence(assignment);
+      render(false);
+    }
+  }
   if (target.dataset.include) { draft()[target.dataset.include].included = target.checked; render(false); }
   if (target.dataset.planInclude) { ui.plan.assignments[target.dataset.planInclude].included = target.checked; render(false); }
   if (target.id === 'differences-only') { ui.differencesOnly = target.checked; render(false); }

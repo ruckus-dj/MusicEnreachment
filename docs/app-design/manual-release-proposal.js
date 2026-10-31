@@ -23,7 +23,8 @@ window.initManualReleaseForm = (root, initial, onCreate, onDraft, askConfirm) =>
       <div class="repeat-fields">
         <div class="field"><label for="artist-name-${id}">Артист (поиск / новое имя)</label><input id="artist-name-${id}" data-value="name" list="artist-options" value="${escapeHTML(value.name)}" placeholder="Начните вводить имя" autocomplete="off"></div>
         <div class="field"><label for="artist-credit-${id}">Отображаемый credit</label><input id="artist-credit-${id}" data-value="credit" value="${escapeHTML(value.credit ?? value.name)}" placeholder="Имя в этом релизе"></div>
-        <div class="field"><label for="artist-role-${id}">Роль / уточнение (если нужно)</label><input id="artist-role-${id}" data-value="role" value="${escapeHTML(value.role)}" placeholder="Например: вокал"></div>
+        <div class="field"><label for="artist-role-${id}">Описание credit (если нужно)</label><input id="artist-role-${id}" data-value="role" value="${escapeHTML(value.role)}" placeholder="Описательный текст"></div>
+        <p class="sub">Это описание — метаданные, не отдельная связь с артистом. Имена композиторов/авторов текста в других метаданных не добавляются в состав артистов.</p>
       </div><span class="sub" data-artist-match>${artistMatch(value.name)}</span>
     </div>`;
   }
