@@ -272,7 +272,7 @@ Table media_variant {
     (quality_score, codec_name)
   }
 
-  Note: 'Для source_sha256 миграция добавляет CHECK octet_length(source_sha256) = 32. Для технических значений добавляются CHECK size_bytes > 0, duration_ms > 0, sample_rate > 0, channels > 0 и проверки остальных необязательных чисел на неотрицательность. Верхнего продуктового лимита длительности/размера нет. Variant с digest сохраняется как переиспользуемый cache без locations, в том числе после удаления последнего root-reference; orphan variant без digest удаляется service layer после завершения удерживающих операций и удаления последней ссылки. Удаление root очищает принадлежащие приложению staged-копии удаляемых источников. Для problem_flags миграция добавляет CHECK (problem_flags >= 0). Provider ambiguity и ошибки внешних сервисов сюда не входят.'
+  Note: 'Для source_sha256 миграция добавляет CHECK octet_length(source_sha256) = 32. Для технических значений добавляются CHECK size_bytes > 0, duration_ms > 0, sample_rate > 0, channels > 0 и проверки остальных необязательных чисел на неотрицательность. Верхнего продуктового лимита длительности/размера нет. Variant с digest не удаляется никогда, в том числе без locations после удаления последнего root-reference, и остаётся переиспользуемым cache, а не историей версий; variant без digest удаляется service layer, когда на него больше не ссылается ни один source_location (track_source links не являются source-ссылками). Удаление root очищает принадлежащие приложению staged-копии удаляемых источников. Для problem_flags миграция добавляет CHECK (problem_flags >= 0). Provider ambiguity и ошибки внешних сервисов сюда не входят.'
 }
 
 Table source_location {
@@ -481,7 +481,7 @@ Table track_source {
     (collection_track_id, selected)
   }
 
-  Note: 'Связь collection_track ↔ media_variant является M:N. Один variant может быть source для tracks разных recordings/MBID. При удалении root удаляются source variants, лишившиеся всех locations; каскадно исчезают соответствующие track_source links, но collection_track и текущие публикации сохраняются. PostgreSQL migration должна добавить partial unique index UNIQUE(collection_track_id) WHERE selected и CHECK границ CUE/manual segment: start >= 0, end > start; full_file не имеет границ.'
+  Note: 'Связь collection_track ↔ media_variant является M:N. Один variant может быть source для tracks разных recordings/MBID. Удаление root не удаляет collection_track и текущие публикации; очистка source associations не задаёт срок хранения анализа. Анализ с SHA-256 не удаляется никогда, без SHA-256 удаляется при отсутствии ссылающегося source_location (см. media_variant). PostgreSQL migration должна добавить partial unique index UNIQUE(collection_track_id) WHERE selected и CHECK границ CUE/manual segment: start >= 0, end > start; full_file не имеет границ.'
 }
 
 Table match_candidate {
