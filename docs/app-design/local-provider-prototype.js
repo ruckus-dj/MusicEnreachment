@@ -40,7 +40,7 @@ window.LocalProviderPrototype = (() => {
   const providerArtistOptions = item => artists.map(artist => `<label class="local-provider-option"><input type="checkbox" name="artistIds" value="${esc(artist.id)}" ${item?.artistIds?.includes(artist.id) ? 'checked' : ''}><span>${esc(artist.name)} <span class="muted">· ${esc(artist.provider)}${artist.provider === 'Local' ? '' : ' · внешняя ссылка, только чтение'} · <code>${esc(artist.key)}</code></span></span></label>`).join('');
   const genrePicker = item => window.GenreLibraryPrototype.renderPicker(item?.genres || []);
   const genreNames = item => (item?.genres || []).map(id => window.GenreLibraryPrototype.get(id)?.name || item?.genreNamesById?.[id]).filter(Boolean).join(', ') || '—';
-  const field = (label, name, value = '', required = false, type = 'text') => `<label class="field">${label}${required ? ' <span class="required">Обязательно</span>' : ' <span class="muted">необязательно</span>'}<input name="${name}" type="${type}" value="${esc(value)}" ${required ? 'required' : ''}></label>`;
+  const field = (label, name, value = '', required = false, type = 'text', describedBy = '') => `<label class="field">${label}${required ? ' <span class="required">Обязательно</span>' : ' <span class="muted">необязательно</span>'}<input name="${name}" type="${type}" value="${esc(value)}" ${required ? 'required' : ''}${describedBy ? ` aria-describedby="${esc(describedBy)}"` : ''}></label>`;
   const durationField = value => `<label class="field">Длительность <span class="muted">необязательно</span><input name="duration" type="text" value="${esc(formatDuration(value.duration_ms))}" aria-describedby="local-provider-duration-hint"></label><small id="local-provider-duration-hint">Целые секунды или М:СС. Отображается как М:СС, хранится в duration_ms.</small><p class="note error" data-duration-error role="alert" hidden></p>`;
 
   function trackRows(item) {
@@ -49,7 +49,8 @@ window.LocalProviderPrototype = (() => {
       const selectedRecording = recording(track.recordingId);
       const options = recordings.map(candidate => `<option value="${esc(candidate.id)}" ${candidate.id === track.recordingId ? 'selected' : ''}>${esc(candidate.title)} · ${esc(candidate.provider)} · ${esc(candidate.key)}</option>`).join('');
       const durationOverride = track.durationInput ?? formatDuration(track.durationOverrideMs);
-      return `<fieldset class="local-provider-track" data-track-index="${index}"><legend>Позиция ${index + 1}</legend><div class="local-provider-track-actions"><button type="button" data-local-action="track-up" data-index="${index}" aria-label="Переместить позицию ${index + 1} выше" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-local-action="track-down" data-index="${index}" aria-label="Переместить позицию ${index + 1} ниже" ${index === tracks.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-local-action="remove-track" data-index="${index}" aria-label="Удалить позицию ${index + 1}">Удалить</button></div><label class="field">Существующая композиция <select name="trackRecording" required><option value="">Выберите композицию…</option>${options}</select></label><p class="local-provider-track-default">По умолчанию: <strong>${esc(selectedRecording?.title || 'Композиция не выбрана')}</strong> · ${formatDuration(selectedRecording?.duration_ms) || 'длительность не указана'} · ${esc(selectedRecording?.artistIds?.map(artistName).join(', ') || 'артисты не указаны')}</p><div class="local-provider-fields">${field('Название в этой позиции · override', 'trackTitleOverride', track.titleOverride || '')}${field('Длительность · override', 'trackDurationOverride', durationOverride)}</div><small>Номер позиции определяется порядком строки. Длительность: целые секунды или М:СС.</small></fieldset>`;
+      const durationErrorId = `local-provider-track-duration-error-${index}`;
+      return `<fieldset class="local-provider-track" data-track-index="${index}"><legend>Позиция ${index + 1}</legend><div class="local-provider-track-actions"><button type="button" data-local-action="track-up" data-index="${index}" aria-label="Переместить позицию ${index + 1} выше" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-local-action="track-down" data-index="${index}" aria-label="Переместить позицию ${index + 1} ниже" ${index === tracks.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-local-action="remove-track" data-index="${index}" aria-label="Удалить позицию ${index + 1}">Удалить</button></div><label class="field">Существующая композиция <select name="trackRecording" required><option value="">Выберите композицию…</option>${options}</select></label><p class="local-provider-track-default">По умолчанию: <strong>${esc(selectedRecording?.title || 'Композиция не выбрана')}</strong> · ${formatDuration(selectedRecording?.duration_ms) || 'длительность не указана'} · ${esc(selectedRecording?.artistIds?.map(artistName).join(', ') || 'артисты не указаны')}</p><div class="local-provider-fields">${field('Название в этой позиции · override', 'trackTitleOverride', track.titleOverride || '')}${field('Длительность · override', 'trackDurationOverride', durationOverride, false, 'text', durationErrorId)}</div><small>Номер позиции определяется порядком строки. Длительность: целые секунды или М:СС.</small><p class="note error" id="${durationErrorId}" data-track-duration-error role="alert" hidden></p></fieldset>`;
     }).join('') : '<p class="empty">Позиции не добавлены. Пустой трек-лист допустим.</p>'}</div>`;
   }
 
@@ -136,15 +137,35 @@ window.LocalProviderPrototype = (() => {
     if (state.type === 'artists') Object.assign(item, { name: text('name'), disambiguation: text('disambiguation'), genres: genreIds, genreNamesById, tags: text('tags') });
     if (state.type === 'releases') {
       const trackRows = [...event.target.querySelectorAll('[data-track-index]')];
-      const tracks = trackRows.map(row => ({
-        recordingId: row.querySelector('[name="trackRecording"]').value,
-        titleOverride: row.querySelector('[name="trackTitleOverride"]').value.trim(),
-        durationOverrideMs: parseDuration(row.querySelector('[name="trackDurationOverride"]').value)
-      }));
-      const invalidDuration = trackRows.some(row => Number.isNaN(parseDuration(row.querySelector('[name="trackDurationOverride"]').value)));
-      if (invalidDuration) {
-        state.notice = 'Проверьте длительность override: используйте целые секунды или М:СС с секундами от 00 до 59.';
-        refresh();
+      const invalidDurations = [];
+      const tracks = trackRows.map(row => {
+        const durationInput = row.querySelector('[name="trackDurationOverride"]');
+        const durationOverrideMs = parseDuration(durationInput.value);
+        if (Number.isNaN(durationOverrideMs)) invalidDurations.push({ row, durationInput });
+        return {
+          recordingId: row.querySelector('[name="trackRecording"]').value,
+          titleOverride: row.querySelector('[name="trackTitleOverride"]').value.trim(),
+          durationOverrideMs
+        };
+      });
+      trackRows.forEach(row => {
+        const error = row.querySelector('[data-track-duration-error]');
+        if (error) {
+          error.textContent = '';
+          error.hidden = true;
+        }
+        row.querySelector('[name="trackDurationOverride"]').removeAttribute('aria-invalid');
+      });
+      if (invalidDurations.length) {
+        invalidDurations.forEach(({ row, durationInput }) => {
+          const error = row.querySelector('[data-track-duration-error]');
+          if (error) {
+            error.textContent = 'Проверьте длительность override: используйте целые секунды или М:СС с секундами от 00 до 59.';
+            error.hidden = false;
+          }
+          durationInput.setAttribute('aria-invalid', 'true');
+        });
+        invalidDurations[0].durationInput.focus({ preventScroll: true });
         return true;
       }
       Object.assign(item, { release_group_title: text('release_group_title'), title: text('title'), primaryType: text('primaryType'), secondaryTypes: text('secondaryTypes').split(',').map(value => value.trim()).filter(Boolean), language: text('language'), country_code: text('country_code'), release_date: text('release_date'), status: text('status'), packaging: text('packaging'), label: text('label'), catalog_number: text('catalog_number'), barcode: text('barcode'), disambiguation: text('disambiguation'), genres: genreIds, genreNamesById, artistIds: form.getAll('artistIds').map(String), tracks });
@@ -188,7 +209,7 @@ window.LocalProviderPrototype = (() => {
   document.addEventListener('click', event => {
     if (!(event.target instanceof Element) || !location.hash.startsWith('#local')) return;
     const target = event.target.closest('[data-local-action]');
-    if (!target || !state.editing || state.type !== 'releases') return;
+    if (!target || (!state.editing && !state.creating) || state.type !== 'releases') return;
     const rows = [...document.querySelectorAll('#local-provider-form [data-track-index]')];
     const tracks = rows.map(row => ({ recordingId: row.querySelector('[name="trackRecording"]').value, titleOverride: row.querySelector('[name="trackTitleOverride"]').value, durationInput: row.querySelector('[name="trackDurationOverride"]').value }));
     const index = Number(target.dataset.index);
@@ -198,8 +219,7 @@ window.LocalProviderPrototype = (() => {
     else if (target.dataset.localAction === 'track-down' && index < tracks.length - 1) [tracks[index + 1], tracks[index]] = [tracks[index], tracks[index + 1]];
     else return;
     const form = document.querySelector('#local-provider-form');
-    const formData = new FormData(form);
-    const previewItem = { ...selected(), tracks };
+    const previewItem = { ...(state.creating ? {} : selected()), tracks };
     const tracklist = form.querySelector('.local-provider-tracklist');
     tracklist.outerHTML = trackRows(previewItem);
     event.stopImmediatePropagation();
