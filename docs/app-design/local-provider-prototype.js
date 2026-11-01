@@ -41,6 +41,7 @@ window.LocalProviderPrototype = (() => {
   const genrePicker = item => window.GenreLibraryPrototype.renderPicker(item?.genres || []);
   const genreNames = item => (item?.genres || []).map(id => window.GenreLibraryPrototype.get(id)?.name || item?.genreNamesById?.[id]).filter(Boolean).join(', ') || '—';
   const field = (label, name, value = '', required = false, type = 'text') => `<label class="field">${label}${required ? ' <span class="required">Обязательно</span>' : ' <span class="muted">необязательно</span>'}<input name="${name}" type="${type}" value="${esc(value)}" ${required ? 'required' : ''}></label>`;
+  const durationField = value => `<label class="field">Длительность <span class="muted">необязательно</span><input name="duration" type="text" value="${esc(formatDuration(value.duration_ms))}" aria-describedby="local-provider-duration-hint"></label><small id="local-provider-duration-hint">Целые секунды или М:СС. Отображается как М:СС, хранится в duration_ms.</small><p class="note error" data-duration-error role="alert" hidden></p>`;
 
   function trackRows(item) {
     const tracks = item?.tracks || [];
@@ -73,7 +74,7 @@ window.LocalProviderPrototype = (() => {
     } else if (state.type === 'releases') {
       fields = `${field('Название группы релизов', 'release_group_title', value.release_group_title, true)}${field('Название издания', 'title', value.title, true)}<div class="local-provider-fields">${field('Основной тип группы релизов', 'primaryType', value.primaryType)}${field('Дополнительные типы · через запятую', 'secondaryTypes', (value.secondaryTypes || []).join(', '))}${field('Язык', 'language', value.language)}${field('Страна', 'country_code', value.country_code)}${field('Дата', 'release_date', value.release_date)}${field('Статус', 'status', value.status)}${field('Упаковка', 'packaging', value.packaging)}${field('Лейбл', 'label', value.label)}${field('Каталожный номер', 'catalog_number', value.catalog_number)}${field('Штрихкод', 'barcode', value.barcode)}${field('Уточнение', 'disambiguation', value.disambiguation)}</div>${genrePicker(value)}<small>Жанры релиза относятся только к релизу и не наследуются артистами или композициями.</small><fieldset class="local-provider-links"><legend>Артисты релиза · ссылки на существующие provider_artist</legend>${providerArtistOptions(value)}<small>Выбор сохраняет provider ownership и native key; копия записи не создаётся.</small></fieldset>${trackRows(value)}<p class="muted">Script не вводится.</p>`;
     } else {
-      fields = `${field('Название композиции', 'title', value.title, true)}${field('Длительность, мс', 'duration_ms', value.duration_ms, false, 'number')}${field('Уточнение', 'disambiguation', value.disambiguation)}<label class="field">Explicit <span class="muted">необязательно</span><select name="explicit"><option value="" ${value.explicit === '' ? 'selected' : ''}>Не указано</option><option value="true" ${value.explicit === 'true' ? 'selected' : ''}>Да</option><option value="false" ${value.explicit === 'false' ? 'selected' : ''}>Нет</option></select></label>${field('ISRC · через запятую', 'isrcs', value.isrcs)}${genrePicker(value)}${field('Теги · через запятую', 'tags', value.tags)}<fieldset class="local-provider-links"><legend>Исполнители · ссылки на существующие provider_artist</legend>${providerArtistOptions(value)}<small>Выбор сохраняет provider ownership и native key; копия записи не создаётся.</small></fieldset>`;
+      fields = `${field('Название композиции', 'title', value.title, true)}${durationField(value)}${field('Уточнение', 'disambiguation', value.disambiguation)}<label class="field">Explicit <span class="muted">необязательно</span><select name="explicit"><option value="" ${value.explicit === '' ? 'selected' : ''}>Не указано</option><option value="true" ${value.explicit === 'true' ? 'selected' : ''}>Да</option><option value="false" ${value.explicit === 'false' ? 'selected' : ''}>Нет</option></select></label>${field('ISRC · через запятую', 'isrcs', value.isrcs)}${genrePicker(value)}${field('Теги · через запятую', 'tags', value.tags)}<fieldset class="local-provider-links"><legend>Исполнители · ссылки на существующие provider_artist</legend>${providerArtistOptions(value)}<small>Выбор сохраняет provider ownership и native key; копия записи не создаётся.</small></fieldset>`;
     }
     return `<form id="local-provider-form" class="local-provider-form"><div class="local-provider-form-heading"><div><h2>${state.creating ? currentType().create : currentType().edit}</h2><p class="muted">Только in-memory демонстрация. Обязательны лишь отмеченные поля DBML.</p></div></div>${fields}<div class="actions">${button('cancel', 'Отмена')}${button('save', state.creating ? currentType().create : 'Сохранить изменения', true)}</div></form>`;
   }
@@ -84,7 +85,7 @@ window.LocalProviderPrototype = (() => {
     let detail;
     if (state.type === 'artists') detail = [['Жанры', genreNames(item)], ['Теги', item.tags || '—'], ['Связанные релизы', releases.filter(release => release.artistIds.includes(item.id)).map(release => release.title).join(', ') || '—']];
     else if (state.type === 'releases') detail = [['Группа релизов', item.release_group_title], ['Артисты', item.artistIds.map(artistName).join(', ') || '—'], ['Жанры', genreNames(item)], ['Основной тип', item.primaryType || '—'], ['Дополнительные типы', item.secondaryTypes?.join(', ') || '—'], ['Язык', item.language || '—'], ['Позиции · носитель 1', String(item.tracks?.length || 0)], ['Дата', item.release_date || '—'], ['Страна', item.country_code || '—'], ['Лейбл', item.label || '—'], ['Каталожный номер', item.catalog_number || '—']];
-    else detail = [['Артисты', item.artistIds.map(artistName).join(', ') || '—'], ['Длительность', item.duration_ms ? `${item.duration_ms} мс` : '—'], ['ISRC', item.isrcs || '—'], ['Жанры', genreNames(item)]];
+    else detail = [['Артисты', item.artistIds.map(artistName).join(', ') || '—'], ['Длительность', formatDuration(item.duration_ms) || '—'], ['ISRC', item.isrcs || '—'], ['Жанры', genreNames(item)]];
     return `<div class="local-provider-detail-heading"><div><span class="eyebrow">${esc(item.provider)} · ${esc(currentType().entity)}</span><h2>${esc(title)}</h2></div>${item.provider === 'Local' ? button('edit', 'Редактировать') : ''}</div><dl class="local-provider-facts">${detail.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}<div><dt>Provider key</dt><dd><code>${esc(item.key)}</code></dd></div></dl><div class="note">Редактирование metadata само по себе не запускает публикацию. Удаление и поведение зависимостей этим экраном не определяются.</div>`;
   }
 
@@ -148,7 +149,21 @@ window.LocalProviderPrototype = (() => {
       }
       Object.assign(item, { release_group_title: text('release_group_title'), title: text('title'), primaryType: text('primaryType'), secondaryTypes: text('secondaryTypes').split(',').map(value => value.trim()).filter(Boolean), language: text('language'), country_code: text('country_code'), release_date: text('release_date'), status: text('status'), packaging: text('packaging'), label: text('label'), catalog_number: text('catalog_number'), barcode: text('barcode'), disambiguation: text('disambiguation'), genres: genreIds, genreNamesById, artistIds: form.getAll('artistIds').map(String), tracks });
     }
-    if (state.type === 'recordings') Object.assign(item, { title: text('title'), duration_ms: text('duration_ms'), disambiguation: text('disambiguation'), explicit: text('explicit'), isrcs: text('isrcs'), genres: genreIds, genreNamesById, tags: text('tags'), artistIds: form.getAll('artistIds').map(String) });
+    if (state.type === 'recordings') {
+      const durationInput = event.target.querySelector('[name="duration"]');
+      const durationMs = parseDuration(durationInput.value);
+      if (Number.isNaN(durationMs)) {
+        const error = event.target.querySelector('[data-duration-error]');
+        if (error) {
+          error.hidden = false;
+          error.textContent = 'Проверьте длительность: используйте целые секунды или М:СС с секундами от 00 до 59.';
+        }
+        durationInput.setAttribute('aria-invalid', 'true');
+        durationInput.focus({ preventScroll: true });
+        return true;
+      }
+      Object.assign(item, { title: text('title'), duration_ms: durationMs, disambiguation: text('disambiguation'), explicit: text('explicit'), isrcs: text('isrcs'), genres: genreIds, genreNamesById, tags: text('tags'), artistIds: form.getAll('artistIds').map(String) });
+    }
     if (state.creating) currentType().items.unshift(item);
     state.selectedId = item.id;
     state.creating = false;
