@@ -2,7 +2,7 @@
 const view = document.querySelector('#view');
 const dialog = document.querySelector('#confirmation');
 const folderDialog = document.querySelector('#folder-picker');
-const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, manualDraft: null, manualReleaseCount: 0, notice: '', demoDeleteOperations: [], toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false, sourceAddOpen: false, sourceRoots: null, sourcePath: '/mnt/music', sourceMode: '', sourceWorkDirectory: '', folderPicker: null };
+const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, manualDraft: null, manualReleaseCount: 0, notice: '', demoDeleteOperations: [], toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false, sourceAddOpen: false, sourceRoots: null, sourcePath: '/mnt/music', sourceMode: '', sourceWorkDirectory: '', outputCandidate: '', outputDemoExecution: 'idle', folderPicker: null };
 let confirmAction = null;
 let draggedFile = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
@@ -610,9 +610,30 @@ function requestLibraryDeletion(kind, id) {
   });
 }
 
+function outputDirectorySettings() {
+  const blocked = ['running', 'claimed'].includes(ui.outputDemoExecution);
+  const samePath = !ui.outputCandidate || ui.outputCandidate === '/srv/music';
+  const executionLabel = { idle: 'Нет активных операций', queued: 'Есть только ожидающие операции', running: 'Выполняется операция', claimed: 'Операция уже захвачена worker' }[ui.outputDemoExecution];
+  const statusNote = blocked
+    ? note(`Смена заблокирована: ${executionLabel.toLowerCase()}.`, 'warning')
+    : ui.outputDemoExecution === 'queued'
+      ? note('Ожидающие задачи не блокируют смену; при подтверждении все очереди и jobs будут сброшены.', 'warning')
+      : note('Активных операций нет в выбранном демонстрационном состоянии.');
+  return panel('Каталог публикации', `<div class="padded output-directory-settings">
+    <div class="field"><label for="settings-output-current">Текущий output · только чтение</label><input id="settings-output-current" value="/srv/music" readonly></div>
+    <div class="field"><label for="settings-output-candidate">Новый путь · кандидат, ещё не применён</label><div class="path-field-control"><input id="settings-output-candidate" value="${esc(ui.outputCandidate)}" placeholder="Выберите папку на сервере" readonly aria-describedby="settings-output-candidate-help">${button('pick-output-path', 'Выбрать папку')}</div><span class="sub" id="settings-output-candidate-help">Выбор папки только задаёт кандидата. Отмена в picker ничего не меняет.</span></div>
+    <div class="field"><label for="output-demo-execution">Состояние выполнения · только для демонстрации</label><select id="output-demo-execution"><option value="idle" ${ui.outputDemoExecution === 'idle' ? 'selected' : ''}>Нет активных операций</option><option value="queued" ${ui.outputDemoExecution === 'queued' ? 'selected' : ''}>Есть ожидающие операции</option><option value="running" ${ui.outputDemoExecution === 'running' ? 'selected' : ''}>Выполняется операция</option><option value="claimed" ${ui.outputDemoExecution === 'claimed' ? 'selected' : ''}>Операция захвачена worker</option></select><span class="sub">Это демонстрационный переключатель состояния, не настройка продукта. Сейчас: ${esc(executionLabel)}.</span></div>
+    ${statusNote}
+    <div class="output-reset-warning"><strong>Что произойдёт при подтверждении смены</strong><ul><li>Сменится настройка output: <code>/srv/music</code> → <code>${esc(ui.outputCandidate || '—')}</code>.</li><li>Все очереди и jobs будут сброшены; ожидающие задачи смене не препятствуют.</li><li>Все ссылки БД на прежний output, включая строки публикаций и ссылки на размещённые в нём служебные файлы, будут удалены.</li><li>Физические файлы в старом каталоге не удаляются.</li><li>Автоматической повторной публикации не будет.</li><li>Инвентарь источников, сущности библиотеки, связи с источниками и анализы сохраняются.</li></ul></div>
+    <div class="actions">${button('confirm-output-reset', 'Подтвердить смену output', blocked || samePath ? 'disabled' : '', true)}</div>
+    ${samePath && ui.outputCandidate ? '<span class="sub">Кандидат совпадает с текущим output: менять нечего, reset не запускается.</span>' : ''}
+    ${note('Статический макет: реального reset нет. Текущий путь, очереди, БД, файлы и fixture-публикации не изменяются.')}
+  </div>`);
+}
+
 function settings() {
   return header('Настройки', 'Тема доступна в верхней панели. Рабочие настройки продукта сохраняются в БД; здесь демонстрация.', button('check-updates', 'Проверить обновления', '', true)) +
-    `<div class="genre-library-panel">${panel('Библиотека жанров', `${window.GenreLibraryPrototype.statusMarkup()}${window.GenreLibraryPrototype.controls('Загрузить / обновить каталог в демо')}`)}</div><div class="two-columns">${panel('Рабочая папка анализа источников', `<div class="padded"><div class="field"><label for="settings-source-work-path">Общая папка для staged AUDIO-копий</label><div class="path-field-control"><input id="settings-source-work-path" value="${esc(ui.sourceWorkDirectory)}" readonly aria-describedby="settings-source-work-help">${button('pick-source-work-path', 'Выбрать папку')}</div><span class="sub" id="settings-source-work-help">Серверный путь, общий для всех staged-источников; отдельный от output. ${ui.sourceWorkDirectory ? `Текущий выбор: <code>${esc(ui.sourceWorkDirectory)}</code>.` : 'Не задана.'}</span></div><p>Настройте её до начала staged-обработки. Setup и добавление источника не требуют выбора. В реальном продукте смена запрещена, пока папку используют операции или в ней остаются сохранённые копии; автоматического переноса нет.</p>${note('Статический макет не проверяет файловую систему и не моделирует занятые операции или сохранённые копии; путь не проверен.')}</div>`)}${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '-version']]) + `<div class="panel-foot"><div class="field"><label for="settings-tools-path">Persistent tools-directory</label><div class="path-field-control"><input id="settings-tools-path" value="${esc(ui.toolsPath)}" readonly aria-describedby="settings-tools-path-help">${button('pick-tools-path', 'Выбрать папку')}</div><span class="sub" id="settings-tools-path-help">Каталог на сервере для управляемых инструментов.</span></div>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Policy matching-rapidfuzz-v1; применимость ≥0.70. Макет не вычисляет confidence'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
+    `<div class="genre-library-panel">${panel('Библиотека жанров', `${window.GenreLibraryPrototype.statusMarkup()}${window.GenreLibraryPrototype.controls('Загрузить / обновить каталог в демо')}`)}</div><div class="two-columns">${outputDirectorySettings()}${panel('Рабочая папка анализа источников', `<div class="padded"><div class="field"><label for="settings-source-work-path">Общая папка для staged AUDIO-копий</label><div class="path-field-control"><input id="settings-source-work-path" value="${esc(ui.sourceWorkDirectory)}" readonly aria-describedby="settings-source-work-help">${button('pick-source-work-path', 'Выбрать папку')}</div><span class="sub" id="settings-source-work-help">Серверный путь, общий для всех staged-источников; отдельный от output. ${ui.sourceWorkDirectory ? `Текущий выбор: <code>${esc(ui.sourceWorkDirectory)}</code>.` : 'Не задана.'}</span></div><p>Настройте её до начала staged-обработки. Setup и добавление источника не требуют выбора. В реальном продукте смена запрещена, пока папку используют операции или в ней остаются сохранённые копии; автоматического переноса нет.</p>${note('Статический макет не проверяет файловую систему и не моделирует занятые операции или сохранённые копии; путь не проверен.')}</div>`)}${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + -version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '-version']]) + `<div class="panel-foot"><div class="field"><label for="settings-tools-path">Persistent tools-directory</label><div class="path-field-control"><input id="settings-tools-path" value="${esc(ui.toolsPath)}" readonly aria-describedby="settings-tools-path-help">${button('pick-tools-path', 'Выбрать папку')}</div><span class="sub" id="settings-tools-path-help">Каталог на сервере для управляемых инструментов.</span></div>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Policy matching-rapidfuzz-v1; применимость ≥0.70. Макет не вычисляет confidence'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
 }
 
 function setup() {
@@ -796,14 +817,43 @@ document.addEventListener('click', event => {
     }
     case 'pick-tools-path': openFolderPicker('tools', ui.toolsPath); break;
     case 'pick-source-work-path': openFolderPicker('source-work', ui.sourceWorkDirectory || undefined); break;
+    case 'pick-output-path': openFolderPicker('output', ui.outputCandidate || '/srv/music'); break;
+    case 'confirm-output-reset': {
+      const candidatePath = ui.outputCandidate;
+      if (!candidatePath || candidatePath === '/srv/music') {
+        notify('Выберите путь, отличный от текущего output.');
+        break;
+      }
+      if (['running', 'claimed'].includes(ui.outputDemoExecution)) {
+        notify('Смена output заблокирована: выполняется или захвачена операция.');
+        render(false);
+        break;
+      }
+      confirm('Подтвердить смену каталога публикации?', `<p><strong>/srv/music → ${esc(candidatePath)}</strong></p><p>Все очереди и jobs будут сброшены. Ожидающие задачи не блокируют смену.</p><p>Все ссылки БД на прежний output, включая строки публикаций и ссылки на размещённые в нём служебные файлы, будут удалены. Физические файлы в старом каталоге не удаляются. Автоматической повторной публикации не будет.</p><p>Инвентарь источников, сущности библиотеки, связи с источниками и анализы сохраняются.</p>${note('Подтверждение только демонстрирует UX. Текущий output, очереди, БД, файлы и fixture-публикации останутся без изменений.')}`, () => {
+        if (['running', 'claimed'].includes(ui.outputDemoExecution)) {
+          notify('Подтверждение устарело: состояние изменилось на выполняющуюся или захваченную операцию. Смена не выполнена.');
+          render(false);
+          return;
+        }
+        if (ui.outputCandidate !== candidatePath) {
+          notify('Подтверждение устарело: демонстрационные параметры изменились. Смена не выполнена.');
+          render(false);
+          return;
+        }
+        notify('В макете текущий output, очереди и fixture-публикации не изменены; реального reset нет.');
+        render(false);
+      });
+      break;
+    }
     case 'folder-cancel': folderDialog.close('cancel'); break;
     case 'folder-choose': {
       const picker = ui.folderPicker;
       if (!picker) break;
-      const returnAction = picker.target === 'tools' ? 'pick-tools-path' : picker.target === 'source-work' ? 'pick-source-work-path' : 'pick-source-path';
+      const returnAction = picker.target === 'tools' ? 'pick-tools-path' : picker.target === 'source-work' ? 'pick-source-work-path' : picker.target === 'output' ? 'pick-output-path' : 'pick-source-path';
       const chosenPath = picker.path;
       if (picker.target === 'tools') { ui.toolsPath = chosenPath; ui.pathChecked = false; ui.notice = 'Демо: выбран серверный каталог. Проверка прав и конфигурации не выполнялась.'; }
       else if (picker.target === 'source-work') { ui.sourceWorkDirectory = chosenPath; ui.notice = 'Демо: общая рабочая папка выбрана и сохранена только в памяти макета. Использование и файлы не проверялись.'; }
+      else if (picker.target === 'output') { ui.outputCandidate = chosenPath; ui.notice = `Демо: выбран кандидат output ${chosenPath}. Текущий путь не изменён; серверный каталог не проверялся.`; }
       else { ui.sourcePath = chosenPath; ui.notice = 'Демо: путь источника выбран. Реальный каталог не проверялся.'; }
       folderDialog.close('choose');
       render(false);
@@ -874,6 +924,11 @@ document.addEventListener('keydown', event => {
 document.addEventListener('change', event => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+  if (target.id === 'output-demo-execution') {
+    ui.outputDemoExecution = target.value;
+    render(false);
+    return;
+  }
   if (target.dataset.trackSource) {
     const context = findLocalTrack(target.dataset.trackSource);
     if (context && trackSourceIds(context.track).includes(target.value)) {
