@@ -14,6 +14,11 @@ const demoAlbums = [
 const demoFiles = {};
 const providerReleases = [];
 const localReleases = [];
+// Explicit recording metadata fixtures, not an artist/release inheritance rule.
+const demoRecordingGenres = {
+  north: ['ambient', 'folk'], hours: ['contemporary jazz'],
+  signals: ['electronic'], rooms: ['ambient', 'folk']
+};
 
 function demoArtist(id) { return demoArtists.find(artist => artist.id === id); }
 
@@ -25,7 +30,7 @@ function providerTags(album, track) {
     ALBUM: album.title ? [album.title] : [], ALBUMARTIST: album.credits?.length ? album.credits.map(credit => credit.credit || credit.name).filter(Boolean) : (demoArtist(album.artistId)?.name ? [demoArtist(album.artistId).name] : []),
     DATE: [album.year], COUNTRY: album.country ? [album.country] : [],
     LABEL: album.label ? [album.label] : [], CATALOGNUMBER: album.catalog ? [album.catalog] : [],
-    TRACKNUMBER: [String(track.displayedNumber || track.mediumPosition || track.position)], DISCNUMBER: [String(track.medium ?? 1)], GENRE: artist?.genre ? [artist.genre] : [],
+    TRACKNUMBER: [String(track.displayedNumber || track.mediumPosition || track.position)], DISCNUMBER: [String(track.medium ?? 1)], GENRE: [...(track.recordingGenres || [])],
     MUSICBRAINZ_ARTISTID: album.manual ? [] : artist ? [`demo-artist-${artist.id}`] : [],
     MUSICBRAINZ_ALBUMID: album.providerId ? [album.providerId] : [],
     MUSICBRAINZ_TRACKID: album.manual ? [] : track.recordingId ? [track.recordingId] : [],
@@ -36,7 +41,7 @@ function providerTags(album, track) {
 for (const album of demoAlbums) {
   const tracks = album.titles.map((title, index) => {
     const artistId = album.id === 'mix' ? ['mira', 'forma', 'arden', 'mira', 'various'][index] : album.artistId;
-    return { id: `${album.id}-t${index + 1}`, position: index + 1, title, duration: album.durations[index], artistId, recordingId: album.providerId ? `demo-rec-${album.id}-${index + 1}` : null, sourceId: null, providerTrackId: null, published: null };
+    return { id: `${album.id}-t${index + 1}`, position: index + 1, title, duration: album.durations[index], artistId, recordingId: album.providerId ? `demo-rec-${album.id}-${index + 1}` : null, recordingGenres: [...(demoRecordingGenres[album.id] || [])], sourceId: null, providerTrackId: null, published: null };
   });
   const local = { ...album, tracks };
   delete local.titles;
@@ -50,6 +55,7 @@ for (const album of demoAlbums) {
     if (!available) continue;
     const fileId = `${album.id}-f${track.position}`;
     const raw = providerTags(album, track);
+    raw.GENRE = demoArtist(track.artistId)?.genre ? [demoArtist(track.artistId).genre] : [];
     raw.MUSICBRAINZ_ARTISTID = [];
     raw.MUSICBRAINZ_ALBUMID = [];
     raw.MUSICBRAINZ_TRACKID = [];
@@ -79,6 +85,7 @@ for (const album of demoAlbums) {
     track.providerTrackId = album.providerId ? `${album.providerId}-t${track.position}` : null;
     if (album.id === 'rooms' || album.id === 'signals' || (album.id === 'north' && track.position <= 5)) {
       const tags = structuredClone(raw);
+      tags.GENRE = [...track.recordingGenres];
       track.published = { tags, codec: album.id === 'north' ? 'MP3' : 'FLAC', container: 'MKA', sourceId: album.id === 'north' ? `previous-mp3-${fileId}` : fileId, readAt: '26.09.2026 10:18', path: `/srv/music/${demoArtist(album.artistId).name}/${album.year} - ${album.title}/${String(track.position).padStart(2, '0')} - ${track.title}.mka` };
     }
   }

@@ -344,6 +344,22 @@ dialog p { margin-bottom:10px; }
 .local-provider-links small { display:block; margin-top:6px; color:var(--muted); }
 .local-provider-form .actions { justify-content:flex-end; }
 .local-provider-notice { min-height:28px; padding:6px 0; color:var(--muted); font-size:11px; }
+.genre-library-panel { margin-bottom:10px; }
+.genre-library-status { padding:10px; border:1px solid var(--line); border-radius:var(--control-radius); background:var(--raised); font-size:12px; }
+.genre-library-status p { margin:5px 0; color:var(--muted); }
+.genre-library-status small,.genre-picker small { display:block; margin-top:6px; color:var(--muted); }
+.genre-library-controls { justify-content:flex-start; margin-top:8px; }
+.genre-library-controls .muted { font-size:11px; }
+.setup-genre-library { margin:12px 0; padding:10px; border:1px solid var(--line); border-radius:var(--radius); }
+.setup-genre-library h3 { margin:0 0 8px; }
+.genre-picker { min-width:0; margin:0; padding:8px; border:1px solid var(--line); border-radius:var(--radius); }
+.genre-picker legend { padding:0 4px; font-size:11px; font-weight:600; }
+.genre-picker .field { display:grid; gap:4px; margin-bottom:6px; font-size:11px; }
+.genre-picker-options { display:flex; flex-wrap:wrap; gap:5px; max-height:110px; overflow:auto; }
+.genre-picker-options button { min-height:28px; padding:4px 8px; font-size:11px; }
+.genre-picker-selected { display:flex; flex-wrap:wrap; align-items:center; gap:5px; min-height:26px; margin-top:8px; }
+.genre-chip { display:inline-flex; align-items:center; gap:5px; padding:3px 6px; border-radius:var(--control-radius); background:var(--accent-soft); font-size:11px; }
+.genre-chip button { min-height:20px; padding:0 4px; border:0; background:transparent; font-size:15px; line-height:1; }
 .required { color:var(--warning); font-size:10px; }
 .local-provider-tracklist { display:grid; gap:8px; padding:8px; border:1px solid var(--line); border-radius:var(--radius); }
 .local-provider-tracklist-heading,.local-provider-track-actions { display:flex; align-items:center; justify-content:space-between; gap:6px; }
