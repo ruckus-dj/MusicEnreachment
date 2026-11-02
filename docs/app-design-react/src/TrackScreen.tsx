@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Button, Radio, RadioGroup } from "react-aria-components";
+import { TrackActions } from "./TrackActions";
+import type { DeletionOperation } from "./DeletionRequest";
 import {
 	desiredTags,
 	metadataChanged,
@@ -8,6 +10,7 @@ import {
 	originalProviders,
 	type OriginalRelease,
 	type OriginalTrack,
+	type SourceFiles,
 } from "./catalogData";
 
 const duration = (seconds: number) =>
@@ -39,16 +42,22 @@ export function TrackScreen({
 	track,
 	onSource,
 	onPreview,
+	onMutate,
+	onQueueDeletion,
+	files = originalFiles,
 }: {
 	release: OriginalRelease;
 	track: OriginalTrack;
 	onSource: (id: string) => void;
 	onPreview: () => void;
+	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
+	onQueueDeletion?: (operation: DeletionOperation) => void;
+	files?: SourceFiles;
 }) {
 	const [scope, setScope] = useState<keyof typeof fields>("track");
 	const [differencesOnly, setDifferencesOnly] = useState(false);
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
-	const file = track.sourceId ? originalFiles[track.sourceId] : undefined;
+	const file = track.sourceId ? files[track.sourceId] : undefined;
 	const provider = originalProviders.find((item) =>
 		item.tracks.some((candidate) => candidate.id === track.providerTrackId),
 	);
@@ -98,7 +107,7 @@ export function TrackScreen({
 							onChange={onSource}
 						>
 							{sourceIds.map((id) => {
-								const source = originalFiles[id];
+								const source = files[id];
 								return source ? (
 									<Radio key={id} value={id} className="demo-source">
 										<span aria-hidden="true" className="demo-radio-dot" />
@@ -184,11 +193,15 @@ export function TrackScreen({
 						)}
 						<Button onPress={onPreview}>Предпросмотр публикации</Button>
 					</div>
-					<p className="demo-migration-note">
-						Редактирование, обновление кэша, улучшение аудио, явная
-						перепубликация и удаление ещё не перенесены; эти действия остаются в
-						исходном прототипе.
-					</p>
+					{onMutate && (
+						<TrackActions
+							release={release}
+							track={track}
+							onMutate={onMutate}
+							files={files}
+							onQueueDeletion={onQueueDeletion}
+						/>
+					)}
 				</section>
 			</div>
 			<section className="demo-panel">

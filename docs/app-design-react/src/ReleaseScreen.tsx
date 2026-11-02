@@ -1,4 +1,5 @@
 import { Checkbox } from "react-aria-components";
+import { DeletionRequest, type DeletionOperation } from "./DeletionRequest";
 import {
 	metadataChanged,
 	originalArtistName,
@@ -11,11 +12,13 @@ export function ReleaseScreen({
 	selected,
 	onSelect,
 	onPreview,
+	onQueueDeletion,
 }: {
 	release: OriginalRelease;
 	selected: Set<string>;
 	onSelect: (ids: string[], value: boolean) => void;
 	onPreview: (ids: string[]) => void;
+	onQueueDeletion?: (operation: DeletionOperation) => void;
 }) {
 	const ids = release.tracks.map((track) => track.id);
 	const count = ids.filter((id) => selected.has(id)).length;
@@ -176,9 +179,12 @@ export function ReleaseScreen({
 				</div>
 				{!ids.length && <p>Позиции не добавлены.</p>}
 			</section>
+			{onQueueDeletion && (
+				<DeletionRequest release={release} onQueue={onQueueDeletion} />
+			)}
 			<p className="demo-migration-note">
-				Удаление альбома, ручной черновик и сравнение метаданных на уровне
-				издания ещё не перенесены.
+				Ручной черновик и сравнение метаданных на уровне издания ещё не
+				перенесены.
 			</p>
 		</section>
 	);

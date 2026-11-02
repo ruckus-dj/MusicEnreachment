@@ -10,7 +10,9 @@ export interface OriginalTrack {
 	providerTrackId?: string | null;
 	recordingTitle?: string;
 	providerTitle?: string;
-	observedFile?: { mtime?: string; state?: string };
+	providerCacheVersion?: number;
+	recovered?: boolean;
+	observedFile?: { mtime?: string; state?: string } | null;
 	sourceId: string | null;
 	sourceIds?: string[];
 	published: null | {
@@ -48,23 +50,24 @@ export interface OriginalRelease {
 }
 
 export const originalReleases: OriginalRelease[] = original.releases;
+export const recoveryFixture = original.recoveryFixture;
 export const originalArtistName = (id: string) =>
 	original.artists.find((artist) => artist.id === id)?.name ??
 	"Артист не указан";
-export const originalFiles: Record<
-	string,
-	{
-		id: string;
-		name: string;
-		duration: number;
-		size: string;
-		tags: Record<string, string[]>;
-		available: boolean;
-		locations?: unknown[];
-		path: string;
-		codec: string;
-	}
-> = original.files;
+export interface SourceFile {
+	id: string;
+	name: string;
+	duration: number;
+	size: string;
+	tags: Record<string, string[]>;
+	available: boolean;
+	locations?: { id: string; rootId: string; path: string }[];
+	sha256?: string | null;
+	path: string;
+	codec: string;
+}
+export type SourceFiles = Record<string, SourceFile>;
+export const originalFiles: SourceFiles = original.files;
 export const originalProviders: OriginalRelease[] =
 	original.providerReleases.map((release) => ({
 		...release,
@@ -78,12 +81,13 @@ export const originalProviders: OriginalRelease[] =
 export function applyMetadataPreview(
 	releases: OriginalRelease[],
 	selected: Set<string>,
+	files: SourceFiles = originalFiles,
 ): OriginalRelease[] {
 	const next = structuredClone(releases);
 	for (const release of next)
 		for (const track of release.tracks) {
 			if (!selected.has(track.id)) continue;
-			const file = track.sourceId ? originalFiles[track.sourceId] : undefined;
+			const file = track.sourceId ? files[track.sourceId] : undefined;
 			if (!track.published && !(file?.available && file.locations?.length))
 				continue;
 			if (track.published && !metadataChanged(release, track)) continue;

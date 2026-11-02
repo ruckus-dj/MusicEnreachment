@@ -7,6 +7,7 @@ import {
 	metadataChanged,
 	desiredTags,
 	type OriginalRelease,
+	type SourceFiles,
 } from "./catalogData";
 
 export function PublicationPreview({
@@ -14,18 +15,20 @@ export function PublicationPreview({
 	onBack,
 	releases = originalReleases,
 	onApply,
+	files = originalFiles,
 }: {
 	selected: Set<string>;
 	onBack: () => void;
 	releases?: OriginalRelease[];
 	onApply?: () => void;
+	files?: SourceFiles;
 }) {
 	const [confirming, setConfirming] = useState(false);
 	const rows = releases.flatMap((release) =>
 		release.tracks
 			.filter((track) => selected.has(track.id))
 			.map((track) => {
-				const file = track.sourceId ? originalFiles[track.sourceId] : null;
+				const file = track.sourceId ? files[track.sourceId] : null;
 				const usable = file?.available && file.locations?.length ? file : null;
 				const action = !track.published
 					? usable

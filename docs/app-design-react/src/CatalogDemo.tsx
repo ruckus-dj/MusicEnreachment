@@ -1,14 +1,24 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Checkbox } from "react-aria-components";
 import {
 	catalogData,
 	originalReleases,
 	applyMetadataPreview,
+	originalFiles,
 } from "./catalogData";
-import { ThemeControl } from "./ThemeControl";
 import { PublicationPreview } from "./PublicationPreview";
 import { TrackScreen } from "./TrackScreen";
 import { ReleaseScreen } from "./ReleaseScreen";
+import { OperationsScreen } from "./OperationsScreen";
+import type { DeletionOperation } from "./DeletionRequest";
+import { recoveryFixture } from "./catalogData";
+import { initialSourceRoots, SourcesScreen } from "./SourcesScreen";
+import { removeRootFromInventory } from "./sourceInventory";
+import { SettingsScreen, initialDemoSettings } from "./SettingsScreen";
+import { SetupScreen } from "./SetupScreen";
+import { IncomingScreen } from "./IncomingScreen";
+import { MatchingScreen } from "./MatchingScreen";
+import { createIncomingState } from "./incomingModel";
 
 const subscribeRoute = (listener: () => void) => {
 	window.addEventListener("hashchange", listener);
@@ -50,15 +60,23 @@ function GroupCheckbox({
 }
 
 const trackIds = (tracks: Track[]) => tracks.map((track) => track.id);
-const files: Record<string, { available: boolean; located: boolean }> =
-	catalogData.files;
-const hasAudio = (track: Track) =>
-	track.published ||
-	[...track.sourceIds, ...(track.sourceId ? [track.sourceId] : [])].some(
-		(id) => files[id]?.available && files[id]?.located,
-	);
 
 export function CatalogDemo() {
+	const [incoming, setIncoming] = useState(createIncomingState);
+	const [settings, setSettings] = useState(initialDemoSettings);
+	const [setupStep, setSetupStep] = useState(0);
+	const [files, setFiles] = useState(() => structuredClone(originalFiles));
+	const [sourceRoots, setSourceRoots] = useState(() =>
+		structuredClone(initialSourceRoots),
+	);
+	const [removedRoots, setRemovedRoots] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const hasAudio = (track: Track) =>
+		track.published ||
+		[...track.sourceIds, ...(track.sourceId ? [track.sourceId] : [])].some(
+			(id) => files[id]?.available && files[id]?.locations?.length,
+		);
 	const route = useSyncExternalStore(
 		subscribeRoute,
 		() => window.location.hash.slice(1),
@@ -81,7 +99,23 @@ export function CatalogDemo() {
 	const allTracks = fixture.releases.flatMap((release) => release.tracks);
 	const [view, setView] = useState<View>("artists");
 	const [preview, setPreview] = useState(false);
+	useEffect(() => setPreview(false), [route]);
 	const [contextIds, setContextIds] = useState<string[] | null>(null);
+	const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
+	const queueDeletion = (operation: DeletionOperation) => {
+		setDeletions((previous) => [...previous, operation]);
+		window.location.hash = "operations";
+	};
+	useEffect(() => {
+		const heading = document.querySelector<HTMLElement>(".demo-shell h1");
+		if (heading) {
+			heading.tabIndex = -1;
+			heading.focus({ preventScroll: true });
+			document.title = `${heading.textContent} · MeloTrove · React-макет`;
+		}
+		const main = document.querySelector<HTMLElement>(".demo-shell");
+		if (main) main.tabIndex = -1;
+	}, [route, preview]);
 	const [artistId, setArtistId] = useState<string | null>(null);
 	const [query, setQuery] = useState("");
 	const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -124,12 +158,14 @@ export function CatalogDemo() {
 			<main className="demo-shell">
 				<PublicationPreview
 					selected={contextIds ? new Set(contextIds) : selected}
+					files={files}
 					releases={releases}
 					onApply={() =>
 						setReleases((previous) =>
 							applyMetadataPreview(
 								previous,
 								contextIds ? new Set(contextIds) : selected,
+								files,
 							),
 						)
 					}
@@ -150,8 +186,8 @@ export function CatalogDemo() {
 			);
 		return (
 			<main className="demo-shell">
-				<ThemeControl />
 				<ReleaseScreen
+					onQueueDeletion={queueDeletion}
 					release={release}
 					selected={selected}
 					onSelect={update}
@@ -178,10 +214,23 @@ export function CatalogDemo() {
 			);
 		return (
 			<main className="demo-shell">
-				<ThemeControl />
 				<TrackScreen
+					files={files}
+					onQueueDeletion={queueDeletion}
 					release={release}
 					track={track}
+					onMutate={(updateTrack) =>
+						setReleases((previous) =>
+							previous.map((item) => ({
+								...item,
+								tracks: item.tracks.map((candidate) =>
+									candidate.id === track.id
+										? updateTrack(candidate)
+										: candidate,
+								),
+							})),
+						)
+					}
 					onPreview={() => {
 						setContextIds([track.id]);
 						setPreview(true);
@@ -206,10 +255,133 @@ export function CatalogDemo() {
 			</main>
 		);
 	}
+	if (route === "review")
+		return (
+			<IncomingScreen
+				state={incoming}
+				onState={setIncoming}
+				files={files}
+				releases={releases}
+				onReleases={setReleases}
+			/>
+		);
+	if (route.startsWith("match/"))
+		return (
+			<MatchingScreen
+				groupId={route.slice(6)}
+				state={incoming}
+				onState={setIncoming}
+				files={files}
+				releases={releases}
+				onReleases={setReleases}
+			/>
+		);
+	if (route === "settings")
+		return (
+			<main className="demo-shell">
+				<SettingsScreen settings={settings} onSettings={setSettings} />
+			</main>
+		);
+	if (route === "setup")
+		return (
+			<main className="demo-shell">
+				<SetupScreen
+					settings={settings}
+					onSettings={setSettings}
+					step={setupStep}
+					onStepChange={setSetupStep}
+				/>
+			</main>
+		);
+	if (route === "sources")
+		return (
+			<main className="demo-shell">
+				<SourcesScreen
+					roots={sourceRoots}
+					onRoots={setSourceRoots}
+					files={files}
+					removed={removedRoots}
+					workDirectory={settings.workDirectory}
+					onRemove={(id) => {
+						const next = removeRootFromInventory(files, releases, id);
+						setIncoming((previous) => {
+							const updated = structuredClone(previous);
+							for (const group of updated.groups) {
+								group.fileIds = group.fileIds.filter(
+									(fileId) => !next.orphaned.has(fileId),
+								);
+								for (const assignments of Object.values(group.drafts))
+									for (const assignment of Object.values(assignments)) {
+										assignment.sourceIds = assignment.sourceIds.filter(
+											(fileId) => !next.orphaned.has(fileId),
+										);
+										if (
+											assignment.selectedSourceId &&
+											next.orphaned.has(assignment.selectedSourceId)
+										)
+											assignment.selectedSourceId = null;
+										for (const fileId of next.orphaned)
+											delete assignment.sourceMeta[fileId];
+									}
+							}
+							updated.inventoryVersion++;
+							return updated;
+						});
+						setFiles(next.files);
+						setReleases(next.releases);
+						setRemovedRoots((previous) => new Set([...previous, id]));
+					}}
+				/>
+			</main>
+		);
+	if (route === "operations")
+		return (
+			<main className="demo-shell">
+				<OperationsScreen
+					releases={releases}
+					deletions={deletions}
+					onRecover={() =>
+						setReleases((previous) =>
+							previous.map((release) => ({
+								...release,
+								tracks: release.tracks.map((track) =>
+									track.id === recoveryFixture.trackId && track.published
+										? {
+												...track,
+												recovered: true,
+												metadataBaseline: structuredClone(track.published.tags),
+												metadataBaselineExtras: {
+													coverHash: track.published.coverHash || null,
+													lyrics: track.published.lyrics || null,
+												},
+											}
+										: track,
+								),
+							})),
+						)
+					}
+				/>
+			</main>
+		);
+	if (route && route !== "library")
+		return (
+			<main className="demo-shell">
+				<h1>Экран ещё не перенесён</h1>
+				<p>
+					Маршрут: {route}. Чтобы не подменять исходный сценарий упрощённой
+					демонстрацией, он пока доступен только в старом прототипе.
+				</p>
+				<a href={`/reference/index.html#${encodeURI(route)}`}>
+					Открыть исходный экран
+				</a>
+				<p>
+					<a href="#library">К медиатеке React</a>
+				</p>
+			</main>
+		);
 	return (
 		<main className="demo-shell">
 			<header>
-				<ThemeControl />
 				<p className="demo-eyebrow">MeloTrove · стенд в разработке</p>
 				<h1>{artistId ? artistName(artistId) : "Медиатека"}</h1>
 				<p>Демонстрационные данные · перенесён только выбор в каталоге</p>
