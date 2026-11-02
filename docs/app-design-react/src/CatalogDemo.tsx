@@ -772,10 +772,10 @@ export function CatalogDemo({
 										Все
 									</Radio>
 									<Radio value="published" className="catalogue-segment">
-										Опубликованные
+										Есть
 									</Radio>
 									<Radio value="unpublished" className="catalogue-segment">
-										Не опубликованные
+										Нет
 									</Radio>
 								</div>
 							</RadioGroup>

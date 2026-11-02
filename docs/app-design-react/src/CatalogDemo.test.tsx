@@ -65,7 +65,7 @@ it("renders independent keyboard-operable radio segments for both filters", () =
 		name: "В наличии",
 	});
 	const published = within(publication).getByRole("radio", {
-		name: "Опубликованные",
+		name: "Есть",
 	});
 
 	expect(allAvailability).toBeChecked();

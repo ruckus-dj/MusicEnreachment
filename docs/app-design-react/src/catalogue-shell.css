@@ -87,10 +87,24 @@
 .artist-card-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; color: #ffffffbd; font-size: 10px; line-height: 1.25; }
 .artist-card-stats > span { min-width: 0; }
 .artist-card-stats strong { color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
-.artist-card-selection { position: absolute; z-index: 2; top: 10px; left: 10px; display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #ffffff6b; border-radius: 8px; background: #101415a8; box-shadow: 0 2px 8px #0003; }
-.artist-card-selection .demo-checkbox { width: 32px; height: 32px; }
-.artist-card-selection .demo-checkbox-box { border-color: #fff; background: #ffffff22; }
-.artist-card-selection .demo-checkbox[data-selected] .demo-checkbox-box, .artist-card-selection .demo-checkbox[data-indeterminate] .demo-checkbox-box { color: #17201d; border-color: #fff; background: #fff; }
+.artist-card-selection { position: absolute; z-index: 2; top: 9px; left: 9px; display: grid; width: 24px; height: 24px; place-items: center; }
+.artist-card-selection .demo-checkbox { width: 24px; height: 24px; }
+.artist-card-selection .demo-checkbox-box { width: 16px; height: 16px; border: 1.5px solid #ffffffd9; border-radius: 4px; background-color: #1014154d; color: transparent; font-size: 0; transition: background-color .12s ease, border-color .12s ease; }
+.artist-card-selection .demo-checkbox[data-hovered]:not([data-selected]):not([data-indeterminate]) .demo-checkbox-box { border-color: #fff; background-color: #10141580; }
+.artist-card-selection .demo-checkbox[data-selected] .demo-checkbox-box, .artist-card-selection .demo-checkbox[data-indeterminate] .demo-checkbox-box { border-color: #fff; background-color: #fff; background-position: center; background-repeat: no-repeat; background-size: 12px 12px; }
+.artist-card-selection .demo-checkbox[data-selected] .demo-checkbox-box { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='%2317201d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.artist-card-selection .demo-checkbox[data-indeterminate] .demo-checkbox-box { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8h8' fill='none' stroke='%2317201d' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"); }
+.artist-card-selection .demo-checkbox[data-focus-visible] .demo-checkbox-box { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 4px #10141580; }
+.artist-card-selection .demo-checkbox[data-disabled] .demo-checkbox-box { opacity: .45; }
+.artist-card { transition: transform .18s ease; }
+.artist-card-art { transition: box-shadow .18s ease; }
+.artist-card-art::before, .artist-card-art::after { transition: transform .3s ease; }
+@media (hover: hover) and (pointer: fine) {
+	.artist-card:hover { transform: translateY(-3px); }
+	.artist-card:hover .artist-card-art { box-shadow: 0 14px 32px color-mix(in srgb, var(--artist-color) 30%, transparent); }
+	.artist-card:hover .artist-card-art::before { transform: rotate(-18deg) scale(1.04); }
+	.artist-card:hover .artist-card-art::after { transform: scale(1.05); }
+}
 .catalogue-shell .demo-absent { margin-top: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
 .catalogue-shell .demo-absent h2 { margin: 0 0 4px; font-size: 15px; }
 .catalogue-shell .demo-absent p { margin: 4px 0 12px; color: var(--muted); font-size: 12px; }
@@ -156,4 +170,4 @@
 	.catalogue-object .demo-facts dd { margin: 0 0 7px; }
 	.catalogue-edition-trigger { align-items: flex-start; }
 }
-@media (prefers-reduced-motion: reduce) { .catalogue-shell *, .catalogue-object * { scroll-behavior: auto; transition-duration: .01ms; } }
+@media (prefers-reduced-motion: reduce) { .catalogue-shell *, .catalogue-object * { scroll-behavior: auto; transition-duration: .01ms; } .artist-card, .artist-card-art, .artist-card-art::before, .artist-card-art::after { transition: none; } .artist-card:hover, .artist-card:has(:focus-visible) { transform: none; } .artist-card:hover .artist-card-art::before, .artist-card:has(:focus-visible) .artist-card-art::before { transform: rotate(-18deg); } .artist-card:hover .artist-card-art::after, .artist-card:has(:focus-visible) .artist-card-art::after { transform: none; } }
