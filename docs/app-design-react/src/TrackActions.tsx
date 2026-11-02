@@ -1,12 +1,19 @@
 import { useState } from "react";
+import "./matching-publication.css";
 import { DeletionRequest, type DeletionOperation } from "./DeletionRequest";
 import {
 	Button,
 	Checkbox,
+	Disclosure,
+	DisclosureGroup,
+	DisclosurePanel,
 	Dialog,
 	Heading,
+	Input,
+	Label,
 	Modal,
-} from "react-aria-components";
+	TextField,
+} from "./ui";
 import {
 	originalFiles,
 	type OriginalRelease,
@@ -53,49 +60,53 @@ export function TrackActions({
 	};
 	return (
 		<>
-			<details>
-				<summary>Другие действия</summary>
-				<div className="demo-object-actions">
-					<Button onPress={() => open("rename")}>
-						Изменить локальное название
-					</Button>
-					<Button
-						onPress={() => {
-							onMutate(refreshProviderHint);
-							setNotice(
-								"Кэш провайдера обновлён отдельно. Публикация и снимок метаданных не изменились.",
-							);
-						}}
-					>
-						Обновить кэш провайдера
-					</Button>
-					{track.published?.codec === "MP3" && file?.codec === "FLAC" && (
-						<Button onPress={() => open("upgrade")}>
-							Демо: улучшить только качество аудио
-						</Button>
-					)}
-					{track.published && (
-						<Button
-							onPress={() => {
-								if (file) open("republish");
-								else
+			<DisclosureGroup>
+				<Disclosure id="track-actions">
+					<Button slot="trigger">Другие действия</Button>
+					<DisclosurePanel>
+						<div className="demo-object-actions">
+							<Button onPress={() => open("rename")}>
+								Изменить локальное название
+							</Button>
+							<Button
+								onPress={() => {
+									onMutate(refreshProviderHint);
 									setNotice(
-										"Для явной перепубликации нужно выбрать исходник. Альтернативный вариант автоматически не выбирается.",
+										"Кэш провайдера обновлён отдельно. Публикация и снимок метаданных не изменились.",
 									);
-							}}
-						>
-							Перепубликовать явно
-						</Button>
-					)}
-				</div>
-				{track.published && onQueueDeletion && (
-					<DeletionRequest
-						release={release}
-						track={track}
-						onQueue={onQueueDeletion}
-					/>
-				)}
-			</details>
+								}}
+							>
+								Обновить кэш провайдера
+							</Button>
+							{track.published?.codec === "MP3" && file?.codec === "FLAC" && (
+								<Button onPress={() => open("upgrade")}>
+									Демо: улучшить только качество аудио
+								</Button>
+							)}
+							{track.published && (
+								<Button
+									onPress={() => {
+										if (file) open("republish");
+										else
+											setNotice(
+												"Для явной перепубликации нужно выбрать исходник. Альтернативный вариант автоматически не выбирается.",
+											);
+									}}
+								>
+									Перепубликовать явно
+								</Button>
+							)}
+						</div>
+						{track.published && onQueueDeletion && (
+							<DeletionRequest
+								release={release}
+								track={track}
+								onQueue={onQueueDeletion}
+							/>
+						)}
+					</DisclosurePanel>
+				</Disclosure>
+			</DisclosureGroup>
 			{notice && <p role="status">{notice}</p>}
 			<Modal
 				isOpen={action !== null}
@@ -104,7 +115,7 @@ export function TrackActions({
 				}}
 				isDismissable
 			>
-				<Dialog aria-labelledby="track-action-title">
+				<Dialog aria-labelledby="track-action-title" className="dialog-content">
 					{notice && <p role="alert">{notice}</p>}
 					<form
 						onSubmit={(event) => {
@@ -152,14 +163,15 @@ export function TrackActions({
 						</Heading>
 						{action === "rename" ? (
 							<>
-								<label className="demo-search">
-									Название позиции
-									<input
-										value={title}
-										onChange={(event) => setTitle(event.currentTarget.value)}
-										required
-									/>
-								</label>
+								<TextField
+									aria-label="Название позиции"
+									value={title}
+									onChange={setTitle}
+									isRequired
+								>
+									<Label>Название позиции</Label>
+									<Input />
+								</TextField>
 								<p>
 									Исходник, кэш провайдера и текущая публикация останутся
 									прежними.
@@ -186,14 +198,20 @@ export function TrackActions({
 								onChange={setDowngrade}
 								className="demo-downgrade"
 							>
-								<span aria-hidden="true">{downgrade ? "☑" : "☐"}</span>{" "}
+								<span className="checkbox" aria-hidden="true">
+									{downgrade ? "✓" : ""}
+								</span>
 								Понижение качества подтверждаю
 							</Checkbox>
 						)}
-						<Button type="button" onPress={() => setAction(null)}>
-							Отмена
-						</Button>
-						<Button type="submit">Подтвердить</Button>
+						<div className="dialog-footer">
+							<Button type="button" onPress={() => setAction(null)}>
+								Отмена
+							</Button>
+							<Button type="submit" className="ui-button--primary">
+								Подтвердить
+							</Button>
+						</div>
 					</form>
 				</Dialog>
 			</Modal>

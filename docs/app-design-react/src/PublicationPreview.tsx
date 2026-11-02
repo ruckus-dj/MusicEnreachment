@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Button, Dialog, Heading, Modal } from "react-aria-components";
+import "./matching-publication.css";
+import { Button, Dialog, Heading, Modal } from "./ui";
 import {
 	originalFiles,
 	originalReleases,
@@ -63,26 +64,29 @@ export function PublicationPreview({
 	).length;
 	const returnLink = `#${returnRoute}`;
 	return (
-		<section aria-labelledby="preview-title">
-			<h1 id="preview-title">Предпросмотр медиатеки</h1>
-			<p>
-				Показаны существующие позиции выбранных объектов; повторяющиеся треки
-				объединены. Новые сущности и альтернативные источники не выбираются.
-			</p>
-			<p>
-				Контекст предпросмотра: {returnLabel}.{" "}
-				<a href={returnLink}>{returnLabel}</a>
-			</p>
-			<button type="button" onClick={onBack}>
-				{returnLabel}
-			</button>
+		<section className="publication-preview" aria-labelledby="preview-title">
+			<header>
+				<div>
+					<h1 id="preview-title">Предпросмотр медиатеки</h1>
+					<p>
+						Показаны существующие позиции выбранных объектов; повторяющиеся
+						треки объединены. Новые сущности и альтернативные источники не
+						выбираются.
+					</p>
+				</div>
+				<p>
+					Контекст предпросмотра: {returnLabel}.{" "}
+					<a href={returnLink}>{returnLabel}</a>
+				</p>
+				<Button onPress={onBack}>{returnLabel}</Button>
+			</header>
 			{stale && (
 				<p role="alert">
 					Снимок предпросмотра устарел: изменился инвентарь источников или
 					контекст. Вернитесь и откройте предпросмотр заново.
 				</p>
 			)}
-			<div className="demo-preview-counts">
+			<div className="preview-summary" aria-label="Сводка действий">
 				{["Создать", "Обновить", "Без изменений", "Пропустить"].map(
 					(action) => (
 						<span key={action}>
@@ -163,27 +167,36 @@ export function PublicationPreview({
 					</tbody>
 				</table>
 			</div>
-			<p>{unprocessable} не обрабатываемых позиций.</p>
-			<p>
-				Для уже опубликованных позиций это действие обновляет только метаданные:
-				опубликованный звук и его качество остаются прежними. Для новых
-				публикаций используется выбранный исходник.
-			</p>
-			{onApply && (
-				<Button
-					onPress={() => setConfirming(true)}
-					isDisabled={
-						stale ||
-						!rows.some(
-							(row) => row.action === "Создать" || row.action === "Обновить",
-						)
-					}
-				>
-					Опубликовать / обновить
-				</Button>
-			)}
+			<div className="preview-commit">
+				<p>
+					<strong>{unprocessable} не обрабатываемых позиций.</strong> Для уже
+					опубликованных позиций это действие обновляет только метаданные:
+					опубликованный звук и его качество остаются прежними. Для новых
+					публикаций используется выбранный исходник.
+				</p>
+				<div className="preview-actions">
+					{onApply && (
+						<Button
+							className="ui-button--primary"
+							onPress={() => setConfirming(true)}
+							isDisabled={
+								stale ||
+								!rows.some(
+									(row) =>
+										row.action === "Создать" || row.action === "Обновить",
+								)
+							}
+						>
+							Опубликовать / обновить
+						</Button>
+					)}
+				</div>
+			</div>
 			<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
-				<Dialog aria-labelledby="apply-preview-title">
+				<Dialog
+					aria-labelledby="apply-preview-title"
+					className="dialog-content"
+				>
 					{stale && (
 						<p role="alert">
 							Снимок предпросмотра устарел: изменился инвентарь источников или
@@ -204,24 +217,29 @@ export function PublicationPreview({
 						публикаций меняются только метаданные; звук и качество сохраняются.
 						Действие выполняется только в памяти макета, без записи файлов.
 					</p>
-					<Button onPress={() => setConfirming(false)}>Отмена</Button>
-					<Button
-						isDisabled={stale}
-						onPress={() => {
-							if (!isMetadataPreviewFresh(token, inventoryVersion, scopeKey)) {
+					<div className="dialog-footer">
+						<Button onPress={() => setConfirming(false)}>Отмена</Button>
+						<Button
+							className="ui-button--primary"
+							isDisabled={stale}
+							onPress={() => {
+								if (
+									!isMetadataPreviewFresh(token, inventoryVersion, scopeKey)
+								) {
+									setConfirming(false);
+									return;
+								}
+								if (onApply && !onApply(token)) {
+									setParentRejected(true);
+									setConfirming(false);
+									return;
+								}
 								setConfirming(false);
-								return;
-							}
-							if (onApply && !onApply(token)) {
-								setParentRejected(true);
-								setConfirming(false);
-								return;
-							}
-							setConfirming(false);
-						}}
-					>
-						Подтвердить
-					</Button>
+							}}
+						>
+							Подтвердить
+						</Button>
+					</div>
 				</Dialog>
 			</Modal>
 		</section>

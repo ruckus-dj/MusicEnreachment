@@ -10,9 +10,19 @@ it("shows component states, the technical comparison and explicit file selection
 		screen.getByRole("heading", { name: "Компоненты · плотный интерфейс" }),
 	).toBeInTheDocument();
 	expect(screen.getByText("Высокая уверенность")).toHaveClass("success");
-	expect(screen.getByRole("table")).toBeInTheDocument();
+	expect(screen.getByRole("grid")).toBeInTheDocument();
+	expect(
+		screen.getByRole("tablist", { name: "Примеры компонентов" }),
+	).toBeInTheDocument();
+	expect(
+		screen.getByRole("textbox", { name: "Поиск в библиотеке" }),
+	).toBeInTheDocument();
+	fireEvent.click(screen.getByRole("tab", { name: "Выбор" }));
+	expect(
+		screen.getByRole("checkbox", { name: "Показывать только различия" }),
+	).toBeInTheDocument();
 	const fileChip = screen.getByRole("button", { name: /Northbound/ });
-	expect(fileChip).toHaveAttribute("draggable", "true");
+	expect(fileChip.parentElement).toHaveAttribute("draggable", "true");
 	fireEvent.click(fileChip);
 	expect(fileChip).toHaveAttribute("aria-pressed", "true");
 	expect(onSelectFile).toHaveBeenCalledWith("north-f3");

@@ -1,5 +1,6 @@
 import { type ReactNode, useSyncExternalStore } from "react";
 import { ThemeControl } from "./ThemeControl";
+import { Link } from "./ui";
 
 const sections = [
 	["review", "Входящие"],
@@ -54,18 +55,18 @@ export function DesignShell({
 			</a>
 			<div className="design-shell">
 				<aside className="design-rail">
-					<a className="design-brand" href="#review">
+					<Link className="design-brand" href="#review">
 						<span aria-hidden="true" className="design-mark">
 							mt
 						</span>
 						<span>
 							MeloTrove<small>АРХИВНАЯ МАСТЕРСКАЯ</small>
 						</span>
-					</a>
+					</Link>
 					<p className="design-rail-label">РАБОЧЕЕ ПРОСТРАНСТВО</p>
 					<nav aria-label="Основная навигация">
 						{sections.map(([id, label], index) => (
-							<a
+							<Link
 								key={id}
 								href={`#${id}`}
 								aria-current={section === id ? "page" : undefined}
@@ -77,7 +78,7 @@ export function DesignShell({
 								{id === "review" && (
 									<span className="design-nav-count">{incomingCount}</span>
 								)}
-							</a>
+							</Link>
 						))}
 					</nav>
 					<div className="design-rail-bottom">

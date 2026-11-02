@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Radio, RadioGroup } from "react-aria-components";
+import { Button, Checkbox, Radio, RadioGroup, Tab, TabList, Tabs } from "./ui";
 import { TrackActions } from "./TrackActions";
 import type { DeletionOperation } from "./DeletionRequest";
 import {
@@ -126,7 +126,7 @@ export function TrackScreen({
 				new Set(row.values.map((value) => JSON.stringify(value))).size > 1,
 		);
 	return (
-		<section>
+		<section className="catalogue-object">
 			<header className="demo-object-header">
 				<div>
 					<h1>
@@ -257,32 +257,29 @@ export function TrackScreen({
 			</div>
 			<section className="demo-panel">
 				<h2>Сравнение тегов</h2>
-				<div className="demo-object-actions">
-					{(
-						[
-							["artist", "Артист"],
-							["release", "Альбом"],
-							["track", "Трек"],
-						] as const
-					).map(([id, label]) => (
-						<Button
-							key={id}
-							aria-pressed={scope === id}
-							onPress={() => setScope(id)}
-						>
-							{label}
-						</Button>
-					))}
-					<label>
-						<input
-							type="checkbox"
-							checked={differencesOnly}
-							onChange={(event) =>
-								setDifferencesOnly(event.currentTarget.checked)
-							}
-						/>{" "}
+				<div className="catalogue-comparison-controls">
+					<Tabs
+						selectedKey={scope}
+						onSelectionChange={(key) => setScope(key as keyof typeof fields)}
+					>
+						<TabList aria-label="Область тегов">
+							{(
+								[
+									["artist", "Артист"],
+									["release", "Альбом"],
+									["track", "Трек"],
+								] as const
+							).map(([id, label]) => (
+								<Tab key={id} id={id}>
+									{label}
+								</Tab>
+							))}
+						</TabList>
+					</Tabs>
+					<Checkbox isSelected={differencesOnly} onChange={setDifferencesOnly}>
+						<span className="checkbox" />
 						Только отличия
-					</label>
+					</Checkbox>
 				</div>
 				<div className="demo-preview-table">
 					<table>

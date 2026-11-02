@@ -13,8 +13,19 @@ it("shows the original incoming identities and routes into matching for each gro
 		"#match/north",
 	);
 	expect(
+		screen.getByRole("grid", { name: "Текущие группы входящих альбомов" }),
+	).toBeInTheDocument();
+	expect(screen.getAllByRole("columnheader")).toHaveLength(8);
+	expect(
 		screen.getByRole("link", { name: "Открыть локальный сборник" }),
 	).toHaveAttribute("href", "#match/mix");
+});
+
+it("shows an explicit empty state when there are no incoming groups", () => {
+	const state = createIncomingState();
+	state.groups = [];
+	render(<IncomingScreen state={state} />);
+	expect(screen.getByText("Входящих групп пока нет.")).toBeInTheDocument();
 });
 
 it("runs the fully eligible group and keeps incomplete groups in manual review", () => {

@@ -1,6 +1,26 @@
 import { useState } from "react";
-import { Button, Dialog, Heading, Modal } from "react-aria-components";
+import {
+	Button,
+	Checkbox,
+	Dialog,
+	Disclosure,
+	DisclosureGroup,
+	DisclosurePanel,
+	Heading,
+	Input,
+	Label,
+	ListBox,
+	ListBoxItem,
+	Modal,
+	Popover,
+	Radio,
+	RadioGroup,
+	Select,
+	SelectValue,
+	TextField,
+} from "./ui";
 import { DirectoryPicker } from "./DirectoryPicker";
+import "./forms-operations.css";
 import type { SourceFiles } from "./catalogData";
 import { rootLocations } from "./sourceInventory";
 
@@ -63,8 +83,8 @@ export function SourcesScreen({
 				: `Демо: предпосылка выбора рабочей папки для ${root.path} выполнена. Реальные файлы, доступность источника и права не проверялись; копирование и анализ не запускались.`,
 		);
 	return (
-		<section>
-			<header className="demo-object-header">
+		<section className="source-screen">
+			<header className="demo-object-header form-page-header">
 				<div>
 					<h1>Источники</h1>
 					<p>
@@ -98,52 +118,38 @@ export function SourcesScreen({
 			{adding && (
 				<section className="demo-panel">
 					<h2>Новый источник</h2>
-					<label className="demo-search">
-						Имя источника
-						<input
-							value={name}
-							onChange={(event) => setName(event.currentTarget.value)}
-							placeholder="Например, Музыкальная библиотека"
-						/>
-					</label>
-					<label className="demo-search">
-						Каталог на сервере
-						<input value={path} readOnly />
-					</label>
+					<TextField className="demo-search" value={name} onChange={setName}>
+						<Label>Имя источника</Label>
+						<Input placeholder="Например, Музыкальная библиотека" />
+					</TextField>
+					<TextField className="demo-search" value={path} isReadOnly>
+						<Label>Каталог на сервере</Label>
+						<Input />
+					</TextField>
 					<Button onPress={() => setPicker(true)}>Выбрать папку</Button>
 					<p>Только каталог; файлы не загружаются.</p>
-					<fieldset>
-						<legend>Режим обработки · выберите явно</legend>
-						<label>
-							<input
-								type="radio"
-								name="source-mode"
-								value="in_place"
-								checked={mode === "in_place"}
-								onChange={() => setMode("in_place")}
-							/>{" "}
+					<RadioGroup
+						className="source-mode-group"
+						aria-label="Режим обработки · выберите явно"
+						value={mode}
+						onChange={(value) => setMode(value as Mode)}
+					>
+						<Radio className="source-mode-choice" value="in_place">
 							На месте
-						</label>
+						</Radio>
 						<p>
 							Анализ выполняется по исходному файлу; сам источник остаётся
 							только для чтения.
 						</p>
-						<label>
-							<input
-								type="radio"
-								name="source-mode"
-								value="staged"
-								checked={mode === "staged"}
-								onChange={() => setMode("staged")}
-							/>{" "}
+						<Radio className="source-mode-choice" value="staged">
 							Через рабочую копию
-						</label>
+						</Radio>
 						<p>
 							Для обработки создаётся принадлежащая работе рабочая копия аудио в
 							общей рабочей папке сервера. Папка требуется до обработки, но не
 							для добавления источника.
 						</p>
-					</fieldset>
+					</RadioGroup>
 					<p>
 						Политика источника: только чтение — независимо от выбранного режима.
 					</p>
@@ -184,8 +190,8 @@ export function SourcesScreen({
 			)}
 			<section className="demo-panel">
 				<h2>Подключённые каталоги</h2>
-				<div className="demo-preview-table">
-					<table>
+				<div className="source-table-wrap">
+					<table className="source-table">
 						<thead>
 							<tr>
 								{[
@@ -211,12 +217,13 @@ export function SourcesScreen({
 										<code>{root.path}</code>
 									</td>
 									<td>
-										<label className="demo-search">
-											Режим обработки: {root.name}
-											<select
-												value={root.mode}
-												onChange={(event) => {
-													const next = event.currentTarget.value as Mode;
+										<div className="demo-search">
+											<Label>Режим обработки: {root.name}</Label>
+											<Select
+												selectedKey={root.mode}
+												aria-label={`Режим обработки: ${root.name}`}
+												onSelectionChange={(key) => {
+													const next = String(key) as Mode;
 													onRoots(
 														roots.map((item, position) =>
 															index === position
@@ -226,10 +233,19 @@ export function SourcesScreen({
 													);
 												}}
 											>
-												<option value="in_place">На месте</option>
-												<option value="staged">Через рабочую копию</option>
-											</select>
-										</label>
+												<Button>
+													<SelectValue />
+												</Button>
+												<Popover>
+													<ListBox>
+														<ListBoxItem id="in_place">На месте</ListBoxItem>
+														<ListBoxItem id="staged">
+															Через рабочую копию
+														</ListBoxItem>
+													</ListBox>
+												</Popover>
+											</Select>
+										</div>
 										<p>Изменение влияет на будущую обработку.</p>
 										{root.mode === "staged" && (
 											<p>
@@ -273,95 +289,94 @@ export function SourcesScreen({
 					</table>
 				</div>
 			</section>
-			<details>
-				<summary>Демонстрация удаления источника</summary>
-				<section className="demo-panel">
-					<h2>Удаление каталога источника</h2>
-					<p>
-						Подтверждение показывает точный путь и число записей инвентаря.
-						Файлы на диске и текущие публикации не затрагиваются. Включите
-						активную операцию, чтобы увидеть отказ.
-					</p>
-					<label>
-						<input
-							type="checkbox"
-							checked={busy}
-							onChange={(event) => setBusy(event.currentTarget.checked)}
-						/>
-						Для /mnt/music выполняется операция
-					</label>
-					<div className="demo-preview-table">
-						<table>
-							<thead>
-								<tr>
-									{[
-										"Идентификатор",
-										"Путь на сервере",
-										"Записей",
-										"Сценарий",
-										"Действие",
-									].map((label) => (
-										<th scope="col" key={label}>
-											{label}
-										</th>
-									))}
-								</tr>
-							</thead>
-							<tbody>
-								{[
-									[
-										"root-inbox",
-										"/mnt/inbox",
-										"Общий файл остаётся связанным с резервным каталогом",
-									],
-									[
-										"root-library",
-										"/mnt/music",
-										"Последний FLAC-исходник снимает связь; MP3 не выбирается автоматически",
-									],
-								].map(([id, path, scenario]) => (
-									<tr key={id}>
-										<td>{id}</td>
-										<td>{path}</td>
-										<td>{rootLocations(files, id).length}</td>
-										<td>{scenario}</td>
-										<td>
-											{removed.has(id) ? (
-												"Удалён в демо"
-											) : (
-												<Button
-													onPress={() => {
-														if (id === "root-library" && busy) {
-															setNotice(
-																"Удаление отклонено: для этого каталога источника выполняется операция.",
-															);
-															return;
-														}
-														setRemoval({
-															id,
-															path,
-															locations: rootLocations(files, id)
-																.map((location) => location.id)
-																.sort(),
-														});
-													}}
-												>
-													Удалить каталог
-												</Button>
-											)}
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-					<p>
-						После удаления последней записи связи позиций снимаются, кэш анализа
-						по SHA-256 сохраняется. Выбранный файл очищается без
-						автопереключения. Публикация и медиатека остаются.
-					</p>
-				</section>
-			</details>
+			<DisclosureGroup className="source-removal-disclosures">
+				<Disclosure>
+					<Button slot="trigger">Демонстрация удаления источника</Button>
+					<DisclosurePanel>
+						<section className="demo-panel">
+							<h2>Удаление каталога источника</h2>
+							<p>
+								Подтверждение показывает точный путь и число записей инвентаря.
+								Файлы на диске и текущие публикации не затрагиваются. Включите
+								активную операцию, чтобы увидеть отказ.
+							</p>
+							<Checkbox isSelected={busy} onChange={setBusy}>
+								Для /mnt/music выполняется операция
+							</Checkbox>
+							<div className="source-table-wrap">
+								<table className="source-table">
+									<thead>
+										<tr>
+											{[
+												"Идентификатор",
+												"Путь на сервере",
+												"Записей",
+												"Сценарий",
+												"Действие",
+											].map((label) => (
+												<th scope="col" key={label}>
+													{label}
+												</th>
+											))}
+										</tr>
+									</thead>
+									<tbody>
+										{[
+											[
+												"root-inbox",
+												"/mnt/inbox",
+												"Общий файл остаётся связанным с резервным каталогом",
+											],
+											[
+												"root-library",
+												"/mnt/music",
+												"Последний FLAC-исходник снимает связь; MP3 не выбирается автоматически",
+											],
+										].map(([id, path, scenario]) => (
+											<tr key={id}>
+												<td>{id}</td>
+												<td>{path}</td>
+												<td>{rootLocations(files, id).length}</td>
+												<td>{scenario}</td>
+												<td>
+													{removed.has(id) ? (
+														"Удалён в демо"
+													) : (
+														<Button
+															onPress={() => {
+																if (id === "root-library" && busy) {
+																	setNotice(
+																		"Удаление отклонено: для этого каталога источника выполняется операция.",
+																	);
+																	return;
+																}
+																setRemoval({
+																	id,
+																	path,
+																	locations: rootLocations(files, id)
+																		.map((location) => location.id)
+																		.sort(),
+																});
+															}}
+														>
+															Удалить каталог
+														</Button>
+													)}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+							<p>
+								После удаления последней записи связи позиций снимаются, кэш
+								анализа по SHA-256 сохраняется. Выбранный файл очищается без
+								автопереключения. Публикация и медиатека остаются.
+							</p>
+						</section>
+					</DisclosurePanel>
+				</Disclosure>
+			</DisclosureGroup>
 			<p>
 				Недоступность исходного диска не удаляет существующие управляемые
 				публикации.

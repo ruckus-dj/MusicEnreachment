@@ -57,3 +57,42 @@ it("shows manual medium count and medium-position numbering", () => {
 	expect(rows[1]).toHaveTextContent("1.01");
 	expect(rows[2]).toHaveTextContent("2.01");
 });
+
+it("selects all release positions and represents a partial aggregate selection", () => {
+	const release = originalReleases.find((item) => item.id === "north");
+	if (!release) throw new Error("Missing baseline fixture");
+	const onSelect = vi.fn();
+	const firstTrackId = release.tracks[0]?.id;
+	if (!firstTrackId) throw new Error("Missing baseline track");
+	const { rerender } = render(
+		<ReleaseScreen
+			release={release}
+			selected={new Set([firstTrackId])}
+			onSelect={onSelect}
+			onPreview={vi.fn()}
+		/>,
+	);
+	const aggregate = screen.getByRole("checkbox", {
+		name: `Выбрать все позиции релиза ${release.title}`,
+	});
+	expect((aggregate as HTMLInputElement).indeterminate).toBe(true);
+	fireEvent.click(aggregate);
+	expect(onSelect).toHaveBeenCalledWith(
+		release.tracks.map((track) => track.id),
+		true,
+	);
+
+	rerender(
+		<ReleaseScreen
+			release={release}
+			selected={new Set(release.tracks.map((track) => track.id))}
+			onSelect={onSelect}
+			onPreview={vi.fn()}
+		/>,
+	);
+	expect(
+		screen.getByRole("checkbox", {
+			name: `Выбрать все позиции релиза ${release.title}`,
+		}),
+	).toBeChecked();
+});

@@ -1,5 +1,42 @@
 import { useState } from "react";
 import {
+	Button,
+	Cell,
+	Checkbox,
+	Column,
+	Dialog,
+	DialogTrigger,
+	Disclosure,
+	DisclosurePanel,
+	Heading,
+	Input,
+	Label,
+	Link,
+	ListBox,
+	ListBoxItem,
+	Modal,
+	ModalOverlay,
+	PageHeader,
+	Panel,
+	Popover,
+	Radio,
+	RadioGroup,
+	Row,
+	SearchField,
+	Select,
+	SelectValue,
+	StatusBadge,
+	Tab,
+	TabList,
+	TabPanel,
+	Table,
+	TableBody,
+	TableHeader,
+	Tabs,
+	TextField,
+	Toolbar,
+} from "./ui";
+import {
 	originalFiles,
 	type SourceFile,
 	type SourceFiles,
@@ -37,86 +74,181 @@ export function ComponentsScreen({
 	};
 	if (!file)
 		return (
-			<section>
+			<section className="components-screen" id="content" tabIndex={-1}>
 				<h1>Компоненты · плотный интерфейс</h1>
-				<p>Нет файла для назначения.</p>
+				<p className="ui-empty">Нет файла для назначения.</p>
 			</section>
 		);
 	return (
-		<section>
-			<header className="demo-object-header">
+		<section className="components-screen" id="content" tabIndex={-1}>
+			<PageHeader className="components-header">
 				<div>
+					<p className="demo-eyebrow">СИСТЕМА · БИБЛИОТЕКА КОМПОНЕНТОВ</p>
 					<h1>Компоненты · плотный интерфейс</h1>
 					<p>
 						Обе темы используют одинаковую геометрию и семантические состояния.
 					</p>
 				</div>
-			</header>
-			<section className="demo-panel">
-				<h2>Состояния и действия</h2>
-				<div className="demo-object-actions">
-					<span className="status success">Высокая уверенность</span>
-					<span className="status warning">Есть отличия</span>
-					<span className="status error">Ошибка</span>
-					<span className="status">Без связи с провайдером</span>
-					<button type="button" className="primary">
-						Основное действие
-					</button>
-					<button type="button">Вторичное действие</button>
-					<button type="button" disabled>
-						Нет назначения
-					</button>
-				</div>
-			</section>
-			<section className="demo-panel">
-				<h2>Файл для назначения</h2>
-				<div className="demo-object-actions">
+				<span className="components-version">RAC 1.22.1</span>
+			</PageHeader>
+			<Panel className="components-panel" aria-labelledby="actions-heading">
+				<header className="ui-panel-heading">
+					<div>
+						<h2 id="actions-heading">Состояния и действия</h2>
+						<span className="incoming-section-meta">
+							Цвет всегда сопровождается подписью
+						</span>
+					</div>
+				</header>
+				<Toolbar aria-label="Примеры действий" className="components-toolbar">
+					<StatusBadge tone="success">Высокая уверенность</StatusBadge>
+					<StatusBadge tone="warning">Есть отличия</StatusBadge>
+					<StatusBadge tone="error">Ошибка</StatusBadge>
+					<StatusBadge>Без связи с провайдером</StatusBadge>
+					<Button className="ui-button--primary">Основное действие</Button>
+					<Button>Вторичное действие</Button>
+					<Button isDisabled>Нет назначения</Button>
+					<DialogTrigger>
+						<Button>Предпросмотр диалога</Button>
+						<ModalOverlay>
+							<Modal>
+								<Dialog>
+									{({ close }) => (
+										<>
+											<Heading slot="title">Проверка публикации</Heading>
+											<p>
+												Диалог сохраняет фокус и закрывается клавишей Escape.
+											</p>
+											<Button onPress={close}>Закрыть</Button>
+										</>
+									)}
+								</Dialog>
+							</Modal>
+						</ModalOverlay>
+					</DialogTrigger>
+				</Toolbar>
+			</Panel>
+			<Panel className="components-panel" aria-labelledby="file-heading">
+				<header className="ui-panel-heading">
+					<h2 id="file-heading">Файл для назначения</h2>
+				</header>
+				<div className="components-file">
 					<FileChip
 						file={file}
 						selected={selectedFile === file.id}
 						onSelect={selectFile}
 					/>
 				</div>
-			</section>
-			<section className="demo-panel">
-				<h2>Техническая таблица</h2>
-				<div className="demo-preview-table">
-					<table>
-						<thead>
-							<tr>
-								{["Поле", "Исходник", "Провайдер", "Различие"].map((label) => (
-									<th scope="col" key={label}>
-										{label}
-									</th>
-								))}
-							</tr>
-						</thead>
-						<tbody>
-							<tr>
-								<th scope="row">TITLE</th>
-								<td>Northbound (live?)</td>
-								<td>Northbound</td>
-								<td>
-									<span className="status warning">
+			</Panel>
+			<Panel className="components-panel" aria-labelledby="table-heading">
+				<header className="ui-panel-heading">
+					<h2 id="table-heading">Техническая таблица</h2>
+				</header>
+				<div className="components-table-wrap">
+					<Table
+						aria-label="Сравнение исходных и провайдерских данных"
+						className="components-table"
+					>
+						<TableHeader>
+							<Column id="field" isRowHeader>
+								Поле
+							</Column>
+							<Column id="source">Исходник</Column>
+							<Column id="provider">Провайдер</Column>
+							<Column id="difference">Различие</Column>
+						</TableHeader>
+						<TableBody>
+							<Row id="title">
+								<Cell>TITLE</Cell>
+								<Cell>Northbound (live?)</Cell>
+								<Cell>Northbound</Cell>
+								<Cell>
+									<StatusBadge tone="warning">
 										Версия записи не подтверждена
-									</span>
-								</td>
-							</tr>
-							<tr>
-								<th scope="row">DURATION</th>
-								<td>3:58</td>
-								<td>3:46</td>
-								<td>+12 с</td>
-							</tr>
-						</tbody>
-					</table>
+									</StatusBadge>
+								</Cell>
+							</Row>
+							<Row id="duration">
+								<Cell>DURATION</Cell>
+								<Cell>3:58</Cell>
+								<Cell>3:46</Cell>
+								<Cell>+12 с</Cell>
+							</Row>
+						</TableBody>
+					</Table>
 				</div>
-			</section>
+			</Panel>
+			<Panel className="components-panel" aria-labelledby="controls-heading">
+				<header className="ui-panel-heading">
+					<div>
+						<h2 id="controls-heading">Поля и выбор</h2>
+						<span className="incoming-section-meta">
+							React Aria управляет клавиатурой, фокусом и состоянием
+						</span>
+					</div>
+				</header>
+				<Tabs defaultSelectedKey="fields" className="components-tabs">
+					<TabList aria-label="Примеры компонентов">
+						<Tab id="fields">Поля</Tab>
+						<Tab id="selection">Выбор</Tab>
+					</TabList>
+					<TabPanel id="fields" className="components-control-grid">
+						<TextField name="demo-search" autoComplete="off">
+							<Label>Поиск в библиотеке</Label>
+							<Input placeholder="Например, Northern Lines…" />
+						</TextField>
+						<SearchField name="file-search" autoComplete="off">
+							<Label>Поиск файлов</Label>
+							<Input placeholder="Имя или путь файла…" />
+							<Button aria-label="Очистить поиск" slot="clear">
+								×
+							</Button>
+						</SearchField>
+						<Select defaultSelectedKey="manual">
+							<Label>Режим назначения</Label>
+							<Button>
+								<SelectValue />
+								<span aria-hidden="true">⌄</span>
+							</Button>
+							<Popover>
+								<ListBox>
+									<ListBoxItem id="auto">Автоматически</ListBoxItem>
+									<ListBoxItem id="manual">Ручная обработка</ListBoxItem>
+								</ListBox>
+							</Popover>
+						</Select>
+					</TabPanel>
+					<TabPanel id="selection" className="components-control-grid">
+						<Checkbox defaultSelected>Показывать только различия</Checkbox>
+						<RadioGroup defaultValue="tags">
+							<Label>Способ поиска</Label>
+							<Radio value="tags">По тегам</Radio>
+							<Radio value="audio">По аудиоотпечатку</Radio>
+						</RadioGroup>
+						<Disclosure>
+							<Button slot="trigger">Подробнее о доступности</Button>
+							<DisclosurePanel>
+								<p>
+									Состояния доступны с клавиатуры и озвучиваются
+									вспомогательными технологиями.
+								</p>
+							</DisclosurePanel>
+						</Disclosure>
+					</TabPanel>
+				</Tabs>
+			</Panel>
 			<p className="demo-migration-note">
 				Политика matching-rapidfuzz-v1 утверждена; этот макет не рассчитывает
 				уверенность или её вклады. Демонстрационный вердикт подписан явно. Цвет
 				не заменяет текст.
 			</p>
+			<footer className="components-footer">
+				<Link href="#review">Вернуться во входящие</Link>
+				<span>
+					Семантические элементы · адаптивная плотная сетка · светлая и тёмная
+					темы
+				</span>
+			</footer>
 		</section>
 	);
 }
@@ -131,26 +263,29 @@ function FileChip({
 	onSelect: (id: string) => void;
 }) {
 	return (
-		<button
-			type="button"
-			className={`file-chip ${selected ? "selected" : ""}`}
-			draggable="true"
-			aria-pressed={selected}
+		<div
+			draggable
 			title="Выбрать или перетащить файл"
-			onClick={() => onSelect(file.id)}
 			onDragStart={(event) => event.dataTransfer.setData("text/plain", file.id)}
 		>
-			<span className="grip" aria-hidden="true">
-				⠿
-			</span>
-			<span>
-				<strong>{file.name}</strong>
-				<span className="sub">
-					{file.codec} · {duration(file.duration)} ·{" "}
-					{file.codec === "FLAC" ? "24 бит / 48 кГц" : "320 кбит/с"} ·{" "}
-					{file.size}
+			<Button
+				className={`file-chip ${selected ? "selected" : ""}`}
+				data-selected={selected || undefined}
+				aria-pressed={selected}
+				onPress={() => onSelect(file.id)}
+			>
+				<span className="grip" aria-hidden="true">
+					⠿
 				</span>
-			</span>
-		</button>
+				<span>
+					<strong>{file.name}</strong>
+					<span className="sub">
+						{file.codec} · {duration(file.duration)} ·{" "}
+						{file.codec === "FLAC" ? "24 бит / 48 кГц" : "320 кбит/с"} ·{" "}
+						{file.size}
+					</span>
+				</span>
+			</Button>
+		</div>
 	);
 }

@@ -31,7 +31,7 @@ it("renders artist releases and tracks, selection and publication preview action
 		}),
 	).toBeInTheDocument();
 	expect(
-		screen.getAllByRole("link", { name: "First Light" })[0],
+		screen.getAllByRole("link", { name: /First Light/ })[0],
 	).toHaveAttribute("href", "#track/north-t1");
 	expect(screen.getByText(/Аудио по изданиям:/)).toBeInTheDocument();
 	fireEvent.click(
@@ -61,13 +61,12 @@ it("filters track rows and searches absent editions without adding them to the l
 		screen.getByRole("heading", { name: "Отсутствующие альбомы" }),
 	).toBeInTheDocument();
 	fireEvent.change(
-		screen.getByRole("searchbox", { name: "Поиск в медиатеке" }),
+		screen.getByRole("searchbox", { name: "Поиск альбомов без издания" }),
 		{ target: { value: "Blue Atlas" } },
 	);
-	expect(screen.getByRole("row", { name: /Blue Atlas/ })).toBeInTheDocument();
-	fireEvent.change(screen.getByRole("combobox", { name: "Наличие" }), {
-		target: { value: "available" },
-	});
+	expect(screen.getByText("Blue Atlas")).toBeInTheDocument();
+	fireEvent.click(screen.getByRole("button", { name: /Наличие/ }));
+	fireEvent.click(screen.getByRole("option", { name: "В наличии" }));
 	expect(
 		screen.queryByRole("heading", { name: "Отсутствующие альбомы" }),
 	).not.toBeInTheDocument();
@@ -105,7 +104,8 @@ it("uses shared availability and publication props while only availability empha
 	);
 	const rowFor = (id: string) =>
 		screen
-			.getAllByRole("row")
+			.getAllByRole("table")
+			.flatMap((table) => [...table.querySelectorAll("tbody tr")])
 			.find((row) => row.querySelector(`a[href="#track/${id}"]`));
 	const availableRow = rowFor(availableID);
 	const missingRow = rowFor(missingID);
@@ -113,8 +113,8 @@ it("uses shared availability and publication props while only availability empha
 	expect(missingRow).toBeTruthy();
 	expect(availableRow).toHaveClass("filter-match");
 	expect(missingRow).toHaveClass("filter-muted");
-	expect(screen.getByRole("combobox", { name: "Наличие" })).toHaveValue(
-		"available",
+	expect(screen.getByRole("button", { name: /Наличие/ })).toHaveTextContent(
+		"В наличии",
 	);
 	rerender(
 		<ArtistScreen
@@ -126,9 +126,9 @@ it("uses shared availability and publication props while only availability empha
 			publication="published"
 		/>,
 	);
-	expect(screen.getByRole("combobox", { name: "Публикация" })).toHaveValue(
-		"published",
-	);
+	expect(
+		screen.getByRole("button", { name: /^Опубликованные Публикация$/ }),
+	).toHaveTextContent("Опубликованные");
 	expect(rowFor(availableID)).not.toHaveClass("filter-match", "filter-muted");
 	expect(rowFor(missingID)).not.toHaveClass("filter-match", "filter-muted");
 });
@@ -157,10 +157,12 @@ it("numbers tracks by medium for a cloned multi-medium release without displayed
 			files={originalFiles}
 		/>,
 	);
-	expect(screen.getByRole("row", { name: /First Light/ })).toHaveTextContent(
-		"1.01",
-	);
-	expect(screen.getByRole("row", { name: /Still Water/ })).toHaveTextContent(
-		"2.01",
-	);
+	const table = screen.getAllByRole("table")[0];
+	const rows = [...table.querySelectorAll("tbody tr")];
+	expect(
+		rows.find((row) => row.textContent?.includes("First Light")),
+	).toHaveTextContent("1.01");
+	expect(
+		rows.find((row) => row.textContent?.includes("Still Water")),
+	).toHaveTextContent("2.01");
 });

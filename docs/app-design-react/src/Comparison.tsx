@@ -1,4 +1,12 @@
 import { useState } from "react";
+import {
+	Button,
+	ListBox,
+	ListBoxItem,
+	Popover,
+	Select,
+	SelectValue,
+} from "./ui";
 
 const targets = [
 	["library", "Медиатека", "Частично: списки, выбор, фильтры"],
@@ -75,7 +83,7 @@ export function Comparison() {
 	const [route, title, status] = targets[index];
 	return (
 		<main className="comparison">
-			<header>
+			<header className="comparison-header">
 				<h1>Сверка переноса</h1>
 				<a href="/">Вернуться в React-прототип</a>
 			</header>
@@ -84,30 +92,51 @@ export function Comparison() {
 				средство сравнения, не способ реализации новых экранов. Состояние внутри
 				окон независимо.
 			</p>
-			<div className="demo-filters">
-				<label>
+			<div className="comparison-filters">
+				<label className="form-field">
 					Экран
-					<select
-						value={index}
-						onChange={(event) => setIndex(Number(event.currentTarget.value))}
+					<Select
+						aria-label="Экран"
+						selectedKey={targets[index][0]}
+						onSelectionChange={(key) => {
+							const next = targets.findIndex(([id]) => id === key);
+							if (next >= 0) setIndex(next);
+						}}
 					>
-						{targets.map(([id, label], option) => (
-							<option value={option} key={id}>
-								{label}
-							</option>
-						))}
-					</select>
+						<Button>
+							<SelectValue />
+						</Button>
+						<Popover>
+							<ListBox>
+								{targets.map(([id, label]) => (
+									<ListBoxItem id={id} key={id}>
+										{label}
+									</ListBoxItem>
+								))}
+							</ListBox>
+						</Popover>
+					</Select>
 				</label>
-				<label>
+				<label className="form-field">
 					Ширина каждого окна
-					<select
-						value={width}
-						onChange={(event) => setWidth(event.currentTarget.value)}
+					<Select
+						aria-label="Ширина каждого окна"
+						selectedKey={width}
+						onSelectionChange={(key) => key && setWidth(String(key))}
 					>
-						<option value="1440">1440 px</option>
-						<option value="768">768 px</option>
-						<option value="375">375 px</option>
-					</select>
+						<Button>
+							<SelectValue />
+						</Button>
+						<Popover>
+							<ListBox>
+								{["1440", "768", "375"].map((size) => (
+									<ListBoxItem id={size} key={size}>
+										{size} px
+									</ListBoxItem>
+								))}
+							</ListBox>
+						</Popover>
+					</Select>
 				</label>
 			</div>
 			<p role="status">{status}</p>

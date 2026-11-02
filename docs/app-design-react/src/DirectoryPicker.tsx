@@ -1,5 +1,15 @@
-import { useState } from "react";
-import { Button, Dialog, Heading, Modal } from "react-aria-components";
+import { useEffect, useRef, useState } from "react";
+import {
+	Button,
+	Dialog,
+	Heading,
+	Input,
+	Label,
+	Modal,
+	TextField,
+	Toolbar,
+} from "./ui";
+import "./forms-operations.css";
 
 const directories: Record<string, string[]> = {
 	"/": ["mnt", "srv", "var"],
@@ -40,12 +50,22 @@ export function DirectoryPicker({
 	onChoose: (path: string) => void;
 	onClose: () => void;
 }) {
+	const pathInputRef = useRef<HTMLInputElement>(null);
+	const editTriggerRef = useRef<HTMLButtonElement>(null);
+	const returnFocusAfterCancel = useRef(false);
 	const [path, setPath] = useState(
 		directories[initialPath] ? initialPath : "/",
 	);
 	const [editing, setEditing] = useState(false);
 	const [requested, setRequested] = useState(path);
 	const [error, setError] = useState("");
+	useEffect(() => {
+		if (editing) pathInputRef.current?.focus();
+		else if (returnFocusAfterCancel.current) {
+			returnFocusAfterCancel.current = false;
+			editTriggerRef.current?.focus();
+		}
+	}, [editing]);
 	const parts = path.split("/").filter(Boolean);
 	const unreadable = path === "/mnt/archive";
 	const folders = directories[path];
@@ -64,6 +84,7 @@ export function DirectoryPicker({
 			isDismissable
 		>
 			<Dialog
+				className="directory-dialog"
 				aria-labelledby="directory-picker-title"
 				aria-describedby="directory-picker-help"
 			>
@@ -74,7 +95,7 @@ export function DirectoryPicker({
 					Каталоги на сервере MeloTrove — не файлы устройства.
 				</p>
 				<nav
-					className="demo-object-actions"
+					className="directory-breadcrumbs"
 					aria-label="Навигация по каталогам"
 				>
 					<Button
@@ -85,6 +106,7 @@ export function DirectoryPicker({
 						↑
 					</Button>
 					<Button
+						ref={editTriggerRef}
 						onPress={() => (path === "/" ? setEditing(true) : go("/"))}
 						aria-label={path === "/" ? "Редактировать путь" : undefined}
 					>
@@ -95,6 +117,7 @@ export function DirectoryPicker({
 						return (
 							<Button
 								key={parts.slice(0, index + 1).join("/")}
+								ref={current ? editTriggerRef : undefined}
 								aria-label={current ? "Редактировать путь" : undefined}
 								aria-current={current ? "location" : undefined}
 								onPress={() =>
@@ -121,24 +144,29 @@ export function DirectoryPicker({
 							else go(next);
 						}}
 					>
-						<label className="demo-search">
-							Абсолютный серверный путь
-							<input
+						<TextField
+							className="demo-search"
+							aria-label="Абсолютный серверный путь"
+							value={requested}
+							onChange={setRequested}
+						>
+							<Label>Абсолютный серверный путь</Label>
+							<Input
+								ref={pathInputRef}
 								autoComplete="off"
 								spellCheck={false}
-								value={requested}
 								aria-invalid={Boolean(error)}
-								onChange={(event) => setRequested(event.currentTarget.value)}
 								onKeyDown={(event) => {
 									if (event.key === "Escape") {
 										event.stopPropagation();
 										event.preventDefault();
+										returnFocusAfterCancel.current = true;
 										setEditing(false);
 										setError("");
 									}
 								}}
 							/>
-						</label>
+						</TextField>
 						<Button type="submit">Перейти</Button>
 					</form>
 				)}
@@ -156,17 +184,21 @@ export function DirectoryPicker({
 							Проверьте путь или выберите папку из списка.
 						</p>
 					) : folders.length ? (
-						<ul className="demo-directory-list">
-							{folders.map((folder) => (
-								<li key={folder}>
-									<Button
-										onPress={() => go(`${path === "/" ? "" : path}/${folder}`)}
-									>
-										{folder} ›
-									</Button>
-								</li>
-							))}
-						</ul>
+						<div className="directory-list-scroll">
+							<ul className="demo-directory-list">
+								{folders.map((folder) => (
+									<li key={folder}>
+										<Button
+											onPress={() =>
+												go(`${path === "/" ? "" : path}/${folder}`)
+											}
+										>
+											{folder} ›
+										</Button>
+									</li>
+								))}
+							</ul>
+						</div>
 					) : (
 						<p>
 							В этой папке нет вложенных каталогов. Вы можете выбрать текущую
@@ -174,7 +206,7 @@ export function DirectoryPicker({
 						</p>
 					)}
 				</div>
-				<div className="demo-object-actions">
+				<Toolbar className="directory-footer">
 					<Button onPress={onClose}>Отмена</Button>
 					<Button
 						isDisabled={!folders || unreadable || Boolean(error)}
@@ -182,7 +214,7 @@ export function DirectoryPicker({
 					>
 						Выбрать папку
 					</Button>
-				</div>
+				</Toolbar>
 			</Dialog>
 		</Modal>
 	);

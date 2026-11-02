@@ -5,25 +5,34 @@ import { ContextPublicationPreview } from "./ContextPublicationPreview";
 import { catalogData, originalFiles, originalReleases } from "./catalogData";
 import { makeReleasePlan } from "./incomingModel";
 
+function selectOption(label: RegExp, option: string) {
+	fireEvent.click(screen.getByRole("button", { name: label }));
+	fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
 it("keeps nested selection consistent when an album is partially deselected", () => {
 	render(<CatalogDemo />);
 	fireEvent.click(
 		screen.getByRole("checkbox", { name: "Выбрать позиции артиста Mira Vale" }),
 	);
 	expect(screen.getByRole("status")).toHaveTextContent("29");
-	fireEvent.click(screen.getByRole("button", { name: "Все альбомы" }));
+	fireEvent.click(screen.getByRole("tab", { name: "Все альбомы" }));
 	const albums = screen.getAllByRole("checkbox", {
 		name: "Выбрать позиции альбома Northern Lines",
 	});
 	fireEvent.click(albums[0]);
 	expect(screen.getByRole("status")).toHaveTextContent("19");
-	fireEvent.click(screen.getAllByRole("button", { name: "Northern Lines" })[0]);
+	const albumExpander = screen.getAllByRole("button", {
+		name: "Northern Lines",
+	})[0];
+	fireEvent.click(albumExpander);
+	expect(albumExpander).toHaveAttribute("aria-expanded", "true");
 	fireEvent.click(
-		screen.getByRole("checkbox", { name: "Выбрать First Light" }),
+		screen.getByRole("checkbox", { name: /Выбрать First Light/ }),
 	);
 	expect(screen.getByRole("status")).toHaveTextContent("20");
 	expect(albums[0]).toBePartiallyChecked();
-	fireEvent.click(screen.getByRole("button", { name: "Артисты" }));
+	fireEvent.click(screen.getByRole("tab", { name: "Артисты" }));
 	expect(
 		screen.getByRole("checkbox", { name: "Выбрать позиции артиста Mira Vale" }),
 	).toBePartiallyChecked();
@@ -31,13 +40,12 @@ it("keeps nested selection consistent when an album is partially deselected", ()
 
 it("includes a partially available album in both availability filters", () => {
 	render(<CatalogDemo />);
-	fireEvent.click(screen.getByRole("button", { name: "Все альбомы" }));
-	const filter = screen.getByRole("combobox", { name: "Наличие" });
-	fireEvent.change(filter, { target: { value: "available" } });
+	fireEvent.click(screen.getByRole("tab", { name: "Все альбомы" }));
+	selectOption(/Наличие/, "В наличии");
 	expect(
 		screen.getAllByRole("button", { name: "Northern Lines" }),
 	).toHaveLength(2);
-	fireEvent.change(filter, { target: { value: "missing" } });
+	selectOption(/Наличие/, "Не хватает");
 	expect(
 		screen.getAllByRole("button", { name: "Northern Lines" }),
 	).toHaveLength(2);
@@ -48,11 +56,11 @@ it("includes a partially available album in both availability filters", () => {
 
 it("renders full album completeness and keeps local publication completeness unknown", () => {
 	render(<CatalogDemo />);
-	fireEvent.click(screen.getByRole("button", { name: "Все альбомы" }));
+	fireEvent.click(screen.getByRole("tab", { name: "Все альбомы" }));
 	expect(
-		screen.getByRole("columnheader", { name: "Есть исходники" }),
+		screen.getByRole("columnheader", { name: "Исходники" }),
 	).toBeInTheDocument();
-	expect(screen.getByText(/полнота неизвестна/)).toBeInTheDocument();
+	expect(screen.getByText(/Полнота неизвестна/)).toBeInTheDocument();
 	expect(
 		screen.getByRole("columnheader", { name: "Провайдер" }),
 	).toBeInTheDocument();
@@ -60,7 +68,7 @@ it("renders full album completeness and keeps local publication completeness unk
 
 it("renders technical track details and links from the library track list", () => {
 	render(<CatalogDemo />);
-	fireEvent.click(screen.getByRole("button", { name: "Все треки" }));
+	fireEvent.click(screen.getByRole("tab", { name: "Все треки" }));
 	for (const heading of [
 		"Длительность",
 		"Источник",
@@ -84,11 +92,14 @@ it("renders technical track details and links from the library track list", () =
 
 it("requires an explicit edition before showing an absent album's tracks", () => {
 	render(<CatalogDemo />);
-	fireEvent.click(screen.getByRole("button", { name: "Все альбомы" }));
+	fireEvent.click(screen.getByRole("tab", { name: "Все альбомы" }));
 	expect(screen.queryByText("After Rain")).not.toBeInTheDocument();
-	fireEvent.change(screen.getByRole("combobox", { name: "Выберите издание" }), {
-		target: { value: "absent-blue-b" },
-	});
+	const absentAlbum = screen.getByText("Blue Atlas").closest("section");
+	if (!absentAlbum) throw new Error("Missing absent album section");
+	fireEvent.click(
+		within(absentAlbum).getByRole("button", { name: /Blue Atlas/ }),
+	);
+	fireEvent.click(screen.getByRole("option", { name: /2001 · JP/ }));
 	expect(screen.getByText("After Rain")).toBeInTheDocument();
 	expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });

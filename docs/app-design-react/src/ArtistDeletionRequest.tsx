@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Button, Dialog, Heading, Modal } from "react-aria-components";
+import "./matching-publication.css";
+import { Button, Dialog, Heading, Modal } from "./ui";
 import type {
 	CatalogArtist,
 	OriginalRelease,
@@ -126,7 +127,10 @@ export function ArtistDeletionRequest({
 		<>
 			<Button onPress={() => setOpen(true)}>Удалить артиста</Button>
 			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
-				<Dialog aria-labelledby="artist-deletion-title">
+				<Dialog
+					aria-labelledby="artist-deletion-title"
+					className="deletion-dialog-content"
+				>
 					<Heading slot="title" id="artist-deletion-title">
 						Удалить: {plan.target}?
 					</Heading>
@@ -163,20 +167,23 @@ export function ArtistDeletionRequest({
 						в список операций: реальные файлы и демонстрационные записи не
 						удаляются.
 					</p>
-					<Button onPress={() => setOpen(false)}>Отмена</Button>
-					<Button
-						onPress={() => {
-							setOpen(false);
-							onQueue({
-								target: plan.target,
-								scope: plan.scope,
-								publications: plan.publications,
-								paths: plan.paths,
-							});
-						}}
-					>
-						Подтвердить
-					</Button>
+					<div className="deletion-dialog-footer">
+						<Button onPress={() => setOpen(false)}>Отмена</Button>
+						<Button
+							className="ui-button--danger"
+							onPress={() => {
+								setOpen(false);
+								onQueue({
+									target: plan.target,
+									scope: plan.scope,
+									publications: plan.publications,
+									paths: plan.paths,
+								});
+							}}
+						>
+							Подтвердить
+						</Button>
+					</div>
 				</Dialog>
 			</Modal>
 		</>

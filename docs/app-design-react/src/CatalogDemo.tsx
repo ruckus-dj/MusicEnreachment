@@ -1,5 +1,19 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Checkbox } from "react-aria-components";
+import {
+	Button,
+	Checkbox,
+	Label,
+	ListBox,
+	ListBoxItem,
+	Popover,
+	Select,
+	SelectValue,
+	Tab,
+	TabList,
+	TabPanel,
+	Tabs,
+} from "./ui";
+import { Input, SearchField } from "./ui";
 import {
 	catalogData,
 	originalReleases,
@@ -42,6 +56,7 @@ import {
 } from "./catalogViewModel";
 import { ManualReleaseScreen } from "./ManualReleaseScreen";
 import { LibraryCatalogRows } from "./LibraryCatalogRows";
+import "./catalogue-shell.css";
 import {
 	createManualRelease,
 	createManualReleaseDemoDraft,
@@ -357,18 +372,15 @@ export function CatalogDemo({
 				{selected.size > 0 && (
 					<div className="demo-selection" role="status">
 						Выбрано позиций: {selected.size}
-						<button
-							type="button"
-							onClick={() => {
+						<Button
+							onPress={() => {
 								setContextIds(null);
 								openPreview(selected);
 							}}
 						>
 							Предпросмотр публикации
-						</button>
-						<button type="button" onClick={() => setSelected(new Set())}>
-							Снять выбор
-						</button>
+						</Button>
+						<Button onPress={() => setSelected(new Set())}>Снять выбор</Button>
 					</div>
 				)}
 			</main>
@@ -682,7 +694,7 @@ export function CatalogDemo({
 		),
 	);
 	return (
-		<main className="demo-shell">
+		<main className="demo-shell catalogue-shell">
 			<header>
 				<p className="demo-eyebrow">MeloTrove · стенд в разработке</p>
 				<h1>{artistId ? artistName(artistId) : "Медиатека"}</h1>
@@ -692,180 +704,202 @@ export function CatalogDemo({
 					<a href="/compare">Сравнить со старым прототипом</a>
 				)}
 				{artistId && (
-					<button
-						type="button"
-						onClick={() => {
+					<Button
+						onPress={() => {
 							setArtistId(null);
 							setView("artists");
 						}}
 					>
 						К медиатеке
-					</button>
+					</Button>
 				)}
 			</header>
-			<nav className="demo-tabs" aria-label="Вид медиатеки">
-				{tabs.map(([key, label]) => (
-					<button
-						key={key}
-						type="button"
-						aria-pressed={view === key}
-						onClick={() => {
-							setView(key);
-							setArtistId(null);
-							setExpanded(null);
-						}}
-					>
-						{label}
-					</button>
-				))}
-			</nav>
-			<label className="demo-search">
-				Поиск в медиатеке
-				<input
-					type="search"
+			<div className="catalogue-controls">
+				<Tabs
+					selectedKey={view}
+					onSelectionChange={(key) => {
+						setView(key as View);
+						setArtistId(null);
+						setExpanded(null);
+					}}
+					className="catalogue-tabs"
+				>
+					<TabList aria-label="Вид медиатеки">
+						{tabs.map(([key, label]) => (
+							<Tab key={key} id={key}>
+								{label}
+							</Tab>
+						))}
+					</TabList>
+					<TabPanel id={view}>
+						<section
+							className="demo-list"
+							aria-label={tabs.find(([key]) => key === view)?.[1]}
+						>
+							<LibraryCatalogRows
+								view={view}
+								artists={view === "artists" ? visibleArtists : fixture.artists}
+								releases={
+									view === "albums"
+										? releases.filter((release) =>
+												visibleReleases.some((item) => item.id === release.id),
+											)
+										: view === "tracks"
+											? releases
+													.map((release) => ({
+														...release,
+														tracks: release.tracks.filter((track) =>
+															visibleTrackIds.has(track.id),
+														),
+													}))
+													.filter((release) => release.tracks.length > 0)
+											: releases
+								}
+								missingCounts={
+									new Map(
+										fixture.artists.map((artist) => [
+											artist.id,
+											missingGroups.filter(
+												(group) => group.artistId === artist.id,
+											).length,
+										]),
+									)
+								}
+								hasAudio={(track) => hasAudio(track as Track)}
+								files={files}
+								availability={availability}
+								publication={publication}
+								groupCheckbox={(ids, label) => (
+									<GroupCheckbox
+										ids={ids}
+										label={label}
+										selected={selected}
+										onChange={update}
+									/>
+								)}
+								expanded={expanded}
+								onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
+							/>
+						</section>
+						{view === "albums" &&
+							missingGroups
+								.filter((group) => !artistId || group.artistId === artistId)
+								.map((group) => {
+									const chosen = group.editions.find(
+										(edition) => edition.id === editions[group.id],
+									);
+									return (
+										<section className="demo-absent" key={group.id}>
+											<h2>{group.title}</h2>
+											<p>
+												{artistName(group.artistId)} · альбом отсутствует в
+												медиатеке
+											</p>
+											<Select
+												aria-label={`Выберите издание для ${group.title}`}
+												selectedKey={editions[group.id] ?? "none"}
+												onSelectionChange={(key) => {
+													const value =
+														String(key) === "none" ? "" : String(key);
+													setEditions((previous) => ({
+														...previous,
+														[group.id]: value,
+													}));
+												}}
+												className="catalogue-filter"
+											>
+												<Button>
+													<SelectValue />
+													<span aria-hidden="true">⌄</span>
+												</Button>
+												<Popover>
+													<ListBox>
+														<ListBoxItem id="none">
+															Выберите издание
+														</ListBoxItem>
+														{group.editions.map((edition) => (
+															<ListBoxItem key={edition.id} id={edition.id}>
+																{edition.year} · {edition.country} ·{" "}
+																{edition.format} · {edition.disambiguation}
+															</ListBoxItem>
+														))}
+													</ListBox>
+												</Popover>
+											</Select>
+											{chosen && (
+												<ol>
+													{chosen.titles.map((title) => (
+														<li key={title}>{title}</li>
+													))}
+												</ol>
+											)}
+											<p>Просмотр не добавляет альбом в медиатеку.</p>
+										</section>
+									);
+								})}
+					</TabPanel>
+				</Tabs>
+				<SearchField
+					aria-label="Поиск в медиатеке"
 					value={query}
-					onChange={(event) => setQuery(event.currentTarget.value)}
-					placeholder="Артист, альбом, трек…"
-				/>
-			</label>
-			<div className="demo-filters">
-				<label>
-					Наличие{" "}
-					<select
-						value={availability}
-						onChange={(event) =>
-							setAvailability(event.currentTarget.value as Availability)
-						}
-					>
-						<option value="all">Все</option>
-						<option value="available">В наличии</option>
-						<option value="missing">Не хватает</option>
-					</select>
-				</label>
-				<label>
-					Публикация{" "}
-					<select
-						value={publication}
-						onChange={(event) =>
-							setPublication(event.currentTarget.value as Publication)
-						}
-					>
-						<option value="all">Все</option>
-						<option value="published">Опубликованные</option>
-						<option value="unpublished">Не опубликованные</option>
-					</select>
-				</label>
+					onChange={setQuery}
+					className="catalogue-search"
+				>
+					<Input placeholder="Артист, альбом, трек…" />
+				</SearchField>
+				<Select
+					aria-label="Наличие"
+					selectedKey={availability}
+					onSelectionChange={(key) => setAvailability(key as Availability)}
+					className="catalogue-filter"
+				>
+					<Label>Наличие</Label>
+					<Button>
+						<SelectValue />
+						<span aria-hidden="true">⌄</span>
+					</Button>
+					<Popover>
+						<ListBox>
+							<ListBoxItem id="all">Все</ListBoxItem>
+							<ListBoxItem id="available">В наличии</ListBoxItem>
+							<ListBoxItem id="missing">Не хватает</ListBoxItem>
+						</ListBox>
+					</Popover>
+				</Select>
+				<Select
+					aria-label="Публикация"
+					selectedKey={publication}
+					onSelectionChange={(key) => setPublication(key as Publication)}
+					className="catalogue-filter"
+				>
+					<Label>Публикация</Label>
+					<Button>
+						<SelectValue />
+						<span aria-hidden="true">⌄</span>
+					</Button>
+					<Popover>
+						<ListBox>
+							<ListBoxItem id="all">Все</ListBoxItem>
+							<ListBoxItem id="published">Опубликованные</ListBoxItem>
+							<ListBoxItem id="unpublished">Не опубликованные</ListBoxItem>
+						</ListBox>
+					</Popover>
+				</Select>
 			</div>
 			{selected.size > 0 && (
 				<div className="demo-selection" role="status">
 					Выбрано позиций: {selected.size}
-					<button
-						type="button"
-						onClick={() => {
+					<Button
+						onPress={() => {
 							setContextIds(null);
 							openPreview(selected);
 						}}
 					>
 						Предпросмотр публикации
-					</button>
-					<button type="button" onClick={() => setSelected(new Set())}>
-						Снять выбор
-					</button>
+					</Button>
+					<Button onPress={() => setSelected(new Set())}>Снять выбор</Button>
 				</div>
 			)}
-			<section
-				className="demo-list"
-				aria-label={tabs.find(([key]) => key === view)?.[1]}
-			>
-				<LibraryCatalogRows
-					view={view}
-					artists={view === "artists" ? visibleArtists : fixture.artists}
-					releases={
-						view === "albums"
-							? releases.filter((release) =>
-									visibleReleases.some((item) => item.id === release.id),
-								)
-							: view === "tracks"
-								? releases
-										.map((release) => ({
-											...release,
-											tracks: release.tracks.filter((track) =>
-												visibleTrackIds.has(track.id),
-											),
-										}))
-										.filter((release) => release.tracks.length > 0)
-								: releases
-					}
-					missingCounts={
-						new Map(
-							fixture.artists.map((artist) => [
-								artist.id,
-								missingGroups.filter((group) => group.artistId === artist.id)
-									.length,
-							]),
-						)
-					}
-					hasAudio={(track) => hasAudio(track as Track)}
-					files={files}
-					availability={availability}
-					publication={publication}
-					groupCheckbox={(ids, label) => (
-						<GroupCheckbox
-							ids={ids}
-							label={label}
-							selected={selected}
-							onChange={update}
-						/>
-					)}
-					expanded={expanded}
-					onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
-				/>
-			</section>
-			{view === "albums" &&
-				missingGroups
-					.filter((group) => !artistId || group.artistId === artistId)
-					.map((group) => {
-						const chosen = group.editions.find(
-							(edition) => edition.id === editions[group.id],
-						);
-						return (
-							<section className="demo-absent" key={group.id}>
-								<h2>{group.title}</h2>
-								<p>
-									{artistName(group.artistId)} · альбом отсутствует в медиатеке
-								</p>
-								<label>
-									Выберите издание{" "}
-									<select
-										value={editions[group.id] ?? ""}
-										onChange={(event) => {
-											const value = event.currentTarget.value;
-											setEditions((previous) => ({
-												...previous,
-												[group.id]: value,
-											}));
-										}}
-									>
-										<option value="">Выберите издание</option>
-										{group.editions.map((edition) => (
-											<option key={edition.id} value={edition.id}>
-												{edition.year} · {edition.country} · {edition.format} ·{" "}
-												{edition.disambiguation}
-											</option>
-										))}
-									</select>
-								</label>
-								{chosen && (
-									<ol>
-										{chosen.titles.map((title) => (
-											<li key={title}>{title}</li>
-										))}
-									</ol>
-								)}
-								<p>Просмотр не добавляет альбом в медиатеку.</p>
-							</section>
-						);
-					})}
 		</main>
 	);
 }

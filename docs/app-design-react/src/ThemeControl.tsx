@@ -1,4 +1,13 @@
 import { useEffect, useState } from "react";
+import {
+	Button,
+	Label,
+	ListBox,
+	ListBoxItem,
+	Popover,
+	Select,
+	SelectValue,
+} from "./ui";
 
 type Theme = "system" | "light" | "dark";
 const storageKey = "music-design-v2-theme";
@@ -26,12 +35,12 @@ export function ThemeControl() {
 		return () => media?.removeEventListener("change", apply);
 	}, [theme]);
 	return (
-		<label className="demo-theme" title={warning}>
-			Тема
-			<select
-				value={theme}
-				onChange={(event) => {
-					const next = event.currentTarget.value as Theme;
+		<>
+			<Select
+				aria-label="Тема оформления"
+				selectedKey={theme}
+				onSelectionChange={(key) => {
+					const next = key as Theme;
 					setTheme(next);
 					try {
 						localStorage.setItem(storageKey, next);
@@ -40,11 +49,22 @@ export function ThemeControl() {
 						setWarning("Тема изменена; браузер не разрешил сохранить выбор.");
 					}
 				}}
+				className="demo-theme"
 			>
-				<option value="system">Как в системе</option>
-				<option value="light">Светлая</option>
-				<option value="dark">Тёмная</option>
-			</select>
-		</label>
+				<Label>Тема</Label>
+				<Button>
+					<SelectValue />
+					<span aria-hidden="true">⌄</span>
+				</Button>
+				<Popover>
+					<ListBox>
+						<ListBoxItem id="system">Как в системе</ListBoxItem>
+						<ListBoxItem id="light">Светлая</ListBoxItem>
+						<ListBoxItem id="dark">Тёмная</ListBoxItem>
+					</ListBox>
+				</Popover>
+			</Select>
+			{warning && <span role="status">{warning}</span>}
+		</>
 	);
 }

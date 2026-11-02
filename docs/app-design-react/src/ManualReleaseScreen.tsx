@@ -12,6 +12,21 @@ import {
 	type ManualPositionDraft,
 	type ManualReleaseDraft,
 } from "./manualReleaseModel";
+import {
+	Button,
+	Input,
+	Label,
+	ListBox,
+	ListBoxItem,
+	Popover,
+	Radio,
+	RadioGroup,
+	SearchField,
+	Select,
+	SelectValue,
+	TextField,
+} from "./ui";
+import "./forms-operations.css";
 
 type ListKind = "artists" | "media" | "positions";
 
@@ -106,25 +121,25 @@ export function ManualReleaseScreen({
 		label: string,
 	) => (
 		<div className="demo-object-actions">
-			<button
+			<Button
 				type="button"
 				aria-label={`Переместить ${label} выше`}
-				disabled={index === 0}
-				onClick={() => move(kind, mediumIndex, index, -1)}
+				isDisabled={index === 0}
+				onPress={() => move(kind, mediumIndex, index, -1)}
 			>
 				↑
-			</button>
-			<button
+			</Button>
+			<Button
 				type="button"
 				aria-label={`Переместить ${label} ниже`}
-				disabled={index === length - 1}
-				onClick={() => move(kind, mediumIndex, index, 1)}
+				isDisabled={index === length - 1}
+				onPress={() => move(kind, mediumIndex, index, 1)}
 			>
 				↓
-			</button>
-			<button type="button" onClick={() => remove(kind, mediumIndex, index)}>
+			</Button>
+			<Button type="button" onPress={() => remove(kind, mediumIndex, index)}>
 				Удалить
-			</button>
+			</Button>
 		</div>
 	);
 	const sourceCount = draft.media.reduce(
@@ -141,8 +156,11 @@ export function ManualReleaseScreen({
 	);
 
 	return (
-		<section aria-labelledby="manual-release-title">
-			<header className="demo-object-header">
+		<section
+			className="manual-release-screen"
+			aria-labelledby="manual-release-title"
+		>
+			<header className="demo-object-header form-page-header">
 				<div>
 					<h1 id="manual-release-title">Создать локальный релиз</h1>
 					<p>
@@ -216,9 +234,9 @@ export function ManualReleaseScreen({
 							можно уточнить.
 						</span>
 					</div>
-					<button
+					<Button
 						type="button"
-						onClick={() =>
+						onPress={() =>
 							update({
 								...draft,
 								artists: [
@@ -229,7 +247,7 @@ export function ManualReleaseScreen({
 						}
 					>
 						Добавить авторство
-					</button>
+					</Button>
 				</div>
 				{draft.artists.map((artist, index) => {
 					const matched = artists.find(
@@ -244,29 +262,26 @@ export function ManualReleaseScreen({
 								{actions("artists", -1, index, draft.artists.length, "артиста")}
 							</div>
 							<div className="demo-object-columns">
-								<label>
-									Артист (поиск / новое имя)
-									<input
-										list="manual-artist-options"
-										value={artist.name}
-										placeholder="Начните вводить имя"
-										autoComplete="off"
-										onChange={(event) => {
-											const name = event.currentTarget.value;
-											const exact = artists.find(
-												(item) =>
-													item.name.toLocaleLowerCase() ===
-													name.trim().toLocaleLowerCase(),
-											);
-											updateArtist(index, {
-												name,
-												artistId: exact?.id ?? null,
-												credit:
-													exact && !artist.credit ? exact.name : artist.credit,
-											});
-										}}
-									/>
-								</label>
+								<TextField
+									className="field"
+									value={artist.name}
+									onChange={(name) => {
+										const exact = artists.find(
+											(item) =>
+												item.name.toLocaleLowerCase() ===
+												name.trim().toLocaleLowerCase(),
+										);
+										updateArtist(index, {
+											name,
+											artistId: exact?.id ?? null,
+											credit:
+												exact && !artist.credit ? exact.name : artist.credit,
+										});
+									}}
+								>
+									<Label>Артист (поиск / новое имя)</Label>
+									<Input placeholder="Начните вводить имя" autoComplete="off" />
+								</TextField>
 								<Field
 									label="Отображаемое имя"
 									value={artist.credit}
@@ -308,14 +323,14 @@ export function ManualReleaseScreen({
 						<h2>Носители и позиции</h2>
 						<span>Порядок носителей и позиций изменяется независимо.</span>
 					</div>
-					<button
+					<Button
 						type="button"
-						onClick={() =>
+						onPress={() =>
 							update({ ...draft, media: [...draft.media, emptyManualMedium()] })
 						}
 					>
 						Добавить носитель
-					</button>
+					</Button>
 				</div>
 				{draft.media.map((medium, mediumIndex) => (
 					<div className="demo-panel" key={`medium-${mediumIndex}`}>
@@ -343,16 +358,16 @@ export function ManualReleaseScreen({
 						</div>
 						<div className="panel-heading">
 							<h3>Позиции</h3>
-							<button
+							<Button
 								type="button"
-								onClick={() =>
+								onPress={() =>
 									updateMedium(mediumIndex, {
 										positions: [...medium.positions, emptyManualPosition()],
 									})
 								}
 							>
 								Добавить позицию
-							</button>
+							</Button>
 						</div>
 						{medium.positions.map((position, positionIndex) => (
 							<div
@@ -394,35 +409,19 @@ export function ManualReleaseScreen({
 										placeholder="Необязательно"
 									/>
 								</div>
-								<fieldset>
-									<legend>Композиция</legend>
-									<label>
-										<input
-											type="radio"
-											name={`recording-mode-${mediumIndex}-${positionIndex}`}
-											checked={position.recordingMode === "new"}
-											onChange={() =>
-												updatePosition(mediumIndex, positionIndex, {
-													recordingMode: "new",
-												})
-											}
-										/>{" "}
-										Новая композиция
-									</label>
-									<label>
-										<input
-											type="radio"
-											name={`recording-mode-${mediumIndex}-${positionIndex}`}
-											checked={position.recordingMode === "existing"}
-											onChange={() =>
-												updatePosition(mediumIndex, positionIndex, {
-													recordingMode: "existing",
-												})
-											}
-										/>{" "}
-										Существующая композиция
-									</label>
-								</fieldset>
+								<RadioGroup
+									className="recording-mode-options"
+									aria-label="Композиция"
+									value={position.recordingMode}
+									onChange={(recordingMode) =>
+										updatePosition(mediumIndex, positionIndex, {
+											recordingMode: recordingMode as "new" | "existing",
+										})
+									}
+								>
+									<Radio value="new">Новая композиция</Radio>
+									<Radio value="existing">Существующая композиция</Radio>
+								</RadioGroup>
 								{position.recordingMode === "new" ? (
 									<div>
 										<Field
@@ -456,71 +455,77 @@ export function ManualReleaseScreen({
 										</span>
 									</div>
 									{position.sourceIds.length ? (
-										position.sourceIds.map((id) => {
-											const source = manualSources.find(
-												(item) => item.id === id,
-											);
-											return source ? (
-												<div className="demo-source" key={id}>
-													<label>
-														<input
-															type="radio"
-															name={`publish-source-${mediumIndex}-${positionIndex}`}
-															checked={position.selectedSourceId === id}
-															onChange={() =>
+										<RadioGroup
+											aria-label="Выбранный исходник для публикации"
+											value={position.selectedSourceId}
+											onChange={(selectedSourceId) =>
+												updatePosition(mediumIndex, positionIndex, {
+													selectedSourceId,
+												})
+											}
+										>
+											{position.sourceIds.map((id) => {
+												const source = manualSources.find(
+													(item) => item.id === id,
+												);
+												return source ? (
+													<div className="demo-source" key={id}>
+														<Radio value={id}>
+															<strong>{source.name}</strong>
+															<span className="demo-secondary">
+																{source.kind} · {source.path}
+															</span>
+														</Radio>
+														<Button
+															type="button"
+															aria-label={`Снять ${source.name}`}
+															onPress={() =>
 																updatePosition(mediumIndex, positionIndex, {
-																	selectedSourceId: id,
+																	sourceIds: position.sourceIds.filter(
+																		(item) => item !== id,
+																	),
+																	selectedSourceId:
+																		position.selectedSourceId === id
+																			? ""
+																			: position.selectedSourceId,
 																})
 															}
-														/>
-														<strong>{source.name}</strong>
-														<span className="demo-secondary">
-															{source.kind} · {source.path}
-														</span>
-													</label>
-													<button
-														type="button"
-														aria-label={`Снять ${source.name}`}
-														onClick={() =>
-															updatePosition(mediumIndex, positionIndex, {
-																sourceIds: position.sourceIds.filter(
-																	(item) => item !== id,
-																),
-																selectedSourceId:
-																	position.selectedSourceId === id
-																		? ""
-																		: position.selectedSourceId,
-															})
-														}
-													>
-														Снять
-													</button>
-												</div>
-											) : null;
-										})
+														>
+															Снять
+														</Button>
+													</div>
+												) : null;
+											})}
+										</RadioGroup>
 									) : (
 										<p>Исходники не выбраны для этой позиции.</p>
 									)}
 									<div className="demo-object-actions">
-										<select
+										<Select
 											aria-label="Выбрать вариант исходника"
-											value={position.pendingSourceId ?? ""}
-											onChange={(event) =>
+											selectedKey={position.pendingSourceId || null}
+											onSelectionChange={(key) =>
 												updatePosition(mediumIndex, positionIndex, {
-													pendingSourceId: event.currentTarget.value,
+													pendingSourceId: String(key ?? ""),
 												})
 											}
 										>
-											<option value="">Выберите вариант…</option>
-											{manualSources.map((source) => (
-												<option key={source.id} value={source.id}>
-													{source.name} · {source.kind}
-												</option>
-											))}
-										</select>
-										<button
+											<Button>
+												<SelectValue />
+											</Button>
+											<Popover>
+												<ListBox>
+													{manualSources.map((source) => (
+														<ListBoxItem key={source.id} id={source.id}>
+															{source.name} · {source.kind}
+														</ListBoxItem>
+													))}
+												</ListBox>
+											</Popover>
+										</Select>
+										<Button
 											type="button"
-											onClick={() => {
+											onPress={() => {
 												const id = position.pendingSourceId;
 												if (!id) return;
 												updatePosition(mediumIndex, positionIndex, {
@@ -530,10 +535,10 @@ export function ManualReleaseScreen({
 											}}
 										>
 											Добавить к позиции
-										</button>
-										<button
+										</Button>
+										<Button
 											type="button"
-											onClick={() => {
+											onPress={() => {
 												const id = position.pendingSourceId;
 												if (!id) return;
 												setReplaceTarget({
@@ -544,7 +549,7 @@ export function ManualReleaseScreen({
 											}}
 										>
 											Заменить набор…
-										</button>
+										</Button>
 									</div>
 								</div>
 							</div>
@@ -577,46 +582,48 @@ export function ManualReleaseScreen({
 				</p>
 				<div className="panel-heading">
 					<h3>Обложка (необязательно)</h3>
-					<button
+					<Button
 						type="button"
-						onClick={() => update({ ...draft, coverId: "" })}
+						onPress={() => update({ ...draft, coverId: "" })}
 					>
 						Снять выбор
-					</button>
+					</Button>
 				</div>
-				<div className="demo-object-columns">
+				<RadioGroup
+					className="demo-object-columns"
+					aria-label="Обложка"
+					value={draft.coverId}
+					onChange={(coverId) => update({ ...draft, coverId })}
+				>
 					{manualCovers.map((cover) => (
-						<label className="demo-panel" key={cover.id}>
-							<input
-								type="radio"
-								name="manual-cover"
-								value={cover.id}
-								checked={draft.coverId === cover.id}
-								onChange={() => update({ ...draft, coverId: cover.id })}
-							/>
+						<Radio
+							key={cover.id}
+							className="demo-panel cover-choice"
+							value={cover.id}
+						>
 							<span className={`manual-cover-art ${cover.style}`}>
 								{cover.mark}
 							</span>
 							<strong>{cover.title}</strong>
 							<span className="demo-secondary">{cover.source}</span>
-						</label>
+						</Radio>
 					))}
-				</div>
+				</RadioGroup>
 			</section>
 			<section className="demo-panel">
 				<div className="demo-object-actions">
-					<button
+					<Button
 						type="button"
-						onClick={() => {
+						onPress={() => {
 							onReset();
 							setReplaceTarget(null);
 						}}
 					>
 						Восстановить демо-черновик
-					</button>
-					<button type="button" className="primary" onClick={onCreate}>
+					</Button>
+					<Button type="button" className="primary" onPress={onCreate}>
 						Создать демо-релиз
-					</button>
+					</Button>
 				</div>
 			</section>
 			<p className="demo-secondary">
@@ -655,9 +662,9 @@ export function ManualReleaseScreen({
 							»? Публикации не изменятся; выбранный исходник будет снят, если
 							его больше нет в наборе.
 						</p>
-						<button
+						<Button
 							type="button"
-							onClick={() => {
+							onPress={() => {
 								updatePosition(replaceTarget.medium, replaceTarget.position, {
 									sourceIds: [replaceTarget.sourceId],
 									selectedSourceId:
@@ -671,10 +678,10 @@ export function ManualReleaseScreen({
 							}}
 						>
 							Заменить набор
-						</button>
-						<button type="button" onClick={() => setReplaceTarget(null)}>
+						</Button>
+						<Button type="button" onPress={() => setReplaceTarget(null)}>
 							Отмена
-						</button>
+						</Button>
 					</Dialog>
 				</Modal>
 			)}
@@ -694,15 +701,10 @@ function Field({
 	placeholder?: string;
 }) {
 	return (
-		<label>
-			{label}
-			<input
-				value={value}
-				placeholder={placeholder}
-				autoComplete="off"
-				onChange={(event) => onChange(event.currentTarget.value)}
-			/>
-		</label>
+		<TextField className="field form-field" value={value} onChange={onChange}>
+			<Label>{label}</Label>
+			<Input placeholder={placeholder} autoComplete="off" />
+		</TextField>
 	);
 }
 
@@ -730,22 +732,28 @@ function RecordingPicker({
 				onChange={setQuery}
 				placeholder="Фильтр названий / артистов"
 			/>
-			<label>
+			<label className="form-field">
 				Существующая композиция
-				<select
+				<Select
 					aria-label="Существующая композиция"
-					value={position.recordingId}
-					onChange={(event) =>
-						onChange({ recordingId: event.currentTarget.value })
+					selectedKey={position.recordingId || null}
+					onSelectionChange={(key) =>
+						onChange({ recordingId: String(key ?? "") })
 					}
 				>
-					<option value="">Выберите композицию…</option>
-					{matching.map((recording) => (
-						<option key={recording.id} value={recording.id}>
-							{recording.title} — {recording.artists} ({recording.duration})
-						</option>
-					))}
-				</select>
+					<Button>
+						<SelectValue />
+					</Button>
+					<Popover>
+						<ListBox>
+							{matching.map((recording) => (
+								<ListBoxItem key={recording.id} id={recording.id}>
+									{recording.title} — {recording.artists} ({recording.duration})
+								</ListBoxItem>
+							))}
+						</ListBox>
+					</Popover>
+				</Select>
 			</label>
 			<span className="demo-secondary">
 				Выбрана:{" "}

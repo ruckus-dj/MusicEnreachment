@@ -20,23 +20,32 @@ it("compares the selected track across all metadata sources and scopes", () => {
 		}),
 	).toBeInTheDocument();
 
-	fireEvent.click(within(comparison).getByRole("button", { name: "Артист" }));
+	fireEvent.click(within(comparison).getByRole("tab", { name: "Артист" }));
 	expect(
 		within(comparison).getByRole("rowheader", { name: "ARTISTSORT" }),
 	).toBeInTheDocument();
-	fireEvent.click(within(comparison).getByRole("button", { name: "Трек" }));
+	fireEvent.click(within(comparison).getByRole("tab", { name: "Трек" }));
 	expect(
 		within(comparison).getByRole("rowheader", { name: "TRACKNUMBER" }),
 	).toBeInTheDocument();
-	fireEvent.click(within(comparison).getByLabelText("Только отличия"));
-	expect(within(comparison).getByLabelText("Только отличия")).toBeChecked();
+	fireEvent.click(
+		within(comparison).getByRole("checkbox", { name: /Только отличия/ }),
+	);
+	expect(
+		within(comparison).getByRole("checkbox", { name: /Только отличия/ }),
+	).toBeChecked();
 
-	const trackSelect = within(comparison).getByRole("combobox", {
-		name: "Позиция сравнения",
+	const trackSelect = within(comparison).getByRole("button", {
+		name: /Позиция сравнения/,
 	});
 	const nextTrack = release.tracks[1];
 	if (!nextTrack) throw new Error("Missing second baseline track");
-	fireEvent.change(trackSelect, { target: { value: nextTrack.id } });
+	fireEvent.click(trackSelect);
+	fireEvent.click(
+		within(screen.getByRole("listbox")).getByRole("option", {
+			name: nextTrack.title,
+		}),
+	);
 	expect(
 		within(comparison).getByRole("link", {
 			name: "Открыть подробное сравнение альбома",

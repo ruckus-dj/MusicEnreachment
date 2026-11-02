@@ -1,4 +1,3 @@
-import { Checkbox } from "react-aria-components";
 import { DeletionRequest, type DeletionOperation } from "./DeletionRequest";
 import {
 	metadataChanged,
@@ -11,6 +10,7 @@ import {
 	type SourceFiles,
 } from "./catalogData";
 import { ReleaseMetadataComparison } from "./ReleaseMetadataComparison";
+import { Button, Checkbox } from "./ui";
 import {
 	availabilityRowClass,
 	availabilityRowHint,
@@ -49,7 +49,6 @@ export function ReleaseScreen({
 				...(track.sourceId ? [track.sourceId] : []),
 			]),
 		].some((id) => files[id]?.available && files[id]?.locations?.length);
-	const count = ids.filter((id) => selected.has(id)).length;
 	const published = release.tracks.filter((track) => track.published).length;
 	const provider = originalProviders.find(
 		(item) => item.id === release.providerId,
@@ -72,7 +71,7 @@ export function ReleaseScreen({
 	const duration = (seconds: number) =>
 		`${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
 	return (
-		<section>
+		<section className="catalogue-object">
 			<header className="demo-object-header">
 				<div>
 					<h1>{release.title || "Локальный релиз без названия"}</h1>
@@ -102,24 +101,28 @@ export function ReleaseScreen({
 			</div>
 			<div className="demo-object-actions">
 				<Checkbox
-					aria-label={`Выбрать позиции альбома ${release.title}`}
+					aria-label={`Выбрать все позиции релиза ${release.title}`}
 					className="demo-checkbox"
-					isSelected={ids.length > 0 && count === ids.length}
-					isIndeterminate={count > 0 && count < ids.length}
-					isDisabled={ids.length === 0}
+					isSelected={ids.length > 0 && ids.every((id) => selected.has(id))}
+					isIndeterminate={
+						ids.some((id) => selected.has(id)) &&
+						!ids.every((id) => selected.has(id))
+					}
+					isDisabled={!ids.length}
 					onChange={(value) => onSelect(ids, value)}
 				>
 					<span className="demo-checkbox-box" aria-hidden="true">
-						{count === ids.length && ids.length ? "✓" : count ? "−" : ""}
+						{ids.length > 0 && ids.every((id) => selected.has(id))
+							? "✓"
+							: ids.some((id) => selected.has(id))
+								? "−"
+								: ""}
 					</span>
+					<span className="sr-only">Выбрать все позиции релиза</span>
 				</Checkbox>
-				<button
-					type="button"
-					disabled={!ids.length}
-					onClick={() => onPreview(ids)}
-				>
+				<Button isDisabled={!ids.length} onPress={() => onPreview(ids)}>
 					Предпросмотр публикации
-				</button>
+				</Button>
 			</div>
 			<section className="demo-panel">
 				<h2>
@@ -158,16 +161,16 @@ export function ReleaseScreen({
 									)}
 								>
 									<td>
-										<label className="demo-checkbox">
-											<input
-												type="checkbox"
-												aria-label={`Выбрать ${track.title}`}
-												checked={selected.has(track.id)}
-												onChange={(event) =>
-													onSelect([track.id], event.currentTarget.checked)
-												}
-											/>
-										</label>
+										<Checkbox
+											className="demo-checkbox"
+											aria-label={`Выбрать ${track.title}`}
+											isSelected={selected.has(track.id)}
+											onChange={(value) => onSelect([track.id], value)}
+										>
+											<span className="demo-checkbox-box" aria-hidden="true">
+												{selected.has(track.id) ? "✓" : ""}
+											</span>
+										</Checkbox>
 									</td>
 									<td>{trackNumberLabel(release, track)}</td>
 									<td>
@@ -224,9 +227,7 @@ export function ReleaseScreen({
 				<DeletionRequest release={release} onQueue={onQueueDeletion} />
 			)}
 			{release.manual && onReturnToDraft && (
-				<button type="button" onClick={onReturnToDraft}>
-					Вернуться к черновику
-				</button>
+				<Button onPress={onReturnToDraft}>Вернуться к черновику</Button>
 			)}
 			<a href="#create-release">Создать локальный релиз</a>
 			<ReleaseMetadataComparison

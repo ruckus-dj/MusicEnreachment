@@ -23,12 +23,16 @@ it("provides scoped four-column comparison and explicit source-file selection", 
 	expect(
 		within(table).getByRole("rowheader", { name: "ARTIST" }),
 	).toBeInTheDocument();
-	fireEvent.change(
-		screen.getByRole("combobox", { name: "Исходный файл для сравнения" }),
-		{ target: { value: track.sourceIds?.[1] } },
+	fireEvent.click(
+		screen.getByRole("button", { name: /Исходный файл для сравнения/ }),
+	);
+	fireEvent.click(
+		screen.getByRole("option", {
+			name: /01 - First Light\.mp3/,
+		}),
 	);
 	expect(onSelectFile).toHaveBeenCalledWith(track.id, track.sourceIds?.[1]);
-	fireEvent.click(screen.getByRole("button", { name: "Альбом" }));
+	fireEvent.click(screen.getByRole("tab", { name: "Альбом" }));
 	expect(
 		within(table).getByRole("rowheader", { name: "ALBUM" }),
 	).toBeInTheDocument();
@@ -47,7 +51,13 @@ it("keeps publication tags distinct and offers differences-only filtering", () =
 		/>,
 	);
 	expect(screen.getByText(/Публикация: .*чтение/)).toBeInTheDocument();
-	fireEvent.click(screen.getByRole("checkbox", { name: /Только отличия/ }));
+	const comparison = screen
+		.getByRole("heading", { name: "Контекст сравнения" })
+		.closest("section");
+	if (!comparison) throw new Error("Missing comparison section");
+	fireEvent.click(
+		within(comparison).getByRole("checkbox", { name: /Только отличия/ }),
+	);
 	expect(screen.getByRole("table")).toBeInTheDocument();
 });
 
@@ -68,7 +78,9 @@ it("keeps source values empty when the selected track has no source", () => {
 		/>,
 	);
 	expect(
-		screen.getByRole("combobox", { name: "Исходный файл для сравнения" }),
-	).toHaveValue("");
-	expect(screen.getAllByRole("row")[1]).toHaveTextContent("—");
+		screen.getByRole("button", { name: /Исходный файл для сравнения/ }),
+	).toHaveTextContent("Исходник не выбран");
+	expect(
+		within(screen.getByRole("table")).getAllByRole("row")[1],
+	).toHaveTextContent("—");
 });

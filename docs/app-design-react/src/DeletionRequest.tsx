@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Button, Dialog, Heading, Modal } from "react-aria-components";
+import "./matching-publication.css";
+import { Button, Dialog, Heading, Modal } from "./ui";
 import type { OriginalRelease, OriginalTrack } from "./catalogData";
 
 export interface DeletionOperation {
@@ -45,7 +46,10 @@ export function DeletionRequest({
 				{track ? "Удалить публикацию" : "Удалить альбом"}
 			</Button>
 			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
-				<Dialog aria-labelledby="deletion-title">
+				<Dialog
+					aria-labelledby="deletion-title"
+					className="deletion-dialog-content"
+				>
 					<Heading slot="title" id="deletion-title">
 						Удалить: {plan.target}?
 					</Heading>
@@ -102,15 +106,18 @@ export function DeletionRequest({
 						в список операций: реальные файлы и демонстрационные записи не
 						удаляются.
 					</p>
-					<Button onPress={() => setOpen(false)}>Отмена</Button>
-					<Button
-						onPress={() => {
-							setOpen(false);
-							onQueue(plan);
-						}}
-					>
-						Подтвердить
-					</Button>
+					<div className="deletion-dialog-footer">
+						<Button onPress={() => setOpen(false)}>Отмена</Button>
+						<Button
+							className="ui-button--danger"
+							onPress={() => {
+								setOpen(false);
+								onQueue(plan);
+							}}
+						>
+							Подтвердить
+						</Button>
+					</div>
 				</Dialog>
 			</Modal>
 		</>

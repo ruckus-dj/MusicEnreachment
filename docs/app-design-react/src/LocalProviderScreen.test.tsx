@@ -27,7 +27,7 @@ it("retains original provider identities and search never creates records", () =
 		localProviderFixtures.artists.map(({ id }) => id),
 	);
 	fireEvent.change(
-		screen.getByRole("searchbox", { name: "Поиск в артистах" }),
+		screen.getByRole("searchbox", { name: /Поиск в артистах/ }),
 		{ target: { value: "not present" } },
 	);
 	expect(
@@ -83,14 +83,15 @@ it("preserves external artist references as readonly identities and gates genre 
 	render(<Harness />);
 	fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
 	const forma = screen
-		.getByRole("checkbox", { name: /Forma.*MusicBrainz/ })
-		.closest("label")!;
+		.getByText("mb-artist-forma")
+		.closest<HTMLElement>(".local-provider-option");
+	if (!forma) throw new Error("Missing Forma artist option");
 	expect(forma).toHaveTextContent("mb-artist-forma");
 	expect(
 		screen.getByRole("button", { name: "electronic" }),
 	).toBeInTheDocument();
 	// The external artist option is only a reference checkbox; its canonical key is not editable.
 	expect(
-		within(forma.closest("label") as HTMLElement).getByRole("checkbox"),
+		within(forma).getByRole("checkbox", { name: "Forma" }),
 	).toBeInTheDocument();
 });

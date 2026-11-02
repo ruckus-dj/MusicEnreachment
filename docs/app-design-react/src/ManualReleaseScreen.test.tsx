@@ -89,13 +89,19 @@ describe("ManualReleaseScreen", () => {
 			{ title: "", format: "", positions: [emptyManualPosition()] },
 		];
 		render(<Harness initial={draft} />);
-		const picker = screen.getByLabelText("Выбрать вариант исходника");
-		fireEvent.change(picker, { target: { value: "north-f1" } });
+		fireEvent.click(
+			screen.getByRole("button", { name: /Выбрать вариант исходника/ }),
+		);
+		fireEvent.click(
+			screen.getByRole("option", { name: /01 - First Light\.flac/ }),
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Добавить к позиции" }));
 		expect(
 			screen.getByRole("radio", { name: /01 - First Light.flac/ }),
 		).not.toBeChecked();
-		expect(screen.getByLabelText("Выбрать вариант исходника")).toHaveValue("");
+		expect(
+			screen.getByRole("button", { name: /Выбрать вариант исходника/ }),
+		).not.toHaveTextContent(/First Light/);
 	});
 
 	it("confirmed replacement clears a no-longer-available selection without fallback", () => {
@@ -114,9 +120,14 @@ describe("ManualReleaseScreen", () => {
 			},
 		];
 		render(<Harness initial={draft} />);
-		fireEvent.change(screen.getByLabelText("Выбрать вариант исходника"), {
-			target: { value: "north-f3" },
-		});
+		fireEvent.click(
+			screen.getByRole("button", { name: /Выбрать вариант исходника/ }),
+		);
+		fireEvent.click(
+			within(screen.getByRole("listbox")).getByRole("option", {
+				name: /03 - Northbound \(live\?\)\.flac/,
+			}),
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Заменить набор…" }));
 		const dialog = screen.getByRole("alertdialog");
 		fireEvent.click(

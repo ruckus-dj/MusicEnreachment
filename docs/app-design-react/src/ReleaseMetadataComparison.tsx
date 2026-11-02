@@ -1,4 +1,18 @@
 import { useState } from "react";
+import "./matching-publication.css";
+import {
+	Button,
+	Checkbox,
+	Label,
+	ListBox,
+	ListBoxItem,
+	Popover,
+	Select,
+	SelectValue,
+	Tab,
+	TabList,
+	Tabs,
+} from "./ui";
 import {
 	desiredTags,
 	originalProviders,
@@ -92,7 +106,10 @@ export function ReleaseMetadataComparison({
 		["track", "Трек"],
 	];
 	return (
-		<section className="demo-panel" aria-label="Сравнение метаданных">
+		<section
+			className="demo-panel metadata-comparison"
+			aria-label="Сравнение метаданных"
+		>
 			<h2>Сравнение метаданных</h2>
 			{release.manual && (
 				<p>
@@ -103,66 +120,72 @@ export function ReleaseMetadataComparison({
 						.join(", ") || "не указаны"}
 				</p>
 			)}
-			<div className="demo-object-actions">
-				<label>
-					Позиция
-					<select
-						aria-label="Позиция сравнения"
-						value={track.id}
-						onChange={(event) => {
-							setTrackId(event.currentTarget.value);
-							setFileOverride(undefined);
-						}}
-					>
-						{release.tracks.map((item) => (
-							<option key={item.id} value={item.id}>
-								{item.title}
-							</option>
-						))}
-					</select>
-				</label>
-				<label>
-					Исходный файл
-					<select
-						aria-label="Исходный файл сравнения"
-						value={fileId ?? ""}
-						onChange={(event) =>
-							setFileOverride(event.currentTarget.value || null)
-						}
-					>
-						<option value="">Исходник не выбран</option>
-						{linkedFileIds.map(
-							(id) =>
-								files[id] && (
-									<option key={id} value={id}>
-										{files[id].name}
-									</option>
-								),
-						)}
-					</select>
-				</label>
+			<div className="demo-object-actions comparison-controls">
+				<Select
+					aria-label="Позиция сравнения"
+					selectedKey={track.id}
+					onSelectionChange={(key) => {
+						setTrackId(String(key));
+						setFileOverride(undefined);
+					}}
+				>
+					<Label>Позиция</Label>
+					<Button>
+						<SelectValue />
+						<span aria-hidden="true">⌄</span>
+					</Button>
+					<Popover>
+						<ListBox>
+							{release.tracks.map((item) => (
+								<ListBoxItem key={item.id} id={item.id}>
+									{item.title}
+								</ListBoxItem>
+							))}
+						</ListBox>
+					</Popover>
+				</Select>
+				<Select
+					aria-label="Исходный файл сравнения"
+					selectedKey={fileId ?? ""}
+					onSelectionChange={(key) => setFileOverride(String(key) || null)}
+				>
+					<Label>Исходный файл</Label>
+					<Button>
+						<SelectValue />
+						<span aria-hidden="true">⌄</span>
+					</Button>
+					<Popover>
+						<ListBox>
+							<ListBoxItem id="">Исходник не выбран</ListBoxItem>
+							{linkedFileIds.map(
+								(id) =>
+									files[id] && (
+										<ListBoxItem key={id} id={id}>
+											{files[id].name}
+										</ListBoxItem>
+									),
+							)}
+						</ListBox>
+					</Popover>
+				</Select>
 			</div>
 			<div className="demo-object-actions" aria-label="Область тегов">
-				{scopes.map(([id, label]) => (
-					<button
-						key={id}
-						type="button"
-						aria-pressed={scope === id}
-						onClick={() => setScope(id)}
-					>
-						{label}
-					</button>
-				))}
-				<label>
-					<input
-						type="checkbox"
-						checked={differencesOnly}
-						onChange={(event) =>
-							setDifferencesOnly(event.currentTarget.checked)
-						}
-					/>{" "}
+				<Tabs
+					selectedKey={scope}
+					onSelectionChange={(key) => setScope(key as Scope)}
+				>
+					<TabList aria-label="Область тегов">
+						{scopes.map(([id, label]) => (
+							<Tab key={id} id={id}>
+								{label}
+							</Tab>
+						))}
+					</TabList>
+				</Tabs>
+				<Checkbox isSelected={differencesOnly} onChange={setDifferencesOnly}>
+					<span className="checkbox" />
 					Только отличия
-				</label>
+				</Checkbox>
 			</div>
 			<div className="demo-preview-table">
 				<table>

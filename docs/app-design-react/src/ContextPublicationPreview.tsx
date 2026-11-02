@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Button, Dialog, Heading, Modal } from "react-aria-components";
+import "./matching-publication.css";
+import { Button, Checkbox, Dialog, Heading, Modal } from "./ui";
 import type { CatalogArtist, OriginalRelease } from "./catalogData";
 import {
 	applyPlan,
@@ -100,7 +101,10 @@ export function ContextPublicationPreview({
 	};
 
 	return (
-		<section aria-labelledby="context-publication-title">
+		<section
+			className="publication-preview"
+			aria-labelledby="context-publication-title"
+		>
 			<header className="demo-object-header">
 				<div>
 					<h1 id="context-publication-title">
@@ -111,9 +115,7 @@ export function ContextPublicationPreview({
 						публикаций.
 					</p>
 				</div>
-				<button type="button" onClick={onBack}>
-					Вернуться к объекту
-				</button>
+				<Button onPress={onBack}>Вернуться к объекту</Button>
 			</header>
 			{(stale || error) && (
 				<p role="alert">
@@ -144,18 +146,16 @@ export function ContextPublicationPreview({
 						{rows.map((row) => (
 							<tr key={row.targetTrack.id}>
 								<td>
-									<input
-										type="checkbox"
+									<Checkbox
 										aria-label={`Включить ${row.targetTrack.title}`}
-										checked={Boolean(row.assignment?.included && row.file)}
-										disabled={!row.file}
-										onChange={(event) =>
-											updateIncluded(
-												String(row.targetTrack.id),
-												event.currentTarget.checked,
-											)
+										isSelected={Boolean(row.assignment?.included && row.file)}
+										isDisabled={!row.file}
+										onChange={(checked) =>
+											updateIncluded(String(row.targetTrack.id), checked)
 										}
-									/>
+									>
+										<span className="checkbox" />
+									</Checkbox>
 								</td>
 								<td>
 									{row.targetTrack.position} · {row.targetTrack.title}
@@ -191,29 +191,29 @@ export function ContextPublicationPreview({
 				текущие публикации не изменятся. Файлы без назначения не удаляются.
 			</p>
 			{downgrades.length > 0 && (
-				<label>
-					<input
-						type="checkbox"
-						checked={confirmDowngrade}
-						onChange={(event) => onPlan(plan, event.currentTarget.checked)}
-					/>
+				<Checkbox
+					isSelected={confirmDowngrade}
+					onChange={(checked) => onPlan(plan, checked)}
+				>
+					<span className="checkbox" />
 					Подтверждаю отдельное понижение качества ({downgrades.length} поз.)
-				</label>
+				</Checkbox>
 			)}
 			<div className="demo-object-actions">
-				<button
-					type="button"
-					disabled={!canConfirm}
-					onClick={() => setConfirming(true)}
+				<Button
+					className="ui-button--primary"
+					isDisabled={!canConfirm}
+					onPress={() => setConfirming(true)}
 				>
 					Подтвердить публикацию
-				</button>
-				<button type="button" onClick={onBack}>
-					Отмена
-				</button>
+				</Button>
+				<Button onPress={onBack}>Отмена</Button>
 			</div>
 			<Modal isOpen={confirming} onOpenChange={setConfirming}>
-				<Dialog aria-labelledby="context-publication-confirm-title">
+				<Dialog
+					aria-labelledby="context-publication-confirm-title"
+					className="dialog-content"
+				>
 					{({ close }) => (
 						<div className="demo-dialog-content">
 							<Heading slot="title" id="context-publication-confirm-title">
@@ -247,8 +247,12 @@ export function ContextPublicationPreview({
 										"Инвентарь источников изменился. Создайте новый предпросмотр перед подтверждением."}
 								</p>
 							)}
-							<div className="demo-object-actions">
-								<Button isDisabled={!canConfirm} onPress={confirm}>
+							<div className="dialog-footer">
+								<Button
+									className="ui-button--primary"
+									isDisabled={!canConfirm}
+									onPress={confirm}
+								>
 									Подтвердить
 								</Button>
 								<Button onPress={close}>Отмена</Button>

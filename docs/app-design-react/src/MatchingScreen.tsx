@@ -1,12 +1,23 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
+import "./matching-publication.css";
 import {
 	Button,
 	Checkbox,
 	Dialog,
 	Heading,
+	Input,
+	Label,
 	Modal,
-} from "react-aria-components";
+	Radio,
+	RadioGroup,
+	SearchField,
+	Tab,
+	TabList,
+	TabPanel,
+	Tabs,
+	TextField,
+} from "./ui";
 import type { OriginalTrack } from "./catalogData";
 import {
 	applyPlan,
@@ -286,27 +297,30 @@ export function MatchingScreen({
 		const file = files[id];
 		if (!file) return null;
 		return (
-			<button
+			<div
 				key={id}
-				type="button"
-				className={`incoming-file ${state.selectedFile === id ? "selected" : ""}`}
 				draggable
 				onDragStart={(event) => {
 					event.dataTransfer.setData("text/plain", id);
 					event.dataTransfer.effectAllowed = "copy";
 				}}
-				onClick={() => {
-					state.selectedFile = state.selectedFile === id ? null : id;
-					commitState();
-				}}
-				aria-pressed={state.selectedFile === id}
 			>
-				<strong>{file.name}</strong>
-				<span>
-					{file.codec} · {duration(file.duration)}
-					{compact ? "" : ` · ${file.path}`}
-				</span>
-			</button>
+				<Button
+					type="button"
+					className={`incoming-file ${state.selectedFile === id ? "selected" : ""}`}
+					onPress={() => {
+						state.selectedFile = state.selectedFile === id ? null : id;
+						commitState();
+					}}
+					aria-pressed={state.selectedFile === id}
+				>
+					<strong>{file.name}</strong>
+					<span>
+						{file.codec} · {duration(file.duration)}
+						{compact ? "" : ` · ${file.path}`}
+					</span>
+				</Button>
+			</div>
 		);
 	};
 	return (
@@ -351,16 +365,18 @@ export function MatchingScreen({
 				<section className="matching-candidates">
 					<h2>Найти издание</h2>
 					<form onSubmit={searchProvider}>
-						<label htmlFor="provider-query">Поиск изданий · текстом</label>
+						<Label htmlFor="provider-query">Поиск изданий · текстом</Label>
 						<div className="matching-search">
-							<input
-								id="provider-query"
+							<SearchField
+								aria-label="Поиск изданий"
 								value={providerQuery}
-								onChange={(event) =>
-									setProviderQuery(event.currentTarget.value)
-								}
-								placeholder="Артист, альбом, каталог…"
-							/>
+								onChange={setProviderQuery}
+							>
+								<Input
+									id="provider-query"
+									placeholder="Артист, альбом, каталог…"
+								/>
+							</SearchField>
 							<Button type="submit">Найти</Button>
 						</div>
 					</form>
@@ -454,23 +470,23 @@ export function MatchingScreen({
 														commitState();
 													}}
 												>
-													<span aria-hidden="true">
+													<span className="checkbox" aria-hidden="true">
 														{item?.included && usableFile(file) ? "✓" : ""}
 													</span>
 												</Checkbox>
 											</td>
 											<td>{String(track.position).padStart(2, "0")}</td>
 											<td>
-												<button
+												<Button
 													className="text-button"
-													onClick={() => {
+													onPress={() => {
 														state.selectedTarget = id;
 														state.inspector = "tags";
 														commitState();
 													}}
 												>
 													{String(track.title)}
-												</button>
+												</Button>
 												<span className="incoming-sub">
 													{artistName(String(track.artistId))}
 													{group.mode === "local"
@@ -484,19 +500,18 @@ export function MatchingScreen({
 													<div className="linked-sources">
 														{ids.map((sourceId) => (
 															<div key={sourceId} className="linked-source">
-																<label>
-																	<input
-																		type="radio"
-																		name={`selected-${id}`}
-																		value={sourceId}
-																		checked={currentId === sourceId}
-																		onChange={() =>
-																			sourceSelection(id, sourceId)
-																		}
-																		aria-label={`Выбрать ${files[sourceId]?.name ?? sourceId} для публикации`}
-																	/>
-																	{fileButton(sourceId, true)}
-																</label>
+																<RadioGroup
+																	aria-label={`Источник для ${String(track.title)}`}
+																	value={currentId ?? ""}
+																	onChange={(value) =>
+																		sourceSelection(id, value)
+																	}
+																>
+																	<Radio value={sourceId}>
+																		Выбрать для публикации
+																	</Radio>
+																</RadioGroup>
+																{fileButton(sourceId, true)}
 																<Button
 																	aria-label={`Снять связь ${files[sourceId]?.name ?? sourceId} с ${String(track.title)}`}
 																	onPress={() =>
@@ -597,11 +612,14 @@ export function MatchingScreen({
 						}}
 					>
 						<label htmlFor="recording-query">Название / артист</label>
-						<input
-							id="recording-query"
+						<TextField
+							className="ui-field"
+							aria-label="Название / артист"
 							value={recordingQuery}
-							onChange={(event) => setRecordingQuery(event.currentTarget.value)}
-						/>
+							onChange={setRecordingQuery}
+						>
+							<Input id="recording-query" />
+						</TextField>
 						<Button type="submit">Найти композиции</Button>
 						<Button
 							onPress={() => {
@@ -631,103 +649,96 @@ export function MatchingScreen({
 			)}
 			<section className="matching-inspector">
 				<h2>Инспектор · {String(inspected.title)}</h2>
-				<div className="inspector-tabs">
-					<Button
-						aria-pressed={state.inspector === "tags"}
-						onPress={() => {
-							state.inspector = "tags";
-							commitState();
-						}}
-					>
-						Сравнение тегов
-					</Button>
-					<Button
-						aria-pressed={state.inspector === "evidence"}
-						onPress={() => {
-							state.inspector = "evidence";
-							commitState();
-						}}
-					>
-						Почему такое совпадение
-					</Button>
-				</div>
-				{state.inspector === "tags" ? (
-					<>
-						<div className="tag-controls">
-							<div aria-label="Область тегов">
-								{(["artist", "release", "track"] as const).map((scope) => (
-									<Button
-										key={scope}
-										aria-pressed={state.tagScope === scope}
-										onPress={() => {
-											state.tagScope = scope;
+				<Tabs
+					className="matching-inspector-tabs"
+					selectedKey={state.inspector}
+					onSelectionChange={(key) => {
+						state.inspector = key as "tags" | "evidence";
+						commitState();
+					}}
+				>
+					<TabList aria-label="Инспектор позиции">
+						<Tab id="tags">Сравнение тегов</Tab>
+						<Tab id="evidence">Почему такое совпадение</Tab>
+					</TabList>
+					{state.inspector === "tags" ? (
+						<TabPanel id="tags">
+							<>
+								<div className="tag-controls">
+									<Tabs
+										selectedKey={state.tagScope}
+										onSelectionChange={(key) => {
+											state.tagScope = key as "artist" | "release" | "track";
 											commitState();
 										}}
 									>
-										{scope === "artist"
-											? "Артист"
-											: scope === "release"
-												? "Альбом"
-												: "Трек"}
-									</Button>
-								))}
-							</div>
-							<Checkbox
-								isSelected={state.differencesOnly}
-								onChange={(checked) => {
-									state.differencesOnly = checked;
-									commitState();
-								}}
-							>
-								Только отличия
-							</Checkbox>
-						</div>
-						<div className="matching-table-wrap">
-							<table>
-								<thead>
-									<tr>
-										<th>Поле</th>
-										<th>Исходный файл</th>
-										<th>Провайдер · кэш</th>
-										<th>Локальная медиатека</th>
-										<th>Сейчас в публикации</th>
-									</tr>
-								</thead>
-								<tbody>
-									{tagRows.map((key) => (
-										<tr key={key}>
-											<th>{key}</th>
-											<td>{tagValue(sourceTags, key)}</td>
-											<td>
-												{providerTrack
-													? tagValue(remoteTags, key)
-													: "Нет связи"}
-											</td>
-											<td>{tagValue(localTags, key)}</td>
-											<td>
-												{publication
-													? tagValue(publicationTags, key)
-													: "Не опубликован"}
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</div>
-						<p>
-							{selectedFile?.path ?? "Исходник не выбран"} ·{" "}
-							{publication
-								? `Публикация: ${String(publication.path)} · чтение ${String(publication.readAt)}`
-								: "Публикация отсутствует; текущие метаданные не подставляются."}
-						</p>
-					</>
-				) : (
-					<Evidence
-						file={selectedFile}
-						track={inspected}
-						assignment={assignment}
-					/>
-				)}
+										<TabList aria-label="Область тегов">
+											<Tab id="artist">Артист</Tab>
+											<Tab id="release">Альбом</Tab>
+											<Tab id="track">Трек</Tab>
+										</TabList>
+									</Tabs>
+									<Checkbox
+										isSelected={state.differencesOnly}
+										onChange={(checked) => {
+											state.differencesOnly = checked;
+											commitState();
+										}}
+									>
+										<span className="checkbox" />
+										Только отличия
+									</Checkbox>
+								</div>
+								<div className="matching-table-wrap">
+									<table>
+										<thead>
+											<tr>
+												<th>Поле</th>
+												<th>Исходный файл</th>
+												<th>Провайдер · кэш</th>
+												<th>Локальная медиатека</th>
+												<th>Сейчас в публикации</th>
+											</tr>
+										</thead>
+										<tbody>
+											{tagRows.map((key) => (
+												<tr key={key}>
+													<th>{key}</th>
+													<td>{tagValue(sourceTags, key)}</td>
+													<td>
+														{providerTrack
+															? tagValue(remoteTags, key)
+															: "Нет связи"}
+													</td>
+													<td>{tagValue(localTags, key)}</td>
+													<td>
+														{publication
+															? tagValue(publicationTags, key)
+															: "Не опубликован"}
+													</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+								<p>
+									{selectedFile?.path ?? "Исходник не выбран"} ·{" "}
+									{publication
+										? `Публикация: ${String(publication.path)} · чтение ${String(publication.readAt)}`
+										: "Публикация отсутствует; текущие метаданные не подставляются."}
+								</p>
+							</>
+						</TabPanel>
+					) : (
+						<TabPanel id="evidence">
+							<Evidence
+								file={selectedFile}
+								track={inspected}
+								assignment={assignment}
+							/>
+						</TabPanel>
+					)}
+				</Tabs>
 			</section>
 			<div className="matching-commit">
 				<strong>
@@ -810,7 +821,9 @@ export function MatchingScreen({
 													commitState();
 												}}
 											>
-												<span>{row.assignment?.included ? "✓" : ""}</span>
+												<span className="checkbox">
+													{row.assignment?.included ? "✓" : ""}
+												</span>
 											</Checkbox>
 										</td>
 										<td>
@@ -848,6 +861,7 @@ export function MatchingScreen({
 								commitState();
 							}}
 						>
+							<span className="checkbox" />
 							Подтверждаю замену сжатия без потерь на сжатие с потерями
 						</Checkbox>
 					)}
@@ -874,7 +888,10 @@ export function MatchingScreen({
 				</section>
 			)}
 			<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
-				<Dialog aria-labelledby="incoming-confirm-title">
+				<Dialog
+					aria-labelledby="incoming-confirm-title"
+					className="dialog-content"
+				>
 					<Heading slot="title" id="incoming-confirm-title">
 						{changedRows.length
 							? `Опубликовать ${changedRows.length} позиций?`
@@ -889,13 +906,16 @@ export function MatchingScreen({
 							Инвентарь источников изменился. Пересмотрите предпросмотр.
 						</p>
 					)}
-					<Button onPress={() => setConfirming(false)}>Отмена</Button>
-					<Button
-						isDisabled={stale || (hasDowngrade && !state.confirmDowngrade)}
-						onPress={confirmPublish}
-					>
-						Подтвердить
-					</Button>
+					<div className="dialog-footer">
+						<Button onPress={() => setConfirming(false)}>Отмена</Button>
+						<Button
+							className="ui-button--primary"
+							isDisabled={stale || (hasDowngrade && !state.confirmDowngrade)}
+							onPress={confirmPublish}
+						>
+							Подтвердить
+						</Button>
+					</div>
 				</Dialog>
 			</Modal>
 		</main>

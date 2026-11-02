@@ -3,15 +3,19 @@ import {
 	Button,
 	Dialog,
 	Heading,
-	Modal,
-	Select,
-	SelectValue,
+	Input,
+	Label,
 	ListBox,
 	ListBoxItem,
+	Modal,
 	Popover,
-} from "react-aria-components";
+	Select,
+	SelectValue,
+	TextField,
+} from "./ui";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { GenreLibrary } from "./GenreLibrary";
+import "./forms-operations.css";
 
 export interface DemoSettings {
 	toolsPath: string;
@@ -94,8 +98,8 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 	};
 
 	return (
-		<section aria-labelledby="settings-title">
-			<header className="demo-object-header">
+		<section className="settings-screen" aria-labelledby="settings-title">
+			<header className="demo-object-header form-page-header">
 				<div>
 					<h1 id="settings-title">Настройки</h1>
 					<p>
@@ -114,7 +118,11 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 					Проверить обновления
 				</Button>
 			</header>
-			{notice && <p role="status">{notice}</p>}
+			{notice && (
+				<p className="form-notice" role="status" aria-live="polite">
+					{notice}
+				</p>
+			)}
 			<section className="demo-panel genre-library-panel">
 				<h2>Библиотека жанров</h2>
 				<GenreLibrary
@@ -123,25 +131,24 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 					buttonLabel="Загрузить / обновить каталог в демо"
 				/>
 			</section>
-			<div className="demo-object-columns">
+			<div className="settings-grid">
 				<section className="demo-panel">
 					<h2>Каталог публикации</h2>
-					<label className="demo-search">
-						Текущий каталог публикации · только чтение
-						<input value="/srv/music" readOnly />
-					</label>
-					<div className="demo-search">
-						<label htmlFor="settings-output-candidate">
-							Новый путь · кандидат, ещё не применён
-						</label>
+					<TextField className="form-field" isReadOnly value="/srv/music">
+						<Label>Текущий каталог публикации · только чтение</Label>
+						<Input />
+					</TextField>
+					<div className="form-field">
 						<div className="demo-object-actions">
-							<input
+							<TextField
 								id="settings-output-candidate"
 								value={settings.outputCandidate}
-								placeholder="Выберите папку на сервере"
-								readOnly
+								isReadOnly
 								aria-describedby="settings-output-candidate-help"
-							/>
+							>
+								<Label>Новый путь · кандидат, ещё не применён</Label>
+								<Input placeholder="Выберите папку на сервере" />
+							</TextField>
 							<Button onPress={() => setPicker("output")}>Выбрать папку</Button>
 						</div>
 						<small id="settings-output-candidate-help">
@@ -149,10 +156,8 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 							не меняет.
 						</small>
 					</div>
-					<label className="demo-search">
-						Состояние выполнения · только для демонстрации
+					<div className="form-field">
 						<Select
-							aria-label="Состояние выполнения · только для демонстрации"
 							selectedKey={settings.outputDemoExecution}
 							onSelectionChange={(key) =>
 								key &&
@@ -162,6 +167,7 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 								})
 							}
 						>
+							<Label>Состояние выполнения · только для демонстрации</Label>
 							<Button>
 								<SelectValue />
 							</Button>
@@ -181,7 +187,7 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 							Это демонстрационный переключатель состояния, не настройка
 							продукта. Сейчас: {executionLabels[settings.outputDemoExecution]}.
 						</small>
-					</label>
+					</div>
 					<p role={blocked ? "alert" : "note"}>
 						{blocked
 							? `Смена заблокирована: ${executionLabels[settings.outputDemoExecution].toLocaleLowerCase()}.`
@@ -245,14 +251,14 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 				</section>
 				<section className="demo-panel">
 					<h2>Рабочая папка анализа источников</h2>
-					<label className="demo-search">
-						Общая папка для рабочих копий аудио
+					<TextField
+						className="form-field"
+						value={settings.workDirectory}
+						isReadOnly
+					>
+						<Label>Общая папка для рабочих копий аудио</Label>
 						<div className="demo-object-actions">
-							<input
-								value={settings.workDirectory}
-								readOnly
-								aria-describedby="settings-source-work-help"
-							/>
+							<Input aria-describedby="settings-source-work-help" />
 							<Button onPress={() => setPicker("work")}>Выбрать папку</Button>
 						</div>
 						<small id="settings-source-work-help">
@@ -262,7 +268,7 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 								? `Текущий выбор: ${settings.workDirectory}.`
 								: "Не задана."}
 						</small>
-					</label>
+					</TextField>
 					<p>
 						Настройте её до начала обработки через рабочие копии. Первый запуск
 						и добавление источника не требуют выбора. В реальном продукте смена
@@ -309,14 +315,14 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 						</table>
 					</div>
 					<div className="demo-panel">
-						<label className="demo-search">
-							Постоянный каталог инструментов
+						<TextField
+							className="form-field"
+							value={settings.toolsPath}
+							isReadOnly
+						>
+							<Label>Постоянный каталог инструментов</Label>
 							<div className="demo-object-actions">
-								<input
-									value={settings.toolsPath}
-									readOnly
-									aria-describedby="settings-tools-path-help"
-								/>
+								<Input aria-describedby="settings-tools-path-help" />
 								<Button onPress={() => setPicker("tools")}>
 									Выбрать папку
 								</Button>
@@ -324,7 +330,7 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 							<small id="settings-tools-path-help">
 								Каталог на сервере для управляемых инструментов.
 							</small>
-						</label>
+						</TextField>
 						<p>
 							Версии условные. Проверка только уведомляет; установка и откат
 							явные.

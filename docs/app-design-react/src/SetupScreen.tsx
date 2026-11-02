@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Button } from "react-aria-components";
+import { Button, Input, Label, TextField } from "./ui";
+import "./forms-operations.css";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { GenreLibrary } from "./GenreLibrary";
 import type { SettingsScreenProps } from "./SettingsScreen";
@@ -51,37 +52,36 @@ export function SetupScreen({
 	};
 
 	return (
-		<section aria-labelledby="setup-title">
-			<header>
+		<section className="setup-screen" aria-labelledby="setup-title">
+			<header className="form-page-header">
 				<h1 id="setup-title">Первый запуск</h1>
 				<p>
 					Требуется рабочая конфигурация инструментов. Версии, доступность и
 					пути демонстрационные.
 				</p>
 			</header>
-			<nav className="demo-tabs" aria-label="Шаги первого запуска">
-				{steps.map((label, index) => (
-					<span
-						className={index === step ? "active" : undefined}
-						aria-current={index === step ? "step" : undefined}
-						key={label}
-					>
-						{index + 1}. {label}
-					</span>
-				))}
+			<nav aria-label="Шаги первого запуска">
+				<ol className="setup-steps">
+					{steps.map((label, index) => (
+						<li aria-current={index === step ? "step" : undefined} key={label}>
+							<span className="setup-step-index">
+								{index < step ? "✓" : index + 1}
+							</span>
+							<span>{label}</span>
+						</li>
+					))}
+				</ol>
 			</nav>
 			<section className="demo-panel" aria-labelledby="setup-step-title">
 				<h2 id="setup-step-title">{steps[step]}</h2>
 				<div className="demo-panel">
 					{step === 0 && (
 						<>
-							<label className="demo-search">
-								Постоянный каталог инструментов
+							<TextField className="demo-search" value={toolsPath} isReadOnly>
+								<Label>Постоянный каталог инструментов</Label>
 								<div className="demo-object-actions">
-									<input
+									<Input
 										id="tools-path"
-										value={toolsPath}
-										readOnly
 										aria-invalid={pathError}
 										aria-describedby="path-help"
 									/>
@@ -92,7 +92,7 @@ export function SetupScreen({
 								<small id="path-help">
 									Абсолютный путь на сервере, не на компьютере с браузером.
 								</small>
-							</label>
+							</TextField>
 							<div className="demo-object-actions">
 								<Button onPress={checkPath}>Проверить путь</Button>
 							</div>
@@ -197,8 +197,12 @@ export function SetupScreen({
 							</div>
 						</dl>
 					)}
-					{notice && <p role="status">{notice}</p>}
-					<div className="demo-object-actions">
+					{notice && (
+						<p role="status" aria-live="polite">
+							{notice}
+						</p>
+					)}
+					<div className="setup-footer">
 						{step > 0 && (
 							<Button onPress={() => setStep(step - 1)}>Назад</Button>
 						)}

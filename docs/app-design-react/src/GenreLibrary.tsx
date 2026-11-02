@@ -1,4 +1,4 @@
-import { Button } from "react-aria-components";
+import { Button, StatusBadge } from "./ui";
 
 export const demoGenres = [
 	{ id: "demo-genre-ambient", name: "ambient" },
@@ -26,6 +26,9 @@ export function GenreLibrary({
 				<strong>
 					{loaded ? "Каталог доступен в демонстрации" : "Каталог недоступен"}
 				</strong>
+				<StatusBadge tone={loaded ? "success" : "warning"}>
+					{loaded ? "Доступен" : "Не загружен"}
+				</StatusBadge>
 				<p>
 					{loaded
 						? "Последнее успешное обновление: демо · сейчас."
@@ -39,7 +42,12 @@ export function GenreLibrary({
 				</small>
 			</div>
 			<div className="demo-object-actions genre-library-controls">
-				<Button onPress={() => onLoadedChange(true)}>{buttonLabel}</Button>
+				<Button
+					className="ui-button ui-button--primary"
+					onPress={() => onLoadedChange(true)}
+				>
+					{buttonLabel}
+				</Button>
 				<span className="demo-secondary">
 					Автоматическое обновление: раз в неделю в продукте; в макете — только
 					вручную.
