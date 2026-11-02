@@ -67,8 +67,13 @@ export interface OriginalRelease {
 }
 
 export function trackNumberLabel(
-	release: Pick<OriginalRelease, "media"> & { tracks: Pick<OriginalTrack, "medium">[] },
-	track: Pick<OriginalTrack, "displayedNumber" | "medium" | "mediumPosition" | "position">,
+	release: Pick<OriginalRelease, "media"> & {
+		tracks: Pick<OriginalTrack, "medium">[];
+	},
+	track: Pick<
+		OriginalTrack,
+		"displayedNumber" | "medium" | "mediumPosition" | "position"
+	>,
 ): string {
 	if (track.displayedNumber) return track.displayedNumber;
 	const multiple =

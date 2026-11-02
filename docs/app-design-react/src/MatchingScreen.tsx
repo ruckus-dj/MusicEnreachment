@@ -73,7 +73,7 @@ export function MatchingScreen({
 		return (
 			<main className="demo-shell">
 				<h1>Входящая группа не найдена</h1>
-				<a href="#incoming">К входящим</a>
+				<a href="#review">К входящим</a>
 			</main>
 		);
 	state.groupId = group.id;
@@ -82,7 +82,7 @@ export function MatchingScreen({
 		return (
 			<main className="demo-shell">
 				<h1>Цель сопоставления не найдена</h1>
-				<a href="#incoming">К входящим</a>
+				<a href="#review">К входящим</a>
 			</main>
 		);
 	const tracks = target.tracks;
@@ -310,10 +310,18 @@ export function MatchingScreen({
 		);
 	};
 	return (
-		<main className="demo-shell matching-screen" onKeyDown={(event) => { if (event.key === "Escape" && state.selectedFile) { state.selectedFile = null; commitState(); } }}>
+		<main
+			className="demo-shell matching-screen"
+			onKeyDown={(event) => {
+				if (event.key === "Escape" && state.selectedFile) {
+					state.selectedFile = null;
+					commitState();
+				}
+			}}
+		>
 			<header>
 				<p className="demo-eyebrow">
-					<a href="#incoming">Все входящие</a> · Только чтение: /mnt/inbox/
+					<a href="#review">Все входящие</a> · Только чтение: /mnt/inbox/
 					{group.id}
 				</p>
 				<h1>Разбор: {group.title}</h1>

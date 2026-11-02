@@ -15,7 +15,9 @@ it("shows the complete edition and previews precisely its own positions", () => 
 			onPreview={onPreview}
 		/>,
 	);
-	expect(within(screen.getAllByRole("table")[0]).getAllByRole("row")).toHaveLength(11);
+	expect(
+		within(screen.getAllByRole("table")[0]).getAllByRole("row"),
+	).toHaveLength(11);
 	expect(screen.getByRole("link", { name: "Winter Birds" })).toHaveAttribute(
 		"href",
 		"#track/north-t9",

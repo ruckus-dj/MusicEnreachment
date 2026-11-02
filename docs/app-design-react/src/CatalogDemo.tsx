@@ -321,6 +321,10 @@ export function CatalogDemo({
 						}))
 					}
 					onReleases={setReleases}
+					onSuccess={(notice) => {
+						setIncoming((current) => ({ ...current, notice }));
+						window.location.hash = "review";
+					}}
 					onBack={() => {
 						window.location.hash = incoming.plan?.localReleaseId
 							? `release/${incoming.plan.localReleaseId}`

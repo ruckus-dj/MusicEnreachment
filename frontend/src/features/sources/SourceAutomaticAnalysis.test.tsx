@@ -259,7 +259,14 @@ describe("automatic source analysis after a successful scan", () => {
       scanStream.dispatchEvent(new Event("operation-changed"));
       await scanRead;
     });
-    await act(async () => Promise.all([refreshedRoot, refreshedLocations]));
+    // The root response schedules the inventory re-read, so the locations
+    // request cannot start until that commit is flushed: await them in order.
+    await act(async () => {
+      await refreshedRoot;
+    });
+    await act(async () => {
+      await refreshedLocations;
+    });
     fireEvent.click(
       await screen.findByRole("link", { name: location.relative_path }),
     );

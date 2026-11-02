@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { CatalogDemo } from "./CatalogDemo";
-import { catalogData, originalReleases } from "./catalogData";
+import { ContextPublicationPreview } from "./ContextPublicationPreview";
+import { catalogData, originalFiles, originalReleases } from "./catalogData";
+import { makeReleasePlan } from "./incomingModel";
 
 it("keeps nested selection consistent when an album is partially deselected", () => {
 	render(<CatalogDemo />);
@@ -136,6 +138,103 @@ it("shows contextual source codec separately from metadata-only preview", () => 
 	} finally {
 		window.location.hash = previousHash;
 	}
+});
+
+it("does not publish when the final contextual confirmation is cancelled", () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "release/north";
+	try {
+		render(<CatalogDemo />);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Предпросмотр публикации" }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Подтвердить публикацию" }),
+		);
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		fireEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", {
+				name: "Отмена",
+			}),
+		);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(window.location.hash).toBe("#publications");
+		expect(
+			screen.getByRole("button", { name: "Подтвердить публикацию" }),
+		).toBeInTheDocument();
+	} finally {
+		window.location.hash = previousHash;
+	}
+});
+
+it("announces a confirmed contextual publication after returning to incoming", () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "release/north";
+	try {
+		render(<CatalogDemo />);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Предпросмотр публикации" }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Подтвердить публикацию" }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
+		expect(window.location.hash).toBe("#review");
+		expect(screen.getByRole("status")).toHaveTextContent("Демо:");
+	} finally {
+		window.location.hash = previousHash;
+	}
+});
+
+it("refuses final confirmation when inventory becomes stale while the dialog is open", () => {
+	const releases = structuredClone(originalReleases);
+	const release = releases.find((item) =>
+		item.tracks.some(
+			(track) => track.sourceId && originalFiles[track.sourceId],
+		),
+	);
+	if (!release) throw new Error("Missing release with an available source");
+	const files = structuredClone(originalFiles);
+	const plan = makeReleasePlan(
+		{
+			inventoryVersion: 0,
+		} as Parameters<typeof makeReleasePlan>[0],
+		release,
+		files,
+	);
+	const track = release.tracks.find((item) => plan.assignments[item.id]);
+	if (!track) throw new Error("Missing plan assignment");
+	const source = files[plan.assignments[track.id].selectedSourceId ?? ""];
+	if (!source) throw new Error("Missing selected source");
+	const replacementId = "confirmation-test-replacement";
+	files[replacementId] = { ...source, id: replacementId };
+	plan.assignments[track.id] = {
+		...plan.assignments[track.id],
+		sourceIds: [...plan.assignments[track.id].sourceIds, replacementId],
+		selectedSourceId: replacementId,
+	};
+	const onReleases = vi.fn();
+	const props = {
+		plan,
+		files,
+		releases,
+		artists: catalogData.artists,
+		confirmDowngrade: false,
+		onPlan: vi.fn(),
+		onReleases,
+		onSuccess: vi.fn(),
+		onBack: vi.fn(),
+	};
+	const view = render(
+		<ContextPublicationPreview {...props} inventoryVersion={0} />,
+	);
+	fireEvent.click(
+		screen.getByRole("button", { name: "Подтвердить публикацию" }),
+	);
+	view.rerender(<ContextPublicationPreview {...props} inventoryVersion={1} />);
+	expect(screen.getByRole("button", { name: "Подтвердить" })).toBeDisabled();
+	expect(screen.getAllByRole("alert").length).toBeGreaterThan(0);
+	expect(onReleases).not.toHaveBeenCalled();
 });
 
 it("keeps global selected-item actions separate from the current artist controls", () => {

@@ -26,8 +26,11 @@ it("normalizes optional source associations without dropping the legacy fileId",
 	expect(sourceIds(undefined)).toEqual([]);
 	expect(sourceIds({})).toEqual([]);
 	expect(sourceIds({ fileId: "legacy" })).toEqual(["legacy"]);
-	expect(sourceIds({ sourceIds: [] , fileId: "legacy" })).toEqual([]);
-	expect(sourceIds({ sourceIds: ["a", "b"], fileId: "legacy" })).toEqual(["a", "b"]);
+	expect(sourceIds({ sourceIds: [], fileId: "legacy" })).toEqual([]);
+	expect(sourceIds({ sourceIds: ["a", "b"], fileId: "legacy" })).toEqual([
+		"a",
+		"b",
+	]);
 });
 
 it("freezes only the current selected source for contextual release publication", () => {

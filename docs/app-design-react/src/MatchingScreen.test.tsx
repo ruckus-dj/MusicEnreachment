@@ -65,7 +65,9 @@ it("clears the selected source file on Escape and persists the state transition"
 		<MatchingScreen groupId="north" state={state} onState={onState} />,
 	);
 	fireEvent.keyDown(container.querySelector("main")!, { key: "Escape" });
-	expect(onState).toHaveBeenCalledWith(expect.objectContaining({ selectedFile: null }));
+	expect(onState).toHaveBeenCalledWith(
+		expect.objectContaining({ selectedFile: null }),
+	);
 });
 
 it("switches candidates without replacing the other candidate's draft", () => {

@@ -90,6 +90,15 @@ line to dispatch in native EventSource; mock listener calls alone cannot verify
 framing. Failed Settings rows retain their controls and snapshots without an
 active follower; queued/running rows continue following.
 
+**Chained source reads in tests**: A root response bumps the detail screen's
+inventory refresh token, so the locations request starts only after that commit.
+Arm both signals and await them in separate `act` calls, as `changed()` and
+`SourcesInventory.test.tsx` do. Avoid awaiting a dependent request in the same
+async `act` body when that request is scheduled by a state update flushed by
+`act`; this dependency ordering can leave the await unresolved. Diagnose the
+specific request/commit sequence rather than assuming every grouped await causes
+a deadlock.
+
 **Managed tool catalog failures**: Setup must retain a successfully loaded tool
 inventory even if catalog requests fail; ready-package restrictions and duplicate
 ready-package diagnostics do not depend on catalog availability.

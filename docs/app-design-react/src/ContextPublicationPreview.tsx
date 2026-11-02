@@ -1,12 +1,14 @@
 import { useState } from "react";
-import type { CatalogArtist } from "./catalogData";
-import type { OriginalRelease } from "./catalogData";
+import { Button, Dialog, Heading, Modal } from "react-aria-components";
+import type { CatalogArtist, OriginalRelease } from "./catalogData";
 import {
 	applyPlan,
-	planRows,
 	type IncomingFiles,
 	type IncomingPlan,
 	type IncomingReleases,
+	planRows,
+	sourceIds,
+	usableFile,
 } from "./incomingModel";
 
 export function ContextPublicationPreview({
@@ -18,6 +20,7 @@ export function ContextPublicationPreview({
 	confirmDowngrade,
 	onPlan,
 	onReleases,
+	onSuccess,
 	onBack,
 }: {
 	plan: IncomingPlan | null;
@@ -28,9 +31,11 @@ export function ContextPublicationPreview({
 	confirmDowngrade: boolean;
 	onPlan: (plan: IncomingPlan | null, confirmDowngrade?: boolean) => void;
 	onReleases: (releases: OriginalRelease[]) => void;
+	onSuccess: (notice: string) => void;
 	onBack: () => void;
 }) {
 	const [error, setError] = useState("");
+	const [confirming, setConfirming] = useState(false);
 	if (!plan)
 		return (
 			<section>
@@ -45,8 +50,26 @@ export function ContextPublicationPreview({
 	const changed = active.filter((row) => row.action !== "Без изменений");
 	const downgrades = changed.filter((row) => row.downgrade);
 	const stale = plan.inventoryVersion !== inventoryVersion;
+	const existing = releases.find(
+		(release) => release.id === plan.localReleaseId,
+	);
+	const links = rows.filter((row) => {
+		const assigned = sourceIds(row.assignment).filter((id) =>
+			usableFile(files[id]),
+		);
+		const track = existing?.tracks.find(
+			(item) => item.position === row.targetTrack.position,
+		);
+		const persisted = new Set([
+			...(track?.sourceIds ?? []),
+			...(track?.sourceId ? [track.sourceId] : []),
+		]);
+		return assigned.some((id) => !persisted.has(id));
+	});
 	const canConfirm =
-		!stale && changed.length > 0 && (!downgrades.length || confirmDowngrade);
+		!stale &&
+		(changed.length > 0 || links.length > 0) &&
+		(!downgrades.length || confirmDowngrade);
 	const updateIncluded = (trackId: string, included: boolean) => {
 		const assignment = plan.assignments[trackId];
 		if (!assignment) return;
@@ -67,9 +90,13 @@ export function ContextPublicationPreview({
 		}
 		if (!canConfirm) return;
 		const next = structuredClone(releases);
-		applyPlan(plan, files, next, undefined, false, artists);
+		const applied = applyPlan(plan, files, next, undefined, false, artists);
 		onReleases(next);
 		onPlan(null, false);
+		onSuccess(
+			`Демо: ${applied} позиций опубликовано.${links.length ? ` Связи ${links.length} позиций сохранены.` : ""} Невыбранные позиции и неразмеченные файлы не изменены.`,
+		);
+		setConfirming(false);
 	};
 
 	return (
@@ -174,13 +201,62 @@ export function ContextPublicationPreview({
 				</label>
 			)}
 			<div className="demo-object-actions">
-				<button type="button" disabled={!canConfirm} onClick={confirm}>
+				<button
+					type="button"
+					disabled={!canConfirm}
+					onClick={() => setConfirming(true)}
+				>
 					Подтвердить публикацию
 				</button>
 				<button type="button" onClick={onBack}>
 					Отмена
 				</button>
 			</div>
+			<Modal isOpen={confirming} onOpenChange={setConfirming}>
+				<Dialog aria-labelledby="context-publication-confirm-title">
+					{({ close }) => (
+						<div className="demo-dialog-content">
+							<Heading slot="title" id="context-publication-confirm-title">
+								{changed.length
+									? `Опубликовать ${changed.length} позиций?`
+									: `Сохранить связи ${links.length} позиций?`}
+							</Heading>
+							<p>
+								{plan.target.title}. Будут изменены только выбранные строки
+								плана. Остальные позиции и существующие публикации сохраняются.
+							</p>
+							{links.length > 0 && (
+								<p>
+									{links.length} позиций получат новые связи с источниками;
+									выбранный источник и текущая публикация сохраняются.
+								</p>
+							)}
+							{downgrades.length > 0 && (
+								<p>
+									Подтверждено отдельное понижение качества для{" "}
+									{downgrades.length} поз.
+								</p>
+							)}
+							<p>
+								Неразмеченные файлы останутся во входящих. Все исходники
+								сохраняются. Демо: запись аудиофайлов не выполняется.
+							</p>
+							{(stale || error) && (
+								<p role="alert">
+									{error ||
+										"Инвентарь источников изменился. Создайте новый предпросмотр перед подтверждением."}
+								</p>
+							)}
+							<div className="demo-object-actions">
+								<Button isDisabled={!canConfirm} onPress={confirm}>
+									Подтвердить
+								</Button>
+								<Button onPress={close}>Отмена</Button>
+							</div>
+						</div>
+					)}
+				</Dialog>
+			</Modal>
 		</section>
 	);
 }
