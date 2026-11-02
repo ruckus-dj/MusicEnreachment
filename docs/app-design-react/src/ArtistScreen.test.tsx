@@ -9,14 +9,52 @@ import {
 } from "./catalogData";
 
 function expandAlbum(release: OriginalRelease) {
-	const trigger = screen.getByRole("button", {
-		name: (name) =>
-			name.includes(release.title) &&
-			name.includes(String(release.year)) &&
-			name.includes(release.catalog ?? ""),
-	});
+	const trigger = screen
+		.getAllByRole("button", {
+			name: (name) =>
+				name.includes(release.title) &&
+				name.includes(String(release.year)) &&
+				name.includes(release.catalog ?? ""),
+		})
+		.find((button) => button.getAttribute("slot") === "trigger");
+	if (!trigger)
+		throw new Error(`Missing disclosure trigger for ${release.title}`);
 	fireEvent.click(trigger);
 }
+
+function commonAncestor(first: Element, second: Element): HTMLElement | null {
+	let ancestor: HTMLElement | null = first.parentElement;
+	while (ancestor && !ancestor.contains(second))
+		ancestor = ancestor.parentElement;
+	return ancestor;
+}
+
+it("keeps publication summaries compact in the artist track table", () => {
+	const release = originalReleases.find((item) => item.id === "north");
+	const track = release?.tracks.find((item) => item.id === "north-t1");
+	if (!release || !track?.published)
+		throw new Error("Missing published track fixture");
+	render(
+		<ArtistScreen
+			artistId="mira"
+			artists={catalogData.artists}
+			releases={[release]}
+			files={originalFiles}
+		/>,
+	);
+	expandAlbum(release);
+	expect(screen.getByRole("link", { name: track.title })).toHaveAttribute(
+		"href",
+		`#track/${track.id}`,
+	);
+	expect(
+		screen.getAllByText(new RegExp(track.published.codec)).length,
+	).toBeGreaterThan(0);
+	expect(screen.queryByText(track.published.path)).not.toBeInTheDocument();
+	expect(
+		screen.queryByText("Путь и снимок публикации"),
+	).not.toBeInTheDocument();
+});
 
 it("renders artist releases and tracks with aggregate selection", () => {
 	const release = originalReleases.find((item) => item.id === "north");
@@ -240,7 +278,7 @@ it("reports changes through the unified artist filter and retains collapsed albu
 	if (!artistRelease || artistRelease.tracks.length < 2)
 		throw new Error("Missing multi-track artist release fixture");
 	const onFilterChange = vi.fn();
-	const { container } = render(
+	render(
 		<ArtistScreen
 			artistId={artist.id}
 			artists={catalogData.artists}
@@ -263,16 +301,27 @@ it("reports changes through the unified artist filter and retains collapsed albu
 		name: `Выбрать все позиции альбома ${artistRelease.title} · ${artistRelease.year} · ${artistRelease.catalog || "—"}`,
 	})[0];
 	expect(albumCheckbox).toBePartiallyChecked();
-	expect(albumCheckbox.closest(".artist-album-card")).not.toBeNull();
-	expect(albumCheckbox.closest(".catalogue-edition-trigger")).toBeNull();
-	expect(albumCheckbox.closest(".ui-disclosure-panel")).toBeNull();
+	const albumTrigger = screen.getByRole("button", {
+		name: `${artistRelease.title} · ${artistRelease.year} · ${artistRelease.catalog || "—"}`,
+	});
+	const albumGroup = commonAncestor(albumCheckbox, albumTrigger);
+	expect(albumGroup).not.toBeNull();
+	expect(albumGroup).toContainElement(albumCheckbox);
+	expect(albumGroup).toContainElement(albumTrigger);
+	expect(albumTrigger).toHaveAttribute("aria-expanded", "false");
+	if (!albumGroup) throw new Error("Missing album group");
+	expect(within(albumGroup).queryByRole("table")).toBeNull();
+	fireEvent.click(albumTrigger);
+	expect(albumTrigger).toHaveAttribute("aria-expanded", "true");
 	const heroCheckbox = screen.getByRole("checkbox", {
 		name: `Выбрать все позиции артиста ${artist.name}`,
 	});
-	expect(heroCheckbox.closest(".artist-hero-art")).not.toBeNull();
+	expect(heroCheckbox).toBeVisible();
 	expect(heroCheckbox.closest('[aria-hidden="true"]')).toBeNull();
 	expect(screen.queryByText(/Аудио по изданиям:/)).not.toBeInTheDocument();
-	expect(container.querySelector(".artist-album-cover")).toBeInTheDocument();
+	expect(
+		albumTrigger.querySelector('[aria-hidden="true"]'),
+	).toBeInTheDocument();
 });
 
 it("selects only the album's tracks and keeps the artist aggregate partial", () => {
@@ -349,7 +398,7 @@ it("numbers tracks by medium for a cloned multi-medium release without displayed
 
 it("selects a collapsed album without opening it", () => {
 	const onSelect = vi.fn();
-	const { container } = render(
+	render(
 		<ArtistScreen
 			artistId="mira"
 			artists={catalogData.artists}
@@ -358,16 +407,59 @@ it("selects a collapsed album without opening it", () => {
 			onSelect={onSelect}
 		/>,
 	);
-	const card = container.querySelectorAll(".artist-album-card")[1];
-	if (!(card instanceof HTMLElement))
-		throw new Error("Missing collapsed album fixture");
-	const trigger = card.querySelector('button[slot="trigger"]');
+	const release = originalReleases.filter(
+		(item) => item.artistId === "mira",
+	)[1];
+	if (!release) throw new Error("Missing collapsed album fixture");
+	const trigger = screen.getByRole("button", {
+		name: `${release.title} · ${release.year} · ${release.catalog || "—"}`,
+	});
 	expect(trigger).toHaveAttribute("aria-expanded", "false");
-	const checkbox = within(card).getByRole("checkbox");
+	const checkbox = screen.getByRole("checkbox", {
+		name: `Выбрать все позиции альбома ${release.title} · ${release.year} · ${release.catalog || "—"}`,
+	});
+	const card = commonAncestor(checkbox, trigger);
+	if (!card) throw new Error("Album controls do not share a card");
 	expect(checkbox).toBeVisible();
 	fireEvent.click(checkbox);
 	expect(onSelect).toHaveBeenCalled();
 	expect(trigger).toHaveAttribute("aria-expanded", "false");
+});
+
+it("opens album deletion from a collapsed card without expanding or selecting it", () => {
+	const release = originalReleases.find((item) => item.id === "north");
+	if (!release) throw new Error("Missing baseline fixture");
+	const onQueueDeletion = vi.fn();
+	const onSelect = vi.fn();
+	render(
+		<ArtistScreen
+			artistId={release.artistId ?? ""}
+			artists={catalogData.artists}
+			releases={[release]}
+			files={originalFiles}
+			onQueueDeletion={onQueueDeletion}
+			onSelect={onSelect}
+		/>,
+	);
+	const deleteButton = screen.getByRole("button", {
+		name: `Удалить альбом ${release.title} · ${release.year} · ${release.catalog || "—"}`,
+	});
+	const expandTrigger = screen.getByRole("button", {
+		name: `${release.title} · ${release.year} · ${release.catalog || "—"}`,
+	});
+	const card = commonAncestor(deleteButton, expandTrigger);
+	if (!(card instanceof HTMLElement)) throw new Error("Missing album card");
+	expect(expandTrigger).toHaveAttribute("aria-expanded", "false");
+	fireEvent.click(
+		within(card).getByRole("button", {
+			name: `Удалить альбом ${release.title} · ${release.year} · ${release.catalog || "—"}`,
+		}),
+	);
+	expect(expandTrigger).toHaveAttribute("aria-expanded", "false");
+	expect(onSelect).not.toHaveBeenCalled();
+	expect(screen.getByRole("dialog")).toBeInTheDocument();
+	fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+	expect(onQueueDeletion).not.toHaveBeenCalled();
 });
 
 it("keeps album-level duration, observed-file evidence, and deletion scope on the artist route", () => {
@@ -399,7 +491,7 @@ it("keeps album-level duration, observed-file evidence, and deletion scope on th
 	expect(
 		within(firstTrackRow).getByText("Файл изменён вне приложения"),
 	).toBeInTheDocument();
-	fireEvent.click(screen.getByRole("button", { name: "Удалить альбом" }));
+	fireEvent.click(screen.getByRole("button", { name: /Удалить альбом/ }));
 	expect(screen.getByText(/Позиции релиза/)).toBeInTheDocument();
 	fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
 	expect(onQueueDeletion).toHaveBeenCalledWith(

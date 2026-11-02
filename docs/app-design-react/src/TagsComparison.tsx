@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import "./matching-publication.css";
 import {
 	Button,
 	Checkbox,
@@ -20,6 +19,19 @@ import {
 	type OriginalRelease,
 	type SourceFiles,
 } from "./catalogData";
+import {
+	comparisonControls,
+	comparisonDifference,
+	comparisonNote,
+	comparisonRow,
+	comparisonRowHeading,
+	metadataPanel,
+	objectActions,
+	previewTable,
+	previewTableCell,
+	previewTableHeading,
+	previewTableWrap,
+} from "./matchingStyles";
 
 export type TagScope = "artist" | "release" | "track";
 
@@ -121,10 +133,10 @@ export function TagsComparison({
 		.filter((row) => !differencesOnly || row.different);
 	return (
 		<section
-			className="demo-panel metadata-comparison"
+			className={metadataPanel}
 			aria-label={`Сравнение тегов: ${activeScope}`}
 		>
-			<div className="demo-object-actions comparison-controls">
+			<div className={comparisonControls}>
 				<Select
 					aria-label="Позиция сравнения"
 					selectedKey={track.id}
@@ -177,7 +189,7 @@ export function TagsComparison({
 						</ListBox>
 					</Popover>
 				</Select>
-				<span className="demo-secondary">
+				<span className="block text-[11px] text-[var(--muted)]">
 					Кэш провайдера: 26.09.2026 10:20 · идентификаторы демонстрационные
 				</span>
 			</div>
@@ -201,8 +213,8 @@ export function TagsComparison({
 					</TabList>
 				</Tabs>
 			)}
-			<div className="demo-preview-table">
-				<table>
+			<div className={previewTableWrap}>
+				<table className={`${previewTable} min-w-[720px]`}>
 					<thead>
 						<tr>
 							{[
@@ -212,7 +224,7 @@ export function TagsComparison({
 								"Локальная медиатека",
 								"Сейчас в публикации",
 							].map((heading) => (
-								<th scope="col" key={heading}>
+								<th className={previewTableHeading} scope="col" key={heading}>
 									{heading}
 								</th>
 							))}
@@ -220,14 +232,17 @@ export function TagsComparison({
 					</thead>
 					<tbody>
 						{rows.map(({ key, values, different }) => (
-							<tr key={key}>
-								<th scope="row" className={different ? "difference" : ""}>
+							<tr className={comparisonRow} key={key}>
+								<th
+									scope="row"
+									className={`${comparisonRowHeading} ${different ? comparisonDifference : ""}`}
+								>
 									{key}
 								</th>
 								{values.map((value, index) => (
-									<td key={`${key}:${index}`}>
+									<td className={previewTableCell} key={`${key}:${index}`}>
 										{value === null ? (
-											<span className="demo-secondary">
+											<span className="block text-[11px] text-[var(--muted)]">
 												{index === 1 ? "Нет связи" : "Не опубликован"}
 											</span>
 										) : value.length ? (
@@ -247,14 +262,14 @@ export function TagsComparison({
 					</tbody>
 				</table>
 			</div>
-			<p className="demo-secondary">
+			<p className={comparisonNote}>
 				{file?.path ?? "Исходник не выбран"}
 				<br />
 				{track.published
 					? `Публикация: ${track.published.path} · чтение ${track.published.readAt} (демо)`
 					: "Публикация отсутствует; пустая колонка не подменяется текущими метаданными."}
 			</p>
-			<div className="demo-object-actions">
+			<div className={objectActions}>
 				<Checkbox isSelected={differencesOnly} onChange={setDifferencesOnly}>
 					<span className="checkbox" />
 					Только отличия

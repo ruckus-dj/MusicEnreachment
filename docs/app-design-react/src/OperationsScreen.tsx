@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button, Dialog, Heading, Modal, StatusBadge } from "./ui";
-import "./forms-operations.css";
+import { formStyles as styles } from "./formStyles";
 import {
 	recoveryFixture,
 	type OriginalRelease,
@@ -23,28 +23,30 @@ export function OperationsScreen({
 		.flatMap((item) => item.tracks)
 		.find((item) => item.id === recoveryFixture.trackId);
 	return (
-		<section className="operations-screen">
-			<header className="form-page-header">
+		<section className={styles.page}>
+			<header className={styles.pageHeader}>
 				<div>
-					<p className="demo-eyebrow">Текущая работа</p>
-					<h1>Текущие операции</h1>
+					<p className="m-0 text-xs">Текущая работа</p>
+					<h1 className={styles.pageTitle}>Текущие операции</h1>
 				</div>
-				<p>Незавершённая работа; завершённой истории здесь нет.</p>
+				<p className={styles.pageDescription}>
+					Незавершённая работа; завершённой истории здесь нет.
+				</p>
 			</header>
 			{notice && (
-				<p className="form-notice" role="status" aria-live="polite">
+				<p className={styles.formNotice} role="status" aria-live="polite">
 					{notice}
 				</p>
 			)}
-			<section className="demo-panel">
-				<div className="panel-heading">
+			<section className={styles.panel}>
+				<div className={styles.panelHeading}>
 					<h2>Требует внимания</h2>
 					<StatusBadge tone="error">
 						{track?.recovered ? 1 : 2} текущие операции
 					</StatusBadge>
 				</div>
-				<div className="operation-table-wrap">
-					<table className="operation-table">
+				<div className={styles.tableWrap}>
+					<table className={styles.table}>
 						<thead>
 							<tr>
 								{[
@@ -66,10 +68,10 @@ export function OperationsScreen({
 								<td>Signals · позиция 06</td>
 								<td>Публикация набора позиций</td>
 								<td>Ошибка</td>
-								<td className="operation-error">
+								<td className={styles.operationError}>
 									EACCES: нет записи во временном каталоге
 								</td>
-								<td className="operation-actions">
+								<td className={styles.operationActions}>
 									Обычный повтор заново подготавливает публикацию; это не
 									принудительная перепубликация
 								</td>
@@ -90,10 +92,10 @@ export function OperationsScreen({
 									<td>Northern Lines · позиция 01</td>
 									<td>Прерванная публикация</td>
 									<td>Прервана</td>
-									<td className="operation-error">
+									<td className={styles.operationError}>
 										Файл установлен, результат не зарегистрирован
 									</td>
-									<td className="operation-actions">
+									<td className={styles.operationActions}>
 										Сверить теги, технические параметры и разрешение операции
 									</td>
 									<td>
@@ -107,10 +109,10 @@ export function OperationsScreen({
 					</table>
 				</div>
 			</section>
-			<section className="demo-panel">
+			<section className={styles.panel}>
 				<h2>Удаление из медиатеки · демонстрационные запросы</h2>
-				<div className="operation-table-wrap">
-					<table className="operation-table">
+				<div className={styles.tableWrap}>
+					<table className={styles.table}>
 						<thead>
 							<tr>
 								{[

@@ -44,65 +44,109 @@ export function DesignShell({
 	return (
 		<>
 			<a
-				className="demo-skip"
+				className="fixed left-3 top-[-80px] z-[200] bg-[var(--surface)] p-2 focus:top-2"
 				href="#content"
 				onClick={(event) => {
 					event.preventDefault();
-					document.querySelector<HTMLElement>(".demo-workspace main")?.focus();
+					document.querySelector<HTMLElement>("#content main")?.focus();
 				}}
 			>
 				К содержимому
 			</a>
-			<div className="design-shell">
-				<aside className="design-rail">
-					<Link className="design-brand" href="#review">
-						<span aria-hidden="true" className="design-mark">
+			<div className="grid h-dvh grid-cols-[174px_minmax(0,1fr)] grid-rows-[42px_minmax(0,1fr)] max-[599px]:flex max-[599px]:h-auto max-[599px]:min-h-dvh max-[599px]:flex-col">
+				<aside className="row-span-2 flex flex-col overflow-auto border-r border-[var(--line)] bg-[var(--surface)] px-2 py-4 max-[599px]:visible max-[599px]:overflow-visible max-[599px]:border-r-0 max-[599px]:border-b max-[599px]:py-2">
+					<Link
+						className="mb-6 flex items-center gap-2 !text-[var(--ink)] text-[11px] font-semibold max-[599px]:mb-2"
+						href="#review"
+					>
+						<span
+							aria-hidden="true"
+							className="border border-[var(--accent)] p-1 text-xl text-[var(--accent)]"
+						>
 							mt
 						</span>
 						<span>
-							MeloTrove<small>АРХИВНАЯ МАСТЕРСКАЯ</small>
+							MeloTrove
+							<small className="mt-[3px] block text-[7px] tracking-[.08em] text-[var(--muted)]">
+								АРХИВНАЯ МАСТЕРСКАЯ
+							</small>
 						</span>
 					</Link>
-					<p className="design-rail-label">РАБОЧЕЕ ПРОСТРАНСТВО</p>
-					<nav aria-label="Основная навигация">
+					<p className="mb-2 px-2 text-[9px] tracking-[.06em] text-[var(--muted)] max-[599px]:hidden">
+						РАБОЧЕЕ ПРОСТРАНСТВО
+					</p>
+					<nav
+						aria-label="Основная навигация"
+						className="grid gap-[3px] max-[599px]:flex max-[599px]:flex-wrap"
+					>
 						{sections.map(([id, label], index) => (
 							<Link
 								key={id}
 								href={`#${id}`}
 								aria-current={section === id ? "page" : undefined}
+								className="flex min-h-[34px] items-center gap-2 rounded px-2 py-1.5 !text-[var(--ink)] hover:bg-[var(--raised)] aria-[current=page]:bg-[var(--accent-soft)] aria-[current=page]:!text-[var(--accent)] aria-[current=page]:font-semibold max-[599px]:min-h-10"
 							>
-								<span aria-hidden="true" className="design-nav-number">
+								<span
+									aria-hidden="true"
+									className="font-mono text-[10px] text-[var(--muted)] max-[599px]:hidden"
+								>
 									{String(index + 1).padStart(2, "0")}
 								</span>
 								{label}
 								{id === "review" && (
-									<span className="design-nav-count">{incomingCount}</span>
+									<span className="ml-auto font-mono text-[10px] text-[var(--muted)]">
+										{incomingCount}
+									</span>
 								)}
 							</Link>
 						))}
 					</nav>
-					<div className="design-rail-bottom">
-						<p className="design-rail-label">ОБ ЭТОЙ ВЕРСИИ</p>
-						<a href="#setup">Первый запуск</a>
-						<a href="#components">Визуальная система</a>
-						<a href="/compare">Сверка переноса</a>
-						<p>
+					<div className="mt-auto pt-6 max-[599px]:hidden">
+						<p className="mb-2 px-2 text-[9px] tracking-[.06em] text-[var(--muted)]">
+							ОБ ЭТОЙ ВЕРСИИ
+						</p>
+						<a
+							className="block px-2 py-1.5 text-[11px] text-[var(--muted)]"
+							href="#setup"
+						>
+							Первый запуск
+						</a>
+						<a
+							className="block px-2 py-1.5 text-[11px] text-[var(--muted)]"
+							href="#components"
+						>
+							Визуальная система
+						</a>
+						<a
+							className="block px-2 py-1.5 text-[11px] text-[var(--muted)]"
+							href="/compare"
+						>
+							Сверка переноса
+						</a>
+						<p className="mt-4 border-t border-[var(--line)] px-2 pt-3 text-[10px] text-[var(--muted)]">
 							Независимая концепция
 							<br />
 							Плотный каталог · v2
 						</p>
 					</div>
 				</aside>
-				<header className="design-topbar">
+				<header className="flex items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-[11px] text-[var(--muted)] max-[599px]:min-h-[42px] max-[599px]:flex-wrap">
 					<span>
 						{sections.find(([id]) => id === section)?.[1] ?? "MeloTrove"}
 					</span>
-					<div>
-						<span className="design-demo-label">МАКЕТ · ТЕСТОВЫЕ ДАННЫЕ</span>
+					<div className="flex items-center gap-2">
+						<span className="text-[9px] tracking-[.04em] max-[599px]:hidden">
+							МАКЕТ · ТЕСТОВЫЕ ДАННЫЕ
+						</span>
 						<ThemeControl />
 					</div>
 				</header>
-				<div className="demo-workspace">{children}</div>
+				<div
+					id="content"
+					className="min-h-0 min-w-0 overflow-auto max-[599px]:overflow-visible"
+				>
+					{children}
+				</div>
 			</div>
 		</>
 	);

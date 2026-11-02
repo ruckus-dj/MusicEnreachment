@@ -82,9 +82,7 @@ it("preserves external artist references as readonly identities and gates genre 
 	}
 	render(<Harness />);
 	fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
-	const forma = screen
-		.getByText("mb-artist-forma")
-		.closest<HTMLElement>(".local-provider-option");
+	const forma = screen.getByText("mb-artist-forma").closest("div");
 	if (!forma) throw new Error("Missing Forma artist option");
 	expect(forma).toHaveTextContent("mb-artist-forma");
 	expect(

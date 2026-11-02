@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { originalReleases } from "./catalogData";
+import { originalFiles, originalReleases } from "./catalogData";
 import { TrackScreen } from "./TrackScreen";
 
 it("shows every linked audio variant and requests an explicit source change", () => {
@@ -71,4 +71,43 @@ it("reports cover and lyrics metadata changes and observed file time", () => {
 	expect(screen.getByText("Файл изменён вне приложения")).toBeInTheDocument();
 	fireEvent.click(screen.getByText("Пути и технические сведения"));
 	expect(screen.getByText("2026-10-31T12:34:56Z")).toBeInTheDocument();
+});
+
+it("keeps the current publication path and tag snapshot in its own disclosure", () => {
+	const release = originalReleases.find((item) => item.id === "north");
+	const track = release?.tracks.find((item) => item.id === "north-t1");
+	if (!release || !track?.published || !track.sourceId)
+		throw new Error("Missing published track fixture");
+	const published = track.published;
+	const localPath = `/local/${track.sourceId}`;
+	render(
+		<TrackScreen
+			release={release}
+			track={track}
+			files={{
+				...originalFiles,
+				[track.sourceId]: { ...originalFiles[track.sourceId], path: localPath },
+			}}
+			onSource={vi.fn()}
+			onPreview={vi.fn()}
+		/>,
+	);
+	const publicationTrigger = screen.getByRole("button", {
+		name: "Текущая публикация",
+	});
+	expect(publicationTrigger).toHaveAttribute("aria-expanded", "false");
+	expect(screen.getByText(localPath)).toBeInTheDocument();
+	fireEvent.click(publicationTrigger);
+	expect(screen.getByText(published.path)).toBeInTheDocument();
+	expect(
+		screen.getByText(
+			(content, element) =>
+				element?.tagName === "DD" &&
+				content.includes(`TITLE: ${published.tags.TITLE[0]}`),
+		),
+	).toBeInTheDocument();
+	expect(screen.getByText(published.readAt)).toBeInTheDocument();
+	expect(
+		screen.queryByText("Путь и снимок публикации"),
+	).not.toBeInTheDocument();
 });

@@ -1,6 +1,12 @@
 import { useState } from "react";
-import "./matching-publication.css";
 import { Button, Dialog, Heading, Modal } from "./ui";
+import {
+	dialogFooter,
+	previewTable,
+	previewTableCell,
+	previewTableHeading,
+	previewTableWrap,
+} from "./matchingStyles";
 import { artistReleaseHref } from "./artistReleaseRoute";
 import {
 	catalogData,
@@ -67,17 +73,22 @@ export function PublicationPreview({
 	).length;
 	const returnLink = `#${returnRoute}`;
 	return (
-		<section className="publication-preview" aria-labelledby="preview-title">
-			<header>
+		<section
+			className="min-w-0 px-[clamp(14px,2vw,28px)] py-5"
+			aria-labelledby="preview-title"
+		>
+			<header className="mb-3.5 flex flex-wrap items-start justify-between gap-3">
 				<div>
-					<h1 id="preview-title">Предпросмотр медиатеки</h1>
-					<p>
+					<h1 id="preview-title" className="m-0 text-2xl tracking-[-.02em]">
+						Предпросмотр медиатеки
+					</h1>
+					<p className="mt-[5px] max-w-[760px] text-[var(--muted)]">
 						Показаны существующие позиции выбранных объектов; повторяющиеся
 						треки объединены. Новые сущности и альтернативные источники не
 						выбираются.
 					</p>
 				</div>
-				<p>
+				<p className="mt-[5px] max-w-[760px] text-[var(--muted)]">
 					Контекст предпросмотра: {returnLabel}.{" "}
 					<a href={returnLink}>{returnLabel}</a>
 				</p>
@@ -89,30 +100,46 @@ export function PublicationPreview({
 					контекст. Вернитесь и откройте предпросмотр заново.
 				</p>
 			)}
-			<div className="preview-summary" aria-label="Сводка действий">
+			<div
+				className="my-2.5 mb-3.5 flex flex-wrap gap-2"
+				aria-label="Сводка действий"
+			>
 				{["Создать", "Обновить", "Без изменений", "Пропустить"].map(
 					(action) => (
-						<span key={action}>
+						<span
+							key={action}
+							className="rounded border border-[var(--line)] bg-[var(--surface)] px-[9px] py-[5px] text-[11px]"
+						>
 							{action}: {rows.filter((row) => row.action === action).length}
 						</span>
 					),
 				)}
 			</div>
-			<div className="demo-preview-table">
-				<table>
+			<div className={previewTableWrap}>
+				<table className={`${previewTable} min-w-[850px]`}>
 					<thead>
 						<tr>
-							<th scope="col">Позиция</th>
-							<th scope="col">Источник / формат</th>
-							<th scope="col">Путь публикации / формат</th>
-							<th scope="col">Действие и причина</th>
-							<th scope="col">Снимок метаданных</th>
+							<th className={previewTableHeading} scope="col">
+								Позиция
+							</th>
+							<th className={previewTableHeading} scope="col">
+								Источник / формат
+							</th>
+							<th className={previewTableHeading} scope="col">
+								Путь публикации / формат
+							</th>
+							<th className={previewTableHeading} scope="col">
+								Действие и причина
+							</th>
+							<th className={previewTableHeading} scope="col">
+								Снимок метаданных
+							</th>
 						</tr>
 					</thead>
 					<tbody>
 						{rows.map(({ release, track, file, action }) => (
 							<tr key={track.id}>
-								<td>
+								<td className={`${previewTableCell} min-w-[175px]`}>
 									{artistReleaseHref(release, availableArtists) ? (
 										<a
 											href={
@@ -130,18 +157,18 @@ export function PublicationPreview({
 										{track.position}. {track.title}
 									</a>
 								</td>
-								<td>
+								<td className={`${previewTableCell} min-w-[190px]`}>
 									{file?.path ?? "Нет выбранного источника"}
 									<br />
 									{file?.codec ?? "—"}
 								</td>
-								<td>
+								<td className={`${previewTableCell} min-w-[190px]`}>
 									{track.published?.path ??
 										`/srv/music/${originalArtistName(release.artistId, availableArtists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`}
 									<br />
 									MKA
 								</td>
-								<td>
+								<td className={previewTableCell}>
 									{action}
 									<p>
 										{action === "Пропустить"
@@ -172,7 +199,7 @@ export function PublicationPreview({
 										</p>
 									)}
 								</td>
-								<td>
+								<td className={`${previewTableCell} min-w-[190px]`}>
 									{desiredTags(release, track, availableArtists).TITLE.join(
 										" · ",
 									)}
@@ -184,17 +211,17 @@ export function PublicationPreview({
 					</tbody>
 				</table>
 			</div>
-			<div className="preview-commit">
+			<div className="mt-3.5 flex flex-wrap items-center justify-between gap-2.5 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] p-3 max-[600px]:items-stretch">
 				<p>
 					<strong>{unprocessable} не обрабатываемых позиций.</strong> Для уже
 					опубликованных позиций это действие обновляет только метаданные:
 					опубликованный звук и его качество остаются прежними. Для новых
 					публикаций используется выбранный исходник.
 				</p>
-				<div className="preview-actions">
+				<div className="flex flex-wrap justify-end gap-2">
 					{onApply && (
 						<Button
-							className="ui-button--primary"
+							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 							onPress={() => setConfirming(true)}
 							isDisabled={
 								stale ||
@@ -210,10 +237,7 @@ export function PublicationPreview({
 				</div>
 			</div>
 			<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
-				<Dialog
-					aria-labelledby="apply-preview-title"
-					className="dialog-content"
-				>
+				<Dialog aria-labelledby="apply-preview-title" className="grid gap-2">
 					{stale && (
 						<p role="alert">
 							Снимок предпросмотра устарел: изменился инвентарь источников или
@@ -229,15 +253,15 @@ export function PublicationPreview({
 						}{" "}
 						позиций?
 					</Heading>
-					<p>
+					<p className="my-0 min-w-[240px] flex-1 text-[11px] text-[var(--muted)]">
 						Новые публикации используют выбранный источник. У существующих
 						публикаций меняются только метаданные; звук и качество сохраняются.
 						Действие выполняется только в памяти макета, без записи файлов.
 					</p>
-					<div className="dialog-footer">
+					<div className={`${dialogFooter} flex-wrap`}>
 						<Button onPress={() => setConfirming(false)}>Отмена</Button>
 						<Button
-							className="ui-button--primary"
+							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 							isDisabled={stale}
 							onPress={() => {
 								if (

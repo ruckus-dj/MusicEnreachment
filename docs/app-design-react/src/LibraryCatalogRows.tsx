@@ -12,6 +12,7 @@ import {
 } from "./catalogData";
 import { availabilityRowClass, type CatalogFilter } from "./availabilityRows";
 import { artistReleaseHref } from "./artistReleaseRoute";
+import { catalogueStyles, catalogueTableWidths } from "./catalogueStyles";
 import {
 	Button,
 	Cell,
@@ -36,7 +37,11 @@ interface Props {
 	hasAudio: (track: Release["tracks"][number]) => boolean;
 	files: SourceFiles;
 	filter?: CatalogFilter;
-	groupCheckbox: (ids: string[], label: string) => ReactNode;
+	groupCheckbox: (
+		ids: string[],
+		label: string,
+		appearance?: "table" | "artwork",
+	) => ReactNode;
 	expanded: string | null;
 	onToggleAlbum: (id: string) => void;
 }
@@ -65,7 +70,10 @@ export function LibraryCatalogRows({
 }: Props) {
 	if (view === "artists") {
 		return (
-			<div className="artist-card-grid" aria-label="Артисты медиатеки">
+			<div
+				className={catalogueStyles.artistGrid}
+				aria-label="Артисты медиатеки"
+			>
 				{artists.length ? (
 					artists.map((artist) => {
 						const own = releases.filter(
@@ -81,24 +89,27 @@ export function LibraryCatalogRows({
 							Boolean(track.published),
 						).length;
 						return (
-							<article className="artist-card" key={artist.id}>
+							<article className={catalogueStyles.artistCard} key={artist.id}>
 								<div
-									className="artist-card-art"
+									className={catalogueStyles.artistArt}
 									data-palette={artist.color || "clay"}
 								>
 									<Link
 										href={`#artist/${artist.id}`}
-										className="artist-card-link"
+										className={catalogueStyles.artistCardLink}
 									>
-										<span className="artist-card-monogram" aria-hidden="true">
+										<span
+											className={catalogueStyles.artistMonogram}
+											aria-hidden="true"
+										>
 											{artist.name.slice(0, 1)}
 										</span>
-										<span className="artist-card-overlay">
-											<span className="artist-card-copy">
+										<span className={catalogueStyles.artistOverlay}>
+											<span className={catalogueStyles.artistCopy}>
 												<strong>{artist.name}</strong>
 												<span>{artist.genre || "Исполнитель"}</span>
 											</span>
-											<span className="artist-card-stats">
+											<span className={catalogueStyles.artistStats}>
 												<span>
 													<strong>{own.length}</strong> изданий
 												</span>
@@ -124,10 +135,11 @@ export function LibraryCatalogRows({
 											</span>
 										</span>
 									</Link>
-									<div className="artist-card-selection">
+									<div className={catalogueStyles.cardSelection}>
 										{groupCheckbox(
 											ownTracks.map((track) => track.id),
 											`Выбрать позиции артиста ${artist.name}`,
+											"artwork",
 										)}
 									</div>
 								</div>
@@ -135,7 +147,7 @@ export function LibraryCatalogRows({
 						);
 					})
 				) : (
-					<div className="catalogue-empty">Артистов не найдено.</div>
+					<div className={catalogueStyles.empty}>Артистов не найдено.</div>
 				)}
 			</div>
 		);
@@ -170,10 +182,10 @@ export function LibraryCatalogRows({
 					"Теги",
 				];
 	return (
-		<div className="catalogue-table-scroll">
+		<div className={catalogueStyles.tableScroll}>
 			<Table
 				aria-label={view === "albums" ? "Альбомы медиатеки" : "Треки медиатеки"}
-				className={`catalogue-table catalogue-table--${view}`}
+				className={`${catalogueStyles.table} ${catalogueTableWidths[view]}`}
 			>
 				<TableHeader>
 					{columns.map((column, index) => (
@@ -200,7 +212,7 @@ export function LibraryCatalogRows({
 							filter,
 						]}
 						renderEmptyState={() => (
-							<div className="catalogue-empty">
+							<div className={catalogueStyles.empty}>
 								Нет результатов. Измените запрос или фильтр.
 							</div>
 						)}
@@ -225,13 +237,13 @@ export function LibraryCatalogRows({
 									</Cell>
 									<Cell>
 										<Button
-											className="catalogue-expander"
+											className={catalogueStyles.expander}
 											aria-expanded={expanded === release.id}
 											onPress={() => onToggleAlbum(release.id)}
 										>
 											{release.title || "Без названия"}
 										</Button>
-										<span className="catalogue-sub">
+										<span className={catalogueStyles.sub}>
 											{artistReleaseHref(release, artists) ? (
 												<a
 													href={
@@ -245,8 +257,8 @@ export function LibraryCatalogRows({
 											)}
 										</span>
 										{expanded === release.id && (
-											<div className="catalogue-inline-tracks">
-												<table>
+											<div className={catalogueStyles.inlineTracks}>
+												<table className={catalogueStyles.inlineTable}>
 													<thead>
 														<tr>
 															{[
@@ -265,7 +277,7 @@ export function LibraryCatalogRows({
 																	scope="col"
 																	className={
 																		headingIndex === 0
-																			? "selection-column"
+																			? catalogueStyles.selectionColumn
 																			: undefined
 																	}
 																>
@@ -293,13 +305,15 @@ export function LibraryCatalogRows({
 															return (
 																<tr
 																	key={track.id}
-																	className={availabilityRowClass(
+																	className={`${availabilityRowClass(
 																		track as OriginalTrack,
 																		filter,
 																		hasAudio,
-																	)}
+																	)} ${catalogueStyles.filterRows}`}
 																>
-																	<td className="selection-column">
+																	<td
+																		className={catalogueStyles.selectionColumn}
+																	>
 																		{groupCheckbox(
 																			[track.id],
 																			`Выбрать ${track.title}`,
@@ -310,7 +324,7 @@ export function LibraryCatalogRows({
 																		<a href={`#track/${track.id}`}>
 																			{track.title}
 																		</a>
-																		<span className="catalogue-sub">
+																		<span className={catalogueStyles.sub}>
 																			{originalArtistName(
 																				track.artistId,
 																				artists,
@@ -320,7 +334,7 @@ export function LibraryCatalogRows({
 																				: ""}
 																		</span>
 																		{track.recordingId ? null : (
-																			<span className="catalogue-sub">
+																			<span className={catalogueStyles.sub}>
 																				Новая запись
 																			</span>
 																		)}
@@ -331,7 +345,7 @@ export function LibraryCatalogRows({
 																			(ids.length
 																				? "Источник не выбран"
 																				: "Нет файла")}
-																		<span className="catalogue-sub">
+																		<span className={catalogueStyles.sub}>
 																			{ids.length} исходников ·{" "}
 																			{hasAudio(track)
 																				? "есть аудио"
@@ -352,7 +366,7 @@ export function LibraryCatalogRows({
 																			.filter(Boolean)
 																			.map((path) => (
 																				<span
-																					className="catalogue-path"
+																					className={catalogueStyles.path}
 																					key={path}
 																				>
 																					{path}
@@ -363,14 +377,11 @@ export function LibraryCatalogRows({
 																		{pub
 																			? `${pub.container} · ${pub.codec}`
 																			: "Не опубликовано"}
-																		<span className="catalogue-sub catalogue-path">
-																			{pub?.path || ""}
-																		</span>
 																	</td>
 																	<td>
 																		<a href={`#tags/${track.id}/track`}>Теги</a>
 																		{pub && (
-																			<span className="catalogue-sub">
+																			<span className={catalogueStyles.sub}>
 																				{pub.tags.TITLE?.join(", ") ||
 																					track.title}
 																			</span>
@@ -408,7 +419,7 @@ export function LibraryCatalogRows({
 									</Cell>
 									<Cell>
 										{release.year || "Дата не указана"}
-										<span className="catalogue-sub">
+										<span className={catalogueStyles.sub}>
 											{release.country || "Локальный"} ·{" "}
 											{release.catalog || "—"}
 										</span>
@@ -423,7 +434,7 @@ export function LibraryCatalogRows({
 									</Cell>
 									<Cell>
 										{published} опубликовано
-										<span className="catalogue-sub">
+										<span className={catalogueStyles.sub}>
 											{provider?.tracks.length === release.tracks.length
 												? "Полнота известна"
 												: "Полнота неизвестна"}
@@ -446,7 +457,7 @@ export function LibraryCatalogRows({
 							filter,
 						]}
 						renderEmptyState={() => (
-							<div className="catalogue-empty">
+							<div className={catalogueStyles.empty}>
 								Нет результатов. Измените запрос или фильтр.
 							</div>
 						)}
@@ -463,11 +474,11 @@ export function LibraryCatalogRows({
 							return (
 								<Row
 									id={track.id}
-									className={availabilityRowClass(
+									className={`${availabilityRowClass(
 										track as OriginalTrack,
 										filter,
 										hasAudio,
-									)}
+									)} ${catalogueStyles.filterRows}`}
 								>
 									<Cell>
 										{groupCheckbox([track.id], `Выбрать ${track.title}`)}
@@ -482,7 +493,7 @@ export function LibraryCatalogRows({
 										) : (
 											release.title
 										)}
-										<span className="catalogue-sub">
+										<span className={catalogueStyles.sub}>
 											{originalArtistName(release.artistId, artists)} ·{" "}
 											{release.year}
 										</span>
@@ -491,13 +502,13 @@ export function LibraryCatalogRows({
 										{release.media?.[(track.medium || 1) - 1]?.title ||
 											track.medium ||
 											"—"}
-										<span className="catalogue-sub">
+										<span className={catalogueStyles.sub}>
 											{trackNumberLabel(release, track)}
 										</span>
 									</Cell>
 									<Cell>
 										<a href={`#track/${track.id}`}>{track.title}</a>
-										<span className="catalogue-sub">
+										<span className={catalogueStyles.sub}>
 											{originalArtistName(track.artistId, artists)}
 											{track.recordingTitle ? ` · ${track.recordingTitle}` : ""}
 										</span>
@@ -506,7 +517,7 @@ export function LibraryCatalogRows({
 									<Cell>
 										{selectedFile?.codec ??
 											(ids.length ? "Источник не выбран" : "Нет файла")}
-										<span className="catalogue-sub">
+										<span className={catalogueStyles.sub}>
 											{ids.length} исходников ·{" "}
 											{hasAudio(track) ? "есть аудио" : "нет аудио"}
 										</span>
@@ -521,7 +532,7 @@ export function LibraryCatalogRows({
 											.map((id) => files[id]?.path || files[id]?.name)
 											.filter(Boolean)
 											.map((path) => (
-												<span className="catalogue-path" key={path}>
+												<span className={catalogueStyles.path} key={path}>
 													{path}
 												</span>
 											))}
@@ -530,14 +541,11 @@ export function LibraryCatalogRows({
 										{pub
 											? `${pub.container} · ${pub.codec}`
 											: "Не опубликовано"}
-										<span className="catalogue-sub catalogue-path">
-											{pub?.path || ""}
-										</span>
 									</Cell>
 									<Cell>
 										<a href={`#tags/${track.id}/track`}>Теги</a>
 										{pub && (
-											<span className="catalogue-sub">
+											<span className={catalogueStyles.sub}>
 												{pub.tags.TITLE?.join(", ") || track.title}
 											</span>
 										)}

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import "./matching-publication.css";
 import { Button, Dialog, Heading, Modal } from "./ui";
 import type {
 	CatalogArtist,
@@ -7,6 +6,7 @@ import type {
 	OriginalTrack,
 } from "./catalogData";
 import type { DeletionOperation } from "./DeletionRequest";
+import { deletionDialog, deletionFooter } from "./matchingStyles";
 
 type DependencySection = { title: string; items: string[] };
 
@@ -127,7 +127,7 @@ export function ArtistDeletionRequest({
 	return (
 		<>
 			<Button
-				className="ui-button--secondary ui-button--danger"
+				className="border-[color-mix(in_srgb,var(--error)_45%,var(--control))]! bg-transparent! text-[var(--error)]!"
 				onPress={() => setOpen(true)}
 			>
 				Удалить артиста
@@ -135,7 +135,7 @@ export function ArtistDeletionRequest({
 			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
 				<Dialog
 					aria-labelledby="artist-deletion-title"
-					className="deletion-dialog-content"
+					className={deletionDialog}
 				>
 					<Heading slot="title" id="artist-deletion-title">
 						Удалить: {plan.target}?
@@ -149,18 +149,20 @@ export function ArtistDeletionRequest({
 					</p>
 					{plan.dependencies.map((section) => (
 						<section key={section.title}>
-							<h3>{section.title}</h3>
-							<ul>
+							<h3 className="mt-1.5 mb-0 text-xs">{section.title}</h3>
+							<ul className="m-0 pl-5">
 								{section.items.map((item) => (
-									<li key={item}>{item}</li>
+									<li className="my-[3px] [overflow-wrap:anywhere]" key={item}>
+										{item}
+									</li>
 								))}
 							</ul>
 						</section>
 					))}
 					{plan.paths.length ? (
-						<ul>
+						<ul className="m-0 pl-5">
 							{plan.paths.map((path) => (
-								<li key={path}>
+								<li className="my-[3px] [overflow-wrap:anywhere]" key={path}>
 									<code>{path}</code>
 								</li>
 							))}
@@ -173,10 +175,10 @@ export function ArtistDeletionRequest({
 						в список операций: реальные файлы и демонстрационные записи не
 						удаляются.
 					</p>
-					<div className="deletion-dialog-footer">
+					<div className={deletionFooter}>
 						<Button onPress={() => setOpen(false)}>Отмена</Button>
 						<Button
-							className="ui-button--danger"
+							className="border-[var(--error)]! text-[var(--error)]!"
 							onPress={() => {
 								setOpen(false);
 								onQueue({

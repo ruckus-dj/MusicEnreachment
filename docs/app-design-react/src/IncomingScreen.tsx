@@ -102,135 +102,212 @@ export function IncomingScreen({
 		updateState();
 	};
 	return (
-		<main className="demo-shell incoming-screen" id="content" tabIndex={-1}>
-			<PageHeader className="incoming-page-header">
-				<p className="demo-eyebrow">
+		<main
+			className="min-w-0 w-full px-4 pt-[14px] pb-[18px] max-[600px]:p-3"
+			id="content"
+			tabIndex={-1}
+		>
+			<PageHeader className="mb-[10px] min-w-0">
+				<p className="mb-[3px] text-[10px] tracking-[.06em] text-[var(--muted)]">
 					Входящие · исходные теги → сопоставление → публикация
 				</p>
-				<div className="incoming-page-title">
-					<div>
-						<h1>Входящие альбомы</h1>
-						<p>
+				<div className="flex items-center justify-between gap-[14px] max-[600px]:items-start max-[600px]:flex-col">
+					<div className="min-w-0">
+						<h1 className="m-0 text-xl leading-[1.25] text-[var(--ink)] [text-wrap:balance]">
+							Входящие альбомы
+						</h1>
+						<p className="mt-[3px] mb-0 text-xs text-[var(--muted)]">
 							Группы из исходных тегов → поиск издания → назначения →
 							публикация. Неполные данные допустимы.
 						</p>
 					</div>
-					<Button className="ui-button--primary" onPress={runAuto}>
+					<Button
+						className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90 max-[600px]:w-full"
+						onPress={runAuto}
+					>
 						Запустить обработку · демо
 					</Button>
 				</div>
 			</PageHeader>
-			<ol className="incoming-flow" aria-label="Этапы обработки">
-				<li>
-					<b>01</b>
-					<span>Сгруппировать файлы</span>
+			<ol
+				className="mb-[10px] grid list-none grid-cols-4 gap-0 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--raised)] p-0 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1"
+				aria-label="Этапы обработки"
+			>
+				<li className="flex min-w-0 items-center gap-2 px-[10px] py-2 text-[11px] text-[var(--muted)] max-[600px]:min-h-10">
+					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
+						01
+					</b>
+					<span className="min-w-0">Сгруппировать файлы</span>
 				</li>
-				<li>
-					<b>02</b>
-					<span>Сопоставить</span>
+				<li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t max-[600px]:border-[var(--line)]">
+					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
+						02
+					</b>
+					<span className="min-w-0">Сопоставить</span>
 				</li>
-				<li>
-					<b>03</b>
-					<span>
-						Все позиции уверенные <i aria-hidden="true">→</i> автоматически
+				<li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[900px]:border-l-0 max-[900px]:border-t max-[900px]:border-[var(--line)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t">
+					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
+						03
+					</b>
+					<span className="min-w-0">
+						Все позиции уверенные{" "}
+						<i className="text-[var(--accent)] not-italic" aria-hidden="true">
+							→
+						</i>{" "}
+						автоматически
 					</span>
 				</li>
-				<li>
-					<b>04</b>
-					<span>
-						Иначе <i aria-hidden="true">→</i> ручной разбор, в том числе
-						частичный
+				<li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[900px]:border-t max-[900px]:border-[var(--line)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t">
+					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
+						04
+					</b>
+					<span className="min-w-0">
+						Иначе{" "}
+						<i className="text-[var(--accent)] not-italic" aria-hidden="true">
+							→
+						</i>{" "}
+						ручной разбор, в том числе частичный
 					</span>
 				</li>
 			</ol>
 			{state.notice && (
-				<p role="status" className="demo-notice">
+				<p
+					role="status"
+					className="mb-[10px] border-l-[3px] border-[var(--accent)] bg-[var(--accent-soft)] px-[10px] py-[7px] text-xs text-[var(--ink)]"
+				>
 					{state.notice}
 				</p>
 			)}
-			<Panel
-				className="incoming-groups"
-				aria-labelledby="incoming-groups-heading"
-			>
-				<header className="ui-panel-heading">
+			<Panel className="mb-[10px]" aria-labelledby="incoming-groups-heading">
+				<header className="flex min-h-10 items-center justify-between gap-2 border-b border-[var(--line)] px-[10px] py-[7px]">
 					<div>
-						<h2 id="incoming-groups-heading">Текущие группы</h2>
-						<span className="incoming-section-meta">
+						<h2
+							className="m-0 text-[13px] font-semibold"
+							id="incoming-groups-heading"
+						>
+							Текущие группы
+						</h2>
+						<span className="mt-0.5 block text-[10px] text-[var(--muted)]">
 							{rows.length} группы · очередь источников
 						</span>
 					</div>
 				</header>
-				<div className="incoming-table-wrap">
+				<div className="min-w-0 overflow-x-auto">
 					<Table
 						aria-label="Текущие группы входящих альбомов"
-						className="incoming-table"
+						className="w-full min-w-[1040px] border-collapse text-xs [font-variant-numeric:tabular-nums] [&_tbody_tr:last-child_td]:border-b-0 max-[900px]:min-w-[970px]"
 					>
 						<TableHeader>
-							<Column id="group" isRowHeader>
+							<Column
+								id="group"
+								isRowHeader
+								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
+							>
 								Альбом / папка
 							</Column>
-							<Column id="files" className="numeric">
+							<Column
+								id="files"
+								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
+							>
 								Входящие
 							</Column>
-							<Column id="assigned" className="numeric">
+							<Column
+								id="assigned"
+								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
+							>
 								Назначено
 							</Column>
-							<Column id="free" className="numeric">
+							<Column
+								id="free"
+								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
+							>
 								Свободно
 							</Column>
-							<Column id="mode">Режим</Column>
-							<Column id="published" className="numeric">
+							<Column
+								id="mode"
+								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
+							>
+								Режим
+							</Column>
+							<Column
+								id="published"
+								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
+							>
 								Опубликовано
 							</Column>
-							<Column id="reason">Причина</Column>
-							<Column id="action" aria-label="Действие" />
+							<Column
+								id="reason"
+								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
+							>
+								Причина
+							</Column>
+							<Column
+								id="action"
+								aria-label="Действие"
+								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
+							/>
 						</TableHeader>
 						<TableBody>
 							{rows.length === 0 && (
 								<Row id="empty">
-									<Cell colSpan={8} className="incoming-empty">
+									<Cell
+										colSpan={8}
+										className="!p-6 text-center text-[var(--muted)]"
+									>
 										Входящих групп пока нет.
 									</Cell>
 								</Row>
 							)}
 							{rows.map(
 								({ group, assignments, used, publishedCount, tracks }) => (
-									<Row id={group.id} key={group.id}>
-										<Cell className="incoming-entity">
+									<Row
+										id={group.id}
+										key={group.id}
+										className="transition-colors hover:bg-[var(--raised)]"
+									>
+										<Cell className="min-w-[190px] border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
 											<span
-												className={`incoming-initial incoming-initial--${group.id}`}
+												className={`float-left mr-2 inline-grid h-8 w-8 place-items-center text-sm font-semibold text-white ${group.id === "north" ? "bg-[#486d59]" : group.id === "hours" ? "bg-[#676e95]" : group.id === "mix" ? "bg-[#4c717e]" : "bg-[#ac7059]"}`}
 												aria-hidden="true"
 											>
 												{group.title.slice(0, 1).toLocaleUpperCase()}
 											</span>
-											<span className="incoming-entity-copy">
-												<Link href={`#match/${group.id}`}>{group.title}</Link>
-												<span className="incoming-sub">
+											<span className="grid min-w-0 gap-px">
+												<Link
+													className="font-semibold wrap-anywhere"
+													href={`#match/${group.id}`}
+												>
+													{group.title}
+												</Link>
+												<span className="text-[10px] text-[var(--muted)]">
 													{artistName(group.artistId, artists)}
 												</span>
-												<code className="incoming-path">
+												<code className="font-mono text-[9px] leading-[1.4] text-[var(--muted)] wrap-anywhere">
 													/mnt/inbox/{group.id}
 												</code>
 											</span>
 										</Cell>
-										<Cell className="incoming-numeric">
-											<span className="incoming-count">
+										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
+											<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
 												{group.fileIds.length}
 											</span>
-											<span> файлов</span>
+											<span className="text-[var(--muted)]"> файлов</span>
 										</Cell>
-										<Cell className="incoming-numeric">
-											<span className="incoming-count">
+										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
+											<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
 												{
 													Object.values(assignments).filter(
 														(item) => item.sourceIds.length,
 													).length
 												}
 											</span>
-											<span> / {tracks.length}</span>
+											<span className="text-[var(--muted)]">
+												{" "}
+												/ {tracks.length}
+											</span>
 										</Cell>
-										<Cell className="incoming-numeric">
-											<span className="incoming-count">
+										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
+											<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
 												{
 													group.fileIds.filter(
 														(id) => files[id]?.available && !used.has(id),
@@ -238,11 +315,14 @@ export function IncomingScreen({
 												}
 											</span>
 										</Cell>
-										<Cell>
+										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
 											<span
-												className={`incoming-status ${group.processed ? "is-success" : group.autoEligible ? "is-ready" : "is-manual"}`}
+												className={`inline-flex max-w-[170px] items-center gap-[5px] text-[10px] leading-[1.3] ${group.processed ? "text-[var(--success)]" : group.autoEligible ? "text-[var(--info)]" : "text-[var(--warning)]"}`}
 											>
-												<i aria-hidden="true" />
+												<i
+													className={`h-1.5 w-1.5 flex-[0_0_6px] rounded-full ${group.processed ? "bg-[var(--success)]" : group.autoEligible ? "bg-[var(--info)]" : "bg-[var(--warning)]"}`}
+													aria-hidden="true"
+												/>
 												{group.processed
 													? "Опубликовано автоматически"
 													: group.autoEligible
@@ -250,14 +330,21 @@ export function IncomingScreen({
 														: "Ручная обработка"}
 											</span>
 										</Cell>
-										<Cell className="incoming-numeric">
-											<span className="incoming-count">{publishedCount}</span>
-											<span> / {tracks.length}</span>
+										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
+											<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
+												{publishedCount}
+											</span>
+											<span className="text-[var(--muted)]">
+												{" "}
+												/ {tracks.length}
+											</span>
 										</Cell>
-										<Cell className="incoming-reason">{group.reason}</Cell>
-										<Cell>
+										<Cell className="min-w-40 max-w-[270px] border-b border-[var(--line)] px-2 py-1.5 text-left align-middle text-[10px] text-[var(--muted)] wrap-anywhere">
+											{group.reason}
+										</Cell>
+										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
 											<Link
-												className="incoming-open"
+												className="inline-flex min-h-7 items-center whitespace-nowrap rounded-[3px] border border-[var(--line)] px-[7px] py-[3px] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline max-[600px]:min-h-10"
 												href={`#match/${group.id}`}
 											>
 												Открыть
@@ -270,10 +357,12 @@ export function IncomingScreen({
 					</Table>
 				</div>
 			</Panel>
-			<div className="incoming-bottom">
-				<Panel className="incoming-info-panel">
-					<h2>Как пройти ручной сценарий</h2>
-					<ol>
+			<div className="grid grid-cols-2 gap-[10px] max-[600px]:grid-cols-1">
+				<Panel className="m-0 p-[10px]">
+					<h2 className="mb-1.5 mt-0 text-[13px]">
+						Как пройти ручной сценарий
+					</h2>
+					<ol className="m-0 list-decimal pl-5 text-[11px] text-[var(--muted)] [&>li+li]:mt-[3px]">
 						<li>Откройте Northern Lines: уверенные назначения заполнены.</li>
 						<li>Назначьте 03 — Northbound (live?) на позицию 03.</li>
 						<li>
@@ -282,9 +371,11 @@ export function IncomingScreen({
 						<li>Предпросмотр → подтвердить публикацию выбранных позиций.</li>
 					</ol>
 				</Panel>
-				<Panel className="incoming-info-panel">
-					<h2>Сборник, которого нет у провайдера</h2>
-					<p>
+				<Panel className="m-0 p-[10px]">
+					<h2 className="mb-1.5 mt-0 text-[13px]">
+						Сборник, которого нет у провайдера
+					</h2>
+					<p className="mb-[7px] mt-0 text-[11px] text-[var(--muted)]">
 						Road Notes сохраняет собственное название и порядок. Композиции
 						можно найти в других изданиях; альбом провайдера не заменяет
 						локальный сборник.

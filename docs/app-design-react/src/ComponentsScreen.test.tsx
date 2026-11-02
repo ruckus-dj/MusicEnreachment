@@ -9,7 +9,10 @@ it("shows component states, the technical comparison and explicit file selection
 	expect(
 		screen.getByRole("heading", { name: "Компоненты · плотный интерфейс" }),
 	).toBeInTheDocument();
-	expect(screen.getByText("Высокая уверенность")).toHaveClass("success");
+	expect(screen.getByText("Высокая уверенность")).toHaveClass(
+		"bg-[var(--success-soft)]",
+		"text-[var(--success)]",
+	);
 	expect(screen.getByRole("grid")).toBeInTheDocument();
 	expect(
 		screen.getByRole("tablist", { name: "Примеры компонентов" }),

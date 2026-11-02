@@ -20,9 +20,9 @@ import {
 	TextField,
 } from "./ui";
 import { DirectoryPicker } from "./DirectoryPicker";
-import "./forms-operations.css";
 import type { SourceFiles } from "./catalogData";
 import { rootLocations } from "./sourceInventory";
+import { formStyles as styles } from "./formStyles";
 
 type Mode = "in_place" | "staged";
 export interface SourceRoot {
@@ -83,16 +83,18 @@ export function SourcesScreen({
 				: `Демо: предпосылка выбора рабочей папки для ${root.path} выполнена. Реальные файлы, доступность источника и права не проверялись; копирование и анализ не запускались.`,
 		);
 	return (
-		<section className="source-screen">
-			<header className="demo-object-header form-page-header">
+		<section className={styles.page}>
+			<header
+				className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-3`}
+			>
 				<div>
-					<h1>Источники</h1>
-					<p>
+					<h1 className={styles.pageTitle}>Источники</h1>
+					<p className={styles.pageDescription}>
 						Серверные пути, политика источника — только чтение. Режим обработки
 						выбирается отдельно; файлы не загружаются перетаскиванием.
 					</p>
 				</div>
-				<div className="demo-object-actions">
+				<div className={styles.objectActions}>
 					<Button
 						onPress={() => {
 							setAdding(true);
@@ -114,37 +116,49 @@ export function SourcesScreen({
 					</Button>
 				</div>
 			</header>
-			{notice && <p role="status">{notice}</p>}
+			{notice && (
+				<p className={styles.formNotice} role="status">
+					{notice}
+				</p>
+			)}
 			{adding && (
-				<section className="demo-panel">
+				<section className={styles.panel}>
 					<h2>Новый источник</h2>
-					<TextField className="demo-search" value={name} onChange={setName}>
+					<TextField
+						className={`${styles.searchField} max-w-none`}
+						value={name}
+						onChange={setName}
+					>
 						<Label>Имя источника</Label>
 						<Input placeholder="Например, Музыкальная библиотека" />
 					</TextField>
-					<TextField className="demo-search" value={path} isReadOnly>
+					<TextField
+						className={`${styles.searchField} max-w-none`}
+						value={path}
+						isReadOnly
+					>
 						<Label>Каталог на сервере</Label>
 						<Input />
 					</TextField>
 					<Button onPress={() => setPicker(true)}>Выбрать папку</Button>
 					<p>Только каталог; файлы не загружаются.</p>
 					<RadioGroup
-						className="source-mode-group"
+						className="my-3 grid gap-1"
 						aria-label="Режим обработки · выберите явно"
 						value={mode}
 						onChange={(value) => setMode(value as Mode)}
 					>
-						<Radio className="source-mode-choice" value="in_place">
+						<Radio className={styles.modeChoice} value="in_place">
 							На месте
 						</Radio>
-						<p>
+						<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
 							Анализ выполняется по исходному файлу; сам источник остаётся
 							только для чтения.
 						</p>
-						<Radio className="source-mode-choice" value="staged">
+						<Radio className={styles.modeChoice} value="staged">
 							Через рабочую копию
 						</Radio>
-						<p>
+						<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
 							Для обработки создаётся принадлежащая работе рабочая копия аудио в
 							общей рабочей папке сервера. Папка требуется до обработки, но не
 							для добавления источника.
@@ -153,7 +167,7 @@ export function SourcesScreen({
 					<p>
 						Политика источника: только чтение — независимо от выбранного режима.
 					</p>
-					<div className="demo-object-actions">
+					<div className={styles.objectActions}>
 						<Button
 							onPress={() => {
 								if (!name.trim()) {
@@ -188,10 +202,10 @@ export function SourcesScreen({
 					</div>
 				</section>
 			)}
-			<section className="demo-panel">
+			<section className={styles.panel}>
 				<h2>Подключённые каталоги</h2>
-				<div className="source-table-wrap">
-					<table className="source-table">
+				<div className={styles.tableWrap}>
+					<table className={styles.table}>
 						<thead>
 							<tr>
 								{[
@@ -217,7 +231,7 @@ export function SourcesScreen({
 										<code>{root.path}</code>
 									</td>
 									<td>
-										<div className="demo-search">
+										<div className="grid max-w-none gap-[5px] text-xs text-[var(--muted)]">
 											<Label>Режим обработки: {root.name}</Label>
 											<Select
 												selectedKey={root.mode}
@@ -246,7 +260,9 @@ export function SourcesScreen({
 												</Popover>
 											</Select>
 										</div>
-										<p>Изменение влияет на будущую обработку.</p>
+										<p className="my-2">
+											Изменение влияет на будущую обработку.
+										</p>
 										{root.mode === "staged" && (
 											<p>
 												Общая рабочая папка: {workDirectory || "Не выбрана"} ·{" "}
@@ -289,11 +305,11 @@ export function SourcesScreen({
 					</table>
 				</div>
 			</section>
-			<DisclosureGroup className="source-removal-disclosures">
+			<DisclosureGroup className="mt-2">
 				<Disclosure>
 					<Button slot="trigger">Демонстрация удаления источника</Button>
 					<DisclosurePanel>
-						<section className="demo-panel">
+						<section className={styles.panel}>
 							<h2>Удаление каталога источника</h2>
 							<p>
 								Подтверждение показывает точный путь и число записей инвентаря.
@@ -303,8 +319,8 @@ export function SourcesScreen({
 							<Checkbox isSelected={busy} onChange={setBusy}>
 								Для /mnt/music выполняется операция
 							</Checkbox>
-							<div className="source-table-wrap">
-								<table className="source-table">
+							<div className={styles.tableWrap}>
+								<table className={styles.table}>
 									<thead>
 										<tr>
 											{[

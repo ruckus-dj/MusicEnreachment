@@ -1,5 +1,4 @@
 import { useState } from "react";
-import "./matching-publication.css";
 import { Button, Checkbox, Dialog, Heading, Modal } from "./ui";
 import type { CatalogArtist, OriginalRelease } from "./catalogData";
 import {
@@ -11,6 +10,12 @@ import {
 	sourceIds,
 	usableFile,
 } from "./incomingModel";
+import {
+	dialogFooter,
+	objectActions,
+	previewTable,
+	previewTableWrap,
+} from "./matchingStyles";
 
 export function ContextPublicationPreview({
 	plan,
@@ -104,15 +109,15 @@ export function ContextPublicationPreview({
 
 	return (
 		<section
-			className="publication-preview"
+			className="min-w-0 px-[clamp(14px,2vw,28px)] py-5"
 			aria-labelledby="context-publication-title"
 		>
-			<header className="demo-object-header">
-				<div>
+			<header className="demo-object-header mb-3 flex flex-wrap items-center justify-between gap-3">
+				<div className="min-w-0 [overflow-wrap:anywhere]">
 					<h1 id="context-publication-title">
 						Предпросмотр: {plan.target.title}
 					</h1>
-					<p>
+					<p className="mt-[5px] max-w-[760px] text-[var(--muted)]">
 						Контекстный предпросмотр операции. Это не отдельный список
 						публикаций.
 					</p>
@@ -125,15 +130,19 @@ export function ContextPublicationPreview({
 						"Инвентарь источников изменился. Создайте новый предпросмотр перед подтверждением."}
 				</p>
 			)}
-			<p className="demo-preview-counts">
-				<span>
+			<p className="demo-preview-counts flex flex-wrap gap-2 py-3">
+				<span className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]">
 					{active.length} / {plan.target.tracks.length} выбрано
 				</span>
-				<span>{changed.length} изменений</span>
-				<span>MKA · перепаковка без перекодирования</span>
+				<span className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]">
+					{changed.length} изменений
+				</span>
+				<span className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]">
+					MKA · перепаковка без перекодирования
+				</span>
 			</p>
-			<div className="demo-preview-table">
-				<table>
+			<div className={previewTableWrap}>
+				<table className={previewTable}>
 					<thead>
 						<tr>
 							<th>Включить</th>
@@ -201,9 +210,9 @@ export function ContextPublicationPreview({
 					Подтверждаю отдельное понижение качества ({downgrades.length} поз.)
 				</Checkbox>
 			)}
-			<div className="demo-object-actions">
+			<div className={objectActions}>
 				<Button
-					className="ui-button--primary"
+					className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 					isDisabled={!canConfirm}
 					onPress={() => setConfirming(true)}
 				>
@@ -214,10 +223,10 @@ export function ContextPublicationPreview({
 			<Modal isOpen={confirming} onOpenChange={setConfirming}>
 				<Dialog
 					aria-labelledby="context-publication-confirm-title"
-					className="dialog-content"
+					className="grid gap-2"
 				>
 					{({ close }) => (
-						<div className="demo-dialog-content">
+						<div className="grid gap-2">
 							<Heading slot="title" id="context-publication-confirm-title">
 								{changed.length
 									? `Опубликовать ${changed.length} позиций?`
@@ -249,9 +258,9 @@ export function ContextPublicationPreview({
 										"Инвентарь источников изменился. Создайте новый предпросмотр перед подтверждением."}
 								</p>
 							)}
-							<div className="dialog-footer">
+							<div className={dialogFooter}>
 								<Button
-									className="ui-button--primary"
+									className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 									isDisabled={!canConfirm}
 									onPress={confirm}
 								>

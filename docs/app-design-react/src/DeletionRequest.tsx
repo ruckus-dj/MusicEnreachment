@@ -1,7 +1,7 @@
 import { useState } from "react";
-import "./matching-publication.css";
-import { Button, Dialog, Heading, Modal } from "./ui";
+import { Button, Dialog, Heading, Modal, Tooltip, TooltipTrigger } from "./ui";
 import type { OriginalRelease, OriginalTrack } from "./catalogData";
+import { deletionDialog, deletionFooter } from "./matchingStyles";
 
 export interface DeletionOperation {
 	kind?: "library" | "publication" | "artist";
@@ -56,23 +56,49 @@ export function DeletionRequest({
 	release,
 	track,
 	onQueue,
+	iconOnly = false,
+	triggerLabel,
 }: {
 	release: OriginalRelease;
 	track?: OriginalTrack;
 	onQueue: (operation: DeletionOperation) => void;
+	iconOnly?: boolean;
+	triggerLabel?: string;
 }) {
 	const [open, setOpen] = useState(false);
 	const plan = deletionPlan(release, track);
 	return (
 		<>
-			<Button onPress={() => setOpen(true)}>
-				{track ? "Удалить публикацию" : "Удалить альбом"}
-			</Button>
+			{iconOnly ? (
+				<TooltipTrigger>
+					<Button
+						aria-label={triggerLabel ?? "Удалить альбом"}
+						className="artist-album-delete ui-button--danger text-[var(--error)]"
+						onPress={() => setOpen(true)}
+					>
+						<svg
+							viewBox="0 0 24 24"
+							width="18"
+							height="18"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.8"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							aria-hidden="true"
+						>
+							<path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6" />
+						</svg>
+					</Button>
+					<Tooltip>Удалить альбом</Tooltip>
+				</TooltipTrigger>
+			) : (
+				<Button onPress={() => setOpen(true)}>
+					{track ? "Удалить публикацию" : "Удалить альбом"}
+				</Button>
+			)}
 			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
-				<Dialog
-					aria-labelledby="deletion-title"
-					className="deletion-dialog-content"
-				>
+				<Dialog aria-labelledby="deletion-title" className={deletionDialog}>
 					<Heading slot="title" id="deletion-title">
 						Удалить: {plan.target}?
 					</Heading>
@@ -85,10 +111,10 @@ export function DeletionRequest({
 					</p>
 					{!track && (
 						<>
-							<h3>Релиз (будет удалён)</h3>
+							<h3 className="mt-1.5 mb-0 text-xs">Релиз (будет удалён)</h3>
 							<p>{release.title}</p>
-							<h3>Композиции (сохраняются)</h3>
-							<ul>
+							<h3 className="mt-1.5 mb-0 text-xs">Композиции (сохраняются)</h3>
+							<ul className="m-0 pl-5">
 								{[
 									...new Map(
 										release.tracks
@@ -96,15 +122,23 @@ export function DeletionRequest({
 											.map((item) => [item.recordingId, item]),
 									).values(),
 								].map((item) => (
-									<li key={item.recordingId}>
+									<li
+										className="my-[3px] [overflow-wrap:anywhere]"
+										key={item.recordingId}
+									>
 										{item.title} · {item.recordingId}
 									</li>
 								))}
 							</ul>
-							<h3>Позиции релиза (будут удалены; включая неопубликованные)</h3>
-							<ul>
+							<h3 className="mt-1.5 mb-0 text-xs">
+								Позиции релиза (будут удалены; включая неопубликованные)
+							</h3>
+							<ul className="m-0 pl-5">
 								{release.tracks.map((item) => (
-									<li key={item.id}>
+									<li
+										className="my-[3px] [overflow-wrap:anywhere]"
+										key={item.id}
+									>
 										{release.title} · {String(item.position).padStart(2, "0")} ·{" "}
 										{item.title} ·{" "}
 										{item.published ? "опубликована" : "без публикации"}
@@ -114,9 +148,9 @@ export function DeletionRequest({
 						</>
 					)}
 					{plan.paths.length ? (
-						<ul>
+						<ul className="m-0 pl-5">
 							{plan.paths.map((path) => (
-								<li key={path}>
+								<li className="my-[3px] [overflow-wrap:anywhere]" key={path}>
 									<code>{path}</code>
 								</li>
 							))}
@@ -129,10 +163,10 @@ export function DeletionRequest({
 						в список операций: реальные файлы и демонстрационные записи не
 						удаляются.
 					</p>
-					<div className="deletion-dialog-footer">
+					<div className={deletionFooter}>
 						<Button onPress={() => setOpen(false)}>Отмена</Button>
 						<Button
-							className="ui-button--danger"
+							className="border-[var(--error)]! text-[var(--error)]!"
 							onPress={() => {
 								setOpen(false);
 								onQueue(plan);

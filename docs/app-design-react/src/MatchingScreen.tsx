@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import "./matching-publication.css";
 import {
 	Button,
 	Checkbox,
@@ -44,6 +43,14 @@ import {
 	type IncomingState,
 	type SourceFile,
 } from "./incomingModel";
+import {
+	comparisonTableWrap,
+	dialogFooter,
+	previewTable,
+	previewTableWrap,
+	surfacePanel,
+	table,
+} from "./matchingStyles";
 
 export type MatchingScreenProps = {
 	groupId?: string;
@@ -88,7 +95,7 @@ export function MatchingScreen({
 	const group = state.groups.find((item) => item.id === activeGroupId);
 	if (!group)
 		return (
-			<main className="demo-shell">
+			<main className="demo-shell mx-auto max-w-[1100px] px-6 py-8">
 				<h1>Входящая группа не найдена</h1>
 				<a href="#review">К входящим</a>
 			</main>
@@ -97,7 +104,7 @@ export function MatchingScreen({
 	const target = findTarget(group, releases, providers);
 	if (!target)
 		return (
-			<main className="demo-shell">
+			<main className="demo-shell mx-auto max-w-[1100px] px-6 py-8">
 				<h1>Цель сопоставления не найдена</h1>
 				<a href="#review">К входящим</a>
 			</main>
@@ -336,15 +343,17 @@ export function MatchingScreen({
 			>
 				<Button
 					type="button"
-					className={`incoming-file ${state.selectedFile === id ? "selected" : ""}`}
+					className={`incoming-file mb-[5px] grid w-full cursor-grab gap-[3px] rounded border border-[var(--line)] bg-[var(--surface)] p-2 text-left hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] ${state.selectedFile === id ? "selected border-[var(--accent)] bg-[var(--accent-soft)]" : ""}`}
 					onPress={() => {
 						state.selectedFile = state.selectedFile === id ? null : id;
 						commitState();
 					}}
 					aria-pressed={state.selectedFile === id}
 				>
-					<strong>{file.name}</strong>
-					<span>
+					<strong className="[overflow-wrap:anywhere] text-[11px]">
+						{file.name}
+					</strong>
+					<span className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
 						{file.codec} · {duration(file.duration)}
 						{compact ? "" : ` · ${file.path}`}
 					</span>
@@ -354,7 +363,7 @@ export function MatchingScreen({
 	};
 	return (
 		<main
-			className="demo-shell matching-screen"
+			className="relative mx-auto w-full max-w-[1800px] px-[clamp(14px,2vw,30px)] pt-5 pb-[110px] text-[var(--ink)] max-[800px]:px-3 max-[800px]:pt-3.5 max-[800px]:pb-[120px]"
 			onKeyDown={(event) => {
 				if (event.key === "Escape" && state.selectedFile) {
 					state.selectedFile = null;
@@ -362,25 +371,30 @@ export function MatchingScreen({
 				}
 			}}
 		>
-			<header>
-				<p className="demo-eyebrow">
+			<header className="mb-4">
+				<p className="demo-eyebrow mb-[5px] text-[11px] text-[var(--muted)]">
 					<a href="#review">Все входящие</a> · Только чтение: /mnt/inbox/
 					{group.id}
 				</p>
-				<h1>Разбор: {group.title}</h1>
-				<p>
+				<h1 className="m-0 text-[clamp(22px,2vw,30px)] tracking-[-.025em]">
+					Разбор: {group.title}
+				</h1>
+				<p className="mt-1 text-[var(--muted)]">
 					{group.mode === "local"
 						? "Локальные позиции; композиции можно брать из разных альбомов."
 						: "Выбранное издание → его позиции. Наши файлы находятся отдельно справа."}
 				</p>
 			</header>
 			{state.notice && (
-				<p role="status" className="demo-notice">
+				<p
+					role="status"
+					className="demo-notice mb-2.5 rounded border border-[var(--line)] bg-[var(--accent-soft)] px-3 py-[9px]"
+				>
 					{state.notice}
 				</p>
 			)}
-			<div className="incoming-summary">
-				<strong>
+			<div className="incoming-summary mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] px-3 py-[9px] text-[var(--muted)]">
+				<strong className="text-[var(--ink)]">
 					{Object.keys(assignments).length}/{tracks.length} назначено
 				</strong>
 				<span>{pool.length} файлов свободно</span>
@@ -390,12 +404,16 @@ export function MatchingScreen({
 						: `${target.year ?? ""} · ${target.country ?? ""} · ${target.catalog ?? ""}`}
 				</span>
 			</div>
-			<div className="matching-layout">
-				<section className="matching-candidates">
-					<h2>Найти издание</h2>
+			<div className="matching-layout grid grid-cols-[minmax(220px,.72fr)_minmax(450px,2.1fr)_minmax(220px,.78fr)] items-start gap-3 max-[1250px]:grid-cols-[minmax(200px,.72fr)_minmax(0,1.8fr)] max-[800px]:grid-cols-1">
+				<section
+					className={`matching-candidates ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-1 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:max-h-none`}
+				>
+					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
+						Найти издание
+					</h2>
 					<form onSubmit={searchProvider}>
 						<Label htmlFor="provider-query">Поиск изданий · текстом</Label>
-						<div className="matching-search">
+						<div className="matching-search my-1.5 mb-2 flex gap-1.5">
 							<SearchField
 								aria-label="Поиск изданий"
 								value={providerQuery}
@@ -409,29 +427,35 @@ export function MatchingScreen({
 							<Button type="submit">Найти</Button>
 						</div>
 					</form>
-					<p>Кандидаты MusicBrainz и записи собственного каталога.</p>
-					<div className="candidate-list">
+					<p className="text-[11px] text-[var(--muted)]">
+						Кандидаты MusicBrainz и записи собственного каталога.
+					</p>
+					<div className="candidate-list my-2.5 grid gap-1.5">
 						{candidateList.map((candidate) => (
 							<Button
 								key={String(candidate.id)}
-								className={`candidate-button ${group.mode === "provider" && group.candidateId === candidate.id ? "selected" : ""}`}
+								className={`candidate-button grid min-h-0 w-full justify-start rounded-[5px] border border-[var(--line)] bg-[var(--surface)] px-2.5 py-[9px] text-left [white-space:normal] hover:border-[var(--accent)] hover:bg-[var(--raised)] ${group.mode === "provider" && group.candidateId === candidate.id ? "selected border-[var(--accent)] bg-[var(--accent-soft)] shadow-[inset_3px_0_var(--accent)]" : ""}`}
 								aria-pressed={
 									group.mode === "provider" &&
 									group.candidateId === candidate.id
 								}
 								onPress={() => setCandidate(String(candidate.id))}
 							>
-								<strong>{String(candidate.title)}</strong>
-								<span>
+								<strong className="text-xs leading-[1.35]">
+									{String(candidate.title)}
+								</strong>
+								<span className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
 									{candidate.credits?.[0]?.name ||
 										artistName(String(candidate.artistId), artists)}{" "}
 									· {String(candidate.year)} · {String(candidate.country)}
 								</span>
-								<span>
+								<span className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
 									{candidate.tracks.length} позиций ·{" "}
 									{String(candidate.catalog)}
 								</span>
-								<code>{String(candidate.id)}</code>
+								<code className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
+									{String(candidate.id)}
+								</code>
 							</Button>
 						))}
 					</div>
@@ -442,7 +466,7 @@ export function MatchingScreen({
 						</p>
 					)}
 					<Button
-						className="demo-button"
+						className="demo-button max-[520px]:w-full"
 						aria-pressed={group.mode === "local"}
 						onPress={() => {
 							group.mode = "local";
@@ -456,12 +480,14 @@ export function MatchingScreen({
 						Локальный релиз / сборник
 					</Button>
 				</section>
-				<section className="matching-target">
-					<h2>
+				<section
+					className={`matching-target ${surfacePanel} max-[1250px]:row-span-2 max-[1250px]:col-start-2 max-[800px]:row-auto max-[800px]:col-auto`}
+				>
+					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						{String(target.title)} · {tracks.length} позиций
 					</h2>
-					<div className="matching-table-wrap">
-						<table>
+					<div className={comparisonTableWrap}>
+						<table className={table}>
 							<thead>
 								<tr>
 									<th>✓</th>
@@ -489,7 +515,11 @@ export function MatchingScreen({
 									return (
 										<tr
 											key={id}
-											className={id === selectedTrackId ? "inspected" : ""}
+											className={
+												id === selectedTrackId
+													? "inspected bg-[var(--accent-soft)]"
+													: ""
+											}
 											onDragOver={(event) => event.preventDefault()}
 											onDrop={(event) => {
 												event.preventDefault();
@@ -517,7 +547,7 @@ export function MatchingScreen({
 											<td>{String(track.position).padStart(2, "0")}</td>
 											<td>
 												<Button
-													className="text-button"
+													className="min-h-0 border-0 bg-transparent p-0 text-left font-semibold text-[var(--accent)] hover:bg-transparent"
 													onPress={() => {
 														state.selectedTarget = id;
 														state.inspector = "tags";
@@ -526,7 +556,7 @@ export function MatchingScreen({
 												>
 													{String(track.title)}
 												</Button>
-												<span className="incoming-sub">
+												<span className="block text-[10px] text-[var(--muted)]">
 													{artistName(String(track.artistId), artists)}
 													{group.mode === "local"
 														? ` · ${bound?.release.title ?? "Без связи с провайдером"}`
@@ -538,7 +568,10 @@ export function MatchingScreen({
 												{ids.length ? (
 													<div className="linked-sources">
 														{ids.map((sourceId) => (
-															<div key={sourceId} className="linked-source">
+															<div
+																key={sourceId}
+																className="linked-source border-b border-[var(--line)] py-1.5"
+															>
 																<RadioGroup
 																	aria-label={`Источник для ${String(track.title)}`}
 																	value={currentId ?? ""}
@@ -626,8 +659,12 @@ export function MatchingScreen({
 						уверенность не рассчитывает; уровни — демонстрационные.
 					</p>
 				</section>
-				<section className="matching-pool">
-					<h2>Наши файлы · {pool.length} свободно</h2>
+				<section
+					className={`matching-pool ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-2 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:row-auto max-[800px]:col-auto max-[800px]:max-h-none`}
+				>
+					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
+						Наши файлы · {pool.length} свободно
+					</h2>
 					{pool.length ? (
 						pool.map((id) => fileButton(id))
 					) : (
@@ -640,9 +677,12 @@ export function MatchingScreen({
 				</section>
 			</div>
 			{state.recordingTarget && (
-				<section className="matching-recording">
-					<h2>Поиск композиции</h2>
+				<section className={`matching-recording ${surfacePanel} mt-3`}>
+					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
+						Поиск композиции
+					</h2>
 					<form
+						className="flex flex-wrap items-end gap-[7px] [&_.ui-field]:min-w-[190px] [&_.ui-field]:flex-1"
 						onSubmit={(event) => {
 							event.preventDefault();
 							state.recordingQuery = recordingQuery;
@@ -686,10 +726,12 @@ export function MatchingScreen({
 					</ul>
 				</section>
 			)}
-			<section className="matching-inspector">
-				<h2>Инспектор · {String(inspected.title)}</h2>
+			<section className={`matching-inspector ${surfacePanel} mt-3`}>
+				<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
+					Инспектор · {String(inspected.title)}
+				</h2>
 				<Tabs
-					className="matching-inspector-tabs"
+					className="matching-inspector-tabs min-w-0 [&_.ui-tab-panel]:pt-3"
 					selectedKey={state.inspector}
 					onSelectionChange={(key) => {
 						state.inspector = key as "tags" | "evidence";
@@ -703,7 +745,7 @@ export function MatchingScreen({
 					{state.inspector === "tags" ? (
 						<TabPanel id="tags">
 							<>
-								<div className="tag-controls">
+								<div className="tag-controls mb-2.5 mt-0 flex flex-wrap items-center gap-2.5">
 									<Tabs
 										selectedKey={state.tagScope}
 										onSelectionChange={(key) => {
@@ -728,8 +770,8 @@ export function MatchingScreen({
 										Только отличия
 									</Checkbox>
 								</div>
-								<div className="matching-table-wrap">
-									<table>
+								<div className={comparisonTableWrap}>
+									<table className={table}>
 										<thead>
 											<tr>
 												<th>Поле</th>
@@ -780,7 +822,7 @@ export function MatchingScreen({
 					)}
 				</Tabs>
 			</section>
-			<div className="matching-commit">
+			<div className="matching-commit fixed bottom-3.5 left-[calc(174px_+_18px)] right-[18px] z-[5] m-0 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-md border border-[var(--line)] bg-[color-mix(in_srgb,var(--surface)_95%,transparent)] px-3.5 py-2.5 shadow-[0_6px_24px_#0002] backdrop-blur-[12px] max-[800px]:right-2 max-[800px]:bottom-2 max-[800px]:left-2 max-[800px]:p-2 max-[520px]:items-stretch">
 				<strong>
 					{
 						Object.values(assignments).filter(
@@ -791,13 +833,13 @@ export function MatchingScreen({
 					}{" "}
 					позиций выбрано для публикации
 				</strong>
-				<span>
+				<span className="min-w-[220px] flex-1 text-[11px] text-[var(--muted)] max-[800px]:hidden">
 					{tracks.length - Object.keys(assignments).length} пустых позиций не
 					блокируют публикацию. {pool.length} файлов останутся неразмеченными во
 					входящих.
 				</span>
 				<Button
-					className="demo-button"
+					className="demo-button max-[520px]:w-full"
 					isDisabled={
 						!Object.values(assignments).some(
 							(item) =>
@@ -812,7 +854,7 @@ export function MatchingScreen({
 			</div>
 			{preview && (
 				<section
-					className="matching-preview"
+					className={`matching-preview ${surfacePanel} mt-3.5 max-w-[min(1100px,95vw)]`}
 					aria-label="Предпросмотр публикации"
 				>
 					<h2>Предпросмотр: {String(preview.target.title)}</h2>
@@ -834,8 +876,8 @@ export function MatchingScreen({
 							new Set(activeRows.map((row) => row.file?.id)).size}{" "}
 						файлов останутся во входящих · MKA · перепаковка без перекодирования
 					</p>
-					<div className="matching-table-wrap">
-						<table>
+					<div className={comparisonTableWrap}>
+						<table className={previewTable}>
 							<thead>
 								<tr>
 									<th>Включить</th>
@@ -905,7 +947,7 @@ export function MatchingScreen({
 							Подтверждаю замену сжатия без потерь на сжатие с потерями
 						</Checkbox>
 					)}
-					<div className="incoming-actions">
+					<div className="incoming-actions flex flex-wrap justify-end gap-2">
 						<Button
 							isDisabled={
 								stale ||
@@ -930,7 +972,7 @@ export function MatchingScreen({
 			<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
 				<Dialog
 					aria-labelledby="incoming-confirm-title"
-					className="dialog-content"
+					className="grid gap-2.5"
 				>
 					<Heading slot="title" id="incoming-confirm-title">
 						{changedRows.length
@@ -946,10 +988,10 @@ export function MatchingScreen({
 							Инвентарь источников изменился. Пересмотрите предпросмотр.
 						</p>
 					)}
-					<div className="dialog-footer">
+					<div className={dialogFooter}>
 						<Button onPress={() => setConfirming(false)}>Отмена</Button>
 						<Button
-							className="ui-button--primary"
+							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 							isDisabled={stale || (hasDowngrade && !state.confirmDowngrade)}
 							onPress={confirmPublish}
 						>
@@ -991,8 +1033,8 @@ function Evidence({
 						: "Недостаточная уверенность · демонстрационные данные"}
 			</p>
 			<strong>Числовая оценка: не рассчитана</strong>
-			<div className="matching-table-wrap">
-				<table>
+			<div className={comparisonTableWrap}>
+				<table className={table}>
 					<thead>
 						<tr>
 							<th>Признак</th>

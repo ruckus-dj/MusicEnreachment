@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Button, Input, Label, TextField } from "./ui";
-import "./forms-operations.css";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { GenreLibrary } from "./GenreLibrary";
 import type { SettingsScreenProps } from "./SettingsScreen";
+import { formStyles as styles } from "./formStyles";
 
 const steps = ["Каталог", "Инструменты", "Публикация", "Итог"];
 
@@ -52,19 +52,21 @@ export function SetupScreen({
 	};
 
 	return (
-		<section className="setup-screen" aria-labelledby="setup-title">
-			<header className="form-page-header">
-				<h1 id="setup-title">Первый запуск</h1>
-				<p>
+		<section className={styles.page} aria-labelledby="setup-title">
+			<header className={styles.pageHeader}>
+				<h1 className={styles.pageTitle} id="setup-title">
+					Первый запуск
+				</h1>
+				<p className={styles.pageDescription}>
 					Требуется рабочая конфигурация инструментов. Версии, доступность и
 					пути демонстрационные.
 				</p>
 			</header>
 			<nav aria-label="Шаги первого запуска">
-				<ol className="setup-steps">
+				<ol className={styles.setupSteps}>
 					{steps.map((label, index) => (
 						<li aria-current={index === step ? "step" : undefined} key={label}>
-							<span className="setup-step-index">
+							<span className={styles.setupStepIndex}>
 								{index < step ? "✓" : index + 1}
 							</span>
 							<span>{label}</span>
@@ -72,14 +74,20 @@ export function SetupScreen({
 					))}
 				</ol>
 			</nav>
-			<section className="demo-panel" aria-labelledby="setup-step-title">
-				<h2 id="setup-step-title">{steps[step]}</h2>
-				<div className="demo-panel">
+			<section className={styles.panel} aria-labelledby="setup-step-title">
+				<h2 className="mb-2 text-sm font-semibold" id="setup-step-title">
+					{steps[step]}
+				</h2>
+				<div className="min-w-0 rounded-md border border-[var(--line)] bg-[var(--surface)] p-[14px]">
 					{step === 0 && (
 						<>
-							<TextField className="demo-search" value={toolsPath} isReadOnly>
+							<TextField
+								className={styles.searchField}
+								value={toolsPath}
+								isReadOnly
+							>
 								<Label>Постоянный каталог инструментов</Label>
-								<div className="demo-object-actions">
+								<div className={styles.objectActions}>
 									<Input
 										id="tools-path"
 										aria-invalid={pathError}
@@ -93,14 +101,14 @@ export function SetupScreen({
 									Абсолютный путь на сервере, не на компьютере с браузером.
 								</small>
 							</TextField>
-							<div className="demo-object-actions">
+							<div className={styles.objectActions}>
 								<Button onPress={checkPath}>Проверить путь</Button>
 							</div>
 						</>
 					)}
 					{step === 1 && (
 						<>
-							<div className="demo-preview-table">
+							<div className={styles.previewTable}>
 								<table>
 									<thead>
 										<tr>
@@ -128,7 +136,7 @@ export function SetupScreen({
 									</tbody>
 								</table>
 							</div>
-							<p>
+							<p className="my-2">
 								Каждый исполняемый файл проверяется через -version; SHA-256
 								проверяется, только если он опубликован. В этом макете
 								скачивания нет.
@@ -137,7 +145,7 @@ export function SetupScreen({
 					)}
 					{step === 2 && (
 						<>
-							<dl className="demo-facts">
+							<dl className="my-[10px] grid grid-cols-[minmax(100px,1fr)_minmax(0,2fr)] gap-x-3 gap-y-[6px] [&_dd]:[overflow-wrap:anywhere] [&_dd]:my-0 [&_dt]:text-[var(--muted)]">
 								<div>
 									<dt>Каталог</dt>
 									<dd>
@@ -159,8 +167,10 @@ export function SetupScreen({
 									</dd>
 								</div>
 							</dl>
-							<section className="setup-genre-library">
-								<h3>Библиотека жанров · необязательно для продолжения</h3>
+							<section className="grid gap-2">
+								<h3 className="mb-2 text-sm font-semibold">
+									Библиотека жанров · необязательно для продолжения
+								</h3>
 								<GenreLibrary
 									loaded={settings.genresLoaded}
 									onLoadedChange={(genresLoaded) =>
@@ -171,7 +181,7 @@ export function SetupScreen({
 						</>
 					)}
 					{step === 3 && (
-						<dl className="demo-facts">
+						<dl className="my-[10px] grid grid-cols-[minmax(100px,1fr)_minmax(0,2fr)] gap-x-3 gap-y-[6px] [&_dd]:[overflow-wrap:anywhere] [&_dd]:my-0 [&_dt]:text-[var(--muted)]">
 							<div>
 								<dt>MusicBrainz</dt>
 								<dd>
@@ -198,11 +208,15 @@ export function SetupScreen({
 						</dl>
 					)}
 					{notice && (
-						<p role="status" aria-live="polite">
+						<p
+							className="my-3 border-l-[3px] border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-[10px]"
+							role="status"
+							aria-live="polite"
+						>
 							{notice}
 						</p>
 					)}
-					<div className="setup-footer">
+					<div className={styles.setupFooter}>
 						{step > 0 && (
 							<Button onPress={() => setStep(step - 1)}>Назад</Button>
 						)}

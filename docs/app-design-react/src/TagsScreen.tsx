@@ -23,18 +23,20 @@ export function TagsScreen({
 	onPreview?: (ids: string[]) => void;
 }) {
 	return (
-		<section className="catalogue-object">
-			<header className="demo-object-header">
-				<div>
+		<section className="catalogue-object min-w-0">
+			<header className="mb-3 flex flex-wrap items-center justify-between gap-3">
+				<div className="min-w-0 [overflow-wrap:anywhere]">
 					<h1>Сравнение тегов</h1>
-					<p>
+					<p className="text-[var(--muted)]">
 						Теги источника, кэша провайдера, локальной медиатеки и отдельного
 						снимка публикации показаны раздельно.
 					</p>
 				</div>
-				<a href="#library">К медиатеке</a>
+				<a className="text-[var(--accent)] hover:underline" href="#library">
+					К медиатеке
+				</a>
 			</header>
-			<section aria-labelledby="tag-context-title">
+			<section className="min-w-0" aria-labelledby="tag-context-title">
 				<h2 id="tag-context-title">Контекст сравнения</h2>
 				<TagsComparison
 					releases={releases}

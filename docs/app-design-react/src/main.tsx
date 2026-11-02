@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { CatalogDemo } from "./CatalogDemo";
 import { Comparison } from "./Comparison";
 import { DesignShell } from "./DesignShell";
-import "./design.css";
+import "./tailwind.css";
 
 const root = document.getElementById("root");
 function PrototypeApp() {

@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Tooltip, TooltipTrigger } from "./ui";
-import "./theme-button.css";
+import { applyTheme, type Theme } from "./theme";
 
-type Theme = "system" | "light" | "dark";
 const storageKey = "music-design-v2-theme";
 const themes: Theme[] = ["system", "light", "dark"];
 const labels: Record<Theme, string> = {
@@ -77,10 +76,10 @@ export function ThemeControl() {
 	const [warning, setWarning] = useState("");
 	useEffect(() => {
 		const media = window.matchMedia?.("(prefers-color-scheme: dark)");
-		const apply = () => {
-			document.documentElement.dataset.theme =
-				theme === "system" ? (media?.matches ? "dark" : "light") : theme;
-		};
+		const apply = () =>
+			applyTheme(
+				theme === "system" ? (media?.matches ? "dark" : "light") : theme,
+			);
 		apply();
 		media?.addEventListener("change", apply);
 		return () => media?.removeEventListener("change", apply);
@@ -88,10 +87,10 @@ export function ThemeControl() {
 	const currentLabel = labels[theme];
 	const nextLabel = labels[nextTheme(theme)];
 	return (
-		<div className="theme-control">
+		<div className="flex items-center gap-2 text-[11px] text-[var(--muted)]">
 			<TooltipTrigger>
 				<Button
-					className="theme-button"
+					className="h-[26px] w-7 !min-h-0 rounded-[4px] border border-[var(--control)] bg-[var(--surface)] !p-0 text-[var(--ink)] motion-safe:transition-[background-color,border-color] motion-safe:duration-[120ms] motion-reduce:transition-none hover:border-[var(--accent)] hover:bg-[var(--raised)] data-[hovered]:border-[var(--accent)] data-[hovered]:bg-[var(--raised)] data-[pressed]:bg-[var(--accent-soft)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-2 [&_svg]:size-[15px]"
 					aria-label={`Тема: ${currentLabel}. Следующая: ${nextLabel}`}
 					onPress={() => {
 						const next = nextTheme(theme);
@@ -108,7 +107,14 @@ export function ThemeControl() {
 				</Button>
 				<Tooltip>{`Тема: ${currentLabel}`}</Tooltip>
 			</TooltipTrigger>
-			{warning && <span role="status">{warning}</span>}
+			{warning && (
+				<span
+					className="max-w-[220px] text-[10px] text-[var(--warning)]"
+					role="status"
+				>
+					{warning}
+				</span>
+			)}
 		</div>
 	);
 }

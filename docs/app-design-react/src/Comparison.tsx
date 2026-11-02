@@ -82,18 +82,18 @@ export function Comparison() {
 	const [width, setWidth] = useState("1440");
 	const [route, title, status] = targets[index];
 	return (
-		<main className="comparison">
-			<header className="comparison-header">
-				<h1>Сверка переноса</h1>
+		<main className="min-h-dvh bg-[var(--canvas)] p-4 text-[var(--ink)]">
+			<header className="flex flex-wrap items-center gap-5">
+				<h1 className="text-xl font-semibold">Сверка переноса</h1>
 				<a href="/">Вернуться в React-прототип</a>
 			</header>
-			<p>
+			<p className="my-3">
 				Слева — исходный HTML-прототип, справа — отдельный React-прототип. Это
 				средство сравнения, не способ реализации новых экранов. Состояние внутри
 				окон независимо.
 			</p>
-			<div className="comparison-filters">
-				<label className="form-field">
+			<div className="mb-3 flex flex-wrap items-end gap-4">
+				<label className="grid max-w-[420px] gap-1 text-xs text-[var(--muted)]">
 					Экран
 					<Select
 						aria-label="Экран"
@@ -117,7 +117,7 @@ export function Comparison() {
 						</Popover>
 					</Select>
 				</label>
-				<label className="form-field">
+				<label className="grid max-w-[420px] gap-1 text-xs text-[var(--muted)]">
 					Ширина каждого окна
 					<Select
 						aria-label="Ширина каждого окна"
@@ -139,19 +139,22 @@ export function Comparison() {
 					</Select>
 				</label>
 			</div>
-			<p role="status">{status}</p>
-			<div className="comparison-windows">
-				<section>
-					<h2>Исходник · {title}</h2>
+			<p className="my-3" role="status">
+				{status}
+			</p>
+			<div className="flex items-start gap-5 overflow-auto">
+				<section className="flex-none">
+					<h2 className="my-2 text-sm font-semibold">Исходник · {title}</h2>
 					<iframe
 						key={`old:${route}:${width}`}
 						title="Исходный HTML-прототип"
 						src={`/reference/index.html#${route}`}
-						style={{ width: Number(width) }}
+						className="h-[900px] max-w-none border border-[var(--line)] bg-[var(--canvas)] data-[width=375]:w-[375px] data-[width=768]:w-[768px] data-[width=1440]:w-[1440px]"
+						data-width={width}
 					/>
 				</section>
-				<section>
-					<h2>React · {title}</h2>
+				<section className="flex-none">
+					<h2 className="my-2 text-sm font-semibold">React · {title}</h2>
 					{route === "library" ||
 					route === "local" ||
 					route === "create-release" ||
@@ -170,7 +173,8 @@ export function Comparison() {
 							key={`new:${route}:${width}`}
 							title="Новый React-прототип"
 							src={`/?embedded=1#${route}`}
-							style={{ width: Number(width) }}
+							className="h-[900px] max-w-none border border-[var(--line)] bg-[var(--canvas)] data-[width=375]:w-[375px] data-[width=768]:w-[768px] data-[width=1440]:w-[1440px]"
+							data-width={width}
 						/>
 					) : (
 						<p>

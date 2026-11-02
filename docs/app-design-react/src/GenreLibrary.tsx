@@ -1,4 +1,5 @@
 import { Button, StatusBadge } from "./ui";
+import { formStyles as styles } from "./formStyles";
 
 export const demoGenres = [
 	{ id: "demo-genre-ambient", name: "ambient" },
@@ -21,8 +22,8 @@ export function GenreLibrary({
 	buttonLabel?: string;
 }) {
 	return (
-		<div className="genre-library">
-			<div className="genre-library-status">
+		<div className={styles.genreLibrary}>
+			<div className={styles.genreLibraryStatus}>
 				<strong>
 					{loaded ? "Каталог доступен в демонстрации" : "Каталог недоступен"}
 				</strong>
@@ -41,14 +42,14 @@ export function GenreLibrary({
 					сеть и обновления не выполняются.
 				</small>
 			</div>
-			<div className="demo-object-actions genre-library-controls">
+			<div className={styles.genreLibraryControls}>
 				<Button
-					className="ui-button ui-button--primary"
+					className={styles.genreLibraryButton}
 					onPress={() => onLoadedChange(true)}
 				>
 					{buttonLabel}
 				</Button>
-				<span className="demo-secondary">
+				<span className="block text-[11px] text-[var(--muted)]">
 					Автоматическое обновление: раз в неделю в продукте; в макете — только
 					вручную.
 				</span>

@@ -47,6 +47,40 @@ it("keeps nested selection consistent when an album is partially deselected", ()
 	).toBePartiallyChecked();
 });
 
+it("keeps publication paths out of library tables without changing track links", () => {
+	const previousHash = window.location.hash;
+	const release = originalReleases.find((item) => item.id === "north");
+	const track = release?.tracks.find((item) => item.id === "north-t1");
+	if (!release || !track?.published)
+		throw new Error("Missing published track fixture");
+	window.location.hash = "library";
+	try {
+		render(<CatalogDemo />);
+		fireEvent.click(screen.getByRole("tab", { name: "Все альбомы" }));
+		const albumRow = screen
+			.getAllByRole("row")
+			.find((row) => row.getAttribute("data-key") === release.id);
+		if (!albumRow) throw new Error("Missing Northern Lines edition row");
+		fireEvent.click(
+			within(albumRow).getByRole("button", { name: release.title }),
+		);
+		expect(
+			within(albumRow).getByRole("link", { name: track.title }),
+		).toHaveAttribute("href", `#track/${track.id}`);
+		expect(screen.queryByText(track.published.path)).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("tab", { name: "Все треки" }));
+		const trackLink = screen
+			.getAllByRole("link", { name: track.title })
+			.find((link) => link.getAttribute("href") === `#track/${track.id}`);
+		expect(trackLink).toHaveAttribute("href", `#track/${track.id}`);
+		expect(screen.queryByText(track.published.path)).not.toBeInTheDocument();
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
+	}
+});
+
 it("uses the shared floating dock to enter the existing publication preview flow", async () => {
 	const previousHash = window.location.hash;
 	window.location.hash = "library";
@@ -133,11 +167,18 @@ it("retains the selected filter when navigating between library and artist", asy
 it("shows artist cards with a separate aggregate checkbox and real artist link", () => {
 	render(<CatalogDemo />);
 	const artistLink = screen.getByRole("link", { name: /Mira Vale/ });
-	const artistCard = artistLink.closest<HTMLElement>(".artist-card");
+	let artistCard = artistLink.parentElement;
+	while (
+		artistCard &&
+		!within(artistCard).queryByRole("checkbox", {
+			name: "Выбрать позиции артиста Mira Vale",
+		})
+	)
+		artistCard = artistCard.parentElement;
 	if (!artistCard) throw new Error("Missing Mira Vale artist card");
 
 	expect(artistLink).toHaveAttribute("href", "#artist/mira");
-	expect(artistCard).toHaveAttribute("class", "artist-card");
+	expect(within(artistCard).getAllByRole("link")).toContain(artistLink);
 	expect(artistCard).toHaveTextContent("изданий");
 	expect(artistCard).toHaveTextContent("позиций");
 	expect(artistCard).toHaveTextContent("аудио");
@@ -435,12 +476,15 @@ it("migrates a legacy release route to its artist with the album expanded", asyn
 			await screen.findByRole("heading", { name: "Mira Vale" }),
 		).toBeInTheDocument();
 		expect(window.location.hash).toBe("#artist/mira?release=north");
-		const album = screen.getByRole("button", {
-			name: (name) =>
-				name.includes("Northern Lines") &&
-				name.includes("2021") &&
-				name.includes("FR-021"),
-		});
+		const album = screen
+			.getAllByRole("button", {
+				name: (name) =>
+					name.includes("Northern Lines") &&
+					name.includes("2021") &&
+					name.includes("FR-021"),
+			})
+			.find((button) => button.getAttribute("slot") === "trigger");
+		if (!album) throw new Error("Missing Northern Lines disclosure trigger");
 		expect(album).toHaveAttribute("aria-expanded", "true");
 		expect(screen.getByRole("link", { name: /First Light/ })).toHaveAttribute(
 			"href",

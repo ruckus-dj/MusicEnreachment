@@ -62,7 +62,7 @@ import { LibraryCatalogRows } from "./LibraryCatalogRows";
 import { CatalogFilter as CatalogFilterControl } from "./CatalogFilter";
 import { SelectionDock } from "./SelectionDock";
 import type { CatalogFilter } from "./availabilityRows";
-import "./catalogue-shell.css";
+import { catalogueStyles } from "./catalogueStyles";
 
 const subscribeRoute = (listener: () => void) => {
 	window.addEventListener("hashchange", listener);
@@ -77,25 +77,38 @@ function GroupCheckbox({
 	label,
 	selected,
 	onChange,
+	appearance = "table",
 }: {
 	ids: string[];
 	label: string;
 	selected: Set<string>;
 	onChange: (ids: string[], checked: boolean) => void;
+	appearance?: "table" | "artwork";
 }) {
 	const count = ids.filter((id) => selected.has(id)).length;
 	const checked = ids.length > 0 && count === ids.length;
 	return (
 		<Checkbox
 			slot="selection"
-			className="demo-checkbox"
+			className={
+				appearance === "artwork"
+					? catalogueStyles.cardCheckbox
+					: catalogueStyles.tableCheckbox
+			}
 			aria-label={label}
 			isSelected={checked}
 			isIndeterminate={count > 0 && !checked}
 			isDisabled={ids.length === 0}
 			onChange={(value) => onChange(ids, value)}
 		>
-			<span className="demo-checkbox-box" aria-hidden="true">
+			<span
+				className={
+					appearance === "artwork"
+						? catalogueStyles.cardCheckboxBox
+						: catalogueStyles.checkboxBox
+				}
+				aria-hidden="true"
+			>
 				{count > 0 && !checked ? "−" : checked ? "✓" : ""}
 			</span>
 		</Checkbox>
@@ -103,6 +116,9 @@ function GroupCheckbox({
 }
 
 const trackIds = (tracks: Track[]) => tracks.map((track) => track.id);
+
+const screenLayout =
+	"demo-shell max-w-none p-3 [&_h1]:my-[2px] [&_h1]:text-[20px] [&_header_p]:my-1 [&_header_p]:text-[var(--muted)] [&_a]:text-[var(--accent)] [&_a:hover]:underline";
 
 export function CatalogDemo({
 	onIncomingCount,
@@ -369,7 +385,7 @@ export function CatalogDemo({
 	];
 	if (preview || route === "publication-preview")
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				{previewToken ? (
 					<PublicationPreview
 						token={previewToken}
@@ -408,7 +424,7 @@ export function CatalogDemo({
 		);
 	if (route === "publications")
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<ContextPublicationPreview
 					plan={incoming.plan}
 					files={files}
@@ -447,7 +463,7 @@ export function CatalogDemo({
 				: undefined;
 		const releaseId = params.get("release") ?? undefined;
 		return (
-			<main className="demo-shell selection-dock-screen">
+			<main className={`demo-shell ${catalogueStyles.dockScreen}`}>
 				<ArtistScreen
 					key={route}
 					artistId={artistPath.slice(7)}
@@ -488,7 +504,7 @@ export function CatalogDemo({
 				? requestedScope
 				: "track";
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<TagsScreen
 					key={route}
 					trackId={id}
@@ -505,7 +521,7 @@ export function CatalogDemo({
 	}
 	if (route === "components")
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<ComponentsScreen />
 			</main>
 		);
@@ -514,7 +530,7 @@ export function CatalogDemo({
 			(item) => item.id === route.slice("release/".length),
 		);
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<h1>
 					{!release
 						? "Издание не найдено в медиатеке"
@@ -534,13 +550,13 @@ export function CatalogDemo({
 		const track = release?.tracks.find((item) => item.id === trackId);
 		if (!release || !track)
 			return (
-				<main className="demo-shell">
+				<main className={screenLayout}>
 					<h1>Позиция не найдена</h1>
 					<a href="#library">К медиатеке</a>
 				</main>
 			);
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<TrackScreen
 					files={files}
 					artists={artists}
@@ -634,13 +650,13 @@ export function CatalogDemo({
 		);
 	if (route === "settings")
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<SettingsScreen settings={settings} onSettings={setSettings} />
 			</main>
 		);
 	if (route === "setup")
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<SetupScreen
 					settings={settings}
 					onSettings={setSettings}
@@ -651,7 +667,7 @@ export function CatalogDemo({
 		);
 	if (route === "sources")
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<SourcesScreen
 					roots={sourceRoots}
 					onRoots={setSourceRoots}
@@ -692,7 +708,7 @@ export function CatalogDemo({
 		);
 	if (route === "operations")
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<OperationsScreen
 					releases={releases}
 					deletions={deletions}
@@ -721,7 +737,7 @@ export function CatalogDemo({
 		);
 	if (route && route !== "library")
 		return (
-			<main className="demo-shell">
+			<main className={screenLayout}>
 				<h1>Экран ещё не перенесён</h1>
 				<p>
 					Маршрут: {route}. Чтобы не подменять исходный сценарий упрощённой
@@ -768,11 +784,16 @@ export function CatalogDemo({
 		),
 	);
 	return (
-		<main className="demo-shell catalogue-shell selection-dock-screen">
-			<header>
-				<h1>{artistId ? artistName(artistId) : "Медиатека"}</h1>
+		<main
+			className={`demo-shell ${catalogueStyles.shell} ${catalogueStyles.dockScreen}`}
+		>
+			<header className={catalogueStyles.pageHeader}>
+				<h1 className={catalogueStyles.pageTitle}>
+					{artistId ? artistName(artistId) : "Медиатека"}
+				</h1>
 				{artistId && (
 					<Button
+						className={catalogueStyles.pageHeaderAction}
 						onPress={() => {
 							setArtistId(null);
 							setView("artists");
@@ -782,7 +803,7 @@ export function CatalogDemo({
 					</Button>
 				)}
 			</header>
-			<div className="catalogue-controls">
+			<div className={catalogueStyles.controls}>
 				<Tabs
 					selectedKey={view}
 					onSelectionChange={(key) => {
@@ -790,7 +811,7 @@ export function CatalogDemo({
 						setArtistId(null);
 						setExpanded(null);
 					}}
-					className="catalogue-tabs"
+					className={catalogueStyles.tabs}
 				>
 					<TabList aria-label="Вид медиатеки">
 						{tabs.map(([key, label]) => (
@@ -799,20 +820,20 @@ export function CatalogDemo({
 							</Tab>
 						))}
 					</TabList>
-					<TabPanel id={view}>
-						<div className="catalogue-panel-controls">
+					<TabPanel id={view} className={catalogueStyles.tabsPanel}>
+						<div className={catalogueStyles.panelControls}>
 							<SearchField
 								aria-label="Поиск в медиатеке"
 								value={query}
 								onChange={setQuery}
-								className="catalogue-search"
+								className={catalogueStyles.search}
 							>
 								<Input placeholder="Артист, альбом, трек…" />
 							</SearchField>
 							<CatalogFilterControl value={filter} onChange={setFilter} />
 						</div>
 						<section
-							className="demo-list"
+							className={catalogueStyles.list}
 							aria-label={tabs.find(([key]) => key === view)?.[1]}
 						>
 							<LibraryCatalogRows
@@ -847,10 +868,11 @@ export function CatalogDemo({
 								hasAudio={(track) => hasAudio(track as Track)}
 								files={files}
 								filter={filter}
-								groupCheckbox={(ids, label) => (
+								groupCheckbox={(ids, label, appearance) => (
 									<GroupCheckbox
 										ids={ids}
 										label={label}
+										appearance={appearance}
 										selected={selected}
 										onChange={update}
 									/>
@@ -867,7 +889,10 @@ export function CatalogDemo({
 										(edition) => edition.id === editions[group.id],
 									);
 									return (
-										<section className="demo-absent" key={group.id}>
+										<section
+											className={catalogueStyles.detailSelect}
+											key={group.id}
+										>
 											<h2>{group.title}</h2>
 											<p>
 												{artistName(group.artistId)} · альбом отсутствует в
@@ -884,13 +909,13 @@ export function CatalogDemo({
 														[group.id]: value,
 													}));
 												}}
-												className="catalogue-filter"
+												className={catalogueStyles.select}
 											>
 												<Button>
 													<SelectValue />
 													<span aria-hidden="true">⌄</span>
 												</Button>
-												<Popover>
+												<Popover className={catalogueStyles.popover}>
 													<ListBox>
 														<ListBoxItem id="none">
 															Выберите издание

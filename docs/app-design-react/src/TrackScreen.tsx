@@ -1,8 +1,16 @@
-import { Button, Radio, RadioGroup } from "./ui";
+import {
+	Button,
+	Disclosure,
+	DisclosurePanel,
+	Heading,
+	Radio,
+	RadioGroup,
+} from "./ui";
 import { TrackActions } from "./TrackActions";
 import { TagsComparison } from "./TagsComparison";
 import { artistReleaseHref } from "./artistReleaseRoute";
 import type { DeletionOperation } from "./DeletionRequest";
+import { catalogueStyles } from "./catalogueStyles";
 import {
 	catalogData,
 	desiredTags,
@@ -87,8 +95,8 @@ export function TrackScreen({
 				]
 			: [];
 	return (
-		<section className="catalogue-object">
-			<header className="demo-object-header">
+		<section className={catalogueStyles.object}>
+			<header className={catalogueStyles.objectHeader}>
 				<div>
 					<h1>
 						{String(track.position).padStart(2, "0")} · {track.title}
@@ -111,8 +119,8 @@ export function TrackScreen({
 					<a href="#library">К медиатеке</a>
 				)}
 			</header>
-			<div className="demo-object-columns">
-				<section className="demo-panel">
+			<div className={catalogueStyles.objectColumns}>
+				<section className={catalogueStyles.panel}>
 					<h2>Связанные аудиоварианты</h2>
 					{sourceIds.length ? (
 						<RadioGroup
@@ -123,11 +131,14 @@ export function TrackScreen({
 							{sourceIds.map((id) => {
 								const source = files[id];
 								return source ? (
-									<Radio key={id} value={id} className="demo-source">
-										<span aria-hidden="true" className="demo-radio-dot" />
+									<Radio key={id} value={id} className={catalogueStyles.source}>
+										<span
+											aria-hidden="true"
+											className={catalogueStyles.radioDot}
+										/>
 										<span>
 											<strong>{source.name}</strong>
-											<span className="demo-secondary">
+											<span className={catalogueStyles.secondaryInline}>
 												{source.codec} · {duration(source.duration)} ·{" "}
 												{source.size}
 											</span>
@@ -144,9 +155,9 @@ export function TrackScreen({
 						публикация не меняется автоматически.
 					</p>
 				</section>
-				<section className="demo-panel">
+				<section className={catalogueStyles.panel}>
 					<h2>Состояние позиции</h2>
-					<dl className="demo-facts">
+					<dl className={catalogueStyles.facts}>
 						<dt>Формат исходника</dt>
 						<dd>
 							{file
@@ -161,10 +172,10 @@ export function TrackScreen({
 									? "Связанная композиция"
 									: "Без связи с провайдером")}
 						</dd>
-						<dt>Текущая публикация</dt>
+						<dt>Формат публикации</dt>
 						<dd>
 							{track.published
-								? `${track.published.container} · ${track.published.codec} · ${track.published.readAt}`
+								? `${track.published.container} · ${track.published.codec}`
 								: "Не опубликована"}
 						</dd>
 						<dt>Метаданные</dt>
@@ -180,9 +191,9 @@ export function TrackScreen({
 								: "Изменения не отмечены"}
 						</dd>
 					</dl>
-					<details>
+					<details className={catalogueStyles.trackDetails}>
 						<summary>Пути и технические сведения</summary>
-						<dl className="demo-facts">
+						<dl className={catalogueStyles.facts}>
 							<dt>Путь исходника</dt>
 							<dd>{file?.path ?? "Не выбран"}</dd>
 							<dt>Идентификатор композиции</dt>
@@ -195,21 +206,36 @@ export function TrackScreen({
 									<dd>{track.observedFile.mtime}</dd>
 								</>
 							)}
-							<dt>Путь и снимок публикации</dt>
-							<dd>
-								{track.published
-									? `${track.published.path} · ${track.published.tags.TITLE.join(" · ")} · ${track.published.readAt}`
-									: "Публикации нет"}
-							</dd>
 						</dl>
 					</details>
+					{track.published && (
+						<Disclosure className={catalogueStyles.trackPublication}>
+							<Heading>
+								<Button slot="trigger">Текущая публикация</Button>
+							</Heading>
+							<DisclosurePanel>
+								<dl className={catalogueStyles.facts}>
+									<dt>Путь</dt>
+									<dd>{track.published.path}</dd>
+									<dt>Снимок тегов</dt>
+									<dd>
+										{Object.entries(track.published.tags)
+											.map(([key, values]) => `${key}: ${values.join(" · ")}`)
+											.join("; ")}
+									</dd>
+									<dt>Прочитано</dt>
+									<dd>{track.published.readAt}</dd>
+								</dl>
+							</DisclosurePanel>
+						</Disclosure>
+					)}
 					<p>
 						Локальные изменения сравниваются с последним успешным состоянием
 						публикации; версия кэша и наблюдение за файлом не подменяют снимок
 						публикации.
 					</p>
 					<h3>Публикация</h3>
-					<div className="demo-object-actions">
+					<div className={catalogueStyles.actions}>
 						{track.published && (
 							<Button onPress={() => onMetadataPreview([track.id])}>
 								Обновить метаданные

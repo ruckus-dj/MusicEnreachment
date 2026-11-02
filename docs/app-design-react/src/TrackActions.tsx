@@ -1,5 +1,4 @@
 import { useState } from "react";
-import "./matching-publication.css";
 import { DeletionRequest, type DeletionOperation } from "./DeletionRequest";
 import {
 	Button,
@@ -27,6 +26,7 @@ import {
 	renameLocalTrack,
 	upgradeAudioOnly,
 } from "./trackActionModel";
+import { dialogFooter, objectActions } from "./matchingStyles";
 
 export function TrackActions({
 	release,
@@ -64,7 +64,7 @@ export function TrackActions({
 				<Disclosure id="track-actions">
 					<Button slot="trigger">Другие действия</Button>
 					<DisclosurePanel>
-						<div className="demo-object-actions">
+						<div className={objectActions}>
 							<Button onPress={() => open("rename")}>
 								Изменить локальное название
 							</Button>
@@ -115,7 +115,7 @@ export function TrackActions({
 				}}
 				isDismissable
 			>
-				<Dialog aria-labelledby="track-action-title" className="dialog-content">
+				<Dialog aria-labelledby="track-action-title" className="grid gap-2.5">
 					{notice && <p role="alert">{notice}</p>}
 					<form
 						onSubmit={(event) => {
@@ -204,11 +204,14 @@ export function TrackActions({
 								Понижение качества подтверждаю
 							</Checkbox>
 						)}
-						<div className="dialog-footer">
+						<div className={dialogFooter}>
 							<Button type="button" onPress={() => setAction(null)}>
 								Отмена
 							</Button>
-							<Button type="submit" className="ui-button--primary">
+							<Button
+								type="submit"
+								className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
+							>
 								Подтвердить
 							</Button>
 						</div>

@@ -15,7 +15,7 @@ import {
 } from "./ui";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { GenreLibrary } from "./GenreLibrary";
-import "./forms-operations.css";
+import { formStyles as styles } from "./formStyles";
 
 export interface DemoSettings {
 	toolsPath: string;
@@ -98,11 +98,15 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 	};
 
 	return (
-		<section className="settings-screen" aria-labelledby="settings-title">
-			<header className="demo-object-header form-page-header">
+		<section className={styles.page} aria-labelledby="settings-title">
+			<header
+				className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-3`}
+			>
 				<div>
-					<h1 id="settings-title">Настройки</h1>
-					<p>
+					<h1 className={styles.pageTitle} id="settings-title">
+						Настройки
+					</h1>
+					<p className={styles.pageDescription}>
 						Тема доступна в верхней панели. Рабочие настройки продукта
 						сохраняются в БД; здесь демонстрация.
 					</p>
@@ -119,27 +123,27 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 				</Button>
 			</header>
 			{notice && (
-				<p className="form-notice" role="status" aria-live="polite">
+				<p className={styles.formNotice} role="status" aria-live="polite">
 					{notice}
 				</p>
 			)}
-			<section className="demo-panel genre-library-panel">
-				<h2>Библиотека жанров</h2>
+			<section className={`${styles.panel} grid gap-2`}>
+				<h2 className="mb-2 text-sm font-semibold">Библиотека жанров</h2>
 				<GenreLibrary
 					loaded={settings.genresLoaded}
 					onLoadedChange={(genresLoaded) => update({ genresLoaded })}
 					buttonLabel="Загрузить / обновить каталог в демо"
 				/>
 			</section>
-			<div className="settings-grid">
-				<section className="demo-panel">
+			<div className={styles.settingsGrid}>
+				<section className={styles.panel}>
 					<h2>Каталог публикации</h2>
-					<TextField className="form-field" isReadOnly value="/srv/music">
+					<TextField className={styles.formField} isReadOnly value="/srv/music">
 						<Label>Текущий каталог публикации · только чтение</Label>
 						<Input />
 					</TextField>
-					<div className="form-field">
-						<div className="demo-object-actions">
+					<div className={styles.formField}>
+						<div className={styles.objectActions}>
 							<TextField
 								id="settings-output-candidate"
 								value={settings.outputCandidate}
@@ -156,7 +160,7 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 							не меняет.
 						</small>
 					</div>
-					<div className="form-field">
+					<div className={styles.formField}>
 						<Select
 							selectedKey={settings.outputDemoExecution}
 							onSelectionChange={(key) =>
@@ -195,7 +199,7 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 								? "Ожидающие задачи не блокируют смену; при подтверждении все очереди и задания будут сброшены."
 								: "Активных операций нет в выбранном демонстрационном состоянии."}
 					</p>
-					<div className="demo-absent">
+					<div className="mt-4 rounded-md border border-[var(--line)] bg-[var(--surface)] p-4 [&_h2]:m-0 [&_h2]:text-base [&_p]:text-[var(--muted)] [&_p]:text-[13px] [&_label]:grid [&_label]:max-w-[420px] [&_label]:gap-[6px] [&_select]:min-h-10 [&_select]:px-[10px] [&_select]:py-[6px]">
 						<strong>Что произойдёт при подтверждении смены</strong>
 						<ul>
 							<li>
@@ -230,7 +234,7 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 							</li>
 						</ul>
 					</div>
-					<div className="demo-object-actions">
+					<div className={styles.objectActions}>
 						<Button
 							isDisabled={blocked || samePath}
 							onPress={requestOutputReset}
@@ -249,15 +253,15 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 						файлы и демонстрационные публикации не изменяются.
 					</p>
 				</section>
-				<section className="demo-panel">
+				<section className={styles.panel}>
 					<h2>Рабочая папка анализа источников</h2>
 					<TextField
-						className="form-field"
+						className={styles.formField}
 						value={settings.workDirectory}
 						isReadOnly
 					>
 						<Label>Общая папка для рабочих копий аудио</Label>
-						<div className="demo-object-actions">
+						<div className={styles.objectActions}>
 							<Input aria-describedby="settings-source-work-help" />
 							<Button onPress={() => setPicker("work")}>Выбрать папку</Button>
 						</div>
@@ -280,9 +284,9 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 						занятые операции или сохранённые копии; путь не проверен.
 					</p>
 				</section>
-				<section className="demo-panel">
+				<section className={styles.panel}>
 					<h2>Инструменты · Linux amd64</h2>
-					<div className="demo-preview-table">
+					<div className={styles.previewTable}>
 						<table>
 							<thead>
 								<tr>
@@ -314,14 +318,14 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 							</tbody>
 						</table>
 					</div>
-					<div className="demo-panel">
+					<div className="min-w-0 rounded-md border border-[var(--line)] bg-[var(--raised)] p-3">
 						<TextField
-							className="form-field"
+							className={styles.formField}
 							value={settings.toolsPath}
 							isReadOnly
 						>
 							<Label>Постоянный каталог инструментов</Label>
-							<div className="demo-object-actions">
+							<div className={styles.objectActions}>
 								<Input aria-describedby="settings-tools-path-help" />
 								<Button onPress={() => setPicker("tools")}>
 									Выбрать папку
@@ -335,7 +339,7 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 							Версии условные. Проверка только уведомляет; установка и откат
 							явные.
 						</p>
-						<div className="demo-object-actions">
+						<div className={styles.objectActions}>
 							{settings.toolsChecked && !settings.toolsUpdated && (
 								<Button onPress={() => setConfirming("tools-install")}>
 									Установить обновление
@@ -349,9 +353,9 @@ export function SettingsScreen({ settings, onSettings }: SettingsScreenProps) {
 						</div>
 					</div>
 				</section>
-				<section className="demo-panel">
-					<h2>Обработка и публикация</h2>
-					<dl className="demo-facts">
+				<section className={styles.panel}>
+					<h2 className="mb-2 text-sm font-semibold">Обработка и публикация</h2>
+					<dl className="my-[10px] grid grid-cols-[minmax(100px,1fr)_minmax(0,2fr)] gap-x-3 gap-y-[6px] [&_dd]:[overflow-wrap:anywhere] [&_dd]:my-0 [&_dt]:text-[var(--muted)]">
 						{[
 							[
 								"Полный уверенный релиз",

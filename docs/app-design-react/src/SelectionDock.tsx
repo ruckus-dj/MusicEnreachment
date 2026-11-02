@@ -6,6 +6,7 @@ import {
 	publicationSelectionPlan,
 } from "./DeletionRequest";
 import { Button, Dialog, Heading, Modal } from "./ui";
+import { catalogueStyles } from "./catalogueStyles";
 
 type FrozenPublication = {
 	releaseId: string;
@@ -64,14 +65,14 @@ export function SelectionDock({
 		<>
 			{selected.size > 0 && (
 				<div
-					className="selection-dock"
+					className={catalogueStyles.dock}
 					role="region"
 					aria-label="Выбранные позиции"
 				>
 					<span role="status">Выбрано позиций: {selected.size}</span>
-					<div className="selection-dock-actions">
+					<div className={catalogueStyles.dockActions}>
 						<Button
-							className="ui-button--primary"
+							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 							onPress={() => onPreview([...selected])}
 						>
 							Опубликовать
@@ -86,7 +87,7 @@ export function SelectionDock({
 			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
 				<Dialog
 					aria-labelledby="selection-deletion-title"
-					className="deletion-dialog-content"
+					className={catalogueStyles.dockDialog}
 				>
 					<Heading slot="title" id="selection-deletion-title">
 						Удалить выбранные публикации?
@@ -124,10 +125,10 @@ export function SelectionDock({
 						в список операций: реальные файлы и демонстрационные записи не
 						удаляются.
 					</p>
-					<div className="deletion-dialog-footer">
+					<div className={catalogueStyles.dockDialogFooter}>
 						<Button onPress={() => setOpen(false)}>Отмена</Button>
 						<Button
-							className="ui-button--danger"
+							className="border-[var(--error)]! bg-[var(--error)]! text-white!"
 							isDisabled={!currentPublications.length}
 							onPress={() => {
 								const confirmed = currentPublications.flatMap(

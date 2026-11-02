@@ -1,5 +1,4 @@
 import { useState } from "react";
-import "./matching-publication.css";
 import {
 	Button,
 	Checkbox,
@@ -20,6 +19,20 @@ import {
 	type OriginalRelease,
 	type SourceFiles,
 } from "./catalogData";
+import {
+	comparisonControls,
+	comparisonDifference,
+	comparisonFilter,
+	comparisonNote,
+	comparisonRow,
+	comparisonRowHeading,
+	metadataPanel,
+	metadataPanelHeading,
+	previewTable,
+	previewTableCell,
+	previewTableHeading,
+	previewTableWrap,
+} from "./matchingStyles";
 
 const fields = {
 	artist: ["ARTIST", "ARTISTSORT", "MUSICBRAINZ_ARTISTID"],
@@ -106,11 +119,8 @@ export function ReleaseMetadataComparison({
 		["track", "Трек"],
 	];
 	return (
-		<section
-			className="demo-panel metadata-comparison"
-			aria-label="Сравнение метаданных"
-		>
-			<h2>Сравнение метаданных</h2>
+		<section className={metadataPanel} aria-label="Сравнение метаданных">
+			<h2 className={metadataPanelHeading}>Сравнение метаданных</h2>
 			{release.manual && (
 				<p>
 					Тип: {release.metadata?.type || "—"} · Исполнители:{" "}
@@ -120,7 +130,7 @@ export function ReleaseMetadataComparison({
 						.join(", ") || "не указаны"}
 				</p>
 			)}
-			<div className="demo-object-actions comparison-controls">
+			<div className={comparisonControls}>
 				<Select
 					aria-label="Позиция сравнения"
 					selectedKey={track.id}
@@ -169,7 +179,7 @@ export function ReleaseMetadataComparison({
 					</Popover>
 				</Select>
 			</div>
-			<div className="demo-object-actions" aria-label="Область тегов">
+			<div className={comparisonFilter} aria-label="Область тегов">
 				<Tabs
 					selectedKey={scope}
 					onSelectionChange={(key) => setScope(key as Scope)}
@@ -187,8 +197,8 @@ export function ReleaseMetadataComparison({
 					Только отличия
 				</Checkbox>
 			</div>
-			<div className="demo-preview-table">
-				<table>
+			<div className={previewTableWrap}>
+				<table className={`${previewTable} min-w-[720px]`}>
 					<thead>
 						<tr>
 							{[
@@ -198,7 +208,7 @@ export function ReleaseMetadataComparison({
 								"Локальная медиатека",
 								"Сейчас в публикации",
 							].map((heading) => (
-								<th scope="col" key={heading}>
+								<th className={previewTableHeading} scope="col" key={heading}>
 									{heading}
 								</th>
 							))}
@@ -206,14 +216,17 @@ export function ReleaseMetadataComparison({
 					</thead>
 					<tbody>
 						{rows.map(({ key, values, different }) => (
-							<tr key={key}>
-								<th scope="row" className={different ? "difference" : ""}>
+							<tr className={comparisonRow} key={key}>
+								<th
+									scope="row"
+									className={`${comparisonRowHeading} ${different ? comparisonDifference : ""}`}
+								>
 									{key}
 								</th>
 								{values.map((value, index) => (
-									<td key={`${key}:${index}`}>
+									<td className={previewTableCell} key={`${key}:${index}`}>
 										{value === null ? (
-											<span className="demo-secondary">
+											<span className="block text-[11px] text-[var(--muted)]">
 												{index === 1 ? "Нет связи" : "Не опубликован"}
 											</span>
 										) : value.length ? (
@@ -233,7 +246,7 @@ export function ReleaseMetadataComparison({
 					</tbody>
 				</table>
 			</div>
-			<p className="demo-secondary">
+			<p className={comparisonNote}>
 				{file?.path ?? "Исходник не выбран"}
 				<br />
 				{track.published

@@ -9,7 +9,7 @@ import {
 	TextField,
 	Toolbar,
 } from "./ui";
-import "./forms-operations.css";
+import { formStyles as styles } from "./formStyles";
 
 const directories: Record<string, string[]> = {
 	"/": ["mnt", "srv", "var"],
@@ -84,7 +84,7 @@ export function DirectoryPicker({
 			isDismissable
 		>
 			<Dialog
-				className="directory-dialog"
+				className={styles.directoryDialog}
 				aria-labelledby="directory-picker-title"
 				aria-describedby="directory-picker-help"
 			>
@@ -95,7 +95,7 @@ export function DirectoryPicker({
 					Каталоги на сервере MeloTrove — не файлы устройства.
 				</p>
 				<nav
-					className="directory-breadcrumbs"
+					className={styles.directoryBreadcrumbs}
 					aria-label="Навигация по каталогам"
 				>
 					<Button
@@ -145,7 +145,7 @@ export function DirectoryPicker({
 						}}
 					>
 						<TextField
-							className="demo-search"
+							className={styles.searchField}
 							aria-label="Абсолютный серверный путь"
 							value={requested}
 							onChange={setRequested}
@@ -184,11 +184,12 @@ export function DirectoryPicker({
 							Проверьте путь или выберите папку из списка.
 						</p>
 					) : folders.length ? (
-						<div className="directory-list-scroll">
-							<ul className="demo-directory-list">
+						<div className={styles.directoryList}>
+							<ul className="my-0 list-none p-0">
 								{folders.map((folder) => (
 									<li key={folder}>
 										<Button
+											className="!block !w-full !justify-start !rounded-none !border-0 !border-b !border-[var(--line)] !bg-transparent !px-[10px] !py-[10px] text-left hover:!bg-[var(--raised)]"
 											onPress={() =>
 												go(`${path === "/" ? "" : path}/${folder}`)
 											}
@@ -206,7 +207,7 @@ export function DirectoryPicker({
 						</p>
 					)}
 				</div>
-				<Toolbar className="directory-footer">
+				<Toolbar className={styles.directoryFooter}>
 					<Button onPress={onClose}>Отмена</Button>
 					<Button
 						isDisabled={!folders || unreadable || Boolean(error)}
