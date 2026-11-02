@@ -155,6 +155,7 @@ export function ReleaseScreen({
 										track,
 										availability,
 										hasAudio,
+										publication,
 									)}
 								>
 									<td>

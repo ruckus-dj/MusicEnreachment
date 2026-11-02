@@ -8,6 +8,16 @@ import {
 } from "./catalogData";
 import { ArtistScreen } from "./ArtistScreen";
 
+function expandAlbum(release: OriginalRelease) {
+	const trigger = screen.getByRole("button", {
+		name: (name) =>
+			name.includes(release.title) &&
+			name.includes(String(release.year)) &&
+			name.includes(release.catalog ?? ""),
+	});
+	fireEvent.click(trigger);
+}
+
 it("renders artist releases and tracks, selection and publication preview actions", () => {
 	const release = originalReleases.find((item) => item.id === "north");
 	if (!release) throw new Error("Missing baseline fixture");
@@ -24,6 +34,7 @@ it("renders artist releases and tracks, selection and publication preview action
 			onPreview={onPreview}
 		/>,
 	);
+	expandAlbum(release);
 	expect(
 		screen.getByRole("heading", {
 			name: catalogData.artists.find((artist) => artist.id === release.artistId)
@@ -70,16 +81,24 @@ it("filters track rows and searches absent editions without adding them to the l
 	).not.toBeInTheDocument();
 });
 
-it("uses shared availability and publication props while only availability emphasizes rows", () => {
+it("emphasizes rows for active availability and publication filters together", () => {
 	const release = originalReleases.find((item) => item.id === "north");
 	if (!release) throw new Error("Missing baseline fixture");
-	const availableID = release.tracks.find(
+	const availablePublishedID = release.tracks.find(
 		(track) =>
+			Boolean(track.published) &&
 			track.sourceId &&
 			originalFiles[track.sourceId]?.available &&
 			originalFiles[track.sourceId]?.locations?.length,
 	)?.id;
-	const missingID = release.tracks.find(
+	const availableUnpublishedID = release.tracks.find(
+		(track) =>
+			!track.published &&
+			track.sourceId &&
+			originalFiles[track.sourceId]?.available &&
+			originalFiles[track.sourceId]?.locations?.length,
+	)?.id;
+	const missingUnpublishedID = release.tracks.find(
 		(track) =>
 			!track.published &&
 			!(
@@ -88,7 +107,7 @@ it("uses shared availability and publication props while only availability empha
 				originalFiles[track.sourceId]?.locations?.length
 			),
 	)?.id;
-	if (!availableID || !missingID)
+	if (!availablePublishedID || !availableUnpublishedID || !missingUnpublishedID)
 		throw new Error("Missing availability fixture");
 	const { rerender } = render(
 		<ArtistScreen
@@ -100,17 +119,18 @@ it("uses shared availability and publication props while only availability empha
 			publication="all"
 		/>,
 	);
+	expandAlbum(release);
 	const rowFor = (id: string) =>
 		screen
 			.getAllByRole("table")
 			.flatMap((table) => [...table.querySelectorAll("tbody tr")])
 			.find((row) => row.querySelector(`a[href="#track/${id}"]`));
-	const availableRow = rowFor(availableID);
-	const missingRow = rowFor(missingID);
-	expect(availableRow).toBeTruthy();
-	expect(missingRow).toBeTruthy();
-	expect(availableRow).toHaveClass("filter-match");
-	expect(missingRow).toHaveClass("filter-muted");
+	const rowForPublished = rowFor(availablePublishedID);
+	const rowForUnpublished = rowFor(availableUnpublishedID);
+	const rowForMissing = rowFor(missingUnpublishedID);
+	expect(rowForPublished).toHaveClass("filter-match");
+	expect(rowForUnpublished).toHaveClass("filter-match");
+	expect(rowForMissing).toHaveClass("filter-muted");
 	expect(screen.getByRole("radio", { name: "В наличии" })).toBeChecked();
 	rerender(
 		<ArtistScreen
@@ -122,14 +142,29 @@ it("uses shared availability and publication props while only availability empha
 			publication="published"
 		/>,
 	);
+	expect(rowFor(availablePublishedID)).toHaveClass("filter-match");
+	expect(rowFor(availableUnpublishedID)).toHaveClass("filter-muted");
+	expect(rowForMissing).toHaveClass("filter-muted");
+	rerender(
+		<ArtistScreen
+			artistId={release.artistId ?? ""}
+			artists={catalogData.artists}
+			releases={originalReleases}
+			files={originalFiles}
+			availability="available"
+			publication="published"
+		/>,
+	);
 	expect(
 		within(screen.getByRole("radiogroup", { name: "Публикация" })).getByRole(
 			"radio",
 			{ name: "Есть" },
 		),
 	).toBeChecked();
-	expect(rowFor(availableID)).not.toHaveClass("filter-match", "filter-muted");
-	expect(rowFor(missingID)).not.toHaveClass("filter-match", "filter-muted");
+	expect(rowFor(availablePublishedID)).toHaveClass("filter-match");
+	expect(rowFor(availableUnpublishedID)).toHaveClass("filter-muted");
+	expect(rowFor(missingUnpublishedID)).toHaveClass("filter-muted");
+	expect(screen.queryByText(/По фильтру|Вне фильтра/)).not.toBeInTheDocument();
 });
 
 it("keeps artist availability and publication filters independently selectable", () => {
@@ -204,6 +239,7 @@ it("numbers tracks by medium for a cloned multi-medium release without displayed
 			files={originalFiles}
 		/>,
 	);
+	expandAlbum(release);
 	const table = screen.getAllByRole("table")[0];
 	const rows = [...table.querySelectorAll("tbody tr")];
 	expect(
@@ -235,4 +271,41 @@ it("selects a collapsed album without opening it", () => {
 	fireEvent.click(checkbox);
 	expect(onSelect).toHaveBeenCalled();
 	expect(trigger).toHaveAttribute("aria-expanded", "false");
+});
+
+it("starts collapsed and resets expansion when changing artists", () => {
+	const props = {
+		artists: catalogData.artists,
+		releases: originalReleases,
+		files: originalFiles,
+	};
+	const { container, rerender } = render(
+		<ArtistScreen {...props} artistId="mira" />,
+	);
+	const triggers = () => [
+		...container.querySelectorAll('button[slot="trigger"]'),
+	];
+	expect(triggers().length).toBeGreaterThan(0);
+	expect(
+		triggers().every((item) => item.getAttribute("aria-expanded") === "false"),
+	).toBe(true);
+	expandAlbum(originalReleases.find((item) => item.id === "north")!);
+	expect(
+		triggers().some((item) => item.getAttribute("aria-expanded") === "true"),
+	).toBe(true);
+	const other = catalogData.artists.find(
+		(item) =>
+			item.id !== "mira" &&
+			originalReleases.some((release) => release.artistId === item.id),
+	);
+	if (!other) throw new Error("Missing second artist fixture");
+	rerender(<ArtistScreen {...props} artistId={other.id} />);
+	expect(triggers().length).toBeGreaterThan(0);
+	expect(
+		triggers().every((item) => item.getAttribute("aria-expanded") === "false"),
+	).toBe(true);
+	rerender(<ArtistScreen {...props} artistId="mira" />);
+	expect(
+		triggers().every((item) => item.getAttribute("aria-expanded") === "false"),
+	).toBe(true);
 });

@@ -308,8 +308,8 @@ export function ArtistScreen({
 				</div>
 			)}
 			<DisclosureGroup
+				key={artistId}
 				className="catalogue-editions"
-				defaultExpandedKeys={artistReleases[0] ? [artistReleases[0].id] : []}
 				allowsMultipleExpanded
 			>
 				{artistReleases.map((release, index) => {
@@ -442,6 +442,7 @@ export function ArtistScreen({
 																track,
 																availability,
 																hasAudio,
+																publication,
 															)}
 														>
 															<td>

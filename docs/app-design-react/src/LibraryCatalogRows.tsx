@@ -273,6 +273,7 @@ export function LibraryCatalogRows({
 																		track as OriginalTrack,
 																		availability,
 																		hasAudio,
+																		publication,
 																	)}
 																>
 																	<td>
@@ -444,6 +445,7 @@ export function LibraryCatalogRows({
 										track as OriginalTrack,
 										availability,
 										hasAudio,
+										publication,
 									)}
 								>
 									<Cell>

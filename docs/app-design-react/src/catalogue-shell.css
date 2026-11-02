@@ -170,6 +170,20 @@
 .catalogue-object .demo-preview-table table { width: 100%; min-width: 700px; border-collapse: collapse; font-size: 11px; }
 .catalogue-object .demo-preview-table th, .catalogue-object .demo-preview-table td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 .catalogue-object .demo-preview-table th { color: var(--muted); background: var(--raised); font-weight: 650; }
+.catalogue-table .react-aria-Row.filter-match,
+.catalogue-object .demo-preview-table tr.filter-match,
+.catalogue-inline-tracks tr.filter-match {
+	background-image: linear-gradient(to left, color-mix(in srgb, var(--ink) 6%, transparent), transparent);
+	background-position: right top;
+	background-repeat: no-repeat;
+	background-size: 18% 100%;
+}
+.catalogue-object .demo-preview-table tr.filter-muted > td,
+.catalogue-inline-tracks tr.filter-muted > td,
+.catalogue-table .react-aria-Row.filter-muted > td { opacity: .55; }
+.catalogue-object .demo-preview-table tr.filter-muted:focus-within > td,
+.catalogue-inline-tracks tr.filter-muted:focus-within > td,
+.catalogue-table .react-aria-Row.filter-muted:focus-within > td { opacity: 1; }
 .catalogue-object .demo-preview-table tr:last-child > * { border-bottom: 0; }
 .catalogue-editions { border-top: 1px solid var(--line); }
 .catalogue-edition { margin: 0; padding: 0; border-bottom: 1px solid var(--line); }
