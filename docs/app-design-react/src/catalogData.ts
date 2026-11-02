@@ -4,11 +4,12 @@ export interface OriginalTrack {
 	id: string;
 	title: string;
 	position: number;
-	duration: number;
-	artistId: string;
+	duration: number | null;
+	artistId: string | null;
 	recordingId?: string | null;
 	providerTrackId?: string | null;
 	recordingTitle?: string;
+	localRecordingId?: string | null;
 	providerTitle?: string;
 	providerCacheVersion?: number;
 	recovered?: boolean;
@@ -38,22 +39,44 @@ export interface OriginalTrack {
 export interface OriginalRelease {
 	id: string;
 	title: string;
-	artistId: string;
+	artistId: string | null;
 	year: string;
 	country: string;
 	catalog: string;
 	label: string;
 	providerId: string | null;
 	manual?: boolean;
-	credits?: { credit?: string; name?: string }[];
+	credits?: {
+		credit?: string;
+		name?: string;
+		role?: string;
+		artistId?: string | null;
+	}[];
+	metadata?: {
+		date: string;
+		country: string;
+		label: string;
+		catalogNumber: string;
+		type: string;
+	};
+	media?: { title: string; format: string; positions: unknown[] }[];
+	coverId?: string;
+	color?: string;
 	tracks: OriginalTrack[];
 }
 
 export const originalReleases: OriginalRelease[] = original.releases;
 export const recoveryFixture = original.recoveryFixture;
-export const originalArtistName = (id: string) =>
-	original.artists.find((artist) => artist.id === id)?.name ??
-	"Артист не указан";
+export type CatalogArtist = {
+	id: string;
+	name: string;
+	genre?: string;
+	color?: string;
+};
+export const originalArtistName = (
+	id: string | null,
+	artists: CatalogArtist[] = original.artists,
+) => artists.find((artist) => artist.id === id)?.name ?? "Артист не указан";
 export interface SourceFile {
 	id: string;
 	name: string;
@@ -82,6 +105,7 @@ export function applyMetadataPreview(
 	releases: OriginalRelease[],
 	selected: Set<string>,
 	files: SourceFiles = originalFiles,
+	artists: CatalogArtist[] = original.artists,
 ): OriginalRelease[] {
 	const next = structuredClone(releases);
 	for (const release of next)
@@ -90,8 +114,9 @@ export function applyMetadataPreview(
 			const file = track.sourceId ? files[track.sourceId] : undefined;
 			if (!track.published && !(file?.available && file.locations?.length))
 				continue;
-			if (track.published && !metadataChanged(release, track)) continue;
-			const tags = desiredTags(release, track);
+			if (track.published && !metadataChanged(release, track, artists))
+				continue;
+			const tags = desiredTags(release, track, artists);
 			const coverHash = track.coverHash || null;
 			const lyrics = track.lyrics || null;
 			track.published = track.published
@@ -103,7 +128,7 @@ export function applyMetadataPreview(
 						codec: file?.codec ?? "",
 						container: "MKA",
 						sourceId: track.sourceId,
-						path: `/srv/music/${originalArtistName(release.artistId)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`,
+						path: `/srv/music/${originalArtistName(release.artistId, artists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`,
 						readAt: "Только в памяти макета",
 					};
 			track.metadataBaseline = structuredClone(tags);
@@ -115,11 +140,10 @@ export function applyMetadataPreview(
 export function desiredTags(
 	release: OriginalRelease,
 	track: OriginalTrack,
+	artists: CatalogArtist[] = original.artists,
 ): Record<string, string[]> {
-	const artist = original.artists.find((item) => item.id === track.artistId);
-	const albumArtist = original.artists.find(
-		(item) => item.id === release.artistId,
-	);
+	const artist = artists.find((item) => item.id === track.artistId);
+	const albumArtist = artists.find((item) => item.id === release.artistId);
 	return {
 		TITLE: track.title ? [track.title] : [],
 		ARTIST: artist?.name ? [artist.name] : [],
@@ -161,9 +185,10 @@ const normalized = (value: string) =>
 export function metadataChanged(
 	release: OriginalRelease,
 	track: OriginalTrack,
+	artists: CatalogArtist[] = original.artists,
 ): boolean {
 	if (!track.published || !track.metadataBaseline) return false;
-	const tags = desiredTags(release, track);
+	const tags = desiredTags(release, track, artists);
 	return (
 		[
 			"TITLE",

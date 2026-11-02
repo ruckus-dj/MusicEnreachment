@@ -53,3 +53,14 @@ it("requires an explicit edition before showing an absent album's tracks", () =>
 	expect(screen.getByText("After Rain")).toBeInTheDocument();
 	expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
+
+it("renders the #local route inside a single main landmark", () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "local";
+	try {
+		render(<CatalogDemo />);
+		expect(screen.getAllByRole("main")).toHaveLength(1);
+	} finally {
+		window.location.hash = previousHash;
+	}
+});

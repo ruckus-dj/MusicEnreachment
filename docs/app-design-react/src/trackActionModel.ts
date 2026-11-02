@@ -5,6 +5,7 @@ import {
 	type OriginalRelease,
 	type OriginalTrack,
 	type SourceFiles,
+	type CatalogArtist,
 } from "./catalogData";
 
 export function renameLocalTrack(
@@ -54,6 +55,7 @@ export function explicitlyRepublish(
 	track: OriginalTrack,
 	downgradeConfirmed: boolean,
 	files: SourceFiles = originalFiles,
+	artists?: CatalogArtist[],
 ): OriginalTrack {
 	const file = track.sourceId ? files[track.sourceId] : undefined;
 	if (
@@ -63,7 +65,7 @@ export function explicitlyRepublish(
 			!downgradeConfirmed)
 	)
 		return track;
-	const tags = desiredTags(release, track);
+	const tags = desiredTags(release, track, artists);
 	const coverHash = track.coverHash || null;
 	const lyrics = track.lyrics || null;
 	return {
@@ -79,7 +81,7 @@ export function explicitlyRepublish(
 			readAt: "Только что · явная перепубликация демо",
 			path:
 				track.published?.path ||
-				`/srv/music/${originalArtistName(release.artistId)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`,
+				`/srv/music/${originalArtistName(release.artistId, artists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`,
 		},
 		metadataBaseline: structuredClone(tags),
 		metadataBaselineExtras: { coverHash, lyrics },

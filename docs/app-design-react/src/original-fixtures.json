@@ -5613,5 +5613,635 @@
     "technicalMatch": true,
     "authorityCurrent": true,
     "sourceIdentityProof": false
+  },
+  "manualReleaseDemoData": {
+    "artists": [
+      {
+        "id": "mira",
+        "name": "Mira Vale"
+      },
+      {
+        "id": "arden",
+        "name": "Arden Trio"
+      },
+      {
+        "id": "forma",
+        "name": "Forma"
+      },
+      {
+        "id": "various",
+        "name": "Various Artists"
+      }
+    ],
+    "recordings": [
+      {
+        "id": "demo-rec-north-1",
+        "title": "First Light",
+        "artists": "Mira Vale",
+        "duration": "4:12"
+      },
+      {
+        "id": "demo-rec-north-2",
+        "title": "Still Water",
+        "artists": "Mira Vale",
+        "duration": "5:08"
+      },
+      {
+        "id": "demo-rec-north-3",
+        "title": "Northbound",
+        "artists": "Mira Vale",
+        "duration": "3:46"
+      },
+      {
+        "id": "demo-rec-north-4",
+        "title": "The Long Way Home",
+        "artists": "Mira Vale",
+        "duration": "6:21"
+      },
+      {
+        "id": "demo-rec-north-5",
+        "title": "Pine Forest",
+        "artists": "Mira Vale",
+        "duration": "4:24"
+      },
+      {
+        "id": "demo-rec-north-6",
+        "title": "Under the Bridge",
+        "artists": "Mira Vale",
+        "duration": "3:18"
+      },
+      {
+        "id": "demo-rec-north-7",
+        "title": "Low Tide",
+        "artists": "Mira Vale",
+        "duration": "4:51"
+      },
+      {
+        "id": "demo-rec-north-8",
+        "title": "Open Country",
+        "artists": "Mira Vale",
+        "duration": "4:04"
+      },
+      {
+        "id": "demo-rec-north-9",
+        "title": "Winter Birds",
+        "artists": "Mira Vale",
+        "duration": "5:18"
+      },
+      {
+        "id": "demo-rec-north-10",
+        "title": "Last Train",
+        "artists": "Mira Vale",
+        "duration": "3:27"
+      },
+      {
+        "id": "demo-rec-hours-1",
+        "title": "Green Room",
+        "artists": "Arden Trio",
+        "duration": "4:44"
+      },
+      {
+        "id": "demo-rec-hours-2",
+        "title": "After Midnight",
+        "artists": "Arden Trio",
+        "duration": "5:12"
+      },
+      {
+        "id": "demo-rec-hours-3",
+        "title": "Slow Motion",
+        "artists": "Arden Trio",
+        "duration": "4:01"
+      },
+      {
+        "id": "demo-rec-hours-4",
+        "title": "Blue Window",
+        "artists": "Arden Trio",
+        "duration": "4:58"
+      },
+      {
+        "id": "demo-rec-hours-5",
+        "title": "On the Corner",
+        "artists": "Arden Trio",
+        "duration": "5:29"
+      },
+      {
+        "id": "demo-rec-hours-6",
+        "title": "Paper Moon",
+        "artists": "Arden Trio",
+        "duration": "4:06"
+      },
+      {
+        "id": "demo-rec-hours-7",
+        "title": "Before Dawn",
+        "artists": "Arden Trio",
+        "duration": "4:31"
+      },
+      {
+        "id": "demo-rec-hours-8",
+        "title": "Small Hours",
+        "artists": "Arden Trio",
+        "duration": "5:56"
+      },
+      {
+        "id": "demo-rec-signals-1",
+        "title": "Carrier",
+        "artists": "Forma",
+        "duration": "3:18"
+      },
+      {
+        "id": "demo-rec-signals-2",
+        "title": "Relay",
+        "artists": "Forma",
+        "duration": "4:03"
+      },
+      {
+        "id": "demo-rec-signals-3",
+        "title": "Frequency",
+        "artists": "Forma",
+        "duration": "4:47"
+      },
+      {
+        "id": "demo-rec-signals-4",
+        "title": "Return Path",
+        "artists": "Forma",
+        "duration": "3:46"
+      },
+      {
+        "id": "demo-rec-signals-5",
+        "title": "Static",
+        "artists": "Forma",
+        "duration": "3:34"
+      },
+      {
+        "id": "demo-rec-signals-6",
+        "title": "Signal Lost",
+        "artists": "Forma",
+        "duration": "4:32"
+      },
+      {
+        "id": "demo-rec-rooms-1",
+        "title": "Morning Room",
+        "artists": "Mira Vale",
+        "duration": "3:49"
+      },
+      {
+        "id": "demo-rec-rooms-2",
+        "title": "North Window",
+        "artists": "Mira Vale",
+        "duration": "5:01"
+      },
+      {
+        "id": "demo-rec-rooms-3",
+        "title": "Night Sketch",
+        "artists": "Mira Vale",
+        "duration": "4:14"
+      },
+      {
+        "id": "demo-rec-rooms-4",
+        "title": "Half Light",
+        "artists": "Mira Vale",
+        "duration": "3:37"
+      },
+      {
+        "id": "demo-rec-rooms-5",
+        "title": "Stone Steps",
+        "artists": "Mira Vale",
+        "duration": "4:44"
+      },
+      {
+        "id": "demo-rec-rooms-6",
+        "title": "Second Floor",
+        "artists": "Mira Vale",
+        "duration": "4:26"
+      },
+      {
+        "id": "demo-rec-rooms-7",
+        "title": "Quiet Street",
+        "artists": "Mira Vale",
+        "duration": "4:06"
+      },
+      {
+        "id": "demo-rec-rooms-8",
+        "title": "Home Again",
+        "artists": "Mira Vale",
+        "duration": "5:29"
+      },
+      {
+        "id": "demo-rec-north-bonus",
+        "title": "Afterglow (bonus)",
+        "artists": "Mira Vale",
+        "duration": "4:27"
+      }
+    ],
+    "sources": [
+      {
+        "id": "north-f1",
+        "name": "01 - First Light.flac",
+        "kind": "FLAC · 24.3 MB",
+        "path": "/mnt/inbox/north/01 - First Light.flac"
+      },
+      {
+        "id": "north-f2",
+        "name": "02 - Still Water.flac",
+        "kind": "FLAC · 26.6 MB",
+        "path": "/mnt/inbox/north/02 - Still Water.flac"
+      },
+      {
+        "id": "north-f3",
+        "name": "03 - Northbound (live?).flac",
+        "kind": "FLAC · 28.9 MB",
+        "path": "/mnt/inbox/north/03 - Northbound (live?).flac"
+      },
+      {
+        "id": "north-f4",
+        "name": "04 - The Long Way Home.flac",
+        "kind": "FLAC · 31.2 MB",
+        "path": "/mnt/inbox/north/04 - The Long Way Home.flac"
+      },
+      {
+        "id": "north-f5",
+        "name": "05 - Pine Forest.flac",
+        "kind": "FLAC · 33.5 MB",
+        "path": "/mnt/inbox/north/05 - Pine Forest.flac"
+      },
+      {
+        "id": "north-f6",
+        "name": "06 - Under the Bridge.flac",
+        "kind": "FLAC · 35.8 MB",
+        "path": "/mnt/inbox/north/06 - Under the Bridge.flac"
+      },
+      {
+        "id": "north-f7",
+        "name": "07 - Low Tide.flac",
+        "kind": "FLAC · 38.1 MB",
+        "path": "/mnt/inbox/north/07 - Low Tide.flac"
+      },
+      {
+        "id": "north-f8",
+        "name": "08 - Open Country.flac",
+        "kind": "FLAC · 40.4 MB",
+        "path": "/mnt/inbox/north/08 - Open Country.flac"
+      },
+      {
+        "id": "hours-f1",
+        "name": "01 - Green Room.flac",
+        "kind": "FLAC · 24.3 MB",
+        "path": "/mnt/inbox/hours/01 - Green Room.flac"
+      },
+      {
+        "id": "hours-f2",
+        "name": "02 - After Midnight.flac",
+        "kind": "FLAC · 26.6 MB",
+        "path": "/mnt/inbox/hours/02 - After Midnight.flac"
+      },
+      {
+        "id": "hours-f3",
+        "name": "03 - Slow Motion.flac",
+        "kind": "FLAC · 28.9 MB",
+        "path": "/mnt/inbox/hours/03 - Slow Motion.flac"
+      },
+      {
+        "id": "hours-f4",
+        "name": "04 - Blue Window.flac",
+        "kind": "FLAC · 31.2 MB",
+        "path": "/mnt/inbox/hours/04 - Blue Window.flac"
+      },
+      {
+        "id": "hours-f5",
+        "name": "05 - On the Corner.flac",
+        "kind": "FLAC · 33.5 MB",
+        "path": "/mnt/inbox/hours/05 - On the Corner.flac"
+      },
+      {
+        "id": "hours-f6",
+        "name": "06 - Paper Moon.flac",
+        "kind": "FLAC · 35.8 MB",
+        "path": "/mnt/inbox/hours/06 - Paper Moon.flac"
+      },
+      {
+        "id": "hours-f7",
+        "name": "07 - Before Dawn.flac",
+        "kind": "FLAC · 38.1 MB",
+        "path": "/mnt/inbox/hours/07 - Before Dawn.flac"
+      },
+      {
+        "id": "hours-f8",
+        "name": "08 - Small Hours.flac",
+        "kind": "FLAC · 40.4 MB",
+        "path": "/mnt/inbox/hours/08 - Small Hours.flac"
+      },
+      {
+        "id": "signals-f1",
+        "name": "01 - Carrier.flac",
+        "kind": "FLAC · 24.3 MB",
+        "path": "/mnt/inbox/signals/01 - Carrier.flac"
+      },
+      {
+        "id": "signals-f2",
+        "name": "02 - Relay.flac",
+        "kind": "FLAC · 26.6 MB",
+        "path": "/mnt/inbox/signals/02 - Relay.flac"
+      },
+      {
+        "id": "signals-f3",
+        "name": "03 - Frequency.flac",
+        "kind": "FLAC · 28.9 MB",
+        "path": "/mnt/inbox/signals/03 - Frequency.flac"
+      },
+      {
+        "id": "signals-f4",
+        "name": "04 - Return Path.flac",
+        "kind": "FLAC · 31.2 MB",
+        "path": "/mnt/inbox/signals/04 - Return Path.flac"
+      },
+      {
+        "id": "signals-f5",
+        "name": "05 - Static.flac",
+        "kind": "FLAC · 33.5 MB",
+        "path": "/mnt/inbox/signals/05 - Static.flac"
+      },
+      {
+        "id": "signals-f6",
+        "name": "06 - Signal Lost.flac",
+        "kind": "FLAC · 35.8 MB",
+        "path": "/mnt/inbox/signals/06 - Signal Lost.flac"
+      },
+      {
+        "id": "rooms-f1",
+        "name": "01 - Morning Room.flac",
+        "kind": "FLAC · 24.3 MB",
+        "path": "/mnt/inbox/rooms/01 - Morning Room.flac"
+      },
+      {
+        "id": "rooms-f2",
+        "name": "02 - North Window.flac",
+        "kind": "FLAC · 26.6 MB",
+        "path": "/mnt/inbox/rooms/02 - North Window.flac"
+      },
+      {
+        "id": "rooms-f3",
+        "name": "03 - Night Sketch.flac",
+        "kind": "FLAC · 28.9 MB",
+        "path": "/mnt/inbox/rooms/03 - Night Sketch.flac"
+      },
+      {
+        "id": "rooms-f4",
+        "name": "04 - Half Light.flac",
+        "kind": "FLAC · 31.2 MB",
+        "path": "/mnt/inbox/rooms/04 - Half Light.flac"
+      },
+      {
+        "id": "rooms-f5",
+        "name": "05 - Stone Steps.flac",
+        "kind": "FLAC · 33.5 MB",
+        "path": "/mnt/inbox/rooms/05 - Stone Steps.flac"
+      },
+      {
+        "id": "rooms-f6",
+        "name": "06 - Second Floor.flac",
+        "kind": "FLAC · 35.8 MB",
+        "path": "/mnt/inbox/rooms/06 - Second Floor.flac"
+      },
+      {
+        "id": "rooms-f7",
+        "name": "07 - Quiet Street.flac",
+        "kind": "FLAC · 38.1 MB",
+        "path": "/mnt/inbox/rooms/07 - Quiet Street.flac"
+      },
+      {
+        "id": "rooms-f8",
+        "name": "08 - Home Again.flac",
+        "kind": "FLAC · 40.4 MB",
+        "path": "/mnt/inbox/rooms/08 - Home Again.flac"
+      },
+      {
+        "id": "mix-f1",
+        "name": "01 - First Light.mp3",
+        "kind": "MP3 · 24.3 MB",
+        "path": "/mnt/inbox/mix/01 - First Light.mp3"
+      },
+      {
+        "id": "mix-f2",
+        "name": "02 - Relay.mp3",
+        "kind": "MP3 · 26.6 MB",
+        "path": "/mnt/inbox/mix/02 - Relay.mp3"
+      },
+      {
+        "id": "mix-f3",
+        "name": "03 - Green Room.mp3",
+        "kind": "MP3 · 28.9 MB",
+        "path": "/mnt/inbox/mix/03 - Green Room.mp3"
+      },
+      {
+        "id": "mix-f4",
+        "name": "04 - Night Sketch.mp3",
+        "kind": "MP3 · 31.2 MB",
+        "path": "/mnt/inbox/mix/04 - Night Sketch.mp3"
+      },
+      {
+        "id": "mix-f5",
+        "name": "05 - Unknown Signal.mp3",
+        "kind": "MP3 · 33.5 MB",
+        "path": "/mnt/inbox/mix/05 - Unknown Signal.mp3"
+      },
+      {
+        "id": "north-extra",
+        "name": "session fragment.flac",
+        "kind": "FLAC · 24.3 MB",
+        "path": "/mnt/inbox/north/session fragment.flac"
+      },
+      {
+        "id": "north-t1-mp3",
+        "name": "01 - First Light.mp3",
+        "kind": "MP3 · 8.2 MB",
+        "path": "/mnt/music/First Light.mp3"
+      },
+      {
+        "id": "north-f3-mp3",
+        "name": "03 - Northbound.mp3",
+        "kind": "MP3 · 9.1 MB",
+        "path": "/mnt/music/Northbound.mp3"
+      }
+    ],
+    "covers": [
+      {
+        "id": "cover-north",
+        "title": "Northern Lines · демо-обложка",
+        "source": "Иллюстративный вариант · не artwork-файл",
+        "mark": "N",
+        "style": ""
+      },
+      {
+        "id": "cover-hours",
+        "title": "Small Hours · демо-обложка",
+        "source": "Иллюстративный вариант · не artwork-файл",
+        "mark": "S",
+        "style": "blue"
+      },
+      {
+        "id": "cover-signals",
+        "title": "Signals · демо-обложка",
+        "source": "Иллюстративный вариант · не artwork-файл",
+        "mark": "S",
+        "style": ""
+      },
+      {
+        "id": "cover-rooms",
+        "title": "Collected Rooms · демо-обложка",
+        "source": "Иллюстративный вариант · не artwork-файл",
+        "mark": "C",
+        "style": ""
+      },
+      {
+        "id": "cover-mix",
+        "title": "Road Notes — личный сборник · демо-обложка",
+        "source": "Иллюстративный вариант · не artwork-файл",
+        "mark": "R",
+        "style": "gold"
+      },
+      {
+        "id": "cover-north-japan-local",
+        "title": "Northern Lines · демо-обложка",
+        "source": "Иллюстративный вариант · не artwork-файл",
+        "mark": "N",
+        "style": ""
+      }
+    ]
+  },
+  "localProvider": {
+    "artists": [
+      {
+        "id": "local-artist-vale",
+        "key": "45ba3b5a-0e0a-4ea9-bcc9-30ee90388e12",
+        "provider": "Local",
+        "name": "Mira Vale",
+        "disambiguation": "",
+        "genres": [],
+        "tags": "independent"
+      },
+      {
+        "id": "local-artist-trio",
+        "key": "0bb5a16e-0a96-4f11-a124-d04ea8a05f0f",
+        "provider": "Local",
+        "name": "Arden Trio",
+        "disambiguation": "",
+        "genres": [],
+        "tags": ""
+      },
+      {
+        "id": "mb-artist-forma",
+        "key": "mb-artist-forma",
+        "provider": "MusicBrainz",
+        "name": "Forma",
+        "disambiguation": "Electronic project",
+        "genres": [
+          "demo-genre-electronic"
+        ],
+        "genreNamesById": {
+          "demo-genre-electronic": "electronic"
+        },
+        "tags": "Berlin"
+      },
+      {
+        "id": "sp-artist-forma",
+        "key": "sp-artist-forma",
+        "provider": "Spotify",
+        "name": "Forma",
+        "disambiguation": "",
+        "genres": [],
+        "tags": ""
+      }
+    ],
+    "releases": [
+      {
+        "id": "local-release-north",
+        "key": "614b2168-70ab-47e3-b02b-e324bb11fd87",
+        "provider": "Local",
+        "release_group_title": "Northern Lines",
+        "title": "Northern Lines",
+        "artistIds": [
+          "local-artist-vale"
+        ],
+        "genres": [],
+        "country_code": "XE",
+        "release_date": "2021",
+        "label": "Field Records",
+        "catalog_number": "FR-021",
+        "status": "",
+        "packaging": "",
+        "barcode": "",
+        "disambiguation": "",
+        "primaryType": "Album",
+        "secondaryTypes": [],
+        "language": "eng",
+        "tracks": [
+          {
+            "recordingId": "local-recording-green",
+            "titleOverride": "",
+            "durationOverrideMs": ""
+          }
+        ]
+      },
+      {
+        "id": "mb-release-hours",
+        "key": "mb-release-hours",
+        "provider": "MusicBrainz",
+        "release_group_title": "Small Hours",
+        "title": "Small Hours",
+        "artistIds": [
+          "mb-artist-forma"
+        ],
+        "country_code": "GB",
+        "release_date": "2018-05-11",
+        "label": "Room Tone",
+        "catalog_number": "RT-018",
+        "status": "Official",
+        "packaging": "CD",
+        "barcode": "",
+        "disambiguation": ""
+      }
+    ],
+    "recordings": [
+      {
+        "id": "local-recording-green",
+        "key": "f3d900a3-f4bf-43db-a96c-2804d00fe235",
+        "provider": "Local",
+        "title": "Green Room",
+        "artistIds": [
+          "local-artist-trio"
+        ],
+        "duration_ms": "284000",
+        "disambiguation": "",
+        "explicit": "",
+        "isrcs": "",
+        "genres": [],
+        "tags": ""
+      },
+      {
+        "id": "mb-recording-relay",
+        "key": "mb-recording-relay",
+        "provider": "MusicBrainz",
+        "title": "Relay",
+        "artistIds": [
+          "mb-artist-forma"
+        ],
+        "duration_ms": "243000",
+        "disambiguation": "",
+        "explicit": "false",
+        "isrcs": "USAAA2400001",
+        "genres": [
+          "demo-genre-electronic"
+        ],
+        "genreNamesById": {
+          "demo-genre-electronic": "electronic"
+        },
+        "tags": ""
+      }
+    ]
+  },
+  "sourceSha256s": {
+    "catalog-data.js": "7dc0811d42fb8c9a64deb8d7112d83da3970e71f67d141c3043714c41320bab3",
+    "manual-release-demo-data.js": "1ceb0a41810a9b3a0f06ce120dfa96eb9276bef68f33116551fcdd2a4d7f9593",
+    "local-provider-prototype.js": "d6548de5c474a0293e874569c9a3ee5965024073047cb8d569ae2c098690dd06"
   }
 }

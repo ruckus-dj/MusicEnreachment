@@ -5,16 +5,19 @@ import {
 	originalArtistName,
 	originalProviders,
 	type OriginalRelease,
+	type CatalogArtist,
 } from "./catalogData";
 
 export function ReleaseScreen({
 	release,
+	artists,
 	selected,
 	onSelect,
 	onPreview,
 	onQueueDeletion,
 }: {
 	release: OriginalRelease;
+	artists?: CatalogArtist[];
 	selected: Set<string>;
 	onSelect: (ids: string[], value: boolean) => void;
 	onPreview: (ids: string[]) => void;
@@ -29,7 +32,7 @@ export function ReleaseScreen({
 	const known =
 		provider?.tracks.length && provider.tracks.length === release.tracks.length;
 	const changed = release.tracks.filter((track) =>
-		metadataChanged(release, track),
+		metadataChanged(release, track, artists),
 	).length;
 	const sourceCount = release.tracks.reduce(
 		(sum, track) =>
@@ -39,7 +42,7 @@ export function ReleaseScreen({
 	const totalDuration = release.tracks.every((track) =>
 		Number.isFinite(track.duration),
 	)
-		? release.tracks.reduce((sum, track) => sum + track.duration, 0)
+		? release.tracks.reduce((sum, track) => sum + (track.duration ?? 0), 0)
 		: null;
 	const duration = (seconds: number) =>
 		`${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
@@ -49,7 +52,7 @@ export function ReleaseScreen({
 				<div>
 					<h1>{release.title || "Локальный релиз без названия"}</h1>
 					<p>
-						{originalArtistName(release.artistId)} ·{" "}
+						{originalArtistName(release.artistId, artists)} ·{" "}
 						{release.year || "Дата не указана"} ·{" "}
 						{release.country || "Страна не указана"} ·{" "}
 						{release.label || "Локальный"} · {release.catalog || "—"}
@@ -139,7 +142,9 @@ export function ReleaseScreen({
 									<td>
 										<a href={`#track/${track.id}`}>{track.title}</a>
 									</td>
-									<td>{duration(track.duration)}</td>
+									<td>
+										{track.duration === null ? "—" : duration(track.duration)}
+									</td>
 									<td>
 										{track.sourceIds?.length || Number(Boolean(track.sourceId))}
 									</td>
@@ -149,7 +154,7 @@ export function ReleaseScreen({
 												<span>
 													{track.published.container} · {track.published.codec}
 												</span>
-												{metadataChanged(release, track) && (
+												{metadataChanged(release, track, artists) && (
 													<span className="demo-secondary">
 														Метаданные изменились
 													</span>
@@ -182,10 +187,14 @@ export function ReleaseScreen({
 			{onQueueDeletion && (
 				<DeletionRequest release={release} onQueue={onQueueDeletion} />
 			)}
-			<p className="demo-migration-note">
-				Ручной черновик и сравнение метаданных на уровне издания ещё не
-				перенесены.
-			</p>
+			<a href="#create-release">Создать локальный релиз</a>
+			{release.tracks[0] && (
+				<p>
+					<a href={`#tags/${release.tracks[0].id}/release`}>
+						Открыть подробное сравнение альбома
+					</a>
+				</p>
+			)}
 		</section>
 	);
 }

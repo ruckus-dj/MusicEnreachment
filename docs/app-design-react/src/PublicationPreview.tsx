@@ -8,6 +8,7 @@ import {
 	desiredTags,
 	type OriginalRelease,
 	type SourceFiles,
+	type CatalogArtist,
 } from "./catalogData";
 
 export function PublicationPreview({
@@ -16,12 +17,14 @@ export function PublicationPreview({
 	releases = originalReleases,
 	onApply,
 	files = originalFiles,
+	artists,
 }: {
 	selected: Set<string>;
 	onBack: () => void;
 	releases?: OriginalRelease[];
 	onApply?: () => void;
 	files?: SourceFiles;
+	artists?: CatalogArtist[];
 }) {
 	const [confirming, setConfirming] = useState(false);
 	const rows = releases.flatMap((release) =>
@@ -34,7 +37,7 @@ export function PublicationPreview({
 					? usable
 						? "Создать"
 						: "Пропустить"
-					: metadataChanged(release, track)
+					: metadataChanged(release, track, artists)
 						? "Обновить"
 						: "Без изменений";
 				return { release, track, file: usable, action };
@@ -83,7 +86,7 @@ export function PublicationPreview({
 								</td>
 								<td>
 									{track.published?.path ??
-										`/srv/music/${originalArtistName(release.artistId)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`}
+										`/srv/music/${originalArtistName(release.artistId, artists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`}
 									<br />
 									MKA
 								</td>
@@ -106,7 +109,7 @@ export function PublicationPreview({
 									)}
 								</td>
 								<td>
-									{desiredTags(release, track).TITLE.join(" · ")}
+									{desiredTags(release, track, artists).TITLE.join(" · ")}
 									<br />
 									{release.title}
 								</td>

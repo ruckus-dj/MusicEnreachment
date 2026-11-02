@@ -1,0 +1,35 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
+import { ComponentsScreen } from "./ComponentsScreen";
+import { originalFiles } from "./catalogData";
+
+it("shows component states, the technical comparison and explicit file selection", () => {
+	const onSelectFile = vi.fn();
+	render(<ComponentsScreen onSelectFile={onSelectFile} />);
+	expect(
+		screen.getByRole("heading", { name: "Компоненты · плотный интерфейс" }),
+	).toBeInTheDocument();
+	expect(screen.getByText("Высокая уверенность")).toHaveClass("success");
+	expect(screen.getByRole("table")).toBeInTheDocument();
+	const fileChip = screen.getByRole("button", { name: /Northbound/ });
+	expect(fileChip).toHaveAttribute("draggable", "true");
+	fireEvent.click(fileChip);
+	expect(fileChip).toHaveAttribute("aria-pressed", "true");
+	expect(onSelectFile).toHaveBeenCalledWith("north-f3");
+	expect(
+		screen.getByText(/Политика matching-rapidfuzz-v1 утверждена/),
+	).toBeInTheDocument();
+});
+
+it("rounds displayed durations to the nearest second", () => {
+	const files = {
+		...originalFiles,
+		"duration-test": {
+			...originalFiles["north-f3"],
+			id: "duration-test",
+			duration: 119.6,
+		},
+	};
+	render(<ComponentsScreen files={files} fileId="duration-test" />);
+	expect(screen.getByRole("button", { name: /2:00/ })).toBeInTheDocument();
+});

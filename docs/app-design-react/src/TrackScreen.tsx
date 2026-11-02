@@ -11,6 +11,7 @@ import {
 	type OriginalRelease,
 	type OriginalTrack,
 	type SourceFiles,
+	type CatalogArtist,
 } from "./catalogData";
 
 const duration = (seconds: number) =>
@@ -45,6 +46,7 @@ export function TrackScreen({
 	onMutate,
 	onQueueDeletion,
 	files = originalFiles,
+	artists,
 }: {
 	release: OriginalRelease;
 	track: OriginalTrack;
@@ -53,6 +55,7 @@ export function TrackScreen({
 	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	files?: SourceFiles;
+	artists?: CatalogArtist[];
 }) {
 	const [scope, setScope] = useState<keyof typeof fields>("track");
 	const [differencesOnly, setDifferencesOnly] = useState(false);
@@ -66,8 +69,8 @@ export function TrackScreen({
 	);
 	const remote =
 		provider && providerTrack ? desiredTags(provider, providerTrack) : {};
-	const local = desiredTags(release, track);
-	const changed = metadataChanged(release, track);
+	const local = desiredTags(release, track, artists);
+	const changed = metadataChanged(release, track, artists);
 	const rows = fields[scope]
 		.map((key) => ({
 			key,
@@ -91,8 +94,8 @@ export function TrackScreen({
 						{String(track.position).padStart(2, "0")} · {track.title}
 					</h1>
 					<p>
-						{originalArtistName(track.artistId)} / {release.title} · позиция
-						конкретного издания
+						{originalArtistName(track.artistId, artists)} / {release.title} ·
+						позиция конкретного издания
 					</p>
 				</div>
 				<a href="#library">К медиатеке</a>
@@ -199,6 +202,7 @@ export function TrackScreen({
 							track={track}
 							onMutate={onMutate}
 							files={files}
+							artists={artists}
 							onQueueDeletion={onQueueDeletion}
 						/>
 					)}

@@ -12,6 +12,7 @@ import {
 	type OriginalRelease,
 	type OriginalTrack,
 	type SourceFiles,
+	type CatalogArtist,
 } from "./catalogData";
 import {
 	explicitlyRepublish,
@@ -26,12 +27,14 @@ export function TrackActions({
 	onMutate,
 	onQueueDeletion,
 	files = originalFiles,
+	artists,
 }: {
 	release: OriginalRelease;
 	track: OriginalTrack;
 	onMutate: (update: (current: OriginalTrack) => OriginalTrack) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	files?: SourceFiles;
+	artists?: CatalogArtist[];
 }) {
 	const [action, setAction] = useState<
 		"rename" | "upgrade" | "republish" | null
@@ -125,7 +128,13 @@ export function TrackActions({
 								);
 							} else if (action === "republish") {
 								onMutate((current) =>
-									explicitlyRepublish(release, current, downgrade, files),
+									explicitlyRepublish(
+										release,
+										current,
+										downgrade,
+										files,
+										artists,
+									),
 								);
 								setNotice(
 									"Демо: явная перепубликация выполнена; текущее состояние и снимок метаданных заменены.",

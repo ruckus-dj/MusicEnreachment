@@ -5,6 +5,7 @@ import {
 	originalReleases,
 	applyMetadataPreview,
 	originalFiles,
+	type CatalogArtist,
 } from "./catalogData";
 import { PublicationPreview } from "./PublicationPreview";
 import { TrackScreen } from "./TrackScreen";
@@ -19,6 +20,17 @@ import { SetupScreen } from "./SetupScreen";
 import { IncomingScreen } from "./IncomingScreen";
 import { MatchingScreen } from "./MatchingScreen";
 import { createIncomingState } from "./incomingModel";
+import { LocalProviderScreen } from "./LocalProviderScreen";
+import { createLocalProviderState } from "./localProviderModel";
+import { ArtistScreen } from "./ArtistScreen";
+import { TagsScreen } from "./TagsScreen";
+import { ComponentsScreen } from "./ComponentsScreen";
+import { ManualReleaseScreen } from "./ManualReleaseScreen";
+import {
+	createManualRelease,
+	createManualReleaseDemoDraft,
+	type ManualReleaseDraft,
+} from "./manualReleaseModel";
 
 const subscribeRoute = (listener: () => void) => {
 	window.addEventListener("hashchange", listener);
@@ -62,6 +74,7 @@ function GroupCheckbox({
 const trackIds = (tracks: Track[]) => tracks.map((track) => track.id);
 
 export function CatalogDemo() {
+	const [localProvider, setLocalProvider] = useState(createLocalProviderState);
 	const [incoming, setIncoming] = useState(createIncomingState);
 	const [settings, setSettings] = useState(initialDemoSettings);
 	const [setupStep, setSetupStep] = useState(0);
@@ -85,8 +98,16 @@ export function CatalogDemo() {
 	const [releases, setReleases] = useState(() =>
 		structuredClone(originalReleases),
 	);
+	const [artists, setArtists] = useState<CatalogArtist[]>(() =>
+		structuredClone(catalogData.artists),
+	);
+	const [manualDraft, setManualDraft] = useState<ManualReleaseDraft>(
+		createManualReleaseDemoDraft,
+	);
+	const [manualReleaseCount, setManualReleaseCount] = useState(0);
 	const fixture = {
 		...catalogData,
+		artists,
 		releases: releases.map((release) => ({
 			...release,
 			tracks: release.tracks.map((track) => ({
@@ -136,7 +157,7 @@ export function CatalogDemo() {
 		);
 	const matchesGroup = (tracks: Track[]) =>
 		matchesAvailability(tracks) && matchesPublication(tracks);
-	const artistName = (id: string) =>
+	const artistName = (id: string | null) =>
 		fixture.artists.find((artist) => artist.id === id)?.name ?? "";
 	const update = (ids: string[], checked: boolean) => {
 		setSelected((previous) => {
@@ -160,17 +181,67 @@ export function CatalogDemo() {
 					selected={contextIds ? new Set(contextIds) : selected}
 					files={files}
 					releases={releases}
+					artists={artists}
 					onApply={() =>
 						setReleases((previous) =>
 							applyMetadataPreview(
 								previous,
 								contextIds ? new Set(contextIds) : selected,
 								files,
+								artists,
 							),
 						)
 					}
 					onBack={() => setPreview(false)}
 				/>
+			</main>
+		);
+	if (route.startsWith("artist/"))
+		return (
+			<main className="demo-shell">
+				<ArtistScreen
+					key={route}
+					artistId={route.slice(7)}
+					artists={artists}
+					releases={releases}
+					files={files}
+					selected={selected}
+					onSelect={update}
+					onQueueDeletion={queueDeletion}
+					onPreview={(ids) => {
+						setContextIds(ids);
+						setPreview(true);
+					}}
+				/>
+			</main>
+		);
+	if (route.startsWith("tags/")) {
+		const [, id, requestedScope] = route.split("/");
+		const scope =
+			requestedScope === "artist" || requestedScope === "release"
+				? requestedScope
+				: "track";
+		return (
+			<main className="demo-shell">
+				<TagsScreen
+					key={route}
+					trackId={id}
+					scope={scope}
+					releases={releases}
+					artists={artists}
+					files={files}
+					onPreview={(ids) => {
+						setContextIds(ids);
+						setPreview(true);
+					}}
+				/>
+			</main>
+		);
+	}
+	if (route === "components")
+		return (
+			<main className="demo-shell">
+				<ComponentsScreen />
 			</main>
 		);
 	if (route.startsWith("release/")) {
@@ -189,6 +260,7 @@ export function CatalogDemo() {
 				<ReleaseScreen
 					onQueueDeletion={queueDeletion}
 					release={release}
+					artists={artists}
 					selected={selected}
 					onSelect={update}
 					onPreview={(ids) => {
@@ -216,6 +288,7 @@ export function CatalogDemo() {
 			<main className="demo-shell">
 				<TrackScreen
 					files={files}
+					artists={artists}
 					onQueueDeletion={queueDeletion}
 					release={release}
 					track={track}
@@ -255,6 +328,36 @@ export function CatalogDemo() {
 			</main>
 		);
 	}
+	if (route === "create-release")
+		return (
+			<main className="demo-shell">
+				<ManualReleaseScreen
+					draft={manualDraft}
+					artists={artists}
+					onDraft={setManualDraft}
+					onReset={() => setManualDraft(createManualReleaseDemoDraft())}
+					onCreate={() => {
+						const next = createManualRelease(
+							manualDraft,
+							manualReleaseCount + 1,
+							artists,
+						);
+						setArtists(next.artists);
+						setReleases((previous) => [...previous, next.release]);
+						setManualReleaseCount((count) => count + 1);
+						window.location.hash = `release/${next.release.id}`;
+					}}
+				/>
+			</main>
+		);
+	if (route === "local")
+		return (
+			<LocalProviderScreen
+				state={localProvider}
+				onState={setLocalProvider}
+				genresLoaded={settings.genresLoaded}
+			/>
+		);
 	if (route === "review")
 		return (
 			<IncomingScreen
@@ -385,6 +488,7 @@ export function CatalogDemo() {
 				<p className="demo-eyebrow">MeloTrove · стенд в разработке</p>
 				<h1>{artistId ? artistName(artistId) : "Медиатека"}</h1>
 				<p>Демонстрационные данные · перенесён только выбор в каталоге</p>
+				<a href="#create-release">Создать локальный релиз</a>
 				{!new URLSearchParams(window.location.search).has("embedded") && (
 					<a href="/compare">Сравнить со старым прототипом</a>
 				)}
@@ -502,17 +606,9 @@ export function CatalogDemo() {
 										{artist.name[0]}
 									</span>
 									<div className="demo-copy">
-										<button
-											className="demo-link"
-											type="button"
-											onClick={() => {
-												setArtistId(artist.id);
-												setQuery("");
-												setView("albums");
-											}}
-										>
+										<a className="demo-link" href={`#artist/${artist.id}`}>
 											{artist.name}
-										</button>
+										</a>
 										<span>
 											{releases.length} изданий · {tracks.length} позиций
 										</span>
