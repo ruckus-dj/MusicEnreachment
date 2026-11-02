@@ -15,7 +15,16 @@ import {
 	availabilityRowHint,
 	type AvailabilityFilter,
 } from "./availabilityRows";
-import { Button, Cell, Column, Row, Table, TableBody, TableHeader } from "./ui";
+import {
+	Button,
+	Cell,
+	Column,
+	Link,
+	Row,
+	Table,
+	TableBody,
+	TableHeader,
+} from "./ui";
 
 type View = "artists" | "albums" | "tracks";
 type CatalogTrack = Omit<OriginalTrack, "published"> & {
@@ -59,54 +68,115 @@ export function LibraryCatalogRows({
 	expanded,
 	onToggleAlbum,
 }: Props) {
+	if (view === "artists") {
+		return (
+			<div className="artist-card-grid" aria-label="Артисты медиатеки">
+				{artists.length ? (
+					artists.map((artist) => {
+						const own = releases.filter(
+							(release) =>
+								release.artistId === artist.id ||
+								release.credits?.some(
+									(credit) => credit.artistId === artist.id,
+								),
+						);
+						const ownTracks = own.flatMap((release) => release.tracks);
+						const availableCount = ownTracks.filter(hasAudio).length;
+						const publishedCount = ownTracks.filter((track) =>
+							Boolean(track.published),
+						).length;
+						return (
+							<article className="artist-card" key={artist.id}>
+								<div
+									className="artist-card-art"
+									data-palette={artist.color || "clay"}
+								>
+									<Link
+										href={`#artist/${artist.id}`}
+										className="artist-card-link"
+									>
+										<span className="artist-card-monogram" aria-hidden="true">
+											{artist.name.slice(0, 1)}
+										</span>
+										<span className="artist-card-overlay">
+											<span className="artist-card-copy">
+												<strong>{artist.name}</strong>
+												<span>{artist.genre || "Исполнитель"}</span>
+											</span>
+											<span className="artist-card-stats">
+												<span>
+													<strong>{own.length}</strong> изданий
+												</span>
+												<span>
+													<strong>{ownTracks.length}</strong> позиций
+												</span>
+												<span>
+													<strong>
+														{availableCount} / {ownTracks.length}
+													</strong>{" "}
+													аудио
+												</span>
+												<span>
+													<strong>
+														{publishedCount} / {ownTracks.length}
+													</strong>{" "}
+													опубликовано
+												</span>
+												<span>
+													<strong>{missingCounts.get(artist.id) || "—"}</strong>{" "}
+													без издания
+												</span>
+											</span>
+										</span>
+									</Link>
+									<div className="artist-card-selection">
+										{groupCheckbox(
+											ownTracks.map((track) => track.id),
+											`Выбрать позиции артиста ${artist.name}`,
+										)}
+									</div>
+								</div>
+							</article>
+						);
+					})
+				) : (
+					<div className="catalogue-empty">Артистов не найдено.</div>
+				)}
+			</div>
+		);
+	}
 	const tracks = releases.flatMap((release) =>
 		release.tracks.map((track) => ({ release, track })),
 	);
 	const columns =
-		view === "artists"
+		view === "albums"
 			? [
 					"Выбор",
+					"Альбом",
 					"Артист",
-					"Издания",
-					"Позиции",
-					"Есть аудио",
-					"Опубликовано",
-					"Без издания",
+					"Год / издание",
+					"Позиций",
+					"Исходники",
+					"Аудио",
+					"Публикация",
+					"Провайдер",
 				]
-			: view === "albums"
-				? [
-						"Выбор",
-						"Альбом",
-						"Артист",
-						"Год / издание",
-						"Позиций",
-						"Исходники",
-						"Аудио",
-						"Публикация",
-						"Провайдер",
-					]
-				: [
-						"Выбор",
-						"Издание",
-						"Носитель / №",
-						"Композиция",
-						"Длительность",
-						"Источник",
-						"Параметры",
-						"Файл / путь",
-						"Публикация",
-						"Теги",
-					];
+			: [
+					"Выбор",
+					"Издание",
+					"Носитель / №",
+					"Композиция",
+					"Длительность",
+					"Источник",
+					"Параметры",
+					"Файл / путь",
+					"Публикация",
+					"Теги",
+				];
 	return (
 		<div className="catalogue-table-scroll">
 			<Table
-				aria-label={
-					view === "artists"
-						? "Артисты медиатеки"
-						: view === "albums"
-							? "Альбомы медиатеки"
-							: "Треки медиатеки"
-				}
+				aria-label={view === "albums" ? "Альбомы медиатеки" : "Треки медиатеки"}
 				className={`catalogue-table catalogue-table--${view}`}
 			>
 				<TableHeader>
@@ -116,62 +186,7 @@ export function LibraryCatalogRows({
 						</Column>
 					))}
 				</TableHeader>
-				{view === "artists" ? (
-					<TableBody
-						items={artists}
-						dependencies={[
-							artists,
-							releases,
-							missingCounts,
-							groupCheckbox,
-							hasAudio,
-							files,
-						]}
-						renderEmptyState={() => (
-							<div className="catalogue-empty">Артистов не найдено.</div>
-						)}
-					>
-						{(artist) => {
-							const own = releases.filter(
-								(release) =>
-									release.artistId === artist.id ||
-									release.credits?.some(
-										(credit) => credit.artistId === artist.id,
-									),
-							);
-							const ownTracks = own.flatMap((release) => release.tracks);
-							return (
-								<Row id={artist.id}>
-									<Cell>
-										{groupCheckbox(
-											ownTracks.map((track) => track.id),
-											`Выбрать позиции артиста ${artist.name}`,
-										)}
-									</Cell>
-									<Cell>
-										<a href={`#artist/${artist.id}`}>{artist.name}</a>
-										<span className="catalogue-sub">
-											{artist.genre || "Исполнитель"}
-										</span>
-									</Cell>
-									<Cell>{own.length}</Cell>
-									<Cell>{ownTracks.length}</Cell>
-									<Cell>
-										{ownTracks.filter(hasAudio).length} / {ownTracks.length}
-									</Cell>
-									<Cell>
-										{
-											ownTracks.filter((track) => Boolean(track.published))
-												.length
-										}{" "}
-										/ {ownTracks.length}
-									</Cell>
-									<Cell>{missingCounts.get(artist.id) || "—"}</Cell>
-								</Row>
-							);
-						}}
-					</TableBody>
-				) : view === "albums" ? (
+				{view === "albums" ? (
 					<TableBody
 						items={releases}
 						dependencies={[

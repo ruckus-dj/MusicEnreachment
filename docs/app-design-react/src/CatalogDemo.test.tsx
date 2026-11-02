@@ -6,8 +6,8 @@ import { catalogData, originalFiles, originalReleases } from "./catalogData";
 import { makeReleasePlan } from "./incomingModel";
 
 function selectOption(label: RegExp, option: string) {
-	fireEvent.click(screen.getByRole("button", { name: label }));
-	fireEvent.click(screen.getByRole("option", { name: option }));
+	const group = screen.getByRole("radiogroup", { name: label });
+	fireEvent.click(within(group).getByRole("radio", { name: option }));
 }
 
 it("keeps nested selection consistent when an album is partially deselected", () => {
@@ -52,6 +52,49 @@ it("includes a partially available album in both availability filters", () => {
 	expect(
 		screen.queryByRole("button", { name: "Collected Rooms" }),
 	).not.toBeInTheDocument();
+});
+
+it("renders independent keyboard-operable radio segments for both filters", () => {
+	render(<CatalogDemo />);
+	const availability = screen.getByRole("radiogroup", { name: "Наличие" });
+	const publication = screen.getByRole("radiogroup", { name: "Публикация" });
+	const allAvailability = within(availability).getByRole("radio", {
+		name: "Все",
+	});
+	const available = within(availability).getByRole("radio", {
+		name: "В наличии",
+	});
+	const published = within(publication).getByRole("radio", {
+		name: "Опубликованные",
+	});
+
+	expect(allAvailability).toBeChecked();
+	expect(within(publication).getByRole("radio", { name: "Все" })).toBeChecked();
+	allAvailability.focus();
+	fireEvent.keyDown(allAvailability, { key: "ArrowRight" });
+	expect(available).toBeChecked();
+	fireEvent.click(published);
+	expect(published).toBeChecked();
+	expect(available).toBeChecked();
+});
+
+it("shows artist cards with a separate aggregate checkbox and real artist link", () => {
+	render(<CatalogDemo />);
+	const artistLink = screen.getByRole("link", { name: /Mira Vale/ });
+	const artistCard = artistLink.closest<HTMLElement>(".artist-card");
+	if (!artistCard) throw new Error("Missing Mira Vale artist card");
+
+	expect(artistLink).toHaveAttribute("href", "#artist/mira");
+	expect(artistCard).toHaveAttribute("class", "artist-card");
+	expect(artistCard).toHaveTextContent("изданий");
+	expect(artistCard).toHaveTextContent("позиций");
+	expect(artistCard).toHaveTextContent("аудио");
+	expect(artistCard).toHaveTextContent("опубликовано");
+	expect(
+		within(artistCard).getByRole("checkbox", {
+			name: "Выбрать позиции артиста Mira Vale",
+		}),
+	).toBeInTheDocument();
 });
 
 it("renders full album completeness and keeps local publication completeness unknown", () => {

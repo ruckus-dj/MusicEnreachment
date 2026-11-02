@@ -17,9 +17,8 @@
 .catalogue-shell > header:first-child h1 { margin: 0; font-size: clamp(24px, 2.2vw, 34px); letter-spacing: -.035em; line-height: 1.12; overflow-wrap: anywhere; }
 .catalogue-shell > header:first-child p { margin: 5px 0 0; color: var(--muted); }
 .catalogue-shell > header:first-child > a, .catalogue-shell > header:first-child > button { justify-self: end; }
-.catalogue-shell .catalogue-controls { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(220px, 1.5fr) repeat(2, minmax(150px, .7fr)); gap: 12px; align-items: end; margin: 0 0 12px; }
-.catalogue-controls > .catalogue-tabs { display: contents; }
-.catalogue-controls > .catalogue-tabs > .react-aria-TabPanel { grid-column: 1 / -1; grid-row: 3; }
+.catalogue-shell .catalogue-controls { margin: 0 0 12px; }
+.catalogue-panel-controls { display: grid; grid-template-columns: minmax(220px, 1.5fr) repeat(2, minmax(150px, .7fr)); gap: 12px; align-items: end; margin: 0 0 12px; }
 .catalogue-tabs .react-aria-TabList { border: 0; gap: 3px; }
 .catalogue-tabs .react-aria-Tab { min-height: 36px; border: 1px solid transparent; border-radius: 4px; padding: 7px 11px; font-weight: 600; }
 .catalogue-tabs .react-aria-Tab[data-selected] { color: var(--accent); background: var(--surface); border-color: var(--line); box-shadow: 0 1px 2px #0001; }
@@ -28,6 +27,13 @@
 .catalogue-search .react-aria-Input { min-height: 32px; border: 0; outline: 0; box-shadow: none; }
 .catalogue-filter { min-width: 0; }
 .catalogue-filter .react-aria-Label { display: block; margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.catalogue-radio-filter { min-width: 0; }
+.catalogue-segments { display: flex; min-height: 34px; flex-wrap: wrap; overflow: visible; border: 1px solid var(--control); border-radius: 6px; background: var(--surface); }
+.catalogue-segment { display: flex; min-width: 82px; flex: 1 1 82px; align-items: center; justify-content: center; padding: 5px 7px; color: var(--muted); font-size: 11px; line-height: 1.2; text-align: center; white-space: normal; overflow-wrap: anywhere; cursor: pointer; transition: color .12s ease, background-color .12s ease; }
+.catalogue-segment + .catalogue-segment { border-left: 1px solid var(--line); }
+.catalogue-segment[data-selected] { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 -2px var(--accent); font-weight: 700; }
+.catalogue-segment[data-hovered]:not([data-selected]) { color: var(--ink); background: var(--raised); }
+.catalogue-segment[data-focus-visible] { position: relative; z-index: 1; outline: 2px solid var(--focus); outline-offset: -3px; }
 .catalogue-filter > .react-aria-Button { display: flex; width: 100%; min-height: 34px; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 9px; color: var(--ink); background: var(--surface); border: 1px solid var(--control); border-radius: 4px; text-align: left; }
 .catalogue-shell .react-aria-Popover { z-index: 50; min-width: var(--trigger-width); max-height: 300px; overflow: auto; padding: 4px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; box-shadow: var(--catalogue-shadow); }
 .catalogue-shell .react-aria-ListBox { display: grid; gap: 2px; outline: none; }
@@ -59,6 +65,32 @@
 .catalogue-table .demo-checkbox { width: 28px; height: 32px; }
 .catalogue-table .demo-checkbox-box { width: 15px; height: 15px; }
 .catalogue-empty { padding: 28px 16px; color: var(--muted); text-align: center; }
+.artist-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 224px), 1fr)); gap: 14px; padding: clamp(12px, 1.5vw, 20px); }
+.artist-card { min-width: 0; }
+.artist-card-art { --artist-color: #ac7059; position: relative; isolation: isolate; width: 100%; min-width: 0; min-height: 0; box-sizing: border-box; aspect-ratio: 1.18 / 1; overflow: hidden; border: 1px solid color-mix(in srgb, var(--artist-color) 45%, var(--line)); border-radius: 11px; color: white; background: linear-gradient(145deg, color-mix(in srgb, var(--artist-color) 77%, #111), color-mix(in srgb, var(--artist-color) 46%, #101820)); box-shadow: 0 7px 20px color-mix(in srgb, var(--artist-color) 20%, transparent); }
+.artist-card-art[data-palette="clay"] { --artist-color: #ac7059; }
+.artist-card-art[data-palette="forest"] { --artist-color: #486d59; }
+.artist-card-art[data-palette="dusk"] { --artist-color: #676e95; }
+.artist-card-art[data-palette="sand"] { --artist-color: #aa905f; }
+.artist-card-art[data-palette="slate"] { --artist-color: #4c717e; }
+.artist-card-art::before, .artist-card-art::after { position: absolute; z-index: -1; content: ""; pointer-events: none; }
+.artist-card-art::before { inset: 10% 8% 13% 31%; border: 1px solid #ffffff47; border-radius: 48% 52% 42% 58% / 54% 38% 62% 46%; background: linear-gradient(135deg, #ffffff16, transparent 68%); transform: rotate(-18deg); }
+.artist-card-art::after { top: 12%; right: 14%; width: 38%; aspect-ratio: 1; border: 1px solid #ffffff30; border-radius: 50%; background: radial-gradient(circle at 35% 32%, #ffffff28, #ffffff05 68%); }
+.catalogue-shell .artist-card-art .artist-card-link { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; padding: 17px; color: #fff; text-decoration: none; }
+.catalogue-shell .artist-card-art .artist-card-link:hover, .catalogue-shell .artist-card-art .artist-card-link:focus-visible { color: #fff; text-decoration: none; }
+.catalogue-shell .artist-card-art .artist-card-link:focus-visible { outline: 3px solid var(--focus); outline-offset: -4px; border-radius: inherit; }
+.artist-card-monogram { display: block; width: 62px; height: 62px; color: #fff; font-size: 42px; font-weight: 650; line-height: 62px; text-align: center; text-shadow: 0 2px 15px #0005; }
+.artist-card-overlay { display: grid; gap: 11px; margin: -17px; padding: 34px 17px 15px; background: linear-gradient(transparent, #101415e8 22%, #101415f2); }
+.artist-card-copy { display: grid; min-width: 0; gap: 3px; }
+.artist-card-copy strong { overflow-wrap: anywhere; font-size: clamp(16px, 1.3vw, 20px); line-height: 1.15; letter-spacing: -.02em; }
+.artist-card-copy > span { color: #ffffffbf; font-size: 11px; }
+.artist-card-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; color: #ffffffbd; font-size: 10px; line-height: 1.25; }
+.artist-card-stats > span { min-width: 0; }
+.artist-card-stats strong { color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
+.artist-card-selection { position: absolute; z-index: 2; top: 10px; left: 10px; display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #ffffff6b; border-radius: 8px; background: #101415a8; box-shadow: 0 2px 8px #0003; }
+.artist-card-selection .demo-checkbox { width: 32px; height: 32px; }
+.artist-card-selection .demo-checkbox-box { border-color: #fff; background: #ffffff22; }
+.artist-card-selection .demo-checkbox[data-selected] .demo-checkbox-box, .artist-card-selection .demo-checkbox[data-indeterminate] .demo-checkbox-box { color: #17201d; border-color: #fff; background: #fff; }
 .catalogue-shell .demo-absent { margin-top: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
 .catalogue-shell .demo-absent h2 { margin: 0 0 4px; font-size: 15px; }
 .catalogue-shell .demo-absent p { margin: 4px 0 12px; color: var(--muted); font-size: 12px; }
@@ -102,21 +134,21 @@
 .design-shell .design-rail a.ui-link { color: var(--ink); text-decoration: none; }
 .design-shell .design-rail a.ui-link:hover { background: var(--raised); }
 .design-shell .design-rail nav a[aria-current="page"] { color: var(--accent); }
-@media (max-width: 1000px) {
-	.catalogue-shell .catalogue-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-	.catalogue-tabs { grid-column: 1 / -1; }
+@media (max-width: 1100px) {
+	.catalogue-panel-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.catalogue-object .demo-object-columns { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
 	.catalogue-shell { padding: 14px 10px; }
 	.catalogue-shell > header:first-child { grid-template-columns: minmax(0, 1fr); align-items: start; }
 	.catalogue-shell > header:first-child > a, .catalogue-shell > header:first-child > button { justify-self: start; }
-	.catalogue-shell .catalogue-controls { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-	.catalogue-controls > .catalogue-tabs > .react-aria-TabPanel { grid-row: 5; }
+	.catalogue-panel-controls { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 	.catalogue-tabs { grid-column: auto; overflow-x: auto; }
 	.catalogue-tabs .react-aria-TabList { flex-wrap: nowrap; }
 	.catalogue-tabs .react-aria-Tab { white-space: nowrap; }
 	.catalogue-shell .demo-selection { position: static; }
+	.artist-card-grid { grid-template-columns: minmax(0, 1fr); gap: 11px; padding: 10px; }
+	.artist-card-art { min-height: 0; }
 	.catalogue-object { padding: 13px 10px; }
 	.catalogue-object .demo-object-header { flex-direction: column; }
 	.catalogue-object .demo-object-header > .demo-object-actions { width: 100%; }

@@ -6,6 +6,8 @@ import {
 	ListBox,
 	ListBoxItem,
 	Popover,
+	Radio,
+	RadioGroup,
 	Select,
 	SelectValue,
 	Tab,
@@ -698,7 +700,7 @@ export function CatalogDemo({
 			<header>
 				<p className="demo-eyebrow">MeloTrove · стенд в разработке</p>
 				<h1>{artistId ? artistName(artistId) : "Медиатека"}</h1>
-				<p>Демонстрационные данные · перенесён только выбор в каталоге</p>
+				<p>Демонстрационные данные</p>
 				<a href="#create-release">Создать локальный релиз</a>
 				{!new URLSearchParams(window.location.search).has("embedded") && (
 					<a href="/compare">Сравнить со старым прототипом</a>
@@ -732,6 +734,52 @@ export function CatalogDemo({
 						))}
 					</TabList>
 					<TabPanel id={view}>
+						<div className="catalogue-panel-controls">
+							<SearchField
+								aria-label="Поиск в медиатеке"
+								value={query}
+								onChange={setQuery}
+								className="catalogue-search"
+							>
+								<Input placeholder="Артист, альбом, трек…" />
+							</SearchField>
+							<RadioGroup
+								value={availability}
+								onChange={(value) => setAvailability(value as Availability)}
+								className="catalogue-filter catalogue-radio-filter"
+							>
+								<Label>Наличие</Label>
+								<div className="catalogue-segments">
+									<Radio value="all" className="catalogue-segment">
+										Все
+									</Radio>
+									<Radio value="available" className="catalogue-segment">
+										В наличии
+									</Radio>
+									<Radio value="missing" className="catalogue-segment">
+										Не хватает
+									</Radio>
+								</div>
+							</RadioGroup>
+							<RadioGroup
+								value={publication}
+								onChange={(value) => setPublication(value as Publication)}
+								className="catalogue-filter catalogue-radio-filter"
+							>
+								<Label>Публикация</Label>
+								<div className="catalogue-segments">
+									<Radio value="all" className="catalogue-segment">
+										Все
+									</Radio>
+									<Radio value="published" className="catalogue-segment">
+										Опубликованные
+									</Radio>
+									<Radio value="unpublished" className="catalogue-segment">
+										Не опубликованные
+									</Radio>
+								</div>
+							</RadioGroup>
+						</div>
 						<section
 							className="demo-list"
 							aria-label={tabs.find(([key]) => key === view)?.[1]}
@@ -839,52 +887,6 @@ export function CatalogDemo({
 								})}
 					</TabPanel>
 				</Tabs>
-				<SearchField
-					aria-label="Поиск в медиатеке"
-					value={query}
-					onChange={setQuery}
-					className="catalogue-search"
-				>
-					<Input placeholder="Артист, альбом, трек…" />
-				</SearchField>
-				<Select
-					aria-label="Наличие"
-					selectedKey={availability}
-					onSelectionChange={(key) => setAvailability(key as Availability)}
-					className="catalogue-filter"
-				>
-					<Label>Наличие</Label>
-					<Button>
-						<SelectValue />
-						<span aria-hidden="true">⌄</span>
-					</Button>
-					<Popover>
-						<ListBox>
-							<ListBoxItem id="all">Все</ListBoxItem>
-							<ListBoxItem id="available">В наличии</ListBoxItem>
-							<ListBoxItem id="missing">Не хватает</ListBoxItem>
-						</ListBox>
-					</Popover>
-				</Select>
-				<Select
-					aria-label="Публикация"
-					selectedKey={publication}
-					onSelectionChange={(key) => setPublication(key as Publication)}
-					className="catalogue-filter"
-				>
-					<Label>Публикация</Label>
-					<Button>
-						<SelectValue />
-						<span aria-hidden="true">⌄</span>
-					</Button>
-					<Popover>
-						<ListBox>
-							<ListBoxItem id="all">Все</ListBoxItem>
-							<ListBoxItem id="published">Опубликованные</ListBoxItem>
-							<ListBoxItem id="unpublished">Не опубликованные</ListBoxItem>
-						</ListBox>
-					</Popover>
-				</Select>
 			</div>
 			{selected.size > 0 && (
 				<div className="demo-selection" role="status">

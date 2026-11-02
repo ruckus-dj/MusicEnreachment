@@ -40,3 +40,20 @@ it("renders the supplied incoming count in navigation", () => {
 	expect(review).toHaveTextContent("7");
 	window.location.hash = "";
 });
+
+it("exposes the single theme cycle control in the shared top bar", () => {
+	window.location.hash = "library";
+	render(
+		<DesignShell>
+			<main>
+				<h1>Медиатека</h1>
+			</main>
+		</DesignShell>,
+	);
+	expect(
+		screen.getAllByRole("button", {
+			name: "Тема: как в системе. Следующая: светлая",
+		}),
+	).toHaveLength(1);
+	window.location.hash = "";
+});

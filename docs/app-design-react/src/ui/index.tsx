@@ -33,6 +33,8 @@ import {
 	Tabs as AriaTabs,
 	TextField as AriaTextField,
 	Toolbar as AriaToolbar,
+	Tooltip as AriaTooltip,
+	TooltipTrigger as AriaTooltipTrigger,
 	Cell as AriaCell,
 } from "react-aria-components";
 
@@ -252,6 +254,17 @@ export function Toolbar({ className, ...props }: Props<typeof AriaToolbar>) {
 		<AriaToolbar
 			{...props}
 			className={withClass("react-aria-Toolbar ui-toolbar")(className)}
+		/>
+	);
+}
+export function TooltipTrigger(props: Props<typeof AriaTooltipTrigger>) {
+	return <AriaTooltipTrigger {...props} />;
+}
+export function Tooltip({ className, ...props }: Props<typeof AriaTooltip>) {
+	return (
+		<AriaTooltip
+			{...props}
+			className={withClass("react-aria-Tooltip ui-tooltip")(className)}
 		/>
 	);
 }
