@@ -14,7 +14,13 @@ const subscribe = (listener: () => void) => {
 	return () => window.removeEventListener("hashchange", listener);
 };
 
-export function DesignShell({ children }: { children: ReactNode }) {
+export function DesignShell({
+	children,
+	incomingCount = 3,
+}: {
+	children: ReactNode;
+	incomingCount?: number;
+}) {
 	const route = useSyncExternalStore(
 		subscribe,
 		() => window.location.hash.slice(1).split("/")[0] || "library",
@@ -27,6 +33,8 @@ export function DesignShell({ children }: { children: ReactNode }) {
 		"tags",
 		"create-release",
 		"publication-preview",
+		"publications",
+		"publication-list",
 	].includes(route)
 		? "library"
 		: route === "match"
@@ -66,7 +74,9 @@ export function DesignShell({ children }: { children: ReactNode }) {
 									{String(index + 1).padStart(2, "0")}
 								</span>
 								{label}
-								{id === "review" && <span className="design-nav-count">3</span>}
+								{id === "review" && (
+									<span className="design-nav-count">{incomingCount}</span>
+								)}
 							</a>
 						))}
 					</nav>

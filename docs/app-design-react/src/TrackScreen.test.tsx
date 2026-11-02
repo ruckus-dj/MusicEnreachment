@@ -41,3 +41,34 @@ it("opens a contextual metadata preview without requiring selection", () => {
 	expect(onPreview).toHaveBeenCalledOnce();
 	expect(screen.getByRole("table")).toBeInTheDocument();
 });
+
+it("reports cover and lyrics metadata changes and observed file time", () => {
+	const original = originalReleases.find((item) => item.id === "north");
+	const baseline = original?.tracks.find((item) => item.id === "north-t2");
+	if (!original || !baseline?.published)
+		throw new Error("Missing published fixture");
+	const release = structuredClone(original);
+	const track = release.tracks.find((item) => item.id === baseline.id);
+	if (!track?.published) throw new Error("Missing published track fixture");
+	track.metadataBaselineExtras = {
+		coverHash: track.published.coverHash,
+		lyrics: track.published.lyrics,
+	};
+	track.coverHash = "new-cover-hash";
+	track.lyrics = "Updated lyrics";
+	track.observedFile = { state: "changed", mtime: "2026-10-31T12:34:56Z" };
+	render(
+		<TrackScreen
+			release={release}
+			track={track}
+			onSource={vi.fn()}
+			onPreview={vi.fn()}
+		/>,
+	);
+	expect(
+		screen.getByText(/Изменились: .*Встроенная обложка, Текст песни/),
+	).toBeInTheDocument();
+	expect(screen.getByText("Файл изменён вне приложения")).toBeInTheDocument();
+	fireEvent.click(screen.getByText("Пути и технические сведения"));
+	expect(screen.getByText("2026-10-31T12:34:56Z")).toBeInTheDocument();
+});

@@ -10,26 +10,41 @@ import {
 	type SourceFiles,
 	type CatalogArtist,
 } from "./catalogData";
+import {
+	isMetadataPreviewFresh,
+	type MetadataPreviewToken,
+} from "./previewModel";
 
 export function PublicationPreview({
-	selected,
+	token,
+	inventoryVersion,
+	scopeKey,
 	onBack,
 	releases = originalReleases,
 	onApply,
 	files = originalFiles,
 	artists,
+	returnRoute = "library",
+	returnLabel = "Вернуться в медиатеку",
 }: {
-	selected: Set<string>;
+	token: MetadataPreviewToken;
+	inventoryVersion: number;
+	scopeKey: string;
 	onBack: () => void;
 	releases?: OriginalRelease[];
-	onApply?: () => void;
+	onApply?: (token: MetadataPreviewToken) => boolean;
 	files?: SourceFiles;
 	artists?: CatalogArtist[];
+	returnRoute?: string;
+	returnLabel?: string;
 }) {
 	const [confirming, setConfirming] = useState(false);
+	const [parentRejected, setParentRejected] = useState(false);
+	const fresh = isMetadataPreviewFresh(token, inventoryVersion, scopeKey);
+	const stale = !fresh || parentRejected;
 	const rows = releases.flatMap((release) =>
 		release.tracks
-			.filter((track) => selected.has(track.id))
+			.filter((track) => token.selectedIds.includes(track.id))
 			.map((track) => {
 				const file = track.sourceId ? files[track.sourceId] : null;
 				const usable = file?.available && file.locations?.length ? file : null;
@@ -43,6 +58,10 @@ export function PublicationPreview({
 				return { release, track, file: usable, action };
 			}),
 	);
+	const unprocessable = rows.filter(
+		(row) => !row.file && !row.track.published,
+	).length;
+	const returnLink = `#${returnRoute}`;
 	return (
 		<section aria-labelledby="preview-title">
 			<h1 id="preview-title">Предпросмотр медиатеки</h1>
@@ -50,9 +69,19 @@ export function PublicationPreview({
 				Показаны существующие позиции выбранных объектов; повторяющиеся треки
 				объединены. Новые сущности и альтернативные источники не выбираются.
 			</p>
+			<p>
+				Контекст предпросмотра: {returnLabel}.{" "}
+				<a href={returnLink}>{returnLabel}</a>
+			</p>
 			<button type="button" onClick={onBack}>
-				Вернуться в медиатеку
+				{returnLabel}
 			</button>
+			{stale && (
+				<p role="alert">
+					Снимок предпросмотра устарел: изменился инвентарь источников или
+					контекст. Вернитесь и откройте предпросмотр заново.
+				</p>
+			)}
 			<div className="demo-preview-counts">
 				{["Создать", "Обновить", "Без изменений", "Пропустить"].map(
 					(action) => (
@@ -77,7 +106,10 @@ export function PublicationPreview({
 						{rows.map(({ release, track, file, action }) => (
 							<tr key={track.id}>
 								<td>
-									{release.title} · {track.position}. {track.title}
+									<a href={`#release/${release.id}`}>{release.title}</a> ·{" "}
+									<a href={`#track/${track.id}`}>
+										{track.position}. {track.title}
+									</a>
 								</td>
 								<td>
 									{file?.path ?? "Нет выбранного источника"}
@@ -107,6 +139,19 @@ export function PublicationPreview({
 											{track.published.codec}).
 										</p>
 									)}
+									{track.published &&
+										file &&
+										file.codec !== track.published.codec && (
+											<p>
+												Выбранный источник {file.codec} в этом действии не
+												применяется.
+											</p>
+										)}
+									{!track.published && file && (
+										<p>
+											Новая публикация из выбранного источника ({file.codec}).
+										</p>
+									)}
 								</td>
 								<td>
 									{desiredTags(release, track, artists).TITLE.join(" · ")}
@@ -118,6 +163,7 @@ export function PublicationPreview({
 					</tbody>
 				</table>
 			</div>
+			<p>{unprocessable} не обрабатываемых позиций.</p>
 			<p>
 				Для уже опубликованных позиций это действие обновляет только метаданные:
 				опубликованный звук и его качество остаются прежними. Для новых
@@ -127,6 +173,7 @@ export function PublicationPreview({
 				<Button
 					onPress={() => setConfirming(true)}
 					isDisabled={
+						stale ||
 						!rows.some(
 							(row) => row.action === "Создать" || row.action === "Обновить",
 						)
@@ -137,6 +184,12 @@ export function PublicationPreview({
 			)}
 			<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
 				<Dialog aria-labelledby="apply-preview-title">
+					{stale && (
+						<p role="alert">
+							Снимок предпросмотра устарел: изменился инвентарь источников или
+							контекст. Вернитесь и откройте предпросмотр заново.
+						</p>
+					)}
 					<Heading slot="title" id="apply-preview-title">
 						Применить изменения для{" "}
 						{
@@ -153,8 +206,17 @@ export function PublicationPreview({
 					</p>
 					<Button onPress={() => setConfirming(false)}>Отмена</Button>
 					<Button
+						isDisabled={stale}
 						onPress={() => {
-							onApply?.();
+							if (!isMetadataPreviewFresh(token, inventoryVersion, scopeKey)) {
+								setConfirming(false);
+								return;
+							}
+							if (onApply && !onApply(token)) {
+								setParentRejected(true);
+								setConfirming(false);
+								return;
+							}
 							setConfirming(false);
 						}}
 					>

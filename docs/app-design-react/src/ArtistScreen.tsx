@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { trackNumberLabel } from "./catalogData";
 import { Checkbox } from "react-aria-components";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import type { DeletionOperation } from "./DeletionRequest";
@@ -12,6 +13,11 @@ import {
 	type OriginalTrack,
 	type SourceFiles,
 } from "./catalogData";
+import {
+	availabilityRowClass,
+	availabilityRowHint,
+	type AvailabilityFilter,
+} from "./availabilityRows";
 
 type Availability = "all" | "available" | "missing";
 type Publication = "all" | "published" | "unpublished";
@@ -24,9 +30,16 @@ export function ArtistScreen({
 	artists,
 	releases,
 	files,
+	query: sharedQuery,
+	availability: sharedAvailability,
+	publication: sharedPublication,
 	selected = new Set(),
 	onSelect,
 	onPreview,
+	onContextPreview,
+	onQueryChange,
+	onAvailabilityChange,
+	onPublicationChange,
 	onDeleteArtist,
 	onQueueDeletion,
 }: {
@@ -34,16 +47,39 @@ export function ArtistScreen({
 	artists: CatalogArtist[];
 	releases: OriginalRelease[];
 	files: SourceFiles;
+	query?: string;
+	availability?: AvailabilityFilter;
+	publication?: Publication;
 	selected?: Set<string>;
 	onSelect?: (ids: string[], value: boolean) => void;
 	onPreview?: (ids: string[]) => void;
+	onContextPreview?: (release: OriginalRelease) => void;
+	onQueryChange?: (value: string) => void;
+	onAvailabilityChange?: (value: Availability) => void;
+	onPublicationChange?: (value: Publication) => void;
 	onDeleteArtist?: (artistId: string) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 }) {
+	const [localQuery, setLocalQuery] = useState("");
+	const [localAvailability, setLocalAvailability] =
+		useState<Availability>("all");
+	const [localPublication, setLocalPublication] = useState<Publication>("all");
+	const query = sharedQuery ?? localQuery;
+	const availability = sharedAvailability ?? localAvailability;
+	const publication = sharedPublication ?? localPublication;
+	const changeQuery = (value: string) => {
+		setLocalQuery(value);
+		onQueryChange?.(value);
+	};
+	const changeAvailability = (value: Availability) => {
+		setLocalAvailability(value);
+		onAvailabilityChange?.(value);
+	};
+	const changePublication = (value: Publication) => {
+		setLocalPublication(value);
+		onPublicationChange?.(value);
+	};
 	const artist = artists.find((item) => item.id === artistId);
-	const [query, setQuery] = useState("");
-	const [availability, setAvailability] = useState<Availability>("all");
-	const [publication, setPublication] = useState<Publication>("all");
 	const [absentEdition, setAbsentEdition] = useState<Record<string, string>>(
 		{},
 	);
@@ -67,12 +103,6 @@ export function ArtistScreen({
 				...(track.sourceId ? [track.sourceId] : []),
 			]),
 		].some((id) => files[id]?.available && files[id]?.locations?.length);
-	const matchesAvailability = (track: OriginalTrack) =>
-		availability === "all" ||
-		(availability === "available" ? hasAudio(track) : !hasAudio(track));
-	const matchesPublication = (track: OriginalTrack) =>
-		publication === "all" ||
-		(publication === "published" ? Boolean(track.published) : !track.published);
 	const selectedCount = ids.filter((id) => selected.has(id)).length;
 	const providerFor = (release: OriginalRelease) =>
 		originalProviders.find((item) => item.id === release.providerId);
@@ -257,7 +287,7 @@ export function ArtistScreen({
 						aria-label="Наличие"
 						value={availability}
 						onChange={(event) =>
-							setAvailability(event.currentTarget.value as Availability)
+							changeAvailability(event.currentTarget.value as Availability)
 						}
 					>
 						<option value="all">Все</option>
@@ -271,7 +301,7 @@ export function ArtistScreen({
 						aria-label="Публикация"
 						value={publication}
 						onChange={(event) =>
-							setPublication(event.currentTarget.value as Publication)
+							changePublication(event.currentTarget.value as Publication)
 						}
 					>
 						<option value="all">Все</option>
@@ -286,7 +316,7 @@ export function ArtistScreen({
 						aria-label="Поиск в медиатеке"
 						placeholder="Артист, альбом, трек…"
 						value={query}
-						onChange={(event) => setQuery(event.currentTarget.value)}
+						onChange={(event) => changeQuery(event.currentTarget.value)}
 					/>
 				</label>
 			</div>
@@ -372,10 +402,8 @@ export function ArtistScreen({
 							<a href={`#release/${release.id}`}>Открыть альбом</a>
 							<button
 								type="button"
-								disabled={!release.tracks.length || !onPreview}
-								onClick={() =>
-									onPreview?.(release.tracks.map((track) => track.id))
-								}
+								disabled={!release.tracks.length || !onContextPreview}
+								onClick={() => onContextPreview?.(release)}
 							>
 								Предпросмотр публикации
 							</button>
@@ -416,18 +444,14 @@ export function ArtistScreen({
 												...(track.sourceId ? [track.sourceId] : []),
 											]),
 										];
-										const matching =
-											matchesAvailability(track) && matchesPublication(track);
 										return (
 											<tr
 												key={track.id}
-												className={
-													availability === "all" && publication === "all"
-														? ""
-														: matching
-															? "filter-match"
-															: "filter-muted"
-												}
+												className={availabilityRowClass(
+													track,
+													availability,
+													hasAudio,
+												)}
 											>
 												<td>
 													<input
@@ -443,19 +467,20 @@ export function ArtistScreen({
 														}
 													/>
 												</td>
-												<td>
-													{track.displayedNumber ||
-														String(
-															track.mediumPosition || track.position,
-														).padStart(2, "0")}
-												</td>
+												<td>{trackNumberLabel(release, track)}</td>
 												<td>
 													<a href={`#track/${track.id}`}>{track.title}</a>
-													{availability !== "all" && (
+													{availabilityRowHint(
+														track,
+														availability,
+														hasAudio,
+													) && (
 														<span className="demo-secondary">
-															{matchesAvailability(track)
-																? "По фильтру наличия"
-																: "Вне фильтра наличия"}
+															{availabilityRowHint(
+																track,
+																availability,
+																hasAudio,
+															)}
 														</span>
 													)}
 												</td>

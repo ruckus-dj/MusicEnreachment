@@ -38,6 +38,7 @@ export interface OriginalTrack {
 
 export interface OriginalRelease {
 	id: string;
+	releaseGroupId?: string;
 	title: string;
 	artistId: string | null;
 	year: string;
@@ -63,6 +64,19 @@ export interface OriginalRelease {
 	coverId?: string;
 	color?: string;
 	tracks: OriginalTrack[];
+}
+
+export function trackNumberLabel(
+	release: Pick<OriginalRelease, "media"> & { tracks: Pick<OriginalTrack, "medium">[] },
+	track: Pick<OriginalTrack, "displayedNumber" | "medium" | "mediumPosition" | "position">,
+): string {
+	if (track.displayedNumber) return track.displayedNumber;
+	const multiple =
+		(release.media?.length ?? 0) > 1 ||
+		new Set(release.tracks.map((item) => item.medium).filter(Boolean)).size > 1;
+	return multiple && track.mediumPosition
+		? `${track.medium}.${String(track.mediumPosition).padStart(2, "0")}`
+		: String(track.mediumPosition || track.position).padStart(2, "0");
 }
 
 export const originalReleases: OriginalRelease[] = original.releases;

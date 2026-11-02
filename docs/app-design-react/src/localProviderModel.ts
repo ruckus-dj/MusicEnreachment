@@ -82,10 +82,7 @@ export function parseLocalDuration(value: string): number | null {
 				return Number(match[1]) * 60 + Number(match[2]);
 			})();
 	const milliseconds = seconds * 1000;
-	if (
-		!Number.isFinite(milliseconds) ||
-		!Number.isSafeInteger(milliseconds)
-	)
+	if (!Number.isFinite(milliseconds) || !Number.isSafeInteger(milliseconds))
 		return Number.NaN;
 	return milliseconds;
 }

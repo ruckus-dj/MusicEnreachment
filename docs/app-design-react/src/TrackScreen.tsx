@@ -43,6 +43,7 @@ export function TrackScreen({
 	track,
 	onSource,
 	onPreview,
+	onMetadataPreview = onPreview,
 	onMutate,
 	onQueueDeletion,
 	files = originalFiles,
@@ -52,6 +53,7 @@ export function TrackScreen({
 	track: OriginalTrack;
 	onSource: (id: string) => void;
 	onPreview: () => void;
+	onMetadataPreview?: () => void;
 	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	files?: SourceFiles;
@@ -71,6 +73,43 @@ export function TrackScreen({
 		provider && providerTrack ? desiredTags(provider, providerTrack) : {};
 	const local = desiredTags(release, track, artists);
 	const changed = metadataChanged(release, track, artists);
+	const normalizeTag = (values: string[]) =>
+		values
+			.join("\0")
+			.normalize("NFKC")
+			.toLocaleLowerCase()
+			.replace(/\s+/g, " ")
+			.trim();
+	const changes =
+		track.published && track.metadataBaseline
+			? [
+					...[
+						"TITLE",
+						"ARTIST",
+						"ALBUM",
+						"ALBUMARTIST",
+						"DATE",
+						"COUNTRY",
+						"LABEL",
+						"CATALOGNUMBER",
+						"TRACKNUMBER",
+						"DISCNUMBER",
+						"GENRE",
+					].filter(
+						(key) =>
+							normalizeTag(local[key] ?? []) !==
+							normalizeTag(track.metadataBaseline?.[key] ?? []),
+					),
+					...((track.coverHash || null) !==
+					(track.metadataBaselineExtras?.coverHash || null)
+						? ["Встроенная обложка"]
+						: []),
+					...((track.lyrics || null) !==
+					(track.metadataBaselineExtras?.lyrics || null)
+						? ["Текст песни"]
+						: []),
+				]
+			: [];
 	const rows = fields[scope]
 		.map((key) => ({
 			key,
@@ -158,7 +197,9 @@ export function TrackScreen({
 						</dd>
 						<dt>Метаданные</dt>
 						<dd>
-							{changed ? "Изменились" : "Совпадают со снимком публикации"}
+							{changed
+								? `Изменились: ${changes.join(", ")}`
+								: "Совпадают со снимком публикации"}
 						</dd>
 						<dt>Файл на диске</dt>
 						<dd>
@@ -176,6 +217,12 @@ export function TrackScreen({
 							<dd>{track.recordingId ?? "Нет связи"}</dd>
 							<dt>Подсказка провайдера</dt>
 							<dd>{track.providerTitle || providerTrack?.title || "Нет"}</dd>
+							{track.observedFile?.mtime && (
+								<>
+									<dt>Внешнее изменение файла · время наблюдения</dt>
+									<dd>{track.observedFile.mtime}</dd>
+								</>
+							)}
 							<dt>Путь и снимок публикации</dt>
 							<dd>
 								{track.published
@@ -192,7 +239,7 @@ export function TrackScreen({
 					<h3>Публикация</h3>
 					<div className="demo-object-actions">
 						{track.published && (
-							<Button onPress={onPreview}>Обновить метаданные</Button>
+							<Button onPress={onMetadataPreview}>Обновить метаданные</Button>
 						)}
 						<Button onPress={onPreview}>Предпросмотр публикации</Button>
 					</div>

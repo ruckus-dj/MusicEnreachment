@@ -310,7 +310,7 @@ export function MatchingScreen({
 		);
 	};
 	return (
-		<main className="demo-shell matching-screen">
+		<main className="demo-shell matching-screen" onKeyDown={(event) => { if (event.key === "Escape" && state.selectedFile) { state.selectedFile = null; commitState(); } }}>
 			<header>
 				<p className="demo-eyebrow">
 					<a href="#incoming">Все входящие</a> · Только чтение: /mnt/inbox/

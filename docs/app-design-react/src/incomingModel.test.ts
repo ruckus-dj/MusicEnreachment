@@ -6,11 +6,13 @@ import {
 	getDraft,
 	incomingFixtures,
 	makePlan,
+	makeReleasePlan,
 	planRows,
 	providerReleases,
 	providerTags,
 	removeRootFromIncomingInventory,
 	selectedSourceId,
+	sourceIds,
 	unassignFile,
 } from "./incomingModel";
 
@@ -18,6 +20,62 @@ const fresh = () => ({
 	state: createIncomingState(),
 	files: structuredClone(incomingFixtures.files),
 	releases: structuredClone(incomingFixtures.releases),
+});
+
+it("normalizes optional source associations without dropping the legacy fileId", () => {
+	expect(sourceIds(undefined)).toEqual([]);
+	expect(sourceIds({})).toEqual([]);
+	expect(sourceIds({ fileId: "legacy" })).toEqual(["legacy"]);
+	expect(sourceIds({ sourceIds: [] , fileId: "legacy" })).toEqual([]);
+	expect(sourceIds({ sourceIds: ["a", "b"], fileId: "legacy" })).toEqual(["a", "b"]);
+});
+
+it("freezes only the current selected source for contextual release publication", () => {
+	const { state, files, releases } = fresh();
+	const release = releases.find((item) => item.id === "north")!;
+	const track = release.tracks[0];
+	const selected = track.sourceId!;
+	const plan = makeReleasePlan(state, release, files, track.id);
+	expect(plan.inventoryVersion).toBe(state.inventoryVersion);
+	expect(plan.assignments[track.id].selectedSourceId).toBe(selected);
+	expect(plan.assignments[track.id].included).toBe(true);
+	expect(
+		Object.values(plan.assignments).filter((item) => item.included),
+	).toHaveLength(1);
+	expect(planRows(plan, files, releases)[0].file?.id).toBe(selected);
+	expect(planRows(plan, files, releases)[1].assignment?.included).toBe(false);
+	const manualArtist = { id: "manual-test-artist", name: "New Manual Artist" };
+	plan.target.tracks[0].artistId = manualArtist.id;
+	release.tracks[0].artistId = manualArtist.id;
+	expect(
+		planRows(plan, files, releases, undefined, [manualArtist])[0].nextTags
+			.ARTIST,
+	).toEqual([manualArtist.name]);
+});
+
+it("resolves a new manual artist from the supplied registry for tags and path", () => {
+	const { state, files, releases } = fresh();
+	state.groupId = "north";
+	const plan = makePlan(state, files, releases)!;
+	const localRelease = releases.find((item) => item.id === "north")!;
+	const artist = { id: "manual-path-artist", name: "New Manual Artist" };
+	plan.target.artistId = artist.id;
+	localRelease.artistId = artist.id;
+	for (const targetTrack of plan.target.tracks)
+		targetTrack.artistId = artist.id;
+	for (const track of localRelease.tracks) track.artistId = artist.id;
+	const track = localRelease.tracks[0];
+	plan.assignments = {
+		[plan.target.tracks[0].id]: plan.assignments[plan.target.tracks[0].id],
+	};
+	plan.assignments[plan.target.tracks[0].id].included = true;
+	track.published = null;
+
+	expect(applyPlan(plan, files, releases, undefined, false, [artist])).toBe(1);
+	const published = releases.find((item) => item.id === localRelease.id)
+		?.tracks[0].published;
+	expect(published?.tags.ARTIST).toEqual([artist.name]);
+	expect(published?.path).toContain(`/srv/music/${artist.name}/`);
 });
 
 it("preserves an identical current publication and its complete metadata", () => {

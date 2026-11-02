@@ -1,11 +1,13 @@
 import fixtureData from "./original-fixtures.json";
 import {
 	desiredTags,
+	originalArtistName,
 	originalFiles,
 	originalProviders,
 	originalReleases,
 	type OriginalRelease,
 	type OriginalTrack,
+	type CatalogArtist,
 	type SourceFile as CatalogSourceFile,
 } from "./catalogData";
 
@@ -255,8 +257,9 @@ const tagSets: Record<string, string[]> = {
 export function providerTags(
 	release: OriginalRelease,
 	track: OriginalTrack,
+	artists?: CatalogArtist[],
 ): TagMap {
-	return desiredTags(release, track);
+	return desiredTags(release, track, artists);
 }
 
 export function findProviderTrack(
@@ -324,11 +327,46 @@ export function makeGroupPlan(
 	};
 }
 
+export function makeReleasePlan(
+	state: IncomingState,
+	release: OriginalRelease,
+	files: IncomingFiles,
+	trackId: string | null = null,
+): IncomingPlan {
+	const assignments: Record<string, Assignment> = {};
+	for (const track of release.tracks) {
+		const selectedSource = track.sourceId;
+		const file = selectedSource ? files[selectedSource] : undefined;
+		if (!selectedSource || !usableFile(file)) continue;
+		const availableSources = [
+			...new Set([...(track.sourceIds ?? []), selectedSource]),
+		].filter((id) => usableFile(files[id]));
+		assignments[String(track.id)] = {
+			sourceIds: availableSources,
+			selectedSourceId: selectedSource,
+			sourceMeta: {},
+			method: "Текущий выбранный источник",
+			confidence: null,
+			providerTrackId: track.providerTrackId ?? null,
+			included: !trackId || track.id === trackId,
+		};
+	}
+	return {
+		mode: "local",
+		groupId: "",
+		target: structuredClone(release),
+		localReleaseId: release.id,
+		assignments,
+		inventoryVersion: state.inventoryVersion,
+	};
+}
+
 export function planRows(
 	plan: IncomingPlan,
 	files: IncomingFiles,
 	releases: IncomingReleases,
 	providers: IncomingReleases = providerReleases,
+	artists?: CatalogArtist[],
 ): PlanRow[] {
 	const existing = releases.find(
 		(release) => release.id === plan.localReleaseId,
@@ -355,7 +393,7 @@ export function planRows(
 							provider?.track.recordingId || track?.recordingId || null,
 					}
 				: { ...targetTrack, sourceId: file?.id ?? null };
-		const nextTags = providerTags(releaseForTags, projected);
+		const nextTags = providerTags(releaseForTags, projected, artists);
 		const previous = track?.published ?? undefined;
 		const unchanged =
 			previous &&
@@ -394,6 +432,7 @@ export function applyPlan(
 	releases: IncomingReleases,
 	providers: IncomingReleases = providerReleases,
 	automatic = false,
+	artists?: CatalogArtist[],
 ) {
 	let release = releases.find((item) => item.id === plan.localReleaseId);
 	if (!release) {
@@ -413,7 +452,7 @@ export function applyPlan(
 		plan.localReleaseId = String(release.id);
 	}
 	let changed = 0;
-	for (const row of planRows(plan, files, releases, providers)) {
+	for (const row of planRows(plan, files, releases, providers, artists)) {
 		const track = release.tracks.find(
 			(item) => item.position === row.targetTrack.position,
 		);
@@ -460,7 +499,7 @@ export function applyPlan(
 		}
 		const path =
 			published?.path ??
-			`/srv/music/${artistName(String(release.artistId))}/${release.year} - ${release.title}/${String(row.targetTrack.position).padStart(2, "0")} - ${row.targetTrack.title}.mka`;
+			`/srv/music/${originalArtistName(release.artistId, artists)}/${release.year} - ${release.title}/${String(row.targetTrack.position).padStart(2, "0")} - ${row.targetTrack.title}.mka`;
 		track.published = {
 			tags: structuredClone(row.nextTags),
 			coverHash: track.coverHash ?? null,

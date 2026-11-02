@@ -61,6 +61,15 @@ button { cursor: pointer; }
 .demo-directory-list { list-style:none; margin:12px 0; padding:0; }
 .demo-directory-list button { display:block; width:100%; text-align:left; padding:10px; border-bottom:1px solid var(--line); }
 .demo-directory-list button:hover { background:var(--raised); }
+.demo-catalog-table-wrap { overflow-x:auto; }
+.demo-catalog-table { width:100%; border-collapse:collapse; text-align:left; }
+.demo-catalog-table th,.demo-catalog-table td { padding:9px 10px; vertical-align:top; border-bottom:1px solid var(--line); }
+.demo-catalog-table th { color:var(--muted); font-weight:600; white-space:nowrap; }
+.demo-catalog-table td:first-child { width:52px; }
+.demo-catalog-table .sub { display:block; margin-top:3px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.demo-catalog-expander { padding:0; border:0; background:none; text-align:left; font:inherit; font-weight:650; }
+.demo-track-table { min-width:1050px; }
+.demo-catalog-table td .demo-checkbox { width:32px; height:32px; }
 .demo-panel > fieldset label { display:block; padding:6px 0; }
 .demo-preview-counts { display:flex; flex-wrap:wrap; gap:16px; padding:12px 0; }
 .demo-preview-table { overflow:auto; border:1px solid var(--line); background:var(--surface); }

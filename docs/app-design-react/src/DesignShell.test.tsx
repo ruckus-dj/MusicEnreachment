@@ -26,3 +26,17 @@ it("preserves original navigation sections without a separate publication tab", 
 	expect(screen.getByRole("main")).toHaveFocus();
 	window.location.hash = "";
 });
+
+it("renders the supplied incoming count in navigation", () => {
+	window.location.hash = "review";
+	render(
+		<DesignShell incomingCount={7}>
+			<main>
+				<h1>Входящие</h1>
+			</main>
+		</DesignShell>,
+	);
+	const review = screen.getByRole("link", { name: "Входящие7" });
+	expect(review).toHaveTextContent("7");
+	window.location.hash = "";
+});

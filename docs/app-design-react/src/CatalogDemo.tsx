@@ -8,6 +8,13 @@ import {
 	type CatalogArtist,
 } from "./catalogData";
 import { PublicationPreview } from "./PublicationPreview";
+import { ContextPublicationPreview } from "./ContextPublicationPreview";
+import {
+	captureMetadataPreview,
+	isMetadataPreviewFresh,
+	previewScopeKey,
+	type MetadataPreviewToken,
+} from "./previewModel";
 import { TrackScreen } from "./TrackScreen";
 import { ReleaseScreen } from "./ReleaseScreen";
 import { OperationsScreen } from "./OperationsScreen";
@@ -19,13 +26,22 @@ import { SettingsScreen, initialDemoSettings } from "./SettingsScreen";
 import { SetupScreen } from "./SetupScreen";
 import { IncomingScreen } from "./IncomingScreen";
 import { MatchingScreen } from "./MatchingScreen";
-import { createIncomingState } from "./incomingModel";
+import { createIncomingState, makeReleasePlan } from "./incomingModel";
 import { LocalProviderScreen } from "./LocalProviderScreen";
 import { createLocalProviderState } from "./localProviderModel";
 import { ArtistScreen } from "./ArtistScreen";
 import { TagsScreen } from "./TagsScreen";
 import { ComponentsScreen } from "./ComponentsScreen";
+import {
+	albumSearchText,
+	artistReleases,
+	catalogArtistMatches,
+	missingCatalogGroups,
+	normalizeCatalogSearch,
+	trackSearchText,
+} from "./catalogViewModel";
 import { ManualReleaseScreen } from "./ManualReleaseScreen";
+import { LibraryCatalogRows } from "./LibraryCatalogRows";
 import {
 	createManualRelease,
 	createManualReleaseDemoDraft,
@@ -73,9 +89,19 @@ function GroupCheckbox({
 
 const trackIds = (tracks: Track[]) => tracks.map((track) => track.id);
 
-export function CatalogDemo() {
+export function CatalogDemo({
+	onIncomingCount,
+}: {
+	onIncomingCount?: (count: number) => void;
+} = {}) {
 	const [localProvider, setLocalProvider] = useState(createLocalProviderState);
 	const [incoming, setIncoming] = useState(createIncomingState);
+	const incomingCount = incoming.groups.filter(
+		(group) => !group.processed,
+	).length;
+	useEffect(() => {
+		onIncomingCount?.(incomingCount);
+	}, [incomingCount, onIncomingCount]);
 	const [settings, setSettings] = useState(initialDemoSettings);
 	const [setupStep, setSetupStep] = useState(0);
 	const [files, setFiles] = useState(() => structuredClone(originalFiles));
@@ -85,14 +111,24 @@ export function CatalogDemo() {
 	const [removedRoots, setRemovedRoots] = useState<Set<string>>(
 		() => new Set(),
 	);
-	const hasAudio = (track: Track) =>
-		track.published ||
-		[...track.sourceIds, ...(track.sourceId ? [track.sourceId] : [])].some(
-			(id) => files[id]?.available && files[id]?.locations?.length,
-		);
+	const hasAudio = (track: {
+		published: unknown;
+		sourceIds?: string[];
+		sourceId?: string | null;
+	}) =>
+		Boolean(track.published) ||
+		[
+			...new Set([
+				...(track.sourceIds ?? []),
+				...(track.sourceId ? [track.sourceId] : []),
+			]),
+		].some((id) => files[id]?.available && files[id]?.locations?.length);
 	const route = useSyncExternalStore(
 		subscribeRoute,
-		() => window.location.hash.slice(1),
+		() => {
+			const hash = window.location.hash.slice(1);
+			return hash === "publication-list" ? "library" : hash;
+		},
 		() => "library",
 	);
 	const [releases, setReleases] = useState(() =>
@@ -120,8 +156,14 @@ export function CatalogDemo() {
 	const allTracks = fixture.releases.flatMap((release) => release.tracks);
 	const [view, setView] = useState<View>("artists");
 	const [preview, setPreview] = useState(false);
-	useEffect(() => setPreview(false), [route]);
+	useEffect(() => {
+		if (route !== "publication-preview") setPreview(false);
+	}, [route]);
 	const [contextIds, setContextIds] = useState<string[] | null>(null);
+	const [previewOriginRoute, setPreviewOriginRoute] = useState("library");
+	const [previewToken, setPreviewToken] = useState<MetadataPreviewToken | null>(
+		null,
+	);
 	const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
 	const queueDeletion = (operation: DeletionOperation) => {
 		setDeletions((previous) => [...previous, operation]);
@@ -144,7 +186,7 @@ export function CatalogDemo() {
 	const [editions, setEditions] = useState<Record<string, string>>({});
 	const [availability, setAvailability] = useState<Availability>("all");
 	const [publication, setPublication] = useState<Publication>("all");
-	const normalized = query.trim().toLocaleLowerCase();
+	const normalized = normalizeCatalogSearch(query);
 	const matchesAvailability = (tracks: Track[]) =>
 		availability === "all" ||
 		tracks.some((track) =>
@@ -159,6 +201,14 @@ export function CatalogDemo() {
 		matchesAvailability(tracks) && matchesPublication(tracks);
 	const artistName = (id: string | null) =>
 		fixture.artists.find((artist) => artist.id === id)?.name ?? "";
+	const missingGroups = missingCatalogGroups(
+		fixture.absentGroups,
+		fixture.releases,
+		fixture.artists,
+		query,
+		availability,
+		publication,
+	);
 	const update = (ids: string[], checked: boolean) => {
 		setSelected((previous) => {
 			const next = new Set(previous);
@@ -169,30 +219,113 @@ export function CatalogDemo() {
 			return next;
 		});
 	};
+	const openPreview = (ids: Iterable<string>) => {
+		const frozenIds = [...ids];
+		setPreviewOriginRoute(route);
+		setContextIds(route === "library" ? null : frozenIds);
+		setPreviewToken(
+			captureMetadataPreview(
+				incoming.inventoryVersion,
+				previewScopeKey(route, frozenIds),
+				frozenIds,
+			),
+		);
+		setPreview(true);
+		window.location.hash = "publication-preview";
+	};
+	const applyPreview = (token: MetadataPreviewToken) => {
+		const activeIds = contextIds ?? [...selected];
+		const activeScope = previewScopeKey(previewOriginRoute, activeIds);
+		if (!isMetadataPreviewFresh(token, incoming.inventoryVersion, activeScope))
+			return false;
+		setReleases((previous) =>
+			applyMetadataPreview(
+				previous,
+				new Set(token.selectedIds),
+				files,
+				artists,
+			),
+		);
+		return true;
+	};
+	const openContextPublication = (
+		release: (typeof releases)[number],
+		trackId: string | null = null,
+	) => {
+		setIncoming((current) => ({
+			...current,
+			plan: makeReleasePlan(current, release, files, trackId),
+			confirmDowngrade: false,
+		}));
+		window.location.hash = "publications";
+	};
 	const tabs: [View, string][] = [
 		["artists", "Артисты"],
 		["albums", "Все альбомы"],
 		["tracks", "Все треки"],
 	];
-	if (preview)
+	if (preview || route === "publication-preview")
 		return (
 			<main className="demo-shell">
-				<PublicationPreview
-					selected={contextIds ? new Set(contextIds) : selected}
+				{previewToken ? (
+					<PublicationPreview
+						token={previewToken}
+						inventoryVersion={incoming.inventoryVersion}
+						scopeKey={previewScopeKey(
+							previewOriginRoute,
+							contextIds ?? [...selected],
+						)}
+						files={files}
+						releases={releases}
+						artists={artists}
+						onApply={applyPreview}
+						onBack={() => {
+							setPreview(false);
+							window.location.hash = previewOriginRoute;
+						}}
+						returnRoute={
+							previewOriginRoute.startsWith("track/")
+								? previewOriginRoute
+								: "library"
+						}
+						returnLabel={
+							previewOriginRoute.startsWith("track/")
+								? "Вернуться к треку"
+								: "Вернуться в медиатеку"
+						}
+					/>
+				) : (
+					<>
+						<h1>Предпросмотр медиатеки</h1>
+						<p>Нет сохранённого предпросмотра метаданных.</p>
+						<a href="#library">К медиатеке</a>
+					</>
+				)}
+			</main>
+		);
+	if (route === "publications")
+		return (
+			<main className="demo-shell">
+				<ContextPublicationPreview
+					plan={incoming.plan}
 					files={files}
 					releases={releases}
 					artists={artists}
-					onApply={() =>
-						setReleases((previous) =>
-							applyMetadataPreview(
-								previous,
-								contextIds ? new Set(contextIds) : selected,
-								files,
-								artists,
-							),
-						)
+					inventoryVersion={incoming.inventoryVersion}
+					confirmDowngrade={incoming.confirmDowngrade}
+					onPlan={(plan, confirmDowngrade) =>
+						setIncoming((current) => ({
+							...current,
+							plan,
+							confirmDowngrade: confirmDowngrade ?? current.confirmDowngrade,
+						}))
 					}
-					onBack={() => setPreview(false)}
+					onReleases={setReleases}
+					onBack={() => {
+						window.location.hash = incoming.plan?.localReleaseId
+							? `release/${incoming.plan.localReleaseId}`
+							: "library";
+					}}
 				/>
 			</main>
 		);
@@ -200,19 +333,40 @@ export function CatalogDemo() {
 		return (
 			<main className="demo-shell">
 				<ArtistScreen
+					availability={availability}
+					publication={publication}
 					key={route}
 					artistId={route.slice(7)}
 					artists={artists}
 					releases={releases}
 					files={files}
 					selected={selected}
+					query={query}
+					onQueryChange={setQuery}
+					onAvailabilityChange={setAvailability}
+					onPublicationChange={setPublication}
 					onSelect={update}
 					onQueueDeletion={queueDeletion}
-					onPreview={(ids) => {
-						setContextIds(ids);
-						setPreview(true);
-					}}
+					onPreview={openPreview}
+					onContextPreview={(release) => openContextPublication(release)}
 				/>
+				{selected.size > 0 && (
+					<div className="demo-selection" role="status">
+						Выбрано позиций: {selected.size}
+						<button
+							type="button"
+							onClick={() => {
+								setContextIds(null);
+								openPreview(selected);
+							}}
+						>
+							Предпросмотр публикации
+						</button>
+						<button type="button" onClick={() => setSelected(new Set())}>
+							Снять выбор
+						</button>
+					</div>
+				)}
 			</main>
 		);
 	if (route.startsWith("tags/")) {
@@ -231,8 +385,7 @@ export function CatalogDemo() {
 					artists={artists}
 					files={files}
 					onPreview={(ids) => {
-						setContextIds(ids);
-						setPreview(true);
+						openPreview(ids);
 					}}
 				/>
 			</main>
@@ -258,15 +411,21 @@ export function CatalogDemo() {
 		return (
 			<main className="demo-shell">
 				<ReleaseScreen
+					files={files}
+					availability={availability}
 					onQueueDeletion={queueDeletion}
 					release={release}
 					artists={artists}
 					selected={selected}
 					onSelect={update}
-					onPreview={(ids) => {
-						setContextIds(ids);
-						setPreview(true);
-					}}
+					onPreview={() => openContextPublication(release)}
+					onReturnToDraft={
+						release.manual
+							? () => {
+									window.location.hash = "create-release";
+								}
+							: undefined
+					}
 				/>
 			</main>
 		);
@@ -305,8 +464,11 @@ export function CatalogDemo() {
 						)
 					}
 					onPreview={() => {
-						setContextIds([track.id]);
-						setPreview(true);
+						openContextPublication(release, track.id);
+					}}
+					onMetadataPreview={() => {
+						openPreview([track.id]);
+						window.location.hash = "publication-preview";
 					}}
 					onSource={(id) =>
 						setReleases((previous) =>
@@ -482,6 +644,39 @@ export function CatalogDemo() {
 				</p>
 			</main>
 		);
+	const visibleArtists = fixture.artists.filter((artist) =>
+		catalogArtistMatches(
+			artist,
+			fixture.releases,
+			missingGroups,
+			query,
+			availability,
+			publication,
+			(track) => hasAudio(track as Track),
+		),
+	);
+	const visibleReleases = fixture.releases.filter(
+		(release) =>
+			(!artistId ||
+				release.artistId === artistId ||
+				release.credits?.some((credit) => credit.artistId === artistId)) &&
+			normalizeCatalogSearch(
+				albumSearchText(release, fixture.artists),
+			).includes(normalized) &&
+			matchesGroup(release.tracks),
+	);
+	const visibleTrackIds = new Set(
+		fixture.releases.flatMap((release) =>
+			release.tracks
+				.filter(
+					(track) =>
+						normalizeCatalogSearch(
+							trackSearchText(track, release, fixture.artists),
+						).includes(normalized) && matchesGroup([track]),
+				)
+				.map((track) => track.id),
+		),
+	);
 	return (
 		<main className="demo-shell">
 			<header>
@@ -564,7 +759,7 @@ export function CatalogDemo() {
 						type="button"
 						onClick={() => {
 							setContextIds(null);
-							setPreview(true);
+							openPreview(selected);
 						}}
 					>
 						Предпросмотр публикации
@@ -578,154 +773,53 @@ export function CatalogDemo() {
 				className="demo-list"
 				aria-label={tabs.find(([key]) => key === view)?.[1]}
 			>
-				{view === "artists" &&
-					fixture.artists
-						.filter(
-							(artist) =>
-								artist.name.toLocaleLowerCase().includes(normalized) &&
-								fixture.releases.some(
-									(release) =>
-										release.artistId === artist.id &&
-										matchesGroup(release.tracks),
-								),
+				<LibraryCatalogRows
+					view={view}
+					artists={view === "artists" ? visibleArtists : fixture.artists}
+					releases={
+						view === "albums"
+							? releases.filter((release) =>
+									visibleReleases.some((item) => item.id === release.id),
+								)
+							: view === "tracks"
+								? releases
+										.map((release) => ({
+											...release,
+											tracks: release.tracks.filter((track) =>
+												visibleTrackIds.has(track.id),
+											),
+										}))
+										.filter((release) => release.tracks.length > 0)
+								: releases
+					}
+					missingCounts={
+						new Map(
+							fixture.artists.map((artist) => [
+								artist.id,
+								missingGroups.filter((group) => group.artistId === artist.id)
+									.length,
+							]),
 						)
-						.map((artist) => {
-							const releases = fixture.releases.filter(
-								(release) => release.artistId === artist.id,
-							);
-							const tracks = releases.flatMap((release) => release.tracks);
-							return (
-								<div className="demo-row" key={artist.id}>
-									<GroupCheckbox
-										ids={trackIds(tracks)}
-										label={`Выбрать позиции артиста ${artist.name}`}
-										selected={selected}
-										onChange={update}
-									/>
-									<span className="demo-initial" aria-hidden="true">
-										{artist.name[0]}
-									</span>
-									<div className="demo-copy">
-										<a className="demo-link" href={`#artist/${artist.id}`}>
-											{artist.name}
-										</a>
-										<span>
-											{releases.length} изданий · {tracks.length} позиций
-										</span>
-									</div>
-									<span className="demo-count">
-										Опубликовано{" "}
-										{tracks.filter((track) => track.published).length} /{" "}
-										{tracks.length}
-									</span>
-								</div>
-							);
-						})}
-				{view === "albums" &&
-					fixture.releases
-						.filter(
-							(release) =>
-								(!artistId || release.artistId === artistId) &&
-								`${release.title} ${artistName(release.artistId)} ${release.catalog}`
-									.toLocaleLowerCase()
-									.includes(normalized) &&
-								matchesGroup(release.tracks),
-						)
-						.map((release) => (
-							<div key={release.id}>
-								<div className="demo-row">
-									<GroupCheckbox
-										ids={trackIds(release.tracks)}
-										label={`Выбрать позиции альбома ${release.title}`}
-										selected={selected}
-										onChange={update}
-									/>
-									<div className="demo-copy">
-										<button
-											className="demo-link"
-											type="button"
-											aria-expanded={expanded === release.id}
-											onClick={() =>
-												setExpanded(expanded === release.id ? null : release.id)
-											}
-										>
-											{release.title}
-										</button>
-										<a href={`#release/${release.id}`}>Открыть альбом</a>
-										<span>
-											{
-												fixture.artists.find(
-													(artist) => artist.id === release.artistId,
-												)?.name
-											}{" "}
-											· {release.year} · {release.tracks.length} позиций
-										</span>
-									</div>
-									<span className="demo-count">
-										Опубликовано{" "}
-										{release.tracks.filter((track) => track.published).length} /{" "}
-										{release.tracks.length}
-									</span>
-								</div>
-								{expanded === release.id &&
-									release.tracks.map((track) => (
-										<div className="demo-track" key={track.id}>
-											<GroupCheckbox
-												ids={[track.id]}
-												label={`Выбрать ${track.title}`}
-												selected={selected}
-												onChange={update}
-											/>
-											<a href={`#track/${track.id}`}>
-												{track.position}. {track.title}
-											</a>
-										</div>
-									))}
-							</div>
-						))}
-				{view === "tracks" &&
-					allTracks
-						.filter(
-							(track) =>
-								`${track.title} ${fixture.releases.find((release) => release.tracks.some((item) => item.id === track.id))?.title ?? ""}`
-									.toLocaleLowerCase()
-									.includes(normalized) && matchesGroup([track]),
-						)
-						.map((track) => (
-							<div className="demo-row" key={track.id}>
-								<GroupCheckbox
-									ids={[track.id]}
-									label={`Выбрать ${track.title}`}
-									selected={selected}
-									onChange={update}
-								/>
-								<div className="demo-copy">
-									<a href={`#track/${track.id}`}>{track.title}</a>
-									<span>
-										{
-											fixture.releases.find((release) =>
-												release.tracks.some((item) => item.id === track.id),
-											)?.title
-										}
-									</span>
-								</div>
-								<span className="demo-count">
-									{track.published ? "Опубликовано" : "Не опубликовано"}
-								</span>
-							</div>
-						))}
+					}
+					hasAudio={(track) => hasAudio(track as Track)}
+					files={files}
+					availability={availability}
+					publication={publication}
+					groupCheckbox={(ids, label) => (
+						<GroupCheckbox
+							ids={ids}
+							label={label}
+							selected={selected}
+							onChange={update}
+						/>
+					)}
+					expanded={expanded}
+					onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
+				/>
 			</section>
 			{view === "albums" &&
-				availability !== "available" &&
-				publication !== "published" &&
-				fixture.absentGroups
-					.filter(
-						(group) =>
-							(!artistId || group.artistId === artistId) &&
-							`${group.title} ${artistName(group.artistId)} ${group.editions.map((edition) => `${edition.disambiguation} ${edition.titles.join(" ")}`).join(" ")}`
-								.toLocaleLowerCase()
-								.includes(normalized),
-					)
+				missingGroups
+					.filter((group) => !artistId || group.artistId === artistId)
 					.map((group) => {
 						const chosen = group.editions.find(
 							(edition) => edition.id === editions[group.id],

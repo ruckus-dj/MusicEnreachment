@@ -4,26 +4,51 @@ import {
 	metadataChanged,
 	originalArtistName,
 	originalProviders,
+	originalFiles,
+	trackNumberLabel,
 	type OriginalRelease,
 	type CatalogArtist,
+	type SourceFiles,
 } from "./catalogData";
+import { ReleaseMetadataComparison } from "./ReleaseMetadataComparison";
+import {
+	availabilityRowClass,
+	availabilityRowHint,
+	type AvailabilityFilter,
+} from "./availabilityRows";
 
 export function ReleaseScreen({
 	release,
 	artists,
+	files = originalFiles,
+	availability = "all",
+	publication = "all",
 	selected,
 	onSelect,
 	onPreview,
+	onReturnToDraft,
 	onQueueDeletion,
 }: {
 	release: OriginalRelease;
 	artists?: CatalogArtist[];
+	files?: SourceFiles;
+	availability?: AvailabilityFilter;
+	publication?: "all" | "published" | "unpublished";
 	selected: Set<string>;
 	onSelect: (ids: string[], value: boolean) => void;
 	onPreview: (ids: string[]) => void;
+	onReturnToDraft?: () => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 }) {
 	const ids = release.tracks.map((track) => track.id);
+	const hasAudio = (track: OriginalRelease["tracks"][number]) =>
+		Boolean(track.published) ||
+		[
+			...new Set([
+				...(track.sourceIds ?? []),
+				...(track.sourceId ? [track.sourceId] : []),
+			]),
+		].some((id) => files[id]?.available && files[id]?.locations?.length);
 	const count = ids.filter((id) => selected.has(id)).length;
 	const published = release.tracks.filter((track) => track.published).length;
 	const provider = originalProviders.find(
@@ -97,7 +122,12 @@ export function ReleaseScreen({
 				</button>
 			</div>
 			<section className="demo-panel">
-				<h2>Список треков · конкретное издание</h2>
+				<h2>
+					Список треков ·{" "}
+					{release.manual
+						? `${release.media?.length ?? 0} носителя`
+						: "конкретное издание"}
+				</h2>
 				{totalDuration !== null && <p>{duration(totalDuration)} всего</p>}
 				<div className="demo-preview-table">
 					<table>
@@ -119,7 +149,14 @@ export function ReleaseScreen({
 						</thead>
 						<tbody>
 							{release.tracks.map((track) => (
-								<tr key={track.id}>
+								<tr
+									key={track.id}
+									className={availabilityRowClass(
+										track,
+										availability,
+										hasAudio,
+									)}
+								>
 									<td>
 										<label className="demo-checkbox">
 											<input
@@ -132,15 +169,14 @@ export function ReleaseScreen({
 											/>
 										</label>
 									</td>
-									<td>
-										{track.displayedNumber ||
-											String(track.mediumPosition || track.position).padStart(
-												2,
-												"0",
-											)}
-									</td>
+									<td>{trackNumberLabel(release, track)}</td>
 									<td>
 										<a href={`#track/${track.id}`}>{track.title}</a>
+										{availabilityRowHint(track, availability, hasAudio) && (
+											<span className="demo-secondary">
+												{availabilityRowHint(track, availability, hasAudio)}
+											</span>
+										)}
 									</td>
 									<td>
 										{track.duration === null ? "—" : duration(track.duration)}
@@ -187,14 +223,17 @@ export function ReleaseScreen({
 			{onQueueDeletion && (
 				<DeletionRequest release={release} onQueue={onQueueDeletion} />
 			)}
-			<a href="#create-release">Создать локальный релиз</a>
-			{release.tracks[0] && (
-				<p>
-					<a href={`#tags/${release.tracks[0].id}/release`}>
-						Открыть подробное сравнение альбома
-					</a>
-				</p>
+			{release.manual && onReturnToDraft && (
+				<button type="button" onClick={onReturnToDraft}>
+					Вернуться к черновику
+				</button>
 			)}
+			<a href="#create-release">Создать локальный релиз</a>
+			<ReleaseMetadataComparison
+				release={release}
+				artists={artists}
+				files={files}
+			/>
 		</section>
 	);
 }

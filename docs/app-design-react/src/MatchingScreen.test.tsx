@@ -57,6 +57,17 @@ it("starts with the Northern Lines candidate draft and leaves missing positions 
 	expect(screen.getByText("session fragment.flac")).toBeInTheDocument();
 });
 
+it("clears the selected source file on Escape and persists the state transition", () => {
+	const state = createIncomingState();
+	state.selectedFile = "north-f1";
+	const onState = vi.fn();
+	const { container } = render(
+		<MatchingScreen groupId="north" state={state} onState={onState} />,
+	);
+	fireEvent.keyDown(container.querySelector("main")!, { key: "Escape" });
+	expect(onState).toHaveBeenCalledWith(expect.objectContaining({ selectedFile: null }));
+});
+
 it("switches candidates without replacing the other candidate's draft", () => {
 	render(<MatchingScreen groupId="north" />);
 	const firstInclude = screen.getByRole("checkbox", {
