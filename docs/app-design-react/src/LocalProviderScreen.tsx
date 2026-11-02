@@ -31,6 +31,7 @@ import { demoGenres } from "./GenreLibrary";
 export type LocalProviderScreenProps = {
 	state?: LocalProviderState;
 	onState?: (state: LocalProviderState) => void;
+	onMatchRelease?: (release: LocalProviderRecord) => void;
 	genresLoaded?: boolean;
 };
 
@@ -80,6 +81,7 @@ function splitList(value: string) {
 export function LocalProviderScreen({
 	state: givenState,
 	onState,
+	onMatchRelease,
 	genresLoaded = false,
 }: LocalProviderScreenProps) {
 	const [localState, setLocalState] = useState(createLocalProviderState);
@@ -277,6 +279,7 @@ export function LocalProviderScreen({
 							tracks: [
 								...tracks,
 								{
+									id: ids(),
 									recordingId: "",
 									titleOverride: "",
 									durationOverrideMs: "",
@@ -295,10 +298,7 @@ export function LocalProviderScreen({
 						(candidate) => candidate.id === track.recordingId,
 					);
 					return (
-						<fieldset
-							className="local-provider-track"
-							key={`${index}-${track.recordingId}`}
-						>
+						<fieldset className="local-provider-track" key={track.id}>
 							<legend>Позиция {index + 1}</legend>
 							<div className="local-provider-track-actions">
 								<Button
@@ -899,7 +899,14 @@ export function LocalProviderScreen({
 											</h2>
 										</div>
 										{selected.provider === "Local" && (
-											<Button onPress={startEdit}>Редактировать</Button>
+											<div className="local-provider-detail-actions">
+												{state.type === "releases" && onMatchRelease && (
+													<Button onPress={() => onMatchRelease(selected)}>
+														Сопоставить входящие
+													</Button>
+												)}
+												<Button onPress={startEdit}>Редактировать</Button>
+											</div>
 										)}
 									</div>
 									<dl className="local-provider-facts">

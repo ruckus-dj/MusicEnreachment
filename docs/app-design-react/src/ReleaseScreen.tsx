@@ -26,7 +26,6 @@ export function ReleaseScreen({
 	selected,
 	onSelect,
 	onPreview,
-	onReturnToDraft,
 	onQueueDeletion,
 }: {
 	release: OriginalRelease;
@@ -37,7 +36,6 @@ export function ReleaseScreen({
 	selected: Set<string>;
 	onSelect: (ids: string[], value: boolean) => void;
 	onPreview: (ids: string[]) => void;
-	onReturnToDraft?: () => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 }) {
 	const ids = release.tracks.map((track) => track.id);
@@ -226,10 +224,6 @@ export function ReleaseScreen({
 			{onQueueDeletion && (
 				<DeletionRequest release={release} onQueue={onQueueDeletion} />
 			)}
-			{release.manual && onReturnToDraft && (
-				<Button onPress={onReturnToDraft}>Вернуться к черновику</Button>
-			)}
-			<a href="#create-release">Создать локальный релиз</a>
 			<ReleaseMetadataComparison
 				release={release}
 				artists={artists}

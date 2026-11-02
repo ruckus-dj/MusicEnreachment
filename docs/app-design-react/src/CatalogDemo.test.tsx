@@ -2,7 +2,12 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { CatalogDemo } from "./CatalogDemo";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
-import { catalogData, originalFiles, originalReleases } from "./catalogData";
+import {
+	catalogData,
+	originalFiles,
+	originalProviders,
+	originalReleases,
+} from "./catalogData";
 import { makeReleasePlan } from "./incomingModel";
 
 function selectOption(label: RegExp, option: string) {
@@ -272,6 +277,7 @@ it("refuses final confirmation when inventory becomes stale while the dialog is 
 		plan,
 		files,
 		releases,
+		providers: originalProviders,
 		artists: catalogData.artists,
 		confirmDowngrade: false,
 		onPlan: vi.fn(),
@@ -339,23 +345,15 @@ it("keeps global selected-item actions separate from the current artist controls
 	}
 });
 
-it("returns from a created manual release to its unchanged saved draft", async () => {
+it("redirects the obsolete manual-release route to the Local provider", async () => {
 	const previousHash = window.location.hash;
 	window.location.hash = "create-release";
 	try {
 		render(<CatalogDemo />);
-		const title = screen.getByRole("textbox", { name: "Название релиза" });
-		fireEvent.change(title, { target: { value: "Draft that must survive" } });
-		fireEvent.click(screen.getByRole("button", { name: "Создать демо-релиз" }));
-
-		const returnButton = screen.getByRole("button", {
-			name: "Вернуться к черновику",
-		});
-		fireEvent.click(returnButton);
-		expect(window.location.hash).toBe("#create-release");
 		expect(
-			await screen.findByRole("textbox", { name: "Название релиза" }),
-		).toHaveValue("Draft that must survive");
+			await screen.findByRole("heading", { name: "Собственный каталог" }),
+		).toBeInTheDocument();
+		expect(window.location.hash).toBe("#local");
 	} finally {
 		window.location.hash = previousHash;
 	}

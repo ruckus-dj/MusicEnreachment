@@ -23,10 +23,13 @@ import {
 	type IncomingReleases,
 	type IncomingState,
 } from "./incomingModel";
+import type { CatalogArtist } from "./catalogData";
 
 export type IncomingScreenProps = {
 	files?: IncomingFiles;
 	releases?: IncomingReleases;
+	providers?: IncomingReleases;
+	artists?: CatalogArtist[];
 	state?: IncomingState;
 	onState?: (state: IncomingState) => void;
 	onFiles?: (files: IncomingFiles) => void;
@@ -36,6 +39,8 @@ export type IncomingScreenProps = {
 export function IncomingScreen({
 	files: givenFiles,
 	releases: givenReleases,
+	providers: givenProviders,
+	artists = incomingFixtures.artists,
 	state: givenState,
 	onState,
 	onFiles,
@@ -51,21 +56,23 @@ export function IncomingScreen({
 	const state = givenState ?? localState;
 	const files = givenFiles ?? localFiles;
 	const releases = givenReleases ?? localReleases;
+	const providers = givenProviders ?? providerReleases;
 	const updateState = () => {
 		const next = structuredClone(state);
 		givenState ? onState?.(next) : setLocalState(next);
 	};
 	const groups = state.groups;
 	const rows = groups.map((group) => {
-		const target = findTarget(group, releases);
-		const assignments = getDraft(group, files, providerReleases, releases);
+		const target = findTarget(group, releases, providers);
+		const assignments = getDraft(group, files, providers, releases);
 		const used = new Set(
 			Object.values(assignments).flatMap((assignment) => assignment.sourceIds),
 		);
 		const published = releases.find((release) =>
 			group.mode === "local"
 				? release.id === group.releaseId
-				: release.providerId === target?.id,
+				: release.providerId === target?.id ||
+					release.providerId === target?.providerId,
 		);
 		const publishedCount =
 			published?.tracks.filter((track) => Boolean(track.published)).length ?? 0;
@@ -84,7 +91,8 @@ export function IncomingScreen({
 			state,
 			files,
 			nextReleases,
-			providerReleases,
+			providers,
+			artists,
 		);
 		state.notice = count
 			? `Демо: автоматически опубликовано ${count} позиций Small Hours. Неполные группы остались в ручном разборе. Файловые операции не выполнялись.`
@@ -198,7 +206,7 @@ export function IncomingScreen({
 											<span className="incoming-entity-copy">
 												<Link href={`#match/${group.id}`}>{group.title}</Link>
 												<span className="incoming-sub">
-													{artistName(group.artistId)}
+													{artistName(group.artistId, artists)}
 												</span>
 												<code className="incoming-path">
 													/mnt/inbox/{group.id}

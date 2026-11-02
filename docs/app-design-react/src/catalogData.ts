@@ -46,6 +46,7 @@ export interface OriginalRelease {
 	catalog: string;
 	label: string;
 	providerId: string | null;
+	provider?: string;
 	manual?: boolean;
 	credits?: {
 		credit?: string;
@@ -184,17 +185,22 @@ export function desiredTags(
 		],
 		DISCNUMBER: [String(track.medium ?? 1)],
 		GENRE: track.recordingGenres ?? [],
-		MUSICBRAINZ_ARTISTID: release.manual
-			? []
-			: artist
-				? [`demo-artist-${artist.id}`]
-				: [],
-		MUSICBRAINZ_ALBUMID: release.providerId ? [release.providerId] : [],
-		MUSICBRAINZ_TRACKID: release.manual
-			? []
-			: track.recordingId
-				? [track.recordingId]
-				: [],
+		MUSICBRAINZ_ARTISTID:
+			release.manual || release.provider === "Local"
+				? []
+				: artist
+					? [`demo-artist-${artist.id}`]
+					: [],
+		MUSICBRAINZ_ALBUMID:
+			release.manual || release.provider === "Local" || !release.providerId
+				? []
+				: [release.providerId],
+		MUSICBRAINZ_TRACKID:
+			release.manual || release.provider === "Local"
+				? []
+				: track.recordingId
+					? [track.recordingId]
+					: [],
 		COMMENT: [],
 	};
 }

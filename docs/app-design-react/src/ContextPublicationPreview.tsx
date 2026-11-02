@@ -16,6 +16,7 @@ export function ContextPublicationPreview({
 	plan,
 	files,
 	releases,
+	providers,
 	artists,
 	inventoryVersion,
 	confirmDowngrade,
@@ -27,6 +28,7 @@ export function ContextPublicationPreview({
 	plan: IncomingPlan | null;
 	files: IncomingFiles;
 	releases: IncomingReleases;
+	providers: IncomingReleases;
 	artists: CatalogArtist[];
 	inventoryVersion: number;
 	confirmDowngrade: boolean;
@@ -46,7 +48,7 @@ export function ContextPublicationPreview({
 			</section>
 		);
 
-	const rows = planRows(plan, files, releases, undefined, artists);
+	const rows = planRows(plan, files, releases, providers, artists);
 	const active = rows.filter((row) => row.assignment?.included && row.file);
 	const changed = active.filter((row) => row.action !== "Без изменений");
 	const downgrades = changed.filter((row) => row.downgrade);
@@ -91,7 +93,7 @@ export function ContextPublicationPreview({
 		}
 		if (!canConfirm) return;
 		const next = structuredClone(releases);
-		const applied = applyPlan(plan, files, next, undefined, false, artists);
+		const applied = applyPlan(plan, files, next, providers, false, artists);
 		onReleases(next);
 		onPlan(null, false);
 		onSuccess(

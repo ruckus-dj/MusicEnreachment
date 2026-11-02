@@ -19,9 +19,11 @@ import { Input, SearchField } from "./ui";
 import {
 	catalogData,
 	originalReleases,
+	originalProviders,
 	applyMetadataPreview,
 	originalFiles,
 	type CatalogArtist,
+	type OriginalRelease,
 } from "./catalogData";
 import { PublicationPreview } from "./PublicationPreview";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
@@ -44,7 +46,10 @@ import { IncomingScreen } from "./IncomingScreen";
 import { MatchingScreen } from "./MatchingScreen";
 import { createIncomingState, makeReleasePlan } from "./incomingModel";
 import { LocalProviderScreen } from "./LocalProviderScreen";
-import { createLocalProviderState } from "./localProviderModel";
+import {
+	createLocalProviderState,
+	localProviderReleases,
+} from "./localProviderModel";
 import { ArtistScreen } from "./ArtistScreen";
 import { TagsScreen } from "./TagsScreen";
 import { ComponentsScreen } from "./ComponentsScreen";
@@ -56,14 +61,8 @@ import {
 	normalizeCatalogSearch,
 	trackSearchText,
 } from "./catalogViewModel";
-import { ManualReleaseScreen } from "./ManualReleaseScreen";
 import { LibraryCatalogRows } from "./LibraryCatalogRows";
 import "./catalogue-shell.css";
-import {
-	createManualRelease,
-	createManualReleaseDemoDraft,
-	type ManualReleaseDraft,
-} from "./manualReleaseModel";
 
 const subscribeRoute = (listener: () => void) => {
 	window.addEventListener("hashchange", listener);
@@ -144,7 +143,11 @@ export function CatalogDemo({
 		subscribeRoute,
 		() => {
 			const hash = window.location.hash.slice(1);
-			return hash === "publication-list" ? "library" : hash;
+			return hash === "publication-list"
+				? "library"
+				: hash === "create-release"
+					? "local"
+					: hash;
 		},
 		() => "library",
 	);
@@ -154,10 +157,55 @@ export function CatalogDemo({
 	const [artists, setArtists] = useState<CatalogArtist[]>(() =>
 		structuredClone(catalogData.artists),
 	);
-	const [manualDraft, setManualDraft] = useState<ManualReleaseDraft>(
-		createManualReleaseDemoDraft,
-	);
-	const [manualReleaseCount, setManualReleaseCount] = useState(0);
+	const providers = [
+		...originalProviders,
+		...localProviderReleases(localProvider),
+	];
+	const providerArtists = [
+		...artists,
+		...localProvider.items.artists
+			.filter((artist) => artist.provider === "Local")
+			.map((artist) => ({
+				id: artist.id,
+				name: artist.name ?? "",
+				genre: "Локальный каталог",
+				color: "slate",
+			})),
+	];
+	useEffect(() => {
+		if (window.location.hash === "#create-release")
+			window.location.hash = "local";
+	}, [route]);
+	const setImportedReleases = (nextReleases: OriginalRelease[]) => {
+		const localProviderKeys = new Set(
+			providers
+				.filter((release) => release.provider === "Local")
+				.map((release) => release.providerId ?? release.id),
+		);
+		const importedArtistIds = new Set(
+			nextReleases
+				.filter(
+					(release) =>
+						release.providerId && localProviderKeys.has(release.providerId),
+				)
+				.flatMap((release) => [
+					release.artistId,
+					...(release.credits ?? []).map((credit) => credit.artistId ?? null),
+					...release.tracks.map((track) => track.artistId),
+				])
+				.filter((id): id is string => Boolean(id)),
+		);
+		setArtists((current) => {
+			const known = new Set(current.map((artist) => artist.id));
+			return [
+				...current,
+				...providerArtists.filter(
+					(artist) => importedArtistIds.has(artist.id) && !known.has(artist.id),
+				),
+			];
+		});
+		setReleases(nextReleases);
+	};
 	const fixture = {
 		...catalogData,
 		artists,
@@ -327,7 +375,8 @@ export function CatalogDemo({
 					plan={incoming.plan}
 					files={files}
 					releases={releases}
-					artists={artists}
+					providers={providers}
+					artists={providerArtists}
 					inventoryVersion={incoming.inventoryVersion}
 					confirmDowngrade={incoming.confirmDowngrade}
 					onPlan={(plan, confirmDowngrade) =>
@@ -337,7 +386,7 @@ export function CatalogDemo({
 							confirmDowngrade: confirmDowngrade ?? current.confirmDowngrade,
 						}))
 					}
-					onReleases={setReleases}
+					onReleases={setImportedReleases}
 					onSuccess={(notice) => {
 						setIncoming((current) => ({ ...current, notice }));
 						window.location.hash = "review";
@@ -437,13 +486,6 @@ export function CatalogDemo({
 					selected={selected}
 					onSelect={update}
 					onPreview={() => openContextPublication(release)}
-					onReturnToDraft={
-						release.manual
-							? () => {
-									window.location.hash = "create-release";
-								}
-							: undefined
-					}
 				/>
 			</main>
 		);
@@ -508,33 +550,24 @@ export function CatalogDemo({
 			</main>
 		);
 	}
-	if (route === "create-release")
-		return (
-			<main className="demo-shell">
-				<ManualReleaseScreen
-					draft={manualDraft}
-					artists={artists}
-					onDraft={setManualDraft}
-					onReset={() => setManualDraft(createManualReleaseDemoDraft())}
-					onCreate={() => {
-						const next = createManualRelease(
-							manualDraft,
-							manualReleaseCount + 1,
-							artists,
-						);
-						setArtists(next.artists);
-						setReleases((previous) => [...previous, next.release]);
-						setManualReleaseCount((count) => count + 1);
-						window.location.hash = `release/${next.release.id}`;
-					}}
-				/>
-			</main>
-		);
 	if (route === "local")
 		return (
 			<LocalProviderScreen
 				state={localProvider}
 				onState={setLocalProvider}
+				onMatchRelease={(release) => {
+					const next = structuredClone(incoming);
+					const group = next.groups.find((item) => item.id === next.groupId);
+					if (!group) return;
+					group.mode = "provider";
+					group.candidateId = release.id;
+					next.groupId = group.id;
+					next.selectedTarget = null;
+					next.plan = null;
+					next.notice = `Выбрана запись Local «${release.title ?? release.release_group_title ?? ""}» для сопоставления входящих.`;
+					setIncoming(next);
+					window.location.hash = `match/${group.id}`;
+				}}
 				genresLoaded={settings.genresLoaded}
 			/>
 		);
@@ -544,8 +577,10 @@ export function CatalogDemo({
 				state={incoming}
 				onState={setIncoming}
 				files={files}
+				providers={providers}
+				artists={providerArtists}
 				releases={releases}
-				onReleases={setReleases}
+				onReleases={setImportedReleases}
 			/>
 		);
 	if (route.startsWith("match/"))
@@ -555,8 +590,10 @@ export function CatalogDemo({
 				state={incoming}
 				onState={setIncoming}
 				files={files}
+				providers={providers}
+				artists={providerArtists}
 				releases={releases}
-				onReleases={setReleases}
+				onReleases={setImportedReleases}
 			/>
 		);
 	if (route === "settings")
@@ -698,13 +735,7 @@ export function CatalogDemo({
 	return (
 		<main className="demo-shell catalogue-shell">
 			<header>
-				<p className="demo-eyebrow">MeloTrove · стенд в разработке</p>
 				<h1>{artistId ? artistName(artistId) : "Медиатека"}</h1>
-				<p>Демонстрационные данные</p>
-				<a href="#create-release">Создать локальный релиз</a>
-				{!new URLSearchParams(window.location.search).has("embedded") && (
-					<a href="/compare">Сравнить со старым прототипом</a>
-				)}
 				{artistId && (
 					<Button
 						onPress={() => {

@@ -18,7 +18,7 @@ import {
 	Tabs,
 	TextField,
 } from "./ui";
-import type { OriginalTrack } from "./catalogData";
+import type { CatalogArtist, OriginalTrack } from "./catalogData";
 import {
 	applyPlan,
 	artistName,
@@ -49,6 +49,8 @@ export type MatchingScreenProps = {
 	groupId?: string;
 	files?: IncomingFiles;
 	releases?: IncomingReleases;
+	providers?: IncomingReleases;
+	artists?: CatalogArtist[];
 	state?: IncomingState;
 	onState?: (state: IncomingState) => void;
 	onReleases?: (releases: IncomingReleases) => void;
@@ -64,6 +66,8 @@ export function MatchingScreen({
 	groupId,
 	files: givenFiles,
 	releases: givenReleases,
+	providers: givenProviders,
+	artists: givenArtists,
 	state: givenState,
 	onState,
 	onReleases,
@@ -78,6 +82,8 @@ export function MatchingScreen({
 	const state = givenState ?? localState;
 	const files = givenFiles ?? incomingFixtures.files;
 	const releases = givenReleases ?? localReleases;
+	const providers = givenProviders ?? providerReleases;
+	const artists = givenArtists ?? incomingFixtures.artists;
 	const activeGroupId = groupId ?? state.groupId;
 	const group = state.groups.find((item) => item.id === activeGroupId);
 	if (!group)
@@ -88,7 +94,7 @@ export function MatchingScreen({
 			</main>
 		);
 	state.groupId = group.id;
-	const target = findTarget(group, releases);
+	const target = findTarget(group, releases, providers);
 	if (!target)
 		return (
 			<main className="demo-shell">
@@ -97,7 +103,7 @@ export function MatchingScreen({
 			</main>
 		);
 	const tracks = target.tracks;
-	const assignments = getDraft(group, files, providerReleases, releases);
+	const assignments = getDraft(group, files, providers, releases);
 	const commitState = () => {
 		const next = structuredClone(state);
 		givenState ? onState?.(next) : setLocalState(next);
@@ -118,11 +124,18 @@ export function MatchingScreen({
 	const assignment = assignments[String(inspected?.id)];
 	const sourceIdsForTrack = sourceIds(assignment);
 	const selectedFile = files[selectedSourceId(assignment) ?? ""];
-	const providerTrack = findProviderTrack(assignment?.providerTrackId ?? null);
+	const providerTrack = findProviderTrack(
+		assignment?.providerTrackId ?? null,
+		providers,
+	);
 	const existingRelease =
 		group.mode === "local"
 			? releases.find((release) => release.id === group.releaseId)
-			: releases.find((release) => release.providerId === target.id);
+			: releases.find(
+					(release) =>
+						release.providerId === target.id ||
+						release.providerId === target.providerId,
+				);
 	const localTrack = existingRelease?.tracks.find(
 		(track) => track.position === inspected?.position,
 	);
@@ -132,18 +145,18 @@ export function MatchingScreen({
 	const pool = group.fileIds.filter(
 		(id) => files[id]?.available && !used.has(id),
 	);
-	const candidateList = providerReleases.filter((release) => {
+	const candidateList = providers.filter((release) => {
 		const query = normalized(providerQuery || target.title);
 		return query
 			.split(" ")
 			.filter(Boolean)
 			.every((term) =>
 				normalized(
-					`${release.title} ${artistName(String(release.artistId))} ${release.catalog} ${release.id} ${release.year}`,
+					`${release.title} ${artistName(String(release.artistId), artists)} ${release.catalog} ${release.id} ${release.year}`,
 				).includes(term),
 			);
 	});
-	const allProviderTracks = providerReleases.flatMap((release) =>
+	const allProviderTracks = providers.flatMap((release) =>
 		release.tracks.map((track) => ({ release, track })),
 	);
 	const matchingRecordings = (state.recordingResults ?? []).filter(
@@ -154,7 +167,7 @@ export function MatchingScreen({
 				.filter(Boolean)
 				.every((term) =>
 					normalized(
-						`${track.title} ${artistName(String(track.artistId))} ${release.title}`,
+						`${track.title} ${artistName(String(track.artistId), artists)} ${release.title}`,
 					).includes(term),
 				);
 		},
@@ -167,7 +180,14 @@ export function MatchingScreen({
 		commitState();
 	};
 	const addSource = (fileId: string, trackId: string) => {
-		const didAssign = assignFile(group, trackId, fileId, files, releases);
+		const didAssign = assignFile(
+			group,
+			trackId,
+			fileId,
+			files,
+			releases,
+			providers,
+		);
 		state.selectedFile = null;
 		state.selectedTarget = trackId;
 		state.notice = didAssign
@@ -214,7 +234,9 @@ export function MatchingScreen({
 		commitState();
 	};
 	const preview = state.plan?.groupId === group.id ? state.plan : null;
-	const previewRows = preview ? planRows(preview, files, releases) : [];
+	const previewRows = preview
+		? planRows(preview, files, releases, providers, artists)
+		: [];
 	const activeRows = previewRows.filter(
 		(row) => row.assignment?.included && row.file,
 	);
@@ -244,7 +266,14 @@ export function MatchingScreen({
 			return;
 		}
 		const nextReleases = structuredClone(releases);
-		const changed = applyPlan(preview, files, nextReleases);
+		const changed = applyPlan(
+			preview,
+			files,
+			nextReleases,
+			providers,
+			false,
+			artists,
+		);
 		state.notice = changed
 			? `Демо: ${changed} позиций опубликовано.${linkedRows.length ? ` Связи ${linkedRows.length} позиций сохранены.` : ""} Невыбранные позиции и неразмеченные файлы не изменены.`
 			: `Демо: связи ${linkedRows.length} позиций сохранены. Аудиофайлы и публикации не изменены.`;
@@ -256,13 +285,13 @@ export function MatchingScreen({
 	const tagFields = tagFieldGroups()[state.tagScope];
 	const sourceTags = selectedFile?.tags ?? {};
 	const remoteTags = providerTrack
-		? providerTags(providerTrack.release, providerTrack.track)
+		? providerTags(providerTrack.release, providerTrack.track, artists)
 		: {};
 	const localTags =
 		existingRelease && localTrack
-			? providerTags(existingRelease, localTrack)
+			? providerTags(existingRelease, localTrack, artists)
 			: group.mode === "local"
-				? providerTags(target, inspected)
+				? providerTags(target, inspected, artists)
 				: {};
 	const publication = localTrack?.published ?? undefined;
 	const publicationTags = publication?.tags ?? {};
@@ -380,7 +409,7 @@ export function MatchingScreen({
 							<Button type="submit">Найти</Button>
 						</div>
 					</form>
-					<p>Локальные демонстрационные данные MusicBrainz, не реальный API.</p>
+					<p>Кандидаты MusicBrainz и записи собственного каталога.</p>
 					<div className="candidate-list">
 						{candidateList.map((candidate) => (
 							<Button
@@ -394,8 +423,9 @@ export function MatchingScreen({
 							>
 								<strong>{String(candidate.title)}</strong>
 								<span>
-									{artistName(String(candidate.artistId))} ·{" "}
-									{String(candidate.year)} · {String(candidate.country)}
+									{candidate.credits?.[0]?.name ||
+										artistName(String(candidate.artistId), artists)}{" "}
+									· {String(candidate.year)} · {String(candidate.country)}
 								</span>
 								<span>
 									{candidate.tracks.length} позиций ·{" "}
@@ -405,6 +435,12 @@ export function MatchingScreen({
 							</Button>
 						))}
 					</div>
+					{candidateList.length === 0 && (
+						<p>
+							Не нашли нужную запись?{" "}
+							<a href="#local">Создать запись в собственном каталоге</a>
+						</p>
+					)}
 					<Button
 						className="demo-button"
 						aria-pressed={group.mode === "local"}
@@ -445,7 +481,10 @@ export function MatchingScreen({
 									const file = files[currentId ?? ""];
 									const bound =
 										group.mode === "local"
-											? findProviderTrack(item?.providerTrackId ?? null)
+											? findProviderTrack(
+													item?.providerTrackId ?? null,
+													providers,
+												)
 											: null;
 									return (
 										<tr
@@ -488,7 +527,7 @@ export function MatchingScreen({
 													{String(track.title)}
 												</Button>
 												<span className="incoming-sub">
-													{artistName(String(track.artistId))}
+													{artistName(String(track.artistId), artists)}
 													{group.mode === "local"
 														? ` · ${bound?.release.title ?? "Без связи с провайдером"}`
 														: ""}
@@ -735,6 +774,7 @@ export function MatchingScreen({
 								file={selectedFile}
 								track={inspected}
 								assignment={assignment}
+								providerArtists={artists}
 							/>
 						</TabPanel>
 					)}
@@ -926,10 +966,12 @@ function Evidence({
 	file,
 	track,
 	assignment,
+	providerArtists,
 }: {
 	file?: SourceFile;
 	track: OriginalTrack;
 	assignment?: Assignment;
+	providerArtists: CatalogArtist[];
 }) {
 	if (!file)
 		return <p>Выберите строку и файл: здесь будут сравнения признаков.</p>;
@@ -971,8 +1013,13 @@ function Evidence({
 						<tr>
 							<th>Артист</th>
 							<td>{rawArtist}</td>
-							<td>{artistName(String(track.artistId))}</td>
-							<td>{compare(rawArtist, artistName(String(track.artistId)))}</td>
+							<td>{artistName(String(track.artistId), providerArtists)}</td>
+							<td>
+								{compare(
+									rawArtist,
+									artistName(String(track.artistId), providerArtists),
+								)}
+							</td>
 							<td>Не моделируется</td>
 						</tr>
 						<tr>

@@ -72,9 +72,12 @@ export const incomingFixtures = {
 	releases: originalReleases,
 	providerReleases: originalProviders,
 };
-export const artistName = (artistId: string) =>
+export const artistName = (
+	artistId: string,
+	artists: CatalogArtist[] = fixtures.artists,
+) =>
 	String(
-		fixtures.artists.find((artist) => artist.id === artistId)?.name ??
+		artists.find((artist) => artist.id === artistId)?.name ??
 			"Артист не указан",
 	);
 export const providerReleases: IncomingReleases = originalProviders;
@@ -188,12 +191,13 @@ export function assignFile(
 	fileId: string,
 	files: IncomingFiles,
 	releases: IncomingReleases = originalReleases,
+	providers: IncomingReleases = providerReleases,
 ) {
 	if (!group.fileIds.includes(fileId) || !usableFile(files[fileId]))
 		return false;
-	const target = findTarget(group, releases);
+	const target = findTarget(group, releases, providers);
 	if (!target?.tracks.some((track) => track.id === targetId)) return false;
-	const assignments = getDraft(group, files, providerReleases, releases);
+	const assignments = getDraft(group, files, providers, releases);
 	const old = assignments[targetId];
 	if (sourceIds(old).includes(fileId)) return false;
 	const assignment = old ?? {
@@ -316,7 +320,9 @@ export function makeGroupPlan(
 	const local =
 		group.mode === "local"
 			? target
-			: releases.find((release) => release.providerId === target.id);
+			: releases.find(
+					(release) => release.providerId === (target.providerId ?? target.id),
+				);
 	return {
 		mode: group.mode,
 		groupId: group.id,
@@ -439,7 +445,10 @@ export function applyPlan(
 		release = {
 			...structuredClone(plan.target),
 			id: `import-${plan.target.id}`,
-			providerId: plan.mode === "provider" ? plan.target.id : null,
+			providerId:
+				plan.mode === "provider"
+					? (plan.target.providerId ?? plan.target.id)
+					: null,
 			tracks: plan.target.tracks.map((track) => ({
 				...track,
 				id: `import-${plan.target.id}-t${track.position}`,
@@ -525,6 +534,7 @@ export function runAutomaticMatching(
 	files: IncomingFiles,
 	releases: IncomingReleases,
 	providers: IncomingReleases = providerReleases,
+	artists?: CatalogArtist[],
 ) {
 	let count = 0;
 	for (const group of state.groups) {
@@ -553,7 +563,7 @@ export function runAutomaticMatching(
 			continue;
 		const plan = makeGroupPlan(state, group, files, releases, providers);
 		if (!plan) continue;
-		count += applyPlan(plan, files, releases, providers, true);
+		count += applyPlan(plan, files, releases, providers, true, artists);
 		group.processed = true;
 	}
 	return count;
