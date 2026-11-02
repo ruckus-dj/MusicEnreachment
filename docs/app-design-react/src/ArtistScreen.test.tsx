@@ -115,8 +115,7 @@ it("emphasizes rows for active availability and publication filters together", (
 			artists={catalogData.artists}
 			releases={originalReleases}
 			files={originalFiles}
-			availability="available"
-			publication="all"
+			filter="available"
 		/>,
 	);
 	expandAlbum(release);
@@ -131,15 +130,19 @@ it("emphasizes rows for active availability and publication filters together", (
 	expect(rowForPublished).toHaveClass("filter-match");
 	expect(rowForUnpublished).toHaveClass("filter-match");
 	expect(rowForMissing).toHaveClass("filter-muted");
-	expect(screen.getByRole("radio", { name: "В наличии" })).toBeChecked();
+	expect(
+		within(screen.getByRole("radiogroup", { name: "Состояние" })).getByRole(
+			"radio",
+			{ name: "В наличии" },
+		),
+	).toBeChecked();
 	rerender(
 		<ArtistScreen
 			artistId={release.artistId ?? ""}
 			artists={catalogData.artists}
 			releases={originalReleases}
 			files={originalFiles}
-			availability="all"
-			publication="published"
+			filter="published"
 		/>,
 	);
 	expect(rowFor(availablePublishedID)).toHaveClass("filter-match");
@@ -151,14 +154,13 @@ it("emphasizes rows for active availability and publication filters together", (
 			artists={catalogData.artists}
 			releases={originalReleases}
 			files={originalFiles}
-			availability="available"
-			publication="published"
+			filter="published"
 		/>,
 	);
 	expect(
-		within(screen.getByRole("radiogroup", { name: "Публикация" })).getByRole(
+		within(screen.getByRole("radiogroup", { name: "Состояние" })).getByRole(
 			"radio",
-			{ name: "Есть" },
+			{ name: "Опубликовано" },
 		),
 	).toBeChecked();
 	expect(rowFor(availablePublishedID)).toHaveClass("filter-match");
@@ -167,7 +169,7 @@ it("emphasizes rows for active availability and publication filters together", (
 	expect(screen.queryByText(/По фильтру|Вне фильтра/)).not.toBeInTheDocument();
 });
 
-it("keeps artist availability and publication filters independently selectable", () => {
+it("reports changes through the unified artist filter and retains collapsed albums", () => {
 	const artist = catalogData.artists.find((item) => item.id === "mira");
 	if (!artist) throw new Error("Missing artist fixture");
 	const artistRelease = originalReleases.find(
@@ -177,8 +179,7 @@ it("keeps artist availability and publication filters independently selectable",
 	);
 	if (!artistRelease || artistRelease.tracks.length < 2)
 		throw new Error("Missing multi-track artist release fixture");
-	const onAvailabilityChange = vi.fn();
-	const onPublicationChange = vi.fn();
+	const onFilterChange = vi.fn();
 	const { container } = render(
 		<ArtistScreen
 			artistId={artist.id}
@@ -186,19 +187,18 @@ it("keeps artist availability and publication filters independently selectable",
 			releases={originalReleases}
 			files={originalFiles}
 			selected={new Set([artistRelease.tracks[0].id])}
-			onAvailabilityChange={onAvailabilityChange}
-			onPublicationChange={onPublicationChange}
+			onFilterChange={onFilterChange}
 		/>,
 	);
-	fireEvent.click(screen.getByRole("radio", { name: "Не хватает" }));
+	const filterGroup = screen.getByRole("radiogroup", { name: "Состояние" });
 	fireEvent.click(
-		within(screen.getByRole("radiogroup", { name: "Публикация" })).getByRole(
-			"radio",
-			{ name: "Есть" },
-		),
+		within(filterGroup).getByRole("radio", { name: "Не хватает" }),
 	);
-	expect(onAvailabilityChange).toHaveBeenCalledWith("missing");
-	expect(onPublicationChange).toHaveBeenCalledWith("published");
+	fireEvent.click(
+		within(filterGroup).getByRole("radio", { name: "Опубликовано" }),
+	);
+	expect(onFilterChange).toHaveBeenNthCalledWith(1, "missing");
+	expect(onFilterChange).toHaveBeenNthCalledWith(2, "published");
 	const albumCheckbox = screen.getAllByRole("checkbox", {
 		name: `Выбрать все позиции альбома ${artistRelease.title}`,
 	})[0];

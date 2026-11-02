@@ -43,14 +43,14 @@ it("keeps nested selection consistent when an album is partially deselected", ()
 	).toBePartiallyChecked();
 });
 
-it("includes a partially available album in both availability filters", () => {
+it("uses the shared filter to include partially matching albums", () => {
 	render(<CatalogDemo />);
 	fireEvent.click(screen.getByRole("tab", { name: "Все альбомы" }));
-	selectOption(/Наличие/, "В наличии");
+	selectOption(/Состояние/, "В наличии");
 	expect(
 		screen.getAllByRole("button", { name: "Northern Lines" }),
 	).toHaveLength(2);
-	selectOption(/Наличие/, "Не хватает");
+	selectOption(/Состояние/, "Не хватает");
 	expect(
 		screen.getAllByRole("button", { name: "Northern Lines" }),
 	).toHaveLength(2);
@@ -59,28 +59,46 @@ it("includes a partially available album in both availability filters", () => {
 	).not.toBeInTheDocument();
 });
 
-it("renders independent keyboard-operable radio segments for both filters", () => {
+it("renders one keyboard-operable four-option filter radio group", () => {
 	render(<CatalogDemo />);
-	const availability = screen.getByRole("radiogroup", { name: "Наличие" });
-	const publication = screen.getByRole("radiogroup", { name: "Публикация" });
-	const allAvailability = within(availability).getByRole("radio", {
-		name: "Все",
-	});
-	const available = within(availability).getByRole("radio", {
-		name: "В наличии",
-	});
-	const published = within(publication).getByRole("radio", {
-		name: "Есть",
-	});
+	const group = screen.getByRole("radiogroup", { name: "Состояние" });
+	const labels = ["Все", "Не хватает", "В наличии", "Опубликовано"];
+	const radios = labels.map((name) =>
+		within(group).getByRole("radio", { name }),
+	);
+	expect(screen.getAllByRole("radiogroup")).toHaveLength(1);
+	expect(radios[0]).toBeChecked();
+	radios[0].focus();
+	fireEvent.keyDown(radios[0], { key: "ArrowRight" });
+	expect(radios[1]).toBeChecked();
+	fireEvent.keyDown(radios[1], { key: "ArrowRight" });
+	expect(radios[2]).toBeChecked();
+	fireEvent.keyDown(radios[2], { key: "ArrowRight" });
+	expect(radios[3]).toBeChecked();
+});
 
-	expect(allAvailability).toBeChecked();
-	expect(within(publication).getByRole("radio", { name: "Все" })).toBeChecked();
-	allAvailability.focus();
-	fireEvent.keyDown(allAvailability, { key: "ArrowRight" });
-	expect(available).toBeChecked();
-	fireEvent.click(published);
-	expect(published).toBeChecked();
-	expect(available).toBeChecked();
+it("retains the selected filter when navigating between library and artist", async () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "library";
+	try {
+		render(<CatalogDemo />);
+		selectOption(/Состояние/, "Опубликовано");
+		fireEvent.click(screen.getByRole("link", { name: /Mira Vale/ }));
+		await screen.findByRole("heading", { name: "Mira Vale" });
+		const group = screen.getByRole("radiogroup", { name: "Состояние" });
+		expect(
+			within(group).getByRole("radio", { name: "Опубликовано" }),
+		).toBeChecked();
+		fireEvent.click(screen.getByRole("link", { name: "К медиатеке" }));
+		await screen.findByRole("tab", { name: "Артисты" });
+		const libraryGroup = screen.getByRole("radiogroup", { name: "Состояние" });
+		expect(
+			within(libraryGroup).getByRole("radio", { name: "Опубликовано" }),
+		).toBeChecked();
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
+	}
 });
 
 it("shows artist cards with a separate aggregate checkbox and real artist link", () => {

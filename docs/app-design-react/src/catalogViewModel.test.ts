@@ -69,18 +69,10 @@ it("includes missing-only artists for the original filters and excludes represen
 		artists,
 		"Hidden Song",
 		"all",
-		"all",
 	);
 	expect(visible).toEqual([missingGroup]);
 	expect(
-		missingCatalogGroups(
-			[missingGroup],
-			[],
-			artists,
-			"",
-			"missing",
-			"unpublished",
-		),
+		missingCatalogGroups([missingGroup], [], artists, "", "missing"),
 	).toEqual([missingGroup]);
 	expect(
 		catalogArtistMatches(
@@ -88,7 +80,6 @@ it("includes missing-only artists for the original filters and excludes represen
 			[],
 			visible,
 			"Hidden Song",
-			"all",
 			"all",
 			() => false,
 		),
@@ -100,15 +91,42 @@ it("includes missing-only artists for the original filters and excludes represen
 			artists,
 			"",
 			"all",
-			"all",
 		),
 	).toEqual([]);
 	expect(
-		missingCatalogGroups([missingGroup], [], artists, "", "available", "all"),
+		missingCatalogGroups([missingGroup], [], artists, "", "available"),
 	).toEqual([]);
 	expect(
-		missingCatalogGroups([missingGroup], [], artists, "", "all", "published"),
+		missingCatalogGroups([missingGroup], [], artists, "", "published"),
 	).toEqual([]);
+});
+
+it("matches library artists by unified availability and publication state", () => {
+	const mixed = release({
+		tracks: [
+			{ ...track("available-published"), published: true },
+			{ ...track("unavailable-unpublished"), published: false },
+		],
+	});
+	const hasAudio = (item: CatalogTrack) => item.id === "available-published";
+	for (const filter of ["all", "available", "published"] as const) {
+		expect(
+			catalogArtistMatches(artists[0], [mixed], [], "Lead", filter, hasAudio),
+		).toBe(true);
+	}
+	expect(
+		catalogArtistMatches(artists[0], [mixed], [], "Lead", "missing", hasAudio),
+	).toBe(true);
+	expect(
+		catalogArtistMatches(
+			artists[0],
+			[mixed],
+			[],
+			"Lead",
+			"available",
+			() => false,
+		),
+	).toBe(false);
 });
 
 it("searches normalized artist, credit, track, and complete absent-edition metadata", () => {
@@ -124,7 +142,6 @@ it("searches normalized artist, credit, track, and complete absent-edition metad
 			[guestRelease],
 			[],
 			"jazz",
-			"all",
 			"all",
 			() => false,
 		),
@@ -153,7 +170,7 @@ it("searches normalized artist, credit, track, and complete absent-edition metad
 		"hidden song",
 	]) {
 		expect(
-			missingCatalogGroups([missingGroup], [], artists, query, "all", "all"),
+			missingCatalogGroups([missingGroup], [], artists, query, "all"),
 		).toEqual([missingGroup]);
 	}
 	expect(normalizeCatalogSearch("  Ｇｕｅｓｔ\t Artist ")).toBe("guest artist");

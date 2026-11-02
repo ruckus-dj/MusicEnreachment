@@ -11,17 +11,13 @@ import {
 } from "./catalogData";
 import { ReleaseMetadataComparison } from "./ReleaseMetadataComparison";
 import { Button, Checkbox } from "./ui";
-import {
-	availabilityRowClass,
-	type AvailabilityFilter,
-} from "./availabilityRows";
+import { availabilityRowClass, type CatalogFilter } from "./availabilityRows";
 
 export function ReleaseScreen({
 	release,
 	artists,
 	files = originalFiles,
-	availability = "all",
-	publication = "all",
+	filter = "all",
 	selected,
 	onSelect,
 	onPreview,
@@ -30,8 +26,7 @@ export function ReleaseScreen({
 	release: OriginalRelease;
 	artists?: CatalogArtist[];
 	files?: SourceFiles;
-	availability?: AvailabilityFilter;
-	publication?: "all" | "published" | "unpublished";
+	filter?: CatalogFilter;
 	selected: Set<string>;
 	onSelect: (ids: string[], value: boolean) => void;
 	onPreview: (ids: string[]) => void;
@@ -151,12 +146,7 @@ export function ReleaseScreen({
 							{release.tracks.map((track) => (
 								<tr
 									key={track.id}
-									className={availabilityRowClass(
-										track,
-										availability,
-										hasAudio,
-										publication,
-									)}
+									className={availabilityRowClass(track, filter, hasAudio)}
 								>
 									<td>
 										<Checkbox

@@ -1,21 +1,18 @@
 import type { OriginalTrack } from "./catalogData";
 
-export type AvailabilityFilter = "all" | "available" | "missing";
-export type PublicationFilter = "all" | "published" | "unpublished";
+export type CatalogFilter = "all" | "missing" | "available" | "published";
 
 export function availabilityRowClass(
 	track: OriginalTrack,
-	availability: AvailabilityFilter,
+	filter: CatalogFilter,
 	hasAudio: (track: OriginalTrack) => boolean,
-	publication: PublicationFilter = "all",
 ) {
-	if (availability === "all" && publication === "all") return "";
-	const matchesAvailability =
-		availability === "all" ||
-		(availability === "available" ? hasAudio(track) : !hasAudio(track));
-	const matchesPublication =
-		publication === "all" ||
-		(publication === "published" ? Boolean(track.published) : !track.published);
-	const matches = matchesAvailability && matchesPublication;
+	if (filter === "all") return "";
+	const matches =
+		filter === "published"
+			? Boolean(track.published)
+			: filter === "available"
+				? hasAudio(track)
+				: !hasAudio(track);
 	return matches ? "filter-match" : "filter-muted";
 }

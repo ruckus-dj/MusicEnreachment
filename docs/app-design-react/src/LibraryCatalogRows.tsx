@@ -10,10 +10,7 @@ import {
 	originalProviders,
 	trackNumberLabel,
 } from "./catalogData";
-import {
-	availabilityRowClass,
-	type AvailabilityFilter,
-} from "./availabilityRows";
+import { availabilityRowClass, type CatalogFilter } from "./availabilityRows";
 import {
 	Button,
 	Cell,
@@ -37,8 +34,7 @@ interface Props {
 	missingCounts: Map<string, number>;
 	hasAudio: (track: Release["tracks"][number]) => boolean;
 	files: SourceFiles;
-	availability?: AvailabilityFilter;
-	publication?: "all" | "published" | "unpublished";
+	filter?: CatalogFilter;
 	groupCheckbox: (ids: string[], label: string) => ReactNode;
 	expanded: string | null;
 	onToggleAlbum: (id: string) => void;
@@ -61,8 +57,7 @@ export function LibraryCatalogRows({
 	missingCounts,
 	hasAudio,
 	files,
-	availability = "all",
-	publication = "all",
+	filter = "all",
 	groupCheckbox,
 	expanded,
 	onToggleAlbum,
@@ -195,8 +190,7 @@ export function LibraryCatalogRows({
 							hasAudio,
 							files,
 							expanded,
-							availability,
-							publication,
+							filter,
 						]}
 						renderEmptyState={() => (
 							<div className="catalogue-empty">
@@ -271,9 +265,8 @@ export function LibraryCatalogRows({
 																	key={track.id}
 																	className={availabilityRowClass(
 																		track as OriginalTrack,
-																		availability,
+																		filter,
 																		hasAudio,
-																		publication,
 																	)}
 																>
 																	<td>
@@ -420,8 +413,7 @@ export function LibraryCatalogRows({
 							groupCheckbox,
 							hasAudio,
 							files,
-							availability,
-							publication,
+							filter,
 						]}
 						renderEmptyState={() => (
 							<div className="catalogue-empty">
@@ -443,9 +435,8 @@ export function LibraryCatalogRows({
 									id={track.id}
 									className={availabilityRowClass(
 										track as OriginalTrack,
-										availability,
+										filter,
 										hasAudio,
-										publication,
 									)}
 								>
 									<Cell>

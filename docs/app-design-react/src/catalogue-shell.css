@@ -18,7 +18,7 @@
 .catalogue-shell > header:first-child p { margin: 5px 0 0; color: var(--muted); }
 .catalogue-shell > header:first-child > a, .catalogue-shell > header:first-child > button { justify-self: end; }
 .catalogue-shell .catalogue-controls { margin: 0 0 12px; }
-.catalogue-panel-controls { display: grid; grid-template-columns: minmax(220px, 1.5fr) repeat(2, minmax(150px, .7fr)); gap: 12px; align-items: end; margin: 0 0 12px; }
+.catalogue-panel-controls { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(340px, 1fr); gap: 12px; align-items: end; margin: 0 0 12px; }
 .catalogue-tabs .react-aria-TabList { border: 0; gap: 3px; }
 .catalogue-tabs .react-aria-Tab { min-height: 36px; border: 1px solid transparent; border-radius: 4px; padding: 7px 11px; font-weight: 600; }
 .catalogue-tabs .react-aria-Tab[data-selected] { color: var(--accent); background: var(--surface); border-color: var(--line); box-shadow: 0 1px 2px #0001; }
@@ -173,10 +173,10 @@
 .catalogue-table .react-aria-Row.filter-match,
 .catalogue-object .demo-preview-table tr.filter-match,
 .catalogue-inline-tracks tr.filter-match {
-	background-image: linear-gradient(to left, color-mix(in srgb, var(--ink) 6%, transparent), transparent);
-	background-position: right top;
+	background-image: linear-gradient(to right, color-mix(in srgb, var(--accent) 4%, transparent), transparent);
+	background-position: left top;
 	background-repeat: no-repeat;
-	background-size: 18% 100%;
+	background-size: 9% 100%;
 }
 .catalogue-object .demo-preview-table tr.filter-muted > td,
 .catalogue-inline-tracks tr.filter-muted > td,
@@ -206,7 +206,7 @@
 .design-shell .design-rail a.ui-link:hover { background: var(--raised); }
 .design-shell .design-rail nav a[aria-current="page"] { color: var(--accent); }
 @media (max-width: 1100px) {
-	.catalogue-panel-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.catalogue-panel-controls { grid-template-columns: minmax(0, 1fr); }
 	.catalogue-object .demo-object-columns { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {

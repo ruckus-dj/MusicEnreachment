@@ -3,6 +3,7 @@ import type {
 	OriginalRelease,
 	OriginalTrack,
 } from "./catalogData";
+import type { CatalogFilter } from "./availabilityRows";
 
 export type CatalogTrack = Pick<OriginalTrack, "id" | "title" | "artistId"> & {
 	published: boolean;
@@ -10,9 +11,6 @@ export type CatalogTrack = Pick<OriginalTrack, "id" | "title" | "artistId"> & {
 export type CatalogRelease = Omit<OriginalRelease, "tracks"> & {
 	tracks: CatalogTrack[];
 };
-
-export type CatalogAvailability = "all" | "available" | "missing";
-export type CatalogPublication = "all" | "published" | "unpublished";
 
 export interface AbsentCatalogEdition {
 	id: string;
@@ -54,10 +52,9 @@ export function missingCatalogGroups(
 	releases: CatalogRelease[],
 	artists: CatalogArtist[],
 	query: string,
-	availability: CatalogAvailability,
-	publication: CatalogPublication,
+	filter: CatalogFilter,
 ) {
-	if (availability === "available" || publication === "published") return [];
+	if (filter !== "all" && filter !== "missing") return [];
 
 	const search = normalizeCatalogSearch(query);
 	return groups.filter((group) => {
@@ -88,24 +85,22 @@ export function catalogArtistMatches(
 	releases: CatalogRelease[],
 	missingGroups: AbsentCatalogGroup[],
 	query: string,
-	availability: CatalogAvailability,
-	publication: CatalogPublication,
+	filter: CatalogFilter,
 	hasAudio: (track: CatalogTrack) => boolean,
 ) {
 	const search = normalizeCatalogSearch(query);
 	const matchingRelease = artistReleases(releases, artist.id).some(
 		(release) => {
-			const publicationMatches =
-				publication === "all" ||
+			return (
+				filter === "all" ||
 				release.tracks.some((track) =>
-					publication === "published" ? track.published : !track.published,
-				);
-			const availabilityMatches =
-				availability === "all" ||
-				release.tracks.some((track) =>
-					availability === "available" ? hasAudio(track) : !hasAudio(track),
-				);
-			return publicationMatches && availabilityMatches;
+					filter === "published"
+						? Boolean(track.published)
+						: filter === "available"
+							? hasAudio(track)
+							: !hasAudio(track),
+				)
+			);
 		},
 	);
 	const hasMissingGroup = missingGroups.some(

@@ -9,12 +9,9 @@ import {
 	DisclosurePanel,
 	Heading,
 	Input,
-	Label,
 	ListBox,
 	ListBoxItem,
 	Popover,
-	Radio,
-	RadioGroup,
 	SearchField,
 	Select,
 	SelectValue,
@@ -32,11 +29,9 @@ import {
 } from "./catalogData";
 import {
 	availabilityRowClass,
-	type AvailabilityFilter,
+	type CatalogFilter as CatalogFilterValue,
 } from "./availabilityRows";
-
-type Availability = "all" | "available" | "missing";
-type Publication = "all" | "published" | "unpublished";
+import { CatalogFilter } from "./CatalogFilter";
 
 const releaseFields = (release: OriginalRelease) =>
 	release.credits?.some((credit) => credit.artistId) ?? false;
@@ -47,15 +42,13 @@ export function ArtistScreen({
 	releases,
 	files,
 	query: sharedQuery,
-	availability: sharedAvailability,
-	publication: sharedPublication,
+	filter: sharedFilter,
 	selected = new Set(),
 	onSelect,
 	onPreview,
 	onContextPreview,
 	onQueryChange,
-	onAvailabilityChange,
-	onPublicationChange,
+	onFilterChange,
 	onDeleteArtist,
 	onQueueDeletion,
 }: {
@@ -64,36 +57,27 @@ export function ArtistScreen({
 	releases: OriginalRelease[];
 	files: SourceFiles;
 	query?: string;
-	availability?: AvailabilityFilter;
-	publication?: Publication;
+	filter?: CatalogFilterValue;
 	selected?: Set<string>;
 	onSelect?: (ids: string[], value: boolean) => void;
 	onPreview?: (ids: string[]) => void;
 	onContextPreview?: (release: OriginalRelease) => void;
 	onQueryChange?: (value: string) => void;
-	onAvailabilityChange?: (value: Availability) => void;
-	onPublicationChange?: (value: Publication) => void;
+	onFilterChange?: (value: CatalogFilterValue) => void;
 	onDeleteArtist?: (artistId: string) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 }) {
 	const [localQuery, setLocalQuery] = useState("");
-	const [localAvailability, setLocalAvailability] =
-		useState<Availability>("all");
-	const [localPublication, setLocalPublication] = useState<Publication>("all");
+	const [localFilter, setLocalFilter] = useState<CatalogFilterValue>("all");
 	const query = sharedQuery ?? localQuery;
-	const availability = sharedAvailability ?? localAvailability;
-	const publication = sharedPublication ?? localPublication;
+	const filter = sharedFilter ?? localFilter;
 	const changeQuery = (value: string) => {
 		setLocalQuery(value);
 		onQueryChange?.(value);
 	};
-	const changeAvailability = (value: Availability) => {
-		setLocalAvailability(value);
-		onAvailabilityChange?.(value);
-	};
-	const changePublication = (value: Publication) => {
-		setLocalPublication(value);
-		onPublicationChange?.(value);
+	const changeFilter = (value: CatalogFilterValue) => {
+		setLocalFilter(value);
+		onFilterChange?.(value);
 	};
 	const artist = artists.find((item) => item.id === artistId);
 	const [absentEdition, setAbsentEdition] = useState<Record<string, string>>(
@@ -145,7 +129,7 @@ export function ArtistScreen({
 			)
 		)
 			return false;
-		if (availability === "available") return false;
+		if (filter !== "all" && filter !== "missing") return false;
 		const searchable =
 			`${group.title} ${group.editions.map((edition) => `${edition.year} ${edition.country} ${edition.format} ${edition.disambiguation} ${edition.titles.join(" ")}`).join(" ")}`
 				.normalize("NFKC")
@@ -248,42 +232,7 @@ export function ArtistScreen({
 					>
 						<Input placeholder="Артист, альбом, трек…" />
 					</SearchField>
-					<RadioGroup
-						value={availability}
-						onChange={(value) => changeAvailability(value as Availability)}
-						className="catalogue-filter catalogue-radio-filter"
-					>
-						<Label>Наличие</Label>
-						<div className="catalogue-segments">
-							<Radio value="all" className="catalogue-segment">
-								Все
-							</Radio>
-							<Radio value="available" className="catalogue-segment">
-								В наличии
-							</Radio>
-							<Radio value="missing" className="catalogue-segment">
-								Не хватает
-							</Radio>
-						</div>
-					</RadioGroup>
-					<RadioGroup
-						value={publication}
-						onChange={(value) => changePublication(value as Publication)}
-						className="catalogue-filter catalogue-radio-filter"
-					>
-						<Label>Публикация</Label>
-						<div className="catalogue-segments">
-							<Radio value="all" className="catalogue-segment">
-								Все
-							</Radio>
-							<Radio value="published" className="catalogue-segment">
-								Есть
-							</Radio>
-							<Radio value="unpublished" className="catalogue-segment">
-								Нет
-							</Radio>
-						</div>
-					</RadioGroup>
+					<CatalogFilter value={filter} onChange={changeFilter} />
 				</div>
 			</div>
 			{selectedCount > 0 && (
@@ -440,9 +389,8 @@ export function ArtistScreen({
 															key={track.id}
 															className={availabilityRowClass(
 																track,
-																availability,
+																filter,
 																hasAudio,
-																publication,
 															)}
 														>
 															<td>

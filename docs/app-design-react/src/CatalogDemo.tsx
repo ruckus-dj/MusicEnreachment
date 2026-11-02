@@ -2,12 +2,9 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import {
 	Button,
 	Checkbox,
-	Label,
 	ListBox,
 	ListBoxItem,
 	Popover,
-	Radio,
-	RadioGroup,
 	Select,
 	SelectValue,
 	Tab,
@@ -62,6 +59,8 @@ import {
 	trackSearchText,
 } from "./catalogViewModel";
 import { LibraryCatalogRows } from "./LibraryCatalogRows";
+import { CatalogFilter as CatalogFilterControl } from "./CatalogFilter";
+import type { CatalogFilter } from "./availabilityRows";
 import "./catalogue-shell.css";
 
 const subscribeRoute = (listener: () => void) => {
@@ -71,8 +70,6 @@ const subscribeRoute = (listener: () => void) => {
 
 type View = "artists" | "albums" | "tracks";
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
-type Availability = "all" | "available" | "missing";
-type Publication = "all" | "published" | "unpublished";
 
 function GroupCheckbox({
 	ids,
@@ -249,21 +246,17 @@ export function CatalogDemo({
 	const [selected, setSelected] = useState<Set<string>>(() => new Set());
 	const [expanded, setExpanded] = useState<string | null>(null);
 	const [editions, setEditions] = useState<Record<string, string>>({});
-	const [availability, setAvailability] = useState<Availability>("all");
-	const [publication, setPublication] = useState<Publication>("all");
+	const [filter, setFilter] = useState<CatalogFilter>("all");
 	const normalized = normalizeCatalogSearch(query);
-	const matchesAvailability = (tracks: Track[]) =>
-		availability === "all" ||
-		tracks.some((track) =>
-			availability === "available" ? hasAudio(track) : !hasAudio(track),
-		);
-	const matchesPublication = (tracks: Track[]) =>
-		publication === "all" ||
-		tracks.some((track) =>
-			publication === "published" ? track.published : !track.published,
-		);
 	const matchesGroup = (tracks: Track[]) =>
-		matchesAvailability(tracks) && matchesPublication(tracks);
+		filter === "all" ||
+		tracks.some((track) =>
+			filter === "published"
+				? Boolean(track.published)
+				: filter === "available"
+					? hasAudio(track)
+					: !hasAudio(track),
+		);
 	const artistName = (id: string | null) =>
 		fixture.artists.find((artist) => artist.id === id)?.name ?? "";
 	const missingGroups = missingCatalogGroups(
@@ -271,8 +264,7 @@ export function CatalogDemo({
 		fixture.releases,
 		fixture.artists,
 		query,
-		availability,
-		publication,
+		filter,
 	);
 	const update = (ids: string[], checked: boolean) => {
 		setSelected((previous) => {
@@ -403,8 +395,6 @@ export function CatalogDemo({
 		return (
 			<main className="demo-shell">
 				<ArtistScreen
-					availability={availability}
-					publication={publication}
 					key={route}
 					artistId={route.slice(7)}
 					artists={artists}
@@ -412,9 +402,9 @@ export function CatalogDemo({
 					files={files}
 					selected={selected}
 					query={query}
+					filter={filter}
 					onQueryChange={setQuery}
-					onAvailabilityChange={setAvailability}
-					onPublicationChange={setPublication}
+					onFilterChange={setFilter}
 					onSelect={update}
 					onQueueDeletion={queueDeletion}
 					onPreview={openPreview}
@@ -479,7 +469,7 @@ export function CatalogDemo({
 			<main className="demo-shell">
 				<ReleaseScreen
 					files={files}
-					availability={availability}
+					filter={filter}
 					onQueueDeletion={queueDeletion}
 					release={release}
 					artists={artists}
@@ -705,8 +695,7 @@ export function CatalogDemo({
 			fixture.releases,
 			missingGroups,
 			query,
-			availability,
-			publication,
+			filter,
 			(track) => hasAudio(track as Track),
 		),
 	);
@@ -774,42 +763,7 @@ export function CatalogDemo({
 							>
 								<Input placeholder="Артист, альбом, трек…" />
 							</SearchField>
-							<RadioGroup
-								value={availability}
-								onChange={(value) => setAvailability(value as Availability)}
-								className="catalogue-filter catalogue-radio-filter"
-							>
-								<Label>Наличие</Label>
-								<div className="catalogue-segments">
-									<Radio value="all" className="catalogue-segment">
-										Все
-									</Radio>
-									<Radio value="available" className="catalogue-segment">
-										В наличии
-									</Radio>
-									<Radio value="missing" className="catalogue-segment">
-										Не хватает
-									</Radio>
-								</div>
-							</RadioGroup>
-							<RadioGroup
-								value={publication}
-								onChange={(value) => setPublication(value as Publication)}
-								className="catalogue-filter catalogue-radio-filter"
-							>
-								<Label>Публикация</Label>
-								<div className="catalogue-segments">
-									<Radio value="all" className="catalogue-segment">
-										Все
-									</Radio>
-									<Radio value="published" className="catalogue-segment">
-										Есть
-									</Radio>
-									<Radio value="unpublished" className="catalogue-segment">
-										Нет
-									</Radio>
-								</div>
-							</RadioGroup>
+							<CatalogFilterControl value={filter} onChange={setFilter} />
 						</div>
 						<section
 							className="demo-list"
@@ -846,8 +800,7 @@ export function CatalogDemo({
 								}
 								hasAudio={(track) => hasAudio(track as Track)}
 								files={files}
-								availability={availability}
-								publication={publication}
+								filter={filter}
 								groupCheckbox={(ids, label) => (
 									<GroupCheckbox
 										ids={ids}
