@@ -17,6 +17,17 @@ Authoritative design documentation (Russian). Conventions, architecture, decisio
 ## CONVENTIONS
 **Documentation-first**: Conventions live here (Russian), not in inline comments. When code contradicts these docs, the docs are authoritative.
 
+**Target contract, not implementation status**: Design описывает действующий
+целевой контракт, а не статус реализации. Готовность и проверявшаяся ревизия
+фиксируются в `plans/`, `reports/` или `audit/`; завершение плана не доказывает
+соответствия кода последующим решениям.
+
+**Синхронизация графического контракта**: утверждённые изменения видимого поведения
+отражаются в техническом описании и интерактивном `docs/app-design/index.html`
+с его JS/CSS в рамках одной работы. Запись решения в Markdown не означает
+обновления графического дизайна. Неутверждённые решения не реализуются по
+предположению; screenshot-артефакты для синхронизации не нужны.
+
 **Russian language**: Design docs are in Russian; code/comments/tests are English.
 
 **Forbidden items catalog**: decisions.md explicitly lists what must NOT be added (CORS, new env vars, auth in-app, etc.).

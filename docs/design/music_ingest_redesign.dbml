@@ -230,7 +230,7 @@ Table source_root {
   scan_generation bigint [not null, default: 0]
   last_successful_scan_at timestamptz
 
-  Note: 'Отдельного enabled/disable у root нет: status отражает наблюдаемую физическую доступность (unknown/available/unavailable), а не пользовательское включение; root можно только добавить или удалить. Удаление root удаляет связанные source_location и source-инвентарь, но не физические файлы хоста, локальные entities или текущие publications. Удаление разрешено только после подтверждения точного configured_path и числа locations и при отсутствии активной операции root.'
+  Note: 'Отдельного enabled/disable у root нет: status отражает наблюдаемую физическую доступность (unknown/available/unavailable), а не пользовательское включение; root можно только добавить или удалить. Удаление root удаляет его source_location и source-инвентарь, но не физические файлы хоста, локальные entities или текущие publications. track_source сохраняется, пока у variant есть location в другом root; удаление последней location удаляет все track_source-связи variant, в том числе если SHA-256 variant остаётся cache. Если снята выбранная связь, selected очищается и другая связь автоматически не выбирается. Удаление root не запускает fallback/перепубликацию и сохраняет текущую публикацию. Удаление разрешено только после подтверждения точного configured_path и числа locations и при отсутствии активной операции root.'
 }
 
 Table media_variant {
@@ -481,7 +481,7 @@ Table track_source {
     (collection_track_id, selected)
   }
 
-  Note: 'Связь collection_track ↔ media_variant является M:N. Один variant может быть source для tracks разных recordings/MBID. Удаление root не удаляет collection_track и текущие публикации; очистка source associations не задаёт срок хранения анализа. Анализ с SHA-256 не удаляется никогда, без SHA-256 удаляется при отсутствии ссылающегося source_location (см. media_variant). PostgreSQL migration должна добавить partial unique index UNIQUE(collection_track_id) WHERE selected и CHECK границ CUE/manual segment: start >= 0, end > start; full_file не имеет границ.'
+  Note: 'Связь collection_track ↔ media_variant является M:N. Один variant может быть source для tracks разных recordings/MBID. track_source от variant сохраняется, пока у variant есть хотя бы одна source_location; удаление последней location удаляет все его track_source-связи, включая SHA-256 variant, который сам остаётся reusable cache. Удалённая selected-связь очищает выбор без автоматического выбора другой связи. Удаление root не удаляет collection_track и текущие публикации, не запускает fallback/перепубликацию; текущая публикация и её snapshot не изменяются. Существующая automatic quality-improvement policy сохраняется, но автоматическая замена на равное или худшее качество запрещена; ручной downgrade требует явного предупреждения и подтверждения. Очистка source associations не задаёт срок хранения анализа. Анализ с SHA-256 не удаляется никогда, без SHA-256 удаляется при отсутствии ссылающегося source_location (см. media_variant). PostgreSQL migration должна добавить partial unique index UNIQUE(collection_track_id) WHERE selected и CHECK границ CUE/manual segment: start >= 0, end > start; full_file не имеет границ.'
 }
 
 Table match_candidate {

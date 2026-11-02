@@ -3,13 +3,10 @@
 ## Source analysis и output
 
 Актуальный продуктовый и runtime-контракт source analysis, staged-copy retention,
-fingerprint cache и output реализован в завершённом плане 10; см.
-[`решения`](./decisions.md#текущий-контракт-инвентаря-анализа-и-output) и
-датированные [решения владельца плана 10](../plans/done/10-staged-source-analysis.md#appendix-a-owner-decisions).
-В частности, явный per-root mode, per-file processing, retained staged AUDIO
-copies и один последний fingerprint success на SHA уже поставлены. Source
-freshness на уровне продукта означает совпадение наблюдаемых size и `mtime`;
-более строгие implementation guards не добавляют требований.
+fingerprint cache и output описан в
+[`решениях`](./decisions.md#текущий-контракт-инвентаря-анализа-и-output).
+Source freshness на уровне продукта означает совпадение наблюдаемых size и
+`mtime`; более строгие implementation guards не добавляют требований.
 
 Уточнение владельца от 2026-10-31: все staged AUDIO-копии используют один
 runtime-каталог, отдельный от output. Его отсутствие не блокирует Setup или
@@ -29,8 +26,7 @@ analysis steps. Это не сохраняет jobs: сброшенная обр
 
 Этот документ и DBML описывают логические сущности/связи, а не являются
 побайтовым зеркалом runtime-схемы. Не выводить из концептуального DBML наличие
-runtime-таблицы/worker или статус реализации соответствующего процесса. Файловая
-публикация остаётся отдельным следующим этапом и не считается поставленной.
+runtime-таблицы/worker.
 
 ## Логические области
 
@@ -103,13 +99,15 @@ managed publications.
   path, режим обработки (`in_place` или `staged`), поколение последнего успешного
   scan и текущую доступность. Он не представляет managed-медиатеку в output.
   Удаление root удаляет его locations и соответствующий source inventory,
-  но никогда не удаляет физические файлы хоста. При этом
-  media analysis с SHA-256 не удаляется никогда, даже без locations, и остаётся
-  общим reusable cache, а не историей версий; variant без SHA-256 удаляется,
-  когда на него больше не ссылается ни один `source_location`. Принадлежащие
-  приложению staged-копии, относящиеся к удаляемым источникам, удаляются, но
-  локальная медиатека, строки публикаций и текущие опубликованные файлы
-  сохраняются.
+  но никогда не удаляет физические файлы хоста. `track_source`-связь с variant
+  сохраняется, пока у variant есть хотя бы одна location; удаление последней
+  location удаляет все его `track_source`-связи, даже если SHA-256 variant
+  сохраняется как reusable cache. Variant без SHA-256 удаляется после последней
+  location. Удаление выбранной связи очищает выбор без автоматического выбора
+  другой. Локальная медиатека, строки публикаций и текущие опубликованные файлы
+  сохраняются; root removal сам не запускает fallback или перепубликацию.
+  Принадлежащие приложению staged-копии, относящиеся к удаляемым источникам,
+  удаляются.
 - `source_location` существует только для фактически найденного пути внутри
   root и хранит точный relative path, size, mtime и поколение наблюдения. После
   полностью успешного scan не найденные повторно locations удаляются; ошибка
@@ -248,13 +246,17 @@ managed publications.
     сам по себе не считается удалением managed artifact. Зарегистрированная
     publication row описывает только текущий результат, а не шаги или историю
     его файловой операции.
-15. Удаление source root удаляет только root и его inventory/source associations,
-    включая связи `track_source`; оно не удаляет
-    исходные файлы хоста, локальные entities, publication rows или текущие
-    опубликованные файлы. SHA-256 analysis остаётся кэшем без locations и не
-    удаляется никогда; variant без digest удаляется, когда на него больше не
-    ссылается ни один `source_location`. Staged-копии, принадлежащие
-    приложению и связанные с удалёнными источниками, удаляются.
+15. Удаление source root удаляет root и его locations. `track_source` остаётся,
+    если у variant есть другая location; при удалении последней location удаляются
+    все его `track_source`-связи, в том числе для сохраняемого SHA-256 cache.
+    Variant без digest удаляется после последней location. Удалённая выбранная
+    связь снимает выбор без автоматического выбора альтернативы. Root removal не
+    удаляет исходные файлы хоста, локальные entities, publication rows или текущие
+    опубликованные файлы и не запускает fallback/перепубликацию. Staged-копии,
+    принадлежащие приложению и связанные с удалёнными источниками, удаляются.
+    Автоматическая замена публикации сохраняет только существующую policy
+    улучшения качества; равное/худшее качество автоматически не подставляется,
+    ручное понижение требует предупреждения и подтверждения.
 
 16. Provider catalog (включая Local) и локальная медиатека имеют независимое
     владение и lifecycle. Удаление library entities не удаляет provider records;
@@ -274,25 +276,3 @@ managed publications.
 
 River — PostgreSQL-backed очередь фоновых операций; его внутренние таблицы не
 являются частью целевой модели медиатеки.
-
-## Дополнение: физическое сопоставление source-analysis (аудит 2026-10-07)
-
-Следующая таблица дополняет физическое отображение текущей реализации и уже
-описанной целевой модели. Она не меняет концептуальный DBML и не вводит новые
-пользовательские состояния.
-
-| Текущее физическое представление | Целевое представление и инвариант | Миграция / статус |
-| --- | --- | --- |
-| `source_root`, `source_location`, `media_variant` | Root/location содержат актуальный inventory; `media_variant` хранит результаты probe и nullable SHA identity. Успешные результаты имеют явное происхождение, а отсутствующие не заполняются фиктивными значениями. | `20261006000000_automatic_source_analysis`; additive к базовой схеме. |
-| `media_probe_cache`, `media_fingerprint_cache` | Cache association связывает актуальный digest с конкретным сохранённым результатом и версией инструмента; cache не становится selected result автоматически. Первый успешный insert — concurrency-протокол, а не SQL-защита от изменения строки после вставки. | Probe cache — `20261014000000_source_probe_cache`; fingerprint cache — `20261006000000_automatic_source_analysis`. |
-| `media_fingerprint_result`, `media_fingerprint_cache`, `source_analysis_work`, `source_analysis_step` | Fingerprint и cache отделены от текущей работы; work фиксирует location identity, а `(work_id, step)` — независимое текущее состояние каждого шага. Execution operation/attempt/job существует либо полностью, либо отсутствует. | Базовые таблицы — `20261006000000`; nullable input snapshot — `20261010000000`. `20261015000000_source_analysis_guard_closure` закрывает SQL `CHECK`-инвариант для каждого частичного подмножества execution triple, включая nullable `attempt`. |
-| `operation.source_analysis_mode`, target selectors, `operation_source_work_hold`, `operation_tool_read_hold` | Batch/single-step snapshot выбирает work и шаги; отложенные guards связывают каждый execution и каждый удерживаемый work с root/location selectors операции. Tool read-флаг соответствует наличию фактического hold; terminal settlement освобождает holds и execution атомарно. | Normalized операции/guards — `20261007000000`, selected-step guard — `20261013000000`; окончательное закрытие selector/hold guards — `20261015000000_source_analysis_guard_closure`. |
-| Snapshot `operation.input_snapshot`, выбранные cache associations и provenance UUID | Snapshot фиксирует admission inputs, а UUID provenance указывает на операцию, но не удерживает её строку и не заменяет work/tool hold. Правило «первый успешный cache insert побеждает» — протокол записи/конкуренции, а не SQL-инвариант неизменяемости победителя. | Текущая реализация в snapshot/persistence и `media_*_cache`; не считать cache winner защищённым одним лишь уникальным ключом от последующего `UPDATE`. |
-| Исторические схемы до нормализованного анализа | Conceptual DBML остаётся без изменений; миграции только добавляют текущую физическую форму и guards, не переписывая ранее применённые migrations. | Down `20261015000000` восстанавливает только прежние constraint/function definitions и отказывает на небезопасном partial triple. Down plan07 migration цепочки также остаются guarded preflight rollback, а не destructive откат с потерей текущих результатов. |
-
-Для deferred scan tool holds `tools_read_required` является изменяемым отражением
-наличия `operation_tool_read_hold`: admission scan может иметь `false` при tools,
-записанных в snapshot; захват/освобождение hold и изменение флага завершаются в
-одной транзакции. Guard проверяет их итоговое совпадение и отсутствие hold у
-terminal operation, но не требует создавать scan hold для каждого snapshot tool и
-не приравнивает snapshot-флаг к изменяемому полю операции.

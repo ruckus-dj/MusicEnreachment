@@ -27,7 +27,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 ├── frontend/             # React 19 + Vite + Tailwind 4, see frontend/AGENTS.md
 ├── docs/                 # Directory map: see docs/AGENTS.md
 │   ├── design/           # Authoritative conventions (Russian), see AGENTS.md
-│   └── app-design/       # HTML prototype + screenshots, see AGENTS.md
+│   └── app-design/       # Interactive HTML prototype, see AGENTS.md
 ├── deploy/               # Dockerfile + docker-compose.yml
 ├── tools/                # Node .mjs build helpers (stage-frontend, check-generated)
 ├── test_stand/           # Local test data
@@ -48,7 +48,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | Frontend screens | frontend/src/features/ | Setup, settings, sources, incoming grouping, and matching workflows |
 | API client | frontend/src/api/generated/ | Orval-generated from OpenAPI, never hand-edit |
 | Conventions | docs/design/AGENTS.md | Russian docs: decisions.md (stack, forbidden items), repository-architecture.md (layering) |
-| Design prototype | docs/app-design/AGENTS.md | Static HTML/JS prototype with screenshots |
+| Design prototype | docs/app-design/AGENTS.md | Static interactive HTML/JS prototype; sole graphical reference |
 | Build commands | Taskfile.yml at root | `task build/test/verify/generate/run` |
 
 ## CODE MAP

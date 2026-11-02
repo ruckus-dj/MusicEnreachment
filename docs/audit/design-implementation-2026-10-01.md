@@ -106,7 +106,12 @@ Sources и Settings (`frontend/src/routes/AppShell.tsx:15-25,138-151`).
   композиции; план 03 требует сравнить снимки как ориентир, а не обещает
   пиксельное совпадение. Processing mode, количество уникальных variants и
   инспектор технического анализа из S09/S10 ещё не входят в поставленный
-  срез (`docs/plans/done/03-source-inventory-first-slice.md:44-55`).
+   срез (`docs/plans/done/03-source-inventory-first-slice.md:44-55`).
+   **Уточнение владельца от 2026-11-01:** упомянутые prototype screenshots
+   удалены из `docs/app-design/screenshots/`; этот dated finding сохраняет факт
+   прежнего сравнения, но снимок больше не является доступным или текущим
+   графическим reference. Единственный текущий графический эталон — интерактивный
+   `docs/app-design/index.html` и его JS/CSS.
   Отдельная команда «Проверить доступность» из S09
   (`docs/app-design/02-screens.md:104-114`) пока отсутствует: текущий
   `SourceScanControl` предлагает только «Сканировать»/«Повторить»
