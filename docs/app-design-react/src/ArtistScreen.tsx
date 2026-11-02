@@ -195,41 +195,47 @@ export function ArtistScreen({
 						</Checkbox>
 					</div>
 				</div>
-				<div>
-					<p className="artist-kicker">ПРОФИЛЬ АРТИСТА</p>
-					<h1>{artist.name}</h1>
-					<p className="artist-genre">{artist.genre || "Исполнитель"}</p>
-					<p>
-						{artistReleases.length} изданий · {tracks.length} позиций ·{" "}
-						{counts((track) => Boolean(track.published))} опубликовано ·{" "}
-						{filteredMissingGroups.length} альбомов без издания
-					</p>
-				</div>
-				<div className="demo-object-actions artist-hero-actions">
-					<Button
-						aria-label={`Предпросмотр ${selectedCount} выбранных позиций`}
-						isDisabled={!selectedCount || !onPreview}
-						onPress={() => onPreview?.(ids.filter((id) => selected.has(id)))}
-					>
-						Предпросмотр
-						<span className="artist-preview-count">{selectedCount}</span>
-					</Button>
-					{onQueueDeletion ? (
-						<ArtistDeletionRequest
-							artistId={artist.id}
-							artists={artists}
-							releases={releases}
-							onQueue={onQueueDeletion}
-						/>
-					) : (
-						<Button
-							className="ui-button--secondary ui-button--danger"
-							isDisabled={!onDeleteArtist}
-							onPress={() => onDeleteArtist?.(artist.id)}
-						>
-							Удалить артиста
-						</Button>
-					)}
+				<div className="artist-hero-body">
+					<div className="artist-hero-heading">
+						<p className="artist-kicker">ПРОФИЛЬ АРТИСТА</p>
+						<h1>{artist.name}</h1>
+						<p className="artist-genre">{artist.genre || "Исполнитель"}</p>
+					</div>
+					<div className="artist-hero-foot">
+						<p className="artist-hero-stats">
+							{artistReleases.length} изданий · {tracks.length} позиций ·{" "}
+							{counts((track) => Boolean(track.published))} опубликовано ·{" "}
+							{filteredMissingGroups.length} альбомов без издания
+						</p>
+						<div className="demo-object-actions artist-hero-actions">
+							<Button
+								aria-label={`Предпросмотр ${selectedCount} выбранных позиций`}
+								isDisabled={!selectedCount || !onPreview}
+								onPress={() =>
+									onPreview?.(ids.filter((id) => selected.has(id)))
+								}
+							>
+								Предпросмотр
+								<span className="artist-preview-count">{selectedCount}</span>
+							</Button>
+							{onQueueDeletion ? (
+								<ArtistDeletionRequest
+									artistId={artist.id}
+									artists={artists}
+									releases={releases}
+									onQueue={onQueueDeletion}
+								/>
+							) : (
+								<Button
+									className="ui-button--secondary ui-button--danger"
+									isDisabled={!onDeleteArtist}
+									onPress={() => onDeleteArtist?.(artist.id)}
+								>
+									Удалить артиста
+								</Button>
+							)}
+						</div>
+					</div>
 				</div>
 			</header>
 			<div className="catalogue-controls">
