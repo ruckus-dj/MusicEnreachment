@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { AlbumActions } from "./AlbumActions";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { TagsComparison, type TagScope } from "./TagsComparison";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import {
 	availabilityRowClass,
@@ -18,6 +18,7 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import type { DeletionOperation } from "./DeletionRequest";
+import { DeletionRequest } from "./DeletionRequest";
 import {
 	Button,
 	Checkbox,
@@ -50,6 +51,8 @@ export function ArtistScreen({
 	onFilterChange,
 	onDeleteArtist,
 	onQueueDeletion,
+	initialTags,
+	initialReleaseId,
 }: {
 	artistId: string;
 	artists: CatalogArtist[];
@@ -63,6 +66,8 @@ export function ArtistScreen({
 	onFilterChange?: (value: CatalogFilterValue) => void;
 	onDeleteArtist?: (artistId: string) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
+	initialTags?: { scope: TagScope; releaseId?: string };
+	initialReleaseId?: string;
 }) {
 	const [localQuery, setLocalQuery] = useState("");
 	const [localFilter, setLocalFilter] = useState<CatalogFilterValue>("all");
@@ -80,6 +85,24 @@ export function ArtistScreen({
 	const [absentEdition, setAbsentEdition] = useState<Record<string, string>>(
 		{},
 	);
+	const [artistTagsOpen, setArtistTagsOpen] = useState(
+		initialTags?.scope === "artist",
+	);
+	const [releaseTagsOpen, setReleaseTagsOpen] = useState<
+		Record<string, boolean>
+	>(() =>
+		initialTags?.scope === "release" && initialTags.releaseId
+			? { [initialTags.releaseId]: true }
+			: {},
+	);
+	const initialTagsTarget = useRef<HTMLDivElement | null>(null);
+	useEffect(() => {
+		if (!initialTags?.scope) return;
+		const target = initialTagsTarget.current;
+		if (!target) return;
+		target.focus({ preventScroll: true });
+		target.scrollIntoView?.({ block: "start" });
+	}, [initialTags?.scope, initialTags?.releaseId]);
 	const artistReleases = useMemo(
 		() =>
 			releases.filter(
@@ -89,6 +112,16 @@ export function ArtistScreen({
 						release.credits?.some((credit) => credit.artistId === artistId)),
 			),
 		[artistId, releases],
+	);
+	const artistTagReleases = useMemo(
+		() =>
+			artistReleases
+				.map((release) => ({
+					...release,
+					tracks: release.tracks.filter((track) => track.artistId === artistId),
+				}))
+				.filter((release) => release.tracks.length > 0),
+		[artistId, artistReleases],
 	);
 	const tracks = artistReleases.flatMap((release) => release.tracks);
 	const ids = tracks.map((track) => track.id);
@@ -145,6 +178,8 @@ export function ArtistScreen({
 		);
 	const counts = (predicate: (track: OriginalTrack) => boolean) =>
 		tracks.filter(predicate).length;
+	const expandedReleaseId =
+		initialTags?.scope === "release" ? initialTags.releaseId : initialReleaseId;
 	return (
 		<section className="catalogue-object">
 			<nav className="artist-hero-back" aria-label="Навигация">
@@ -189,6 +224,12 @@ export function ArtistScreen({
 							{filteredMissingGroups.length} альбомов без издания
 						</p>
 						<div className="demo-object-actions artist-hero-actions">
+							<Button
+								aria-expanded={artistTagsOpen}
+								onPress={() => setArtistTagsOpen((open) => !open)}
+							>
+								Теги артиста
+							</Button>
 							{onQueueDeletion ? (
 								<ArtistDeletionRequest
 									artistId={artist.id}
@@ -209,6 +250,23 @@ export function ArtistScreen({
 					</div>
 				</div>
 			</header>
+			{artistTagsOpen && (
+				<div
+					ref={initialTagsTarget}
+					tabIndex={-1}
+					className="inline-tags-comparison"
+				>
+					<TagsComparison
+						scope="artist"
+						releases={artistTagReleases}
+						artists={artists}
+						files={files}
+						initialTrackId={
+							artistTagReleases.flatMap((release) => release.tracks)[0]?.id
+						}
+					/>
+				</div>
+			)}
 			<div className="catalogue-controls">
 				<div className="catalogue-panel-controls">
 					<SearchField
@@ -226,8 +284,19 @@ export function ArtistScreen({
 				key={artistId}
 				className="catalogue-editions"
 				allowsMultipleExpanded
+				defaultExpandedKeys={
+					expandedReleaseId ? new Set([expandedReleaseId]) : undefined
+				}
 			>
 				{artistReleases.map((release, index) => {
+					const durationTotal =
+						release.tracks.length > 0 &&
+						release.tracks.every((track) => Number.isFinite(track.duration))
+							? release.tracks.reduce(
+									(sum, track) => sum + (track.duration ?? 0),
+									0,
+								)
+							: null;
 					const pubCount = release.tracks.filter(
 						(track) => track.published,
 					).length;
@@ -244,7 +313,7 @@ export function ArtistScreen({
 							>
 								<div className="artist-release-select artist-card-selection">
 									<Checkbox
-										aria-label={`Выбрать все позиции альбома ${release.title}`}
+										aria-label={`Выбрать все позиции альбома ${release.title} · ${release.year} · ${release.catalog || "—"}`}
 										className="demo-checkbox"
 										isSelected={
 											release.tracks.length > 0 &&
@@ -273,7 +342,11 @@ export function ArtistScreen({
 									</Checkbox>
 								</div>
 								<Heading>
-									<Button slot="trigger" className="catalogue-edition-trigger">
+									<Button
+										slot="trigger"
+										className="catalogue-edition-trigger"
+										aria-label={`${release.title} · ${release.year} · ${release.catalog || "—"}`}
+									>
 										<span
 											className="artist-album-cover"
 											data-palette={release.color || artist.color || "clay"}
@@ -286,8 +359,21 @@ export function ArtistScreen({
 										<span className="artist-album-copy">
 											<strong>{release.title}</strong>
 											<span className="artist-album-meta">
+												{durationTotal === null
+													? "Длительность неизвестна"
+													: `${Math.floor(durationTotal / 60)}:${String(Math.round(durationTotal % 60)).padStart(2, "0")} всего`}
+												·{" "}
+												{release.provider === "Local"
+													? "Local"
+													: release.providerId
+														? `${release.provider || "MusicBrainz"} · ${release.providerId}`
+														: "Локальное издание"}
+											</span>
+											<span className="artist-album-meta">
 												{release.year} · {release.tracks.length} позиций ·{" "}
-												{release.label || "Локальный"} · {release.catalog}
+												{release.country || "Страна не указана"} ·{" "}
+												{release.label || "Локальный"} ·{" "}
+												{release.catalog || "—"}
 											</span>
 											<span className="artist-album-meta">
 												{complete && provider
@@ -301,13 +387,54 @@ export function ArtistScreen({
 									</Button>
 								</Heading>
 								<DisclosurePanel>
-									<AlbumActions release={release} />
+									{onQueueDeletion && (
+										<div className="demo-object-actions">
+											<DeletionRequest
+												release={release}
+												onQueue={onQueueDeletion}
+											/>
+										</div>
+									)}
+									<div className="demo-object-actions">
+										<Button
+											aria-expanded={Boolean(releaseTagsOpen[release.id])}
+											onPress={() =>
+												setReleaseTagsOpen((open) => ({
+													...open,
+													[release.id]: !open[release.id],
+												}))
+											}
+										>
+											Теги альбома
+										</Button>
+									</div>
+									{releaseTagsOpen[release.id] && (
+										<div
+											ref={
+												initialTags?.releaseId === release.id
+													? initialTagsTarget
+													: undefined
+											}
+											tabIndex={
+												initialTags?.releaseId === release.id ? -1 : undefined
+											}
+											className="inline-tags-comparison"
+										>
+											<TagsComparison
+												scope="release"
+												releases={[release]}
+												artists={artists}
+												files={files}
+												initialTrackId={release.tracks[0]?.id}
+											/>
+										</div>
+									)}
 									<div className="demo-preview-table">
 										<table>
 											<thead>
 												<tr>
 													{[
-														"Выбрать",
+														"Выбрать все позиции этого издания",
 														"№",
 														"Композиция",
 														"Параметры",
@@ -315,8 +442,62 @@ export function ArtistScreen({
 														"Связей с исходниками",
 														"Публикация",
 													].map((label) => (
-														<th scope="col" key={label}>
-															{label}
+														<th
+															scope="col"
+															key={label}
+															className={
+																label.startsWith("Выбрать")
+																	? "selection-column"
+																	: undefined
+															}
+														>
+															{label.startsWith("Выбрать") ? (
+																<Checkbox
+																	className="demo-checkbox"
+																	aria-label={label}
+																	isSelected={
+																		release.tracks.length > 0 &&
+																		release.tracks.every((track) =>
+																			selected.has(track.id),
+																		)
+																	}
+																	isIndeterminate={
+																		release.tracks.some((track) =>
+																			selected.has(track.id),
+																		) &&
+																		!release.tracks.every((track) =>
+																			selected.has(track.id),
+																		)
+																	}
+																	isDisabled={
+																		!release.tracks.length || !onSelect
+																	}
+																	onChange={(value) =>
+																		onSelect?.(
+																			release.tracks.map((track) => track.id),
+																			value,
+																		)
+																	}
+																>
+																	<span
+																		className="demo-checkbox-box"
+																		aria-hidden="true"
+																	>
+																		{release.tracks.length > 0 &&
+																		release.tracks.every((track) =>
+																			selected.has(track.id),
+																		)
+																			? "✓"
+																			: release.tracks.some((track) =>
+																						selected.has(track.id),
+																					)
+																				? "−"
+																				: ""}
+																	</span>
+																</Checkbox>
+															) : (
+																label
+															)}
 														</th>
 													))}
 												</tr>
@@ -341,7 +522,7 @@ export function ArtistScreen({
 																hasAudio,
 															)}
 														>
-															<td>
+															<td className="selection-column">
 																<Checkbox
 																	className="demo-checkbox"
 																	aria-label={`Выбрать ${track.title}`}
@@ -362,9 +543,19 @@ export function ArtistScreen({
 															<td>{trackNumberLabel(release, track)}</td>
 															<td>
 																<a href={`#track/${track.id}`}>{track.title}</a>
+																<span className="demo-secondary">
+																	{track.duration === null
+																		? "—"
+																		: `${Math.floor(track.duration / 60)}:${String(Math.round(track.duration % 60)).padStart(2, "0")}`}
+																</span>
 																{track.recordingId ? null : (
 																	<span className="demo-secondary">
 																		Новая запись
+																	</span>
+																)}
+																{track.observedFile && (
+																	<span className="demo-secondary">
+																		Файл изменён вне приложения
 																	</span>
 																)}
 															</td>

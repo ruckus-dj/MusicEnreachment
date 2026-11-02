@@ -1,10 +1,4 @@
-import {
-	fireEvent,
-	render,
-	screen,
-	within,
-	waitFor,
-} from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { ArtistScreen } from "./ArtistScreen";
 import {
@@ -57,7 +51,7 @@ it("renders artist releases and tracks with aggregate selection", () => {
 	expect(onSelect).toHaveBeenCalledWith(["north-t2"], true);
 });
 
-it("keeps album actions to album navigation and tag links through an accessible menu", async () => {
+it("shows artist tags inline and release tags in the album disclosure", () => {
 	const release = originalReleases.find((item) => item.id === "north");
 	if (!release || !release.tracks[0])
 		throw new Error("Missing baseline fixture");
@@ -69,33 +63,35 @@ it("keeps album actions to album navigation and tag links through an accessible 
 			files={originalFiles}
 		/>,
 	);
+	fireEvent.click(screen.getByRole("button", { name: "Теги артиста" }));
+	const artistTags = screen.getByRole("region", {
+		name: "Сравнение тегов: artist",
+	});
+	expect(
+		within(artistTags).getByRole("rowheader", { name: "ARTIST" }),
+	).toBeInTheDocument();
 	expandAlbum(release);
-	expect(screen.getByRole("link", { name: "Открыть альбом" })).toHaveAttribute(
-		"href",
-		`#release/${release.id}`,
-	);
+	expect(
+		screen.getByRole("button", {
+			name: (name) =>
+				name.includes(release.title) && name.includes(String(release.year)),
+		}),
+	).toHaveAttribute("aria-expanded", "true");
 	expect(
 		screen.queryByRole("button", { name: "Предпросмотр публикации" }),
 	).not.toBeInTheDocument();
 
-	const menuTrigger = screen.getByRole("button", { name: "Теги" });
-	menuTrigger.focus();
-	fireEvent.keyDown(menuTrigger, { key: "ArrowDown" });
-	const menu = screen.getByRole("menu", {
-		name: `Теги альбома ${release.title}`,
+	fireEvent.click(screen.getByRole("button", { name: "Теги альбома" }));
+	const releaseTags = screen.getByRole("region", {
+		name: "Сравнение тегов: release",
 	});
 	expect(
-		within(menu).getByRole("menuitem", { name: "Теги артиста" }),
-	).toHaveAttribute("href", `#tags/${release.tracks[0].id}/artist`);
-	expect(
-		within(menu).getByRole("menuitem", { name: "Теги альбома" }),
-	).toHaveAttribute("href", `#tags/${release.tracks[0].id}/release`);
-	fireEvent.keyDown(menu, { key: "Escape" });
-	await waitFor(() => expect(menuTrigger).toHaveFocus());
+		within(releaseTags).getByRole("rowheader", { name: "ALBUM" }),
+	).toBeInTheDocument();
 	expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
 
-it("keeps album navigation and tags available for empty albums without preview actions", () => {
+it("keeps empty album disclosures available without preview actions", () => {
 	const base = originalReleases.find((item) => item.id === "north");
 	if (!base) throw new Error("Missing baseline fixture");
 	const noTracksRelease = { ...base, id: "empty-album", tracks: [] };
@@ -108,10 +104,13 @@ it("keeps album navigation and tags available for empty albums without preview a
 		/>,
 	);
 	expandAlbum(noTracksRelease);
-	expect(screen.getByRole("link", { name: "Открыть альбом" })).toHaveAttribute(
-		"href",
-		"#release/empty-album",
-	);
+	expect(
+		screen.getByRole("button", {
+			name: (name) =>
+				name.includes(noTracksRelease.title) &&
+				name.includes(String(noTracksRelease.year)),
+		}),
+	).toHaveAttribute("aria-expanded", "true");
 	expect(
 		screen.queryByRole("button", { name: "Теги" }),
 	).not.toBeInTheDocument();
@@ -261,7 +260,7 @@ it("reports changes through the unified artist filter and retains collapsed albu
 	expect(onFilterChange).toHaveBeenNthCalledWith(1, "missing");
 	expect(onFilterChange).toHaveBeenNthCalledWith(2, "published");
 	const albumCheckbox = screen.getAllByRole("checkbox", {
-		name: `Выбрать все позиции альбома ${artistRelease.title}`,
+		name: `Выбрать все позиции альбома ${artistRelease.title} · ${artistRelease.year} · ${artistRelease.catalog || "—"}`,
 	})[0];
 	expect(albumCheckbox).toBePartiallyChecked();
 	expect(albumCheckbox.closest(".artist-album-card")).not.toBeNull();
@@ -274,6 +273,43 @@ it("reports changes through the unified artist filter and retains collapsed albu
 	expect(heroCheckbox.closest('[aria-hidden="true"]')).toBeNull();
 	expect(screen.queryByText(/Аудио по изданиям:/)).not.toBeInTheDocument();
 	expect(container.querySelector(".artist-album-cover")).toBeInTheDocument();
+});
+
+it("selects only the album's tracks and keeps the artist aggregate partial", () => {
+	const release = originalReleases.find((item) => item.id === "north");
+	if (!release || release.tracks.length !== 10)
+		throw new Error("Expected the ten-track Northern Lines fixture");
+	const firstTrack = release.tracks[0];
+	if (!firstTrack) throw new Error("Missing baseline track");
+	const onSelect = vi.fn();
+	render(
+		<ArtistScreen
+			artistId="mira"
+			artists={catalogData.artists}
+			releases={originalReleases}
+			files={originalFiles}
+			selected={new Set([firstTrack.id])}
+			onSelect={onSelect}
+		/>,
+	);
+	const album = screen.getByRole("checkbox", {
+		name: `Выбрать все позиции альбома ${release.title} · ${release.year} · ${release.catalog || "—"}`,
+	});
+	expect(album).toBePartiallyChecked();
+	const artist = screen.getByRole("checkbox", {
+		name: "Выбрать все позиции артиста Mira Vale",
+	});
+	expect(artist).toBePartiallyChecked();
+	expect(
+		screen.queryByText("Выбрать", { selector: "th" }),
+	).not.toBeInTheDocument();
+	fireEvent.click(album);
+	expect(onSelect).toHaveBeenCalledWith(
+		release.tracks.map((track) => track.id),
+		true,
+	);
+	expect(onSelect.mock.calls[0][0]).toHaveLength(10);
+	expect(onSelect.mock.calls[0][0]).not.toHaveLength(29);
 });
 
 it("numbers tracks by medium for a cloned multi-medium release without displayed numbers", () => {
@@ -332,6 +368,43 @@ it("selects a collapsed album without opening it", () => {
 	fireEvent.click(checkbox);
 	expect(onSelect).toHaveBeenCalled();
 	expect(trigger).toHaveAttribute("aria-expanded", "false");
+});
+
+it("keeps album-level duration, observed-file evidence, and deletion scope on the artist route", () => {
+	const base = originalReleases.find((item) => item.id === "north");
+	if (!base) throw new Error("Missing baseline fixture");
+	const release: OriginalRelease = structuredClone(base);
+	release.tracks[0] = {
+		...release.tracks[0],
+		observedFile: { state: "modified" },
+	};
+	const onQueueDeletion = vi.fn();
+	render(
+		<ArtistScreen
+			artistId={release.artistId ?? ""}
+			artists={catalogData.artists}
+			releases={[release]}
+			files={originalFiles}
+			onQueueDeletion={onQueueDeletion}
+		/>,
+	);
+	expandAlbum(release);
+	expect(screen.getByText(/всего/)).toBeInTheDocument();
+	const firstTrackRow = screen
+		.getAllByRole("table")
+		.flatMap((table) => [...table.querySelectorAll("tbody tr")])
+		.find((row) => row.querySelector('a[href="#track/north-t1"]'));
+	if (!(firstTrackRow instanceof HTMLElement))
+		throw new Error("Missing first track row");
+	expect(
+		within(firstTrackRow).getByText("Файл изменён вне приложения"),
+	).toBeInTheDocument();
+	fireEvent.click(screen.getByRole("button", { name: "Удалить альбом" }));
+	expect(screen.getByText(/Позиции релиза/)).toBeInTheDocument();
+	fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
+	expect(onQueueDeletion).toHaveBeenCalledWith(
+		expect.objectContaining({ kind: "library", target: release.title }),
+	);
 });
 
 it("starts collapsed and resets expansion when changing artists", () => {

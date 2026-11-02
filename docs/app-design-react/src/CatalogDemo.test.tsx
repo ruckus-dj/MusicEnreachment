@@ -22,21 +22,25 @@ it("keeps nested selection consistent when an album is partially deselected", ()
 	);
 	expect(screen.getByRole("status")).toHaveTextContent("29");
 	fireEvent.click(screen.getByRole("tab", { name: "Все альбомы" }));
-	const albums = screen.getAllByRole("checkbox", {
-		name: "Выбрать позиции альбома Northern Lines",
+	const albumRow = screen
+		.getAllByRole("row")
+		.find((row) => row.getAttribute("data-key") === "north");
+	if (!albumRow) throw new Error("Missing Northern Lines 2021 edition row");
+	const albumCheckbox = within(albumRow).getByRole("checkbox", {
+		name: /Выбрать позиции альбома Northern Lines/,
 	});
-	fireEvent.click(albums[0]);
+	fireEvent.click(albumCheckbox);
 	expect(screen.getByRole("status")).toHaveTextContent("19");
-	const albumExpander = screen.getAllByRole("button", {
+	const albumExpander = within(albumRow).getByRole("button", {
 		name: "Northern Lines",
-	})[0];
+	});
 	fireEvent.click(albumExpander);
 	expect(albumExpander).toHaveAttribute("aria-expanded", "true");
 	fireEvent.click(
 		screen.getByRole("checkbox", { name: /Выбрать First Light/ }),
 	);
 	expect(screen.getByRole("status")).toHaveTextContent("20");
-	expect(albums[0]).toBePartiallyChecked();
+	expect(albumCheckbox).toBePartiallyChecked();
 	fireEvent.click(screen.getByRole("tab", { name: "Артисты" }));
 	expect(
 		screen.getByRole("checkbox", { name: "Выбрать позиции артиста Mira Vale" }),
@@ -227,11 +231,17 @@ it("returns a track metadata preview to its track route", () => {
 
 it("shows contextual source codec separately from metadata-only preview", () => {
 	const previousHash = window.location.hash;
-	window.location.hash = "release/north";
+	window.location.hash = "track/north-t1";
 	try {
 		render(<CatalogDemo />);
+		const publicationPanel = screen
+			.getByRole("heading", { name: "Публикация" })
+			.closest("section");
+		if (!publicationPanel) throw new Error("Missing track publication panel");
 		fireEvent.click(
-			screen.getByRole("button", { name: "Предпросмотр публикации" }),
+			within(publicationPanel).getByRole("button", {
+				name: "Предпросмотр публикации",
+			}),
 		);
 		expect(window.location.hash).toBe("#publications");
 		expect(
@@ -244,11 +254,17 @@ it("shows contextual source codec separately from metadata-only preview", () => 
 
 it("does not publish when the final contextual confirmation is cancelled", () => {
 	const previousHash = window.location.hash;
-	window.location.hash = "release/north";
+	window.location.hash = "track/north-t1";
 	try {
 		render(<CatalogDemo />);
+		const publicationPanel = screen
+			.getByRole("heading", { name: "Публикация" })
+			.closest("section");
+		if (!publicationPanel) throw new Error("Missing track publication panel");
 		fireEvent.click(
-			screen.getByRole("button", { name: "Предпросмотр публикации" }),
+			within(publicationPanel).getByRole("button", {
+				name: "Предпросмотр публикации",
+			}),
 		);
 		fireEvent.click(
 			screen.getByRole("button", { name: "Подтвердить публикацию" }),
@@ -271,11 +287,17 @@ it("does not publish when the final contextual confirmation is cancelled", () =>
 
 it("announces a confirmed contextual publication after returning to incoming", () => {
 	const previousHash = window.location.hash;
-	window.location.hash = "release/north";
+	window.location.hash = "track/north-t1";
 	try {
 		render(<CatalogDemo />);
+		const publicationPanel = screen
+			.getByRole("heading", { name: "Публикация" })
+			.closest("section");
+		if (!publicationPanel) throw new Error("Missing track publication panel");
 		fireEvent.click(
-			screen.getByRole("button", { name: "Предпросмотр публикации" }),
+			within(publicationPanel).getByRole("button", {
+				name: "Предпросмотр публикации",
+			}),
 		);
 		fireEvent.click(
 			screen.getByRole("button", { name: "Подтвердить публикацию" }),
@@ -401,5 +423,75 @@ it("redirects the obsolete manual-release route to the Local provider", async ()
 		expect(window.location.hash).toBe("#local");
 	} finally {
 		window.location.hash = previousHash;
+	}
+});
+
+it("migrates a legacy release route to its artist with the album expanded", async () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "release/north";
+	try {
+		render(<CatalogDemo />);
+		expect(
+			await screen.findByRole("heading", { name: "Mira Vale" }),
+		).toBeInTheDocument();
+		expect(window.location.hash).toBe("#artist/mira?release=north");
+		const album = screen.getByRole("button", {
+			name: (name) =>
+				name.includes("Northern Lines") &&
+				name.includes("2021") &&
+				name.includes("FR-021"),
+		});
+		expect(album).toHaveAttribute("aria-expanded", "true");
+		expect(screen.getByRole("link", { name: /First Light/ })).toHaveAttribute(
+			"href",
+			"#track/north-t1",
+		);
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
+	}
+});
+
+it.each([
+	["artist", "Теги артиста", "Сравнение тегов: artist"],
+	["release", "Теги альбома", "Сравнение тегов: release"],
+])("opens %s tags inline from the legacy tag route", async (scope, label, region) => {
+	const previousHash = window.location.hash;
+	window.location.hash = `tags/north-t1/${scope}`;
+	try {
+		render(<CatalogDemo />);
+		expect(
+			await screen.findByRole("heading", { name: "Mira Vale" }),
+		).toBeInTheDocument();
+		expect(window.location.hash).toBe(
+			`#artist/mira?tags=${scope}&release=north`,
+		);
+		expect(screen.getByRole("button", { name: label })).toHaveAttribute(
+			"aria-expanded",
+			"true",
+		);
+		expect(screen.getByRole("region", { name: region })).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: /First Light/ })).toHaveAttribute(
+			"href",
+			"#track/north-t1",
+		);
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
+	}
+});
+
+it("keeps the legacy track-tag route on the standalone tags screen", async () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "tags/north-t1/track";
+	try {
+		render(<CatalogDemo />);
+		expect(
+			await screen.findByRole("heading", { name: "Сравнение тегов" }),
+		).toBeInTheDocument();
+		expect(window.location.hash).toBe("#tags/north-t1/track");
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
 	}
 });

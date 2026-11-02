@@ -1,8 +1,10 @@
-import { useState } from "react";
-import { Button, Checkbox, Radio, RadioGroup, Tab, TabList, Tabs } from "./ui";
+import { Button, Radio, RadioGroup } from "./ui";
 import { TrackActions } from "./TrackActions";
+import { TagsComparison } from "./TagsComparison";
+import { artistReleaseHref } from "./artistReleaseRoute";
 import type { DeletionOperation } from "./DeletionRequest";
 import {
+	catalogData,
 	desiredTags,
 	metadataChanged,
 	originalArtistName,
@@ -16,28 +18,6 @@ import {
 
 const duration = (seconds: number) =>
 	`${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
-const fields = {
-	artist: ["ARTIST", "ARTISTSORT", "MUSICBRAINZ_ARTISTID"],
-	release: [
-		"ALBUM",
-		"ALBUMARTIST",
-		"DATE",
-		"COUNTRY",
-		"LABEL",
-		"CATALOGNUMBER",
-		"MUSICBRAINZ_ALBUMID",
-	],
-	track: [
-		"TITLE",
-		"ARTIST",
-		"TRACKNUMBER",
-		"DISCNUMBER",
-		"GENRE",
-		"MUSICBRAINZ_TRACKID",
-		"COMMENT",
-	],
-};
-
 export function TrackScreen({
 	release,
 	track,
@@ -53,14 +33,12 @@ export function TrackScreen({
 	track: OriginalTrack;
 	onSource: (id: string) => void;
 	onPreview: () => void;
-	onMetadataPreview?: () => void;
+	onMetadataPreview?: (ids: string[]) => void;
 	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	files?: SourceFiles;
 	artists?: CatalogArtist[];
 }) {
-	const [scope, setScope] = useState<keyof typeof fields>("track");
-	const [differencesOnly, setDifferencesOnly] = useState(false);
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
 	const file = track.sourceId ? files[track.sourceId] : undefined;
 	const provider = originalProviders.find((item) =>
@@ -69,11 +47,9 @@ export function TrackScreen({
 	const providerTrack = provider?.tracks.find(
 		(candidate) => candidate.id === track.providerTrackId,
 	);
-	const remote =
-		provider && providerTrack ? desiredTags(provider, providerTrack) : {};
-	const local = desiredTags(release, track, artists);
 	const changed = metadataChanged(release, track, artists);
-	const normalizeTag = (values: string[]) =>
+	const local = desiredTags(release, track, artists);
+	const normalizeTagValues = (values: string[]) =>
 		values
 			.join("\0")
 			.normalize("NFKC")
@@ -97,8 +73,8 @@ export function TrackScreen({
 						"GENRE",
 					].filter(
 						(key) =>
-							normalizeTag(local[key] ?? []) !==
-							normalizeTag(track.metadataBaseline?.[key] ?? []),
+							normalizeTagValues(local[key] ?? []) !==
+							normalizeTagValues(track.metadataBaseline?.[key] ?? []),
 					),
 					...((track.coverHash || null) !==
 					(track.metadataBaselineExtras?.coverHash || null)
@@ -110,21 +86,6 @@ export function TrackScreen({
 						: []),
 				]
 			: [];
-	const rows = fields[scope]
-		.map((key) => ({
-			key,
-			values: [
-				file?.tags[key] ?? [],
-				remote[key] ?? [],
-				local[key] ?? [],
-				track.published?.tags[key] ?? [],
-			],
-		}))
-		.filter(
-			(row) =>
-				!differencesOnly ||
-				new Set(row.values.map((value) => JSON.stringify(value))).size > 1,
-		);
 	return (
 		<section className="catalogue-object">
 			<header className="demo-object-header">
@@ -137,7 +98,18 @@ export function TrackScreen({
 						позиция конкретного издания
 					</p>
 				</div>
-				<a href="#library">К медиатеке</a>
+				{artistReleaseHref(release, artists ?? catalogData.artists) ? (
+					<a
+						href={
+							artistReleaseHref(release, artists ?? catalogData.artists) ??
+							undefined
+						}
+					>
+						К артисту и изданию
+					</a>
+				) : (
+					<a href="#library">К медиатеке</a>
+				)}
 			</header>
 			<div className="demo-object-columns">
 				<section className="demo-panel">
@@ -239,7 +211,9 @@ export function TrackScreen({
 					<h3>Публикация</h3>
 					<div className="demo-object-actions">
 						{track.published && (
-							<Button onPress={onMetadataPreview}>Обновить метаданные</Button>
+							<Button onPress={() => onMetadataPreview([track.id])}>
+								Обновить метаданные
+							</Button>
 						)}
 						<Button onPress={onPreview}>Предпросмотр публикации</Button>
 					</div>
@@ -255,64 +229,15 @@ export function TrackScreen({
 					)}
 				</section>
 			</div>
-			<section className="demo-panel">
-				<h2>Сравнение тегов</h2>
-				<div className="catalogue-comparison-controls">
-					<Tabs
-						selectedKey={scope}
-						onSelectionChange={(key) => setScope(key as keyof typeof fields)}
-					>
-						<TabList aria-label="Область тегов">
-							{(
-								[
-									["artist", "Артист"],
-									["release", "Альбом"],
-									["track", "Трек"],
-								] as const
-							).map(([id, label]) => (
-								<Tab key={id} id={id}>
-									{label}
-								</Tab>
-							))}
-						</TabList>
-					</Tabs>
-					<Checkbox isSelected={differencesOnly} onChange={setDifferencesOnly}>
-						<span className="checkbox" />
-						Только отличия
-					</Checkbox>
-				</div>
-				<div className="demo-preview-table">
-					<table>
-						<thead>
-							<tr>
-								{[
-									"Поле",
-									"Исходный файл",
-									"Провайдер · кэш",
-									"Локальная медиатека",
-									"Сейчас в публикации",
-								].map((label) => (
-									<th key={label} scope="col">
-										{label}
-									</th>
-								))}
-							</tr>
-						</thead>
-						<tbody>
-							{rows.map((row) => (
-								<tr key={row.key}>
-									<th scope="row">{row.key}</th>
-									{row.values.map((value, index) => (
-										<td key={`${row.key}:${index}`}>
-											{value.join(" · ") || "—"}
-										</td>
-									))}
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
-			</section>
+			<TagsComparison
+				releases={[release]}
+				artists={artists}
+				files={files}
+				scope="track"
+				initialTrackId={track.id}
+				onPreview={onMetadataPreview}
+				allowScopeChange
+			/>
 		</section>
 	);
 }

@@ -1,7 +1,9 @@
 import { useState } from "react";
 import "./matching-publication.css";
 import { Button, Dialog, Heading, Modal } from "./ui";
+import { artistReleaseHref } from "./artistReleaseRoute";
 import {
+	catalogData,
 	originalFiles,
 	originalReleases,
 	originalArtistName,
@@ -41,6 +43,7 @@ export function PublicationPreview({
 }) {
 	const [confirming, setConfirming] = useState(false);
 	const [parentRejected, setParentRejected] = useState(false);
+	const availableArtists = artists ?? catalogData.artists;
 	const fresh = isMetadataPreviewFresh(token, inventoryVersion, scopeKey);
 	const stale = !fresh || parentRejected;
 	const rows = releases.flatMap((release) =>
@@ -110,7 +113,19 @@ export function PublicationPreview({
 						{rows.map(({ release, track, file, action }) => (
 							<tr key={track.id}>
 								<td>
-									<a href={`#release/${release.id}`}>{release.title}</a> ·{" "}
+									{artistReleaseHref(release, availableArtists) ? (
+										<a
+											href={
+												artistReleaseHref(release, availableArtists) ??
+												undefined
+											}
+										>
+											{release.title}
+										</a>
+									) : (
+										release.title
+									)}{" "}
+									·{" "}
 									<a href={`#track/${track.id}`}>
 										{track.position}. {track.title}
 									</a>
@@ -122,7 +137,7 @@ export function PublicationPreview({
 								</td>
 								<td>
 									{track.published?.path ??
-										`/srv/music/${originalArtistName(release.artistId, artists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`}
+										`/srv/music/${originalArtistName(release.artistId, availableArtists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`}
 									<br />
 									MKA
 								</td>
@@ -158,7 +173,9 @@ export function PublicationPreview({
 									)}
 								</td>
 								<td>
-									{desiredTags(release, track, artists).TITLE.join(" · ")}
+									{desiredTags(release, track, availableArtists).TITLE.join(
+										" · ",
+									)}
 									<br />
 									{release.title}
 								</td>

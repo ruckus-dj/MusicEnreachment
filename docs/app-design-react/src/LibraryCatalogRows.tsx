@@ -11,6 +11,7 @@ import {
 	trackNumberLabel,
 } from "./catalogData";
 import { availabilityRowClass, type CatalogFilter } from "./availabilityRows";
+import { artistReleaseHref } from "./artistReleaseRoute";
 import {
 	Button,
 	Cell,
@@ -142,10 +143,11 @@ export function LibraryCatalogRows({
 	const tracks = releases.flatMap((release) =>
 		release.tracks.map((track) => ({ release, track })),
 	);
+	const tableTrackIds = tracks.map(({ track }) => track.id);
 	const columns =
 		view === "albums"
 			? [
-					"Выбор",
+					"Выбрать",
 					"Альбом",
 					"Артист",
 					"Год / издание",
@@ -176,7 +178,12 @@ export function LibraryCatalogRows({
 				<TableHeader>
 					{columns.map((column, index) => (
 						<Column key={column} isRowHeader={index === 1}>
-							{column}
+							{index === 0
+								? groupCheckbox(
+										tableTrackIds,
+										"Выбрать все позиции этой таблицы",
+									)
+								: column}
 						</Column>
 					))}
 				</TableHeader>
@@ -225,7 +232,17 @@ export function LibraryCatalogRows({
 											{release.title || "Без названия"}
 										</Button>
 										<span className="catalogue-sub">
-											<a href={`#release/${release.id}`}>Открыть издание</a>
+											{artistReleaseHref(release, artists) ? (
+												<a
+													href={
+														artistReleaseHref(release, artists) ?? undefined
+													}
+												>
+													Открыть издание
+												</a>
+											) : (
+												"Артист не указан"
+											)}
 										</span>
 										{expanded === release.id && (
 											<div className="catalogue-inline-tracks">
@@ -233,7 +250,7 @@ export function LibraryCatalogRows({
 													<thead>
 														<tr>
 															{[
-																"Выбор",
+																"Выбрать",
 																"№",
 																"Композиция",
 																"Длительность",
@@ -242,9 +259,22 @@ export function LibraryCatalogRows({
 																"Файл / путь",
 																"Публикация",
 																"Теги",
-															].map((heading) => (
-																<th key={heading} scope="col">
-																	{heading}
+															].map((heading, headingIndex) => (
+																<th
+																	key={heading}
+																	scope="col"
+																	className={
+																		headingIndex === 0
+																			? "selection-column"
+																			: undefined
+																	}
+																>
+																	{headingIndex === 0
+																		? groupCheckbox(
+																				release.tracks.map((track) => track.id),
+																				"Выбрать все позиции альбома",
+																			)
+																		: heading}
 																</th>
 															))}
 														</tr>
@@ -269,7 +299,7 @@ export function LibraryCatalogRows({
 																		hasAudio,
 																	)}
 																>
-																	<td>
+																	<td className="selection-column">
 																		{groupCheckbox(
 																			[track.id],
 																			`Выбрать ${track.title}`,
@@ -443,7 +473,15 @@ export function LibraryCatalogRows({
 										{groupCheckbox([track.id], `Выбрать ${track.title}`)}
 									</Cell>
 									<Cell>
-										<a href={`#release/${release.id}`}>{release.title}</a>
+										{artistReleaseHref(release, artists) ? (
+											<a
+												href={artistReleaseHref(release, artists) ?? undefined}
+											>
+												{release.title}
+											</a>
+										) : (
+											release.title
+										)}
 										<span className="catalogue-sub">
 											{originalArtistName(release.artistId, artists)} ·{" "}
 											{release.year}

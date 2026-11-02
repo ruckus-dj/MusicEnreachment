@@ -53,7 +53,10 @@
 .catalogue-table .react-aria-Row:hover { background: var(--raised); }
 .catalogue-table .react-aria-Row + .react-aria-Row .react-aria-Cell { border-top: 1px solid var(--line); }
 .catalogue-table .react-aria-Cell { min-width: 0; padding: 6px 8px; vertical-align: top; overflow-wrap: anywhere; }
-.catalogue-table .react-aria-Cell:first-child { width: 38px; padding: 6px 8px; }
+.catalogue-table .react-aria-Cell:first-child { box-sizing: border-box; width: 34px; min-width: 34px; max-width: 34px; padding: 6px 0; text-align: center; }
+.catalogue-table .react-aria-Column:first-child { box-sizing: border-box; width: 34px; min-width: 34px; max-width: 34px; padding-inline: 0; text-align: center; }
+.selection-column { box-sizing: border-box; width: 34px; min-width: 34px; max-width: 34px; padding-inline: 0 !important; text-align: center !important; }
+.selection-column .demo-checkbox { width: 34px; height: 32px; flex: 0 0 34px; }
 .catalogue-table .react-aria-Cell a, .catalogue-expander { color: var(--accent); font-weight: 650; text-decoration: none; text-underline-offset: 2px; }
 .catalogue-table .react-aria-Cell a:hover, .catalogue-expander:hover { text-decoration: underline; }
 .catalogue-sub { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 400; overflow-wrap: anywhere; }
@@ -65,7 +68,7 @@
 .catalogue-table--artists { min-width: 680px; }
 .catalogue-table--albums { min-width: 940px; }
 .catalogue-table--tracks { min-width: 1050px; }
-.catalogue-table .demo-checkbox { width: 28px; height: 32px; }
+.catalogue-table .demo-checkbox { width: 34px; height: 32px; }
 .catalogue-table .demo-checkbox-box { width: 15px; height: 15px; }
 .catalogue-empty { padding: 28px 16px; color: var(--muted); text-align: center; }
 .artist-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 224px), 1fr)); gap: 14px; padding: clamp(12px, 1.5vw, 20px); }
@@ -162,16 +165,6 @@
 .artist-album-meta { display: block; color: var(--muted); font-size: 11px; font-weight: 450; line-height: 1.4; overflow-wrap: anywhere; }
 .catalogue-object .artist-album-card .react-aria-DisclosurePanel { border-top: 1px solid var(--line); }
 .catalogue-object .artist-album-card .demo-object-actions { padding: 10px 13px; }
-.catalogue-object .artist-album-card .album-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0; padding: 9px 12px; border-bottom: 1px solid var(--line); }
-.catalogue-object .artist-album-card .album-actions-open { display: inline-flex; min-height: 34px; align-items: center; padding: 5px 10px; color: var(--muted); border: 1px solid var(--control); border-radius: 5px; text-decoration: none; }
-.catalogue-object .artist-album-card .album-actions-open:hover { color: var(--ink); background: var(--raised); }
-.catalogue-object .artist-album-card .album-actions > .ui-button { min-height: 34px; padding: 5px 10px; border: 1px solid var(--control); border-radius: 5px; }
-.catalogue-object .artist-album-card .album-actions > .ui-button--primary { border-color: var(--button); }
-.album-actions-popover { z-index: 60; width: max-content; max-width: calc(100vw - 24px); max-height: min(240px, calc(100dvh - 24px)); overflow: auto; padding: 4px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--catalogue-shadow); }
-.album-actions-popover .ui-menu { display: grid; gap: 2px; min-width: 150px; outline: none; }
-.album-actions-popover .ui-menu-item { padding: 8px 10px; color: var(--ink); border-radius: 4px; text-decoration: none; cursor: pointer; outline: none; }
-.album-actions-popover .ui-menu-item[data-focused], .album-actions-popover .ui-menu-item[data-focus-visible] { background: var(--raised); }
-.album-actions-popover .ui-menu-item[data-focus-visible] { box-shadow: inset 0 0 0 2px var(--focus); }
 .catalogue-object .artist-album-card .demo-preview-table { margin: 0 12px 12px; }
 .catalogue-object .demo-object-actions > button, .catalogue-object > button { min-height: 32px; padding: 5px 9px; color: var(--ink); background: var(--surface); border: 1px solid var(--control); border-radius: 4px; }
 .catalogue-object .demo-panel { margin: 10px 0; padding: 12px; border-radius: 5px; box-shadow: 0 2px 8px #00000008; }
@@ -250,13 +243,6 @@
 	.catalogue-object .artist-hero-heading { grid-column: 2; grid-row: 1; }
 	.catalogue-object .artist-hero-foot { grid-column: 1 / -1; grid-row: 2; }
 	.catalogue-object .artist-album-card .catalogue-edition-trigger { grid-template-columns: 54px minmax(0, 1fr) 14px; gap: 9px; min-height: 80px; padding: 9px; }
-	.catalogue-object .artist-album-card .album-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; padding: 8px; }
-	.catalogue-object .artist-album-card .album-actions-open { grid-row: 2; grid-column: 1; }
-	.catalogue-object .artist-album-card .album-actions > .ui-button--primary { grid-row: 1; grid-column: 1 / -1; }
-	.catalogue-object .artist-album-card .album-actions-menu-trigger { grid-row: 2; grid-column: 2; }
-	.catalogue-object .artist-album-card .album-actions-open, .catalogue-object .artist-album-card .album-actions > .ui-button { justify-content: center; min-width: 0; }
-	.catalogue-object .artist-album-card .album-actions-open { white-space: nowrap; }
-	.catalogue-object .artist-album-card .album-actions > .ui-button--primary { width: 100%; }
 	.artist-album-cover { width: 54px; }
 	.artist-album-cover > span { font-size: 28px; }
 	.artist-album-meta { font-size: 10px; }
