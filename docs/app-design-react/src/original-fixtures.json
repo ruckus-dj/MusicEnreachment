@@ -1,0 +1,5617 @@
+{
+  "sourceSha256": "7dc0811d42fb8c9a64deb8d7112d83da3970e71f67d141c3043714c41320bab3",
+  "artists": [
+    {
+      "id": "mira",
+      "name": "Mira Vale",
+      "genre": "Ambient / Folk",
+      "color": "clay"
+    },
+    {
+      "id": "arden",
+      "name": "Arden Trio",
+      "genre": "Contemporary jazz",
+      "color": "forest"
+    },
+    {
+      "id": "forma",
+      "name": "Forma",
+      "genre": "Electronic",
+      "color": "dusk"
+    },
+    {
+      "id": "various",
+      "name": "Various Artists",
+      "genre": "Локальные сборники",
+      "color": "sand"
+    }
+  ],
+  "releases": [
+    {
+      "id": "north",
+      "title": "Northern Lines",
+      "artistId": "mira",
+      "year": "2021",
+      "country": "XE",
+      "label": "Field Records",
+      "catalog": "FR-021",
+      "color": "clay",
+      "providerId": "p-north",
+      "tracks": [
+        {
+          "id": "north-t1",
+          "position": 1,
+          "title": "First Light",
+          "duration": 252,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-1",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f1",
+          "providerTrackId": "p-north-t1",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "First Light"
+              ],
+              "ARTIST": [
+                "mira vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Northern lines"
+              ],
+              "ALBUMARTIST": [
+                "mira vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "1"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": [
+                "Original rip"
+              ]
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "MP3",
+            "container": "MKA",
+            "sourceId": "previous-mp3-north-f1",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2021 - Northern Lines/01 - First Light.mka"
+          },
+          "sourceIds": [
+            "north-f1",
+            "north-t1-mp3"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "First Light"
+            ],
+            "ARTIST": [
+              "mira vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Northern lines"
+            ],
+            "ALBUMARTIST": [
+              "mira vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "1"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": [
+              "Original rip"
+            ]
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "north-t2",
+          "position": 2,
+          "title": "Still Water (local edit)",
+          "duration": 308,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-2",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f2",
+          "providerTrackId": "p-north-t2",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Still Water"
+              ],
+              "ARTIST": [
+                "mira vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Northern lines"
+              ],
+              "ALBUMARTIST": [
+                "mira vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "2"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": [
+                "Original rip"
+              ]
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "MP3",
+            "container": "MKA",
+            "sourceId": "previous-mp3-north-f2",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2021 - Northern Lines/02 - Still Water.mka"
+          },
+          "sourceIds": [
+            "north-f2"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Still Water"
+            ],
+            "ARTIST": [
+              "mira vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Northern lines"
+            ],
+            "ALBUMARTIST": [
+              "mira vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "2"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": [
+              "Original rip"
+            ]
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          },
+          "coverHash": "demo-cover-north",
+          "lyrics": null,
+          "observedFile": {
+            "state": "drift",
+            "mtime": "изменён вне приложения",
+            "size": "не совпадает"
+          }
+        },
+        {
+          "id": "north-t3",
+          "position": 3,
+          "title": "Northbound",
+          "duration": 226,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-3",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f3",
+          "providerTrackId": "p-north-t3",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Northbound (live?)"
+              ],
+              "ARTIST": [
+                "mira vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Northern lines"
+              ],
+              "ALBUMARTIST": [
+                "mira vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "3"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": [
+                "Original rip"
+              ]
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "MP3",
+            "container": "MKA",
+            "sourceId": "previous-mp3-north-f3",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2021 - Northern Lines/03 - Northbound.mka"
+          },
+          "sourceIds": [
+            "north-f3",
+            "north-f3-mp3"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Northbound (live?)"
+            ],
+            "ARTIST": [
+              "mira vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Northern lines"
+            ],
+            "ALBUMARTIST": [
+              "mira vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "3"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": [
+              "Original rip"
+            ]
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "north-t4",
+          "position": 4,
+          "title": "The Long Way Home",
+          "duration": 381,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-4",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f4",
+          "providerTrackId": "p-north-t4",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "The Long Way Home"
+              ],
+              "ARTIST": [
+                "mira vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Northern lines"
+              ],
+              "ALBUMARTIST": [
+                "mira vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "4"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": [
+                "Original rip"
+              ]
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "MP3",
+            "container": "MKA",
+            "sourceId": "previous-mp3-north-f4",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2021 - Northern Lines/04 - The Long Way Home.mka"
+          },
+          "sourceIds": [
+            "north-f4"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "The Long Way Home"
+            ],
+            "ARTIST": [
+              "mira vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Northern lines"
+            ],
+            "ALBUMARTIST": [
+              "mira vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "4"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": [
+              "Original rip"
+            ]
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "north-t5",
+          "position": 5,
+          "title": "Pine Forest",
+          "duration": 264,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-5",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f5",
+          "providerTrackId": "p-north-t5",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Pine Forest"
+              ],
+              "ARTIST": [
+                "mira vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Northern lines"
+              ],
+              "ALBUMARTIST": [
+                "mira vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "5"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": [
+                "Original rip"
+              ]
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "MP3",
+            "container": "MKA",
+            "sourceId": "previous-mp3-north-f5",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2021 - Northern Lines/05 - Pine Forest.mka"
+          },
+          "sourceIds": [
+            "north-f5"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Pine Forest"
+            ],
+            "ARTIST": [
+              "mira vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Northern lines"
+            ],
+            "ALBUMARTIST": [
+              "mira vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "5"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": [
+              "Original rip"
+            ]
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "north-t6",
+          "position": 6,
+          "title": "Under the Bridge",
+          "duration": 198,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-6",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f6",
+          "providerTrackId": "p-north-t6",
+          "published": null,
+          "sourceIds": [
+            "north-f6"
+          ]
+        },
+        {
+          "id": "north-t7",
+          "position": 7,
+          "title": "Low Tide",
+          "duration": 291,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-7",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f7",
+          "providerTrackId": "p-north-t7",
+          "published": null,
+          "sourceIds": [
+            "north-f7"
+          ]
+        },
+        {
+          "id": "north-t8",
+          "position": 8,
+          "title": "Open Country",
+          "duration": 244,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-8",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f8",
+          "providerTrackId": "p-north-t8",
+          "published": null,
+          "sourceIds": [
+            "north-f8"
+          ]
+        },
+        {
+          "id": "north-t9",
+          "position": 9,
+          "title": "Winter Birds",
+          "duration": 318,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-9",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "north-t10",
+          "position": 10,
+          "title": "Last Train",
+          "duration": 207,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-10",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        }
+      ],
+      "releaseGroupId": "demo-rg-north"
+    },
+    {
+      "id": "hours",
+      "title": "Small Hours",
+      "artistId": "arden",
+      "year": "2018",
+      "country": "GB",
+      "label": "Room Tone",
+      "catalog": "RT-018",
+      "color": "forest",
+      "providerId": "p-hours",
+      "tracks": [
+        {
+          "id": "hours-t1",
+          "position": 1,
+          "title": "Green Room",
+          "duration": 284,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-1",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": "hours-f1",
+          "providerTrackId": "p-hours-t1",
+          "published": null,
+          "sourceIds": [
+            "hours-f1"
+          ]
+        },
+        {
+          "id": "hours-t2",
+          "position": 2,
+          "title": "After Midnight",
+          "duration": 312,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-2",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": "hours-f2",
+          "providerTrackId": "p-hours-t2",
+          "published": null,
+          "sourceIds": [
+            "hours-f2"
+          ]
+        },
+        {
+          "id": "hours-t3",
+          "position": 3,
+          "title": "Slow Motion",
+          "duration": 241,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-3",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": "hours-f3",
+          "providerTrackId": "p-hours-t3",
+          "published": null,
+          "sourceIds": [
+            "hours-f3"
+          ]
+        },
+        {
+          "id": "hours-t4",
+          "position": 4,
+          "title": "Blue Window",
+          "duration": 298,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-4",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": "hours-f4",
+          "providerTrackId": "p-hours-t4",
+          "published": null,
+          "sourceIds": [
+            "hours-f4"
+          ]
+        },
+        {
+          "id": "hours-t5",
+          "position": 5,
+          "title": "On the Corner",
+          "duration": 329,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-5",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": "hours-f5",
+          "providerTrackId": "p-hours-t5",
+          "published": null,
+          "sourceIds": [
+            "hours-f5"
+          ]
+        },
+        {
+          "id": "hours-t6",
+          "position": 6,
+          "title": "Paper Moon",
+          "duration": 246,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-6",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": "hours-f6",
+          "providerTrackId": "p-hours-t6",
+          "published": null,
+          "sourceIds": [
+            "hours-f6"
+          ]
+        },
+        {
+          "id": "hours-t7",
+          "position": 7,
+          "title": "Before Dawn",
+          "duration": 271,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-7",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": "hours-f7",
+          "providerTrackId": "p-hours-t7",
+          "published": null,
+          "sourceIds": [
+            "hours-f7"
+          ]
+        },
+        {
+          "id": "hours-t8",
+          "position": 8,
+          "title": "Small Hours",
+          "duration": 356,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-8",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": "hours-f8",
+          "providerTrackId": "p-hours-t8",
+          "published": null,
+          "sourceIds": [
+            "hours-f8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "signals",
+      "title": "Signals",
+      "artistId": "forma",
+      "year": "2024",
+      "country": "XW",
+      "label": "Independent",
+      "catalog": "FM-024",
+      "color": "dusk",
+      "providerId": "p-signals",
+      "tracks": [
+        {
+          "id": "signals-t1",
+          "position": 1,
+          "title": "Carrier",
+          "duration": 198,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-1",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": "signals-f1",
+          "providerTrackId": "p-signals-t1",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Carrier"
+              ],
+              "ARTIST": [
+                "Forma"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Signals"
+              ],
+              "ALBUMARTIST": [
+                "Forma"
+              ],
+              "DATE": [
+                "2024"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Independent"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "1"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "electronic"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "signals-f1",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Forma/2024 - Signals/01 - Carrier.mka"
+          },
+          "sourceIds": [
+            "signals-f1"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Carrier"
+            ],
+            "ARTIST": [
+              "Forma"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Signals"
+            ],
+            "ALBUMARTIST": [
+              "Forma"
+            ],
+            "DATE": [
+              "2024"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Independent"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "1"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "electronic"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "signals-t2",
+          "position": 2,
+          "title": "Relay",
+          "duration": 243,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-2",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": "signals-f2",
+          "providerTrackId": "p-signals-t2",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Relay"
+              ],
+              "ARTIST": [
+                "Forma"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Signals"
+              ],
+              "ALBUMARTIST": [
+                "Forma"
+              ],
+              "DATE": [
+                "2024"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Independent"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "2"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "electronic"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "signals-f2",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Forma/2024 - Signals/02 - Relay.mka"
+          },
+          "sourceIds": [
+            "signals-f2"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Relay"
+            ],
+            "ARTIST": [
+              "Forma"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Signals"
+            ],
+            "ALBUMARTIST": [
+              "Forma"
+            ],
+            "DATE": [
+              "2024"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Independent"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "2"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "electronic"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "signals-t3",
+          "position": 3,
+          "title": "Frequency",
+          "duration": 287,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-3",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": "signals-f3",
+          "providerTrackId": "p-signals-t3",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Frequency"
+              ],
+              "ARTIST": [
+                "Forma"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Signals"
+              ],
+              "ALBUMARTIST": [
+                "Forma"
+              ],
+              "DATE": [
+                "2024"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Independent"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "3"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "electronic"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "signals-f3",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Forma/2024 - Signals/03 - Frequency.mka"
+          },
+          "sourceIds": [
+            "signals-f3"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Frequency"
+            ],
+            "ARTIST": [
+              "Forma"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Signals"
+            ],
+            "ALBUMARTIST": [
+              "Forma"
+            ],
+            "DATE": [
+              "2024"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Independent"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "3"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "electronic"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "signals-t4",
+          "position": 4,
+          "title": "Return Path",
+          "duration": 226,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-4",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": "signals-f4",
+          "providerTrackId": "p-signals-t4",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Return Path"
+              ],
+              "ARTIST": [
+                "Forma"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Signals"
+              ],
+              "ALBUMARTIST": [
+                "Forma"
+              ],
+              "DATE": [
+                "2024"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Independent"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "4"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "electronic"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "signals-f4",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Forma/2024 - Signals/04 - Return Path.mka"
+          },
+          "sourceIds": [
+            "signals-f4"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Return Path"
+            ],
+            "ARTIST": [
+              "Forma"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Signals"
+            ],
+            "ALBUMARTIST": [
+              "Forma"
+            ],
+            "DATE": [
+              "2024"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Independent"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "4"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "electronic"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "signals-t5",
+          "position": 5,
+          "title": "Static",
+          "duration": 214,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-5",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": "signals-f5",
+          "providerTrackId": "p-signals-t5",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Static"
+              ],
+              "ARTIST": [
+                "Forma"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Signals"
+              ],
+              "ALBUMARTIST": [
+                "Forma"
+              ],
+              "DATE": [
+                "2024"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Independent"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "5"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "electronic"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "signals-f5",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Forma/2024 - Signals/05 - Static.mka"
+          },
+          "sourceIds": [
+            "signals-f5"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Static"
+            ],
+            "ARTIST": [
+              "Forma"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Signals"
+            ],
+            "ALBUMARTIST": [
+              "Forma"
+            ],
+            "DATE": [
+              "2024"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Independent"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "5"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "electronic"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "signals-t6",
+          "position": 6,
+          "title": "Signal Lost",
+          "duration": 272,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-6",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": "signals-f6",
+          "providerTrackId": "p-signals-t6",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Signal Lost"
+              ],
+              "ARTIST": [
+                "Forma"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Signals"
+              ],
+              "ALBUMARTIST": [
+                "Forma"
+              ],
+              "DATE": [
+                "2024"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Independent"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "6"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "electronic"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "signals-f6",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Forma/2024 - Signals/06 - Signal Lost.mka"
+          },
+          "sourceIds": [
+            "signals-f6"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Signal Lost"
+            ],
+            "ARTIST": [
+              "Forma"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Signals"
+            ],
+            "ALBUMARTIST": [
+              "Forma"
+            ],
+            "DATE": [
+              "2024"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Independent"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "6"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "electronic"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "rooms",
+      "title": "Collected Rooms",
+      "artistId": "mira",
+      "year": "2020",
+      "country": "XE",
+      "label": "Field Records",
+      "catalog": "FR-020",
+      "color": "slate",
+      "providerId": "p-rooms",
+      "tracks": [
+        {
+          "id": "rooms-t1",
+          "position": 1,
+          "title": "Morning Room",
+          "duration": 229,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-1",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "rooms-f1",
+          "providerTrackId": "p-rooms-t1",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Morning Room"
+              ],
+              "ARTIST": [
+                "Mira Vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Collected Rooms"
+              ],
+              "ALBUMARTIST": [
+                "Mira Vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Field Records"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "1"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": "demo-cover-rooms",
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "rooms-f1",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2020 - Collected Rooms/01 - Morning Room.mka"
+          },
+          "sourceIds": [
+            "rooms-f1"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Morning Room"
+            ],
+            "ARTIST": [
+              "Mira Vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Collected Rooms"
+            ],
+            "ALBUMARTIST": [
+              "Mira Vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Field Records"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "1"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": "demo-cover-rooms",
+            "lyrics": null
+          },
+          "manualProtected": {
+            "TITLE": true
+          },
+          "providerTitle": "Morning Room (provider correction)",
+          "coverHash": "demo-cover-rooms",
+          "lyrics": null
+        },
+        {
+          "id": "rooms-t2",
+          "position": 2,
+          "title": "North Window",
+          "duration": 301,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-2",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "rooms-f2",
+          "providerTrackId": "p-rooms-t2",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "North Window"
+              ],
+              "ARTIST": [
+                "Mira Vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Collected Rooms"
+              ],
+              "ALBUMARTIST": [
+                "Mira Vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Field Records"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "2"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "rooms-f2",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2020 - Collected Rooms/02 - North Window.mka"
+          },
+          "sourceIds": [
+            "rooms-f2"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "North Window"
+            ],
+            "ARTIST": [
+              "Mira Vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Collected Rooms"
+            ],
+            "ALBUMARTIST": [
+              "Mira Vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Field Records"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "2"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "rooms-t3",
+          "position": 3,
+          "title": "Night Sketch",
+          "duration": 254,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-3",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "rooms-f3",
+          "providerTrackId": "p-rooms-t3",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Night Sketch"
+              ],
+              "ARTIST": [
+                "Mira Vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Collected Rooms"
+              ],
+              "ALBUMARTIST": [
+                "Mira Vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Field Records"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "3"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "rooms-f3",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2020 - Collected Rooms/03 - Night Sketch.mka"
+          },
+          "sourceIds": [
+            "rooms-f3"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Night Sketch"
+            ],
+            "ARTIST": [
+              "Mira Vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Collected Rooms"
+            ],
+            "ALBUMARTIST": [
+              "Mira Vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Field Records"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "3"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "rooms-t4",
+          "position": 4,
+          "title": "Half Light",
+          "duration": 217,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-4",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "rooms-f4",
+          "providerTrackId": "p-rooms-t4",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Half Light"
+              ],
+              "ARTIST": [
+                "Mira Vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Collected Rooms"
+              ],
+              "ALBUMARTIST": [
+                "Mira Vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Field Records"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "4"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "rooms-f4",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2020 - Collected Rooms/04 - Half Light.mka"
+          },
+          "sourceIds": [
+            "rooms-f4"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Half Light"
+            ],
+            "ARTIST": [
+              "Mira Vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Collected Rooms"
+            ],
+            "ALBUMARTIST": [
+              "Mira Vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Field Records"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "4"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "rooms-t5",
+          "position": 5,
+          "title": "Stone Steps",
+          "duration": 284,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-5",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "rooms-f5",
+          "providerTrackId": "p-rooms-t5",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Stone Steps"
+              ],
+              "ARTIST": [
+                "Mira Vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Collected Rooms"
+              ],
+              "ALBUMARTIST": [
+                "Mira Vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Field Records"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "5"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "rooms-f5",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2020 - Collected Rooms/05 - Stone Steps.mka"
+          },
+          "sourceIds": [
+            "rooms-f5"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Stone Steps"
+            ],
+            "ARTIST": [
+              "Mira Vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Collected Rooms"
+            ],
+            "ALBUMARTIST": [
+              "Mira Vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Field Records"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "5"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "rooms-t6",
+          "position": 6,
+          "title": "Second Floor",
+          "duration": 266,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-6",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "rooms-f6",
+          "providerTrackId": "p-rooms-t6",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Second Floor"
+              ],
+              "ARTIST": [
+                "Mira Vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Collected Rooms"
+              ],
+              "ALBUMARTIST": [
+                "Mira Vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Field Records"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "6"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "rooms-f6",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2020 - Collected Rooms/06 - Second Floor.mka"
+          },
+          "sourceIds": [
+            "rooms-f6"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Second Floor"
+            ],
+            "ARTIST": [
+              "Mira Vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Collected Rooms"
+            ],
+            "ALBUMARTIST": [
+              "Mira Vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Field Records"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "6"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "rooms-t7",
+          "position": 7,
+          "title": "Quiet Street",
+          "duration": 246,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-7",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "rooms-f7",
+          "providerTrackId": "p-rooms-t7",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Quiet Street"
+              ],
+              "ARTIST": [
+                "Mira Vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Collected Rooms"
+              ],
+              "ALBUMARTIST": [
+                "Mira Vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Field Records"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "7"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "rooms-f7",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2020 - Collected Rooms/07 - Quiet Street.mka"
+          },
+          "sourceIds": [
+            "rooms-f7"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "Quiet Street"
+            ],
+            "ARTIST": [
+              "Mira Vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Collected Rooms"
+            ],
+            "ALBUMARTIST": [
+              "Mira Vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Field Records"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "7"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "rooms-t8",
+          "position": 8,
+          "title": "Home Again",
+          "duration": 329,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-8",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": "p-rooms-t8",
+          "published": {
+            "tags": {
+              "TITLE": [
+                "Home Again"
+              ],
+              "ARTIST": [
+                "Mira Vale"
+              ],
+              "ARTISTSORT": [],
+              "ALBUM": [
+                "Collected Rooms"
+              ],
+              "ALBUMARTIST": [
+                "Mira Vale"
+              ],
+              "DATE": [
+                "2020"
+              ],
+              "COUNTRY": [],
+              "LABEL": [
+                "Field Records"
+              ],
+              "CATALOGNUMBER": [],
+              "TRACKNUMBER": [
+                "8"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [],
+              "MUSICBRAINZ_ALBUMID": [],
+              "MUSICBRAINZ_TRACKID": [],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "rooms-f8",
+            "readAt": "26.09.2026 10:18",
+            "path": "/srv/music/Mira Vale/2020 - Collected Rooms/08 - Home Again.mka"
+          },
+          "sourceIds": [],
+          "metadataBaseline": {
+            "TITLE": [
+              "Home Again"
+            ],
+            "ARTIST": [
+              "Mira Vale"
+            ],
+            "ARTISTSORT": [],
+            "ALBUM": [
+              "Collected Rooms"
+            ],
+            "ALBUMARTIST": [
+              "Mira Vale"
+            ],
+            "DATE": [
+              "2020"
+            ],
+            "COUNTRY": [],
+            "LABEL": [
+              "Field Records"
+            ],
+            "CATALOGNUMBER": [],
+            "TRACKNUMBER": [
+              "8"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [],
+            "MUSICBRAINZ_ALBUMID": [],
+            "MUSICBRAINZ_TRACKID": [],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "mix",
+      "title": "Road Notes — личный сборник",
+      "artistId": "various",
+      "year": "2023",
+      "country": "",
+      "label": "",
+      "catalog": "",
+      "color": "sand",
+      "providerId": null,
+      "tracks": [
+        {
+          "id": "mix-t1",
+          "position": 1,
+          "title": "First Light",
+          "duration": 252,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-1",
+          "recordingGenres": [],
+          "sourceId": "mix-f1",
+          "providerTrackId": "p-north-t1",
+          "published": null,
+          "sourceIds": [
+            "mix-f1"
+          ]
+        },
+        {
+          "id": "mix-t2",
+          "position": 2,
+          "title": "Relay",
+          "duration": 243,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-2",
+          "recordingGenres": [],
+          "sourceId": "mix-f2",
+          "providerTrackId": "p-signals-t2",
+          "published": null,
+          "sourceIds": [
+            "mix-f2"
+          ]
+        },
+        {
+          "id": "mix-t3",
+          "position": 3,
+          "title": "Green Room",
+          "duration": 284,
+          "artistId": "arden",
+          "recordingId": null,
+          "recordingGenres": [],
+          "sourceId": "mix-f3",
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": [
+            "mix-f3"
+          ]
+        },
+        {
+          "id": "mix-t4",
+          "position": 4,
+          "title": "Night Sketch",
+          "duration": 254,
+          "artistId": "mira",
+          "recordingId": null,
+          "recordingGenres": [],
+          "sourceId": "mix-f4",
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": [
+            "mix-f4"
+          ]
+        },
+        {
+          "id": "mix-t5",
+          "position": 5,
+          "title": "Unknown Signal",
+          "duration": 239,
+          "artistId": "various",
+          "recordingId": null,
+          "recordingGenres": [],
+          "sourceId": "mix-f5",
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": [
+            "mix-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "north-japan-local",
+      "title": "Northern Lines",
+      "artistId": "mira",
+      "year": "2022",
+      "country": "JP",
+      "label": "Field Records",
+      "catalog": "FR-021-JP",
+      "color": "clay",
+      "providerId": "p-japan",
+      "tracks": [
+        {
+          "id": "north-japan-local-t1",
+          "position": 1,
+          "title": "First Light",
+          "duration": 252,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-1",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f1",
+          "providerTrackId": null,
+          "published": {
+            "tags": {
+              "TITLE": [
+                "First Light"
+              ],
+              "ARTIST": [
+                "Mira Vale"
+              ],
+              "ARTISTSORT": [
+                "Mira Vale"
+              ],
+              "ALBUM": [
+                "Northern Lines"
+              ],
+              "ALBUMARTIST": [
+                "Mira Vale"
+              ],
+              "DATE": [
+                "2022"
+              ],
+              "COUNTRY": [
+                "JP"
+              ],
+              "LABEL": [
+                "Field Records"
+              ],
+              "CATALOGNUMBER": [
+                "FR-021-JP"
+              ],
+              "TRACKNUMBER": [
+                "1"
+              ],
+              "DISCNUMBER": [
+                "1"
+              ],
+              "GENRE": [
+                "ambient",
+                "folk"
+              ],
+              "MUSICBRAINZ_ARTISTID": [
+                "demo-artist-mira"
+              ],
+              "MUSICBRAINZ_ALBUMID": [
+                "p-japan"
+              ],
+              "MUSICBRAINZ_TRACKID": [
+                "demo-rec-north-1"
+              ],
+              "COMMENT": []
+            },
+            "coverHash": null,
+            "lyrics": null,
+            "codec": "FLAC",
+            "container": "MKA",
+            "sourceId": "north-f1",
+            "readAt": "26.09.2026 11:02 · Japan edition",
+            "path": "/srv/music/Mira Vale/2022 - Northern Lines/01 - First Light.mka"
+          },
+          "sourceIds": [
+            "north-f1"
+          ],
+          "metadataBaseline": {
+            "TITLE": [
+              "First Light"
+            ],
+            "ARTIST": [
+              "Mira Vale"
+            ],
+            "ARTISTSORT": [
+              "Mira Vale"
+            ],
+            "ALBUM": [
+              "Northern Lines"
+            ],
+            "ALBUMARTIST": [
+              "Mira Vale"
+            ],
+            "DATE": [
+              "2022"
+            ],
+            "COUNTRY": [
+              "JP"
+            ],
+            "LABEL": [
+              "Field Records"
+            ],
+            "CATALOGNUMBER": [
+              "FR-021-JP"
+            ],
+            "TRACKNUMBER": [
+              "1"
+            ],
+            "DISCNUMBER": [
+              "1"
+            ],
+            "GENRE": [
+              "ambient",
+              "folk"
+            ],
+            "MUSICBRAINZ_ARTISTID": [
+              "demo-artist-mira"
+            ],
+            "MUSICBRAINZ_ALBUMID": [
+              "p-japan"
+            ],
+            "MUSICBRAINZ_TRACKID": [
+              "demo-rec-north-1"
+            ],
+            "COMMENT": []
+          },
+          "metadataBaselineExtras": {
+            "coverHash": null,
+            "lyrics": null
+          }
+        },
+        {
+          "id": "north-japan-local-t2",
+          "position": 2,
+          "title": "Still Water",
+          "duration": 308,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-2",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": "north-f2",
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": [
+            "north-f2"
+          ]
+        },
+        {
+          "id": "north-japan-local-t3",
+          "position": 3,
+          "title": "Northbound",
+          "duration": 226,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-3",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": []
+        },
+        {
+          "id": "north-japan-local-t4",
+          "position": 4,
+          "title": "The Long Way Home",
+          "duration": 381,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-4",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": []
+        },
+        {
+          "id": "north-japan-local-t5",
+          "position": 5,
+          "title": "Pine Forest",
+          "duration": 264,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-5",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": []
+        },
+        {
+          "id": "north-japan-local-t6",
+          "position": 6,
+          "title": "Under the Bridge",
+          "duration": 198,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-6",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": []
+        },
+        {
+          "id": "north-japan-local-t7",
+          "position": 7,
+          "title": "Low Tide",
+          "duration": 291,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-7",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": []
+        },
+        {
+          "id": "north-japan-local-t8",
+          "position": 8,
+          "title": "Open Country",
+          "duration": 244,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-8",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": []
+        },
+        {
+          "id": "north-japan-local-t9",
+          "position": 9,
+          "title": "Winter Birds",
+          "duration": 318,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-9",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": []
+        },
+        {
+          "id": "north-japan-local-t10",
+          "position": 10,
+          "title": "Last Train",
+          "duration": 207,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-10",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null,
+          "sourceIds": []
+        },
+        {
+          "id": "north-japan-local-t11",
+          "position": 11,
+          "title": "Afterglow (bonus)",
+          "duration": 267,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-bonus",
+          "sourceId": null,
+          "sourceIds": [],
+          "published": null
+        }
+      ],
+      "medium": "CD",
+      "releaseGroupId": "demo-rg-north"
+    }
+  ],
+  "files": {
+    "north-f1": {
+      "id": "north-f1",
+      "name": "01 - First Light.flac",
+      "path": "/mnt/inbox/north/01 - First Light.flac",
+      "tags": {
+        "TITLE": [
+          "First Light"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "1"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 252,
+      "size": "24.3 MB",
+      "available": true,
+      "providerTrackId": "p-north-t1",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-north-f1",
+          "rootId": "root-inbox",
+          "path": "/mnt/inbox/north/01 - First Light.flac"
+        },
+        {
+          "id": "loc-north-f1-backup",
+          "rootId": "root-backup",
+          "path": "/mnt/backup/Northern Lines/01 - First Light.flac"
+        }
+      ],
+      "sha256": "demo-sha256-north-f1"
+    },
+    "north-f2": {
+      "id": "north-f2",
+      "name": "02 - Still Water.flac",
+      "path": "/mnt/inbox/north/02 - Still Water.flac",
+      "tags": {
+        "TITLE": [
+          "Still Water"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "2"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 308,
+      "size": "26.6 MB",
+      "available": true,
+      "providerTrackId": "p-north-t2",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-north-f2",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/north/02 - Still Water.flac"
+        }
+      ]
+    },
+    "north-f3": {
+      "id": "north-f3",
+      "name": "03 - Northbound (live?).flac",
+      "path": "/mnt/inbox/north/03 - Northbound (live?).flac",
+      "tags": {
+        "TITLE": [
+          "Northbound (live?)"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "3"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 238,
+      "size": "28.9 MB",
+      "available": true,
+      "providerTrackId": "p-north-t3",
+      "confidence": "low",
+      "fingerprint": "Не найдено подтверждения",
+      "locations": [
+        {
+          "id": "loc-north-f3-final",
+          "rootId": "root-library",
+          "path": "/mnt/inbox/north/03 - Northbound (live?).flac"
+        }
+      ]
+    },
+    "north-f4": {
+      "id": "north-f4",
+      "name": "04 - The Long Way Home.flac",
+      "path": "/mnt/inbox/north/04 - The Long Way Home.flac",
+      "tags": {
+        "TITLE": [
+          "The Long Way Home"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "4"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 381,
+      "size": "31.2 MB",
+      "available": true,
+      "providerTrackId": "p-north-t4",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-north-f4",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/north/04 - The Long Way Home.flac"
+        }
+      ]
+    },
+    "north-f5": {
+      "id": "north-f5",
+      "name": "05 - Pine Forest.flac",
+      "path": "/mnt/inbox/north/05 - Pine Forest.flac",
+      "tags": {
+        "TITLE": [
+          "Pine Forest"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "5"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 264,
+      "size": "33.5 MB",
+      "available": true,
+      "providerTrackId": "p-north-t5",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-north-f5",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/north/05 - Pine Forest.flac"
+        }
+      ]
+    },
+    "north-f6": {
+      "id": "north-f6",
+      "name": "06 - Under the Bridge.flac",
+      "path": "/mnt/inbox/north/06 - Under the Bridge.flac",
+      "tags": {
+        "TITLE": [
+          "Under the Bridge"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "6"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 198,
+      "size": "35.8 MB",
+      "available": true,
+      "providerTrackId": "p-north-t6",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-north-f6",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/north/06 - Under the Bridge.flac"
+        }
+      ]
+    },
+    "north-f7": {
+      "id": "north-f7",
+      "name": "07 - Low Tide.flac",
+      "path": "/mnt/inbox/north/07 - Low Tide.flac",
+      "tags": {
+        "TITLE": [
+          "Low Tide"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "7"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 291,
+      "size": "38.1 MB",
+      "available": true,
+      "providerTrackId": "p-north-t7",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-north-f7",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/north/07 - Low Tide.flac"
+        }
+      ]
+    },
+    "north-f8": {
+      "id": "north-f8",
+      "name": "08 - Open Country.flac",
+      "path": "/mnt/inbox/north/08 - Open Country.flac",
+      "tags": {
+        "TITLE": [
+          "Open Country"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "8"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 244,
+      "size": "40.4 MB",
+      "available": true,
+      "providerTrackId": "p-north-t8",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-north-f8",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/north/08 - Open Country.flac"
+        }
+      ]
+    },
+    "hours-f1": {
+      "id": "hours-f1",
+      "name": "01 - Green Room.flac",
+      "path": "/mnt/inbox/hours/01 - Green Room.flac",
+      "tags": {
+        "TITLE": [
+          "Green Room"
+        ],
+        "ARTIST": [
+          "Arden Trio"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Small Hours"
+        ],
+        "ALBUMARTIST": [
+          "Arden Trio"
+        ],
+        "DATE": [
+          "2018"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Room Tone"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "1"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Contemporary jazz"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 284,
+      "size": "24.3 MB",
+      "available": true,
+      "providerTrackId": "p-hours-t1",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-hours-f1",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/hours/01 - Green Room.flac"
+        }
+      ]
+    },
+    "hours-f2": {
+      "id": "hours-f2",
+      "name": "02 - After Midnight.flac",
+      "path": "/mnt/inbox/hours/02 - After Midnight.flac",
+      "tags": {
+        "TITLE": [
+          "After Midnight"
+        ],
+        "ARTIST": [
+          "Arden Trio"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Small Hours"
+        ],
+        "ALBUMARTIST": [
+          "Arden Trio"
+        ],
+        "DATE": [
+          "2018"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Room Tone"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "2"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Contemporary jazz"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 312,
+      "size": "26.6 MB",
+      "available": true,
+      "providerTrackId": "p-hours-t2",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-hours-f2",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/hours/02 - After Midnight.flac"
+        }
+      ]
+    },
+    "hours-f3": {
+      "id": "hours-f3",
+      "name": "03 - Slow Motion.flac",
+      "path": "/mnt/inbox/hours/03 - Slow Motion.flac",
+      "tags": {
+        "TITLE": [
+          "Slow Motion"
+        ],
+        "ARTIST": [
+          "Arden Trio"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Small Hours"
+        ],
+        "ALBUMARTIST": [
+          "Arden Trio"
+        ],
+        "DATE": [
+          "2018"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Room Tone"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "3"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Contemporary jazz"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 241,
+      "size": "28.9 MB",
+      "available": true,
+      "providerTrackId": "p-hours-t3",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-hours-f3",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/hours/03 - Slow Motion.flac"
+        }
+      ]
+    },
+    "hours-f4": {
+      "id": "hours-f4",
+      "name": "04 - Blue Window.flac",
+      "path": "/mnt/inbox/hours/04 - Blue Window.flac",
+      "tags": {
+        "TITLE": [
+          "Blue Window"
+        ],
+        "ARTIST": [
+          "Arden Trio"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Small Hours"
+        ],
+        "ALBUMARTIST": [
+          "Arden Trio"
+        ],
+        "DATE": [
+          "2018"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Room Tone"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "4"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Contemporary jazz"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 298,
+      "size": "31.2 MB",
+      "available": true,
+      "providerTrackId": "p-hours-t4",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-hours-f4",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/hours/04 - Blue Window.flac"
+        }
+      ]
+    },
+    "hours-f5": {
+      "id": "hours-f5",
+      "name": "05 - On the Corner.flac",
+      "path": "/mnt/inbox/hours/05 - On the Corner.flac",
+      "tags": {
+        "TITLE": [
+          "On the Corner"
+        ],
+        "ARTIST": [
+          "Arden Trio"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Small Hours"
+        ],
+        "ALBUMARTIST": [
+          "Arden Trio"
+        ],
+        "DATE": [
+          "2018"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Room Tone"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "5"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Contemporary jazz"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 329,
+      "size": "33.5 MB",
+      "available": true,
+      "providerTrackId": "p-hours-t5",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-hours-f5",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/hours/05 - On the Corner.flac"
+        }
+      ]
+    },
+    "hours-f6": {
+      "id": "hours-f6",
+      "name": "06 - Paper Moon.flac",
+      "path": "/mnt/inbox/hours/06 - Paper Moon.flac",
+      "tags": {
+        "TITLE": [
+          "Paper Moon"
+        ],
+        "ARTIST": [
+          "Arden Trio"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Small Hours"
+        ],
+        "ALBUMARTIST": [
+          "Arden Trio"
+        ],
+        "DATE": [
+          "2018"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Room Tone"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "6"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Contemporary jazz"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 246,
+      "size": "35.8 MB",
+      "available": true,
+      "providerTrackId": "p-hours-t6",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-hours-f6",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/hours/06 - Paper Moon.flac"
+        }
+      ]
+    },
+    "hours-f7": {
+      "id": "hours-f7",
+      "name": "07 - Before Dawn.flac",
+      "path": "/mnt/inbox/hours/07 - Before Dawn.flac",
+      "tags": {
+        "TITLE": [
+          "Before Dawn"
+        ],
+        "ARTIST": [
+          "Arden Trio"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Small Hours"
+        ],
+        "ALBUMARTIST": [
+          "Arden Trio"
+        ],
+        "DATE": [
+          "2018"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Room Tone"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "7"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Contemporary jazz"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 271,
+      "size": "38.1 MB",
+      "available": true,
+      "providerTrackId": "p-hours-t7",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-hours-f7",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/hours/07 - Before Dawn.flac"
+        }
+      ]
+    },
+    "hours-f8": {
+      "id": "hours-f8",
+      "name": "08 - Small Hours.flac",
+      "path": "/mnt/inbox/hours/08 - Small Hours.flac",
+      "tags": {
+        "TITLE": [
+          "Small Hours"
+        ],
+        "ARTIST": [
+          "Arden Trio"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Small Hours"
+        ],
+        "ALBUMARTIST": [
+          "Arden Trio"
+        ],
+        "DATE": [
+          "2018"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Room Tone"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "8"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Contemporary jazz"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 356,
+      "size": "40.4 MB",
+      "available": true,
+      "providerTrackId": "p-hours-t8",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-hours-f8",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/hours/08 - Small Hours.flac"
+        }
+      ]
+    },
+    "signals-f1": {
+      "id": "signals-f1",
+      "name": "01 - Carrier.flac",
+      "path": "/mnt/inbox/signals/01 - Carrier.flac",
+      "tags": {
+        "TITLE": [
+          "Carrier"
+        ],
+        "ARTIST": [
+          "Forma"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Signals"
+        ],
+        "ALBUMARTIST": [
+          "Forma"
+        ],
+        "DATE": [
+          "2024"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Independent"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "1"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Electronic"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 198,
+      "size": "24.3 MB",
+      "available": true,
+      "providerTrackId": "p-signals-t1",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-signals-f1",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/signals/01 - Carrier.flac"
+        }
+      ]
+    },
+    "signals-f2": {
+      "id": "signals-f2",
+      "name": "02 - Relay.flac",
+      "path": "/mnt/inbox/signals/02 - Relay.flac",
+      "tags": {
+        "TITLE": [
+          "Relay"
+        ],
+        "ARTIST": [
+          "Forma"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Signals"
+        ],
+        "ALBUMARTIST": [
+          "Forma"
+        ],
+        "DATE": [
+          "2024"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Independent"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "2"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Electronic"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 243,
+      "size": "26.6 MB",
+      "available": true,
+      "providerTrackId": "p-signals-t2",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-signals-f2",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/signals/02 - Relay.flac"
+        }
+      ]
+    },
+    "signals-f3": {
+      "id": "signals-f3",
+      "name": "03 - Frequency.flac",
+      "path": "/mnt/inbox/signals/03 - Frequency.flac",
+      "tags": {
+        "TITLE": [
+          "Frequency"
+        ],
+        "ARTIST": [
+          "Forma"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Signals"
+        ],
+        "ALBUMARTIST": [
+          "Forma"
+        ],
+        "DATE": [
+          "2024"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Independent"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "3"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Electronic"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 287,
+      "size": "28.9 MB",
+      "available": true,
+      "providerTrackId": "p-signals-t3",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-signals-f3",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/signals/03 - Frequency.flac"
+        }
+      ]
+    },
+    "signals-f4": {
+      "id": "signals-f4",
+      "name": "04 - Return Path.flac",
+      "path": "/mnt/inbox/signals/04 - Return Path.flac",
+      "tags": {
+        "TITLE": [
+          "Return Path"
+        ],
+        "ARTIST": [
+          "Forma"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Signals"
+        ],
+        "ALBUMARTIST": [
+          "Forma"
+        ],
+        "DATE": [
+          "2024"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Independent"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "4"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Electronic"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 226,
+      "size": "31.2 MB",
+      "available": true,
+      "providerTrackId": "p-signals-t4",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-signals-f4",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/signals/04 - Return Path.flac"
+        }
+      ]
+    },
+    "signals-f5": {
+      "id": "signals-f5",
+      "name": "05 - Static.flac",
+      "path": "/mnt/inbox/signals/05 - Static.flac",
+      "tags": {
+        "TITLE": [
+          "Static"
+        ],
+        "ARTIST": [
+          "Forma"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Signals"
+        ],
+        "ALBUMARTIST": [
+          "Forma"
+        ],
+        "DATE": [
+          "2024"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Independent"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "5"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Electronic"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 214,
+      "size": "33.5 MB",
+      "available": true,
+      "providerTrackId": "p-signals-t5",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-signals-f5",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/signals/05 - Static.flac"
+        }
+      ]
+    },
+    "signals-f6": {
+      "id": "signals-f6",
+      "name": "06 - Signal Lost.flac",
+      "path": "/mnt/inbox/signals/06 - Signal Lost.flac",
+      "tags": {
+        "TITLE": [
+          "Signal Lost"
+        ],
+        "ARTIST": [
+          "Forma"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Signals"
+        ],
+        "ALBUMARTIST": [
+          "Forma"
+        ],
+        "DATE": [
+          "2024"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Independent"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "6"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Electronic"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 272,
+      "size": "35.8 MB",
+      "available": true,
+      "providerTrackId": "p-signals-t6",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-signals-f6",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/signals/06 - Signal Lost.flac"
+        }
+      ]
+    },
+    "rooms-f1": {
+      "id": "rooms-f1",
+      "name": "01 - Morning Room.flac",
+      "path": "/mnt/inbox/rooms/01 - Morning Room.flac",
+      "tags": {
+        "TITLE": [
+          "Morning Room"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Collected Rooms"
+        ],
+        "ALBUMARTIST": [
+          "Mira Vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Field Records"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "1"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 229,
+      "size": "24.3 MB",
+      "available": true,
+      "providerTrackId": "p-rooms-t1",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-rooms-f1",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/rooms/01 - Morning Room.flac"
+        }
+      ]
+    },
+    "rooms-f2": {
+      "id": "rooms-f2",
+      "name": "02 - North Window.flac",
+      "path": "/mnt/inbox/rooms/02 - North Window.flac",
+      "tags": {
+        "TITLE": [
+          "North Window"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Collected Rooms"
+        ],
+        "ALBUMARTIST": [
+          "Mira Vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Field Records"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "2"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 301,
+      "size": "26.6 MB",
+      "available": true,
+      "providerTrackId": "p-rooms-t2",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-rooms-f2",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/rooms/02 - North Window.flac"
+        }
+      ]
+    },
+    "rooms-f3": {
+      "id": "rooms-f3",
+      "name": "03 - Night Sketch.flac",
+      "path": "/mnt/inbox/rooms/03 - Night Sketch.flac",
+      "tags": {
+        "TITLE": [
+          "Night Sketch"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Collected Rooms"
+        ],
+        "ALBUMARTIST": [
+          "Mira Vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Field Records"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "3"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 254,
+      "size": "28.9 MB",
+      "available": true,
+      "providerTrackId": "p-rooms-t3",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-rooms-f3",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/rooms/03 - Night Sketch.flac"
+        }
+      ]
+    },
+    "rooms-f4": {
+      "id": "rooms-f4",
+      "name": "04 - Half Light.flac",
+      "path": "/mnt/inbox/rooms/04 - Half Light.flac",
+      "tags": {
+        "TITLE": [
+          "Half Light"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Collected Rooms"
+        ],
+        "ALBUMARTIST": [
+          "Mira Vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Field Records"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "4"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 217,
+      "size": "31.2 MB",
+      "available": true,
+      "providerTrackId": "p-rooms-t4",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-rooms-f4",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/rooms/04 - Half Light.flac"
+        }
+      ]
+    },
+    "rooms-f5": {
+      "id": "rooms-f5",
+      "name": "05 - Stone Steps.flac",
+      "path": "/mnt/inbox/rooms/05 - Stone Steps.flac",
+      "tags": {
+        "TITLE": [
+          "Stone Steps"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Collected Rooms"
+        ],
+        "ALBUMARTIST": [
+          "Mira Vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Field Records"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "5"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 284,
+      "size": "33.5 MB",
+      "available": true,
+      "providerTrackId": "p-rooms-t5",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-rooms-f5",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/rooms/05 - Stone Steps.flac"
+        }
+      ]
+    },
+    "rooms-f6": {
+      "id": "rooms-f6",
+      "name": "06 - Second Floor.flac",
+      "path": "/mnt/inbox/rooms/06 - Second Floor.flac",
+      "tags": {
+        "TITLE": [
+          "Second Floor"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Collected Rooms"
+        ],
+        "ALBUMARTIST": [
+          "Mira Vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Field Records"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "6"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 266,
+      "size": "35.8 MB",
+      "available": true,
+      "providerTrackId": "p-rooms-t6",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-rooms-f6",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/rooms/06 - Second Floor.flac"
+        }
+      ]
+    },
+    "rooms-f7": {
+      "id": "rooms-f7",
+      "name": "07 - Quiet Street.flac",
+      "path": "/mnt/inbox/rooms/07 - Quiet Street.flac",
+      "tags": {
+        "TITLE": [
+          "Quiet Street"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Collected Rooms"
+        ],
+        "ALBUMARTIST": [
+          "Mira Vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Field Records"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "7"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 246,
+      "size": "38.1 MB",
+      "available": true,
+      "providerTrackId": "p-rooms-t7",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-rooms-f7",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/rooms/07 - Quiet Street.flac"
+        }
+      ]
+    },
+    "rooms-f8": {
+      "id": "rooms-f8",
+      "name": "08 - Home Again.flac",
+      "path": "/mnt/inbox/rooms/08 - Home Again.flac",
+      "tags": {
+        "TITLE": [
+          "Home Again"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Collected Rooms"
+        ],
+        "ALBUMARTIST": [
+          "Mira Vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [
+          "Field Records"
+        ],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "8"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": []
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 329,
+      "size": "40.4 MB",
+      "available": true,
+      "providerTrackId": "p-rooms-t8",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": []
+    },
+    "mix-f1": {
+      "id": "mix-f1",
+      "name": "01 - First Light.mp3",
+      "path": "/mnt/inbox/mix/01 - First Light.mp3",
+      "tags": {
+        "TITLE": [
+          "First Light"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Road Notes"
+        ],
+        "ALBUMARTIST": [
+          "Various Artists"
+        ],
+        "DATE": [
+          "2023"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "1"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Personal compilation"
+        ]
+      },
+      "codec": "MP3",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 252,
+      "size": "24.3 MB",
+      "available": true,
+      "providerTrackId": "p-north-t1",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-mix-f1",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/mix/01 - First Light.mp3"
+        }
+      ]
+    },
+    "mix-f2": {
+      "id": "mix-f2",
+      "name": "02 - Relay.mp3",
+      "path": "/mnt/inbox/mix/02 - Relay.mp3",
+      "tags": {
+        "TITLE": [
+          "Relay"
+        ],
+        "ARTIST": [
+          "Forma"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Road Notes"
+        ],
+        "ALBUMARTIST": [
+          "Various Artists"
+        ],
+        "DATE": [
+          "2023"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "2"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Electronic"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Personal compilation"
+        ]
+      },
+      "codec": "MP3",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 243,
+      "size": "26.6 MB",
+      "available": true,
+      "providerTrackId": "p-signals-t2",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-mix-f2",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/mix/02 - Relay.mp3"
+        }
+      ]
+    },
+    "mix-f3": {
+      "id": "mix-f3",
+      "name": "03 - Green Room.mp3",
+      "path": "/mnt/inbox/mix/03 - Green Room.mp3",
+      "tags": {
+        "TITLE": [
+          "Green Room"
+        ],
+        "ARTIST": [
+          "Arden Trio"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Road Notes"
+        ],
+        "ALBUMARTIST": [
+          "Various Artists"
+        ],
+        "DATE": [
+          "2023"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "3"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Contemporary jazz"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Personal compilation"
+        ]
+      },
+      "codec": "MP3",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 284,
+      "size": "28.9 MB",
+      "available": true,
+      "providerTrackId": "p-hours-t1",
+      "confidence": "low",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-mix-f3",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/mix/03 - Green Room.mp3"
+        }
+      ]
+    },
+    "mix-f4": {
+      "id": "mix-f4",
+      "name": "04 - Night Sketch.mp3",
+      "path": "/mnt/inbox/mix/04 - Night Sketch.mp3",
+      "tags": {
+        "TITLE": [
+          "Night Sketch"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Road Notes"
+        ],
+        "ALBUMARTIST": [
+          "Various Artists"
+        ],
+        "DATE": [
+          "2023"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "4"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Personal compilation"
+        ]
+      },
+      "codec": "MP3",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 254,
+      "size": "31.2 MB",
+      "available": true,
+      "providerTrackId": "p-rooms-t3",
+      "confidence": "low",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-mix-f4",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/mix/04 - Night Sketch.mp3"
+        }
+      ]
+    },
+    "mix-f5": {
+      "id": "mix-f5",
+      "name": "05 - Unknown Signal.mp3",
+      "path": "/mnt/inbox/mix/05 - Unknown Signal.mp3",
+      "tags": {
+        "TITLE": [
+          "Unknown Signal"
+        ],
+        "ARTIST": [
+          "Various Artists"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Road Notes"
+        ],
+        "ALBUMARTIST": [
+          "Various Artists"
+        ],
+        "DATE": [
+          "2023"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "5"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Локальные сборники"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Personal compilation"
+        ]
+      },
+      "codec": "MP3",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 239,
+      "size": "33.5 MB",
+      "available": true,
+      "providerTrackId": null,
+      "confidence": "low",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-mix-f5",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/mix/05 - Unknown Signal.mp3"
+        }
+      ]
+    },
+    "north-extra": {
+      "id": "north-extra",
+      "name": "session fragment.flac",
+      "path": "/mnt/inbox/north/session fragment.flac",
+      "tags": {
+        "TITLE": [
+          "Session fragment"
+        ],
+        "ARTIST": [
+          "Mira Vale"
+        ],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "COMMENT": [
+          "Unidentified fragment"
+        ]
+      },
+      "codec": "FLAC",
+      "bits": 24,
+      "sampleRate": 48000,
+      "duration": 73,
+      "size": "24.3 MB",
+      "available": true,
+      "providerTrackId": null,
+      "confidence": "low",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-north-extra",
+          "rootId": "root-backup",
+          "path": "/mnt/inbox/north/session fragment.flac"
+        }
+      ]
+    },
+    "north-t1-mp3": {
+      "id": "north-t1-mp3",
+      "name": "01 - First Light.mp3",
+      "path": "/mnt/music/First Light.mp3",
+      "tags": {
+        "TITLE": [
+          "First Light"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "1"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "MP3",
+      "bits": null,
+      "sampleRate": 48000,
+      "duration": 252,
+      "size": "8.2 MB",
+      "available": true,
+      "providerTrackId": "p-north-t1",
+      "confidence": "high",
+      "fingerprint": "Нет ответа AcoustID; fingerprint рассчитан",
+      "locations": [
+        {
+          "id": "loc-north-t1-mp3",
+          "rootId": "root-library",
+          "path": "/mnt/music/First Light.mp3"
+        }
+      ],
+      "sha256": "demo-sha256-north-f1"
+    },
+    "north-f3-mp3": {
+      "id": "north-f3-mp3",
+      "name": "03 - Northbound.mp3",
+      "path": "/mnt/music/Northbound.mp3",
+      "tags": {
+        "TITLE": [
+          "Northbound (live?)"
+        ],
+        "ARTIST": [
+          "mira vale"
+        ],
+        "ARTISTSORT": [],
+        "ALBUM": [
+          "Northern lines"
+        ],
+        "ALBUMARTIST": [
+          "mira vale"
+        ],
+        "DATE": [
+          "2020"
+        ],
+        "COUNTRY": [],
+        "LABEL": [],
+        "CATALOGNUMBER": [],
+        "TRACKNUMBER": [
+          "3"
+        ],
+        "DISCNUMBER": [
+          "1"
+        ],
+        "GENRE": [
+          "Ambient / Folk"
+        ],
+        "MUSICBRAINZ_ARTISTID": [],
+        "MUSICBRAINZ_ALBUMID": [],
+        "MUSICBRAINZ_TRACKID": [],
+        "COMMENT": [
+          "Original rip"
+        ]
+      },
+      "codec": "MP3",
+      "bits": null,
+      "sampleRate": 48000,
+      "duration": 238,
+      "size": "9.1 MB",
+      "available": true,
+      "providerTrackId": "p-north-t3",
+      "confidence": "low",
+      "fingerprint": "Не найдено подтверждения",
+      "locations": [
+        {
+          "id": "loc-north-f3-mp3",
+          "rootId": "root-backup",
+          "path": "/mnt/backup/Northbound.mp3"
+        }
+      ]
+    }
+  },
+  "providerReleases": [
+    {
+      "id": "p-north",
+      "title": "Northern Lines",
+      "artistId": "mira",
+      "year": "2021",
+      "country": "XE",
+      "label": "Field Records",
+      "catalog": "FR-021",
+      "color": "clay",
+      "providerId": "p-north",
+      "tracks": [
+        {
+          "id": "p-north-t1",
+          "position": 1,
+          "title": "First Light",
+          "duration": 252,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-1",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-north-t2",
+          "position": 2,
+          "title": "Still Water",
+          "duration": 308,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-2",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-north-t3",
+          "position": 3,
+          "title": "Northbound",
+          "duration": 226,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-3",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-north-t4",
+          "position": 4,
+          "title": "The Long Way Home",
+          "duration": 381,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-4",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-north-t5",
+          "position": 5,
+          "title": "Pine Forest",
+          "duration": 264,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-5",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-north-t6",
+          "position": 6,
+          "title": "Under the Bridge",
+          "duration": 198,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-6",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-north-t7",
+          "position": 7,
+          "title": "Low Tide",
+          "duration": 291,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-7",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-north-t8",
+          "position": 8,
+          "title": "Open Country",
+          "duration": 244,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-8",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-north-t9",
+          "position": 9,
+          "title": "Winter Birds",
+          "duration": 318,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-9",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-north-t10",
+          "position": 10,
+          "title": "Last Train",
+          "duration": 207,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-10",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        }
+      ],
+      "medium": "CD",
+      "releaseGroupId": "demo-rg-north"
+    },
+    {
+      "id": "p-japan",
+      "title": "Northern Lines",
+      "artistId": "mira",
+      "year": "2022",
+      "country": "JP",
+      "label": "Field Records",
+      "catalog": "FR-021-JP",
+      "color": "clay",
+      "providerId": "p-japan",
+      "tracks": [
+        {
+          "id": "p-japan-t1",
+          "position": 1,
+          "title": "First Light",
+          "duration": 252,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-1",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t2",
+          "position": 2,
+          "title": "Still Water",
+          "duration": 308,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-2",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t3",
+          "position": 3,
+          "title": "Northbound",
+          "duration": 226,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-3",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t4",
+          "position": 4,
+          "title": "The Long Way Home",
+          "duration": 381,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-4",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t5",
+          "position": 5,
+          "title": "Pine Forest",
+          "duration": 264,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-5",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t6",
+          "position": 6,
+          "title": "Under the Bridge",
+          "duration": 198,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-6",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t7",
+          "position": 7,
+          "title": "Low Tide",
+          "duration": 291,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-7",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t8",
+          "position": 8,
+          "title": "Open Country",
+          "duration": 244,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-8",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t9",
+          "position": 9,
+          "title": "Winter Birds",
+          "duration": 318,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-9",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t10",
+          "position": 10,
+          "title": "Last Train",
+          "duration": 207,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-10",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-japan-t11",
+          "position": 11,
+          "title": "Afterglow (bonus)",
+          "duration": 267,
+          "artistId": "mira",
+          "recordingId": "demo-rec-north-bonus"
+        }
+      ],
+      "medium": "CD",
+      "releaseGroupId": "demo-rg-north"
+    },
+    {
+      "id": "p-hours",
+      "title": "Small Hours",
+      "artistId": "arden",
+      "year": "2018",
+      "country": "GB",
+      "label": "Room Tone",
+      "catalog": "RT-018",
+      "color": "forest",
+      "providerId": "p-hours",
+      "tracks": [
+        {
+          "id": "p-hours-t1",
+          "position": 1,
+          "title": "Green Room",
+          "duration": 284,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-1",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-hours-t2",
+          "position": 2,
+          "title": "After Midnight",
+          "duration": 312,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-2",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-hours-t3",
+          "position": 3,
+          "title": "Slow Motion",
+          "duration": 241,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-3",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-hours-t4",
+          "position": 4,
+          "title": "Blue Window",
+          "duration": 298,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-4",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-hours-t5",
+          "position": 5,
+          "title": "On the Corner",
+          "duration": 329,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-5",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-hours-t6",
+          "position": 6,
+          "title": "Paper Moon",
+          "duration": 246,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-6",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-hours-t7",
+          "position": 7,
+          "title": "Before Dawn",
+          "duration": 271,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-7",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-hours-t8",
+          "position": 8,
+          "title": "Small Hours",
+          "duration": 356,
+          "artistId": "arden",
+          "recordingId": "demo-rec-hours-8",
+          "recordingGenres": [
+            "contemporary jazz"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        }
+      ],
+      "medium": "CD"
+    },
+    {
+      "id": "p-signals",
+      "title": "Signals",
+      "artistId": "forma",
+      "year": "2024",
+      "country": "XW",
+      "label": "Independent",
+      "catalog": "FM-024",
+      "color": "dusk",
+      "providerId": "p-signals",
+      "tracks": [
+        {
+          "id": "p-signals-t1",
+          "position": 1,
+          "title": "Carrier",
+          "duration": 198,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-1",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-signals-t2",
+          "position": 2,
+          "title": "Relay",
+          "duration": 243,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-2",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-signals-t3",
+          "position": 3,
+          "title": "Frequency",
+          "duration": 287,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-3",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-signals-t4",
+          "position": 4,
+          "title": "Return Path",
+          "duration": 226,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-4",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-signals-t5",
+          "position": 5,
+          "title": "Static",
+          "duration": 214,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-5",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-signals-t6",
+          "position": 6,
+          "title": "Signal Lost",
+          "duration": 272,
+          "artistId": "forma",
+          "recordingId": "demo-rec-signals-6",
+          "recordingGenres": [
+            "electronic"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        }
+      ],
+      "medium": "CD"
+    },
+    {
+      "id": "p-rooms",
+      "title": "Collected Rooms",
+      "artistId": "mira",
+      "year": "2020",
+      "country": "XE",
+      "label": "Field Records",
+      "catalog": "FR-020",
+      "color": "slate",
+      "providerId": "p-rooms",
+      "tracks": [
+        {
+          "id": "p-rooms-t1",
+          "position": 1,
+          "title": "Morning Room",
+          "duration": 229,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-1",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-rooms-t2",
+          "position": 2,
+          "title": "North Window",
+          "duration": 301,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-2",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-rooms-t3",
+          "position": 3,
+          "title": "Night Sketch",
+          "duration": 254,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-3",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-rooms-t4",
+          "position": 4,
+          "title": "Half Light",
+          "duration": 217,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-4",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-rooms-t5",
+          "position": 5,
+          "title": "Stone Steps",
+          "duration": 284,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-5",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-rooms-t6",
+          "position": 6,
+          "title": "Second Floor",
+          "duration": 266,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-6",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-rooms-t7",
+          "position": 7,
+          "title": "Quiet Street",
+          "duration": 246,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-7",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        },
+        {
+          "id": "p-rooms-t8",
+          "position": 8,
+          "title": "Home Again",
+          "duration": 329,
+          "artistId": "mira",
+          "recordingId": "demo-rec-rooms-8",
+          "recordingGenres": [
+            "ambient",
+            "folk"
+          ],
+          "sourceId": null,
+          "providerTrackId": null,
+          "published": null
+        }
+      ],
+      "medium": "CD"
+    }
+  ],
+  "incomingGroups": [
+    {
+      "id": "north",
+      "title": "Northern Lines",
+      "artistId": "mira",
+      "releaseId": "north",
+      "fileIds": [
+        "north-f1",
+        "north-f2",
+        "north-f3",
+        "north-f4",
+        "north-f5",
+        "north-f6",
+        "north-f7",
+        "north-f8",
+        "north-extra"
+      ],
+      "candidateId": "p-north",
+      "mode": "provider",
+      "autoEligible": false,
+      "reason": "Неполный релиз; одна спорная композиция",
+      "processed": false,
+      "drafts": {}
+    },
+    {
+      "id": "hours",
+      "title": "Small Hours",
+      "artistId": "arden",
+      "releaseId": "hours",
+      "fileIds": [
+        "hours-f1",
+        "hours-f2",
+        "hours-f3",
+        "hours-f4",
+        "hours-f5",
+        "hours-f6",
+        "hours-f7",
+        "hours-f8"
+      ],
+      "candidateId": "p-hours",
+      "mode": "provider",
+      "autoEligible": true,
+      "reason": "8 / 8: все назначения уверенные",
+      "processed": false,
+      "drafts": {}
+    },
+    {
+      "id": "mix",
+      "title": "Road Notes — личный сборник",
+      "artistId": "various",
+      "releaseId": "mix",
+      "fileIds": [
+        "mix-f1",
+        "mix-f2",
+        "mix-f3",
+        "mix-f4",
+        "mix-f5"
+      ],
+      "candidateId": null,
+      "mode": "local",
+      "autoEligible": false,
+      "reason": "Релиза нет у провайдера; композиции из разных альбомов",
+      "processed": false,
+      "drafts": {}
+    }
+  ],
+  "absentGroups": [
+    {
+      "id": "absent-blue",
+      "title": "Blue Atlas",
+      "artistId": "mira",
+      "groupId": "demo-rg-blue",
+      "editions": [
+        {
+          "id": "absent-blue-a",
+          "year": "1998",
+          "country": "GB",
+          "format": "CD",
+          "disambiguation": "Первое издание",
+          "titles": [
+            "Glass Harbor",
+            "The Map",
+            "Blue Atlas"
+          ]
+        },
+        {
+          "id": "absent-blue-b",
+          "year": "2001",
+          "country": "JP",
+          "format": "CD",
+          "disambiguation": "Японское издание",
+          "titles": [
+            "Glass Harbor",
+            "The Map",
+            "Blue Atlas",
+            "After Rain"
+          ]
+        }
+      ]
+    }
+  ],
+  "recoveryFixture": {
+    "trackId": "north-t1",
+    "targetPath": "/srv/music/Mira Vale/2021 - Northern Lines/01 - First Light.mka",
+    "tagsMatch": true,
+    "technicalMatch": true,
+    "authorityCurrent": true,
+    "sourceIdentityProof": false
+  }
+}

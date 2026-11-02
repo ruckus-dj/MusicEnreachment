@@ -4,6 +4,31 @@ env:
   CGO_ENABLED: "1"
 
 tasks:
+  design:install:
+    desc: Install standalone React design dependencies
+    sources:
+      - docs/app-design-react/package.json
+      - docs/app-design-react/package-lock.json
+    cmds:
+      - npm --prefix docs/app-design-react ci --ignore-scripts
+
+  design:run:
+    desc: Serve the separate React design prototype
+    deps: [design:install]
+    dir: docs/app-design-react
+    cmds:
+      - node_modules/.bin/vite --host 127.0.0.1 --port 5175
+
+  design:check:
+    desc: Check the separate React design prototype
+    deps: [design:install]
+    dir: docs/app-design-react
+    cmds:
+      - node export-fixtures.mjs --check
+      - node_modules/.bin/tsc --project tsconfig.json
+      - node_modules/.bin/vitest run
+      - node_modules/.bin/vite build
+
   default:
     desc: Build the complete application
     cmds:
@@ -167,4 +192,5 @@ tasks:
       - node tools/check-generated.mjs
       - task: lint
       - task: test
+      - task: design:check
       - task: build
