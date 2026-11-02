@@ -22,7 +22,7 @@ window.GenreLibraryPrototype = (() => {
   }
 
   function statusMarkup() {
-    return `<div class="genre-library-status"><strong>${state.loaded ? 'Каталог доступен в демонстрации' : 'Каталог недоступен'}</strong><p>${state.loaded ? `Последнее успешное обновление: ${escape(state.lastSuccess)}.` : 'Жанры не загружены. Выбор жанров недоступен; локальные записи можно сохранять без жанров.'}</p>${state.lastFailure ? `<p>Последняя неудачная попытка: ${escape(state.lastFailure)}.</p>` : ''}<small>В продукте каталог загружается с настроенного публичного MusicBrainz или self-hosted сервера. Офлайн-макет показывает небольшой набор вымышленных fixture-значений, не полный каталог MusicBrainz; сеть и обновления не выполняются.</small></div>`;
+    return `<div class="genre-library-status"><strong>${state.loaded ? 'Каталог доступен в демонстрации' : 'Каталог недоступен'}</strong><p>${state.loaded ? `Последнее успешное обновление: ${escape(state.lastSuccess)}.` : 'Жанры не загружены. Выбор жанров недоступен; локальные записи можно сохранять без жанров.'}</p>${state.lastFailure ? `<p>Последняя неудачная попытка: ${escape(state.lastFailure)}.</p>` : ''}<small>В продукте каталог загружается с настроенного публичного MusicBrainz или собственного сервера. Офлайн-макет показывает небольшой набор вымышленных демонстрационных значений, не полный каталог MusicBrainz; сеть и обновления не выполняются.</small></div>`;
   }
 
   function controls(buttonLabel = 'Загрузить каталог в демо') {

@@ -22,8 +22,8 @@ window.initManualReleaseForm = (root, initial, onCreate, onDraft, askConfirm) =>
       <div class="repeat-head"><strong>Артист</strong>${itemActions('артиста')}</div>
       <div class="repeat-fields">
         <div class="field"><label for="artist-name-${id}">Артист (поиск / новое имя)</label><input id="artist-name-${id}" data-value="name" list="artist-options" value="${escapeHTML(value.name)}" placeholder="Начните вводить имя" autocomplete="off"></div>
-        <div class="field"><label for="artist-credit-${id}">Отображаемый credit</label><input id="artist-credit-${id}" data-value="credit" value="${escapeHTML(value.credit ?? value.name)}" placeholder="Имя в этом релизе"></div>
-        <div class="field"><label for="artist-role-${id}">Описание credit (если нужно)</label><input id="artist-role-${id}" data-value="role" value="${escapeHTML(value.role)}" placeholder="Описательный текст"></div>
+        <div class="field"><label for="artist-credit-${id}">Отображаемое имя</label><input id="artist-credit-${id}" data-value="credit" value="${escapeHTML(value.credit ?? value.name)}" placeholder="Имя в этом релизе"></div>
+        <div class="field"><label for="artist-role-${id}">Уточнение роли (если нужно)</label><input id="artist-role-${id}" data-value="role" value="${escapeHTML(value.role)}" placeholder="Описательный текст"></div>
         <p class="sub">Это описание — метаданные, не отдельная связь с артистом. Имена композиторов/авторов текста в других метаданных не добавляются в состав артистов.</p>
       </div><span class="sub" data-artist-match>${artistMatch(value.name)}</span>
     </div>`;
@@ -53,7 +53,7 @@ window.initManualReleaseForm = (root, initial, onCreate, onDraft, askConfirm) =>
       <div class="field ${existing ? 'hidden' : ''}" data-new-recording><label for="new-recording-${id}">Название композиции</label><input id="new-recording-${id}" data-value="newRecordingTitle" value="${escapeHTML(value.newRecordingTitle ?? (existing ? '' : value.title))}" placeholder="Можно оставить пустым"><span class="sub">Новая композиция будет показана как черновая сущность, не сохранённая в приложении.</span></div>
       <div class="field ${existing ? '' : 'hidden'}" data-existing-recording><label for="recording-search-${id}">Поиск по демонстрационному каталогу</label><input class="recording-search" id="recording-search-${id}" data-recording-search placeholder="Фильтр названий / артистов" value="${escapeHTML(value.recordingSearch)}"><select data-recording-select aria-label="Существующая композиция"><option value="">Выберите композицию…</option>${recordingOptions}</select><span class="sub" data-recording-identity>Выбрана: ${escapeHTML(recordingName(value.recordingId) || 'не выбрана')}</span></div>
       <div class="source-box" data-source-box>
-        <div class="panel-heading"><h3>Связанные исходники</h3><span class="sub">Назначения M:N · можно использовать повторно</span></div>
+        <div class="panel-heading"><h3>Связанные исходники</h3><span class="sub">Связи «многие ко многим» · можно использовать повторно</span></div>
         <div class="source-chips" data-source-chips></div>
         <div class="source-tools"><select data-source-select aria-label="Выбрать вариант исходника"><option value="">Выберите вариант…</option>${data.sources.map(source => `<option value="${source.id}">${escapeHTML(source.name)} · ${escapeHTML(source.kind)}</option>`).join('')}</select><button type="button" data-action="assign-source">Добавить к позиции</button><button type="button" data-action="replace-sources">Заменить набор…</button></div>
       </div>

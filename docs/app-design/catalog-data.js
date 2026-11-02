@@ -86,7 +86,9 @@ for (const album of demoAlbums) {
     if (album.id === 'rooms' || album.id === 'signals' || (album.id === 'north' && track.position <= 5)) {
       const tags = structuredClone(raw);
       tags.GENRE = [...track.recordingGenres];
-      track.published = { tags, codec: album.id === 'north' ? 'MP3' : 'FLAC', container: 'MKA', sourceId: album.id === 'north' ? `previous-mp3-${fileId}` : fileId, readAt: '26.09.2026 10:18', path: `/srv/music/${demoArtist(album.artistId).name}/${album.year} - ${album.title}/${String(track.position).padStart(2, '0')} - ${track.title}.mka` };
+      track.published = { tags, coverHash: null, lyrics: null, codec: album.id === 'north' ? 'MP3' : 'FLAC', container: 'MKA', sourceId: album.id === 'north' ? `previous-mp3-${fileId}` : fileId, readAt: '26.09.2026 10:18', path: `/srv/music/${demoArtist(album.artistId).name}/${album.year} - ${album.title}/${String(track.position).padStart(2, '0')} - ${track.title}.mka` };
+      track.metadataBaseline = structuredClone(track.published.tags);
+      track.metadataBaselineExtras = { coverHash: track.published.coverHash, lyrics: track.published.lyrics };
     }
   }
 }
@@ -113,3 +115,62 @@ const incomingGroups = [
   { id: 'hours', title: 'Small Hours', artistId: 'arden', releaseId: 'hours', fileIds: Array.from({ length: 8 }, (_, i) => `hours-f${i + 1}`), candidateId: 'p-hours', mode: 'provider', autoEligible: true, reason: '8 / 8: все назначения уверенные', processed: false, drafts: {} },
   { id: 'mix', title: 'Road Notes — личный сборник', artistId: 'various', releaseId: 'mix', fileIds: Array.from({ length: 5 }, (_, i) => `mix-f${i + 1}`), candidateId: null, mode: 'local', autoEligible: false, reason: 'Релиза нет у провайдера; композиции из разных альбомов', processed: false, drafts: {} }
 ];
+
+// Fictional browsing fixtures for approved catalog and inventory scenarios.
+// They are deliberately separate from provider identity and do not imply full
+// MusicBrainz discography coverage.
+const absentProviderGroups = [
+  { id: 'absent-blue', title: 'Blue Atlas', artistId: 'mira', groupId: 'demo-rg-blue', editions: [
+    { id: 'absent-blue-a', year: '1998', country: 'GB', format: 'CD', disambiguation: 'Первое издание', titles: ['Glass Harbor', 'The Map', 'Blue Atlas'] },
+    { id: 'absent-blue-b', year: '2001', country: 'JP', format: 'CD', disambiguation: 'Японское издание', titles: ['Glass Harbor', 'The Map', 'Blue Atlas', 'After Rain'] }
+  ] }
+];
+
+// Location identities let root-removal previews distinguish a shared variant
+// from one whose final location is about to disappear.
+for (const file of Object.values(demoFiles)) {
+  file.locations = [{ id: `loc-${file.id}`, rootId: 'root-backup', path: file.path }];
+}
+demoFiles['north-f1'].locations.push({ id: 'loc-north-f1-backup', rootId: 'root-backup', path: '/mnt/backup/Northern Lines/01 - First Light.flac' });
+demoFiles['north-f1'].sha256 = 'demo-sha256-north-f1';
+demoFiles['north-f1'].locations[0].rootId = 'root-inbox';
+demoFiles['north-f3'].locations = [{ id: 'loc-north-f3-final', rootId: 'root-library', path: demoFiles['north-f3'].path }];
+
+// A lossless alternative remains linked but is not selected or auto-fallbacked.
+demoFiles['north-t1-mp3'] = { ...structuredClone(demoFiles['north-f1']), id: 'north-t1-mp3', name: '01 - First Light.mp3', path: '/mnt/music/First Light.mp3', codec: 'MP3', bits: null, size: '8.2 MB', locations: [{ id: 'loc-north-t1-mp3', rootId: 'root-library', path: '/mnt/music/First Light.mp3' }] };
+const northTrackOne = localReleases.find(release => release.id === 'north').tracks[0];
+northTrackOne.sourceIds.push('north-t1-mp3');
+demoFiles['north-f3-mp3'] = { ...structuredClone(demoFiles['north-f3']), id: 'north-f3-mp3', name: '03 - Northbound.mp3', path: '/mnt/music/Northbound.mp3', codec: 'MP3', bits: null, size: '9.1 MB', locations: [{ id: 'loc-north-f3-mp3', rootId: 'root-backup', path: '/mnt/backup/Northbound.mp3' }] };
+const northTrackThree = localReleases.find(release => release.id === 'north').tracks[2];
+northTrackThree.sourceIds.push('north-f3-mp3');
+
+// An explicit effective metadata change plus an independently observed file drift.
+const northTrackTwo = localReleases.find(release => release.id === 'north').tracks[1];
+northTrackTwo.title = 'Still Water (local edit)';
+northTrackTwo.coverHash = 'demo-cover-north';
+northTrackTwo.lyrics = null;
+northTrackTwo.observedFile = { state: 'drift', mtime: 'изменён вне приложения', size: 'не совпадает' };
+const protectedTrack = localReleases.find(release => release.id === 'rooms').tracks[0];
+protectedTrack.manualProtected = { TITLE: true };
+protectedTrack.providerTitle = 'Morning Room (provider correction)';
+protectedTrack.coverHash = protectedTrack.published.coverHash = 'demo-cover-rooms';
+protectedTrack.lyrics = null;
+protectedTrack.metadataBaselineExtras = { coverHash: protectedTrack.published.coverHash, lyrics: protectedTrack.published.lyrics };
+
+const sourceLessPublishedTrack = localReleases.find(release => release.id === 'rooms').tracks[7];
+const sourceLessFileId = sourceLessPublishedTrack.sourceId;
+sourceLessPublishedTrack.sourceId = null;
+sourceLessPublishedTrack.sourceIds = [];
+demoFiles[sourceLessFileId].locations = [];
+
+// Second concrete edition of the same release group, independently materialized.
+const japanProvider = providerReleases.find(release => release.id === 'p-japan');
+const japanLocal = { ...structuredClone(japanProvider), id: 'north-japan-local', providerId: 'p-japan', releaseGroupId: 'demo-rg-north', tracks: japanProvider.tracks.map((track, index) => {
+  const published = index === 0 ? { tags: structuredClone(providerTags(japanProvider, track)), coverHash: null, lyrics: null, codec: 'FLAC', container: 'MKA', sourceId: 'north-f1', readAt: '26.09.2026 11:02 · Japan edition', path: `/srv/music/Mira Vale/2022 - Northern Lines/${String(track.position).padStart(2, '0')} - ${track.title}.mka` } : null;
+  return { ...track, id: `north-japan-local-t${index + 1}`, sourceId: index < 2 ? `north-f${index + 1}` : null, sourceIds: index < 2 ? [`north-f${index + 1}`] : [], published, ...(published ? { metadataBaseline: structuredClone(published.tags), metadataBaselineExtras: { coverHash: published.coverHash, lyrics: published.lyrics } } : {}) };
+}) };
+localReleases.push(japanLocal);
+for (const release of localReleases.filter(item => item.id === 'north' || item.id === 'north-japan-local')) release.releaseGroupId = 'demo-rg-north';
+for (const release of providerReleases.filter(item => item.id === 'p-north' || item.id === 'p-japan')) release.releaseGroupId = 'demo-rg-north';
+
+const recoveryFixture = { trackId: 'north-t1', targetPath: '/srv/music/Mira Vale/2021 - Northern Lines/01 - First Light.mka', tagsMatch: true, technicalMatch: true, authorityCurrent: true, sourceIdentityProof: false };
