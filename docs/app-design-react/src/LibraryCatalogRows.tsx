@@ -12,7 +12,6 @@ import {
 } from "./catalogData";
 import {
 	availabilityRowClass,
-	availabilityRowHint,
 	type AvailabilityFilter,
 } from "./availabilityRows";
 import {
@@ -471,19 +470,6 @@ export function LibraryCatalogRows({
 											{originalArtistName(track.artistId, artists)}
 											{track.recordingTitle ? ` · ${track.recordingTitle}` : ""}
 										</span>
-										{availabilityRowHint(
-											track as OriginalTrack,
-											availability,
-											hasAudio,
-										) && (
-											<span className="catalogue-sub">
-												{availabilityRowHint(
-													track as OriginalTrack,
-													availability,
-													hasAudio,
-												)}
-											</span>
-										)}
 									</Cell>
 									<Cell>{duration(track.duration)}</Cell>
 									<Cell>

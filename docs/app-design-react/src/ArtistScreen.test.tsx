@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import {
 	catalogData,
@@ -33,7 +33,6 @@ it("renders artist releases and tracks, selection and publication preview action
 	expect(
 		screen.getAllByRole("link", { name: /First Light/ })[0],
 	).toHaveAttribute("href", "#track/north-t1");
-	expect(screen.getByText(/Аудио по изданиям:/)).toBeInTheDocument();
 	fireEvent.click(
 		screen.getByRole("button", {
 			name: "Предпросмотр 1 выбранных позиций",
@@ -61,12 +60,11 @@ it("filters track rows and searches absent editions without adding them to the l
 		screen.getByRole("heading", { name: "Отсутствующие альбомы" }),
 	).toBeInTheDocument();
 	fireEvent.change(
-		screen.getByRole("searchbox", { name: "Поиск альбомов без издания" }),
+		screen.getByRole("searchbox", { name: "Поиск в медиатеке" }),
 		{ target: { value: "Blue Atlas" } },
 	);
 	expect(screen.getByText("Blue Atlas")).toBeInTheDocument();
-	fireEvent.click(screen.getByRole("button", { name: /Наличие/ }));
-	fireEvent.click(screen.getByRole("option", { name: "В наличии" }));
+	fireEvent.click(screen.getByRole("radio", { name: "В наличии" }));
 	expect(
 		screen.queryByRole("heading", { name: "Отсутствующие альбомы" }),
 	).not.toBeInTheDocument();
@@ -113,9 +111,7 @@ it("uses shared availability and publication props while only availability empha
 	expect(missingRow).toBeTruthy();
 	expect(availableRow).toHaveClass("filter-match");
 	expect(missingRow).toHaveClass("filter-muted");
-	expect(screen.getByRole("button", { name: /Наличие/ })).toHaveTextContent(
-		"В наличии",
-	);
+	expect(screen.getByRole("radio", { name: "В наличии" })).toBeChecked();
 	rerender(
 		<ArtistScreen
 			artistId={release.artistId ?? ""}
@@ -127,10 +123,61 @@ it("uses shared availability and publication props while only availability empha
 		/>,
 	);
 	expect(
-		screen.getByRole("button", { name: /^Опубликованные Публикация$/ }),
-	).toHaveTextContent("Опубликованные");
+		within(screen.getByRole("radiogroup", { name: "Публикация" })).getByRole(
+			"radio",
+			{ name: "Есть" },
+		),
+	).toBeChecked();
 	expect(rowFor(availableID)).not.toHaveClass("filter-match", "filter-muted");
 	expect(rowFor(missingID)).not.toHaveClass("filter-match", "filter-muted");
+});
+
+it("keeps artist availability and publication filters independently selectable", () => {
+	const artist = catalogData.artists.find((item) => item.id === "mira");
+	if (!artist) throw new Error("Missing artist fixture");
+	const artistRelease = originalReleases.find(
+		(release) =>
+			release.artistId === artist.id ||
+			release.credits?.some((credit) => credit.artistId === artist.id),
+	);
+	if (!artistRelease || artistRelease.tracks.length < 2)
+		throw new Error("Missing multi-track artist release fixture");
+	const onAvailabilityChange = vi.fn();
+	const onPublicationChange = vi.fn();
+	const { container } = render(
+		<ArtistScreen
+			artistId={artist.id}
+			artists={catalogData.artists}
+			releases={originalReleases}
+			files={originalFiles}
+			selected={new Set([artistRelease.tracks[0].id])}
+			onAvailabilityChange={onAvailabilityChange}
+			onPublicationChange={onPublicationChange}
+		/>,
+	);
+	fireEvent.click(screen.getByRole("radio", { name: "Не хватает" }));
+	fireEvent.click(
+		within(screen.getByRole("radiogroup", { name: "Публикация" })).getByRole(
+			"radio",
+			{ name: "Есть" },
+		),
+	);
+	expect(onAvailabilityChange).toHaveBeenCalledWith("missing");
+	expect(onPublicationChange).toHaveBeenCalledWith("published");
+	const albumCheckbox = screen.getAllByRole("checkbox", {
+		name: `Выбрать все позиции альбома ${artistRelease.title}`,
+	})[0];
+	expect(albumCheckbox).toBePartiallyChecked();
+	expect(albumCheckbox.closest(".artist-album-card")).not.toBeNull();
+	expect(albumCheckbox.closest(".catalogue-edition-trigger")).toBeNull();
+	expect(albumCheckbox.closest(".ui-disclosure-panel")).toBeNull();
+	const heroCheckbox = screen.getByRole("checkbox", {
+		name: `Выбрать все позиции артиста ${artist.name}`,
+	});
+	expect(heroCheckbox.closest(".artist-hero-art")).not.toBeNull();
+	expect(heroCheckbox.closest('[aria-hidden="true"]')).toBeNull();
+	expect(screen.queryByText(/Аудио по изданиям:/)).not.toBeInTheDocument();
+	expect(container.querySelector(".artist-album-cover")).toBeInTheDocument();
 });
 
 it("numbers tracks by medium for a cloned multi-medium release without displayed numbers", () => {
@@ -165,4 +212,27 @@ it("numbers tracks by medium for a cloned multi-medium release without displayed
 	expect(
 		rows.find((row) => row.textContent?.includes("Still Water")),
 	).toHaveTextContent("2.01");
+});
+
+it("selects a collapsed album without opening it", () => {
+	const onSelect = vi.fn();
+	const { container } = render(
+		<ArtistScreen
+			artistId="mira"
+			artists={catalogData.artists}
+			releases={originalReleases}
+			files={originalFiles}
+			onSelect={onSelect}
+		/>,
+	);
+	const card = container.querySelectorAll(".artist-album-card")[1];
+	if (!(card instanceof HTMLElement))
+		throw new Error("Missing collapsed album fixture");
+	const trigger = card.querySelector('button[slot="trigger"]');
+	expect(trigger).toHaveAttribute("aria-expanded", "false");
+	const checkbox = within(card).getByRole("checkbox");
+	expect(checkbox).toBeVisible();
+	fireEvent.click(checkbox);
+	expect(onSelect).toHaveBeenCalled();
+	expect(trigger).toHaveAttribute("aria-expanded", "false");
 });

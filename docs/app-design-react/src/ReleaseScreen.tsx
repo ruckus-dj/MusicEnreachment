@@ -13,7 +13,6 @@ import { ReleaseMetadataComparison } from "./ReleaseMetadataComparison";
 import { Button, Checkbox } from "./ui";
 import {
 	availabilityRowClass,
-	availabilityRowHint,
 	type AvailabilityFilter,
 } from "./availabilityRows";
 
@@ -173,11 +172,6 @@ export function ReleaseScreen({
 									<td>{trackNumberLabel(release, track)}</td>
 									<td>
 										<a href={`#track/${track.id}`}>{track.title}</a>
-										{availabilityRowHint(track, availability, hasAudio) && (
-											<span className="demo-secondary">
-												{availabilityRowHint(track, availability, hasAudio)}
-											</span>
-										)}
 									</td>
 									<td>
 										{track.duration === null ? "—" : duration(track.duration)}

@@ -13,6 +13,8 @@ import {
 	ListBox,
 	ListBoxItem,
 	Popover,
+	Radio,
+	RadioGroup,
 	SearchField,
 	Select,
 	SelectValue,
@@ -30,7 +32,6 @@ import {
 } from "./catalogData";
 import {
 	availabilityRowClass,
-	availabilityRowHint,
 	type AvailabilityFilter,
 } from "./availabilityRows";
 
@@ -163,56 +164,55 @@ export function ArtistScreen({
 		);
 	const counts = (predicate: (track: OriginalTrack) => boolean) =>
 		tracks.filter(predicate).length;
-	const audioStatus = (release: OriginalRelease) => {
-		const complete = providerComplete(release);
-		const values = release.tracks.map(hasAudio);
-		if (!complete) return "неизвестно";
-		if (values.every(Boolean)) return "полностью";
-		if (values.some(Boolean)) return "частично";
-		return "нет";
-	};
-	const publicationStatus = (release: OriginalRelease) => {
-		const complete = providerComplete(release);
-		const values = release.tracks.map((track) => Boolean(track.published));
-		if (!complete) return "неизвестно";
-		if (values.every(Boolean)) return "полностью";
-		if (values.some(Boolean)) return "частично";
-		return "нет";
-	};
 	return (
 		<section className="catalogue-object">
-			<header className="demo-object-header">
+			<nav className="artist-hero-back" aria-label="Навигация">
+				<a href="#library">К медиатеке</a>
+			</nav>
+			<header className="demo-object-header artist-hero">
+				<div className="artist-hero-art" data-palette={artist.color || "clay"}>
+					<span aria-hidden="true">
+						{artist.name.trim().slice(0, 1).toLocaleUpperCase()}
+					</span>
+					<i aria-hidden="true" />
+					<div className="artist-card-selection">
+						<Checkbox
+							aria-label={`Выбрать все позиции артиста ${artist.name}`}
+							className="demo-checkbox"
+							isSelected={ids.length > 0 && selectedCount === ids.length}
+							isIndeterminate={selectedCount > 0 && selectedCount < ids.length}
+							isDisabled={!ids.length || !onSelect}
+							onChange={(value) => onSelect?.(ids, value)}
+						>
+							<span className="demo-checkbox-box" aria-hidden="true">
+								{ids.length > 0 && selectedCount === ids.length
+									? "✓"
+									: selectedCount > 0
+										? "−"
+										: ""}
+							</span>
+							<span className="sr-only">Выбрать все позиции артиста</span>
+						</Checkbox>
+					</div>
+				</div>
 				<div>
+					<p className="artist-kicker">ПРОФИЛЬ АРТИСТА</p>
 					<h1>{artist.name}</h1>
+					<p className="artist-genre">{artist.genre || "Исполнитель"}</p>
 					<p>
 						{artistReleases.length} изданий · {tracks.length} позиций ·{" "}
 						{counts((track) => Boolean(track.published))} опубликовано ·{" "}
 						{filteredMissingGroups.length} альбомов без издания
 					</p>
 				</div>
-				<div className="demo-object-actions">
-					<Checkbox
-						aria-label={`Выбрать все позиции артиста ${artist.name}`}
-						className="demo-checkbox"
-						isSelected={ids.length > 0 && selectedCount === ids.length}
-						isIndeterminate={selectedCount > 0 && selectedCount < ids.length}
-						isDisabled={!ids.length || !onSelect}
-						onChange={(value) => onSelect?.(ids, value)}
-					>
-						<span className="demo-checkbox-box" aria-hidden="true">
-							{ids.length > 0 && selectedCount === ids.length
-								? "✓"
-								: selectedCount > 0
-									? "−"
-									: ""}
-						</span>
-						<span className="sr-only">Выбрать все позиции артиста</span>
-					</Checkbox>
+				<div className="demo-object-actions artist-hero-actions">
 					<Button
+						aria-label={`Предпросмотр ${selectedCount} выбранных позиций`}
 						isDisabled={!selectedCount || !onPreview}
 						onPress={() => onPreview?.(ids.filter((id) => selected.has(id)))}
 					>
-						Предпросмотр {selectedCount} выбранных позиций
+						Предпросмотр
+						<span className="artist-preview-count">{selectedCount}</span>
 					</Button>
 					{onQueueDeletion ? (
 						<ArtistDeletionRequest
@@ -223,122 +223,62 @@ export function ArtistScreen({
 						/>
 					) : (
 						<Button
+							className="ui-button--secondary ui-button--danger"
 							isDisabled={!onDeleteArtist}
 							onPress={() => onDeleteArtist?.(artist.id)}
 						>
 							Удалить артиста
 						</Button>
 					)}
-					<a href="#library">К медиатеке</a>
 				</div>
 			</header>
-			<div className="demo-preview-counts">
-				<span>
-					Исходники:{" "}
-					{counts(
-						(track) =>
-							(track.sourceIds?.length ?? Number(Boolean(track.sourceId))) > 0,
-					)}
-				</span>
-				<span>Есть аудио: {counts(hasAudio)}</span>
-				<span>Опубликовано: {counts((track) => Boolean(track.published))}</span>
-				<span>
-					Аудио по изданиям: полностью{" "}
-					{
-						artistReleases.filter(
-							(release) => audioStatus(release) === "полностью",
-						).length
-					}{" "}
-					· частично{" "}
-					{
-						artistReleases.filter(
-							(release) => audioStatus(release) === "частично",
-						).length
-					}{" "}
-					· нет{" "}
-					{
-						artistReleases.filter((release) => audioStatus(release) === "нет")
-							.length
-					}{" "}
-					· неизвестно{" "}
-					{
-						artistReleases.filter(
-							(release) => audioStatus(release) === "неизвестно",
-						).length
-					}
-				</span>
-				<span>
-					Публикация по изданиям: полностью{" "}
-					{
-						artistReleases.filter(
-							(release) => publicationStatus(release) === "полностью",
-						).length
-					}{" "}
-					· частично{" "}
-					{
-						artistReleases.filter(
-							(release) => publicationStatus(release) === "частично",
-						).length
-					}{" "}
-					· нет{" "}
-					{
-						artistReleases.filter(
-							(release) => publicationStatus(release) === "нет",
-						).length
-					}{" "}
-					· неизвестно{" "}
-					{
-						artistReleases.filter(
-							(release) => publicationStatus(release) === "неизвестно",
-						).length
-					}
-				</span>
-			</div>
-			<div className="catalogue-controls" aria-label="Фильтры медиатеки">
-				<Select
-					selectedKey={availability}
-					onSelectionChange={(key) => changeAvailability(key as Availability)}
-					className="catalogue-filter"
-				>
-					<Label>Наличие</Label>
-					<Button>
-						<SelectValue />
-						<span aria-hidden="true">⌄</span>
-					</Button>
-					<Popover>
-						<ListBox>
-							<ListBoxItem id="all">Все</ListBoxItem>
-							<ListBoxItem id="available">В наличии</ListBoxItem>
-							<ListBoxItem id="missing">Не хватает</ListBoxItem>
-						</ListBox>
-					</Popover>
-				</Select>
-				<Select
-					selectedKey={publication}
-					onSelectionChange={(key) => changePublication(key as Publication)}
-					className="catalogue-filter"
-				>
-					<Label>Публикация</Label>
-					<Button>
-						<SelectValue />
-						<span aria-hidden="true">⌄</span>
-					</Button>
-					<Popover>
-						<ListBox>
-							<ListBoxItem id="all">Все</ListBoxItem>
-							<ListBoxItem id="published">Опубликованные</ListBoxItem>
-							<ListBoxItem id="unpublished">Не опубликованные</ListBoxItem>
-						</ListBox>
-					</Popover>
-				</Select>
-				<SearchField
-					aria-label="Поиск альбомов без издания"
-					value={query}
-					onChange={changeQuery}
-					className="catalogue-search"
-				>
-					<Input placeholder="Альбом или издание…" />
-				</SearchField>
+			<div className="catalogue-controls">
+				<div className="catalogue-panel-controls">
+					<SearchField
+						aria-label="Поиск в медиатеке"
+						value={query}
+						onChange={changeQuery}
+						className="catalogue-search"
+					>
+						<Input placeholder="Артист, альбом, трек…" />
+					</SearchField>
+					<RadioGroup
+						value={availability}
+						onChange={(value) => changeAvailability(value as Availability)}
+						className="catalogue-filter catalogue-radio-filter"
+					>
+						<Label>Наличие</Label>
+						<div className="catalogue-segments">
+							<Radio value="all" className="catalogue-segment">
+								Все
+							</Radio>
+							<Radio value="available" className="catalogue-segment">
+								В наличии
+							</Radio>
+							<Radio value="missing" className="catalogue-segment">
+								Не хватает
+							</Radio>
+						</div>
+					</RadioGroup>
+					<RadioGroup
+						value={publication}
+						onChange={(value) => changePublication(value as Publication)}
+						className="catalogue-filter catalogue-radio-filter"
+					>
+						<Label>Публикация</Label>
+						<div className="catalogue-segments">
+							<Radio value="all" className="catalogue-segment">
+								Все
+							</Radio>
+							<Radio value="published" className="catalogue-segment">
+								Есть
+							</Radio>
+							<Radio value="unpublished" className="catalogue-segment">
+								Нет
+							</Radio>
+						</div>
+					</RadioGroup>
+				</div>
 			</div>
 			{selectedCount > 0 && (
 				<div
@@ -376,30 +316,12 @@ export function ArtistScreen({
 						metadataChanged(release, track, artists),
 					).length;
 					return (
-						<Disclosure
-							className="catalogue-edition"
-							id={release.id}
-							key={release.id}
-						>
-							<Heading>
-								<Button slot="trigger" className="catalogue-edition-trigger">
-									<strong>{release.title}</strong> · {release.year} ·{" "}
-									{release.tracks.length} позиций ·{" "}
-									{release.label || "Локальный"} · {release.catalog}
-									<span className="demo-secondary">
-										{" "}
-										·{" "}
-										{complete && provider
-											? `${pubCount}/${provider.tracks.length} опубликовано`
-											: `${pubCount} опубликовано · полнота неизвестна`}
-										{changes
-											? ` · Метаданные изменились у ${changes} позиций`
-											: ""}
-									</span>
-								</Button>
-							</Heading>
-							<DisclosurePanel>
-								<div className="demo-object-actions">
+						<div className="artist-release-row" key={release.id}>
+							<Disclosure
+								className="catalogue-edition artist-album-card"
+								id={release.id}
+							>
+								<div className="artist-release-select artist-card-selection">
 									<Checkbox
 										aria-label={`Выбрать все позиции альбома ${release.title}`}
 										className="demo-checkbox"
@@ -420,151 +342,175 @@ export function ArtistScreen({
 										}
 									>
 										<span className="demo-checkbox-box" aria-hidden="true">
-											{release.tracks.every((track) =>
-												selected.has(track.id),
-											) && release.tracks.length
+											{release.tracks.length > 0 &&
+											release.tracks.every((track) => selected.has(track.id))
 												? "✓"
 												: release.tracks.some((track) => selected.has(track.id))
 													? "−"
 													: ""}
 										</span>
 									</Checkbox>
-									<a href={`#release/${release.id}`}>Открыть альбом</a>
-									<Button
-										isDisabled={!release.tracks.length || !onContextPreview}
-										onPress={() => onContextPreview?.(release)}
-									>
-										Предпросмотр публикации
-									</Button>
-									{release.tracks[0] && (
-										<>
-											<a href={`#tags/${release.tracks[0].id}/artist`}>
-												Теги артиста
-											</a>
-											<a href={`#tags/${release.tracks[0].id}/release`}>
-												Теги альбома
-											</a>
-										</>
-									)}
 								</div>
-								<div className="demo-preview-table">
-									<table>
-										<thead>
-											<tr>
-												{[
-													"Выбрать",
-													"№",
-													"Композиция",
-													"Параметры",
-													"Есть аудио",
-													"Связей с исходниками",
-													"Публикация",
-												].map((label) => (
-													<th scope="col" key={label}>
-														{label}
-													</th>
-												))}
-											</tr>
-										</thead>
-										<tbody>
-											{release.tracks.map((track) => {
-												const sourceIds = [
-													...new Set([
-														...(track.sourceIds ?? []),
-														...(track.sourceId ? [track.sourceId] : []),
-													]),
-												];
-												const source = track.sourceId
-													? files[track.sourceId]
-													: undefined;
-												return (
-													<tr
-														key={track.id}
-														className={availabilityRowClass(
-															track,
-															availability,
-															hasAudio,
-														)}
-													>
-														<td>
-															<Checkbox
-																className="demo-checkbox"
-																aria-label={`Выбрать ${track.title}`}
-																isSelected={selected.has(track.id)}
-																isDisabled={!onSelect}
-																onChange={(value) =>
-																	onSelect?.([track.id], value)
-																}
-															>
-																<span
-																	className="demo-checkbox-box"
-																	aria-hidden="true"
-																>
-																	{selected.has(track.id) ? "✓" : ""}
-																</span>
-															</Checkbox>
-														</td>
-														<td>{trackNumberLabel(release, track)}</td>
-														<td>
-															<a href={`#track/${track.id}`}>{track.title}</a>
-															{track.recordingId ? null : (
-																<span className="demo-secondary">
-																	Новая запись
-																</span>
-															)}
-															{availabilityRowHint(
+								<Heading>
+									<Button slot="trigger" className="catalogue-edition-trigger">
+										<span
+											className="artist-album-cover"
+											data-palette={release.color || artist.color || "clay"}
+											aria-hidden="true"
+										>
+											<span>
+												{release.title.trim().slice(0, 1).toLocaleUpperCase()}
+											</span>
+										</span>
+										<span className="artist-album-copy">
+											<strong>{release.title}</strong>
+											<span className="artist-album-meta">
+												{release.year} · {release.tracks.length} позиций ·{" "}
+												{release.label || "Локальный"} · {release.catalog}
+											</span>
+											<span className="artist-album-meta">
+												{complete && provider
+													? `${pubCount}/${provider.tracks.length} опубликовано`
+													: `${pubCount} опубликовано · полнота неизвестна`}
+												{changes
+													? ` · Метаданные изменились у ${changes} позиций`
+													: ""}
+											</span>
+										</span>
+									</Button>
+								</Heading>
+								<DisclosurePanel>
+									<div className="demo-object-actions">
+										<a href={`#release/${release.id}`}>Открыть альбом</a>
+										<Button
+											isDisabled={!release.tracks.length || !onContextPreview}
+											onPress={() => onContextPreview?.(release)}
+										>
+											Предпросмотр публикации
+										</Button>
+										{release.tracks[0] && (
+											<>
+												<a href={`#tags/${release.tracks[0].id}/artist`}>
+													Теги артиста
+												</a>
+												<a href={`#tags/${release.tracks[0].id}/release`}>
+													Теги альбома
+												</a>
+											</>
+										)}
+									</div>
+									<div className="demo-preview-table">
+										<table>
+											<thead>
+												<tr>
+													{[
+														"Выбрать",
+														"№",
+														"Композиция",
+														"Параметры",
+														"Есть аудио",
+														"Связей с исходниками",
+														"Публикация",
+													].map((label) => (
+														<th scope="col" key={label}>
+															{label}
+														</th>
+													))}
+												</tr>
+											</thead>
+											<tbody>
+												{release.tracks.map((track) => {
+													const sourceIds = [
+														...new Set([
+															...(track.sourceIds ?? []),
+															...(track.sourceId ? [track.sourceId] : []),
+														]),
+													];
+													const source = track.sourceId
+														? files[track.sourceId]
+														: undefined;
+													return (
+														<tr
+															key={track.id}
+															className={availabilityRowClass(
 																track,
 																availability,
 																hasAudio,
-															) && (
-																<span className="demo-secondary">
-																	{availabilityRowHint(
-																		track,
-																		availability,
-																		hasAudio,
-																	)}
-																</span>
 															)}
-														</td>
-														<td>
-															{source
-																? `${source.codec === "FLAC" ? "24 бит / 48 кГц" : "320 кбит/с"} · ${source.codec}`
-																: "—"}
-														</td>
-														<td>{hasAudio(track) ? "Да" : "Нет"}</td>
-														<td>{sourceIds.length}</td>
-														<td>
-															{track.published ? (
-																<>
-																	{track.published.container} ·{" "}
-																	{track.published.codec}
-																	{metadataChanged(release, track, artists) && (
-																		<span className="demo-secondary">
-																			Метаданные изменились
-																		</span>
-																	)}
-																	<details>
-																		<summary>Путь и снимок публикации</summary>
-																		<p>{track.published.path}</p>
-																		<p>
-																			{track.published.tags.TITLE.join(" · ")} ·{" "}
-																			{track.published.readAt}
-																		</p>
-																	</details>
-																</>
-															) : (
-																"Не опубликовано"
-															)}
-														</td>
-													</tr>
-												);
-											})}
-										</tbody>
-									</table>
-								</div>
-								{!release.tracks.length && <p>Позиции не добавлены.</p>}
-							</DisclosurePanel>
-						</Disclosure>
+														>
+															<td>
+																<Checkbox
+																	className="demo-checkbox"
+																	aria-label={`Выбрать ${track.title}`}
+																	isSelected={selected.has(track.id)}
+																	isDisabled={!onSelect}
+																	onChange={(value) =>
+																		onSelect?.([track.id], value)
+																	}
+																>
+																	<span
+																		className="demo-checkbox-box"
+																		aria-hidden="true"
+																	>
+																		{selected.has(track.id) ? "✓" : ""}
+																	</span>
+																</Checkbox>
+															</td>
+															<td>{trackNumberLabel(release, track)}</td>
+															<td>
+																<a href={`#track/${track.id}`}>{track.title}</a>
+																{track.recordingId ? null : (
+																	<span className="demo-secondary">
+																		Новая запись
+																	</span>
+																)}
+															</td>
+															<td>
+																{source
+																	? `${source.codec === "FLAC" ? "24 бит / 48 кГц" : "320 кбит/с"} · ${source.codec}`
+																	: "—"}
+															</td>
+															<td>{hasAudio(track) ? "Да" : "Нет"}</td>
+															<td>{sourceIds.length}</td>
+															<td>
+																{track.published ? (
+																	<>
+																		{track.published.container} ·{" "}
+																		{track.published.codec}
+																		{metadataChanged(
+																			release,
+																			track,
+																			artists,
+																		) && (
+																			<span className="demo-secondary">
+																				Метаданные изменились
+																			</span>
+																		)}
+																		<details>
+																			<summary>
+																				Путь и снимок публикации
+																			</summary>
+																			<p>{track.published.path}</p>
+																			<p>
+																				{track.published.tags.TITLE.join(" · ")}{" "}
+																				· {track.published.readAt}
+																			</p>
+																		</details>
+																	</>
+																) : (
+																	"Не опубликовано"
+																)}
+															</td>
+														</tr>
+													);
+												})}
+											</tbody>
+										</table>
+									</div>
+									{!release.tracks.length && <p>Позиции не добавлены.</p>}
+								</DisclosurePanel>
+							</Disclosure>
+						</div>
 					);
 				})}
 			</DisclosureGroup>

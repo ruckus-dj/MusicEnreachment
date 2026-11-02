@@ -125,7 +125,12 @@ export function ArtistDeletionRequest({
 
 	return (
 		<>
-			<Button onPress={() => setOpen(true)}>Удалить артиста</Button>
+			<Button
+				className="ui-button--secondary ui-button--danger"
+				onPress={() => setOpen(true)}
+			>
+				Удалить артиста
+			</Button>
 			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
 				<Dialog
 					aria-labelledby="artist-deletion-title"
