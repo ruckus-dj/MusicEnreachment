@@ -60,6 +60,7 @@ import {
 } from "./catalogViewModel";
 import { LibraryCatalogRows } from "./LibraryCatalogRows";
 import { CatalogFilter as CatalogFilterControl } from "./CatalogFilter";
+import { SelectionDock } from "./SelectionDock";
 import type { CatalogFilter } from "./availabilityRows";
 import "./catalogue-shell.css";
 
@@ -393,7 +394,7 @@ export function CatalogDemo({
 		);
 	if (route.startsWith("artist/"))
 		return (
-			<main className="demo-shell">
+			<main className="demo-shell selection-dock-screen">
 				<ArtistScreen
 					key={route}
 					artistId={route.slice(7)}
@@ -407,23 +408,17 @@ export function CatalogDemo({
 					onFilterChange={setFilter}
 					onSelect={update}
 					onQueueDeletion={queueDeletion}
-					onPreview={openPreview}
-					onContextPreview={(release) => openContextPublication(release)}
 				/>
-				{selected.size > 0 && (
-					<div className="demo-selection" role="status">
-						Выбрано позиций: {selected.size}
-						<Button
-							onPress={() => {
-								setContextIds(null);
-								openPreview(selected);
-							}}
-						>
-							Предпросмотр публикации
-						</Button>
-						<Button onPress={() => setSelected(new Set())}>Снять выбор</Button>
-					</div>
-				)}
+				<SelectionDock
+					selected={selected}
+					releases={releases}
+					onSelect={update}
+					onPreview={(ids) => {
+						setContextIds(null);
+						openPreview(ids);
+					}}
+					onQueueDeletion={queueDeletion}
+				/>
 			</main>
 		);
 	if (route.startsWith("tags/")) {
@@ -722,7 +717,7 @@ export function CatalogDemo({
 		),
 	);
 	return (
-		<main className="demo-shell catalogue-shell">
+		<main className="demo-shell catalogue-shell selection-dock-screen">
 			<header>
 				<h1>{artistId ? artistName(artistId) : "Медиатека"}</h1>
 				{artistId && (
@@ -872,20 +867,16 @@ export function CatalogDemo({
 					</TabPanel>
 				</Tabs>
 			</div>
-			{selected.size > 0 && (
-				<div className="demo-selection" role="status">
-					Выбрано позиций: {selected.size}
-					<Button
-						onPress={() => {
-							setContextIds(null);
-							openPreview(selected);
-						}}
-					>
-						Предпросмотр публикации
-					</Button>
-					<Button onPress={() => setSelected(new Set())}>Снять выбор</Button>
-				</div>
-			)}
+			<SelectionDock
+				selected={selected}
+				releases={releases}
+				onSelect={update}
+				onPreview={(ids) => {
+					setContextIds(null);
+					openPreview(ids);
+				}}
+				onQueueDeletion={queueDeletion}
+			/>
 		</main>
 	);
 }

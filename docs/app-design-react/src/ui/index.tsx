@@ -1,6 +1,7 @@
 import type { ComponentProps, ElementType, HTMLAttributes } from "react";
 import {
 	Button as AriaButton,
+	Cell as AriaCell,
 	Checkbox as AriaCheckbox,
 	Column as AriaColumn,
 	Dialog as AriaDialog,
@@ -14,6 +15,9 @@ import {
 	Link as AriaLink,
 	ListBox as AriaListBox,
 	ListBoxItem as AriaListBoxItem,
+	Menu as AriaMenu,
+	MenuItem as AriaMenuItem,
+	MenuTrigger as AriaMenuTrigger,
 	Modal as AriaModal,
 	ModalOverlay as AriaModalOverlay,
 	Popover as AriaPopover,
@@ -23,19 +27,18 @@ import {
 	SearchField as AriaSearchField,
 	Select as AriaSelect,
 	SelectValue as AriaSelectValue,
-	Table as AriaTable,
-	TableBody as AriaTableBody,
-	type TableBodyProps,
-	TableHeader as AriaTableHeader,
 	Tab as AriaTab,
 	TabList as AriaTabList,
+	Table as AriaTable,
+	TableBody as AriaTableBody,
+	TableHeader as AriaTableHeader,
 	TabPanel as AriaTabPanel,
 	Tabs as AriaTabs,
 	TextField as AriaTextField,
 	Toolbar as AriaToolbar,
 	Tooltip as AriaTooltip,
 	TooltipTrigger as AriaTooltipTrigger,
-	Cell as AriaCell,
+	type TableBodyProps,
 } from "react-aria-components";
 
 type Props<T extends ElementType> = ComponentProps<T> & { className?: string };
@@ -131,6 +134,25 @@ export function Popover({ className, ...props }: Props<typeof AriaPopover>) {
 		<AriaPopover
 			{...props}
 			className={withClass("react-aria-Popover ui-popover")(className)}
+		/>
+	);
+}
+export function MenuTrigger(props: Props<typeof AriaMenuTrigger>) {
+	return <AriaMenuTrigger {...props} />;
+}
+export function Menu({ className, ...props }: Props<typeof AriaMenu>) {
+	return (
+		<AriaMenu
+			{...props}
+			className={withClass("react-aria-Menu ui-menu")(className)}
+		/>
+	);
+}
+export function MenuItem({ className, ...props }: Props<typeof AriaMenuItem>) {
+	return (
+		<AriaMenuItem
+			{...props}
+			className={withClass("react-aria-MenuItem ui-menu-item")(className)}
 		/>
 	);
 }

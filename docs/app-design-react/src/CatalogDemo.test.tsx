@@ -43,6 +43,31 @@ it("keeps nested selection consistent when an album is partially deselected", ()
 	).toBePartiallyChecked();
 });
 
+it("uses the shared floating dock to enter the existing publication preview flow", async () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "library";
+	try {
+		render(<CatalogDemo />);
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: "Выбрать позиции артиста Mira Vale",
+			}),
+		);
+		const docks = screen.getAllByRole("region", { name: "Выбранные позиции" });
+		expect(docks).toHaveLength(1);
+		fireEvent.click(
+			within(docks[0]).getByRole("button", { name: "Опубликовать" }),
+		);
+		expect(window.location.hash).toBe("#publication-preview");
+		expect(
+			await screen.findByRole("heading", { name: "Предпросмотр медиатеки" }),
+		).toBeInTheDocument();
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
+	}
+});
+
 it("uses the shared filter to include partially matching albums", () => {
 	render(<CatalogDemo />);
 	fireEvent.click(screen.getByRole("tab", { name: "Все альбомы" }));
@@ -338,13 +363,15 @@ it("keeps global selected-item actions separate from the current artist controls
 		fireEvent(window, new Event("hashchange"));
 
 		expect(screen.getByRole("status")).toHaveTextContent("Выбрано позиций: 29");
-		const localPreview = screen.getByRole("button", {
+		const localPreview = screen.queryByRole("button", {
 			name: "Предпросмотр 0 выбранных позиций",
 		});
-		expect(localPreview).toBeDisabled();
+		expect(localPreview).not.toBeInTheDocument();
 		fireEvent.click(
-			within(screen.getByRole("status")).getByRole("button", {
-				name: "Предпросмотр публикации",
+			within(
+				screen.getByRole("region", { name: "Выбранные позиции" }),
+			).getByRole("button", {
+				name: "Опубликовать",
 			}),
 		);
 		expect(window.location.hash).toBe("#publication-preview");

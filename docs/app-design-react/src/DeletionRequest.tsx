@@ -4,10 +4,32 @@ import { Button, Dialog, Heading, Modal } from "./ui";
 import type { OriginalRelease, OriginalTrack } from "./catalogData";
 
 export interface DeletionOperation {
+	kind?: "library" | "publication" | "artist";
 	target: string;
 	scope: string;
 	publications: number;
 	paths: string[];
+}
+
+export function publicationSelectionPlan(
+	tracks: OriginalTrack[],
+	releases: OriginalRelease[],
+): DeletionOperation {
+	const titles = tracks.map((track) => {
+		const release = releases.find((item) =>
+			item.tracks.some((candidate) => candidate.id === track.id),
+		);
+		return `${release?.title ?? "Релиз не найден"} · ${String(track.position).padStart(2, "0")} · ${track.title}`;
+	});
+	return {
+		kind: "publication",
+		target: `${tracks.length} выбранных публикаций`,
+		scope: `Только текущие публикации выбранных позиций (${titles.join("; ")}); позиции медиатеки, композиции, записи провайдера, исходники и другие публикации сохраняются.`,
+		publications: tracks.filter((track) => track.published).length,
+		paths: tracks.flatMap((track) =>
+			track.published ? [track.published.path] : [],
+		),
+	};
 }
 
 export function deletionPlan(
@@ -16,6 +38,7 @@ export function deletionPlan(
 ): DeletionOperation {
 	const tracks = track ? [track] : release.tracks;
 	return {
+		kind: track ? "publication" : "library",
 		target: track
 			? `${release.title} · ${String(track.position).padStart(2, "0")} · ${track.title}`
 			: release.title || "Релиз без названия",

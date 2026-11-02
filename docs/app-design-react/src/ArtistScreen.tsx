@@ -1,6 +1,23 @@
 import { useMemo, useState } from "react";
-import { trackNumberLabel } from "./catalogData";
+import { AlbumActions } from "./AlbumActions";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
+import {
+	availabilityRowClass,
+	type CatalogFilter as CatalogFilterValue,
+} from "./availabilityRows";
+import { CatalogFilter } from "./CatalogFilter";
+import {
+	type CatalogArtist,
+	catalogData,
+	metadataChanged,
+	type OriginalRelease,
+	type OriginalTrack,
+	originalArtistName,
+	originalProviders,
+	type SourceFiles,
+	trackNumberLabel,
+} from "./catalogData";
+import type { DeletionOperation } from "./DeletionRequest";
 import {
 	Button,
 	Checkbox,
@@ -16,22 +33,6 @@ import {
 	Select,
 	SelectValue,
 } from "./ui";
-import type { DeletionOperation } from "./DeletionRequest";
-import {
-	catalogData,
-	metadataChanged,
-	originalArtistName,
-	originalProviders,
-	type CatalogArtist,
-	type OriginalRelease,
-	type OriginalTrack,
-	type SourceFiles,
-} from "./catalogData";
-import {
-	availabilityRowClass,
-	type CatalogFilter as CatalogFilterValue,
-} from "./availabilityRows";
-import { CatalogFilter } from "./CatalogFilter";
 
 const releaseFields = (release: OriginalRelease) =>
 	release.credits?.some((credit) => credit.artistId) ?? false;
@@ -45,8 +46,6 @@ export function ArtistScreen({
 	filter: sharedFilter,
 	selected = new Set(),
 	onSelect,
-	onPreview,
-	onContextPreview,
 	onQueryChange,
 	onFilterChange,
 	onDeleteArtist,
@@ -60,8 +59,6 @@ export function ArtistScreen({
 	filter?: CatalogFilterValue;
 	selected?: Set<string>;
 	onSelect?: (ids: string[], value: boolean) => void;
-	onPreview?: (ids: string[]) => void;
-	onContextPreview?: (release: OriginalRelease) => void;
 	onQueryChange?: (value: string) => void;
 	onFilterChange?: (value: CatalogFilterValue) => void;
 	onDeleteArtist?: (artistId: string) => void;
@@ -192,16 +189,6 @@ export function ArtistScreen({
 							{filteredMissingGroups.length} альбомов без издания
 						</p>
 						<div className="demo-object-actions artist-hero-actions">
-							<Button
-								aria-label={`Предпросмотр ${selectedCount} выбранных позиций`}
-								isDisabled={!selectedCount || !onPreview}
-								onPress={() =>
-									onPreview?.(ids.filter((id) => selected.has(id)))
-								}
-							>
-								Предпросмотр
-								<span className="artist-preview-count">{selectedCount}</span>
-							</Button>
 							{onQueueDeletion ? (
 								<ArtistDeletionRequest
 									artistId={artist.id}
@@ -235,27 +222,6 @@ export function ArtistScreen({
 					<CatalogFilter value={filter} onChange={changeFilter} />
 				</div>
 			</div>
-			{selectedCount > 0 && (
-				<div
-					className="demo-preview-counts"
-					role="region"
-					aria-label="Действия с выбранным"
-				>
-					<span>
-						Выбраны только существующие позиции. Снимите отдельную отметку у
-						позиции, чтобы исключить её.
-					</span>
-					<Button
-						onPress={() => onPreview?.(ids.filter((id) => selected.has(id)))}
-						isDisabled={!onPreview}
-					>
-						Предпросмотр {selectedCount} выбранных
-					</Button>
-					<Button onPress={() => onSelect?.(ids, false)} isDisabled={!onSelect}>
-						Снять выбор артиста
-					</Button>
-				</div>
-			)}
 			<DisclosureGroup
 				key={artistId}
 				className="catalogue-editions"
@@ -335,25 +301,7 @@ export function ArtistScreen({
 									</Button>
 								</Heading>
 								<DisclosurePanel>
-									<div className="demo-object-actions">
-										<a href={`#release/${release.id}`}>Открыть альбом</a>
-										<Button
-											isDisabled={!release.tracks.length || !onContextPreview}
-											onPress={() => onContextPreview?.(release)}
-										>
-											Предпросмотр публикации
-										</Button>
-										{release.tracks[0] && (
-											<>
-												<a href={`#tags/${release.tracks[0].id}/artist`}>
-													Теги артиста
-												</a>
-												<a href={`#tags/${release.tracks[0].id}/release`}>
-													Теги альбома
-												</a>
-											</>
-										)}
-									</div>
+									<AlbumActions release={release} />
 									<div className="demo-preview-table">
 										<table>
 											<thead>

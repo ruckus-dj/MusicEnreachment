@@ -131,7 +131,13 @@ export function OperationsScreen({
 							{deletions.map((operation, index) => (
 								<tr key={`${operation.target}:${index}`}>
 									<td>{operation.target}</td>
-									<td>Удаление медиатеки</td>
+									<td>
+										{operation.kind === "publication"
+											? "Удаление публикаций"
+											: operation.kind === "artist"
+												? "Удаление артиста"
+												: "Удаление медиатеки"}
+									</td>
 									<td>В очереди · демо</td>
 									<td>{operation.scope}</td>
 									<td>

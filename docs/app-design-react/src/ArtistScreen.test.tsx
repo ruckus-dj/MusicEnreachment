@@ -1,12 +1,18 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	within,
+	waitFor,
+} from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import { ArtistScreen } from "./ArtistScreen";
 import {
 	catalogData,
+	type OriginalRelease,
 	originalFiles,
 	originalReleases,
-	type OriginalRelease,
 } from "./catalogData";
-import { ArtistScreen } from "./ArtistScreen";
 
 function expandAlbum(release: OriginalRelease) {
 	const trigger = screen.getByRole("button", {
@@ -18,11 +24,10 @@ function expandAlbum(release: OriginalRelease) {
 	fireEvent.click(trigger);
 }
 
-it("renders artist releases and tracks, selection and publication preview actions", () => {
+it("renders artist releases and tracks with aggregate selection", () => {
 	const release = originalReleases.find((item) => item.id === "north");
 	if (!release) throw new Error("Missing baseline fixture");
 	const onSelect = vi.fn();
-	const onPreview = vi.fn();
 	render(
 		<ArtistScreen
 			artistId={release.artistId ?? ""}
@@ -31,7 +36,6 @@ it("renders artist releases and tracks, selection and publication preview action
 			files={originalFiles}
 			selected={new Set(["north-t1"])}
 			onSelect={onSelect}
-			onPreview={onPreview}
 		/>,
 	);
 	expandAlbum(release);
@@ -44,16 +48,73 @@ it("renders artist releases and tracks, selection and publication preview action
 	expect(
 		screen.getAllByRole("link", { name: /First Light/ })[0],
 	).toHaveAttribute("href", "#track/north-t1");
-	fireEvent.click(
-		screen.getByRole("button", {
-			name: "Предпросмотр 1 выбранных позиций",
-		}),
-	);
-	expect(onPreview).toHaveBeenCalledWith(["north-t1"]);
+	expect(
+		screen.queryByRole("button", { name: /Предпросмотр/ }),
+	).not.toBeInTheDocument();
 	fireEvent.click(
 		screen.getByRole("checkbox", { name: "Выбрать Still Water (local edit)" }),
 	);
 	expect(onSelect).toHaveBeenCalledWith(["north-t2"], true);
+});
+
+it("keeps album actions to album navigation and tag links through an accessible menu", async () => {
+	const release = originalReleases.find((item) => item.id === "north");
+	if (!release || !release.tracks[0])
+		throw new Error("Missing baseline fixture");
+	render(
+		<ArtistScreen
+			artistId={release.artistId ?? ""}
+			artists={catalogData.artists}
+			releases={originalReleases}
+			files={originalFiles}
+		/>,
+	);
+	expandAlbum(release);
+	expect(screen.getByRole("link", { name: "Открыть альбом" })).toHaveAttribute(
+		"href",
+		`#release/${release.id}`,
+	);
+	expect(
+		screen.queryByRole("button", { name: "Предпросмотр публикации" }),
+	).not.toBeInTheDocument();
+
+	const menuTrigger = screen.getByRole("button", { name: "Теги" });
+	menuTrigger.focus();
+	fireEvent.keyDown(menuTrigger, { key: "ArrowDown" });
+	const menu = screen.getByRole("menu", {
+		name: `Теги альбома ${release.title}`,
+	});
+	expect(
+		within(menu).getByRole("menuitem", { name: "Теги артиста" }),
+	).toHaveAttribute("href", `#tags/${release.tracks[0].id}/artist`);
+	expect(
+		within(menu).getByRole("menuitem", { name: "Теги альбома" }),
+	).toHaveAttribute("href", `#tags/${release.tracks[0].id}/release`);
+	fireEvent.keyDown(menu, { key: "Escape" });
+	await waitFor(() => expect(menuTrigger).toHaveFocus());
+	expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+});
+
+it("keeps album navigation and tags available for empty albums without preview actions", () => {
+	const base = originalReleases.find((item) => item.id === "north");
+	if (!base) throw new Error("Missing baseline fixture");
+	const noTracksRelease = { ...base, id: "empty-album", tracks: [] };
+	render(
+		<ArtistScreen
+			artistId={base.artistId ?? ""}
+			artists={catalogData.artists}
+			releases={[noTracksRelease]}
+			files={originalFiles}
+		/>,
+	);
+	expandAlbum(noTracksRelease);
+	expect(screen.getByRole("link", { name: "Открыть альбом" })).toHaveAttribute(
+		"href",
+		"#release/empty-album",
+	);
+	expect(
+		screen.queryByRole("button", { name: "Теги" }),
+	).not.toBeInTheDocument();
 });
 
 it("filters track rows and searches absent editions without adding them to the library", () => {

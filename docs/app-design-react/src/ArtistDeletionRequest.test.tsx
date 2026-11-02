@@ -91,6 +91,7 @@ it("plans deletion across primary and credited releases and shared compositions"
 	expect(plan).not.toBeNull();
 	expect(plan).toMatchObject({
 		target: "Artist A",
+		kind: "artist",
 		publications: 3,
 		paths: ["/owned.mka", "/credited.mka", "/shared.mka"],
 	});
@@ -143,6 +144,7 @@ it("queues only a demo deletion operation after confirmation without mutating in
 	fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
 
 	expect(onQueue).toHaveBeenCalledWith({
+		kind: "artist",
 		target: "Artist A",
 		scope: expect.any(String),
 		publications: 3,

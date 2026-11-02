@@ -40,8 +40,11 @@
 .catalogue-shell .react-aria-ListBoxItem { padding: 7px 9px; border-radius: 3px; cursor: pointer; }
 .catalogue-shell .react-aria-ListBoxItem[data-focused] { background: var(--raised); }
 .catalogue-shell .react-aria-ListBoxItem[data-selected] { color: var(--accent); background: var(--accent-soft); }
-.catalogue-shell .demo-selection { position: sticky; z-index: 3; bottom: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 9px 12px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); border-radius: 5px; box-shadow: var(--catalogue-shadow); }
-.catalogue-shell .demo-selection button { min-height: 32px; padding: 5px 9px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
+.selection-dock-screen { padding-bottom: calc(136px + env(safe-area-inset-bottom)); }
+.selection-dock { position: fixed; z-index: 60; right: 24px; bottom: calc(16px + env(safe-area-inset-bottom)); display: grid; gap: 8px; width: min(680px, calc(100vw - 48px)); padding: 12px 14px; color: var(--ink); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line)); border-radius: 8px; box-shadow: 0 12px 36px color-mix(in srgb, var(--ink) 18%, transparent); }
+.selection-dock-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.selection-dock .react-aria-Button { min-height: 36px; padding: 6px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; }
+.selection-dock .react-aria-Button.ui-button--primary { color: var(--button-text); background: var(--accent); border-color: var(--accent); }
 .catalogue-shell .demo-list { overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); box-shadow: var(--catalogue-shadow); }
 .catalogue-table-scroll { width: 100%; overflow: auto; overscroll-behavior-inline: contain; }
 .catalogue-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -159,6 +162,16 @@
 .artist-album-meta { display: block; color: var(--muted); font-size: 11px; font-weight: 450; line-height: 1.4; overflow-wrap: anywhere; }
 .catalogue-object .artist-album-card .react-aria-DisclosurePanel { border-top: 1px solid var(--line); }
 .catalogue-object .artist-album-card .demo-object-actions { padding: 10px 13px; }
+.catalogue-object .artist-album-card .album-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.catalogue-object .artist-album-card .album-actions-open { display: inline-flex; min-height: 34px; align-items: center; padding: 5px 10px; color: var(--muted); border: 1px solid var(--control); border-radius: 5px; text-decoration: none; }
+.catalogue-object .artist-album-card .album-actions-open:hover { color: var(--ink); background: var(--raised); }
+.catalogue-object .artist-album-card .album-actions > .ui-button { min-height: 34px; padding: 5px 10px; border: 1px solid var(--control); border-radius: 5px; }
+.catalogue-object .artist-album-card .album-actions > .ui-button--primary { border-color: var(--button); }
+.album-actions-popover { z-index: 60; width: max-content; max-width: calc(100vw - 24px); max-height: min(240px, calc(100dvh - 24px)); overflow: auto; padding: 4px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--catalogue-shadow); }
+.album-actions-popover .ui-menu { display: grid; gap: 2px; min-width: 150px; outline: none; }
+.album-actions-popover .ui-menu-item { padding: 8px 10px; color: var(--ink); border-radius: 4px; text-decoration: none; cursor: pointer; outline: none; }
+.album-actions-popover .ui-menu-item[data-focused], .album-actions-popover .ui-menu-item[data-focus-visible] { background: var(--raised); }
+.album-actions-popover .ui-menu-item[data-focus-visible] { box-shadow: inset 0 0 0 2px var(--focus); }
 .catalogue-object .artist-album-card .demo-preview-table { margin: 0 12px 12px; }
 .catalogue-object .demo-object-actions > button, .catalogue-object > button { min-height: 32px; padding: 5px 9px; color: var(--ink); background: var(--surface); border: 1px solid var(--control); border-radius: 4px; }
 .catalogue-object .demo-panel { margin: 10px 0; padding: 12px; border-radius: 5px; box-shadow: 0 2px 8px #00000008; }
@@ -217,7 +230,11 @@
 	.catalogue-tabs { grid-column: auto; overflow-x: auto; }
 	.catalogue-tabs .react-aria-TabList { flex-wrap: nowrap; }
 	.catalogue-tabs .react-aria-Tab { white-space: nowrap; }
-	.catalogue-shell .demo-selection { position: static; }
+	.selection-dock-screen { padding-bottom: calc(190px + env(safe-area-inset-bottom)); }
+	.selection-dock { right: 8px; bottom: env(safe-area-inset-bottom); left: 8px; width: auto; gap: 7px; padding: 10px; }
+	.selection-dock-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.selection-dock-actions .react-aria-Button { min-width: 0; padding-inline: 5px; font-size: 12px; }
+	.selection-dock-actions .react-aria-Button:first-child { grid-column: 1 / -1; }
 	.artist-card-grid { grid-template-columns: minmax(0, 1fr); gap: 11px; padding: 10px; }
 	.artist-card-art { min-height: 0; }
 	.catalogue-object { padding: 13px 10px; }
@@ -233,6 +250,13 @@
 	.catalogue-object .artist-hero-heading { grid-column: 2; grid-row: 1; }
 	.catalogue-object .artist-hero-foot { grid-column: 1 / -1; grid-row: 2; }
 	.catalogue-object .artist-album-card .catalogue-edition-trigger { grid-template-columns: 54px minmax(0, 1fr) 14px; gap: 9px; min-height: 80px; padding: 9px; }
+	.catalogue-object .artist-album-card .album-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; padding: 8px; }
+	.catalogue-object .artist-album-card .album-actions-open { grid-row: 2; grid-column: 1; }
+	.catalogue-object .artist-album-card .album-actions > .ui-button--primary { grid-row: 1; grid-column: 1 / -1; }
+	.catalogue-object .artist-album-card .album-actions-menu-trigger { grid-row: 2; grid-column: 2; }
+	.catalogue-object .artist-album-card .album-actions-open, .catalogue-object .artist-album-card .album-actions > .ui-button { justify-content: center; min-width: 0; }
+	.catalogue-object .artist-album-card .album-actions-open { white-space: nowrap; }
+	.catalogue-object .artist-album-card .album-actions > .ui-button--primary { width: 100%; }
 	.artist-album-cover { width: 54px; }
 	.artist-album-cover > span { font-size: 28px; }
 	.artist-album-meta { font-size: 10px; }

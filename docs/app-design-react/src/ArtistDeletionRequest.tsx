@@ -98,6 +98,7 @@ export function artistDeletionPlan(
 	].filter((section) => section.items.length);
 
 	return {
+		kind: "artist",
 		target: artist.name,
 		scope: `${relatedReleases.length} связанных релизов; ${directRecordingIds.size} напрямую связанных композиций; ${affectedTracks.size} позиций (включая позиции этих композиций в сохраняемых релизах). Остальные сущности медиатеки и все записи провайдера сохраняются.`,
 		publications: publications.length,
@@ -179,6 +180,7 @@ export function ArtistDeletionRequest({
 							onPress={() => {
 								setOpen(false);
 								onQueue({
+									kind: "artist",
 									target: plan.target,
 									scope: plan.scope,
 									publications: plan.publications,
