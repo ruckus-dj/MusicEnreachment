@@ -44,16 +44,27 @@ it("previews an explicit artist sort name change without a display-name fallback
 	const artists = structuredClone(catalogData.artists) as CatalogArtist[];
 	const releases = structuredClone(originalReleases);
 	const files = structuredClone(originalFiles);
-	const release = releases.find((item) => item.id === "north-japan-local");
-	const track = release?.tracks.find(
+	let release = releases.find((item) => item.id === "north-japan-local");
+	let track = release?.tracks.find(
 		(item) => item.id === "north-japan-local-t1",
 	);
 	if (!release || !track) throw new Error("Missing baseline fixture");
 	const mira = artists.find((artist) => artist.id === "mira");
 	if (!mira) throw new Error("Missing artist fixture");
 
-	expect(track.metadataBaseline?.ARTISTSORT).toEqual(["Mira Vale"]);
 	expect(mira.sortName).toBe("Mira Vale");
+	// Establish a valid publication snapshot from the current metadata projection
+	// before asserting the artist-sort-only delta.
+	const baseline = applyMetadataPreview(
+		releases,
+		new Set([track.id]),
+		files,
+		artists,
+	);
+	release = baseline.find((item) => item.id === release?.id);
+	track = release?.tracks.find((item) => item.id === "north-japan-local-t1");
+	if (!release || !track) throw new Error("Missing projected baseline fixture");
+	expect(track.metadataBaseline?.ARTISTSORT).toEqual(["Mira Vale"]);
 	expect(metadataChanged(release, track)).toBe(false);
 	expect(metadataChanged(release, track, artists)).toBe(false);
 
@@ -69,7 +80,7 @@ it("previews an explicit artist sort name change without a display-name fallback
 	mira.sortName = "Vale, Mira";
 
 	const next = applyMetadataPreview(
-		releases,
+		baseline,
 		new Set([track.id]),
 		files,
 		artists,

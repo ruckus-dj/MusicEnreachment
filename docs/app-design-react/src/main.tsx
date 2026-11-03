@@ -1,7 +1,6 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { CatalogDemo } from "./CatalogDemo";
-import { Comparison } from "./Comparison";
 import { DesignShell } from "./DesignShell";
 import "./tailwind.css";
 
@@ -17,10 +16,6 @@ function PrototypeApp() {
 if (!root) throw new Error("Missing design root");
 createRoot(root).render(
 	<StrictMode>
-		{window.location.pathname === "/compare" ? (
-			<Comparison />
-		) : (
-			<PrototypeApp />
-		)}
+		<PrototypeApp />
 	</StrictMode>,
 );

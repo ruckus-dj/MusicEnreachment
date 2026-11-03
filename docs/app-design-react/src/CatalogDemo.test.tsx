@@ -240,6 +240,80 @@ it("saves artist metadata in catalog state across library navigation", async () 
 	}
 });
 
+it("shares the loaded genre catalog with artist metadata editors", async () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "settings";
+	try {
+		render(<CatalogDemo />);
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: "Загрузить / обновить каталог в демо",
+			}),
+		);
+		window.location.hash = "artist/mira";
+		fireEvent(window, new Event("hashchange"));
+		await screen.findByRole("heading", { name: "Mira Vale" });
+		const artistDetails = screen.getByRole("region", {
+			name: "Сведения об артисте",
+		});
+		fireEvent.click(
+			within(artistDetails).getByRole("button", { name: "Редактировать" }),
+		);
+		fireEvent.click(
+			within(artistDetails).getByRole("button", { name: "Жанры" }),
+		);
+		expect(
+			await screen.findByRole("heading", { name: "Жанры" }),
+		).toBeInTheDocument();
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
+	}
+});
+
+it("updates recording metadata across positions without changing position publication data", async () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "track/north-t1";
+	try {
+		render(<CatalogDemo />);
+		await screen.findByRole("heading", { level: 1, name: /First Light/ });
+		const recording = screen.getByRole("region", {
+			name: "Сведения о композиции",
+		});
+		const publicationBefore = screen.getByText(
+			"/srv/music/Mira Vale/2021 - Northern Lines/01 - First Light.mka",
+		);
+		fireEvent.click(
+			within(recording).getByRole("button", { name: "Редактировать" }),
+		);
+		fireEvent.change(within(recording).getByLabelText("Название"), {
+			target: { value: "First Light Updated" },
+		});
+		fireEvent.click(
+			within(recording).getByRole("button", { name: "Сохранить" }),
+		);
+		const confirmation = await screen.findByRole("dialog", {
+			name: "Подтверждение затронутых позиций",
+		});
+		expect(within(confirmation).getAllByRole("listitem")).toHaveLength(3);
+		expect(within(confirmation).getByText(/Road Notes/)).toBeInTheDocument();
+		fireEvent.click(
+			within(confirmation).getByRole("button", {
+				name: "Подтвердить сохранение",
+			}),
+		);
+		expect(publicationBefore).toBeInTheDocument();
+		window.location.hash = "track/mix-t1";
+		fireEvent(window, new Event("hashchange"));
+		expect(await screen.findAllByText("First Light Updated")).not.toHaveLength(
+			0,
+		);
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
+	}
+});
+
 it("saves release metadata in catalog state and restores unsaved edits on cancel and Escape", async () => {
 	const previousHash = window.location.hash;
 	window.location.hash = "artist/mira?release=north";
@@ -249,8 +323,8 @@ it("saves release metadata in catalog state and restores unsaved edits on cancel
 		const releaseDetails = screen.getByRole("region", {
 			name: "Сведения об издании",
 		});
-		const title = within(releaseDetails).getByLabelText("Название");
-		const year = within(releaseDetails).getByLabelText("Год");
+		const title = within(releaseDetails).getByLabelText("Издание");
+		const year = within(releaseDetails).getByLabelText("Дата выпуска");
 		const editRelease = () =>
 			fireEvent.click(
 				within(releaseDetails).getByRole("button", {
@@ -258,42 +332,44 @@ it("saves release metadata in catalog state and restores unsaved edits on cancel
 				}),
 			);
 		editRelease();
-		expect(within(releaseDetails).getByLabelText("Название")).toBe(title);
-		expect(within(releaseDetails).getByLabelText("Год")).toBe(year);
+		expect(within(releaseDetails).getByLabelText("Издание")).toBe(title);
+		expect(within(releaseDetails).getByLabelText("Дата выпуска")).toBe(year);
 		fireEvent.change(title, { target: { value: "Northern Lines Updated" } });
 		fireEvent.click(
 			within(releaseDetails).getByRole("button", { name: "Отменить" }),
 		);
-		expect(within(releaseDetails).getByLabelText("Название")).toHaveValue(
+		expect(within(releaseDetails).getByLabelText("Издание")).toHaveValue(
 			"Northern Lines",
 		);
-		expect(within(releaseDetails).getByLabelText("Название")).toBe(title);
+		expect(within(releaseDetails).getByLabelText("Издание")).toBe(title);
 
 		editRelease();
-		fireEvent.change(within(releaseDetails).getByLabelText("Название"), {
+		fireEvent.change(within(releaseDetails).getByLabelText("Издание"), {
 			target: { value: "Northern Lines Updated" },
 		});
-		fireEvent.keyDown(within(releaseDetails).getByLabelText("Название"), {
+		fireEvent.keyDown(within(releaseDetails).getByLabelText("Издание"), {
 			key: "Escape",
 		});
-		expect(within(releaseDetails).getByLabelText("Название")).toHaveValue(
+		expect(within(releaseDetails).getByLabelText("Издание")).toHaveValue(
 			"Northern Lines",
 		);
 
 		editRelease();
-		fireEvent.change(within(releaseDetails).getByLabelText("Название"), {
+		fireEvent.change(within(releaseDetails).getByLabelText("Издание"), {
 			target: { value: "Northern Lines Updated" },
 		});
-		fireEvent.change(within(releaseDetails).getByLabelText("Год"), {
-			target: { value: "2022" },
+		fireEvent.change(within(releaseDetails).getByLabelText("Дата выпуска"), {
+			target: { value: "2022-05-13" },
 		});
 		fireEvent.click(
 			within(releaseDetails).getByRole("button", { name: "Сохранить" }),
 		);
-		expect(within(releaseDetails).getByLabelText("Название")).toHaveValue(
+		expect(within(releaseDetails).getByLabelText("Издание")).toHaveValue(
 			"Northern Lines Updated",
 		);
-		expect(within(releaseDetails).getByLabelText("Год")).toHaveValue("2022");
+		expect(within(releaseDetails).getByLabelText("Дата выпуска")).toHaveValue(
+			"2022-05-13",
+		);
 
 		fireEvent.click(screen.getByRole("link", { name: "К медиатеке" }));
 		await screen.findByRole("tab", { name: "Артисты" });
@@ -304,12 +380,12 @@ it("saves release metadata in catalog state and restores unsaved edits on cancel
 		const savedReleaseDetails = await screen.findByRole("region", {
 			name: "Сведения об издании",
 		});
-		expect(within(savedReleaseDetails).getByLabelText("Название")).toHaveValue(
+		expect(within(savedReleaseDetails).getByLabelText("Издание")).toHaveValue(
 			"Northern Lines Updated",
 		);
-		expect(within(savedReleaseDetails).getByLabelText("Год")).toHaveValue(
-			"2022",
-		);
+		expect(
+			within(savedReleaseDetails).getByLabelText("Дата выпуска"),
+		).toHaveValue("2022-05-13");
 	} finally {
 		window.location.hash = previousHash;
 		fireEvent(window, new Event("hashchange"));

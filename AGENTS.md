@@ -27,7 +27,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 ├── frontend/             # React 19 + Vite + Tailwind 4, see frontend/AGENTS.md
 ├── docs/                 # Directory map: see docs/AGENTS.md
 │   ├── design/           # Authoritative conventions (Russian), see AGENTS.md
-│   └── app-design/       # Interactive HTML prototype, see AGENTS.md
+│   └── app-design-react/ # Sole current graphical reference, see AGENTS.md
 ├── deploy/               # Dockerfile + docker-compose.yml
 ├── tools/                # Node .mjs build helpers (stage-frontend, check-generated)
 ├── test_stand/           # Local test data
@@ -48,7 +48,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | Frontend screens | frontend/src/features/ | Setup, settings, sources, incoming grouping, and matching workflows |
 | API client | frontend/src/api/generated/ | Orval-generated from OpenAPI, never hand-edit |
 | Conventions | docs/design/AGENTS.md | Russian docs: decisions.md (stack, forbidden items), repository-architecture.md (layering) |
-| Design prototype | docs/app-design/AGENTS.md | Static interactive HTML/JS prototype; sole graphical reference |
+| Design prototype | docs/app-design-react/AGENTS.md | Standalone React design artifact; sole graphical reference |
 | Build commands | Taskfile.yml at root | `task build/test/verify/generate/run` |
 
 ## CODE MAP
@@ -127,7 +127,10 @@ raising that buffer is not a substitute for streaming the dependency inspection.
 
 **Frontend build embedding**: Vite builds to ../build/frontend; tools/stage-frontend.mjs prepares it; Go binary embeds it via internal/static (//go:embed).
 
-**Prototype coexistence**: docs/app-design/index.html is a static HTML/JS design prototype, NOT part of the React app.
+**Prototype boundary**: docs/app-design-react/ is a standalone design artifact,
+not part of the production React app in frontend/. The former docs/app-design/
+static runtime was retired by owner decision on 2026-11-03; its essential design
+prose was moved into docs/app-design-react/.
 
 ## COMMANDS
 

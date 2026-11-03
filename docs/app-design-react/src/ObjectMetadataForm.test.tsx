@@ -161,10 +161,11 @@ describe("ObjectMetadataForm", () => {
 		expect(screen.getByRole("button", { name: "Жанры" })).toBe(genreControl);
 		expect(genreControl).toHaveClass("h-8");
 		fireEvent.click(genreControl);
-		fireEvent.change(screen.getByRole("textbox", { name: "Поиск жанров" }), {
+		fireEvent.change(screen.getByRole("searchbox", { name: "Поиск жанров" }), {
 			target: { value: "rock" },
 		});
-		fireEvent.click(screen.getByRole("checkbox", { name: "rock" }));
+		fireEvent.click(screen.getByRole("option", { name: "rock" }));
+		fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 		fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 		expect(onSave).toHaveBeenCalledWith(
 			expect.objectContaining({ title: "Saved title" }),

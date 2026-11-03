@@ -21,6 +21,7 @@ import {
 	originalFiles,
 	type CatalogArtist,
 	type OriginalRelease,
+	type OriginalTrack,
 } from "./catalogData";
 import { PublicationPreview } from "./PublicationPreview";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
@@ -71,6 +72,13 @@ const subscribeRoute = (listener: () => void) => {
 
 type View = "artists" | "albums" | "tracks";
 type Track = (typeof catalogData.releases)[number]["tracks"][number];
+
+const recordingIdentity = (track: OriginalTrack) =>
+	track.localRecordingId
+		? `local:${track.localRecordingId}`
+		: track.recordingId
+			? `musicbrainz:${track.recordingId}`
+			: null;
 
 function GroupCheckbox({
 	ids,
@@ -134,6 +142,9 @@ export function CatalogDemo({
 		onIncomingCount?.(incomingCount);
 	}, [incomingCount, onIncomingCount]);
 	const [settings, setSettings] = useState(initialDemoSettings);
+	const loadGenres = async () => {
+		setSettings((current) => ({ ...current, genresLoaded: true }));
+	};
 	const [setupStep, setSetupStep] = useState(0);
 	const [files, setFiles] = useState(() => structuredClone(originalFiles));
 	const [sourceRoots, setSourceRoots] = useState(() =>
@@ -204,6 +215,7 @@ export function CatalogDemo({
 			.map((artist) => ({
 				id: artist.id,
 				name: artist.name ?? "",
+				sortName: artist.sortName,
 				genre: "Локальный каталог",
 				color: "slate",
 			})),
@@ -227,7 +239,10 @@ export function CatalogDemo({
 				.flatMap((release) => [
 					release.artistId,
 					...(release.credits ?? []).map((credit) => credit.artistId ?? null),
-					...release.tracks.map((track) => track.artistId),
+					...release.tracks.flatMap((track) => [
+						track.artistId,
+						...(track.recordingCredits ?? []).map((credit) => credit.artistId),
+					]),
 				])
 				.filter((id): id is string => Boolean(id)),
 		);
@@ -471,6 +486,7 @@ export function CatalogDemo({
 					releases={releases}
 					files={files}
 					genresLoaded={settings.genresLoaded}
+					onLoadGenres={loadGenres}
 					selected={selected}
 					query={query}
 					filter={filter}
@@ -570,6 +586,25 @@ export function CatalogDemo({
 					<a href="#library">К медиатеке</a>
 				</main>
 			);
+		const identity = recordingIdentity(track);
+		const recordingPositions = identity
+			? releases.flatMap((candidateRelease) =>
+					candidateRelease.tracks
+						.filter((candidate) => recordingIdentity(candidate) === identity)
+						.map((candidate) => ({
+							release: candidateRelease,
+							track: candidate,
+						})),
+				)
+			: [{ release, track }];
+		const recordingImpact =
+			new Set(recordingPositions.map(({ track: position }) => position.id))
+				.size > 1
+				? recordingPositions.map(
+						({ release: positionRelease, track: position }) =>
+							`${positionRelease.title} · ${position.position} · ${position.title}`,
+					)
+				: [];
 		return (
 			<main className={screenLayout}>
 				<TrackScreen
@@ -578,6 +613,22 @@ export function CatalogDemo({
 					onQueueDeletion={queueDeletion}
 					release={release}
 					track={track}
+					genresLoaded={settings.genresLoaded}
+					onLoadGenres={loadGenres}
+					recordingImpact={recordingImpact}
+					onRecordingChange={(updateTrack) =>
+						setReleases((previous) =>
+							previous.map((item) => ({
+								...item,
+								tracks: item.tracks.map((candidate) =>
+									(identity && recordingIdentity(candidate) === identity) ||
+									(!identity && candidate.id === track.id)
+										? updateTrack(candidate)
+										: candidate,
+								),
+							})),
+						)
+					}
 					onMutate={(updateTrack) =>
 						setReleases((previous) =>
 							previous.map((item) => ({
@@ -621,6 +672,7 @@ export function CatalogDemo({
 		return (
 			<LocalProviderScreen
 				state={localProvider}
+				onLoadGenres={loadGenres}
 				onState={setLocalProvider}
 				onMatchRelease={(release) => {
 					const next = structuredClone(incoming);
@@ -754,13 +806,7 @@ export function CatalogDemo({
 		return (
 			<main className={screenLayout}>
 				<h1>Экран ещё не перенесён</h1>
-				<p>
-					Маршрут: {route}. Чтобы не подменять исходный сценарий упрощённой
-					демонстрацией, он пока доступен только в старом прототипе.
-				</p>
-				<a href={`/reference/index.html#${encodeURI(route)}`}>
-					Открыть исходный экран
-				</a>
+				<p>Маршрут: {route}. Этот сценарий пока не перенесён в React-макет.</p>
 				<p>
 					<a href="#library">К медиатеке React</a>
 				</p>

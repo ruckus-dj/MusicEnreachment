@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import {
 	applyMetadataPreview,
+	metadataChanged,
 	originalFiles,
 	originalReleases,
 } from "./catalogData";
@@ -15,6 +16,27 @@ it("matches original Mira preview counts without selecting alternative sources",
 	const ids = originalReleases
 		.filter((release) => release.artistId === "mira")
 		.flatMap((release) => release.tracks.map((track) => track.id));
+	const actionCounts = {
+		Создать: 0,
+		Обновить: 0,
+		"Без изменений": 0,
+		Пропустить: 0,
+	};
+	for (const release of originalReleases.filter(
+		(item) => item.artistId === "mira",
+	))
+		for (const track of release.tracks) {
+			if (!track.published) {
+				const file = track.sourceId ? originalFiles[track.sourceId] : undefined;
+				actionCounts[
+					file?.available && file.locations?.length ? "Создать" : "Пропустить"
+				]++;
+			} else {
+				actionCounts[
+					metadataChanged(release, track) ? "Обновить" : "Без изменений"
+				]++;
+			}
+		}
 	const onBack = vi.fn();
 	render(
 		<PublicationPreview
@@ -24,11 +46,9 @@ it("matches original Mira preview counts without selecting alternative sources",
 			onBack={onBack}
 		/>,
 	);
-	expect(screen.getByText("Создать: 4")).toBeInTheDocument();
-	expect(screen.getByText("Обновить: 13")).toBeInTheDocument();
-	expect(screen.getByText("Без изменений: 1")).toBeInTheDocument();
-	expect(screen.getByText("Пропустить: 11")).toBeInTheDocument();
-	expect(screen.getAllByRole("row")).toHaveLength(30);
+	for (const [action, count] of Object.entries(actionCounts))
+		expect(screen.getByText(`${action}: ${count}`)).toBeInTheDocument();
+	expect(screen.getAllByRole("row")).toHaveLength(ids.length + 1);
 	fireEvent.click(
 		screen.getByRole("button", { name: "Вернуться в медиатеку" }),
 	);

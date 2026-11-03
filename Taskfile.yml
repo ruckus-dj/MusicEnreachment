@@ -20,11 +20,12 @@ tasks:
       - node_modules/.bin/vite --host 127.0.0.1 --port 5175
 
   design:check:
-    desc: Check the separate React design prototype
+    desc: Validate canonical fixtures and check the separate React design prototype
     deps: [design:install]
     dir: docs/app-design-react
     cmds:
-      - node export-fixtures.mjs --check
+      - node check-fixtures.mjs
+      - node --test check-fixtures.test.mjs
       - node_modules/.bin/tsc --project tsconfig.json
       - node_modules/.bin/vitest run
       - node_modules/.bin/vite build

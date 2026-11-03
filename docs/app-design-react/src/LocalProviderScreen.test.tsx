@@ -55,7 +55,7 @@ it("creates and edits only by explicit action, emitting controlled current state
 	}
 	render(<Harness />);
 	fireEvent.click(screen.getByRole("button", { name: "Создать артиста" }));
-	fireEvent.change(screen.getByRole("textbox", { name: /Имя/ }), {
+	fireEvent.change(screen.getByRole("textbox", { name: /^Имя Обязательно$/ }), {
 		target: { value: "New Local Artist" },
 	});
 	fireEvent.click(
@@ -81,15 +81,130 @@ it("preserves external artist references as readonly identities and gates genre 
 		);
 	}
 	render(<Harness />);
-	fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+	fireEvent.click(screen.getAllByRole("button", { name: "Редактировать" })[0]);
 	const forma = screen.getByText("mb-artist-forma").closest("div");
 	if (!forma) throw new Error("Missing Forma artist option");
 	expect(forma).toHaveTextContent("mb-artist-forma");
+	fireEvent.click(screen.getByRole("button", { name: "Жанры" }));
 	expect(
-		screen.getByRole("button", { name: "electronic" }),
+		screen.getByRole("option", { name: "electronic" }),
 	).toBeInTheDocument();
+	fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 	// The external artist option is only a reference checkbox; its canonical key is not editable.
 	expect(
 		within(forma).getByRole("checkbox", { name: "Forma" }),
 	).toBeInTheDocument();
+});
+
+it("keeps unknown genre references when saving a Local release draft", () => {
+	const state = createLocalProviderState();
+	state.type = "releases";
+	state.selectedId = "local-release-north";
+	state.items.releases[0].genres = ["retired-catalog-genre"];
+	state.items.releases[0].genreNamesById = {
+		"retired-catalog-genre": "Archived genre",
+	};
+	let updated = state;
+	function Harness() {
+		const [current, setCurrent] = useState(state);
+		return (
+			<LocalProviderScreen
+				state={current}
+				onState={(next) => {
+					updated = next;
+					setCurrent(next);
+				}}
+			/>
+		);
+	}
+	render(<Harness />);
+	fireEvent.click(screen.getAllByRole("button", { name: "Редактировать" })[0]);
+	fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+	const saved = updated.items.releases.find(
+		(release) => release.id === "local-release-north",
+	);
+	expect(saved?.genres).toEqual(["retired-catalog-genre"]);
+	// The stored name remains available even when its former catalog entry is gone.
+	expect(saved?.genreNamesById?.["retired-catalog-genre"]).toBe(
+		"Archived genre",
+	);
+});
+
+it("offers the Local artist sort name only in its artist edit card", () => {
+	const state = createLocalProviderState();
+	render(<LocalProviderScreen state={state} onState={() => {}} />);
+	fireEvent.click(screen.getAllByRole("button", { name: "Редактировать" })[0]);
+	expect(
+		screen.getByRole("textbox", { name: /Имя для сортировки/ }),
+	).toBeInTheDocument();
+});
+
+it("saves metadata-editor drafts with the outer Local save and reopens read-only", () => {
+	const state = createLocalProviderState();
+	state.type = "releases";
+	state.selectedId = "local-release-north";
+	let updated = state;
+	function Harness() {
+		const [current, setCurrent] = useState(state);
+		return (
+			<LocalProviderScreen
+				state={current}
+				onState={(next) => {
+					updated = next;
+					setCurrent(next);
+				}}
+			/>
+		);
+	}
+	render(<Harness />);
+	const readonlyEditor = screen.getByRole("region", {
+		name: "Метаданные издания",
+	});
+	within(readonlyEditor).getByRole("textbox", { name: "Издание" });
+	fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+	fireEvent.change(screen.getByRole("textbox", { name: "Издание" }), {
+		target: { value: "Typed release metadata" },
+	});
+	fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+	expect(updated.draft).toBeNull();
+	const saved = updated.items.releases.find(
+		(release) => release.id === "local-release-north",
+	);
+	expect(saved?.metadataValues?.album).toEqual(["Typed release metadata"]);
+	expect(
+		within(
+			screen.getByRole("region", { name: "Метаданные издания" }),
+		).getByRole("textbox", { name: "Издание" }),
+	).toHaveValue("Typed release metadata");
+});
+
+it("keeps Local release fields in one readonly-to-edit form without changing its grid", () => {
+	const state = createLocalProviderState();
+	state.type = "releases";
+	state.selectedId = "local-release-north";
+	function Harness() {
+		const [current, setCurrent] = useState(state);
+		return <LocalProviderScreen state={current} onState={setCurrent} />;
+	}
+	render(<Harness />);
+
+	const form = screen.getByLabelText("Дата необязательно").closest("form");
+	expect(form).not.toBeNull();
+	expect(form).toBeInTheDocument();
+	const date = within(form as HTMLFormElement).getByLabelText(
+		"Дата необязательно",
+	);
+	const label = within(form as HTMLFormElement).getByLabelText("Лейбл");
+	expect(date).toHaveAttribute("readonly");
+	expect(label).toHaveAttribute("readonly");
+	within(form as HTMLFormElement).getByLabelText("Штрихкод");
+
+	fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+	const editingForm = screen
+		.getByLabelText("Дата необязательно")
+		.closest("form");
+	expect(editingForm).toBe(form);
+	expect(
+		within(editingForm as HTMLFormElement).getByLabelText("Дата необязательно"),
+	).not.toHaveAttribute("readonly");
 });

@@ -1,4 +1,14 @@
 import original from "./original-fixtures.json";
+import type { MetadataGenre, MetadataValues } from "./metadata/projection";
+import { fieldByKey } from "./metadata/registry";
+import {
+	metadataManagedTagKeys,
+	metadataTagKeys,
+	projectMetadataValues,
+} from "./metadata/projection";
+
+const musicBrainzUUID =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface OriginalTrack {
 	id: string;
@@ -31,9 +41,15 @@ export interface OriginalTrack {
 	coverHash?: string | null;
 	lyrics?: string | null;
 	recordingGenres?: string[];
+	recordingGenreRefs?: MetadataGenre[];
+	recordingMetadata?: MetadataValues;
+	positionMetadata?: MetadataValues;
+	audioMetadata?: Record<string, MetadataValues>;
+	recordingCredits?: import("./metadata/model").MetadataCredit[];
 	displayedNumber?: string;
 	mediumPosition?: number;
 	medium?: number;
+	positionTitleOverride?: string;
 }
 
 export interface OriginalRelease {
@@ -53,7 +69,10 @@ export interface OriginalRelease {
 		name?: string;
 		role?: string;
 		artistId?: string | null;
+		joinPhrase?: string;
 	}[];
+	metadataValues?: MetadataValues;
+	metadataGenres?: MetadataGenre[];
 	metadata?: {
 		date: string;
 		country: string;
@@ -179,7 +198,7 @@ export function desiredTags(
 ): Record<string, string[]> {
 	const artist = artists.find((item) => item.id === track.artistId);
 	const albumArtist = artists.find((item) => item.id === release.artistId);
-	return {
+	const result: Record<string, string[]> = {
 		TITLE: track.title ? [track.title] : [],
 		ARTIST: artist?.name ? [artist.name] : [],
 		// Single-artist demo: use only the explicit artist sort name, without
@@ -193,7 +212,8 @@ export function desiredTags(
 			: albumArtist
 				? [albumArtist.name]
 				: [],
-		DATE: [release.year],
+		DATE: [],
+		RELEASEDATE: [release.metadata?.date || release.year],
 		COUNTRY: release.country ? [release.country] : [],
 		LABEL: release.label ? [release.label] : [],
 		CATALOGNUMBER: release.catalog ? [release.catalog] : [],
@@ -202,28 +222,117 @@ export function desiredTags(
 		],
 		DISCNUMBER: [String(track.medium ?? 1)],
 		GENRE: track.recordingGenres ?? [],
-		MUSICBRAINZ_ARTISTID:
-			release.manual || release.provider === "Local"
-				? []
-				: artist
-					? [`demo-artist-${artist.id}`]
-					: [],
+		MUSICBRAINZ_ARTISTID: [],
 		MUSICBRAINZ_ALBUMID:
-			release.manual || release.provider === "Local" || !release.providerId
+			release.manual ||
+			release.provider === "Local" ||
+			!release.providerId ||
+			!musicBrainzUUID.test(release.providerId)
 				? []
 				: [release.providerId],
 		MUSICBRAINZ_TRACKID:
-			release.manual || release.provider === "Local"
+			release.manual ||
+			release.provider === "Local" ||
+			!track.recordingId ||
+			!musicBrainzUUID.test(track.recordingId)
 				? []
-				: track.recordingId
-					? [track.recordingId]
-					: [],
+				: [track.recordingId],
 		COMMENT: [],
 	};
+	const recordingCredits =
+		track.recordingCredits ??
+		(artist
+			? [
+					{
+						artistId: artist.id,
+						creditName: artist.name,
+						joinPhrase: "",
+					},
+				]
+			: []);
+	const releaseCredits = release.credits?.length
+		? release.credits
+				.map((credit) => ({
+					artistId: credit.artistId ?? "",
+					creditName: credit.credit || credit.name || "",
+					joinPhrase: credit.joinPhrase ?? "",
+				}))
+				.filter((credit) => credit.creditName)
+		: albumArtist
+			? [
+					{
+						artistId: albumArtist.id,
+						creditName: albumArtist.name,
+						joinPhrase: "",
+					},
+				]
+			: [];
+	const recordingSorts = recordingCredits.map(
+		(credit) =>
+			artists.find((item) => item.id === credit.artistId)?.sortName ?? "",
+	);
+	const releaseSorts = releaseCredits.map(
+		(credit) =>
+			artists.find((item) => item.id === credit.artistId)?.sortName ?? "",
+	);
+	result.ARTIST = recordingCredits.length
+		? [
+				recordingCredits
+					.map((credit) => credit.creditName + credit.joinPhrase)
+					.join(""),
+			]
+		: [];
+	result.ARTISTSORT =
+		recordingSorts.length && recordingSorts.every(Boolean)
+			? [
+					recordingCredits
+						.map(
+							(credit, index) =>
+								recordingSorts[index] + (credit.joinPhrase ?? ""),
+						)
+						.join(""),
+				]
+			: [];
+	result.ARTISTSSORT = recordingSorts;
+	result.ARTISTS = recordingCredits.map((credit) => credit.creditName);
+	result.ALBUMARTIST = releaseCredits.length
+		? [
+				releaseCredits
+					.map((credit) => credit.creditName + credit.joinPhrase)
+					.join(""),
+			]
+		: [];
+	result.ALBUMARTISTS = releaseCredits.map((credit) => credit.creditName);
+	result.ALBUMARTISTSORT =
+		releaseSorts.length && releaseSorts.every(Boolean)
+			? [
+					releaseCredits
+						.map((credit, index) => releaseSorts[index] + credit.joinPhrase)
+						.join(""),
+				]
+			: [];
+	result.ALBUMARTISTSSORT = releaseSorts;
+	const valuesForScope = (values: MetadataValues, scope: string) =>
+		Object.fromEntries(
+			Object.entries(values).filter(
+				([key]) => fieldByKey(key)?.scope === scope,
+			),
+		) as MetadataValues;
+	const explicitValues: MetadataValues = {
+		...valuesForScope(release.metadataValues ?? {}, "release"),
+		...valuesForScope(track.recordingMetadata ?? {}, "recording"),
+		...valuesForScope(track.positionMetadata ?? {}, "track"),
+		...(track.sourceId
+			? valuesForScope(track.audioMetadata?.[track.sourceId] ?? {}, "audio")
+			: {}),
+	};
+	const projected = projectMetadataValues(explicitValues).tags;
+	for (const [key, values] of Object.entries(projected)) result[key] = values;
+	// The recording title cannot overwrite a release position's explicit title.
+	result.TITLE = track.title ? [track.title] : [];
+	return result;
 }
 
-const normalized = (value: string) =>
-	value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim();
 export function metadataChanged(
 	release: OriginalRelease,
 	track: OriginalTrack,
@@ -231,24 +340,35 @@ export function metadataChanged(
 ): boolean {
 	if (!track.published || !track.metadataBaseline) return false;
 	const tags = desiredTags(release, track, artists);
+	const managed = new Set([
+		"TITLE",
+		"ARTIST",
+		"ARTISTSORT",
+		"ARTISTSSORT",
+		"ALBUM",
+		"ALBUMARTIST",
+		"ALBUMARTISTSORT",
+		"ALBUMARTISTSSORT",
+		"DATE",
+		"COUNTRY",
+		"LABEL",
+		"CATALOGNUMBER",
+		"TRACKNUMBER",
+		"DISCNUMBER",
+		"GENRE",
+		...metadataManagedTagKeys(),
+		...metadataTagKeys({
+			...(release.metadataValues ?? {}),
+			...(track.recordingMetadata ?? {}),
+			...(track.positionMetadata ?? {}),
+			...(track.sourceId ? (track.audioMetadata?.[track.sourceId] ?? {}) : {}),
+		}),
+	]);
 	return (
-		[
-			"TITLE",
-			"ARTIST",
-			"ARTISTSORT",
-			"ALBUM",
-			"ALBUMARTIST",
-			"DATE",
-			"COUNTRY",
-			"LABEL",
-			"CATALOGNUMBER",
-			"TRACKNUMBER",
-			"DISCNUMBER",
-			"GENRE",
-		].some(
+		[...managed].some(
 			(key) =>
-				normalized(tags[key].join("\0")) !==
-				normalized((track.metadataBaseline?.[key] ?? []).join("\0")),
+				JSON.stringify(tags[key] ?? []) !==
+				JSON.stringify(track.metadataBaseline?.[key] ?? []),
 		) ||
 		(track.coverHash || null) !==
 			(track.metadataBaselineExtras?.coverHash || null) ||

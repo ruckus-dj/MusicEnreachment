@@ -22,11 +22,15 @@ it("compares the selected track across all metadata sources and scopes", () => {
 
 	fireEvent.click(within(comparison).getByRole("tab", { name: "Артист" }));
 	expect(
-		within(comparison).getByRole("rowheader", { name: "ARTISTSORT" }),
+		within(comparison).getByRole("rowheader", {
+			name: /(?:^|·\s*)ARTISTSORT$/,
+		}),
 	).toBeInTheDocument();
 	fireEvent.click(within(comparison).getByRole("tab", { name: "Трек" }));
 	expect(
-		within(comparison).getByRole("rowheader", { name: "TRACKNUMBER" }),
+		within(comparison).getByRole("rowheader", {
+			name: /(?:^|·\s*)TRACKNUMBER$/,
+		}),
 	).toBeInTheDocument();
 	fireEvent.click(
 		within(comparison).getByRole("checkbox", { name: /Только отличия/ }),

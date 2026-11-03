@@ -11,10 +11,11 @@ import { TagsComparison } from "./TagsComparison";
 import { artistReleaseHref } from "./artistReleaseRoute";
 import type { DeletionOperation } from "./DeletionRequest";
 import { catalogueStyles } from "./catalogueStyles";
+import { TrackMetadataEditors } from "./metadata/TrackMetadataEditors";
+import { navidromeFields } from "./metadata/registry";
 import {
 	catalogData,
 	desiredTags,
-	metadataChanged,
 	originalArtistName,
 	originalFiles,
 	originalProviders,
@@ -33,6 +34,10 @@ export function TrackScreen({
 	onPreview,
 	onMetadataPreview = onPreview,
 	onMutate,
+	onRecordingChange,
+	genresLoaded = true,
+	onLoadGenres,
+	recordingImpact,
 	onQueueDeletion,
 	files = originalFiles,
 	artists,
@@ -43,6 +48,12 @@ export function TrackScreen({
 	onPreview: () => void;
 	onMetadataPreview?: (ids: string[]) => void;
 	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
+	onRecordingChange?: (
+		update: (current: OriginalTrack) => OriginalTrack,
+	) => void;
+	genresLoaded?: boolean;
+	onLoadGenres?: () => void | Promise<void>;
+	recordingImpact?: string[];
 	onQueueDeletion?: (operation: DeletionOperation) => void;
 	files?: SourceFiles;
 	artists?: CatalogArtist[];
@@ -55,7 +66,6 @@ export function TrackScreen({
 	const providerTrack = provider?.tracks.find(
 		(candidate) => candidate.id === track.providerTrackId,
 	);
-	const changed = metadataChanged(release, track, artists);
 	const local = desiredTags(release, track, artists);
 	const normalizeTagValues = (values: string[]) =>
 		values
@@ -67,23 +77,13 @@ export function TrackScreen({
 	const changes =
 		track.published && track.metadataBaseline
 			? [
-					...[
-						"TITLE",
-						"ARTIST",
-						"ALBUM",
-						"ALBUMARTIST",
-						"DATE",
-						"COUNTRY",
-						"LABEL",
-						"CATALOGNUMBER",
-						"TRACKNUMBER",
-						"DISCNUMBER",
-						"GENRE",
-					].filter(
-						(key) =>
-							normalizeTagValues(local[key] ?? []) !==
-							normalizeTagValues(track.metadataBaseline?.[key] ?? []),
-					),
+					...navidromeFields
+						.filter(
+							({ tag }) =>
+								normalizeTagValues(local[tag] ?? []) !==
+								normalizeTagValues(track.metadataBaseline?.[tag] ?? []),
+						)
+						.map((field) => field.tag),
 					...((track.coverHash || null) !==
 					(track.metadataBaselineExtras?.coverHash || null)
 						? ["Встроенная обложка"]
@@ -94,6 +94,9 @@ export function TrackScreen({
 						: []),
 				]
 			: [];
+	const changed = Boolean(
+		track.published && track.metadataBaseline && changes.length,
+	);
 	return (
 		<section className={catalogueStyles.object}>
 			<header className={catalogueStyles.objectHeader}>
@@ -255,6 +258,18 @@ export function TrackScreen({
 					)}
 				</section>
 			</div>
+			{(onMutate || onRecordingChange) && (
+				<TrackMetadataEditors
+					track={track}
+					artists={artists ?? catalogData.artists}
+					files={files}
+					genresLoaded={genresLoaded}
+					onLoadGenres={onLoadGenres}
+					onMutate={onMutate ?? (() => undefined)}
+					onRecordingChange={onRecordingChange}
+					recordingImpact={recordingImpact}
+				/>
+			)}
 			<TagsComparison
 				releases={[release]}
 				artists={artists}

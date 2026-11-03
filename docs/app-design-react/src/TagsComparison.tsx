@@ -32,30 +32,21 @@ import {
 	previewTableHeading,
 	previewTableWrap,
 } from "./matchingStyles";
+import { navidromeFields } from "./metadata/registry";
 
 export type TagScope = "artist" | "release" | "track";
 
-const fields: Record<TagScope, string[]> = {
-	artist: ["ARTIST", "ARTISTSORT", "MUSICBRAINZ_ARTISTID"],
-	release: [
-		"ALBUM",
-		"ALBUMARTIST",
-		"DATE",
-		"COUNTRY",
-		"LABEL",
-		"CATALOGNUMBER",
-		"MUSICBRAINZ_ALBUMID",
-	],
-	track: [
-		"TITLE",
-		"ARTIST",
-		"TRACKNUMBER",
-		"DISCNUMBER",
-		"GENRE",
-		"MUSICBRAINZ_TRACKID",
-		"COMMENT",
-	],
-};
+const artistGroups = new Set(["recording artists", "release artists"]);
+const fieldsForTab = (tab: TagScope) =>
+	navidromeFields.filter((field) => {
+		if (tab === "artist") return artistGroups.has(field.group);
+		if (tab === "release") return field.scope === "release";
+		return (
+			field.scope === "track" ||
+			field.scope === "audio" ||
+			(field.scope === "recording" && !artistGroups.has(field.group))
+		);
+	});
 
 export function TagsComparison({
 	releases,
@@ -66,6 +57,7 @@ export function TagsComparison({
 	onPreview,
 	onSelectFile,
 	allowScopeChange = false,
+	showAllFields = false,
 }: {
 	releases: OriginalRelease[];
 	artists?: CatalogArtist[];
@@ -75,6 +67,7 @@ export function TagsComparison({
 	onPreview?: (ids: string[]) => void;
 	onSelectFile?: (trackId: string, fileId: string) => void;
 	allowScopeChange?: boolean;
+	showAllFields?: boolean;
 }) {
 	const tracks = releases.flatMap((release) =>
 		release.tracks.map((track) => ({ release, track })),
@@ -84,6 +77,7 @@ export function TagsComparison({
 	);
 	const [fileOverride, setFileOverride] = useState<string | null | undefined>();
 	const [differencesOnly, setDifferencesOnly] = useState(false);
+	const [allFields, setAllFields] = useState(false);
 	const [activeScope, setActiveScope] = useState<TagScope>(scope);
 	useEffect(() => setActiveScope(scope), [scope]);
 	const selected =
@@ -115,8 +109,9 @@ export function TagsComparison({
 		: null;
 	const localTags = desiredTags(release, track, artists);
 	const publicationTags = track.published?.tags ?? {};
-	const rows = fields[activeScope]
-		.map((key) => {
+	const rows = (allFields ? navidromeFields : fieldsForTab(activeScope))
+		.map((field) => {
+			const key = field.tag;
 			const values = [
 				sourceTags[key] ?? [],
 				providerTags?.[key] ?? null,
@@ -125,6 +120,7 @@ export function TagsComparison({
 			];
 			return {
 				key,
+				label: field.label,
 				values,
 				different:
 					new Set(values.map((value) => JSON.stringify(value ?? []))).size > 1,
@@ -213,6 +209,12 @@ export function TagsComparison({
 					</TabList>
 				</Tabs>
 			)}
+			{showAllFields && (
+				<Checkbox isSelected={allFields} onChange={setAllFields}>
+					<span className="checkbox" />
+					Все поля
+				</Checkbox>
+			)}
 			<div className={previewTableWrap}>
 				<table className={`${previewTable} min-w-[720px]`}>
 					<thead>
@@ -231,13 +233,13 @@ export function TagsComparison({
 						</tr>
 					</thead>
 					<tbody>
-						{rows.map(({ key, values, different }) => (
+						{rows.map(({ key, label, values, different }) => (
 							<tr className={comparisonRow} key={key}>
 								<th
 									scope="row"
 									className={`${comparisonRowHeading} ${different ? comparisonDifference : ""}`}
 								>
-									{key}
+									{label} · {key}
 								</th>
 								{values.map((value, index) => (
 									<td className={previewTableCell} key={`${key}:${index}`}>

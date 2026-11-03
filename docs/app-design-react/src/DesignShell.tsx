@@ -117,12 +117,6 @@ export function DesignShell({
 						>
 							Визуальная система
 						</a>
-						<a
-							className="block px-2 py-1.5 text-[11px] text-[var(--muted)]"
-							href="/compare"
-						>
-							Сверка переноса
-						</a>
 						<p className="mt-4 border-t border-[var(--line)] px-2 pt-3 text-[10px] text-[var(--muted)]">
 							Независимая концепция
 							<br />

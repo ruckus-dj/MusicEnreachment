@@ -127,13 +127,15 @@ it("shows always-visible artist and release metadata forms", () => {
 	expect(within(artistDetails).getByLabelText("Уточнение")).toHaveAttribute(
 		"readonly",
 	);
-	expect(within(releaseDetails).getByLabelText("Название")).toHaveValue(
+	expect(within(releaseDetails).getByLabelText("Издание")).toHaveValue(
 		release.title,
 	);
-	expect(within(releaseDetails).getByLabelText("Год")).toHaveValue(
-		release.year,
+	expect(within(releaseDetails).getByLabelText("Дата выпуска")).toHaveValue(
+		release.metadataValues?.releasedate?.[0] ??
+			release.metadata?.date ??
+			release.year,
 	);
-	expect(within(releaseDetails).getByLabelText("Страна")).toHaveValue(
+	expect(within(releaseDetails).getByLabelText("Страна выпуска")).toHaveValue(
 		release.country,
 	);
 	expect(within(releaseDetails).getByLabelText("Лейбл")).toHaveValue(
@@ -216,7 +218,12 @@ it("saves artist-owned sort metadata and canonical genres without a sort-name fa
 		target: { value: "ambient, live" },
 	});
 	fireEvent.click(within(details).getByRole("button", { name: "Жанры" }));
-	fireEvent.click(within(details).getByLabelText("electronic"));
+	fireEvent.click(
+		within(screen.getByRole("dialog")).getByRole("option", {
+			name: "electronic",
+		}),
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 	fireEvent.click(within(details).getByRole("button", { name: "Сохранить" }));
 	expect(onUpdateArtist).toHaveBeenCalledWith(
 		expect.objectContaining({
@@ -224,13 +231,14 @@ it("saves artist-owned sort metadata and canonical genres without a sort-name fa
 			disambiguation: "Live project",
 			tags: ["ambient", "live"],
 			genre: "Legacy genre",
-			genres: [
+			genres: expect.arrayContaining([
 				{ id: "demo-genre-rock", name: "rock" },
 				{ id: "legacy-genre-id", name: "Unavailable genre" },
 				{ id: "demo-genre-electronic", name: "electronic" },
-			],
+			]),
 		}),
 	);
+	expect(onUpdateArtist.mock.calls[0][0].genres).toHaveLength(3);
 });
 
 it("preserves legacy and unavailable genre references when editing without a loaded picker", () => {
@@ -262,7 +270,12 @@ it("preserves legacy and unavailable genre references when editing without a loa
 	fireEvent.click(
 		within(details).getByRole("button", { name: "Редактировать" }),
 	);
-	expect(within(details).getByRole("button", { name: "Жанры" })).toBeDisabled();
+	const genres = within(details).getByRole("button", { name: "Жанры" });
+	fireEvent.click(genres);
+	expect(
+		within(screen.getByRole("dialog")).getByText(/каталог жанров не загружен/i),
+	).toBeInTheDocument();
+	fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 	fireEvent.change(within(details).getByLabelText("Имя"), {
 		target: { value: "Renamed Artist" },
 	});

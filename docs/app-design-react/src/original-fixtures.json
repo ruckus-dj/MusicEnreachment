@@ -1,5 +1,4 @@
 {
-  "sourceSha256": "7dc0811d42fb8c9a64deb8d7112d83da3970e71f67d141c3043714c41320bab3",
   "artists": [
     {
       "id": "mira",
@@ -6238,10 +6237,5 @@
         "tags": ""
       }
     ]
-  },
-  "sourceSha256s": {
-    "catalog-data.js": "7dc0811d42fb8c9a64deb8d7112d83da3970e71f67d141c3043714c41320bab3",
-    "manual-release-demo-data.js": "1ceb0a41810a9b3a0f06ce120dfa96eb9276bef68f33116551fcdd2a4d7f9593",
-    "local-provider-prototype.js": "d6548de5c474a0293e874569c9a3ee5965024073047cb8d569ae2c098690dd06"
   }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TagScope } from "./TagsComparison";
 import { ObjectMetadataForm } from "./ObjectMetadataForm";
+import { ReleaseMetadataEditor } from "./metadata/ReleaseMetadataEditor";
 import { demoGenres } from "./GenreLibrary";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import {
@@ -59,6 +60,7 @@ export function ArtistScreen({
 	initialTags,
 	initialReleaseId,
 	genresLoaded = false,
+	onLoadGenres,
 }: {
 	artistId: string;
 	artists: CatalogArtist[];
@@ -77,6 +79,7 @@ export function ArtistScreen({
 	initialTags?: { scope: TagScope; releaseId?: string };
 	initialReleaseId?: string;
 	genresLoaded?: boolean;
+	onLoadGenres?: () => void | Promise<void>;
 }) {
 	const [localQuery, setLocalQuery] = useState("");
 	const [localFilter, setLocalFilter] = useState<CatalogFilterValue>("all");
@@ -209,38 +212,12 @@ export function ArtistScreen({
 				[artist.id]: updated,
 			}));
 	};
-	const saveRelease = (
-		release: OriginalRelease,
-		values: Record<string, string>,
-	) => {
-		const metadata = release.metadata
-			? {
-					...release.metadata,
-					...(release.metadata.country !== undefined
-						? { country: values.country }
-						: {}),
-					...(release.metadata.label !== undefined
-						? { label: values.label }
-						: {}),
-					...(release.metadata.catalogNumber !== undefined
-						? { catalogNumber: values.catalog }
-						: {}),
-				}
-			: undefined;
-		const updated = {
-			...release,
-			title: values.title,
-			year: values.year,
-			country: values.country,
-			label: values.label,
-			catalog: values.catalog,
-			...(metadata ? { metadata } : {}),
-		};
+	const saveRelease = (updated: OriginalRelease) => {
 		if (onUpdateRelease) onUpdateRelease(updated);
 		else
 			setLocalReleaseUpdates((current) => ({
 				...current,
-				[release.id]: updated,
+				[updated.id]: updated,
 			}));
 	};
 	return (
@@ -350,6 +327,23 @@ export function ArtistScreen({
 							value: artist.tags?.join(", ") ?? "",
 						},
 					]}
+					readOnlyFields={[
+						{ key: "id", label: "ID артиста", value: artist.id },
+						...(
+							(
+								artist as CatalogArtist & {
+									providerLinks?: {
+										providerCode: string;
+										providerKey: string;
+									}[];
+								}
+							).providerLinks ?? []
+						).map((link, index) => ({
+							key: `provider-${link.providerCode}-${index}`,
+							label: `ID ${link.providerCode}`,
+							value: link.providerKey,
+						})),
+					]}
 					genreField={{
 						value:
 							artist.genres?.flatMap((genre) => (genre.id ? [genre.id] : [])) ??
@@ -362,6 +356,7 @@ export function ArtistScreen({
 							artist.genre ||
 							"",
 						loaded: genresLoaded,
+						onLoad: onLoadGenres,
 					}}
 					required={["name"]}
 					onSave={saveArtist}
@@ -508,41 +503,13 @@ export function ArtistScreen({
 										}
 										className="grid min-w-0 gap-3"
 									>
-										<ObjectMetadataForm
-											label="Сведения об издании"
-											fields={[
-												{
-													key: "title",
-													label: "Название",
-													value: release.title,
-												},
-												{ key: "year", label: "Год", value: release.year },
-												{
-													key: "country",
-													label: "Страна",
-													value: release.country,
-												},
-												{ key: "label", label: "Лейбл", value: release.label },
-												{
-													key: "catalog",
-													label: "Каталожный номер",
-													value: release.catalog,
-												},
-											]}
-											readOnlyFields={[
-												{
-													key: "provider",
-													label: "Провайдер",
-													value: release.provider ?? "",
-												},
-												{
-													key: "providerId",
-													label: "ID провайдера",
-													value: release.providerId ?? "",
-												},
-											]}
-											required={["title"]}
-											onSave={(values) => saveRelease(release, values)}
+										<ReleaseMetadataEditor
+											release={release}
+											artists={artists}
+											genresLoaded={genresLoaded}
+											onLoadGenres={onLoadGenres}
+											local={!onUpdateRelease}
+											onSave={saveRelease}
 										/>
 									</div>
 									<div className={catalogueStyles.previewTable}>

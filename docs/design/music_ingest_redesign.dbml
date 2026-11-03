@@ -101,7 +101,7 @@ Table provider_release {
   title text [not null]
   status varchar(64)
   packaging varchar(64)
-  language varchar(16) [note: 'Язык релиза; поле script в Local форме не вводится']
+  language varchar(16) [note: 'Язык релиза']
   script varchar(16)
   country_code varchar(2)
   release_date varchar(10)
@@ -297,7 +297,7 @@ Table source_location {
 Table collection_artist {
   id uuid [pk]
   name text [not null]
-  sort_name text [note: 'Необязательное собственное имя артиста для сортировки; не подменяет name и не задаёт автоматически artist_sort_names публикации']
+  sort_name text [note: 'Необязательное собственное имя артиста для сортировки; не подменяет name. Редактируется только в карточке артиста; sort-значения ordered credits производны от него без fallback на display name, без контекстных полей и исключений для album/track.']
   disambiguation text
   genres jsonb [not null, default: '[]']
   tags jsonb [not null, default: '[]']
@@ -308,7 +308,7 @@ Table collection_artist {
     name
   }
 
-  Note: 'Решение владельца 2026-10-29: идентичность MusicBrainz задаётся уникальным MBID через provider_artist.provider_key и collection_artist_provider_link, а не отдельным credit. Позднейшее уточнение того же дня: уникальность имени отложена и обеспечивается оператором вручную; автоматическое объединение по имени и DB-ограничение уникальности имени сейчас не требуются. Разные MBID могут иметь одинаковое имя. sort_name необязателен и принадлежит артисту; он не заменяет отображаемое name. Для публикации artist_sort_names — отдельные списки контекста, не то же поле и не автоматическое наследование sort_name. Приоритет между ними и композиция нескольких артистов не определены. Genres у артиста — отдельный множественный набор из общей библиотеки жанров MusicBrainz по MBID; genres не наследуются между уровнями. Tags остаются отдельными от genres. Disambiguation, genres и tags не являются ключами идентичности. ALBUMARTIST задаёт связи артистов релиза, ARTIST — связи исполнителей recording/позиции. Composer/lyricist/vocalist/instrumentalist и другие ролевые значения остаются метаданными и не создают artist entity или дополнительную artist-связь. Уникальность provider identity и не более одной связи с каждым provider сохраняются.'
+  Note: 'Решение владельца 2026-10-29: идентичность MusicBrainz задаётся уникальным MBID через provider_artist.provider_key и collection_artist_provider_link, а не отдельным credit. Позднейшее уточнение того же дня: уникальность имени отложена и обеспечивается оператором вручную; автоматическое объединение по имени и DB-ограничение уникальности имени сейчас не требуются. Разные MBID могут иметь одинаковое имя. sort_name необязателен и принадлежит артисту; он не заменяет отображаемое name и редактируется только в карточке артиста. Сортировочные значения ordered credits производны от sort_name связанных артистов без fallback на display name; отдельных context-sort полей и исключений для album/track нет. Genres у артиста — отдельный множественный набор из общей библиотеки жанров MusicBrainz по MBID; genres не наследуются между уровнями. Tags остаются отдельными от genres. Disambiguation, genres и tags не являются ключами идентичности. ALBUMARTIST задаёт связи артистов релиза, ARTIST — связи исполнителей recording/позиции. Composer/lyricist/vocalist/instrumentalist и другие ролевые значения остаются метаданными и не создают artist entity или дополнительную artist-связь. Уникальность provider identity и не более одной связи с каждым provider сохраняются.'
 }
 
 Table collection_release {
@@ -321,6 +321,7 @@ Table collection_release {
   country_code varchar(2)
   status varchar(64)
   packaging varchar(64)
+  script varchar(16) [note: 'Необязательная система письма издания; доступна для Local']
   barcode varchar(64)
   label text
   catalog_number text
@@ -339,7 +340,7 @@ Table collection_release {
     release_date
   }
 
-  Note: 'Локальный release существует без provider links. Выбранный artwork candidate обязан принадлежать этому collection release. Удаление release сначала обрабатывает managed publications его positions, затем удаляет positions и release; recordings, на которые ссылались positions, остаются самостоятельными.'
+  Note: 'Локальный release существует без provider links. script — необязательная система письма и доступна для Local. Выбранный artwork candidate обязан принадлежать этому collection release. Удаление release сначала обрабатывает managed publications его positions, затем удаляет positions и release; recordings, на которые ссылались positions, остаются самостоятельными.'
 }
 
 Table collection_release_artist {

@@ -33,42 +33,36 @@ import {
 	previewTableHeading,
 	previewTableWrap,
 } from "./matchingStyles";
+import { navidromeFields } from "./metadata/registry";
 
-const fields = {
-	artist: ["ARTIST", "ARTISTSORT", "MUSICBRAINZ_ARTISTID"],
-	release: [
-		"ALBUM",
-		"ALBUMARTIST",
-		"DATE",
-		"COUNTRY",
-		"LABEL",
-		"CATALOGNUMBER",
-		"MUSICBRAINZ_ALBUMID",
-	],
-	track: [
-		"TITLE",
-		"ARTIST",
-		"TRACKNUMBER",
-		"DISCNUMBER",
-		"GENRE",
-		"MUSICBRAINZ_TRACKID",
-		"COMMENT",
-	],
-} as const;
-type Scope = keyof typeof fields;
+type Scope = "artist" | "release" | "track";
+const artistGroups = new Set(["recording artists", "release artists"]);
+const fieldsForScope = (scope: Scope) =>
+	navidromeFields.filter((field) => {
+		if (scope === "artist") return artistGroups.has(field.group);
+		if (scope === "release") return field.scope === "release";
+		return (
+			field.scope === "track" ||
+			field.scope === "audio" ||
+			(field.scope === "recording" && !artistGroups.has(field.group))
+		);
+	});
 
 export function ReleaseMetadataComparison({
 	release,
 	artists,
 	files,
+	showAllFields = false,
 }: {
 	release: OriginalRelease;
 	artists?: CatalogArtist[];
 	files: SourceFiles;
+	showAllFields?: boolean;
 }) {
 	const [trackId, setTrackId] = useState(release.tracks[0]?.id ?? "");
 	const [scope, setScope] = useState<Scope>("release");
 	const [differencesOnly, setDifferencesOnly] = useState(false);
+	const [allFields, setAllFields] = useState(false);
 	const [fileOverride, setFileOverride] = useState<string | null | undefined>(
 		undefined,
 	);
@@ -99,8 +93,9 @@ export function ReleaseMetadataComparison({
 		: null;
 	const localTags = desiredTags(release, track, artists);
 	const publicationTags = track.published?.tags ?? {};
-	const rows = fields[scope]
-		.map((key) => {
+	const rows = (allFields ? navidromeFields : fieldsForScope(scope))
+		.map((field) => {
+			const key = field.tag;
 			const values = [
 				sourceTags[key] ?? [],
 				providerTags?.[key] ?? null,
@@ -110,7 +105,7 @@ export function ReleaseMetadataComparison({
 			const distinct = new Set(
 				values.map((value) => JSON.stringify(value ?? [])),
 			);
-			return { key, values, different: distinct.size > 1 };
+			return { key, label: field.label, values, different: distinct.size > 1 };
 		})
 		.filter((row) => !differencesOnly || row.different);
 	const scopes: [Scope, string][] = [
@@ -196,6 +191,12 @@ export function ReleaseMetadataComparison({
 					<span className="checkbox" />
 					Только отличия
 				</Checkbox>
+				{showAllFields && (
+					<Checkbox isSelected={allFields} onChange={setAllFields}>
+						<span className="checkbox" />
+						Все поля
+					</Checkbox>
+				)}
 			</div>
 			<div className={previewTableWrap}>
 				<table className={`${previewTable} min-w-[720px]`}>
@@ -215,13 +216,13 @@ export function ReleaseMetadataComparison({
 						</tr>
 					</thead>
 					<tbody>
-						{rows.map(({ key, values, different }) => (
+						{rows.map(({ key, label, values, different }) => (
 							<tr className={comparisonRow} key={key}>
 								<th
 									scope="row"
 									className={`${comparisonRowHeading} ${different ? comparisonDifference : ""}`}
 								>
-									{key}
+									{label} · {key}
 								</th>
 								{values.map((value, index) => (
 									<td className={previewTableCell} key={`${key}:${index}`}>

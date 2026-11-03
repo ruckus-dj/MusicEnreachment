@@ -1,5 +1,7 @@
 import originalFixtures from "./original-fixtures.json";
 import type { OriginalRelease } from "./catalogData";
+import type { MetadataCredit } from "./metadata/model";
+import type { MetadataValues } from "./metadata/projection";
 
 export type LocalProviderType = "artists" | "releases" | "recordings";
 export type LocalProviderTrack = {
@@ -8,17 +10,25 @@ export type LocalProviderTrack = {
 	titleOverride: string;
 	durationOverrideMs: number | "" | null;
 	durationInput?: string;
+	metadataValues?: MetadataValues;
+	credits?: MetadataCredit[];
+	genres?: string[];
+	genreNamesById?: Record<string, string>;
 };
 export type LocalProviderRecord = {
 	id: string;
 	key: string;
 	provider: string;
 	name?: string;
+	sortName?: string;
 	title?: string;
 	release_group_title?: string;
 	disambiguation?: string;
 	genres?: string[];
 	genreNamesById?: Record<string, string>;
+	metadataValues?: MetadataValues;
+	credits?: MetadataCredit[];
+	script?: string;
 	tags?: string;
 	artistIds?: string[];
 	duration_ms?: string | number | "" | null;
@@ -89,31 +99,72 @@ export function localProviderReleases(
 				const artist = localArtists.find((item) => item.id === id);
 				return artist ? [{ name: artist.name, artistId: artist.id }] : [];
 			});
-			return {
+			const metadataCredits = release.credits?.length
+				? release.credits.map((credit, index) => ({
+						name: credit.creditName,
+						credit: credit.creditName,
+						artistId: credit.artistId || artistIds[index] || null,
+						joinPhrase: credit.joinPhrase,
+					}))
+				: credits;
+			const candidate = {
 				id: release.id,
 				provider: "Local",
-				title: release.title ?? release.release_group_title ?? "",
+				title:
+					release.metadataValues?.album?.[0] ??
+					release.title ??
+					release.release_group_title ??
+					"",
 				artistId,
 				year: release.release_date ?? "",
 				country: release.country_code ?? "",
 				catalog: release.catalog_number ?? "",
 				label: release.label ?? "",
 				providerId: release.key,
-				credits,
+				credits: metadataCredits,
+				metadataValues: structuredClone(release.metadataValues ?? {}),
+				metadataGenres: (release.genres ?? []).map((id) => ({
+					id,
+					name: release.genreNamesById?.[id] ?? id,
+				})),
 				tracks: (release.tracks ?? []).map((item, index) => {
 					const recording = localRecordings.find(
 						(candidate) => candidate.id === item.recordingId,
 					);
 					const duration = item.durationOverrideMs || recording?.duration_ms;
+					const recordingTitle =
+						recording?.metadataValues?.title?.[0] ?? recording?.title ?? "";
 					return {
 						id: `${release.id}-${item.id}`,
-						title: item.titleOverride || recording?.title || "",
+						title: item.titleOverride || recordingTitle,
+						recordingTitle,
+						positionTitleOverride: item.titleOverride,
 						position: index + 1,
 						duration:
 							duration == null || duration === ""
 								? null
 								: Number(duration) / 1000,
 						artistId: recording?.artistIds?.[0] ?? artistId,
+						recordingMetadata: structuredClone(recording?.metadataValues ?? {}),
+						recordingCredits: structuredClone(
+							recording?.credits ??
+								recording?.artistIds?.map((artistId) => ({
+									artistId,
+									creditName:
+										state.items.artists.find((artist) => artist.id === artistId)
+											?.name ?? "",
+									joinPhrase: "",
+								})) ??
+								[],
+						),
+						recordingGenres: (recording?.genres ?? []).map(
+							(id) => recording?.genreNamesById?.[id] ?? id,
+						),
+						recordingGenreRefs: (recording?.genres ?? []).map((id) => ({
+							id,
+							name: recording?.genreNamesById?.[id] ?? id,
+						})),
+						positionMetadata: structuredClone(item.metadataValues ?? {}),
 						recordingId: null,
 						localRecordingId: recording?.id ?? item.recordingId,
 						providerTrackId: null,
@@ -122,6 +173,9 @@ export function localProviderReleases(
 					};
 				}),
 			};
+			return Object.assign(candidate, {
+				script: release.script ?? release.metadataValues?.script?.[0],
+			});
 		});
 }
 

@@ -21,7 +21,7 @@ it("provides scoped four-column comparison and explicit source-file selection", 
 	const table = screen.getByRole("table");
 	expect(within(table).getAllByRole("columnheader")).toHaveLength(5);
 	expect(
-		within(table).getByRole("rowheader", { name: "ARTIST" }),
+		within(table).getByRole("rowheader", { name: /(?:^|·\s*)ARTIST$/ }),
 	).toBeInTheDocument();
 	fireEvent.click(
 		screen.getByRole("button", { name: /Исходный файл для сравнения/ }),
@@ -34,7 +34,7 @@ it("provides scoped four-column comparison and explicit source-file selection", 
 	expect(onSelectFile).toHaveBeenCalledWith(track.id, track.sourceIds?.[1]);
 	fireEvent.click(screen.getByRole("tab", { name: "Альбом" }));
 	expect(
-		within(table).getByRole("rowheader", { name: "ALBUM" }),
+		within(table).getByRole("rowheader", { name: /(?:^|·\s*)ALBUM$/ }),
 	).toBeInTheDocument();
 });
 

@@ -18,12 +18,36 @@ it("adapts Local records into provider candidates and publishes with Local ident
 		(item) => item.provider === "Local",
 	)!;
 	recording.artistIds = [artist.id];
+	recording.metadataValues = {
+		artist: ["First Artist", "Second Artist"],
+		musicbrainz_artistid: ["", ""],
+		composer: ["Composer One", "Composer Two"],
+		work: ["Suite"],
+		movement: ["2"],
+	};
+	recording.credits = [
+		{ artistId: "", creditName: "First Artist", joinPhrase: " & " },
+		{ artistId: "", creditName: "Second Artist", joinPhrase: "" },
+	];
+	recording.genres = ["unknown-local-genre"];
+	recording.genreNamesById = { "unknown-local-genre": "Uncatalogued genre" };
 	const release = local.items.releases.find(
 		(item) =>
 			item.provider === "Local" &&
 			item.tracks?.some((track) => track.recordingId === recording.id),
 	)!;
 	release.artistIds = [artist.id];
+	release.release_date = "2004-03";
+	release.metadataValues = {
+		releasedate: ["2004-03"],
+		album: ["Local album"],
+		script: ["Latn"],
+	};
+	release.genres = ["unknown-release-genre"];
+	release.genreNamesById = { "unknown-release-genre": "Local release genre" };
+	release.credits = [
+		{ artistId: "", creditName: "Release credit", joinPhrase: "" },
+	];
 	release.tracks = [
 		{
 			id: "stable-local-track",
@@ -38,13 +62,45 @@ it("adapts Local records into provider candidates and publishes with Local ident
 	expect(candidate).toMatchObject({
 		providerId: release.key,
 		artistId: artist.id,
-		credits: [{ name: artist.name, artistId: artist.id }],
+		year: "2004-03",
+		metadataValues: {
+			releasedate: ["2004-03"],
+			album: ["Local album"],
+			script: ["Latn"],
+		},
+		script: "Latn",
+		metadataGenres: [
+			{ id: "unknown-release-genre", name: "Local release genre" },
+		],
+		credits: [
+			{
+				name: "Release credit",
+				credit: "Release credit",
+				artistId: artist.id,
+			},
+		],
 	});
 	expect(candidate.tracks[0]).toMatchObject({
 		localRecordingId: recording.id,
 		recordingId: null,
 		providerTrackId: null,
+		recordingMetadata: recording.metadataValues,
+		recordingCredits: recording.credits,
+		recordingGenres: ["Uncatalogued genre"],
+		recordingGenreRefs: [
+			{ id: "unknown-local-genre", name: "Uncatalogued genre" },
+		],
 	});
+	expect(candidate.tracks[0].recordingMetadata?.artist).toEqual([
+		"First Artist",
+		"Second Artist",
+	]);
+	expect(candidate.tracks[0].recordingMetadata?.musicbrainz_artistid).toEqual([
+		"",
+		"",
+	]);
+	expect(candidate.tracks[0].recordingMetadata).not.toHaveProperty("script");
+	expect(candidate.tracks[0].recordingCredits).toHaveLength(2);
 	expect(candidate.tracks[0].artistId).toBe(
 		recording.artistIds?.[0] ?? artist.id,
 	);
@@ -68,13 +124,16 @@ it("adapts Local records into provider candidates and publishes with Local ident
 	);
 	expect(rows[0].nextTags.MUSICBRAINZ_ALBUMID).toEqual([]);
 	expect(rows[0].nextTags.MUSICBRAINZ_ARTISTID).toEqual([]);
-	expect(rows[0].nextTags.ARTIST).toEqual([artist.name]);
+	expect(rows[0].nextTags.ARTIST).toEqual(["First Artist", "Second Artist"]);
 	expect(rows[0].nextTags.ALBUM).toEqual([candidate.title]);
 	expect(
 		applyPlan(plan, files, [...existing, candidate], undefined, false, artists),
 	).toBe(1);
 	expect(candidate.providerId).toBe(release.key);
-	expect(candidate.tracks[0].published?.tags.ARTIST).toEqual([artist.name]);
+	expect(candidate.tracks[0].published?.tags.ARTIST).toEqual([
+		"First Artist",
+		"Second Artist",
+	]);
 });
 
 it("keeps Local track identities stable when tracks are reordered or deleted", () => {

@@ -17,6 +17,13 @@ import {
 	TextField,
 } from "./ui";
 import { formStyles as styles } from "./formStyles";
+import { demoGenres } from "./GenreLibrary";
+import { GenrePicker, type GenreReference } from "./metadata/GenrePicker";
+import { MetadataEditor } from "./metadata/MetadataEditor";
+import type { MetadataCredit } from "./metadata/model";
+import type { MetadataValues } from "./metadata/projection";
+import { validateMetadataValues } from "./metadata/projection";
+import { fieldsForScope } from "./metadata/registry";
 import {
 	createLocalProviderState,
 	formatLocalDuration,
@@ -26,13 +33,14 @@ import {
 	type LocalProviderTrack,
 	type LocalProviderType,
 } from "./localProviderModel";
-import { demoGenres } from "./GenreLibrary";
 
 export type LocalProviderScreenProps = {
 	state?: LocalProviderState;
 	onState?: (state: LocalProviderState) => void;
 	onMatchRelease?: (release: LocalProviderRecord) => void;
 	genresLoaded?: boolean;
+	genreOptions?: readonly { id: string; name: string }[];
+	onLoadGenres?: () => void | Promise<void>;
 };
 
 const typeInfo: Record<
@@ -78,16 +86,25 @@ function splitList(value: string) {
 		.filter(Boolean);
 }
 
+const localAdvisory = (value: string) =>
+	value === "true" ? "1" : value === "false" ? "2" : value;
+const localExplicit = (value: string) =>
+	["1", "4"].includes(value) ? "true" : value === "2" ? "false" : "";
+
 export function LocalProviderScreen({
 	state: givenState,
 	onState,
 	onMatchRelease,
 	genresLoaded = false,
+	genreOptions,
+	onLoadGenres,
 }: LocalProviderScreenProps) {
 	const [localState, setLocalState] = useState(createLocalProviderState);
-	const [genreQuery, setGenreQuery] = useState("");
+	const [submitError, setSubmitError] = useState("");
 	const state = givenState ?? localState;
+	const isForm = state.editing || state.creating;
 	const focusRef = useRef<HTMLInputElement>(null);
+	const formRef = useRef<HTMLFormElement>(null);
 	const durationRef = useRef<HTMLInputElement>(null);
 	const trackDurationRefs = useRef<Array<HTMLInputElement | null>>([]);
 	const detailHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -119,24 +136,203 @@ export function LocalProviderScreen({
 		return queryTerms.every((term) => haystack.includes(term));
 	});
 	const value = state.draft;
-	const currentGenres = value?.genres ?? [];
+	const displayedValue = value ?? selected;
+	const genreOptionsById = new Map(
+		(genreOptions ?? demoGenres).map((genre) => [genre.id, genre]),
+	);
+	const genreReferences = (
+		record: LocalProviderRecord | null | undefined,
+	): GenreReference[] =>
+		(record?.genres ?? []).map((id) => ({
+			id,
+			name:
+				genreOptionsById.get(id)?.name ?? record?.genreNamesById?.[id] ?? id,
+		}));
+	const currentGenres = genreReferences(displayedValue);
+	const legacyMetadataKeys: Record<string, string> =
+		state.type === "releases"
+			? {
+					title: "album",
+					release_date: "releasedate",
+					label: "recordlabel",
+					catalog_number: "catalognumber",
+					country_code: "releasecountry",
+					status: "releasestatus",
+					barcode: "barcode",
+					script: "script",
+				}
+			: state.type === "recordings"
+				? { title: "title", isrcs: "isrc", explicit: "explicitstatus" }
+				: {};
+	const legacyMetadataValues = Object.fromEntries(
+		Object.entries(legacyMetadataKeys).flatMap(([name, key]) => {
+			const raw = displayedValue?.[name as keyof LocalProviderRecord];
+			return raw === undefined
+				? []
+				: [
+						[
+							key,
+							key === "isrc"
+								? splitList(String(raw))
+								: raw === ""
+									? []
+									: [
+											key === "explicitstatus"
+												? localAdvisory(String(raw))
+												: String(raw),
+										],
+						],
+					];
+		}),
+	) as MetadataValues;
 	const updateDraft = (change: Partial<LocalProviderRecord>) => {
+		setSubmitError("");
 		const next = cloneState(state);
 		next.draft = { ...(next.draft ?? ({} as LocalProviderRecord)), ...change };
 		update(next);
 	};
+	const saveMetadata = (
+		scope: "release" | "recording",
+		metadataValues: MetadataValues,
+		details?: {
+			credits?: MetadataCredit[];
+			genres?: { id?: string; name?: string }[];
+		},
+	) => {
+		const genres = (details?.genres ?? currentGenres).map((genre) => ({
+			...genre,
+			name: genre.name ?? genre.id ?? "",
+		}));
+		const scopedKeys = new Set(fieldsForScope(scope).map((field) => field.key));
+		updateDraft({
+			...Object.fromEntries(
+				Object.entries(legacyMetadataKeys).flatMap(([name, key]) =>
+					Object.hasOwn(metadataValues, key)
+						? [
+								[
+									name,
+									key === "isrc"
+										? metadataValues[key].join(", ")
+										: key === "explicitstatus"
+											? localExplicit(metadataValues[key]?.[0] ?? "")
+											: (metadataValues[key]?.[0] ?? ""),
+								],
+							]
+						: [],
+				),
+			),
+			metadataValues: {
+				...Object.fromEntries(
+					Object.entries(value?.metadataValues ?? {}).filter(
+						([key]) => !scopedKeys.has(key),
+					),
+				),
+				...metadataValues,
+			},
+			...(scope === "release"
+				? {
+						title: Object.hasOwn(metadataValues, "album")
+							? (metadataValues.album?.[0] ?? "")
+							: value?.title,
+						release_date: Object.hasOwn(metadataValues, "releasedate")
+							? (metadataValues.releasedate?.[0] ?? "")
+							: value?.release_date,
+						label: Object.hasOwn(metadataValues, "recordlabel")
+							? (metadataValues.recordlabel?.[0] ?? "")
+							: value?.label,
+					}
+				: {
+						title: Object.hasOwn(metadataValues, "title")
+							? (metadataValues.title?.[0] ?? "")
+							: value?.title,
+						isrcs: Object.hasOwn(metadataValues, "isrc")
+							? (metadataValues.isrc ?? []).join(", ")
+							: value?.isrcs,
+					}),
+			credits:
+				details?.credits?.map((credit) => ({
+					...credit,
+				})) ??
+				value?.credits ??
+				[],
+			...(details?.credits
+				? {
+						artistIds: details.credits
+							.map((credit) => credit.artistId)
+							.filter(Boolean),
+					}
+				: {}),
+			genres: genres.map((genre) => genre.id ?? genre.name),
+			genreNamesById: Object.fromEntries(
+				genres.map((genre) => [genre.id ?? genre.name, genre.name]),
+			),
+		});
+	};
+	const metadataEditor = (scope: "release" | "recording") => (
+		<MetadataEditor
+			label={scope === "release" ? "Метаданные издания" : "Метаданные записи"}
+			scope={scope}
+			values={Object.fromEntries(
+				Object.entries({
+					...legacyMetadataValues,
+					...displayedValue?.metadataValues,
+				}).filter(([key]) =>
+					fieldsForScope(scope).some((field) => field.key === key),
+				),
+			)}
+			onSave={(values, details) => saveMetadata(scope, values, details)}
+			credits={
+				displayedValue?.credits?.map((credit) => ({
+					...credit,
+				})) ??
+				displayedValue?.artistIds?.map((artistId) => ({
+					artistId,
+					creditName: artistName(state, artistId),
+					joinPhrase: "",
+				}))
+			}
+			artists={state.items.artists.map((artist) => ({
+				id: artist.id,
+				name: artist.name ?? "",
+				sortName: artist.sortName,
+			}))}
+			genres={currentGenres}
+			editing={state.editing || state.creating}
+			hideActions
+			readOnly={displayedValue?.provider !== "Local"}
+			onDraftChange={(values, details) => saveMetadata(scope, values, details)}
+			genresLoaded={genresLoaded}
+			onLoadGenres={onLoadGenres}
+		/>
+	);
 	const field = (
 		label: string,
 		name: keyof LocalProviderRecord,
 		required = false,
 		initial = "",
+		readOnly = false,
 	) => (
 		<TextField
 			className={styles.localField}
 			isRequired={required}
 			name={name}
-			value={String(value?.[name] ?? initial)}
-			onChange={(nextValue) => updateDraft({ [name]: nextValue })}
+			value={String(displayedValue?.[name] ?? initial)}
+			isReadOnly={readOnly || !isForm}
+			onChange={(nextValue) => {
+				const metadataKey = legacyMetadataKeys[name];
+				updateDraft({
+					[name]: nextValue,
+					...(metadataKey
+						? {
+								metadataValues: {
+									...displayedValue?.metadataValues,
+									[metadataKey]:
+										metadataKey === "isrc" ? splitList(nextValue) : [nextValue],
+								},
+							}
+						: {}),
+				});
+			}}
 		>
 			<Label>
 				{label}{" "}
@@ -147,6 +343,7 @@ export function LocalProviderScreen({
 				)}
 			</Label>
 			<Input
+				className="read-only:border-transparent read-only:bg-transparent"
 				ref={
 					name === "name" || name === "release_group_title" || name === "title"
 						? focusRef
@@ -156,75 +353,21 @@ export function LocalProviderScreen({
 		</TextField>
 	);
 	const genrePicker = (
-		<fieldset className={styles.genrePicker} disabled={!genresLoaded}>
-			<legend>Жанры · MusicBrainz</legend>
-			{!genresLoaded ? (
-				<p className={styles.muted}>
-					Каталог недоступен. Можно сохранить запись без жанров.
-				</p>
-			) : (
-				<>
-					<SearchField
-						aria-label="Поиск по каталогу жанров"
-						value={genreQuery}
-						onChange={setGenreQuery}
-					>
-						<Label>Поиск по каталогу</Label>
-						<Input placeholder="Начните вводить название…" />
-					</SearchField>
-					<div className={styles.genreOptions}>
-						{demoGenres
-							.filter(
-								(genre) =>
-									!currentGenres.includes(genre.id) &&
-									genre.name
-										.toLocaleLowerCase()
-										.includes(genreQuery.toLocaleLowerCase()),
-							)
-							.map((genre) => (
-								<Button
-									key={genre.id}
-									data-genre-option
-									onPress={() =>
-										updateDraft({ genres: [...currentGenres, genre.id] })
-									}
-								>
-									{genre.name}
-								</Button>
-							))}
-					</div>
-					<div className={styles.genreSelected}>
-						{currentGenres.length ? (
-							currentGenres.map((id) => (
-								<span className={styles.genreChip} key={id}>
-									{demoGenres.find((genre) => genre.id === id)?.name ??
-										value?.genreNamesById?.[id] ??
-										id}
-									<Button
-										aria-label={`Убрать ${id}`}
-										onPress={() =>
-											updateDraft({
-												genres: currentGenres.filter(
-													(genreId) => genreId !== id,
-												),
-											})
-										}
-									>
-										×
-									</Button>
-								</span>
-							))
-						) : (
-							<span className={styles.muted}>Жанры не выбраны.</span>
-						)}
-					</div>
-					<small>
-						Только канонические ID и названия из загруженного каталога;
-						произвольный ввод не добавляет значение.
-					</small>
-				</>
-			)}
-		</fieldset>
+		<GenrePicker
+			value={currentGenres}
+			readOnly={!isForm}
+			onChange={(genres) =>
+				updateDraft({
+					genres: genres.map((genre) => genre.id ?? genre.name),
+					genreNamesById: Object.fromEntries(
+						genres.map((genre) => [genre.id ?? genre.name, genre.name]),
+					),
+				})
+			}
+			loaded={genresLoaded}
+			onLoad={onLoadGenres}
+			options={genreOptions}
+		/>
 	);
 	const artistLinks = (
 		<fieldset className={styles.genrePicker}>
@@ -236,12 +379,14 @@ export function LocalProviderScreen({
 			{state.items.artists.map((artist) => (
 				<div className={styles.localOption} key={artist.id}>
 					<Checkbox
-						isSelected={value?.artistIds?.includes(artist.id) ?? false}
+						isSelected={displayedValue?.artistIds?.includes(artist.id) ?? false}
 						onChange={(event) =>
 							updateDraft({
 								artistIds: event
-									? [...(value?.artistIds ?? []), artist.id]
-									: (value?.artistIds ?? []).filter((id) => id !== artist.id),
+									? [...(displayedValue?.artistIds ?? []), artist.id]
+									: (displayedValue?.artistIds ?? []).filter(
+											(id) => id !== artist.id,
+										),
 							})
 						}
 					>
@@ -262,7 +407,7 @@ export function LocalProviderScreen({
 			</small>
 		</fieldset>
 	);
-	const tracks = value?.tracks ?? [];
+	const tracks = displayedValue?.tracks ?? [];
 	const changeTrack = (index: number, change: Partial<LocalProviderTrack>) =>
 		updateDraft({
 			tracks: tracks.map((track, i) =>
@@ -382,7 +527,7 @@ export function LocalProviderScreen({
 										changeTrack(index, { titleOverride })
 									}
 								>
-									Название в этой позиции · своё значение
+									<Label>Название в этой позиции · своё значение</Label>
 									<Input />
 								</TextField>
 								<TextField
@@ -395,7 +540,7 @@ export function LocalProviderScreen({
 										changeTrack(index, { durationInput })
 									}
 								>
-									Длительность · своё значение
+									<Label>Длительность · своё значение</Label>
 									<Input
 										ref={(element) => {
 											trackDurationRefs.current[index] = element;
@@ -462,6 +607,19 @@ export function LocalProviderScreen({
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!value) return;
+		if (state.type === "releases" || state.type === "recordings") {
+			const scope = state.type === "releases" ? "release" : "recording";
+			const metadataValues = Object.fromEntries(
+				Object.entries(value.metadataValues ?? {}).filter(([key]) =>
+					fieldsForScope(scope).some((field) => field.key === key),
+				),
+			) as MetadataValues;
+			const metadataErrors = validateMetadataValues(metadataValues, scope);
+			if (metadataErrors.length) {
+				setSubmitError(metadataErrors.join(" "));
+				return;
+			}
+		}
 		const submittedValue = structuredClone(value);
 		if (state.type === "recordings") {
 			const durationInput = event.currentTarget.elements.namedItem(
@@ -496,17 +654,12 @@ export function LocalProviderScreen({
 			key: submittedValue.key || ids(),
 			provider: "Local",
 		};
-		draft.genres = genresLoaded
-			? [...(draft.genres ?? [])].filter((id) =>
-					demoGenres.some((genre) => genre.id === id),
-				)
-			: (selected?.genres ?? []);
+		draft.genres = [...(draft.genres ?? [])];
 		draft.genreNamesById = Object.fromEntries(
 			(draft.genres ?? [])
 				.map((id) => [
 					id,
-					demoGenres.find((genre) => genre.id === id)?.name ??
-						draft.genreNamesById?.[id],
+					genreOptionsById.get(id)?.name ?? draft.genreNamesById?.[id],
 				])
 				.filter(([, name]) => name),
 		);
@@ -549,18 +702,12 @@ export function LocalProviderScreen({
 		: "";
 	const genreNames = (item: LocalProviderRecord) =>
 		(item.genres ?? [])
-			.map(
-				(id) =>
-					demoGenres.find((genre) => genre.id === id)?.name ??
-					item.genreNamesById?.[id],
-			)
+			.map((id) => genreOptionsById.get(id)?.name ?? item.genreNamesById?.[id])
 			.filter(Boolean)
 			.join(", ") || "—";
 	let detailFacts: Array<[string, string]> = [];
 	if (selected && state.type === "artists")
 		detailFacts = [
-			["Жанры", genreNames(selected)],
-			["Теги", selected.tags || "—"],
 			[
 				"Связанные релизы",
 				state.items.releases
@@ -577,7 +724,6 @@ export function LocalProviderScreen({
 				selected.artistIds?.map((id) => artistName(state, id)).join(", ") ||
 					"—",
 			],
-			["Жанры", genreNames(selected)],
 			["Основной тип", selected.primaryType || "—"],
 			[
 				"Дополнительные типы",
@@ -601,9 +747,7 @@ export function LocalProviderScreen({
 			],
 			["Длительность", formatLocalDuration(selected.duration_ms) || "—"],
 			["ISRC", selected.isrcs || "—"],
-			["Жанры", genreNames(selected)],
 		];
-	const isForm = state.editing || state.creating;
 	return (
 		<main className="mx-auto max-w-none p-3">
 			<header className={styles.pageHeader}>
@@ -748,200 +892,249 @@ export function LocalProviderScreen({
 									Текущие данные · без истории
 								</span>
 							</div>
-							{isForm && value ? (
-								<form className={styles.localForm} onSubmit={submit}>
+							{(selected || state.creating) && displayedValue ? (
+								<form
+									ref={formRef}
+									className={styles.localForm}
+									onSubmit={submit}
+									onKeyDown={(event) => {
+										if (isForm && event.key === "Escape") {
+											event.preventDefault();
+											cancel();
+										}
+									}}
+								>
 									<div className={styles.localFormHeading}>
-										<h2>
-											{state.creating
-												? config.create
-												: `Редактировать ${config.entity.toLocaleLowerCase()}`}
-										</h2>
-										<p className={styles.muted}>
-											Только демонстрация в памяти. Обязательные поля отмечены.
-										</p>
-									</div>
-									{state.type === "artists" && (
-										<>
-											{field("Имя", "name", true)}
-											{field("Уточнение", "disambiguation")}
-											{genrePicker}
-											{field("Теги · через запятую", "tags")}
-										</>
-									)}
-									{state.type === "releases" && (
-										<>
-											{field(
-												"Название группы релизов",
-												"release_group_title",
-												true,
-											)}
-											{field("Название издания", "title", true)}
-											<div className={styles.localFields}>
-												{field("Основной тип группы релизов", "primaryType")}
-												<TextField
-													className={styles.localField}
-													value={
-														Array.isArray(value.secondaryTypes)
-															? value.secondaryTypes.join(", ")
-															: (value.secondaryTypes ?? "")
-													}
-													onChange={(secondaryTypes) =>
-														updateDraft({ secondaryTypes })
-													}
-												>
-													Дополнительные типы · через запятую
-													<Input />
-												</TextField>
-												{field("Язык", "language")}
-												{field("Страна", "country_code")}
-												{field("Дата", "release_date")}
-												{field("Статус", "status")}
-												{field("Упаковка", "packaging")}
-												{field("Лейбл", "label")}
-												{field("Каталожный номер", "catalog_number")}
-												{field("Штрихкод", "barcode")}
-												{field("Уточнение", "disambiguation")}
-											</div>
-											{genrePicker}
-											<small>
-												Жанры релиза относятся только к релизу и не наследуются
-												артистами или композициями.
-											</small>
-											{artistLinks}
-											{trackRows}
-											<p className={styles.muted}>
-												Система письма не указывается.
-											</p>
-										</>
-									)}
-									{state.type === "recordings" && (
-										<>
-											{field("Название композиции", "title", true)}
-											<TextField
-												className={styles.localField}
-												value={String(
-													value.durationInput ??
-														formatLocalDuration(value.duration_ms),
-												)}
-												onChange={(durationInput) =>
-													updateDraft({ durationInput })
-												}
-											>
-												Длительность{" "}
-												<span className={styles.muted}>необязательно</span>
-												<Input
-													ref={durationRef}
-													name="duration"
-													aria-describedby="local-duration-error"
-													aria-invalid={Boolean(
-														value.durationInput !== undefined &&
-															Number.isNaN(
-																parseLocalDuration(value.durationInput),
-															),
-													)}
-												/>
-											</TextField>
-											<small id="local-duration-hint">
-												Целые секунды или М:СС. Отображается как М:СС.
-											</small>
-											<p
-												id="local-duration-error"
-												className={`${styles.localNote} ${styles.localError}`}
-												role="alert"
-												hidden={
-													!Number.isNaN(
-														parseLocalDuration(
-															String(
-																value.durationInput ??
-																	formatLocalDuration(value.duration_ms),
-															),
-														),
-													)
-												}
-											>
-												Проверьте длительность: используйте целые секунды или
-												М:СС с секундами от 00 до 59.
-											</p>
-											{field("Уточнение", "disambiguation")}
-											<label className={styles.localField}>
-												Ненормативная лексика{" "}
-												<span className={styles.muted}>необязательно</span>
-												<Select
-													aria-label="Ненормативная лексика"
-													selectedKey={value.explicit ?? ""}
-													onSelectionChange={(key) =>
-														updateDraft({ explicit: String(key ?? "") })
-													}
-												>
-													<Button>
-														<SelectValue />
-													</Button>
-													<Popover>
-														<ListBox>
-															<ListBoxItem id="">Не указано</ListBoxItem>
-															<ListBoxItem id="true">Да</ListBoxItem>
-															<ListBoxItem id="false">Нет</ListBoxItem>
-														</ListBox>
-													</Popover>
-												</Select>
-											</label>
-											{field("ISRC · через запятую", "isrcs")}
-											{genrePicker}
-											{field("Теги · через запятую", "tags")}
-											{artistLinks}
-										</>
-									)}
-									<div className={styles.objectActions}>
-										<Button type="button" onPress={cancel}>
-											Отмена
-										</Button>
-										<Button type="submit" className={styles.genreLibraryButton}>
-											{state.creating ? config.create : "Сохранить изменения"}
-										</Button>
-									</div>
-								</form>
-							) : selected ? (
-								<>
-									<div className={styles.localDetailHeading}>
 										<div>
-											<span className={styles.localEyebrow}>
-												{selected.provider} · {config.entity}
-											</span>
 											<h2 ref={detailHeadingRef} tabIndex={-1}>
-												{detailTitle}
+												{state.creating ? config.create : detailTitle}
 											</h2>
+											<p className={styles.muted}>
+												{displayedValue.provider} · {config.entity} · Ключ
+												провайдера: {displayedValue.key || "будет создан"}
+											</p>
 										</div>
-										{selected.provider === "Local" && (
-											<div className={styles.localDetailActions}>
-												{state.type === "releases" && onMatchRelease && (
-													<Button onPress={() => onMatchRelease(selected)}>
+										<div className={styles.localDetailActions}>
+											{selected?.provider === "Local" &&
+												state.type === "releases" &&
+												onMatchRelease && (
+													<Button
+														type="button"
+														onPress={() => onMatchRelease(selected)}
+													>
 														Сопоставить входящие
 													</Button>
 												)}
-												<Button onPress={startEdit}>Редактировать</Button>
-											</div>
-										)}
-									</div>
-									<dl className={styles.localFacts}>
-										{detailFacts.map(([label, text]) => (
-											<div key={label}>
-												<dt>{label}</dt>
-												<dd>{text}</dd>
-											</div>
-										))}
-										<div>
-											<dt>Ключ провайдера</dt>
-											<dd>
-												<code>{selected.key}</code>
-											</dd>
+											{(state.creating || selected?.provider === "Local") && (
+												<Button
+													className="w-[132px] shrink-0"
+													type="button"
+													onPress={() =>
+														isForm
+															? formRef.current?.requestSubmit()
+															: startEdit()
+													}
+												>
+													{state.creating
+														? config.create
+														: isForm
+															? "Сохранить"
+															: "Редактировать"}
+												</Button>
+											)}
+											<Button
+												className={`w-[132px] shrink-0 ${isForm ? "visible" : "invisible"}`}
+												isDisabled={!isForm}
+												aria-hidden={!isForm}
+												type="button"
+												onPress={cancel}
+											>
+												Отменить
+											</Button>
 										</div>
-									</dl>
+									</div>
+									<p className={styles.muted}>
+										{isForm
+											? "Только демонстрация в памяти. Обязательные поля отмечены."
+											: "Текущие данные · без истории"}
+									</p>
+									<fieldset
+										disabled={!isForm}
+										className="m-0 grid min-w-0 gap-3 border-0 p-0 [&_input:disabled]:border-transparent [&_input:disabled]:bg-transparent [&_select:disabled]:border-transparent [&_select:disabled]:bg-transparent"
+									>
+										{state.type === "artists" && (
+											<>
+												{field("Имя", "name", true)}
+												{field("Имя для сортировки", "sortName")}
+												{field("Уточнение", "disambiguation")}
+												{genrePicker}
+												{field("Теги · через запятую", "tags")}
+											</>
+										)}
+										{state.type === "releases" && (
+											<>
+												{field(
+													"Название группы релизов",
+													"release_group_title",
+													true,
+												)}
+												{field("Название издания", "title", true)}
+												<div className={styles.localFields}>
+													{field("Основной тип группы релизов", "primaryType")}
+													<TextField
+														className={styles.localField}
+														value={
+															Array.isArray(displayedValue.secondaryTypes)
+																? displayedValue.secondaryTypes.join(", ")
+																: (displayedValue.secondaryTypes ?? "")
+														}
+														onChange={(secondaryTypes) =>
+															updateDraft({ secondaryTypes })
+														}
+													>
+														<Label>Дополнительные типы · через запятую</Label>
+														<Input />
+													</TextField>
+													{field("Язык", "language")}
+													{field("Страна", "country_code")}
+													{field("Дата", "release_date")}
+													{field("Статус", "status")}
+													{field("Упаковка", "packaging")}
+													{field("Лейбл", "label")}
+													{field("Каталожный номер", "catalog_number")}
+													{field("Штрихкод", "barcode")}
+													{field("Уточнение", "disambiguation")}
+												</div>
+												<small>
+													Жанры релиза относятся только к релизу и не
+													наследуются артистами или композициями.
+												</small>
+												{artistLinks}
+												{trackRows}
+												{metadataEditor("release")}
+											</>
+										)}
+										{state.type === "recordings" && (
+											<>
+												{field("Название композиции", "title", true)}
+												<TextField
+													className={styles.localField}
+													value={String(
+														displayedValue.durationInput ??
+															formatLocalDuration(displayedValue.duration_ms),
+													)}
+													onChange={(durationInput) =>
+														updateDraft({ durationInput })
+													}
+												>
+													<Label>
+														Длительность{" "}
+														<span className={styles.muted}>необязательно</span>
+													</Label>
+													<Input
+														ref={durationRef}
+														name="duration"
+														aria-describedby="local-duration-error"
+														aria-invalid={Boolean(
+															displayedValue.durationInput !== undefined &&
+																Number.isNaN(
+																	parseLocalDuration(
+																		displayedValue.durationInput,
+																	),
+																),
+														)}
+													/>
+												</TextField>
+												<small>
+													Целые секунды или М:СС. Отображается как М:СС.
+												</small>
+												<p
+													id="local-duration-error"
+													className={`${styles.localNote} ${styles.localError}`}
+													role="alert"
+													hidden={
+														!Number.isNaN(
+															parseLocalDuration(
+																String(
+																	displayedValue.durationInput ??
+																		formatLocalDuration(
+																			displayedValue.duration_ms,
+																		),
+																),
+															),
+														)
+													}
+												>
+													Проверьте длительность: используйте целые секунды или
+													М:СС с секундами от 00 до 59.
+												</p>
+												{field("Уточнение", "disambiguation")}
+												<label className={styles.localField}>
+													Ненормативная лексика{" "}
+													<span className={styles.muted}>необязательно</span>
+													<Select
+														aria-label="Ненормативная лексика"
+														selectedKey={displayedValue.explicit ?? ""}
+														onSelectionChange={(key) =>
+															updateDraft({
+																explicit: String(key ?? ""),
+																metadataValues: {
+																	...displayedValue.metadataValues,
+																	explicitstatus: key
+																		? [localAdvisory(String(key))]
+																		: [],
+																},
+															})
+														}
+													>
+														<Button>
+															<SelectValue />
+														</Button>
+														<Popover>
+															<ListBox>
+																<ListBoxItem id="">Не указано</ListBoxItem>
+																<ListBoxItem id="true">Да</ListBoxItem>
+																<ListBoxItem id="false">Нет</ListBoxItem>
+															</ListBox>
+														</Popover>
+													</Select>
+												</label>
+												{field("ISRC · через запятую", "isrcs")}
+												{field("Теги · через запятую", "tags")}
+												{artistLinks}
+												{metadataEditor("recording")}
+											</>
+										)}
+									</fieldset>
+									<p
+										className={`${styles.localNote} ${styles.localError}`}
+										role="alert"
+										aria-live="assertive"
+									>
+										{submitError}
+									</p>
+									{selected && (
+										<dl className={styles.localFacts}>
+											{detailFacts.map(([label, text]) => (
+												<div key={label}>
+													<dt>{label}</dt>
+													<dd>{text}</dd>
+												</div>
+											))}
+											<div>
+												<dt>Ключ провайдера</dt>
+												<dd>
+													<code>{selected.key}</code>
+												</dd>
+											</div>
+										</dl>
+									)}
 									<div className={styles.localNote}>
 										Редактирование метаданных само по себе не запускает
 										публикацию. Удаление и поведение зависимостей этим экраном
 										не определяются.
 									</div>
-								</>
+								</form>
 							) : (
 								<div className={styles.localEmpty}>
 									Выберите запись или явно создайте новую.
