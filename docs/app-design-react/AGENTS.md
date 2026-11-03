@@ -26,3 +26,10 @@ Tailwind directives/configuration only; do not add handwritten CSS selectors,
 component rules, `@apply` classes, CSS-in-JS, or runtime legacy-class translators.
 Preserve the existing appearance, responsive behavior, theme switching and
 React Aria interaction states when migrating styles.
+
+Artist and release details are always-visible, text-like readonly fields, not
+track-tag comparison tables. Edit enables the same fields in place; the fixed-size
+Edit/Save action and reserved Cancel space must not shift the layout. Saving
+updates prototype library state; Cancel/Escape discard the draft. Provider
+identities remain readonly. Source files and existing publications are not changed
+by editing object metadata; file/publication comparisons belong to a track.

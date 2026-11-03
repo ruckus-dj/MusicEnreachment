@@ -89,10 +89,9 @@ it("renders artist releases and tracks with aggregate selection", () => {
 	expect(onSelect).toHaveBeenCalledWith(["north-t2"], true);
 });
 
-it("shows artist tags inline and release tags in the album disclosure", () => {
+it("shows always-visible artist and release metadata forms", () => {
 	const release = originalReleases.find((item) => item.id === "north");
-	if (!release || !release.tracks[0])
-		throw new Error("Missing baseline fixture");
+	if (!release) throw new Error("Missing baseline fixture");
 	render(
 		<ArtistScreen
 			artistId={release.artistId ?? ""}
@@ -101,14 +100,46 @@ it("shows artist tags inline and release tags in the album disclosure", () => {
 			files={originalFiles}
 		/>,
 	);
-	fireEvent.click(screen.getByRole("button", { name: "Теги артиста" }));
-	const artistTags = screen.getByRole("region", {
-		name: "Сравнение тегов: artist",
+	const artistDetails = screen.getByRole("region", {
+		name: "Сведения об артисте",
 	});
-	expect(
-		within(artistTags).getByRole("rowheader", { name: "ARTIST" }),
-	).toBeInTheDocument();
+	const releaseTrigger = screen
+		.getAllByRole("button", {
+			name: (name) =>
+				name.includes(release.title) && name.includes(String(release.year)),
+		})
+		.find((button) => button.getAttribute("slot") === "trigger");
+	if (!releaseTrigger)
+		throw new Error(`Missing disclosure trigger for ${release.title}`);
+	expect(releaseTrigger).toHaveAttribute("aria-expanded", "false");
 	expandAlbum(release);
+	const releaseDetails = screen.getByRole("region", {
+		name: "Сведения об издании",
+	});
+	expect(within(artistDetails).getByLabelText("Имя")).toHaveValue(
+		catalogData.artists.find((artist) => artist.id === release.artistId)?.name,
+	);
+	expect(within(artistDetails).getByLabelText("Жанр")).toBeInTheDocument();
+	expect(within(releaseDetails).getByLabelText("Название")).toHaveValue(
+		release.title,
+	);
+	expect(within(releaseDetails).getByLabelText("Год")).toHaveValue(
+		release.year,
+	);
+	expect(within(releaseDetails).getByLabelText("Страна")).toHaveValue(
+		release.country,
+	);
+	expect(within(releaseDetails).getByLabelText("Лейбл")).toHaveValue(
+		release.label,
+	);
+	expect(within(releaseDetails).getByLabelText("Каталожный номер")).toHaveValue(
+		release.catalog,
+	);
+	for (const input of [
+		...within(artistDetails).getAllByRole("textbox"),
+		...within(releaseDetails).getAllByRole("textbox"),
+	])
+		expect(input).toHaveAttribute("readonly");
 	expect(
 		screen.getByRole("button", {
 			name: (name) =>
@@ -119,14 +150,12 @@ it("shows artist tags inline and release tags in the album disclosure", () => {
 		screen.queryByRole("button", { name: "Предпросмотр публикации" }),
 	).not.toBeInTheDocument();
 
-	fireEvent.click(screen.getByRole("button", { name: "Теги альбома" }));
-	const releaseTags = screen.getByRole("region", {
-		name: "Сравнение тегов: release",
-	});
 	expect(
-		within(releaseTags).getByRole("rowheader", { name: "ALBUM" }),
-	).toBeInTheDocument();
-	expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		screen.queryByRole("region", { name: "Сравнение тегов: artist" }),
+	).not.toBeInTheDocument();
+	expect(
+		screen.queryByRole("region", { name: "Сравнение тегов: release" }),
+	).not.toBeInTheDocument();
 });
 
 it("keeps empty album disclosures available without preview actions", () => {

@@ -164,6 +164,136 @@ it("retains the selected filter when navigating between library and artist", asy
 	}
 });
 
+it("saves artist metadata in catalog state across library navigation", async () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "artist/mira";
+	try {
+		render(<CatalogDemo />);
+		await screen.findByRole("heading", { name: "Mira Vale" });
+		const artistDetails = screen.getByRole("region", {
+			name: "Сведения об артисте",
+		});
+		const name = within(artistDetails).getByLabelText("Имя");
+		const genre = within(artistDetails).getByLabelText("Жанр");
+		const edit = within(artistDetails).getByRole("button", {
+			name: "Редактировать",
+		});
+		fireEvent.click(edit);
+		const editableName = within(artistDetails).getByLabelText("Имя");
+		const editableGenre = within(artistDetails).getByLabelText("Жанр");
+		expect(editableName).toBe(name);
+		expect(editableGenre).toBe(genre);
+		fireEvent.change(editableName, { target: { value: "Mira Vale Updated" } });
+		fireEvent.change(editableGenre, { target: { value: "Dream pop" } });
+		fireEvent.click(
+			within(artistDetails).getByRole("button", { name: "Сохранить" }),
+		);
+		expect(within(artistDetails).getByLabelText("Имя")).toHaveValue(
+			"Mira Vale Updated",
+		);
+		expect(within(artistDetails).getByLabelText("Жанр")).toHaveValue(
+			"Dream pop",
+		);
+
+		fireEvent.click(screen.getByRole("link", { name: "К медиатеке" }));
+		await screen.findByRole("tab", { name: "Артисты" });
+		expect(
+			screen.getByRole("link", { name: /Mira Vale Updated/ }),
+		).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("link", { name: /Mira Vale Updated/ }));
+		await screen.findByRole("heading", { name: "Mira Vale Updated" });
+		expect(
+			within(
+				screen.getByRole("region", { name: "Сведения об артисте" }),
+			).getByLabelText("Имя"),
+		).toHaveValue("Mira Vale Updated");
+		expect(
+			within(
+				screen.getByRole("region", { name: "Сведения об артисте" }),
+			).getByLabelText("Жанр"),
+		).toHaveValue("Dream pop");
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
+	}
+});
+
+it("saves release metadata in catalog state and restores unsaved edits on cancel and Escape", async () => {
+	const previousHash = window.location.hash;
+	window.location.hash = "artist/mira?release=north";
+	try {
+		render(<CatalogDemo />);
+		await screen.findByRole("heading", { name: "Mira Vale" });
+		const releaseDetails = screen.getByRole("region", {
+			name: "Сведения об издании",
+		});
+		const title = within(releaseDetails).getByLabelText("Название");
+		const year = within(releaseDetails).getByLabelText("Год");
+		const editRelease = () =>
+			fireEvent.click(
+				within(releaseDetails).getByRole("button", {
+					name: "Редактировать",
+				}),
+			);
+		editRelease();
+		expect(within(releaseDetails).getByLabelText("Название")).toBe(title);
+		expect(within(releaseDetails).getByLabelText("Год")).toBe(year);
+		fireEvent.change(title, { target: { value: "Northern Lines Updated" } });
+		fireEvent.click(
+			within(releaseDetails).getByRole("button", { name: "Отменить" }),
+		);
+		expect(within(releaseDetails).getByLabelText("Название")).toHaveValue(
+			"Northern Lines",
+		);
+		expect(within(releaseDetails).getByLabelText("Название")).toBe(title);
+
+		editRelease();
+		fireEvent.change(within(releaseDetails).getByLabelText("Название"), {
+			target: { value: "Northern Lines Updated" },
+		});
+		fireEvent.keyDown(within(releaseDetails).getByLabelText("Название"), {
+			key: "Escape",
+		});
+		expect(within(releaseDetails).getByLabelText("Название")).toHaveValue(
+			"Northern Lines",
+		);
+
+		editRelease();
+		fireEvent.change(within(releaseDetails).getByLabelText("Название"), {
+			target: { value: "Northern Lines Updated" },
+		});
+		fireEvent.change(within(releaseDetails).getByLabelText("Год"), {
+			target: { value: "2022" },
+		});
+		fireEvent.click(
+			within(releaseDetails).getByRole("button", { name: "Сохранить" }),
+		);
+		expect(within(releaseDetails).getByLabelText("Название")).toHaveValue(
+			"Northern Lines Updated",
+		);
+		expect(within(releaseDetails).getByLabelText("Год")).toHaveValue("2022");
+
+		fireEvent.click(screen.getByRole("link", { name: "К медиатеке" }));
+		await screen.findByRole("tab", { name: "Артисты" });
+		fireEvent.click(screen.getByRole("link", { name: /Mira Vale/ }));
+		await screen.findByRole("heading", { name: "Mira Vale" });
+		window.location.hash = "artist/mira?release=north";
+		fireEvent(window, new Event("hashchange"));
+		const savedReleaseDetails = await screen.findByRole("region", {
+			name: "Сведения об издании",
+		});
+		expect(within(savedReleaseDetails).getByLabelText("Название")).toHaveValue(
+			"Northern Lines Updated",
+		);
+		expect(within(savedReleaseDetails).getByLabelText("Год")).toHaveValue(
+			"2022",
+		);
+	} finally {
+		window.location.hash = previousHash;
+		fireEvent(window, new Event("hashchange"));
+	}
+});
+
 it("shows artist cards with a separate aggregate checkbox and real artist link", () => {
 	render(<CatalogDemo />);
 	const artistLink = screen.getByRole("link", { name: /Mira Vale/ });
@@ -497,9 +627,9 @@ it("migrates a legacy release route to its artist with the album expanded", asyn
 });
 
 it.each([
-	["artist", "Теги артиста", "Сравнение тегов: artist"],
-	["release", "Теги альбома", "Сравнение тегов: release"],
-])("opens %s tags inline from the legacy tag route", async (scope, label, region) => {
+	["artist", "Сведения об артисте"],
+	["release", "Сведения об издании"],
+])("opens %s details inline from the legacy tag route", async (scope, region) => {
 	const previousHash = window.location.hash;
 	window.location.hash = `tags/north-t1/${scope}`;
 	try {
@@ -510,11 +640,23 @@ it.each([
 		expect(window.location.hash).toBe(
 			`#artist/mira?tags=${scope}&release=north`,
 		);
-		expect(screen.getByRole("button", { name: label })).toHaveAttribute(
-			"aria-expanded",
-			"true",
-		);
-		expect(screen.getByRole("region", { name: region })).toBeInTheDocument();
+		const details = screen.getByRole("region", { name: region });
+		for (const field of within(details).getAllByRole("textbox")) {
+			expect(field).toHaveAttribute("readonly");
+		}
+		expect(
+			screen.queryByRole("region", { name: /^Сравнение тегов:/ }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("columnheader", {
+				name: "Исходный файл",
+			}),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("columnheader", {
+				name: "Сейчас в публикации",
+			}),
+		).not.toBeInTheDocument();
 		expect(screen.getByRole("link", { name: /First Light/ })).toHaveAttribute(
 			"href",
 			"#track/north-t1",
@@ -538,4 +680,13 @@ it("keeps the legacy track-tag route on the standalone tags screen", async () =>
 		window.location.hash = previousHash;
 		fireEvent(window, new Event("hashchange"));
 	}
+});
+
+it("keeps track-tag links available independently of artist and release metadata", () => {
+	render(<CatalogDemo />);
+	fireEvent.click(screen.getByRole("tab", { name: "Все треки" }));
+	expect(screen.getAllByRole("link", { name: "Теги" })[0]).toHaveAttribute(
+		"href",
+		"#tags/north-t1/track",
+	);
 });

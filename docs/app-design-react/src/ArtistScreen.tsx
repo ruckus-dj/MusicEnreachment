@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { TagsComparison, type TagScope } from "./TagsComparison";
+import type { TagScope } from "./TagsComparison";
+import { ObjectMetadataForm } from "./ObjectMetadataForm";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import {
 	availabilityRowClass,
@@ -52,6 +53,8 @@ export function ArtistScreen({
 	onFilterChange,
 	onDeleteArtist,
 	onQueueDeletion,
+	onUpdateArtist,
+	onUpdateRelease,
 	initialTags,
 	initialReleaseId,
 }: {
@@ -67,6 +70,8 @@ export function ArtistScreen({
 	onFilterChange?: (value: CatalogFilterValue) => void;
 	onDeleteArtist?: (artistId: string) => void;
 	onQueueDeletion?: (operation: DeletionOperation) => void;
+	onUpdateArtist?: (artist: CatalogArtist) => void;
+	onUpdateRelease?: (release: OriginalRelease) => void;
 	initialTags?: { scope: TagScope; releaseId?: string };
 	initialReleaseId?: string;
 }) {
@@ -82,19 +87,17 @@ export function ArtistScreen({
 		setLocalFilter(value);
 		onFilterChange?.(value);
 	};
-	const artist = artists.find((item) => item.id === artistId);
+	const [localArtistUpdates, setLocalArtistUpdates] = useState<
+		Record<string, CatalogArtist>
+	>({});
+	const [localReleaseUpdates, setLocalReleaseUpdates] = useState<
+		Record<string, OriginalRelease>
+	>({});
+	const artist =
+		localArtistUpdates[artistId] ??
+		artists.find((item) => item.id === artistId);
 	const [absentEdition, setAbsentEdition] = useState<Record<string, string>>(
 		{},
-	);
-	const [artistTagsOpen, setArtistTagsOpen] = useState(
-		initialTags?.scope === "artist",
-	);
-	const [releaseTagsOpen, setReleaseTagsOpen] = useState<
-		Record<string, boolean>
-	>(() =>
-		initialTags?.scope === "release" && initialTags.releaseId
-			? { [initialTags.releaseId]: true }
-			: {},
 	);
 	const initialTagsTarget = useRef<HTMLDivElement | null>(null);
 	useEffect(() => {
@@ -106,23 +109,15 @@ export function ArtistScreen({
 	}, [initialTags?.scope, initialTags?.releaseId]);
 	const artistReleases = useMemo(
 		() =>
-			releases.filter(
-				(release) =>
-					release.artistId === artistId ||
-					(releaseFields(release) &&
-						release.credits?.some((credit) => credit.artistId === artistId)),
-			),
-		[artistId, releases],
-	);
-	const artistTagReleases = useMemo(
-		() =>
-			artistReleases
-				.map((release) => ({
-					...release,
-					tracks: release.tracks.filter((track) => track.artistId === artistId),
-				}))
-				.filter((release) => release.tracks.length > 0),
-		[artistId, artistReleases],
+			releases
+				.map((release) => localReleaseUpdates[release.id] ?? release)
+				.filter(
+					(release) =>
+						release.artistId === artistId ||
+						(releaseFields(release) &&
+							release.credits?.some((credit) => credit.artistId === artistId)),
+				),
+		[artistId, localReleaseUpdates, releases],
 	);
 	const tracks = artistReleases.flatMap((release) => release.tracks);
 	const ids = tracks.map((track) => track.id);
@@ -181,6 +176,49 @@ export function ArtistScreen({
 		tracks.filter(predicate).length;
 	const expandedReleaseId =
 		initialTags?.scope === "release" ? initialTags.releaseId : initialReleaseId;
+	const saveArtist = (values: Record<string, string>) => {
+		const updated = { ...artist, name: values.name, genre: values.genre };
+		if (onUpdateArtist) onUpdateArtist(updated);
+		else
+			setLocalArtistUpdates((current) => ({
+				...current,
+				[artist.id]: updated,
+			}));
+	};
+	const saveRelease = (
+		release: OriginalRelease,
+		values: Record<string, string>,
+	) => {
+		const metadata = release.metadata
+			? {
+					...release.metadata,
+					...(release.metadata.country !== undefined
+						? { country: values.country }
+						: {}),
+					...(release.metadata.label !== undefined
+						? { label: values.label }
+						: {}),
+					...(release.metadata.catalogNumber !== undefined
+						? { catalogNumber: values.catalog }
+						: {}),
+				}
+			: undefined;
+		const updated = {
+			...release,
+			title: values.title,
+			year: values.year,
+			country: values.country,
+			label: values.label,
+			catalog: values.catalog,
+			...(metadata ? { metadata } : {}),
+		};
+		if (onUpdateRelease) onUpdateRelease(updated);
+		else
+			setLocalReleaseUpdates((current) => ({
+				...current,
+				[release.id]: updated,
+			}));
+	};
 	return (
 		<section className={catalogueStyles.object}>
 			<nav className={catalogueStyles.heroBack} aria-label="Навигация">
@@ -237,12 +275,6 @@ export function ArtistScreen({
 						<div
 							className={`${catalogueStyles.actions} ${catalogueStyles.artistDanger}`}
 						>
-							<Button
-								aria-expanded={artistTagsOpen}
-								onPress={() => setArtistTagsOpen((open) => !open)}
-							>
-								Теги артиста
-							</Button>
 							{onQueueDeletion ? (
 								<ArtistDeletionRequest
 									artistId={artist.id}
@@ -263,23 +295,21 @@ export function ArtistScreen({
 					</div>
 				</div>
 			</header>
-			{artistTagsOpen && (
-				<div
-					ref={initialTagsTarget}
-					tabIndex={-1}
-					className="inline-tags-comparison"
-				>
-					<TagsComparison
-						scope="artist"
-						releases={artistTagReleases}
-						artists={artists}
-						files={files}
-						initialTrackId={
-							artistTagReleases.flatMap((release) => release.tracks)[0]?.id
-						}
-					/>
-				</div>
-			)}
+			<div
+				ref={initialTags?.scope === "artist" ? initialTagsTarget : undefined}
+				tabIndex={initialTags?.scope === "artist" ? -1 : undefined}
+			>
+				<ObjectMetadataForm
+					key={artist.id}
+					label="Сведения об артисте"
+					fields={[
+						{ key: "name", label: "Имя", value: artist.name },
+						{ key: "genre", label: "Жанр", value: artist.genre ?? "" },
+					]}
+					required={["name"]}
+					onSave={saveArtist}
+				/>
+			</div>
 			<div className={catalogueStyles.controls}>
 				<div className={catalogueStyles.panelControls}>
 					<SearchField
@@ -411,41 +441,53 @@ export function ArtistScreen({
 								</div>
 								<DisclosurePanel className={catalogueStyles.albumPanel}>
 									<div
-										className={`${catalogueStyles.actions} ${catalogueStyles.albumActions}`}
+										ref={
+											initialTags?.releaseId === release.id
+												? initialTagsTarget
+												: undefined
+										}
+										tabIndex={
+											initialTags?.releaseId === release.id ? -1 : undefined
+										}
+										className="grid min-w-0 gap-3"
 									>
-										<Button
-											aria-expanded={Boolean(releaseTagsOpen[release.id])}
-											onPress={() =>
-												setReleaseTagsOpen((open) => ({
-													...open,
-													[release.id]: !open[release.id],
-												}))
-											}
-										>
-											Теги альбома
-										</Button>
+										<ObjectMetadataForm
+											label="Сведения об издании"
+											fields={[
+												{
+													key: "title",
+													label: "Название",
+													value: release.title,
+												},
+												{ key: "year", label: "Год", value: release.year },
+												{
+													key: "country",
+													label: "Страна",
+													value: release.country,
+												},
+												{ key: "label", label: "Лейбл", value: release.label },
+												{
+													key: "catalog",
+													label: "Каталожный номер",
+													value: release.catalog,
+												},
+											]}
+											readOnlyFields={[
+												{
+													key: "provider",
+													label: "Провайдер",
+													value: release.provider ?? "",
+												},
+												{
+													key: "providerId",
+													label: "ID провайдера",
+													value: release.providerId ?? "",
+												},
+											]}
+											required={["title"]}
+											onSave={(values) => saveRelease(release, values)}
+										/>
 									</div>
-									{releaseTagsOpen[release.id] && (
-										<div
-											ref={
-												initialTags?.releaseId === release.id
-													? initialTagsTarget
-													: undefined
-											}
-											tabIndex={
-												initialTags?.releaseId === release.id ? -1 : undefined
-											}
-											className="inline-tags-comparison"
-										>
-											<TagsComparison
-												scope="release"
-												releases={[release]}
-												artists={artists}
-												files={files}
-												initialTrackId={release.tracks[0]?.id}
-											/>
-										</div>
-									)}
 									<div className={catalogueStyles.previewTable}>
 										<table>
 											<thead>

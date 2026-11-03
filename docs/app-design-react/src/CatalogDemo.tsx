@@ -477,6 +477,20 @@ export function CatalogDemo({
 					onFilterChange={setFilter}
 					onSelect={update}
 					onQueueDeletion={queueDeletion}
+					onUpdateArtist={(updated) =>
+						setArtists((current) =>
+							current.map((artist) =>
+								artist.id === updated.id ? updated : artist,
+							),
+						)
+					}
+					onUpdateRelease={(updated) =>
+						setReleases((current) =>
+							current.map((release) =>
+								release.id === updated.id ? updated : release,
+							),
+						)
+					}
 					initialTags={
 						initialTagsScope
 							? { scope: initialTagsScope, releaseId }
