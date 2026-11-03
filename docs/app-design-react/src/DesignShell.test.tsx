@@ -15,6 +15,8 @@ it("preserves original navigation sections without a separate publication tab", 
 		name: "Основная навигация",
 	});
 	expect(navigation.querySelectorAll("a")).toHaveLength(6);
+	expect(navigation).not.toHaveTextContent("01");
+	expect(navigation).not.toHaveTextContent("02");
 	expect(screen.getByRole("link", { name: "Медиатека" })).toHaveAttribute(
 		"aria-current",
 		"page",

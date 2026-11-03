@@ -140,7 +140,6 @@ export function TrackMetadataEditors({
 				onLoadGenres={onLoadGenres}
 				impact={recordingImpact}
 				extraFields={recordingExtras}
-				requiredKeys={["title"]}
 				onSave={(values, details) => {
 					const title = values.title?.[0] ?? "";
 					const titleChanged = title !== recording.title?.[0];

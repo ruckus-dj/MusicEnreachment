@@ -1,11 +1,24 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { SettingsScreen, initialDemoSettings } from "./SettingsScreen";
 
-function StatefulSettings() {
+function StatefulSettings({
+	onOutputReset,
+	workDirectoryBusy,
+}: {
+	onOutputReset?: (nextPath: string) => void;
+	workDirectoryBusy?: boolean;
+} = {}) {
 	const [settings, setSettings] = useState(initialDemoSettings);
-	return <SettingsScreen settings={settings} onSettings={setSettings} />;
+	return (
+		<SettingsScreen
+			settings={settings}
+			onSettings={setSettings}
+			onOutputReset={onOutputReset}
+			workDirectoryBusy={workDirectoryBusy}
+		/>
+	);
 }
 
 function chooseOutputCandidate() {
@@ -35,16 +48,16 @@ it("loads the shared genre catalog and keeps the publication path candidate-only
 		screen.getByText("Каталог доступен в демонстрации"),
 	).toBeInTheDocument();
 
-	expect(
-		screen.getByLabelText("Текущий каталог публикации · только чтение"),
-	).toHaveValue("/srv/music");
+	expect(screen.getByLabelText("Текущий каталог публикации")).toHaveValue(
+		"/srv/music",
+	);
 	chooseOutputCandidate();
 	expect(
 		screen.getByLabelText("Новый путь · кандидат, ещё не применён"),
 	).toHaveValue("/srv/media");
-	expect(
-		screen.getByLabelText("Текущий каталог публикации · только чтение"),
-	).toHaveValue("/srv/music");
+	expect(screen.getByLabelText("Текущий каталог публикации")).toHaveValue(
+		"/srv/music",
+	);
 });
 
 it.each([
@@ -61,7 +74,7 @@ it.each([
 			name:
 				execution === "running"
 					? "Выполняется операция"
-					: "Операция захвачена обработчиком",
+					: "Операция уже захвачена обработчиком",
 		}),
 	);
 	expect(
@@ -72,8 +85,9 @@ it.each([
 	expect(screen.getByRole("alert")).toHaveTextContent("Смена заблокирована");
 });
 
-it("permits queued operations to proceed to demo confirmation without mutating the current output", () => {
-	render(<StatefulSettings />);
+it("permits queued operations to reset output and notifies parent after confirmation", () => {
+	const onOutputReset = vi.fn();
+	render(<StatefulSettings onOutputReset={onOutputReset} />);
 	chooseOutputCandidate();
 	fireEvent.click(
 		screen.getByRole("button", { name: /Нет активных операций/ }),
@@ -90,12 +104,103 @@ it("permits queued operations to proceed to demo confirmation without mutating t
 		}),
 	);
 	const dialog = screen.getByRole("dialog");
-	fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить" }));
-	expect(screen.getByRole("status")).toHaveTextContent("реального сброса нет");
-	expect(
-		screen.getByLabelText("Текущий каталог публикации · только чтение"),
-	).toHaveValue("/srv/music");
+	fireEvent.click(
+		within(dialog).getByRole("button", { name: "Подтвердить смену" }),
+	);
+	expect(screen.getByText(/каталог сменён/)).toBeInTheDocument();
+	expect(screen.getByLabelText("Текущий каталог публикации")).toHaveValue(
+		"/srv/media",
+	);
 	expect(
 		screen.getByLabelText("Новый путь · кандидат, ещё не применён"),
 	).toHaveValue("/srv/media");
+	expect(onOutputReset).toHaveBeenCalledWith("/srv/media");
+});
+
+it("manual catalog refresh bypasses cooldown without installing or activating", () => {
+	render(<StatefulSettings />);
+	fireEvent.click(
+		screen.getByRole("button", { name: "Обновить каталог вручную" }),
+	);
+	expect(screen.getByText(/обходом 24-часового/)).toHaveTextContent(
+		"Ничего не скачано и не активировано",
+	);
+	expect(screen.getByText(/Последняя успешная проверка:/)).toBeInTheDocument();
+});
+
+it("requires an explicit release choice, then leaves a downloaded version inactive", () => {
+	render(<StatefulSettings />);
+	const tools = screen
+		.getByRole("heading", { name: "Управляемые инструменты" })
+		.closest("section");
+	if (!tools) throw new Error("tools section was not rendered");
+	const installButtons = within(tools).getAllByRole("button", {
+		name: "Подготовить установку · оставить неактивной",
+	});
+	expect(installButtons[0]).toBeDisabled();
+	const ffSelect = within(tools).getByRole("button", {
+		name: /Выбрать доступную версию · ffmpeg/,
+	});
+	fireEvent.click(ffSelect);
+	fireEvent.click(screen.getByRole("option", { name: "8.0.1 · demo" }));
+	fireEvent.click(installButtons[0]);
+	const preflight = screen.getByRole("dialog", {
+		name: "Проверка установки ffmpeg · 8.0.1",
+	});
+	expect(
+		within(preflight).getByText(/ffmpeg\/8\.0\.1\/bin\/ffmpeg/),
+	).toBeInTheDocument();
+	expect(
+		within(preflight).getByText(/ffmpeg\/8\.0\.1\/bin\/ffprobe/),
+	).toBeInTheDocument();
+	fireEvent.click(
+		within(preflight).getByRole("button", { name: "Подтвердить проверку" }),
+	);
+	expect(
+		screen.getByText(/добавлен как verified installed; он не активирован/),
+	).toBeInTheDocument();
+	const activation = within(tools).getAllByRole("button", {
+		name: "Активировать",
+	});
+	expect(activation.length).toBeGreaterThan(0);
+});
+
+it("defaults LRCLIB on and explains that disabling it preserves existing lyrics and publications", () => {
+	render(<StatefulSettings />);
+	const control = screen.getByLabelText("Использовать LRCLIB");
+	expect(control).toBeChecked();
+	expect(
+		screen.getByText(
+			/Сохранённые тексты и текущие публикации остаются без изменений/,
+		),
+	).toBeInTheDocument();
+	fireEvent.click(control);
+	expect(control).not.toBeChecked();
+});
+
+it("blocks work-directory changes while source work/copies occupy that path, but permits tools-root preflight", () => {
+	render(<StatefulSettings workDirectoryBusy />);
+	const work = screen
+		.getByRole("heading", { name: "Рабочая папка анализа источников" })
+		.closest("section");
+	if (!work) throw new Error("work directory section was not rendered");
+	expect(
+		within(work).getByRole("button", { name: "Выбрать папку" }),
+	).toBeDisabled();
+	const tools = screen
+		.getByRole("heading", { name: "Управляемые инструменты" })
+		.closest("section");
+	if (!tools) throw new Error("tools section was not rendered");
+	const moveButton = within(tools).getByRole("button", {
+		name: "Выполнить preflight переноса",
+	});
+	expect(moveButton).toBeEnabled();
+	fireEvent.change(
+		within(tools).getByRole("textbox", { name: "Новый tools root · кандидат" }),
+		{ target: { value: "/srv/tools" } },
+	);
+	fireEvent.click(moveButton);
+	expect(
+		screen.getByRole("dialog", { name: "Preflight переноса tools root" }),
+	).toBeInTheDocument();
 });

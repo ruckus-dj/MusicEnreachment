@@ -5,7 +5,7 @@ export const catalogueStyles = {
 	pageHeader:
 		"mb-[18px] grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-6 gap-y-3 border-b border-[var(--line)] pb-4 max-[600px]:grid-cols-1 max-[600px]:items-start",
 	pageTitle:
-		"m-0 text-[clamp(24px,2.2vw,34px)] leading-[1.12] tracking-[-.035em] [overflow-wrap:anywhere]",
+		"m-0 text-[20px] leading-[1.3] tracking-[-.02em] [overflow-wrap:anywhere]",
 	pageSubtitle: "mt-[5px] text-[var(--muted)]",
 	pageHeaderAction: "justify-self-end max-[600px]:justify-self-start",
 	controls: "mb-3",
@@ -33,7 +33,7 @@ export const catalogueStyles = {
 	list: "overflow-hidden rounded-md border border-[var(--line)] bg-[var(--surface)] shadow-[0_8px_28px_color-mix(in_srgb,var(--ink)_6%,transparent)]",
 	tableScroll: "w-full overflow-auto [overscroll-behavior-inline:contain]",
 	table:
-		"w-full border-separate border-spacing-0 text-xs [font-variant-numeric:tabular-nums] [&_.react-aria-Column]:bg-[var(--raised)] [&_.react-aria-Column]:px-[9px] [&_.react-aria-Column]:py-2 [&_.react-aria-Column]:text-left [&_.react-aria-Column]:text-[10px] [&_.react-aria-Column]:font-bold [&_.react-aria-Column]:text-[var(--muted)] [&_.react-aria-Column]:whitespace-nowrap [&_.react-aria-Column]:border-b [&_.react-aria-Column]:border-[var(--line)] [&_.react-aria-Row]:bg-[var(--surface)] [&_.react-aria-Row]:transition-colors [&_.react-aria-Row:hover]:bg-[var(--raised)] [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-t [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-[var(--line)] [&_.react-aria-Cell]:min-w-0 [&_.react-aria-Cell]:px-2 [&_.react-aria-Cell]:py-[6px] [&_.react-aria-Cell]:align-top [&_.react-aria-Cell]:[overflow-wrap:anywhere] [&_.react-aria-Cell:first-child]:box-border [&_.react-aria-Cell:first-child]:w-[34px] [&_.react-aria-Cell:first-child]:min-w-[34px] [&_.react-aria-Cell:first-child]:max-w-[34px] [&_.react-aria-Cell:first-child]:px-0 [&_.react-aria-Cell:first-child]:text-center [&_.react-aria-Column:first-child]:box-border [&_.react-aria-Column:first-child]:w-[34px] [&_.react-aria-Column:first-child]:min-w-[34px] [&_.react-aria-Column:first-child]:max-w-[34px] [&_.react-aria-Column:first-child]:px-0 [&_.react-aria-Column:first-child]:text-center [&_.react-aria-Column]:align-middle [&_.react-aria-Cell:nth-child(2)]:align-middle [&_.react-aria-Cell_a]:font-semibold [&_.react-aria-Cell_a]:text-[var(--accent)] [&_.react-aria-Cell_a]:underline-offset-2 [&_.react-aria-Cell_a:hover]:underline [&_.filter-match]:bg-[linear-gradient(to_right,color-mix(in_srgb,var(--accent)_4%,transparent),transparent)] [&_.filter-match]:bg-left-top [&_.filter-match]:bg-no-repeat [&_.filter-match]:[background-size:9%_100%] [&_.filter-muted>td]:opacity-[.55] [&_.filter-muted:focus-within>td]:opacity-100",
+		"w-full border-separate border-spacing-0 text-xs [font-variant-numeric:tabular-nums] [&_.react-aria-Column]:bg-[var(--raised)] [&_.react-aria-Column]:px-[9px] [&_.react-aria-Column]:py-2 [&_.react-aria-Column]:text-left [&_.react-aria-Column]:text-[12px] [&_.react-aria-Column]:font-bold [&_.react-aria-Column]:text-[var(--muted)] [&_.react-aria-Column]:whitespace-nowrap [&_.react-aria-Column]:border-b [&_.react-aria-Column]:border-[var(--line)] [&_.react-aria-Row]:bg-[var(--surface)] [&_.react-aria-Row]:transition-colors [&_.react-aria-Row:hover]:bg-[var(--raised)] [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-t [&_.react-aria-Row+.react-aria-Row_.react-aria-Cell]:border-[var(--line)] [&_.react-aria-Cell]:min-w-0 [&_.react-aria-Cell]:px-2 [&_.react-aria-Cell]:py-[6px] [&_.react-aria-Cell]:align-top [&_.react-aria-Cell]:[overflow-wrap:anywhere] [&_.react-aria-Cell:first-child]:box-border [&_.react-aria-Cell:first-child]:w-[34px] [&_.react-aria-Cell:first-child]:min-w-[34px] [&_.react-aria-Cell:first-child]:max-w-[34px] [&_.react-aria-Cell:first-child]:px-0 [&_.react-aria-Cell:first-child]:text-center [&_.react-aria-Column:first-child]:box-border [&_.react-aria-Column:first-child]:w-[34px] [&_.react-aria-Column:first-child]:min-w-[34px] [&_.react-aria-Column:first-child]:max-w-[34px] [&_.react-aria-Column:first-child]:px-0 [&_.react-aria-Column:first-child]:text-center [&_.react-aria-Column]:align-middle [&_.react-aria-Cell:nth-child(2)]:align-middle [&_.react-aria-Cell_a]:font-semibold [&_.react-aria-Cell_a]:text-[var(--accent)] [&_.react-aria-Cell_a]:underline-offset-2 [&_.react-aria-Cell_a:hover]:underline [&_.filter-match]:bg-[linear-gradient(to_right,color-mix(in_srgb,var(--accent)_4%,transparent),transparent)] [&_.filter-match]:bg-left-top [&_.filter-match]:bg-no-repeat [&_.filter-match]:[background-size:9%_100%] [&_.filter-muted>td]:opacity-[.55] [&_.filter-muted:focus-within>td]:opacity-100",
 	artistGrid:
 		"grid grid-cols-[repeat(auto-fill,minmax(min(100%,224px),1fr))] gap-[14px] p-[clamp(12px,1.5vw,20px)] max-[600px]:grid-cols-1 max-[600px]:gap-[11px] max-[600px]:p-[10px]",
 	artistCard:
@@ -64,15 +64,14 @@ export const catalogueStyles = {
 		"flex min-w-0 flex-wrap items-center justify-between gap-x-[18px] gap-y-[10px] max-[600px]:col-span-full max-[600px]:row-start-2",
 	heroStats: "m-0",
 	heroBack: "mb-[10px] [&_a]:text-xs [&_a]:text-[var(--muted)]",
-	heroKicker:
-		"mb-[7px] text-[10px] font-bold tracking-[.16em] text-[var(--accent)]",
+	heroKicker: "mb-[7px] text-xs font-bold text-[var(--accent)]",
 	heroGenre: "mt-1 font-semibold text-[var(--ink)]",
 	previewCount:
-		"ml-1.5 inline-grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[var(--raised)] px-[5px] text-[10px] [font-variant-numeric:tabular-nums]",
+		"ml-1.5 inline-grid h-[20px] min-w-[20px] place-items-center rounded-full bg-[var(--raised)] px-[5px] text-xs [font-variant-numeric:tabular-nums]",
 	artistDanger:
 		"[&_.ui-button--secondary.ui-button--danger]:border-[color-mix(in_srgb,var(--error)_45%,var(--control))] [&_.ui-button--secondary.ui-button--danger]:bg-transparent [&_.ui-button--secondary.ui-button--danger]:text-[var(--error)]",
 	objectHeader:
-		"mb-[10px] flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] pb-[14px] [&>div]:min-w-0 [&>div]:[overflow-wrap:anywhere] [&_h1]:text-[clamp(22px,2.4vw,34px)] [&_h1]:leading-[1.15] [&_h1]:tracking-[-.03em] [&_h1]:[overflow-wrap:anywhere] [&_p]:max-w-[850px] [&_p]:[overflow-wrap:anywhere] [&>a]:justify-self-end",
+		"mb-[10px] flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] pb-[14px] [&>div]:min-w-0 [&>div]:[overflow-wrap:anywhere] [&_h1]:text-[20px] [&_h1]:leading-[1.3] [&_h1]:tracking-[-.02em] [&_h1]:[overflow-wrap:anywhere] [&_p]:max-w-[850px] [&_p]:[overflow-wrap:anywhere] [&>a]:justify-self-end",
 	objectColumns: "grid grid-cols-2 gap-3 max-[1100px]:grid-cols-1",
 	panel:
 		"mb-[10px] min-w-0 rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-[10px] [&_h2]:mb-[9px] [&_h2]:text-sm [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mb-2 [&_p]:my-2",
@@ -82,8 +81,8 @@ export const catalogueStyles = {
 		"my-2 flex flex-wrap items-center gap-[7px] [&>button]:min-h-8 [&>button]:rounded-[4px] [&>button]:border [&>button]:border-[var(--control)] [&>button]:bg-[var(--surface)] [&>button]:px-[9px] [&>button]:py-[5px] [&>button]:text-[var(--ink)]",
 	secondary:
 		"mt-[3px] block text-[11px] font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
-	sub: "mt-[3px] block text-[10px] font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
-	path: "block font-[var(--mono)] text-[9px] [overflow-wrap:anywhere]",
+	sub: "mt-[3px] block text-xs font-normal text-[var(--muted)] [overflow-wrap:anywhere]",
+	path: "block font-[var(--mono)] text-[11px] [overflow-wrap:anywhere]",
 	expander:
 		"min-h-0 border-0 bg-transparent p-0 text-left font-[inherit] font-semibold text-[var(--accent)] hover:underline",
 	previewTable:
@@ -102,16 +101,16 @@ export const catalogueStyles = {
 	albumCopy:
 		"grid min-w-0 gap-[5px] text-left [&>strong]:text-[clamp(14px,1.35vw,18px)] [&>strong]:leading-[1.2] [&>strong]:tracking-[-.015em] [&>strong]:[overflow-wrap:anywhere]",
 	albumMeta:
-		"block text-[11px] font-normal leading-[1.4] text-[var(--muted)] [overflow-wrap:anywhere] max-[600px]:text-[10px]",
+		"block text-[12px] font-normal leading-[1.4] text-[var(--muted)] [overflow-wrap:anywhere]",
 	albumPanel:
 		"border-t border-[var(--line)] [&_.demo-preview-table]:mx-3 [&_.demo-preview-table]:mb-3",
 	albumActions: "px-[13px] py-[10px]",
 	artistPanel:
 		"my-[10px] rounded-[5px] border border-[var(--line)] bg-[var(--surface)] p-3 shadow-[0_2px_8px_#00000008] [&_h2]:mb-[9px] [&_h2]:text-sm [&_p]:my-1 [&_p]:mb-3 [&_p]:text-xs [&_p]:text-[var(--muted)] [&_select]:min-h-[34px] [&_select]:rounded-[4px] [&_select]:border [&_select]:border-[var(--control)] [&_select]:bg-[var(--surface)] [&_select]:px-2 [&_select]:py-[5px]",
 	inlineTracks:
-		"mt-2 grid min-w-[240px] gap-1 overflow-auto border-l-2 border-[var(--accent)] bg-[var(--raised)] p-[7px] [&>div]:grid [&>div]:grid-cols-[30px_minmax(100px,1fr)_auto] [&>div]:items-start [&>div]:gap-2 [&>div>span]:text-[10px] [&>div>span]:text-[var(--muted)]",
+		"mt-2 grid min-w-[240px] gap-1 overflow-auto border-l-2 border-[var(--accent)] bg-[var(--raised)] p-[7px] [&>div]:grid [&>div]:grid-cols-[30px_minmax(100px,1fr)_auto] [&>div]:items-start [&>div]:gap-2 [&>div>span]:text-xs [&>div>span]:text-[var(--muted)]",
 	inlineTable:
-		"w-full min-w-[700px] border-collapse text-[10px] [&_th]:bg-[var(--surface)] [&_th]:text-[var(--muted)] [&_th]:font-semibold [&_th]:text-left [&_th]:align-middle [&_th]:px-[6px] [&_th]:py-[5px] [&_td]:px-[6px] [&_td]:py-[5px] [&_td]:align-top [&_td:nth-child(2)]:align-middle [&_td]:[overflow-wrap:anywhere] [&_th]:border-b [&_th]:border-[var(--line)] [&_td]:border-b [&_td]:border-[var(--line)] [&_tr:last-child>*]:border-b-0",
+		"w-full min-w-[700px] border-collapse text-xs [&_th]:bg-[var(--surface)] [&_th]:text-[var(--muted)] [&_th]:font-semibold [&_th]:text-left [&_th]:align-middle [&_th]:px-[6px] [&_th]:py-[5px] [&_td]:px-[6px] [&_td]:py-[5px] [&_td]:align-top [&_td:nth-child(2)]:align-middle [&_td]:[overflow-wrap:anywhere] [&_th]:border-b [&_th]:border-[var(--line)] [&_td]:border-b [&_td]:border-[var(--line)] [&_tr:last-child>*]:border-b-0",
 	empty: "p-7 px-4 text-center text-[var(--muted)]",
 	absPanel: "min-w-0",
 	detailSelect:

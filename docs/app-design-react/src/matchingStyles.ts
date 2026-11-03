@@ -54,3 +54,9 @@ export const deletionDialog =
 
 export const deletionFooter =
 	"sticky bottom-[-1px] -mx-1 -mb-1 mt-1 flex justify-end gap-2 border-t border-[var(--line)] bg-[var(--surface)] px-1 pt-2.5 pb-1";
+
+export const matchingSearchControls =
+	"my-2 flex flex-wrap gap-1.5 [&_[aria-pressed=true]]:border-[var(--accent)] [&_[aria-pressed=true]]:bg-[var(--accent-soft)]";
+
+export const matchingSearchResult =
+	"my-2 rounded border border-[var(--line)] bg-[var(--raised)] px-2.5 py-2 text-xs [overflow-wrap:anywhere]";

@@ -81,6 +81,104 @@ it("resolves a new manual artist from the supplied registry for tags and path", 
 	expect(published?.path).toContain(`/srv/music/${artist.name}/`);
 });
 
+it("projects local publication audio tags from the selected replacement source", () => {
+	const { state, files, releases } = fresh();
+	state.groupId = "north";
+	state.groups.find((group) => group.id === "north")!.mode = "local";
+	const plan = makePlan(state, files, releases)!;
+	const sourceId = "north-extra";
+	const track = releases.find((release) => release.id === "north")!.tracks[0];
+	track.audioMetadata = {
+		...track.audioMetadata,
+		[sourceId]: { replaygain_track_gain: ["-8.25"] },
+	};
+	plan.assignments = {
+		[plan.target.tracks[0].id]: {
+			...plan.assignments[plan.target.tracks[0].id],
+			sourceIds: [sourceId],
+			selectedSourceId: sourceId,
+			included: true,
+		},
+	};
+	expect(
+		planRows(plan, files, releases)[0].nextTags.REPLAYGAIN_TRACK_GAIN,
+	).toEqual(["-8.25"]);
+});
+
+it("filters an invalid included row from application while preserving other positions", () => {
+	const { state, files, releases } = fresh();
+	state.groupId = "north";
+	const plan = makePlan(state, files, releases)!;
+	const local = releases.find((release) => release.id === "north")!;
+	const invalid = local.tracks[0];
+	const valid = local.tracks[1];
+	invalid.recordingMetadata = { explicitstatus: ["maybe"] };
+	const invalidPublication = structuredClone(invalid.published);
+	valid.published = null;
+	plan.assignments = Object.fromEntries(
+		plan.target.tracks.slice(0, 2).map((targetTrack, index) => [
+			targetTrack.id,
+			{
+				...plan.assignments[targetTrack.id],
+				included: true,
+				sourceIds: [index === 0 ? "north-f1" : "north-f2"],
+				selectedSourceId: index === 0 ? "north-f1" : "north-f2",
+			},
+		]),
+	);
+	const originalPositions = local.tracks.map((track) => track.position);
+
+	expect(applyPlan(plan, files, releases)).toBe(1);
+	expect(invalid.published).toEqual(invalidPublication);
+	expect(valid.published).not.toBeNull();
+	expect(local.tracks.map((track) => track.position)).toEqual(
+		originalPositions,
+	);
+});
+
+it("replaces only audio measurement tags on an automatic quality upgrade", () => {
+	const { state, files, releases } = fresh();
+	state.groupId = "north";
+	state.groups.find((group) => group.id === "north")!.mode = "local";
+	const plan = makePlan(state, files, releases)!;
+	const targetTrack = plan.target.tracks[0];
+	const track = releases.find((release) => release.id === "north")!.tracks[0];
+	if (!track.published) throw new Error("Missing publication fixture");
+	const sourceId = "north-upgrade";
+	files[sourceId] = {
+		...files["north-f1"],
+		id: sourceId,
+		codec: "FLAC",
+	};
+	track.audioMetadata = {
+		...track.audioMetadata,
+		[sourceId]: { replaygain_track_gain: ["-5.00"] },
+	};
+	track.published = {
+		...track.published,
+		codec: "MP3",
+		tags: {
+			...track.published.tags,
+			REPLAYGAIN_TRACK_GAIN: ["-12.00 dB"],
+			R128_TRACK_GAIN: ["-4"],
+		},
+	};
+	plan.assignments = {
+		[targetTrack.id]: {
+			...plan.assignments[targetTrack.id],
+			included: true,
+			sourceIds: [sourceId],
+			selectedSourceId: sourceId,
+		},
+	};
+
+	expect(applyPlan(plan, files, releases, undefined, true)).toBe(1);
+	expect(track.published?.tags.REPLAYGAIN_TRACK_GAIN).toEqual(["-5.00"]);
+	expect(track.published?.tags.R128_TRACK_GAIN).toBeUndefined();
+	expect(track.metadataBaseline?.REPLAYGAIN_TRACK_GAIN).toEqual(["-5.00"]);
+	expect(track.published?.tags.TITLE).toEqual(track.metadataBaseline?.TITLE);
+});
+
 it("preserves an identical current publication and its complete metadata", () => {
 	const { state, files, releases } = fresh();
 	const plan = makePlan(state, files, releases)!;

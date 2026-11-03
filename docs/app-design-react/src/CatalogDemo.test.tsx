@@ -98,7 +98,7 @@ it("uses the shared floating dock to enter the existing publication preview flow
 		);
 		expect(window.location.hash).toBe("#publication-preview");
 		expect(
-			await screen.findByRole("heading", { name: "Предпросмотр медиатеки" }),
+			await screen.findByRole("heading", { name: "Предпросмотр публикации" }),
 		).toBeInTheDocument();
 	} finally {
 		window.location.hash = previousHash;

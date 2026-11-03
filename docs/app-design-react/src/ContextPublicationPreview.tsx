@@ -1,15 +1,26 @@
 import { useState } from "react";
 import { Button, Checkbox, Dialog, Heading, Modal } from "./ui";
-import type { CatalogArtist, OriginalRelease } from "./catalogData";
+import {
+	publicationMetadataIssues,
+	type CatalogArtist,
+	type OriginalRelease,
+} from "./catalogData";
 import {
 	applyPlan,
 	type IncomingFiles,
 	type IncomingPlan,
 	type IncomingReleases,
 	planRows,
+	selectedSourceId,
 	sourceIds,
 	usableFile,
 } from "./incomingModel";
+import { MetadataDiff, metadataSnapshotDiff } from "./publicationMetadataDiff";
+import {
+	choosePublicationOutput,
+	fixturePublicationDestination,
+} from "./publicationOutput";
+import { originalArtistName } from "./catalogData";
 import {
 	dialogFooter,
 	objectActions,
@@ -18,6 +29,7 @@ import {
 } from "./matchingStyles";
 
 export function ContextPublicationPreview({
+	destination = fixturePublicationDestination,
 	plan,
 	files,
 	releases,
@@ -30,6 +42,7 @@ export function ContextPublicationPreview({
 	onSuccess,
 	onBack,
 }: {
+	destination?: import("./publicationOutput").PublicationDestination;
 	plan: IncomingPlan | null;
 	files: IncomingFiles;
 	releases: IncomingReleases;
@@ -54,14 +67,76 @@ export function ContextPublicationPreview({
 		);
 
 	const rows = planRows(plan, files, releases, providers, artists);
-	const active = rows.filter((row) => row.assignment?.included && row.file);
-	const changed = active.filter((row) => row.action !== "Без изменений");
-	const downgrades = changed.filter((row) => row.downgrade);
-	const stale = plan.inventoryVersion !== inventoryVersion;
 	const existing = releases.find(
 		(release) => release.id === plan.localReleaseId,
 	);
+	const classified = rows.map((row) => {
+		if (!row.assignment?.included)
+			return {
+				row,
+				action: "Пропустить",
+				reason: "Позиция исключена из плана",
+			};
+		const sourceId = selectedSourceId(row.assignment);
+		const metadataRelease =
+			plan.mode === "local" ? (existing ?? plan.target) : plan.target;
+		const metadataTrack = row.track ?? row.targetTrack;
+		const metadataIssues = publicationMetadataIssues(
+			metadataRelease,
+			metadataTrack,
+			sourceId,
+		);
+		if (metadataIssues.length)
+			return {
+				row,
+				action: "Невозможно обработать",
+				reason: `Некорректные метаданные: ${metadataIssues.join("; ")}`,
+			};
+		if (!row.file) {
+			const reason = !sourceId
+				? "Файл не выбран"
+				: "Выбранный файл недоступен для этой операции";
+			return { row, action: "Пропустить", reason };
+		}
+		return {
+			row,
+			action:
+				row.action === "Без изменений"
+					? "Без изменений"
+					: row.previous
+						? "Обновить"
+						: "Создать",
+			reason:
+				row.action === "Без изменений"
+					? "Источник и эффективные теги совпадают с публикацией"
+					: row.previous
+						? "Будут обновлены выбранные метаданные и аудио"
+						: "Новая публикация из выбранного источника",
+		};
+	});
+	const changed = classified.filter(
+		(item) => item.action === "Создать" || item.action === "Обновить",
+	);
+	const downgrades = classified.filter(
+		(item) => item.row.downgrade && item.action === "Обновить",
+	);
+	const counts = [
+		"Создать",
+		"Обновить",
+		"Без изменений",
+		"Невозможно обработать",
+		"Пропустить",
+	].map((action) => ({
+		action,
+		count: classified.filter((item) => item.action === action).length,
+	}));
+	const stale = plan.inventoryVersion !== inventoryVersion;
 	const links = rows.filter((row) => {
+		const status = classified.find(
+			(item) => item.row.targetTrack.id === row.targetTrack.id,
+		)?.action;
+		if (status === "Пропустить" || status === "Невозможно обработать")
+			return false;
 		const assigned = sourceIds(row.assignment).filter((id) =>
 			usableFile(files[id]),
 		);
@@ -98,7 +173,32 @@ export function ContextPublicationPreview({
 		}
 		if (!canConfirm) return;
 		const next = structuredClone(releases);
-		const applied = applyPlan(plan, files, next, providers, false, artists);
+		const applicableIDs = new Set(
+			classified
+				.filter(
+					(item) =>
+						item.action !== "Пропустить" &&
+						item.action !== "Невозможно обработать",
+				)
+				.map((item) => item.row.targetTrack.id),
+		);
+		const applicablePlan: IncomingPlan = {
+			...plan,
+			assignments: Object.fromEntries(
+				Object.entries(plan.assignments).filter(([trackId]) =>
+					applicableIDs.has(trackId),
+				),
+			),
+		};
+		const applied = applyPlan(
+			applicablePlan,
+			files,
+			next,
+			providers,
+			false,
+			artists,
+			destination,
+		);
 		onReleases(next);
 		onPlan(null, false);
 		onSuccess(
@@ -130,13 +230,18 @@ export function ContextPublicationPreview({
 						"Инвентарь источников изменился. Создайте новый предпросмотр перед подтверждением."}
 				</p>
 			)}
-			<p className="demo-preview-counts flex flex-wrap gap-2 py-3">
-				<span className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]">
-					{active.length} / {plan.target.tracks.length} выбрано
-				</span>
-				<span className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]">
-					{changed.length} изменений
-				</span>
+			<p
+				className="demo-preview-counts flex flex-wrap gap-2 py-3"
+				aria-label="Сводка действий"
+			>
+				{counts.map(({ action, count }) => (
+					<span
+						key={action}
+						className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]"
+					>
+						{action}: {count}
+					</span>
+				))}
 				<span className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]">
 					MKA · перепаковка без перекодирования
 				</span>
@@ -154,7 +259,7 @@ export function ContextPublicationPreview({
 						</tr>
 					</thead>
 					<tbody>
-						{rows.map((row) => (
+						{classified.map(({ row, action, reason }) => (
 							<tr key={row.targetTrack.id}>
 								<td>
 									<Checkbox
@@ -174,7 +279,9 @@ export function ContextPublicationPreview({
 								<td>
 									{row.file
 										? `${row.file.name} · ${row.file.codec}`
-										: "Нет выбранного источника"}
+										: selectedSourceId(row.assignment)
+											? "Выбранный источник недоступен"
+											: "Источник не выбран"}
 								</td>
 								<td>
 									{row.previous
@@ -185,12 +292,46 @@ export function ContextPublicationPreview({
 									{row.nextTags.TITLE?.join(" · ") ?? "—"}
 									<br />
 									{row.nextTags.ALBUM?.join(" · ") ?? "—"}
+									{row.file && (
+										<p className="text-xs wrap-anywhere">
+											<code>
+												{row.previous?.path ??
+													choosePublicationOutput(row.file, {
+														...destination,
+														artist: originalArtistName(
+															plan.target.artistId,
+															artists,
+														),
+														year: plan.target.year,
+														release: plan.target.title,
+														position: row.targetTrack.position,
+														title: row.targetTrack.title,
+													}).path}
+											</code>
+										</p>
+									)}
 								</td>
 								<td>
-									{row.action}
+									<strong>{action}</strong>
+									<p>{reason}</p>
 									{row.downgrade && row.assignment?.included
 										? " · Понижение качества"
 										: ""}
+									<MetadataDiff
+										groups={metadataSnapshotDiff(
+											row.previous?.tags ?? {},
+											row.nextTags,
+											{
+												coverHash: row.previous?.coverHash ?? null,
+												lyrics: row.previous?.lyrics ?? null,
+											},
+											{
+												coverHash:
+													(row.track ?? row.targetTrack).coverHash ?? null,
+												lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
+											},
+										)}
+									/>
 								</td>
 							</tr>
 						))}

@@ -12,10 +12,8 @@ import { artistReleaseHref } from "./artistReleaseRoute";
 import type { DeletionOperation } from "./DeletionRequest";
 import { catalogueStyles } from "./catalogueStyles";
 import { TrackMetadataEditors } from "./metadata/TrackMetadataEditors";
-import { navidromeFields } from "./metadata/registry";
 import {
 	catalogData,
-	desiredTags,
 	originalArtistName,
 	originalFiles,
 	originalProviders,
@@ -24,6 +22,10 @@ import {
 	type SourceFiles,
 	type CatalogArtist,
 } from "./catalogData";
+import {
+	MetadataDiff,
+	publicationMetadataDiff,
+} from "./publicationMetadataDiff";
 
 const duration = (seconds: number) =>
 	`${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
@@ -66,37 +68,23 @@ export function TrackScreen({
 	const providerTrack = provider?.tracks.find(
 		(candidate) => candidate.id === track.providerTrackId,
 	);
-	const local = desiredTags(release, track, artists);
-	const normalizeTagValues = (values: string[]) =>
-		values
-			.join("\0")
-			.normalize("NFKC")
-			.toLocaleLowerCase()
-			.replace(/\s+/g, " ")
-			.trim();
-	const changes =
-		track.published && track.metadataBaseline
-			? [
-					...navidromeFields
-						.filter(
-							({ tag }) =>
-								normalizeTagValues(local[tag] ?? []) !==
-								normalizeTagValues(track.metadataBaseline?.[tag] ?? []),
-						)
-						.map((field) => field.tag),
-					...((track.coverHash || null) !==
-					(track.metadataBaselineExtras?.coverHash || null)
-						? ["Встроенная обложка"]
-						: []),
-					...((track.lyrics || null) !==
-					(track.metadataBaselineExtras?.lyrics || null)
-						? ["Текст песни"]
-						: []),
-				]
-			: [];
-	const changed = Boolean(
-		track.published && track.metadataBaseline && changes.length,
-	);
+	const changes = publicationMetadataDiff(release, track, artists);
+	const changed = changes.length > 0;
+	const outputStatus = !track.published
+		? null
+		: track.observedFile?.state === "changed" ||
+				track.observedFile?.state === "drift"
+			? "изменён вне приложения"
+			: track.observedFile?.state === "missing" &&
+					track.observedFile.rootAvailable === true
+				? "отсутствует"
+				: track.observedFile?.state === "missing" ||
+						track.observedFile?.state === "output-unavailable"
+					? "выходной каталог недоступен; наличие файла не установлено"
+					: track.observedFile?.state === "available" ||
+							track.observedFile?.state === "unchanged"
+						? "отклонений не отмечено"
+						: "состояние файла не проверено";
 	return (
 		<section className={catalogueStyles.object}>
 			<header className={catalogueStyles.objectHeader}>
@@ -188,6 +176,22 @@ export function TrackScreen({
 				</section>
 				<section className={catalogueStyles.panel}>
 					<h2>Публикация</h2>
+					<p aria-label="Состояние метаданных публикации">
+						<strong>
+							{track.published
+								? changed
+									? `Метаданные изменились · ${changes.reduce((count, group) => count + group.changes.length, 0)} изменений`
+									: "Метаданные совпадают с публикацией"
+								: "Публикации ещё нет"}
+						</strong>
+					</p>
+					{track.published && (
+						<details>
+							<summary>Сравнить эффективные метаданные</summary>
+							<MetadataDiff groups={changes} />
+						</details>
+					)}
+					{outputStatus && <p>Файл публикации: {outputStatus}.</p>}
 					<div className={catalogueStyles.actions}>
 						{track.published && (
 							<Button onPress={() => onMetadataPreview([track.id])}>
@@ -216,12 +220,6 @@ export function TrackScreen({
 									(track.recordingId
 										? "Связанная композиция"
 										: "Без связи с провайдером")}
-							</dd>
-							<dt>Метаданные</dt>
-							<dd>
-								{changed
-									? `Изменились: ${changes.join(", ")}`
-									: "Совпадают со снимком публикации"}
 							</dd>
 							<dt>Файл на диске</dt>
 							<dd>

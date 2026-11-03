@@ -33,7 +33,10 @@ import {
 } from "./previewModel";
 import { TrackScreen } from "./TrackScreen";
 import { artistReleaseHref } from "./artistReleaseRoute";
-import { OperationsScreen } from "./OperationsScreen";
+import {
+	initialOperationsDemoState,
+	OperationsScreen,
+} from "./OperationsScreen";
 import type { DeletionOperation } from "./DeletionRequest";
 import { recoveryFixture } from "./catalogData";
 import { initialSourceRoots, SourcesScreen } from "./SourcesScreen";
@@ -64,6 +67,16 @@ import { CatalogFilter as CatalogFilterControl } from "./CatalogFilter";
 import { SelectionDock } from "./SelectionDock";
 import type { CatalogFilter } from "./availabilityRows";
 import { catalogueStyles } from "./catalogueStyles";
+import { completeLibraryDeletion } from "./libraryDeletionModel";
+import {
+	fixturePublicationDestination,
+	type PublicationDestination,
+} from "./publicationOutput";
+import {
+	initialSourceProcessingState,
+	resetSourceProcessingQueue,
+	sourceProcessingLocks,
+} from "./sourceProcessingModel";
 
 const subscribeRoute = (listener: () => void) => {
 	window.addEventListener("hashchange", listener);
@@ -142,6 +155,11 @@ export function CatalogDemo({
 		onIncomingCount?.(incomingCount);
 	}, [incomingCount, onIncomingCount]);
 	const [settings, setSettings] = useState(initialDemoSettings);
+	const publicationDestination: PublicationDestination = {
+		outputDirectory:
+			settings.currentOutput ?? fixturePublicationDestination.outputDirectory,
+		format: settings.publicationFormat || fixturePublicationDestination.format,
+	};
 	const loadGenres = async () => {
 		setSettings((current) => ({ ...current, genresLoaded: true }));
 	};
@@ -149,6 +167,12 @@ export function CatalogDemo({
 	const [files, setFiles] = useState(() => structuredClone(originalFiles));
 	const [sourceRoots, setSourceRoots] = useState(() =>
 		structuredClone(initialSourceRoots),
+	);
+	const [sourceProcessing, setSourceProcessing] = useState(() =>
+		structuredClone(initialSourceProcessingState),
+	);
+	const [operationsDemo, setOperationsDemo] = useState(() =>
+		structuredClone(initialOperationsDemoState),
 	);
 	const [removedRoots, setRemovedRoots] = useState<Set<string>>(
 		() => new Set(),
@@ -308,6 +332,29 @@ export function CatalogDemo({
 		setDeletions((previous) => [...previous, operation]);
 		window.location.hash = "operations";
 	};
+	const completeDeletion = (operation: DeletionOperation) => {
+		const next = completeLibraryDeletion(operation, releases, artists);
+		if (!next) return false;
+		setReleases(next.releases);
+		setArtists(next.artists);
+		setDeletions((previous) => previous.filter((item) => item !== operation));
+		setIncoming((previous) => ({
+			...previous,
+			plan: null,
+			inventoryVersion: previous.inventoryVersion + 1,
+		}));
+		setSelected(
+			(previous) =>
+				new Set(
+					[...previous].filter((id) =>
+						next.releases.some((release) =>
+							release.tracks.some((track) => track.id === id),
+						),
+					),
+				),
+		);
+		return true;
+	};
 	useEffect(() => {
 		const heading = document.querySelector<HTMLElement>(".demo-shell h1");
 		if (heading) {
@@ -378,6 +425,7 @@ export function CatalogDemo({
 				new Set(token.selectedIds),
 				files,
 				artists,
+				publicationDestination,
 			),
 		);
 		return true;
@@ -403,6 +451,7 @@ export function CatalogDemo({
 			<main className={screenLayout}>
 				{previewToken ? (
 					<PublicationPreview
+						destination={publicationDestination}
 						token={previewToken}
 						inventoryVersion={incoming.inventoryVersion}
 						scopeKey={previewScopeKey(
@@ -430,7 +479,7 @@ export function CatalogDemo({
 					/>
 				) : (
 					<>
-						<h1>Предпросмотр медиатеки</h1>
+						<h1>Предпросмотр публикации</h1>
 						<p>Нет сохранённого предпросмотра метаданных.</p>
 						<a href="#library">К медиатеке</a>
 					</>
@@ -441,6 +490,7 @@ export function CatalogDemo({
 		return (
 			<main className={screenLayout}>
 				<ContextPublicationPreview
+					destination={publicationDestination}
 					plan={incoming.plan}
 					files={files}
 					releases={releases}
@@ -693,6 +743,7 @@ export function CatalogDemo({
 	if (route === "review")
 		return (
 			<IncomingScreen
+				destination={publicationDestination}
 				state={incoming}
 				onState={setIncoming}
 				files={files}
@@ -705,6 +756,7 @@ export function CatalogDemo({
 	if (route.startsWith("match/"))
 		return (
 			<MatchingScreen
+				destination={publicationDestination}
 				groupId={route.slice(6)}
 				state={incoming}
 				onState={setIncoming}
@@ -718,7 +770,39 @@ export function CatalogDemo({
 	if (route === "settings")
 		return (
 			<main className={screenLayout}>
-				<SettingsScreen settings={settings} onSettings={setSettings} />
+				<SettingsScreen
+					settings={settings}
+					onSettings={setSettings}
+					workDirectoryBusy={
+						sourceProcessingLocks(sourceProcessing).blocksWorkDirectoryChange
+					}
+					onOutputReset={() => {
+						setSourceProcessing((previous) =>
+							resetSourceProcessingQueue(previous),
+						);
+						setOperationsDemo({
+							retryState: "succeeded",
+							dismissedOperations: new Set(["signals", "recovery"]),
+						});
+						setReleases((previous) =>
+							previous.map((release) => ({
+								...release,
+								tracks: release.tracks.map((track) => ({
+									...track,
+									published: null,
+									metadataBaseline: undefined,
+									metadataBaselineExtras: undefined,
+								})),
+							})),
+						);
+						setDeletions([]);
+						setIncoming((previous) => ({
+							...previous,
+							plan: null,
+							inventoryVersion: previous.inventoryVersion + 1,
+						}));
+					}}
+				/>
 			</main>
 		);
 	if (route === "setup")
@@ -741,6 +825,8 @@ export function CatalogDemo({
 					files={files}
 					removed={removedRoots}
 					workDirectory={settings.workDirectory}
+					initialProcessingState={sourceProcessing}
+					onProcessingState={setSourceProcessing}
 					onRemove={(id) => {
 						const next = removeRootFromInventory(files, releases, id);
 						setIncoming((previous) => {
@@ -778,27 +864,50 @@ export function CatalogDemo({
 			<main className={screenLayout}>
 				<OperationsScreen
 					releases={releases}
+					files={files}
 					deletions={deletions}
-					onRecover={() =>
+					initialState={operationsDemo}
+					onState={setOperationsDemo}
+					onCompleteDeletion={completeDeletion}
+					onDismissDeletion={(operation) =>
+						setDeletions((previous) =>
+							previous.filter((item) => item !== operation),
+						)
+					}
+					onRecover={(snapshot) => {
+						const currentOutput = settings.currentOutput ?? "/srv/music";
+						if (
+							!snapshot.path.startsWith(
+								`${currentOutput.replace(/\/$/, "")}/`,
+							) ||
+							!releases.some((release) =>
+								release.tracks.some(
+									(track) => track.id === recoveryFixture.trackId,
+								),
+							)
+						)
+							return false;
 						setReleases((previous) =>
 							previous.map((release) => ({
 								...release,
 								tracks: release.tracks.map((track) =>
-									track.id === recoveryFixture.trackId && track.published
+									track.id === recoveryFixture.trackId
 										? {
 												...track,
+												published: structuredClone(snapshot),
 												recovered: true,
-												metadataBaseline: structuredClone(track.published.tags),
+												metadataBaseline: structuredClone(snapshot.tags),
 												metadataBaselineExtras: {
-													coverHash: track.published.coverHash || null,
-													lyrics: track.published.lyrics || null,
+													coverHash: snapshot.coverHash ?? null,
+													lyrics: snapshot.lyrics ?? null,
 												},
 											}
 										: track,
 								),
 							})),
-						)
-					}
+						);
+						return true;
+					}}
 				/>
 			</main>
 		);

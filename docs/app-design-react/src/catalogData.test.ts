@@ -40,6 +40,22 @@ it("creates only from the explicitly selected available source and skips missing
 	).toBeNull();
 });
 
+it("treats case and spacing differences as exact metadata changes", () => {
+	const releases = structuredClone(originalReleases);
+	const release = releases.find((item) => item.id === "north");
+	const track = release?.tracks.find((item) => item.id === "north-t2");
+	if (!release || !track) throw new Error("Missing north-t2 fixture");
+	const baseline = applyMetadataPreview(releases, new Set([track.id]));
+	const baselineRelease = baseline.find((item) => item.id === release.id);
+	const baselineTrack = baselineRelease?.tracks.find(
+		(item) => item.id === track.id,
+	);
+	if (!baselineRelease || !baselineTrack)
+		throw new Error("Missing projected publication baseline");
+	baselineTrack.title = `${baselineTrack.title} `;
+	expect(metadataChanged(baselineRelease, baselineTrack)).toBe(true);
+});
+
 it("previews an explicit artist sort name change without a display-name fallback", () => {
 	const artists = structuredClone(catalogData.artists) as CatalogArtist[];
 	const releases = structuredClone(originalReleases);

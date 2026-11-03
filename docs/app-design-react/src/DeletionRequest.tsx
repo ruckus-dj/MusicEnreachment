@@ -9,6 +9,9 @@ export interface DeletionOperation {
 	scope: string;
 	publications: number;
 	paths: string[];
+	libraryReleaseIds?: string[];
+	libraryTrackIds?: string[];
+	libraryArtistId?: string;
 }
 
 export function publicationSelectionPlan(
@@ -23,6 +26,9 @@ export function publicationSelectionPlan(
 	});
 	return {
 		kind: "publication",
+		libraryTrackIds: tracks
+			.filter((track) => track.published)
+			.map((track) => track.id),
 		target: `${tracks.length} выбранных публикаций`,
 		scope: `Только текущие публикации выбранных позиций (${titles.join("; ")}); позиции медиатеки, композиции, записи провайдера, исходники и другие публикации сохраняются.`,
 		publications: tracks.filter((track) => track.published).length,
@@ -39,6 +45,8 @@ export function deletionPlan(
 	const tracks = track ? [track] : release.tracks;
 	return {
 		kind: track ? "publication" : "library",
+		libraryReleaseIds: track ? [] : [release.id],
+		libraryTrackIds: tracks.map((item) => item.id),
 		target: track
 			? `${release.title} · ${String(track.position).padStart(2, "0")} · ${track.title}`
 			: release.title || "Релиз без названия",
@@ -159,9 +167,8 @@ export function DeletionRequest({
 						<p>Текущих публикаций в этой области нет.</p>
 					)}
 					<p>
-						Асинхронная операция. Прототип только ставит демонстрационный запрос
-						в список операций: реальные файлы и демонстрационные записи не
-						удаляются.
+						Запрос появится в текущих операциях. Выполнение меняет только данные
+						макета в памяти; реальные файлы не удаляются.
 					</p>
 					<div className={deletionFooter}>
 						<Button onPress={() => setOpen(false)}>Отмена</Button>

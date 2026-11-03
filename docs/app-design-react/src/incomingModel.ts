@@ -6,11 +6,13 @@ import {
 	originalFiles,
 	originalProviders,
 	originalReleases,
+	publicationMetadataIssues,
 	type OriginalRelease,
 	type OriginalTrack,
 	type CatalogArtist,
 	type SourceFile as CatalogSourceFile,
 } from "./catalogData";
+import { replaceAudioMeasurements } from "./metadata/audioMeasurements";
 
 export type TagMap = Record<string, string[]>;
 export type SourceFile = CatalogSourceFile & {
@@ -264,8 +266,9 @@ export function providerTags(
 	release: OriginalRelease,
 	track: OriginalTrack,
 	artists?: CatalogArtist[],
+	audioSourceId: string | null = track.sourceId,
 ): TagMap {
-	return desiredTags(release, track, artists);
+	return desiredTags(release, track, artists, audioSourceId);
 }
 
 export function findProviderTrack(
@@ -401,7 +404,12 @@ export function planRows(
 							provider?.track.recordingId || track?.recordingId || null,
 					}
 				: { ...targetTrack, sourceId: file?.id ?? null };
-		const nextTags = providerTags(releaseForTags, projected, artists);
+		const nextTags = providerTags(
+			releaseForTags,
+			projected,
+			artists,
+			selectedSourceId(assignment),
+		);
 		const previous = track?.published ?? undefined;
 		const unchanged =
 			previous &&
@@ -434,6 +442,12 @@ export function planRows(
 	});
 }
 
+import {
+	choosePublicationOutput,
+	fixturePublicationDestination,
+	type PublicationDestination,
+} from "./publicationOutput";
+
 export function applyPlan(
 	plan: IncomingPlan,
 	files: IncomingFiles,
@@ -441,8 +455,26 @@ export function applyPlan(
 	providers: IncomingReleases = providerReleases,
 	automatic = false,
 	artists?: CatalogArtist[],
+	destination: PublicationDestination = fixturePublicationDestination,
 ) {
 	let release = releases.find((item) => item.id === plan.localReleaseId);
+	const rows = planRows(plan, files, releases, providers, artists);
+	const hasApplicableRow = rows.some((row) => {
+		if (
+			!row.assignment?.included ||
+			!row.file ||
+			row.action === "Без изменений"
+		)
+			return false;
+		const metadataRelease =
+			plan.mode === "local" ? (release ?? plan.target) : plan.target;
+		return !publicationMetadataIssues(
+			metadataRelease,
+			row.track ?? row.targetTrack,
+			selectedSourceId(row.assignment),
+		).length;
+	});
+	if (!release && !hasApplicableRow) return 0;
 	if (!release) {
 		release = {
 			...structuredClone(plan.target),
@@ -463,11 +495,21 @@ export function applyPlan(
 		plan.localReleaseId = String(release.id);
 	}
 	let changed = 0;
-	for (const row of planRows(plan, files, releases, providers, artists)) {
+	for (const row of rows) {
 		const track = release.tracks.find(
 			(item) => item.position === row.targetTrack.position,
 		);
 		if (!track) continue;
+		if (
+			row.assignment?.included &&
+			row.file &&
+			publicationMetadataIssues(
+				plan.mode === "local" ? release : plan.target,
+				row.track ?? row.targetTrack,
+				selectedSourceId(row.assignment),
+			).length
+		)
+			continue;
 		const assigned = automatic && row.previous ? [] : sourceIds(row.assignment);
 		const usableAssignments = assigned.filter((id) => usableFile(files[id]));
 		const existingSources = [
@@ -499,24 +541,36 @@ export function applyPlan(
 		}
 		const published = track.published;
 		if (automatic && row.previous) {
+			const replacementTags = replaceAudioMeasurements(
+				row.previous.tags,
+				desiredTags(release, track, artists, row.file.id),
+			);
 			track.published = {
 				...row.previous,
+				tags: replacementTags,
 				codec: row.file.codec,
 				sourceId: row.file.id,
 				readAt: "Только что · демо",
 			};
+			track.metadataBaseline = structuredClone(replacementTags);
 			changed++;
 			continue;
 		}
-		const path =
-			published?.path ??
-			`/srv/music/${originalArtistName(release.artistId, artists)}/${release.year} - ${release.title}/${String(row.targetTrack.position).padStart(2, "0")} - ${row.targetTrack.title}.mka`;
+		const output = choosePublicationOutput(row.file, {
+			...destination,
+			artist: originalArtistName(release.artistId, artists),
+			year: release.year,
+			release: release.title,
+			position: row.targetTrack.position,
+			title: row.targetTrack.title,
+		});
+		const path = published?.path ?? output.path;
 		track.published = {
 			tags: structuredClone(row.nextTags),
 			coverHash: track.coverHash ?? null,
 			lyrics: track.lyrics ?? null,
 			codec: row.file.codec,
-			container: "MKA",
+			container: published?.container ?? output.container,
 			sourceId: row.file.id,
 			readAt: "Только что · демо",
 			path,
@@ -537,6 +591,7 @@ export function runAutomaticMatching(
 	releases: IncomingReleases,
 	providers: IncomingReleases = providerReleases,
 	artists?: CatalogArtist[],
+	destination: PublicationDestination = fixturePublicationDestination,
 ) {
 	let count = 0;
 	for (const group of state.groups) {
@@ -556,6 +611,8 @@ export function runAutomaticMatching(
 					: "";
 				return Boolean(
 					selected &&
+						usableFile(files[selected]) &&
+						!publicationMetadataIssues(target, track, selected).length &&
 						files[selected]?.confidence === "high" &&
 						assignment?.included &&
 						method.startsWith("Авто"),
@@ -565,8 +622,17 @@ export function runAutomaticMatching(
 			continue;
 		const plan = makeGroupPlan(state, group, files, releases, providers);
 		if (!plan) continue;
-		count += applyPlan(plan, files, releases, providers, true, artists);
-		group.processed = true;
+		const applied = applyPlan(
+			plan,
+			files,
+			releases,
+			providers,
+			true,
+			artists,
+			destination,
+		);
+		count += applied;
+		if (applied > 0) group.processed = true;
 	}
 	return count;
 }

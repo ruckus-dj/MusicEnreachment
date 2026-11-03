@@ -56,7 +56,7 @@ export function DesignShell({
 			<div className="grid h-dvh grid-cols-[174px_minmax(0,1fr)] grid-rows-[42px_minmax(0,1fr)] max-[599px]:flex max-[599px]:h-auto max-[599px]:min-h-dvh max-[599px]:flex-col">
 				<aside className="row-span-2 flex flex-col overflow-auto border-r border-[var(--line)] bg-[var(--surface)] px-2 py-4 max-[599px]:visible max-[599px]:overflow-visible max-[599px]:border-r-0 max-[599px]:border-b max-[599px]:py-2">
 					<Link
-						className="mb-6 flex items-center gap-2 !text-[var(--ink)] text-[11px] font-semibold max-[599px]:mb-2"
+						className="mb-6 flex items-center gap-2 !text-[var(--ink)] text-[12px] font-semibold max-[599px]:hidden"
 						href="#review"
 					>
 						<span
@@ -67,34 +67,25 @@ export function DesignShell({
 						</span>
 						<span>
 							MeloTrove
-							<small className="mt-[3px] block text-[7px] tracking-[.08em] text-[var(--muted)]">
+							<small className="mt-[3px] block text-[12px] text-[var(--muted)]">
 								АРХИВНАЯ МАСТЕРСКАЯ
 							</small>
 						</span>
 					</Link>
-					<p className="mb-2 px-2 text-[9px] tracking-[.06em] text-[var(--muted)] max-[599px]:hidden">
-						РАБОЧЕЕ ПРОСТРАНСТВО
-					</p>
 					<nav
 						aria-label="Основная навигация"
 						className="grid gap-[3px] max-[599px]:flex max-[599px]:flex-wrap"
 					>
-						{sections.map(([id, label], index) => (
+						{sections.map(([id, label]) => (
 							<Link
 								key={id}
 								href={`#${id}`}
 								aria-current={section === id ? "page" : undefined}
 								className="flex min-h-[34px] items-center gap-2 rounded px-2 py-1.5 !text-[var(--ink)] hover:bg-[var(--raised)] aria-[current=page]:bg-[var(--accent-soft)] aria-[current=page]:!text-[var(--accent)] aria-[current=page]:font-semibold max-[599px]:min-h-10"
 							>
-								<span
-									aria-hidden="true"
-									className="font-mono text-[10px] text-[var(--muted)] max-[599px]:hidden"
-								>
-									{String(index + 1).padStart(2, "0")}
-								</span>
 								{label}
 								{id === "review" && (
-									<span className="ml-auto font-mono text-[10px] text-[var(--muted)]">
+									<span className="ml-auto text-[12px] text-[var(--muted)]">
 										{incomingCount}
 									</span>
 								)}
@@ -102,34 +93,32 @@ export function DesignShell({
 						))}
 					</nav>
 					<div className="mt-auto pt-6 max-[599px]:hidden">
-						<p className="mb-2 px-2 text-[9px] tracking-[.06em] text-[var(--muted)]">
-							ОБ ЭТОЙ ВЕРСИИ
-						</p>
 						<a
-							className="block px-2 py-1.5 text-[11px] text-[var(--muted)]"
+							className="block px-2 py-1.5 text-[12px] text-[var(--muted)]"
 							href="#setup"
 						>
 							Первый запуск
 						</a>
 						<a
-							className="block px-2 py-1.5 text-[11px] text-[var(--muted)]"
+							className="block px-2 py-1.5 text-[12px] text-[var(--muted)]"
 							href="#components"
 						>
 							Визуальная система
 						</a>
-						<p className="mt-4 border-t border-[var(--line)] px-2 pt-3 text-[10px] text-[var(--muted)]">
+						<p className="mt-4 border-t border-[var(--line)] px-2 pt-3 text-[12px] text-[var(--muted)]">
 							Независимая концепция
 							<br />
 							Плотный каталог · v2
 						</p>
 					</div>
 				</aside>
-				<header className="flex items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-[11px] text-[var(--muted)] max-[599px]:min-h-[42px] max-[599px]:flex-wrap">
+				<header className="flex items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-[12px] text-[var(--muted)] max-[599px]:min-h-[42px] max-[599px]:flex-wrap">
 					<span>
+						<span className="hidden max-[599px]:inline">MeloTrove · </span>
 						{sections.find(([id]) => id === section)?.[1] ?? "MeloTrove"}
 					</span>
 					<div className="flex items-center gap-2">
-						<span className="text-[9px] tracking-[.04em] max-[599px]:hidden">
+						<span className="text-[12px] max-[599px]:hidden">
 							МАКЕТ · ТЕСТОВЫЕ ДАННЫЕ
 						</span>
 						<ThemeControl />

@@ -67,12 +67,57 @@ it("reports cover and lyrics metadata changes and observed file time", () => {
 			onPreview={vi.fn()}
 		/>,
 	);
-	expect(
-		screen.getByText(/Изменились: .*Встроенная обложка, Текст песни/),
-	).toBeInTheDocument();
+	expect(screen.getByText(/Метаданные изменились/)).toBeInTheDocument();
 	expect(screen.getByText("Файл изменён вне приложения")).toBeInTheDocument();
 	fireEvent.click(screen.getByText("Состояние и технические сведения"));
 	expect(screen.getByText("2026-10-31T12:34:56Z")).toBeInTheDocument();
+});
+
+it("does not report a missing publication when its output root is unavailable", () => {
+	const original = originalReleases.find((item) => item.id === "north");
+	const baseline = original?.tracks.find((item) => item.id === "north-t2");
+	if (!original || !baseline?.published)
+		throw new Error("Missing published fixture");
+	const release = structuredClone(original);
+	const track = release.tracks.find((item) => item.id === baseline.id);
+	if (!track) throw new Error("Missing track fixture");
+	track.observedFile = { state: "missing", rootAvailable: false };
+	render(
+		<TrackScreen
+			release={release}
+			track={track}
+			onSource={vi.fn()}
+			onPreview={vi.fn()}
+		/>,
+	);
+	expect(
+		screen.getByText(
+			/выходной каталог недоступен; наличие файла не установлено/,
+		),
+	).toBeInTheDocument();
+	expect(
+		screen.queryByText(/^Файл публикации: отсутствует\.$/),
+	).not.toBeInTheDocument();
+});
+
+it("reports missing output only when the root was available for inspection", () => {
+	const original = originalReleases.find((item) => item.id === "north");
+	const baseline = original?.tracks.find((item) => item.id === "north-t2");
+	if (!original || !baseline?.published)
+		throw new Error("Missing published fixture");
+	const release = structuredClone(original);
+	const track = release.tracks.find((item) => item.id === baseline.id);
+	if (!track) throw new Error("Missing track fixture");
+	track.observedFile = { state: "missing", rootAvailable: true };
+	render(
+		<TrackScreen
+			release={release}
+			track={track}
+			onSource={vi.fn()}
+			onPreview={vi.fn()}
+		/>,
+	);
+	expect(screen.getByText("Файл публикации: отсутствует.")).toBeInTheDocument();
 });
 
 it("keeps the current publication path and tag snapshot in its own disclosure", () => {

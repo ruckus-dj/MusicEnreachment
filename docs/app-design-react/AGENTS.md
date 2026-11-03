@@ -22,6 +22,14 @@ regenerate it from a retired prototype or add invented source hashes/provenance.
 critical existing identities; update it only when approved fixture identities
 change. Do not reformat the fixture JSON.
 
+Format explicit TypeScript/TSX paths, not the entire `src` directory: a recursive
+Biome write also reformats the canonical JSON and attempts to parse Tailwind's
+CSS directives without the prototype parser configuration. Keep fixture bytes
+unchanged. RTL assertions must scope duplicate controls to their package/section
+and distinguish notices from independent health/status regions; optional empty
+aligned provider IDs are not invalid metadata merely because projection emits a
+nonblocking completeness notice.
+
 All prototype styling must use Tailwind utilities in components or reusable
 static utility strings. Keep the minimal Tailwind CSS entry to directives and
 configuration only; do not add handwritten CSS selectors, component rules,

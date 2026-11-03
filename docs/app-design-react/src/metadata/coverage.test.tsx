@@ -9,6 +9,7 @@ import { expect, it, vi } from "vitest";
 import { MetadataEditor } from "./MetadataEditor";
 import type { MetadataValues } from "./projection";
 import { fieldsForScope, type MetadataScope } from "./registry";
+import { audioMeasurementKeys } from "./audioMeasurements";
 
 const scopes: MetadataScope[] = ["release", "recording", "track", "audio"];
 
@@ -42,6 +43,21 @@ it.each(
 			field.derived
 		)
 			continue;
+		if (
+			scope === "audio" &&
+			audioMeasurementKeys.includes(
+				field.key as (typeof audioMeasurementKeys)[number],
+			)
+		) {
+			const controls = rendered.filter((node) =>
+				node.getAttribute("data-metadata-keys")!.split(",").includes(field.key),
+			);
+			expect(
+				controls.some((node) => node.textContent?.includes("Не рассчитано")),
+				`${field.key} is rendered readonly`,
+			).toBeTruthy();
+			continue;
+		}
 		const controls = rendered.filter((node) =>
 			node.getAttribute("data-metadata-keys")!.split(",").includes(field.key),
 		);
@@ -221,9 +237,14 @@ it("edits the release-scoped script field", () => {
 	expect(onSave).toHaveBeenCalledWith({ script: ["Cyrl"] });
 });
 
-it("edits audio-only ReplayGain and R128 values without scope leakage", () => {
+it("keeps ReplayGain and R128 measurements readonly while saving encoded fields", () => {
 	const onSave = vi.fn();
-	const values = { replaygain_track_gain: ["-7.5"], r128_album_gain: ["-256"] };
+	const values = {
+		replaygain_track_gain: ["-7.5"],
+		r128_album_gain: ["-256"],
+		encodedby: ["Encoder A"],
+		encodersettings: ["setting A"],
+	};
 	const { container } = render(
 		<MetadataEditor
 			label="Audio"
@@ -233,20 +254,18 @@ it("edits audio-only ReplayGain and R128 values without scope leakage", () => {
 		/>,
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
-	fireEvent.change(
-		screen.getByRole("spinbutton", { name: "ReplayGain трека" }),
-		{
-			target: { value: "-6.25" },
-		},
-	);
-	fireEvent.change(screen.getByRole("spinbutton", { name: "R128 альбома" }), {
-		target: { value: "-240" },
+	for (const key of audioMeasurementKeys) {
+		const marker = container.querySelector<HTMLElement>(
+			`[data-metadata-keys="${key}"]`,
+		);
+		expect(marker, key).toBeTruthy();
+		expect(marker!.matches("input, textarea, select, button")).toBe(false);
+	}
+	fireEvent.change(screen.getByRole("textbox", { name: "Закодировано" }), {
+		target: { value: "Encoder B" },
 	});
 	fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-	expect(onSave).toHaveBeenCalledWith({
-		replaygain_track_gain: ["-6.25"],
-		r128_album_gain: ["-240"],
-	});
+	expect(onSave).toHaveBeenCalledWith({ ...values, encodedby: ["Encoder B"] });
 	expect(
 		container.querySelector('[data-metadata-keys="r128_track_gain"]'),
 	).toBeTruthy();

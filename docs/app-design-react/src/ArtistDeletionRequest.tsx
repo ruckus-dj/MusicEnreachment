@@ -99,6 +99,9 @@ export function artistDeletionPlan(
 
 	return {
 		kind: "artist",
+		libraryArtistId: artistId,
+		libraryReleaseIds: relatedReleases.map((release) => release.id),
+		libraryTrackIds: affected.map(({ track }) => track.id),
 		target: artist.name,
 		scope: `${relatedReleases.length} связанных релизов; ${directRecordingIds.size} напрямую связанных композиций; ${affectedTracks.size} позиций (включая позиции этих композиций в сохраняемых релизах). Остальные сущности медиатеки и все записи провайдера сохраняются.`,
 		publications: publications.length,
@@ -171,9 +174,8 @@ export function ArtistDeletionRequest({
 						<p>Текущих публикаций в этой области нет.</p>
 					)}
 					<p>
-						Асинхронная операция. Прототип только ставит демонстрационный запрос
-						в список операций: реальные файлы и демонстрационные записи не
-						удаляются.
+						Запрос появится в текущих операциях. Выполнение меняет только данные
+						макета в памяти; реальные файлы не удаляются.
 					</p>
 					<div className={deletionFooter}>
 						<Button onPress={() => setOpen(false)}>Отмена</Button>
@@ -182,6 +184,9 @@ export function ArtistDeletionRequest({
 							onPress={() => {
 								setOpen(false);
 								onQueue({
+									libraryArtistId: plan.libraryArtistId,
+									libraryReleaseIds: plan.libraryReleaseIds,
+									libraryTrackIds: plan.libraryTrackIds,
 									kind: "artist",
 									target: plan.target,
 									scope: plan.scope,

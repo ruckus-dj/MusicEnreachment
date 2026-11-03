@@ -20,6 +20,7 @@ it("matches original Mira preview counts without selecting alternative sources",
 		Создать: 0,
 		Обновить: 0,
 		"Без изменений": 0,
+		"Невозможно обработать": 0,
 		Пропустить: 0,
 	};
 	for (const release of originalReleases.filter(
@@ -49,10 +50,92 @@ it("matches original Mira preview counts without selecting alternative sources",
 	for (const [action, count] of Object.entries(actionCounts))
 		expect(screen.getByText(`${action}: ${count}`)).toBeInTheDocument();
 	expect(screen.getAllByRole("row")).toHaveLength(ids.length + 1);
+	expect(
+		Object.values(actionCounts).reduce((sum, count) => sum + count, 0),
+	).toBe(ids.length);
 	fireEvent.click(
 		screen.getByRole("button", { name: "Вернуться в медиатеку" }),
 	);
 	expect(onBack).toHaveBeenCalledOnce();
+});
+
+it("skips an unavailable source without claiming the file is missing", () => {
+	const release = structuredClone(
+		originalReleases.find((item) => item.id === "north"),
+	);
+	if (!release) throw new Error("Missing north release fixture");
+	const track = release.tracks.find((item) => item.id === "north-t9");
+	if (!track) throw new Error("Missing north-t9 fixture");
+	track.sourceId = "unknown-source";
+	render(
+		<PublicationPreview
+			token={token([track.id])}
+			inventoryVersion={4}
+			scopeKey="selection:test"
+			onBack={vi.fn()}
+			releases={[release]}
+			files={{}}
+		/>,
+	);
+	expect(screen.getByText("Пропустить: 1")).toBeInTheDocument();
+	expect(
+		screen.getByText(/файл недоступен для этой операции/i),
+	).toBeInTheDocument();
+	expect(screen.queryByText(/файл отсутствует/i)).not.toBeInTheDocument();
+});
+
+it("marks invalid metadata as unprocessable and explains the validation issue", () => {
+	const release = structuredClone(
+		originalReleases.find((item) => item.id === "north"),
+	);
+	if (!release) throw new Error("Missing north release fixture");
+	const track = release.tracks.find((item) => item.id === "north-t2");
+	if (!track) throw new Error("Missing north-t2 fixture");
+	track.recordingMetadata = { explicitstatus: ["maybe"] };
+	render(
+		<PublicationPreview
+			token={token([track.id])}
+			inventoryVersion={4}
+			scopeKey="selection:test"
+			onBack={vi.fn()}
+			releases={[release]}
+		/>,
+	);
+	expect(screen.getByText("Невозможно обработать: 1")).toBeInTheDocument();
+	expect(
+		screen.getByText(/Некорректные метаданные: explicitstatus/),
+	).toBeInTheDocument();
+});
+
+it("applies only create/update rows and excludes unprocessable metadata", () => {
+	const release = structuredClone(
+		originalReleases.find((item) => item.id === "north"),
+	);
+	if (!release) throw new Error("Missing north release fixture");
+	const invalidTrack = release.tracks.find((item) => item.id === "north-t2");
+	if (!invalidTrack) throw new Error("Missing north-t2 fixture");
+	invalidTrack.recordingMetadata = { explicitstatus: ["maybe"] };
+	const onApply = vi.fn(() => true);
+	render(
+		<PublicationPreview
+			token={token(["north-t2", "north-t6"])}
+			inventoryVersion={4}
+			scopeKey="selection:test"
+			onBack={vi.fn()}
+			onApply={onApply}
+			releases={[release]}
+		/>,
+	);
+	fireEvent.click(
+		screen.getByRole("button", {
+			name: /Создать \d+ · обновить метаданные \d+/,
+		}),
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
+	expect(onApply).toHaveBeenCalledWith({
+		...token(["north-t2", "north-t6"]),
+		selectedIds: ["north-t6"],
+	});
 });
 
 it.each([
@@ -72,7 +155,9 @@ it.each([
 		/>,
 	);
 	fireEvent.click(
-		screen.getByRole("button", { name: "Опубликовать / обновить" }),
+		screen.getByRole("button", {
+			name: /Создать \d+ · обновить метаданные \d+/,
+		}),
 	);
 	expect(screen.getByRole("dialog")).toBeInTheDocument();
 	rerender(
@@ -103,10 +188,14 @@ it("marks an already stale preview and blocks opening confirmation", () => {
 	);
 	expect(screen.getByRole("alert")).toHaveTextContent("устарел");
 	expect(
-		screen.getByRole("button", { name: "Опубликовать / обновить" }),
+		screen.getByRole("button", {
+			name: /Создать \d+ · обновить метаданные \d+/,
+		}),
 	).toBeDisabled();
 	fireEvent.click(
-		screen.getByRole("button", { name: "Опубликовать / обновить" }),
+		screen.getByRole("button", {
+			name: /Создать \d+ · обновить метаданные \d+/,
+		}),
 	);
 	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
@@ -126,7 +215,9 @@ it("keeps a parent-rejected confirmation unapplied and communicates staleness", 
 		/>,
 	);
 	fireEvent.click(
-		screen.getByRole("button", { name: "Опубликовать / обновить" }),
+		screen.getByRole("button", {
+			name: /Создать \d+ · обновить метаданные \d+/,
+		}),
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
 	expect(onApply).toHaveBeenCalledOnce();

@@ -56,6 +56,8 @@ export interface MetadataEditorProps {
 	extraFields?: ExtraField[];
 }
 
+import { audioMeasurementKeys } from "./audioMeasurements";
+
 const inputClass =
 	"h-8 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)] read-only:border-transparent read-only:bg-transparent";
 const disclosureSummaryClass =
@@ -72,6 +74,7 @@ const groupLabels: Record<string, string> = {
 	works: "Произведения",
 	movement: "Часть произведения",
 };
+const audioMeasurementKeySet = new Set<string>(audioMeasurementKeys);
 const linkedArtistKeys = (scope: MetadataScope) =>
 	scope === "release"
 		? [
@@ -370,6 +373,9 @@ export function MetadataEditor({
 	const actionRef = useRef<HTMLButtonElement>(null);
 	const editorRef = useRef<HTMLElement>(null);
 	const fields = useMemo(() => fieldsForScope(scope), [scope]);
+	const editableFields = fields.filter(
+		(field) => !audioMeasurementKeySet.has(field.key),
+	);
 	const current = controlled || !editing ? values : draft;
 	const controlledValues = useRef(values);
 	controlledValues.current = values;
@@ -528,7 +534,7 @@ export function MetadataEditor({
 	});
 	const consumed = new Set<string>();
 	const sections = new Map<string, MetadataField[]>();
-	for (const field of fields) {
+	for (const field of editableFields) {
 		if (
 			field.kind === "identity" &&
 			(field.key === "musicbrainz_artistid" ||
@@ -568,8 +574,10 @@ export function MetadataEditor({
 	const artistGroup =
 		scope === "release" ? "release artists" : "recording artists";
 	const creditKeys = linkedArtistKeys(scope);
-	const artistFields = fields.filter((field) => field.group === artistGroup);
-	const roles = fields.filter(
+	const artistFields = editableFields.filter(
+		(field) => field.group === artistGroup,
+	);
+	const roles = editableFields.filter(
 		(field) => field.kind === "contributors" && field.role,
 	);
 	const remainingSections = [...sections.entries()].filter(
@@ -579,9 +587,9 @@ export function MetadataEditor({
 			group !== "works" &&
 			group !== "movement",
 	);
-	const basicFields = essentialMetadataFields(fields, scope);
+	const basicFields = essentialMetadataFields(editableFields, scope);
 	const basicKeys = new Set(basicFields.map((field) => field.key));
-	for (const field of fields)
+	for (const field of editableFields)
 		if (field.kind === "genres") basicKeys.add(field.key);
 	const otherSections = remainingSections
 		.map(
@@ -697,8 +705,33 @@ export function MetadataEditor({
 					не редактируются.
 				</p>
 			)}
+			{scope === "audio" && (
+				<section aria-label="Измерения аудио" className="grid min-w-0 gap-2">
+					<h3 className="m-0 text-sm font-semibold">Измерения аудио</h3>
+					<dl className="m-0 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+						{audioMeasurementKeys.map((key) => {
+							const field = fieldByKey(key);
+							const measured = rows(values, key).filter(Boolean).join(" · ");
+							return (
+								<div
+									key={key}
+									{...marker([key])}
+									className="grid min-w-0 gap-1 rounded border border-[var(--line)] p-2"
+								>
+									<dt className="text-xs text-[var(--muted)]">
+										{field?.label ?? key}
+									</dt>
+									<dd className="m-0 break-words text-sm text-[var(--ink)]">
+										{measured || "Не рассчитано"}
+									</dd>
+								</div>
+							);
+						})}
+					</dl>
+				</section>
+			)}
 			{(basicFields.length > 0 ||
-				fields.some((field) => field.kind === "genres") ||
+				editableFields.some((field) => field.kind === "genres") ||
 				genres !== undefined) && (
 				<section className="grid min-w-0 gap-2">
 					<h3 className="m-0 text-sm font-semibold">Основное</h3>
@@ -716,7 +749,7 @@ export function MetadataEditor({
 								onChange={(next) => setValue(field.key, next)}
 							/>
 						))}
-						{fields
+						{editableFields
 							.filter((field) => field.kind === "genres")
 							.map((field) => (
 								<div key={field.key} {...marker([field.key])}>
@@ -748,7 +781,7 @@ export function MetadataEditor({
 								</div>
 							))}
 						{genres !== undefined &&
-							!fields.some((field) => field.kind === "genres") && (
+							!editableFields.some((field) => field.kind === "genres") && (
 								<GenrePicker
 									readOnly={!editing}
 									loaded={genresLoaded}

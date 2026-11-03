@@ -145,6 +145,14 @@ it("queues only a demo deletion operation after confirmation without mutating in
 
 	expect(onQueue).toHaveBeenCalledWith({
 		kind: "artist",
+		libraryArtistId: "artist-a",
+		libraryReleaseIds: ["primary", "credited"],
+		libraryTrackIds: [
+			"direct-position",
+			"other-credit-position",
+			"credited-position",
+			"shared-position",
+		],
 		target: "Artist A",
 		scope: expect.any(String),
 		publications: 3,

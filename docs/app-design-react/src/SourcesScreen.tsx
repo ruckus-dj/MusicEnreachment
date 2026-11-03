@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	Button,
 	Checkbox,
@@ -21,11 +21,25 @@ import {
 } from "./ui";
 import { DirectoryPicker } from "./DirectoryPicker";
 import type { SourceFiles } from "./catalogData";
+import {
+	completeSourceStep,
+	createSourceScan,
+	eligibleSourceCopies,
+	failSourceCopyCleanup,
+	initialSourceProcessingState,
+	processSourceQueue,
+	removeEligibleCopy,
+	removeRootProcessingState,
+	resetSourceProcessingQueue,
+	retrySourceStep,
+	type SourceProcessingState,
+} from "./sourceProcessingModel";
 import { rootLocations } from "./sourceInventory";
 import { formStyles as styles } from "./formStyles";
 
 type Mode = "in_place" | "staged";
 export interface SourceRoot {
+	id: string;
 	name: string;
 	path: string;
 	mode: Mode;
@@ -34,6 +48,7 @@ export interface SourceRoot {
 }
 export const initialSourceRoots: SourceRoot[] = [
 	{
+		id: "root-inbox",
 		name: "Входящие",
 		path: "/mnt/inbox",
 		mode: "staged",
@@ -41,6 +56,23 @@ export const initialSourceRoots: SourceRoot[] = [
 		checked: "26.09.2026 10:20",
 	},
 	{
+		id: "root-library",
+		name: "Музыкальная библиотека",
+		path: "/mnt/music",
+		mode: "in_place",
+		available: true,
+		checked: "26.09.2026 10:20",
+	},
+	{
+		id: "root-backup",
+		name: "Резервный источник",
+		path: "/mnt/backup",
+		mode: "in_place",
+		available: true,
+		checked: "26.09.2026 10:20",
+	},
+	{
+		id: "root-archive",
 		name: "Архивный диск",
 		path: "/mnt/archive",
 		mode: "in_place",
@@ -56,6 +88,8 @@ export function SourcesScreen({
 	removed,
 	onRemove,
 	workDirectory = "",
+	initialProcessingState = initialSourceProcessingState,
+	onProcessingState,
 }: {
 	roots: SourceRoot[];
 	onRoots: (roots: SourceRoot[]) => void;
@@ -63,6 +97,8 @@ export function SourcesScreen({
 	removed: Set<string>;
 	onRemove: (rootId: string) => void;
 	workDirectory?: string;
+	initialProcessingState?: SourceProcessingState;
+	onProcessingState?: (state: SourceProcessingState) => void;
 }) {
 	const [adding, setAdding] = useState(false);
 	const [name, setName] = useState("");
@@ -71,17 +107,17 @@ export function SourcesScreen({
 	const [picker, setPicker] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [notice, setNotice] = useState("");
+	const [processing, setProcessing] = useState(initialProcessingState);
 	const [removal, setRemoval] = useState<{
 		id: string;
 		path: string;
 		locations: string[];
 	} | null>(null);
-	const process = (root: SourceRoot) =>
-		setNotice(
-			root.mode === "staged" && !workDirectory
-				? "Демо: обработка через рабочую копию не начата — сначала задайте общую рабочую папку в Настройках. Источники и файлы не читались."
-				: `Демо: предпосылка выбора рабочей папки для ${root.path} выполнена. Реальные файлы, доступность источника и права не проверялись; копирование и анализ не запускались.`,
-		);
+	useEffect(
+		() => onProcessingState?.(processing),
+		[onProcessingState, processing],
+	);
+	const updateProcessing = (next: SourceProcessingState) => setProcessing(next);
 	return (
 		<section className={styles.page}>
 			<header
@@ -104,15 +140,6 @@ export function SourcesScreen({
 						}}
 					>
 						Добавить источник
-					</Button>
-					<Button
-						onPress={() =>
-							setNotice(
-								"Демо: сканирование поставлено в очередь. Рабочая папка не требуется для перечисления файлов; копирование и анализ выполняются отдельно. Реальные каталоги не читались.",
-							)
-						}
-					>
-						Сканировать · демо
 					</Button>
 				</div>
 			</header>
@@ -183,6 +210,7 @@ export function SourcesScreen({
 								onRoots([
 									...roots,
 									{
+										id: `root-${crypto.randomUUID()}`,
 										name: name.trim(),
 										path,
 										mode,
@@ -281,7 +309,26 @@ export function SourcesScreen({
 									<td>{root.checked}</td>
 									<td>
 										{root.available === null ? (
-											<span>Требует проверки</span>
+											<Button
+												onPress={() => {
+													onRoots(
+														roots.map((item) =>
+															item.id === root.id
+																? {
+																		...item,
+																		available: true,
+																		checked: "Только что · демо",
+																	}
+																: item,
+														),
+													);
+													setNotice(
+														"Демо: источник отмечен доступным. Реальная файловая система не проверялась.",
+													);
+												}}
+											>
+												Проверить доступность · демо
+											</Button>
 										) : root.available ? (
 											<a href="#review">Разобрать группы</a>
 										) : (
@@ -295,8 +342,50 @@ export function SourcesScreen({
 												Проверить
 											</Button>
 										)}
-										<Button onPress={() => process(root)}>
-											Обработать · демо
+										<Button
+											isDisabled={root.available !== true}
+											onPress={() => {
+												updateProcessing(
+													createSourceScan(
+														processing,
+														root.id,
+														root.mode,
+														files,
+													),
+												);
+												setNotice(
+													`Демо-сканирование ${root.path}: в очередь передано ${rootLocations(files, root.id).length} записей инвентаря. Файловая система не читалась; рабочая папка не нужна для scan. Обработка не запускалась.`,
+												);
+											}}
+										>
+											Сканировать · демо
+										</Button>
+										<Button
+											isDisabled={root.available !== true}
+											onPress={() => {
+												if (root.mode === "staged" && !workDirectory) {
+													setNotice(
+														`Обработка ${root.path} не начата: задайте общую рабочую папку в Настройках. Сам scan не требует её.`,
+													);
+													return;
+												}
+												updateProcessing(
+													processSourceQueue(
+														createSourceScan(
+															processing,
+															root.id,
+															root.mode,
+															files,
+														),
+														root.id,
+													),
+												);
+												setNotice(
+													`Демо: явно запущена обработка очереди ${root.path}; проверка аудио выполнена, fingerprint завершился демонстрационной ошибкой. Файловая система не читалась.`,
+												);
+											}}
+										>
+											Обработать найденные · демо
 										</Button>
 									</td>
 								</tr>
@@ -304,6 +393,144 @@ export function SourcesScreen({
 						</tbody>
 					</table>
 				</div>
+			</section>
+			<section
+				className={styles.panel}
+				aria-labelledby="source-processing-title"
+			>
+				<h2 id="source-processing-title">Обработка файлов · демо</h2>
+				<p>
+					Сканирование только ставит записи в очередь. Обработка, создание
+					рабочей копии и проверка аудио запускаются отдельно; fingerprint в
+					демонстрации завершается ошибкой. Повтор запускается явно.
+				</p>
+				<p className="text-xs text-[var(--muted)]">
+					В продукте повторное сканирование сравнивает size и mtime. В исходных
+					fixtures нет реального stat: макет не подтверждает свежесть файла на
+					сервере.
+				</p>
+				<Button
+					onPress={() =>
+						updateProcessing(resetSourceProcessingQueue(processing))
+					}
+				>
+					Сбросить очередь · демо
+				</Button>
+				<Button
+					onPress={() => {
+						if (
+							!workDirectory &&
+							processing.files.some(
+								(file) => file.mode === "staged" && file.status !== "completed",
+							)
+						) {
+							setNotice(
+								"Обработка не начата: задайте рабочую папку в Настройках. Очередь и результаты сохранены.",
+							);
+							return;
+						}
+						updateProcessing(processSourceQueue(processing));
+					}}
+				>
+					Запустить / перезапустить обработку · демо
+				</Button>
+				{processing.files.length === 0 ? (
+					<p>Нет файлов, переданных в обработку.</p>
+				) : (
+					<ul className="m-0 grid gap-3 pl-5">
+						{processing.files.map((file) => (
+							<li key={file.id}>
+								<strong>{file.path}</strong> · {file.status}
+								<ul className="grid gap-2 pl-5">
+									{file.steps.map((step) => (
+										<li key={step.id}>
+											{step.id === "audio_inspection"
+												? "Проверка аудио"
+												: "Fingerprint"}
+											: {step.status}
+											{step.error && <span role="alert"> · {step.error}</span>}
+											{step.status === "failed" && (
+												<Button
+													onPress={() =>
+														updateProcessing(
+															retrySourceStep(processing, file.id, step.id),
+														)
+													}
+												>
+													Повторить шаг
+												</Button>
+											)}
+											{step.status === "queued" && (
+												<Button
+													onPress={() =>
+														updateProcessing(
+															completeSourceStep(processing, file.id, step.id),
+														)
+													}
+													isDisabled={file.mode === "staged" && !file.copyId}
+												>
+													Завершить шаг · демо
+												</Button>
+											)}
+										</li>
+									))}
+								</ul>
+							</li>
+						))}
+					</ul>
+				)}
+				<h3>Сохранённые рабочие копии</h3>
+				<p>
+					Принадлежат приложению; физические исходники и публикации ими не
+					затрагиваются.
+				</p>
+				{processing.copies.length === 0 ? (
+					<p>Нет сохранённых копий.</p>
+				) : (
+					<ul className="m-0 grid gap-2 pl-5">
+						{processing.copies.map((copy) => {
+							const eligible = eligibleSourceCopies(processing).some(
+								(item) => item.id === copy.id,
+							);
+							return (
+								<li key={copy.id}>
+									{copy.fileId} · {copy.status} ·{" "}
+									{eligible
+										? "Можно очистить"
+										: "Защищена: обработка не завершена"}
+									{copy.cleanupError && (
+										<span role="alert">
+											{" "}
+											· Ошибка очистки: {copy.cleanupError}
+										</span>
+									)}
+									{eligible && (
+										<>
+											<Button
+												onPress={() =>
+													updateProcessing(
+														failSourceCopyCleanup(processing, copy.id),
+													)
+												}
+											>
+												Смоделировать ошибку очистки
+											</Button>
+											<Button
+												onPress={() =>
+													updateProcessing(
+														removeEligibleCopy(processing, copy.id),
+													)
+												}
+											>
+												Очистить копию · демо
+											</Button>
+										</>
+									)}
+								</li>
+							);
+						})}
+					</ul>
+				)}
 			</section>
 			<DisclosureGroup className="mt-2">
 				<Disclosure>
@@ -337,39 +564,41 @@ export function SourcesScreen({
 										</tr>
 									</thead>
 									<tbody>
-										{[
-											[
-												"root-inbox",
-												"/mnt/inbox",
-												"Общий файл остаётся связанным с резервным каталогом",
-											],
-											[
-												"root-library",
-												"/mnt/music",
-												"Последний FLAC-исходник снимает связь; MP3 не выбирается автоматически",
-											],
-										].map(([id, path, scenario]) => (
-											<tr key={id}>
-												<td>{id}</td>
-												<td>{path}</td>
-												<td>{rootLocations(files, id).length}</td>
-												<td>{scenario}</td>
+										{roots.map((root) => (
+											<tr key={root.id}>
+												<td>{root.id}</td>
+												<td>{root.path}</td>
+												<td>{rootLocations(files, root.id).length}</td>
 												<td>
-													{removed.has(id) ? (
+													{root.id === "root-library"
+														? "Последний FLAC-исходник снимает связь; MP3 не выбирается автоматически"
+														: "Удаляется только inventory root; физический источник и публикации сохраняются"}
+												</td>
+												<td>
+													{removed.has(root.id) ? (
 														"Удалён в демо"
 													) : (
 														<Button
 															onPress={() => {
-																if (id === "root-library" && busy) {
+																if (
+																	busy ||
+																	processing.files.some(
+																		(file) =>
+																			file.rootId === root.id &&
+																			["queued", "running"].includes(
+																				file.status,
+																			),
+																	)
+																) {
 																	setNotice(
 																		"Удаление отклонено: для этого каталога источника выполняется операция.",
 																	);
 																	return;
 																}
 																setRemoval({
-																	id,
-																	path,
-																	locations: rootLocations(files, id)
+																	id: root.id,
+																	path: root.path,
+																	locations: rootLocations(files, root.id)
 																		.map((location) => location.id)
 																		.sort(),
 																});
@@ -446,11 +675,19 @@ export function SourcesScreen({
 					<Button
 						onPress={() => {
 							if (!removal) return;
-							if (busy && removal.id === "root-library")
+							if (
+								busy ||
+								processing.files.some(
+									(file) =>
+										file.rootId === removal.id &&
+										["queued", "running"].includes(file.status),
+								)
+							) {
 								setNotice(
-									"Подтверждение устарело: началась операция; каталог не удалён.",
+									"Подтверждение устарело: для каталога выполняется операция; каталог не удалён. Пересмотрите состояние и подтвердите удаление повторно.",
 								);
-							else if (
+								return;
+							} else if (
 								rootLocations(files, removal.id)
 									.map((location) => location.id)
 									.sort()
@@ -460,9 +697,12 @@ export function SourcesScreen({
 									"Подтверждение устарело: список файлов в инвентаре изменился. Пересмотрите данные.",
 								);
 							else {
+								updateProcessing(
+									removeRootProcessingState(processing, removal.id),
+								);
 								onRemove(removal.id);
 								setNotice(
-									`Демо: каталог ${removal.path} удалён из инвентаря. Файлы на диске, публикации и медиатека не изменились; другой исходник автоматически не выбран.`,
+									`Демо: каталог ${removal.path} удалён из инвентаря. Принадлежащие приложению рабочие копии источника очищены; физические исходники, публикации и медиатека не изменились; другой исходник автоматически не выбран.`,
 								);
 							}
 							setRemoval(null);

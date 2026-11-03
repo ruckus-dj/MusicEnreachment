@@ -10,11 +10,12 @@ import {
 import { artistReleaseHref } from "./artistReleaseRoute";
 import {
 	catalogData,
+	effectivePublicationTags,
 	originalFiles,
 	originalReleases,
 	originalArtistName,
 	metadataChanged,
-	desiredTags,
+	publicationMetadataIssues,
 	type OriginalRelease,
 	type SourceFiles,
 	type CatalogArtist,
@@ -23,8 +24,19 @@ import {
 	isMetadataPreviewFresh,
 	type MetadataPreviewToken,
 } from "./previewModel";
+import {
+	MetadataDiff,
+	metadataSnapshotDiff,
+	publicationMetadataDiff,
+} from "./publicationMetadataDiff";
+
+import {
+	choosePublicationOutput,
+	fixturePublicationDestination,
+} from "./publicationOutput";
 
 export function PublicationPreview({
+	destination = fixturePublicationDestination,
 	token,
 	inventoryVersion,
 	scopeKey,
@@ -36,6 +48,7 @@ export function PublicationPreview({
 	returnRoute = "library",
 	returnLabel = "Вернуться в медиатеку",
 }: {
+	destination?: import("./publicationOutput").PublicationDestination;
 	token: MetadataPreviewToken;
 	inventoryVersion: number;
 	scopeKey: string;
@@ -58,19 +71,38 @@ export function PublicationPreview({
 			.map((track) => {
 				const file = track.sourceId ? files[track.sourceId] : null;
 				const usable = file?.available && file.locations?.length ? file : null;
-				const action = !track.published
-					? usable
-						? "Создать"
-						: "Пропустить"
-					: metadataChanged(release, track, artists)
-						? "Обновить"
-						: "Без изменений";
-				return { release, track, file: usable, action };
+				const metadataIssues = publicationMetadataIssues(release, track);
+				const action = metadataIssues.length
+					? "Невозможно обработать"
+					: track.published
+						? metadataChanged(release, track, artists)
+							? "Обновить"
+							: "Без изменений"
+						: usable
+							? "Создать"
+							: "Пропустить";
+				const reason =
+					action === "Невозможно обработать"
+						? `Некорректные метаданные: ${metadataIssues.join("; ")}`
+						: action === "Создать"
+							? "Создание из выбранного доступного источника"
+							: action === "Обновить"
+								? "Обновятся эффективные метаданные; опубликованный звук сохраняется"
+								: action === "Без изменений"
+									? "Эффективные метаданные совпадают со снимком публикации"
+									: !track.sourceId
+										? "Файл не выбран; другой источник не выбирается"
+										: "Выбранный файл недоступен для этой операции; другой источник не выбирается";
+				return { release, track, file: usable, action, reason };
 			}),
 	);
-	const unprocessable = rows.filter(
-		(row) => !row.file && !row.track.published,
-	).length;
+	const actions = [
+		"Создать",
+		"Обновить",
+		"Без изменений",
+		"Невозможно обработать",
+		"Пропустить",
+	] as const;
 	const returnLink = `#${returnRoute}`;
 	return (
 		<section
@@ -80,7 +112,7 @@ export function PublicationPreview({
 			<header className="mb-3.5 flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<h1 id="preview-title" className="m-0 text-2xl tracking-[-.02em]">
-						Предпросмотр медиатеки
+						Предпросмотр публикации
 					</h1>
 					<p className="mt-[5px] max-w-[760px] text-[var(--muted)]">
 						Показаны существующие позиции выбранных объектов; повторяющиеся
@@ -104,16 +136,14 @@ export function PublicationPreview({
 				className="my-2.5 mb-3.5 flex flex-wrap gap-2"
 				aria-label="Сводка действий"
 			>
-				{["Создать", "Обновить", "Без изменений", "Пропустить"].map(
-					(action) => (
-						<span
-							key={action}
-							className="rounded border border-[var(--line)] bg-[var(--surface)] px-[9px] py-[5px] text-[11px]"
-						>
-							{action}: {rows.filter((row) => row.action === action).length}
-						</span>
-					),
-				)}
+				{actions.map((action) => (
+					<span
+						key={action}
+						className="rounded border border-[var(--line)] bg-[var(--surface)] px-[9px] py-[5px] text-[11px]"
+					>
+						{action}: {rows.filter((row) => row.action === action).length}
+					</span>
+				))}
 			</div>
 			<div className={previewTableWrap}>
 				<table className={`${previewTable} min-w-[850px]`}>
@@ -137,7 +167,7 @@ export function PublicationPreview({
 						</tr>
 					</thead>
 					<tbody>
-						{rows.map(({ release, track, file, action }) => (
+						{rows.map(({ release, track, file, action, reason }) => (
 							<tr key={track.id}>
 								<td className={`${previewTableCell} min-w-[175px]`}>
 									{artistReleaseHref(release, availableArtists) ? (
@@ -158,27 +188,47 @@ export function PublicationPreview({
 									</a>
 								</td>
 								<td className={`${previewTableCell} min-w-[190px]`}>
-									{file?.path ?? "Нет выбранного источника"}
+									{file?.path ??
+										(track.sourceId
+											? "Выбранный источник недоступен"
+											: "Источник не выбран")}
 									<br />
 									{file?.codec ?? "—"}
 								</td>
 								<td className={`${previewTableCell} min-w-[190px]`}>
 									{track.published?.path ??
-										`/srv/music/${originalArtistName(release.artistId, availableArtists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`}
+										(file
+											? choosePublicationOutput(file, {
+													...destination,
+													artist: originalArtistName(
+														release.artistId,
+														availableArtists,
+													),
+													year: release.year,
+													release: release.title,
+													position: track.position,
+													title: track.title,
+												}).path
+											: "Путь не определён: источник недоступен")}
 									<br />
-									MKA
+									{track.published?.container ??
+										(file
+											? choosePublicationOutput(file, {
+													...destination,
+													artist: originalArtistName(
+														release.artistId,
+														availableArtists,
+													),
+													year: release.year,
+													release: release.title,
+													position: track.position,
+													title: track.title,
+												}).container
+											: "—")}
 								</td>
 								<td className={previewTableCell}>
 									{action}
-									<p>
-										{action === "Пропустить"
-											? "Нет выбранного источника и текущей публикации; другой источник не выбирается"
-											: action === "Без изменений"
-												? "Метаданные совпадают со снимком публикации"
-												: file
-													? "Выбранный источник доступен"
-													: "Можно применить к существующей публикации без источника"}
-									</p>
+									<p>{reason}</p>
 									{track.published && (
 										<p>
 											Звук и качество останутся прежними (
@@ -199,12 +249,32 @@ export function PublicationPreview({
 										</p>
 									)}
 								</td>
-								<td className={`${previewTableCell} min-w-[190px]`}>
-									{desiredTags(release, track, availableArtists).TITLE.join(
-										" · ",
+								<td className={`${previewTableCell} min-w-[230px]`}>
+									{track.published ? (
+										<MetadataDiff
+											groups={publicationMetadataDiff(
+												release,
+												track,
+												availableArtists,
+											)}
+										/>
+									) : (
+										<MetadataDiff
+											groups={metadataSnapshotDiff(
+												{},
+												effectivePublicationTags(
+													release,
+													track,
+													availableArtists,
+												),
+												{ coverHash: null, lyrics: null },
+												{
+													coverHash: track.coverHash ?? null,
+													lyrics: track.lyrics ?? null,
+												},
+											)}
+										/>
 									)}
-									<br />
-									{release.title}
 								</td>
 							</tr>
 						))}
@@ -213,10 +283,16 @@ export function PublicationPreview({
 			</div>
 			<div className="mt-3.5 flex flex-wrap items-center justify-between gap-2.5 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] p-3 max-[600px]:items-stretch">
 				<p>
-					<strong>{unprocessable} не обрабатываемых позиций.</strong> Для уже
-					опубликованных позиций это действие обновляет только метаданные:
-					опубликованный звук и его качество остаются прежними. Для новых
-					публикаций используется выбранный исходник.
+					<strong>
+						{
+							rows.filter((row) => row.action === "Невозможно обработать")
+								.length
+						}{" "}
+						позиций невозможно обработать.
+					</strong>{" "}
+					Для уже опубликованных позиций обновляются эффективные метаданные;
+					опубликованный звук сохраняется. Для новых публикаций используется
+					выбранный исходник. Пропущенные позиции не входят в эту выборку.
 				</p>
 				<div className="flex flex-wrap justify-end gap-2">
 					{onApply && (
@@ -231,7 +307,9 @@ export function PublicationPreview({
 								)
 							}
 						>
-							Опубликовать / обновить
+							Создать {rows.filter((row) => row.action === "Создать").length} ·
+							обновить метаданные{" "}
+							{rows.filter((row) => row.action === "Обновить").length}
 						</Button>
 					)}
 				</div>
@@ -270,7 +348,16 @@ export function PublicationPreview({
 									setConfirming(false);
 									return;
 								}
-								if (onApply && !onApply(token)) {
+								const applicableToken = {
+									...token,
+									selectedIds: rows
+										.filter(
+											(row) =>
+												row.action === "Создать" || row.action === "Обновить",
+										)
+										.map((row) => row.track.id),
+								};
+								if (onApply && !onApply(applicableToken)) {
 									setParentRejected(true);
 									setConfirming(false);
 									return;

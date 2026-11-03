@@ -7,6 +7,8 @@ import {
 	type SourceFiles,
 	type CatalogArtist,
 } from "./catalogData";
+import { replaceAudioMeasurements } from "./metadata/audioMeasurements";
+import { projectMetadataValues } from "./metadata/projection";
 
 export function renameLocalTrack(
 	track: OriginalTrack,
@@ -35,11 +37,16 @@ export function upgradeAudioOnly(
 			...track.published,
 			codec: file.codec,
 			sourceId: file.id,
-			tags: structuredClone(track.published.tags),
+			tags: replaceAudioMeasurements(
+				track.published.tags,
+				projectMetadataValues(track.audioMetadata?.[file.id] ?? {}, "audio")
+					.tags,
+			),
 			readAt: "Только что · демо изменения качества аудио",
 		},
-		metadataBaseline: structuredClone(
-			track.metadataBaseline || track.published.tags,
+		metadataBaseline: replaceAudioMeasurements(
+			track.metadataBaseline ?? track.published.tags,
+			projectMetadataValues(track.audioMetadata?.[file.id] ?? {}, "audio").tags,
 		),
 		metadataBaselineExtras: structuredClone(
 			track.metadataBaselineExtras || {

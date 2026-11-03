@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { IncomingScreen } from "./IncomingScreen";
 import { createIncomingState, incomingFixtures } from "./incomingModel";
@@ -26,6 +26,55 @@ it("shows an explicit empty state when there are no incoming groups", () => {
 	state.groups = [];
 	render(<IncomingScreen state={state} />);
 	expect(screen.getByText("Входящих групп пока нет.")).toBeInTheDocument();
+});
+
+it("shows labeled incoming group summaries instead of a wide table on mobile", () => {
+	const originalMatchMedia = Object.getOwnPropertyDescriptor(
+		window,
+		"matchMedia",
+	);
+	Object.defineProperty(window, "matchMedia", {
+		configurable: true,
+		value: vi.fn().mockReturnValue({
+			matches: true,
+			media: "(max-width: 599px)",
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+		}),
+	});
+	try {
+		const northReason = createIncomingState().groups.find(
+			(group) => group.id === "north",
+		)?.reason;
+		render(<IncomingScreen />);
+		const list = screen.getByRole("list", {
+			name: "Текущие группы входящих альбомов",
+		});
+		const groupSummaries = [...list.querySelectorAll("li")];
+		expect(list).toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: "Northern Lines" }),
+		).toHaveAttribute("href", "#match/north");
+		expect(northReason).toBeTruthy();
+		expect(screen.getByText(northReason ?? "")).toBeInTheDocument();
+		for (const item of groupSummaries) {
+			expect(within(item).getByText(/Файлы:/)).toBeInTheDocument();
+			expect(within(item).getByText(/Назначено:/)).toBeInTheDocument();
+			expect(within(item).getByText(/Свободно:/)).toBeInTheDocument();
+			expect(within(item).getByText(/Опубликовано:/)).toBeInTheDocument();
+		}
+		expect(
+			screen.queryByRole("grid", {
+				name: "Текущие группы входящих альбомов",
+			}),
+		).not.toBeInTheDocument();
+	} finally {
+		if (originalMatchMedia) {
+			Object.defineProperty(window, "matchMedia", originalMatchMedia);
+		} else {
+			Reflect.deleteProperty(window, "matchMedia");
+		}
+	}
 });
 
 it("runs the fully eligible group and keeps incomplete groups in manual review", () => {

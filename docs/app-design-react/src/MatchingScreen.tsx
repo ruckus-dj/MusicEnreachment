@@ -6,18 +6,22 @@ import {
 	Dialog,
 	Heading,
 	Input,
-	Label,
 	Modal,
 	Radio,
 	RadioGroup,
-	SearchField,
 	Tab,
 	TabList,
 	TabPanel,
 	Tabs,
 	TextField,
 } from "./ui";
-import type { CatalogArtist, OriginalTrack } from "./catalogData";
+import {
+	publicationMetadataIssues,
+	type CatalogArtist,
+	type OriginalTrack,
+} from "./catalogData";
+import { MatchingSearchPicker } from "./MatchingSearchPicker";
+import { MetadataDiff, metadataSnapshotDiff } from "./publicationMetadataDiff";
 import {
 	applyPlan,
 	artistName,
@@ -53,6 +57,7 @@ import {
 } from "./matchingStyles";
 
 export type MatchingScreenProps = {
+	destination?: import("./publicationOutput").PublicationDestination;
 	groupId?: string;
 	files?: IncomingFiles;
 	releases?: IncomingReleases;
@@ -70,6 +75,7 @@ const duration = (seconds: unknown) =>
 const tagValue = (tags: Record<string, string[]> | undefined, key: string) =>
 	tags?.[key]?.length ? tags[key].join("; ") : "—";
 export function MatchingScreen({
+	destination,
 	groupId,
 	files: givenFiles,
 	releases: givenReleases,
@@ -84,7 +90,6 @@ export function MatchingScreen({
 	const [localReleases, setLocalReleases] = useState<IncomingReleases>(() =>
 		structuredClone(incomingFixtures.releases),
 	);
-	const [providerQuery, setProviderQuery] = useState("");
 	const [recordingQuery, setRecordingQuery] = useState("");
 	const state = givenState ?? localState;
 	const files = givenFiles ?? incomingFixtures.files;
@@ -152,17 +157,6 @@ export function MatchingScreen({
 	const pool = group.fileIds.filter(
 		(id) => files[id]?.available && !used.has(id),
 	);
-	const candidateList = providers.filter((release) => {
-		const query = normalized(providerQuery || target.title);
-		return query
-			.split(" ")
-			.filter(Boolean)
-			.every((term) =>
-				normalized(
-					`${release.title} ${artistName(String(release.artistId), artists)} ${release.catalog} ${release.id} ${release.year}`,
-				).includes(term),
-			);
-	});
 	const allProviderTracks = providers.flatMap((release) =>
 		release.tracks.map((track) => ({ release, track })),
 	);
@@ -203,9 +197,6 @@ export function MatchingScreen({
 		clearPreview();
 		commitState();
 	};
-	const searchProvider = (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-	};
 	const setCandidate = (id: string) => {
 		group.mode = "provider";
 		group.candidateId = id;
@@ -244,13 +235,42 @@ export function MatchingScreen({
 	const previewRows = preview
 		? planRows(preview, files, releases, providers, artists)
 		: [];
+	const metadataIssues = (row: (typeof previewRows)[number]) => {
+		if (!preview) return [];
+		const local = releases.find(
+			(release) => release.id === preview.localReleaseId,
+		);
+		return publicationMetadataIssues(
+			preview.mode === "local" ? (local ?? preview.target) : preview.target,
+			row.track ?? row.targetTrack,
+			selectedSourceId(row.assignment),
+		);
+	};
+	const effectiveMetadata = (row: (typeof previewRows)[number]) => (
+		<MetadataDiff
+			groups={metadataSnapshotDiff(
+				row.previous?.tags ?? {},
+				row.nextTags,
+				{
+					coverHash: row.previous?.coverHash ?? null,
+					lyrics: row.previous?.lyrics ?? null,
+				},
+				{
+					coverHash: (row.track ?? row.targetTrack).coverHash ?? null,
+					lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
+				},
+			)}
+		/>
+	);
 	const activeRows = previewRows.filter(
 		(row) => row.assignment?.included && row.file,
 	);
 	const changedRows = activeRows.filter(
-		(row) => row.action !== "Без изменений",
+		(row) => row.action !== "Без изменений" && !metadataIssues(row).length,
 	);
 	const linkedRows = previewRows.filter((row) => {
+		if (row.assignment?.included && row.file && metadataIssues(row).length)
+			return false;
 		const persisted = new Set(
 			(row.track?.sourceIds as string[] | undefined) ??
 				(row.track?.sourceId ? [String(row.track.sourceId)] : []),
@@ -280,6 +300,7 @@ export function MatchingScreen({
 			providers,
 			false,
 			artists,
+			destination,
 		);
 		state.notice = changed
 			? `Демо: ${changed} позиций опубликовано.${linkedRows.length ? ` Связи ${linkedRows.length} позиций сохранены.` : ""} Невыбранные позиции и неразмеченные файлы не изменены.`
@@ -411,60 +432,14 @@ export function MatchingScreen({
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						Найти издание
 					</h2>
-					<form onSubmit={searchProvider}>
-						<Label htmlFor="provider-query">Поиск изданий · текстом</Label>
-						<div className="matching-search my-1.5 mb-2 flex gap-1.5">
-							<SearchField
-								aria-label="Поиск изданий"
-								value={providerQuery}
-								onChange={setProviderQuery}
-							>
-								<Input
-									id="provider-query"
-									placeholder="Артист, альбом, каталог…"
-								/>
-							</SearchField>
-							<Button type="submit">Найти</Button>
-						</div>
-					</form>
-					<p className="text-[11px] text-[var(--muted)]">
-						Кандидаты MusicBrainz и записи собственного каталога.
-					</p>
-					<div className="candidate-list my-2.5 grid gap-1.5">
-						{candidateList.map((candidate) => (
-							<Button
-								key={String(candidate.id)}
-								className={`candidate-button grid min-h-0 w-full justify-start rounded-[5px] border border-[var(--line)] bg-[var(--surface)] px-2.5 py-[9px] text-left [white-space:normal] hover:border-[var(--accent)] hover:bg-[var(--raised)] ${group.mode === "provider" && group.candidateId === candidate.id ? "selected border-[var(--accent)] bg-[var(--accent-soft)] shadow-[inset_3px_0_var(--accent)]" : ""}`}
-								aria-pressed={
-									group.mode === "provider" &&
-									group.candidateId === candidate.id
-								}
-								onPress={() => setCandidate(String(candidate.id))}
-							>
-								<strong className="text-xs leading-[1.35]">
-									{String(candidate.title)}
-								</strong>
-								<span className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
-									{candidate.credits?.[0]?.name ||
-										artistName(String(candidate.artistId), artists)}{" "}
-									· {String(candidate.year)} · {String(candidate.country)}
-								</span>
-								<span className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
-									{candidate.tracks.length} позиций ·{" "}
-									{String(candidate.catalog)}
-								</span>
-								<code className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
-									{String(candidate.id)}
-								</code>
-							</Button>
-						))}
-					</div>
-					{candidateList.length === 0 && (
-						<p>
-							Не нашли нужную запись?{" "}
-							<a href="#local">Создать запись в собственном каталоге</a>
-						</p>
-					)}
+					<MatchingSearchPicker
+						artists={artists}
+						releases={providers}
+						selectedReleaseId={
+							group.mode === "provider" ? group.candidateId : null
+						}
+						onSelectRelease={setCandidate}
+					/>
 					<Button
 						className="demo-button max-[520px]:w-full"
 						aria-pressed={group.mode === "local"}
@@ -883,8 +858,7 @@ export function MatchingScreen({
 									<th>Включить</th>
 									<th>№ / трек</th>
 									<th>Источник</th>
-									<th>Сейчас опубликовано</th>
-									<th>Будет записано</th>
+									<th>Эффективные метаданные · сейчас → после</th>
 									<th>Действие</th>
 								</tr>
 							</thead>
@@ -917,18 +891,22 @@ export function MatchingScreen({
 												? `${row.file.name} · ${row.file.codec}`
 												: "Нет файла"}
 										</td>
+										<td>{effectiveMetadata(row)}</td>
 										<td>
-											{row.previous
-												? `${String(row.previous.codec)} · ${tagValue(row.previous.tags as Record<string, string[]>, "TITLE")}`
-												: "Нет публикации"}
-										</td>
-										<td>
-											{tagValue(row.nextTags, "TITLE")} ·{" "}
-											{tagValue(row.nextTags, "ALBUM")}
-										</td>
-										<td>
-											{row.action}
+											{row.assignment?.included &&
+											row.file &&
+											metadataIssues(row).length
+												? "Невозможно обработать"
+												: row.action}
 											{row.downgrade ? " · Понижение качества" : ""}
+											{row.assignment?.included &&
+												row.file &&
+												metadataIssues(row).length > 0 && (
+													<p>
+														Некорректные метаданные:{" "}
+														{metadataIssues(row).join("; ")}
+													</p>
+												)}
 										</td>
 									</tr>
 								))}

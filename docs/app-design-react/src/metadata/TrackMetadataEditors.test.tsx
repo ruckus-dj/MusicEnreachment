@@ -57,7 +57,21 @@ it("edits audio metadata only for the selected source and preserves other varian
 	const variants = track.sourceIds ?? [];
 	if (variants.length < 2) throw new Error("Expected two source variants");
 	const otherSourceId = variants.find((id) => id !== track.sourceId) ?? "";
-	track.audioMetadata = { [otherSourceId]: { encodedby: ["Existing"] } };
+	const selectedMeasurements = {
+		replaygain_track_gain: ["-6.0 dB"],
+		replaygain_track_peak: ["0.95"],
+		replaygain_album_gain: ["-5.5 dB"],
+		replaygain_album_peak: ["0.97"],
+		r128_track_gain: ["-400"],
+		r128_album_gain: ["-350"],
+	};
+	track.audioMetadata = {
+		[track.sourceId ?? ""]: selectedMeasurements,
+		[otherSourceId]: {
+			encodedby: ["Existing"],
+			encodersettings: ["Existing settings"],
+		},
+	};
 	let updated = track;
 	render(
 		<TrackMetadataEditors
@@ -84,16 +98,117 @@ it("edits audio metadata only for the selected source and preserves other varian
 	fireEvent.change(within(selectedEditor).getByLabelText("Закодировано"), {
 		target: { value: "Test encoder" },
 	});
+	fireEvent.change(
+		within(selectedEditor).getByLabelText("Настройки кодирования"),
+		{ target: { value: "Test settings" } },
+	);
 	fireEvent.click(
 		within(selectedEditor).getByRole("button", { name: "Сохранить" }),
 	);
 	expect(updated.audioMetadata?.[track.sourceId ?? ""]?.encodedby).toEqual([
 		"Test encoder",
 	]);
+	expect(
+		updated.audioMetadata?.[track.sourceId ?? ""]?.encodersettings,
+	).toEqual(["Test settings"]);
+	expect(updated.audioMetadata?.[track.sourceId ?? ""]).toMatchObject(
+		selectedMeasurements,
+	);
 	expect(updated.audioMetadata?.[otherSourceId]).toEqual({
 		encodedby: ["Existing"],
+		encodersettings: ["Existing settings"],
 	});
 	expect(updated.sourceId).toBe(track.sourceId);
+});
+
+it("shows measured loudness values independently for each concrete audio source", () => {
+	const track = structuredClone(fixture().track);
+	const selectedSource = track.sourceId;
+	const otherSource = track.sourceIds?.find((id) => id !== selectedSource);
+	if (!selectedSource || !otherSource)
+		throw new Error("Expected two source variants");
+	const selectedSourceMeasurements = {
+		replaygain_track_gain: ["-7.2 dB"],
+		replaygain_track_peak: ["0.98"],
+		replaygain_album_gain: ["-6.8 dB"],
+		replaygain_album_peak: ["0.99"],
+		r128_track_gain: ["-512"],
+		r128_album_gain: ["-480"],
+	};
+	const otherMeasurements = { replaygain_track_gain: ["-3.4 dB"] };
+	const onMutate = vi.fn();
+	render(
+		<TrackMetadataEditors
+			track={{
+				...track,
+				audioMetadata: {
+					[selectedSource]: selectedSourceMeasurements,
+					[otherSource]: otherMeasurements,
+				},
+			}}
+			artists={[]}
+			files={originalFiles}
+			genresLoaded
+			onMutate={onMutate}
+		/>,
+	);
+	fireEvent.click(screen.getByText(/Громкость и кодирование ·/));
+	fireEvent.click(screen.getByText(/Другие аудиоварианты ·/));
+	const selectedEditor = screen.getByRole("region", {
+		name: `${originalFiles[selectedSource]?.name} · выбран для публикации`,
+	});
+	const otherEditor = screen.getByRole("region", {
+		name: `${originalFiles[otherSource]?.name} · только просмотр`,
+	});
+	const selectedMeasurements = within(selectedEditor).getByRole("region", {
+		name: "Измерения аудио",
+	});
+	const otherMeasurementsRegion = within(otherEditor).getByRole("region", {
+		name: "Измерения аудио",
+	});
+	for (const value of Object.values(selectedSourceMeasurements).flat())
+		expect(within(selectedMeasurements).getByText(value)).toBeInTheDocument();
+	expect(
+		within(otherMeasurementsRegion).getByText("-3.4 dB"),
+	).toBeInTheDocument();
+	expect(
+		within(otherMeasurementsRegion).getAllByText("Не рассчитано"),
+	).toHaveLength(5);
+	expect(
+		within(selectedEditor).queryByRole("textbox", { name: "ReplayGain трека" }),
+	).not.toBeInTheDocument();
+	expect(
+		within(selectedEditor).getByRole("textbox", { name: "Закодировано" }),
+	).toBeInTheDocument();
+	expect(onMutate).not.toHaveBeenCalled();
+});
+
+it("allows an explicitly empty library recording title", () => {
+	const { track } = fixture();
+	let updated = track;
+	render(
+		<TrackMetadataEditors
+			track={track}
+			artists={[]}
+			files={originalFiles}
+			genresLoaded
+			onMutate={(update) => {
+				updated = update(updated);
+			}}
+		/>,
+	);
+	const recording = screen.getByRole("region", {
+		name: "Сведения о композиции",
+	});
+	fireEvent.click(
+		within(recording).getByRole("button", { name: "Редактировать" }),
+	);
+	fireEvent.change(within(recording).getByLabelText("Название"), {
+		target: { value: "" },
+	});
+	fireEvent.click(within(recording).getByRole("button", { name: "Сохранить" }));
+	expect(updated.recordingMetadata?.title).toEqual([]);
+	expect(updated.recordingTitle).toBe("");
 });
 
 it("updates positional fields without mutating the shared recording source", () => {

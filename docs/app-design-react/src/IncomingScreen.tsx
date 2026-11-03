@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import {
 	Button,
 	Cell,
@@ -25,7 +25,25 @@ import {
 } from "./incomingModel";
 import type { CatalogArtist } from "./catalogData";
 
+const mobileQuery = "(max-width: 599px)";
+
+function subscribeToViewport(listener: () => void) {
+	const media = window.matchMedia?.(mobileQuery);
+	if (!media) return () => {};
+	media.addEventListener("change", listener);
+	return () => media.removeEventListener("change", listener);
+}
+
+function useIsMobile() {
+	return useSyncExternalStore(
+		subscribeToViewport,
+		() => window.matchMedia?.(mobileQuery).matches ?? false,
+		() => false,
+	);
+}
+
 export type IncomingScreenProps = {
+	destination?: import("./publicationOutput").PublicationDestination;
 	files?: IncomingFiles;
 	releases?: IncomingReleases;
 	providers?: IncomingReleases;
@@ -37,6 +55,7 @@ export type IncomingScreenProps = {
 };
 
 export function IncomingScreen({
+	destination,
 	files: givenFiles,
 	releases: givenReleases,
 	providers: givenProviders,
@@ -46,6 +65,7 @@ export function IncomingScreen({
 	onFiles,
 	onReleases,
 }: IncomingScreenProps) {
+	const isMobile = useIsMobile();
 	const [localState, setLocalState] = useState(createIncomingState);
 	const [localFiles, setLocalFiles] = useState<IncomingFiles>(() =>
 		structuredClone(incomingFixtures.files),
@@ -93,6 +113,7 @@ export function IncomingScreen({
 			nextReleases,
 			providers,
 			artists,
+			destination,
 		);
 		state.notice = count
 			? `Демо: автоматически опубликовано ${count} позиций Small Hours. Неполные группы остались в ручном разборе. Файловые операции не выполнялись.`
@@ -108,7 +129,7 @@ export function IncomingScreen({
 			tabIndex={-1}
 		>
 			<PageHeader className="mb-[10px] min-w-0">
-				<p className="mb-[3px] text-[10px] tracking-[.06em] text-[var(--muted)]">
+				<p className="mb-[3px] text-xs text-[var(--muted)]">
 					Входящие · исходные теги → сопоставление → публикация
 				</p>
 				<div className="flex items-center justify-between gap-[14px] max-[600px]:items-start max-[600px]:flex-col">
@@ -187,175 +208,262 @@ export function IncomingScreen({
 						>
 							Текущие группы
 						</h2>
-						<span className="mt-0.5 block text-[10px] text-[var(--muted)]">
+						<span className="mt-0.5 block text-xs text-[var(--muted)]">
 							{rows.length} группы · очередь источников
 						</span>
 					</div>
 				</header>
-				<div className="min-w-0 overflow-x-auto">
-					<Table
+				{isMobile ? (
+					<ul
 						aria-label="Текущие группы входящих альбомов"
-						className="w-full min-w-[1040px] border-collapse text-xs [font-variant-numeric:tabular-nums] [&_tbody_tr:last-child_td]:border-b-0 max-[900px]:min-w-[970px]"
+						className="m-0 grid list-none gap-2 p-2"
 					>
-						<TableHeader>
-							<Column
-								id="group"
-								isRowHeader
-								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
-							>
-								Альбом / папка
-							</Column>
-							<Column
-								id="files"
-								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
-							>
-								Входящие
-							</Column>
-							<Column
-								id="assigned"
-								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
-							>
-								Назначено
-							</Column>
-							<Column
-								id="free"
-								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
-							>
-								Свободно
-							</Column>
-							<Column
-								id="mode"
-								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
-							>
-								Режим
-							</Column>
-							<Column
-								id="published"
-								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
-							>
-								Опубликовано
-							</Column>
-							<Column
-								id="reason"
-								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
-							>
-								Причина
-							</Column>
-							<Column
-								id="action"
-								aria-label="Действие"
-								className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
-							/>
-						</TableHeader>
-						<TableBody>
-							{rows.length === 0 && (
-								<Row id="empty">
-									<Cell
-										colSpan={8}
-										className="!p-6 text-center text-[var(--muted)]"
-									>
-										Входящих групп пока нет.
-									</Cell>
-								</Row>
-							)}
-							{rows.map(
-								({ group, assignments, used, publishedCount, tracks }) => (
-									<Row
-										id={group.id}
-										key={group.id}
-										className="transition-colors hover:bg-[var(--raised)]"
-									>
-										<Cell className="min-w-[190px] border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
-											<span
-												className={`float-left mr-2 inline-grid h-8 w-8 place-items-center text-sm font-semibold text-white ${group.id === "north" ? "bg-[#486d59]" : group.id === "hours" ? "bg-[#676e95]" : group.id === "mix" ? "bg-[#4c717e]" : "bg-[#ac7059]"}`}
-												aria-hidden="true"
-											>
-												{group.title.slice(0, 1).toLocaleUpperCase()}
-											</span>
-											<span className="grid min-w-0 gap-px">
+						{rows.length === 0 ? (
+							<li className="py-6 text-center text-[var(--muted)]">
+								Входящих групп пока нет.
+							</li>
+						) : (
+							rows.map(
+								({ group, assignments, used, publishedCount, tracks }) => {
+									const assignedCount = Object.values(assignments).filter(
+										(item) => item.sourceIds.length,
+									).length;
+									const freeCount = group.fileIds.filter(
+										(id) => files[id]?.available && !used.has(id),
+									).length;
+									return (
+										<li
+											key={group.id}
+											className="grid min-w-0 gap-2 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-3"
+										>
+											<div className="flex min-w-0 items-start justify-between gap-3">
+												<div className="min-w-0">
+													<Link
+														className="font-semibold wrap-anywhere"
+														href={`#match/${group.id}`}
+													>
+														{group.title}
+													</Link>
+													<p className="m-0 mt-0.5 text-xs text-[var(--muted)]">
+														{artistName(group.artistId, artists)}
+													</p>
+												</div>
 												<Link
-													className="font-semibold wrap-anywhere"
+													className="inline-flex min-h-10 shrink-0 items-center rounded-[3px] border border-[var(--line)] px-3 hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline"
 													href={`#match/${group.id}`}
 												>
-													{group.title}
+													Открыть
 												</Link>
-												<span className="text-[10px] text-[var(--muted)]">
-													{artistName(group.artistId, artists)}
-												</span>
-												<code className="font-mono text-[9px] leading-[1.4] text-[var(--muted)] wrap-anywhere">
-													/mnt/inbox/{group.id}
-												</code>
-											</span>
-										</Cell>
-										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
-											<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
-												{group.fileIds.length}
-											</span>
-											<span className="text-[var(--muted)]"> файлов</span>
-										</Cell>
-										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
-											<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
-												{
-													Object.values(assignments).filter(
-														(item) => item.sourceIds.length,
-													).length
-												}
-											</span>
-											<span className="text-[var(--muted)]">
-												{" "}
-												/ {tracks.length}
-											</span>
-										</Cell>
-										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
-											<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
-												{
-													group.fileIds.filter(
-														(id) => files[id]?.available && !used.has(id),
-													).length
-												}
-											</span>
-										</Cell>
-										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
-											<span
-												className={`inline-flex max-w-[170px] items-center gap-[5px] text-[10px] leading-[1.3] ${group.processed ? "text-[var(--success)]" : group.autoEligible ? "text-[var(--info)]" : "text-[var(--warning)]"}`}
-											>
-												<i
-													className={`h-1.5 w-1.5 flex-[0_0_6px] rounded-full ${group.processed ? "bg-[var(--success)]" : group.autoEligible ? "bg-[var(--info)]" : "bg-[var(--warning)]"}`}
-													aria-hidden="true"
-												/>
-												{group.processed
-													? "Опубликовано автоматически"
-													: group.autoEligible
-														? "Готов к автоматике"
-														: "Ручная обработка"}
-											</span>
-										</Cell>
-										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
-											<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
-												{publishedCount}
-											</span>
-											<span className="text-[var(--muted)]">
-												{" "}
-												/ {tracks.length}
-											</span>
-										</Cell>
-										<Cell className="min-w-40 max-w-[270px] border-b border-[var(--line)] px-2 py-1.5 text-left align-middle text-[10px] text-[var(--muted)] wrap-anywhere">
-											{group.reason}
-										</Cell>
-										<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
-											<Link
-												className="inline-flex min-h-7 items-center whitespace-nowrap rounded-[3px] border border-[var(--line)] px-[7px] py-[3px] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline max-[600px]:min-h-10"
-												href={`#match/${group.id}`}
-											>
-												Открыть
-											</Link>
+											</div>
+											<dl className="m-0 grid grid-cols-2 gap-x-3 gap-y-1 text-xs [font-variant-numeric:tabular-nums]">
+												<div>
+													<dt className="inline text-[var(--muted)]">
+														Файлы:{" "}
+													</dt>
+													<dd className="inline m-0 font-semibold">
+														{group.fileIds.length}
+													</dd>
+												</div>
+												<div>
+													<dt className="inline text-[var(--muted)]">
+														Назначено:{" "}
+													</dt>
+													<dd className="inline m-0 font-semibold">
+														{assignedCount} / {tracks.length}
+													</dd>
+												</div>
+												<div>
+													<dt className="inline text-[var(--muted)]">
+														Свободно:{" "}
+													</dt>
+													<dd className="inline m-0 font-semibold">
+														{freeCount}
+													</dd>
+												</div>
+												<div>
+													<dt className="inline text-[var(--muted)]">
+														Опубликовано:{" "}
+													</dt>
+													<dd className="inline m-0 font-semibold">
+														{publishedCount} / {tracks.length}
+													</dd>
+												</div>
+											</dl>
+											<p className="m-0 text-xs text-[var(--muted)]">
+												{group.reason}
+											</p>
+										</li>
+									);
+								},
+							)
+						)}
+					</ul>
+				) : (
+					<div className="min-w-0 overflow-x-auto">
+						<Table
+							aria-label="Текущие группы входящих альбомов"
+							className="w-full min-w-[1040px] border-collapse text-xs [font-variant-numeric:tabular-nums] [&_tbody_tr:last-child_td]:border-b-0 max-[900px]:min-w-[970px]"
+						>
+							<TableHeader>
+								<Column
+									id="group"
+									isRowHeader
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
+								>
+									Альбом / папка
+								</Column>
+								<Column
+									id="files"
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
+								>
+									Входящие
+								</Column>
+								<Column
+									id="assigned"
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
+								>
+									Назначено
+								</Column>
+								<Column
+									id="free"
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
+								>
+									Свободно
+								</Column>
+								<Column
+									id="mode"
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
+								>
+									Режим
+								</Column>
+								<Column
+									id="published"
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
+								>
+									Опубликовано
+								</Column>
+								<Column
+									id="reason"
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
+								>
+									Причина
+								</Column>
+								<Column
+									id="action"
+									aria-label="Действие"
+									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
+								/>
+							</TableHeader>
+							<TableBody>
+								{rows.length === 0 && (
+									<Row id="empty">
+										<Cell
+											colSpan={8}
+											className="!p-6 text-center text-[var(--muted)]"
+										>
+											Входящих групп пока нет.
 										</Cell>
 									</Row>
-								),
-							)}
-						</TableBody>
-					</Table>
-				</div>
+								)}
+								{rows.map(
+									({ group, assignments, used, publishedCount, tracks }) => (
+										<Row
+											id={group.id}
+											key={group.id}
+											className="transition-colors hover:bg-[var(--raised)]"
+										>
+											<Cell className="min-w-[190px] border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
+												<span
+													className={`float-left mr-2 inline-grid h-8 w-8 place-items-center text-sm font-semibold text-white ${group.id === "north" ? "bg-[#486d59]" : group.id === "hours" ? "bg-[#676e95]" : group.id === "mix" ? "bg-[#4c717e]" : "bg-[#ac7059]"}`}
+													aria-hidden="true"
+												>
+													{group.title.slice(0, 1).toLocaleUpperCase()}
+												</span>
+												<span className="grid min-w-0 gap-px">
+													<Link
+														className="font-semibold wrap-anywhere"
+														href={`#match/${group.id}`}
+													>
+														{group.title}
+													</Link>
+													<span className="text-[10px] text-[var(--muted)]">
+														{artistName(group.artistId, artists)}
+													</span>
+													<code className="font-mono text-[9px] leading-[1.4] text-[var(--muted)] wrap-anywhere">
+														/mnt/inbox/{group.id}
+													</code>
+												</span>
+											</Cell>
+											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
+												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
+													{group.fileIds.length}
+												</span>
+												<span className="text-[var(--muted)]"> файлов</span>
+											</Cell>
+											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
+												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
+													{
+														Object.values(assignments).filter(
+															(item) => item.sourceIds.length,
+														).length
+													}
+												</span>
+												<span className="text-[var(--muted)]">
+													{" "}
+													/ {tracks.length}
+												</span>
+											</Cell>
+											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
+												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
+													{
+														group.fileIds.filter(
+															(id) => files[id]?.available && !used.has(id),
+														).length
+													}
+												</span>
+											</Cell>
+											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
+												<span
+													className={`inline-flex max-w-[170px] items-center gap-[5px] text-[10px] leading-[1.3] ${group.processed ? "text-[var(--success)]" : group.autoEligible ? "text-[var(--info)]" : "text-[var(--warning)]"}`}
+												>
+													<i
+														className={`h-1.5 w-1.5 flex-[0_0_6px] rounded-full ${group.processed ? "bg-[var(--success)]" : group.autoEligible ? "bg-[var(--info)]" : "bg-[var(--warning)]"}`}
+														aria-hidden="true"
+													/>
+													{group.processed
+														? "Опубликовано автоматически"
+														: group.autoEligible
+															? "Готов к автоматике"
+															: "Ручная обработка"}
+												</span>
+											</Cell>
+											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
+												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
+													{publishedCount}
+												</span>
+												<span className="text-[var(--muted)]">
+													{" "}
+													/ {tracks.length}
+												</span>
+											</Cell>
+											<Cell className="min-w-40 max-w-[270px] border-b border-[var(--line)] px-2 py-1.5 text-left align-middle text-[10px] text-[var(--muted)] wrap-anywhere">
+												{group.reason}
+											</Cell>
+											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
+												<Link
+													className="inline-flex min-h-7 items-center whitespace-nowrap rounded-[3px] border border-[var(--line)] px-[7px] py-[3px] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline max-[600px]:min-h-10"
+													href={`#match/${group.id}`}
+												>
+													Открыть
+												</Link>
+											</Cell>
+										</Row>
+									),
+								)}
+							</TableBody>
+						</Table>
+					</div>
+				)}
 			</Panel>
 			<div className="grid grid-cols-2 gap-[10px] max-[600px]:grid-cols-1">
 				<Panel className="m-0 p-[10px]">

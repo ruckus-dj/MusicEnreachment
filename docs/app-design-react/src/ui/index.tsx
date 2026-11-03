@@ -104,6 +104,7 @@ export function Label({ className, ...props }: Props<typeof AriaLabel>) {
 export function Input({ className, ...props }: Props<typeof AriaInput>) {
 	return (
 		<AriaInput
+			autoComplete="off"
 			{...props}
 			className={withClass(
 				"react-aria-Input ui-input min-h-8 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 py-[5px] text-[var(--ink)] aria-[invalid=true]:border-[var(--error)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2",

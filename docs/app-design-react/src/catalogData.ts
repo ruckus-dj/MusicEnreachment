@@ -5,7 +5,9 @@ import {
 	metadataManagedTagKeys,
 	metadataTagKeys,
 	projectMetadataValues,
+	validateMetadataValues,
 } from "./metadata/projection";
+import { navidromeFields } from "./metadata/registry";
 
 const musicBrainzUUID =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -23,7 +25,11 @@ export interface OriginalTrack {
 	providerTitle?: string;
 	providerCacheVersion?: number;
 	recovered?: boolean;
-	observedFile?: { mtime?: string; state?: string } | null;
+	observedFile?: {
+		mtime?: string;
+		state?: string;
+		rootAvailable?: boolean;
+	} | null;
 	sourceId: string | null;
 	sourceIds?: string[];
 	published: null | {
@@ -138,7 +144,13 @@ export interface SourceFile {
 	size: string;
 	tags: Record<string, string[]>;
 	available: boolean;
-	locations?: { id: string; rootId: string; path: string }[];
+	locations?: {
+		id: string;
+		rootId: string;
+		path: string;
+		size?: number;
+		mtime?: string;
+	}[];
 	sha256?: string | null;
 	path: string;
 	codec: string;
@@ -155,22 +167,30 @@ export const originalProviders: OriginalRelease[] =
 		})),
 	}));
 
+import {
+	choosePublicationOutput,
+	fixturePublicationDestination,
+	type PublicationDestination,
+} from "./publicationOutput";
+
 export function applyMetadataPreview(
 	releases: OriginalRelease[],
 	selected: Set<string>,
 	files: SourceFiles = originalFiles,
 	artists: CatalogArtist[] = originalArtists,
+	destination: PublicationDestination = fixturePublicationDestination,
 ): OriginalRelease[] {
 	const next = structuredClone(releases);
 	for (const release of next)
 		for (const track of release.tracks) {
 			if (!selected.has(track.id)) continue;
+			if (publicationMetadataIssues(release, track).length) continue;
 			const file = track.sourceId ? files[track.sourceId] : undefined;
 			if (!track.published && !(file?.available && file.locations?.length))
 				continue;
 			if (track.published && !metadataChanged(release, track, artists))
 				continue;
-			const tags = desiredTags(release, track, artists);
+			const tags = effectivePublicationTags(release, track, artists);
 			const coverHash = track.coverHash || null;
 			const lyrics = track.lyrics || null;
 			track.published = track.published
@@ -180,9 +200,23 @@ export function applyMetadataPreview(
 						coverHash,
 						lyrics,
 						codec: file?.codec ?? "",
-						container: "MKA",
+						container: choosePublicationOutput(file!, {
+							...destination,
+							artist: originalArtistName(release.artistId, artists),
+							year: release.year,
+							release: release.title,
+							position: track.position,
+							title: track.title,
+						}).container,
 						sourceId: track.sourceId,
-						path: `/srv/music/${originalArtistName(release.artistId, artists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`,
+						path: choosePublicationOutput(file!, {
+							...destination,
+							artist: originalArtistName(release.artistId, artists),
+							year: release.year,
+							release: release.title,
+							position: track.position,
+							title: track.title,
+						}).path,
 						readAt: "Только в памяти макета",
 					};
 			track.metadataBaseline = structuredClone(tags);
@@ -195,6 +229,7 @@ export function desiredTags(
 	release: OriginalRelease,
 	track: OriginalTrack,
 	artists: CatalogArtist[] = originalArtists,
+	audioSourceId: string | null = track.sourceId,
 ): Record<string, string[]> {
 	const artist = artists.find((item) => item.id === track.artistId);
 	const albumArtist = artists.find((item) => item.id === release.artistId);
@@ -322,8 +357,8 @@ export function desiredTags(
 		...valuesForScope(release.metadataValues ?? {}, "release"),
 		...valuesForScope(track.recordingMetadata ?? {}, "recording"),
 		...valuesForScope(track.positionMetadata ?? {}, "track"),
-		...(track.sourceId
-			? valuesForScope(track.audioMetadata?.[track.sourceId] ?? {}, "audio")
+		...(audioSourceId
+			? valuesForScope(track.audioMetadata?.[audioSourceId] ?? {}, "audio")
 			: {}),
 	};
 	const projected = projectMetadataValues(explicitValues).tags;
@@ -333,13 +368,60 @@ export function desiredTags(
 	return result;
 }
 
+/** Metadata-only updates keep audio-scoped tags attached to the published audio. */
+export function effectivePublicationTags(
+	release: OriginalRelease,
+	track: OriginalTrack,
+	artists: CatalogArtist[] = originalArtists,
+): Record<string, string[]> {
+	const tags = desiredTags(
+		release,
+		track,
+		artists,
+		track.published?.sourceId ?? track.sourceId,
+	);
+	if (!track.published) return tags;
+	for (const field of navidromeFields.filter(
+		(item) => item.scope === "audio",
+	)) {
+		delete tags[field.tag];
+		if (Object.hasOwn(track.published.tags, field.tag))
+			tags[field.tag] = [...track.published.tags[field.tag]];
+	}
+	return tags;
+}
+
+export function publicationMetadataIssues(
+	release: OriginalRelease,
+	track: OriginalTrack,
+	audioSourceId: string | null = track.published ? null : track.sourceId,
+): string[] {
+	const scopes = [
+		[release.metadataValues ?? {}, "release"],
+		[track.recordingMetadata ?? {}, "recording"],
+		[track.positionMetadata ?? {}, "track"],
+		[
+			audioSourceId ? (track.audioMetadata?.[audioSourceId] ?? {}) : {},
+			"audio",
+		],
+	] as const;
+	return [
+		...new Set(
+			scopes.flatMap(([values, scope]) =>
+				validateMetadataValues(values, scope),
+			),
+		),
+	];
+}
+
 export function metadataChanged(
 	release: OriginalRelease,
 	track: OriginalTrack,
 	artists: CatalogArtist[] = originalArtists,
 ): boolean {
-	if (!track.published || !track.metadataBaseline) return false;
-	const tags = desiredTags(release, track, artists);
+	if (!track.published) return false;
+	const tags = effectivePublicationTags(release, track, artists);
+	const baseline = track.metadataBaseline ?? track.published.tags;
 	const managed = new Set([
 		"TITLE",
 		"ARTIST",
@@ -361,18 +443,26 @@ export function metadataChanged(
 			...(release.metadataValues ?? {}),
 			...(track.recordingMetadata ?? {}),
 			...(track.positionMetadata ?? {}),
-			...(track.sourceId ? (track.audioMetadata?.[track.sourceId] ?? {}) : {}),
+			...((track.published?.sourceId ?? track.sourceId)
+				? (track.audioMetadata?.[
+						(track.published?.sourceId ?? track.sourceId) as string
+					] ?? {})
+				: {}),
 		}),
 	]);
 	return (
 		[...managed].some(
 			(key) =>
-				JSON.stringify(tags[key] ?? []) !==
-				JSON.stringify(track.metadataBaseline?.[key] ?? []),
+				JSON.stringify(tags[key] ?? []) !== JSON.stringify(baseline[key] ?? []),
 		) ||
-		(track.coverHash || null) !==
-			(track.metadataBaselineExtras?.coverHash || null) ||
-		(track.lyrics || null) !== (track.metadataBaselineExtras?.lyrics || null)
+		(track.coverHash ?? null) !==
+			((track.metadataBaselineExtras
+				? track.metadataBaselineExtras.coverHash
+				: track.published.coverHash) ?? null) ||
+		(track.lyrics ?? null) !==
+			((track.metadataBaselineExtras
+				? track.metadataBaselineExtras.lyrics
+				: track.published.lyrics) ?? null)
 	);
 }
 export const catalogData = {
