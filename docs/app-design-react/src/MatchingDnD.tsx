@@ -1,4 +1,4 @@
-import { useRef, useState, type ComponentRef } from "react";
+import { useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { DragPreview, useDrag } from "react-aria/useDrag";
 import { useDrop } from "react-aria/useDrop";
 import type { TextDropItem } from "react-aria/useDrop";
@@ -200,22 +200,21 @@ type MatchingDropZoneProps = {
 	groupId: string;
 	trackId: string;
 	trackName: string;
-	selectedFileId: string | null;
-	selectedFileName: string | null;
 	locale?: Locale;
 	onAssign: (fileId: string) => boolean;
+	children: ReactNode;
 };
 
 export function MatchingDropZone({
 	groupId,
 	trackId,
 	trackName,
-	selectedFileId,
-	selectedFileName,
 	locale = "ru",
 	onAssign,
+	children,
 }: MatchingDropZoneProps) {
-	// DragManager focuses the registered element during keyboard navigation.
+	// DragManager focuses this registered target during keyboard DnD; it is not
+	// an ordinary tab stop.
 	const targetRef = useRef<HTMLButtonElement>(null);
 	const [accepted, setAccepted] = useState(false);
 	const { dropProps, dropButtonProps, isDropTarget } = useDrop({
@@ -241,36 +240,31 @@ export function MatchingDropZone({
 			window.setTimeout(() => setAccepted(false), 450);
 		},
 	});
-	const label = selectedFileName ?? matchingMessage(locale, "dropHint");
-
 	return (
 		<div
 			{...dropProps}
 			data-track-id={trackId}
-			className={`flex h-[34px] min-w-0 items-center gap-1 rounded border border-dashed px-1.5 ${isDropTarget ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--line)] bg-[var(--raised)]"} motion-safe:transition-colors motion-safe:duration-150 ${accepted ? "motion-safe:animate-pulse [animation-duration:420ms] [animation-iteration-count:1] motion-reduce:animate-none" : ""}`}
+			className={`relative flex h-full min-w-0 flex-col gap-1 motion-safe:transition-colors motion-safe:duration-150 motion-reduce:transition-none ${accepted ? "motion-safe:animate-pulse [animation-duration:420ms] [animation-iteration-count:1] motion-reduce:animate-none" : ""}`}
 		>
+			{children}
 			<Button
 				{...dropButtonProps}
 				ref={targetRef}
 				type="button"
-				className="min-h-0 h-full min-w-0 flex-1 truncate rounded-sm px-1 text-left text-[10px] text-[var(--muted)] pointer-coarse:min-h-0 hover:text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+				excludeFromTabOrder
+				className="pointer-events-none absolute inset-0 z-20 h-full min-h-0 w-full rounded border-0 bg-transparent p-0 text-transparent opacity-0 focus-visible:outline-none"
 				aria-label={matchingMessage(locale, "ariaDropTarget", {
 					track: trackName,
 				})}
-			>
-				{label}
-			</Button>
-			<Button
-				type="button"
-				className="h-full min-h-0 px-2 py-0 text-[10px] pointer-coarse:min-h-0"
-				aria-label={`${matchingMessage(locale, "assignSelected")}${selectedFileName ? `: ${selectedFileName}` : ` · ${matchingMessage(locale, "chooseFile")}`}`}
-				isDisabled={!selectedFileId}
-				onPress={() => {
-					if (selectedFileId) onAssign(selectedFileId);
-				}}
-			>
-				{matchingMessage(locale, "assign")}
-			</Button>
+			/>
+			{isDropTarget && (
+				<span
+					aria-hidden="true"
+					className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded border border-dashed border-[var(--accent)] bg-[var(--accent-soft)] px-2 text-center text-[10px] font-semibold text-[var(--accent)]"
+				>
+					{matchingMessage(locale, "dropHint")}
+				</span>
+			)}
 		</div>
 	);
 }

@@ -61,6 +61,15 @@ it("starts with the Northern Lines candidate draft and leaves missing positions 
 	).toBeDisabled();
 	expect(screen.getByText("session fragment.flac")).toBeInTheDocument();
 	expect(screen.getAllByText("Высокая*").length).toBeGreaterThan(0);
+	expect(
+		screen.queryByText("Перетащите сюда доступный файл"),
+	).not.toBeInTheDocument();
+	const unassignedRow = screen.getByRole("row", { name: /Winter Birds/ });
+	expect(
+		within(unassignedRow).getByRole("button", {
+			name: "Добавить выбранный файл · Сначала выберите файл",
+		}),
+	).toBeDisabled();
 	const selectedSource = screen.getAllByRole("radio")[0];
 	expect(selectedSource).toBeChecked();
 	expect(

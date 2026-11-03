@@ -61,11 +61,10 @@ export const matchingSearchControls =
 export const matchingSearchResult =
 	"my-2 rounded border border-[var(--line)] bg-[var(--raised)] px-2.5 py-2 text-xs [overflow-wrap:anywhere]";
 
-export const matchingAssignmentRegion =
-	"grid h-[112px] grid-rows-[34px_minmax(0,1fr)] gap-1";
+export const matchingAssignmentRegion = "h-[80px] min-w-0";
 
 export const matchingLinkedSources =
-	"max-h-[72px] min-h-0 overflow-y-auto overscroll-contain";
+	"min-h-0 flex-1 overflow-y-auto overscroll-contain";
 
 export const matchingSourceRow =
 	"grid min-h-8 grid-cols-[minmax(0,1fr)_30px_30px] items-center gap-1 border-b border-[var(--line)] last:border-0";

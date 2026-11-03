@@ -592,85 +592,93 @@ export function MatchingScreen({
 														groupId={group.id}
 														trackId={id}
 														trackName={String(track.title)}
-														selectedFileId={state.selectedFile}
-														selectedFileName={
-															state.selectedFile
-																? (files[state.selectedFile]?.name ?? null)
-																: null
-														}
 														locale={locale}
 														onAssign={(fileId) => addSource(fileId, id)}
-													/>
-													<div
-														className={matchingLinkedSources}
-														role={ids.length ? "group" : undefined}
-														aria-label={
-															ids.length
-																? matchingMessage(locale, "linkedSources", {
-																		track: String(track.title),
-																	})
-																: undefined
-														}
 													>
-														{ids.length ? (
-															<RadioGroup
-																aria-label={matchingMessage(
-																	locale,
-																	"ariaTrackSource",
-																	{ track: String(track.title) },
-																)}
-																value={currentId ?? ""}
-																onChange={(value) => sourceSelection(id, value)}
-															>
-																{ids.map((sourceId) => (
-																	<div
-																		key={sourceId}
-																		className={matchingSourceRow}
-																	>
-																		<Radio value={sourceId}>
-																			<span
-																				className="indicator"
-																				aria-hidden="true"
-																			/>
-																			<span className="truncate text-[10px]">
-																				{files[sourceId]?.name ?? sourceId}
-																			</span>
-																		</Radio>
-																		<MatchingDragHandle
-																			groupId={group.id}
-																			fileId={sourceId}
-																			name={files[sourceId]?.name ?? sourceId}
-																			available={usableFile(files[sourceId])}
-																			locale={locale}
-																		/>
-																		<Button
-																			className="h-6 min-h-0 w-7 p-0 text-[12px]"
-																			aria-label={matchingMessage(
-																				locale,
-																				"removeSource",
-																				{
-																					file:
-																						files[sourceId]?.name ?? sourceId,
-																					track: String(track.title),
-																				},
-																			)}
-																			onPress={() =>
-																				mutateAssignment((draft) =>
-																					unassignFile(draft, id, sourceId),
-																				)
-																			}
+														<div
+															className={matchingLinkedSources}
+															role={ids.length ? "group" : undefined}
+															aria-label={
+																ids.length
+																	? matchingMessage(locale, "linkedSources", {
+																			track: String(track.title),
+																		})
+																	: undefined
+															}
+														>
+															{ids.length ? (
+																<RadioGroup
+																	aria-label={matchingMessage(
+																		locale,
+																		"ariaTrackSource",
+																		{ track: String(track.title) },
+																	)}
+																	value={currentId ?? ""}
+																	onChange={(value) =>
+																		sourceSelection(id, value)
+																	}
+																>
+																	{ids.map((sourceId) => (
+																		<div
+																			key={sourceId}
+																			className={matchingSourceRow}
 																		>
-																			×
-																		</Button>
-																	</div>
-																))}
-															</RadioGroup>
-														) : (
-															<span className="sr-only">
-																{matchingMessage(locale, "dropHint")}
-															</span>
-														)}
-													</div>
+																			<Radio value={sourceId}>
+																				<span
+																					className="indicator"
+																					aria-hidden="true"
+																				/>
+																				<span className="truncate text-[10px]">
+																					{files[sourceId]?.name ?? sourceId}
+																				</span>
+																			</Radio>
+																			<MatchingDragHandle
+																				groupId={group.id}
+																				fileId={sourceId}
+																				name={files[sourceId]?.name ?? sourceId}
+																				available={usableFile(files[sourceId])}
+																				locale={locale}
+																			/>
+																			<Button
+																				className="h-6 min-h-0 w-7 p-0 text-[12px]"
+																				aria-label={matchingMessage(
+																					locale,
+																					"removeSource",
+																					{
+																						file:
+																							files[sourceId]?.name ?? sourceId,
+																						track: String(track.title),
+																					},
+																				)}
+																				onPress={() =>
+																					mutateAssignment((draft) =>
+																						unassignFile(draft, id, sourceId),
+																					)
+																				}
+																			>
+																				×
+																			</Button>
+																		</div>
+																	))}
+																</RadioGroup>
+															) : (
+																<span className="text-[10px] text-[var(--muted)]">
+																	{matchingMessage(locale, "noFile")}
+																</span>
+															)}
+														</div>
+														<Button
+															className="h-6 min-h-0 self-end px-2 py-0 text-[10px] pointer-coarse:min-h-0"
+															aria-label={`${matchingMessage(locale, "assignSelected")}${state.selectedFile ? `: ${files[state.selectedFile]?.name ?? state.selectedFile}` : ` · ${matchingMessage(locale, "chooseFile")}`}`}
+															isDisabled={!state.selectedFile}
+															onPress={() => {
+																if (state.selectedFile)
+																	addSource(state.selectedFile, id);
+															}}
+														>
+															{matchingMessage(locale, "assign")}
+														</Button>
+													</MatchingDropZone>
 												</div>
 											</td>
 											<td>
