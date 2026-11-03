@@ -64,6 +64,7 @@ Table provider_artist {
   provider_id uuid [not null]
   provider_key text [not null]
   name text [not null]
+  sort_name text [note: 'Необязательное имя артиста для сортировки; отдельное от отображаемого name']
   disambiguation text
   genres jsonb [not null, default: '[]']
   tags jsonb [not null, default: '[]']
@@ -296,6 +297,7 @@ Table source_location {
 Table collection_artist {
   id uuid [pk]
   name text [not null]
+  sort_name text [note: 'Необязательное собственное имя артиста для сортировки; не подменяет name и не задаёт автоматически artist_sort_names публикации']
   disambiguation text
   genres jsonb [not null, default: '[]']
   tags jsonb [not null, default: '[]']
@@ -306,7 +308,7 @@ Table collection_artist {
     name
   }
 
-  Note: 'Решение владельца 2026-10-29: идентичность MusicBrainz задаётся уникальным MBID через provider_artist.provider_key и collection_artist_provider_link, а не отдельным credit. Позднейшее уточнение того же дня: уникальность имени отложена и обеспечивается оператором вручную; автоматическое объединение по имени и DB-ограничение уникальности имени сейчас не требуются. Разные MBID могут иметь одинаковое имя. ALBUMARTIST задаёт связи артистов релиза, ARTIST — связи исполнителей recording/позиции. Composer/lyricist/vocalist/instrumentalist и другие ролевые значения остаются метаданными и не создают artist entity или дополнительную artist-связь. Уникальность provider identity и не более одной связи с каждым provider сохраняются.'
+  Note: 'Решение владельца 2026-10-29: идентичность MusicBrainz задаётся уникальным MBID через provider_artist.provider_key и collection_artist_provider_link, а не отдельным credit. Позднейшее уточнение того же дня: уникальность имени отложена и обеспечивается оператором вручную; автоматическое объединение по имени и DB-ограничение уникальности имени сейчас не требуются. Разные MBID могут иметь одинаковое имя. sort_name необязателен и принадлежит артисту; он не заменяет отображаемое name. Для публикации artist_sort_names — отдельные списки контекста, не то же поле и не автоматическое наследование sort_name. Приоритет между ними и композиция нескольких артистов не определены. Genres у артиста — отдельный множественный набор из общей библиотеки жанров MusicBrainz по MBID; genres не наследуются между уровнями. Tags остаются отдельными от genres. Disambiguation, genres и tags не являются ключами идентичности. ALBUMARTIST задаёт связи артистов релиза, ARTIST — связи исполнителей recording/позиции. Composer/lyricist/vocalist/instrumentalist и другие ролевые значения остаются метаданными и не создают artist entity или дополнительную artist-связь. Уникальность provider identity и не более одной связи с каждым provider сохраняются.'
 }
 
 Table collection_release {

@@ -174,26 +174,41 @@ it("saves artist metadata in catalog state across library navigation", async () 
 			name: "Сведения об артисте",
 		});
 		const name = within(artistDetails).getByLabelText("Имя");
-		const genre = within(artistDetails).getByLabelText("Жанр");
+		const genre = within(artistDetails).getByRole("button", { name: "Жанры" });
+		const originalGenreText = genre.textContent;
 		const edit = within(artistDetails).getByRole("button", {
 			name: "Редактировать",
 		});
 		fireEvent.click(edit);
 		const editableName = within(artistDetails).getByLabelText("Имя");
-		const editableGenre = within(artistDetails).getByLabelText("Жанр");
+		const editableGenre = within(artistDetails).getByRole("button", {
+			name: "Жанры",
+		});
 		expect(editableName).toBe(name);
 		expect(editableGenre).toBe(genre);
+		expect(editableGenre).toHaveClass("h-8");
 		fireEvent.change(editableName, { target: { value: "Mira Vale Updated" } });
-		fireEvent.change(editableGenre, { target: { value: "Dream pop" } });
+		fireEvent.change(
+			within(artistDetails).getByLabelText("Имя для сортировки"),
+			{
+				target: { value: "Vale, Mira" },
+			},
+		);
+		fireEvent.change(within(artistDetails).getByLabelText("Теги"), {
+			target: { value: "dream pop, live" },
+		});
 		fireEvent.click(
 			within(artistDetails).getByRole("button", { name: "Сохранить" }),
 		);
 		expect(within(artistDetails).getByLabelText("Имя")).toHaveValue(
 			"Mira Vale Updated",
 		);
-		expect(within(artistDetails).getByLabelText("Жанр")).toHaveValue(
-			"Dream pop",
-		);
+		expect(
+			within(artistDetails).getByLabelText("Имя для сортировки"),
+		).toHaveValue("Vale, Mira");
+		expect(
+			within(artistDetails).getByRole("button", { name: "Жанры" }),
+		).toHaveTextContent(originalGenreText ?? "—");
 
 		fireEvent.click(screen.getByRole("link", { name: "К медиатеке" }));
 		await screen.findByRole("tab", { name: "Артисты" });
@@ -207,11 +222,18 @@ it("saves artist metadata in catalog state across library navigation", async () 
 				screen.getByRole("region", { name: "Сведения об артисте" }),
 			).getByLabelText("Имя"),
 		).toHaveValue("Mira Vale Updated");
+		const updatedDetails = screen.getByRole("region", {
+			name: "Сведения об артисте",
+		});
 		expect(
-			within(
-				screen.getByRole("region", { name: "Сведения об артисте" }),
-			).getByLabelText("Жанр"),
-		).toHaveValue("Dream pop");
+			within(updatedDetails).getByLabelText("Имя для сортировки"),
+		).toHaveValue("Vale, Mira");
+		expect(
+			within(updatedDetails).getByRole("button", { name: "Жанры" }),
+		).toHaveTextContent(originalGenreText ?? "—");
+		expect(within(updatedDetails).getByLabelText("Теги")).toHaveValue(
+			"dream pop, live",
+		);
 	} finally {
 		window.location.hash = previousHash;
 		fireEvent(window, new Event("hashchange"));

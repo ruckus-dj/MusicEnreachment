@@ -38,3 +38,8 @@ The interactive prototype in index.html, together with its JS/CSS, is the sole g
 
 ## NOTES
 Open index.html directly in a browser to view the prototype. No build step, no server required. This prototype predates the React app and remains as design documentation.
+
+Shared genre pickers must use the same hidden-input name for rendering and
+selection reads (`genreIds` is the shared default). A custom name passed only
+to the renderer loses existing selections on add/remove. Verify adding a genre
+preserves the already-selected values, including after loading the demo catalog.

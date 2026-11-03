@@ -470,6 +470,7 @@ export function CatalogDemo({
 					artists={artists}
 					releases={releases}
 					files={files}
+					genresLoaded={settings.genresLoaded}
 					selected={selected}
 					query={query}
 					filter={filter}

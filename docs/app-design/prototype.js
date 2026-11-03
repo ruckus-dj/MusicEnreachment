@@ -361,6 +361,40 @@ function trackTable(items, withAlbum = false) {
   }));
 }
 
+const artistGenreDefaults = { mira: ['demo-genre-ambient', 'demo-genre-folk'], arden: ['demo-genre-contemporary-jazz'], forma: ['demo-genre-electronic'] };
+const artistGenreIds = artist => artist.genres || artistGenreDefaults[artist.id] || [];
+const artistGenreNames = artist => {
+  const names = artistGenreIds(artist).map(id => window.GenreLibraryPrototype?.get(id)?.name).filter(Boolean);
+  return names.length ? names.join(', ') : artist.genre || '—';
+};
+
+function artistMetadataPanel(artist) {
+  const identities = Array.isArray(artist.providerIdentities) ? artist.providerIdentities : [];
+  return `<section class="artist-metadata panel" data-artist-metadata-panel><div class="panel-heading"><div><h2>Сведения об артисте</h2><p class="muted">Только поля артиста в этом демо. Публикации и теги композиций не изменяются.</p></div><div class="artist-metadata-actions" aria-label="Действия с метаданными артиста"><button type="button" data-artist-metadata="main" data-mode="edit">Редактировать</button><button type="button" data-artist-metadata="cancel" aria-hidden="true" tabindex="-1">Отменить</button></div></div><form class="artist-metadata-form" data-artist-form><div class="artist-metadata-fields"><label class="artist-metadata-field"><span>Имя</span><input name="name" value="${esc(artist.name || '')}" readonly></label><label class="artist-metadata-field"><span>Имя для сортировки</span><input name="sort_name" value="${esc(artist.sort_name || '')}" readonly></label><label class="artist-metadata-field"><span>Уточнение</span><input name="disambiguation" value="${esc(artist.disambiguation || '')}" readonly></label><div class="artist-metadata-field artist-genre-field"><span>Жанры</span><button type="button" class="artist-genre-trigger" data-artist-genres aria-label="Жанры" aria-haspopup="dialog" aria-expanded="false" disabled>${esc(artistGenreNames(artist))}</button><dialog class="artist-genre-dialog" data-artist-genre-dialog aria-labelledby="artist-genre-title"><div class="artist-genre-dialog-heading"><h3 id="artist-genre-title">Жанры артиста</h3><button type="button" data-artist-genre-close aria-label="Закрыть">Закрыть</button></div><div data-artist-genre-picker></div></dialog></div><label class="artist-metadata-field"><span>Теги артиста</span><input name="tags" value="${esc(artist.tags || '')}" readonly></label><label class="artist-metadata-field"><span>MusicBrainz ID · только чтение</span><input value="${esc(artist.mbid || 'Не связан')}" readonly></label><label class="artist-metadata-field artist-provider-identities"><span>Идентификаторы провайдеров · только чтение</span><input value="${esc(identities.length ? identities.map(identity => `${identity.provider}: ${identity.id}`).join(' · ') : 'Не указаны в демо')}" readonly></label></div><p class="artist-metadata-hint">Идентификаторы провайдеров доступны только для чтения. Выбор или создание связи с MusicBrainz здесь не выполняется.</p></form></section>`;
+}
+
+function setArtistMetadataMode(panel, editing) {
+  panel.classList.toggle('editing', editing);
+  panel.querySelectorAll('[data-artist-form] input[name]').forEach(input => { input.readOnly = !editing; });
+  const main = panel.querySelector('[data-artist-metadata="main"]');
+  main.textContent = editing ? 'Сохранить' : 'Редактировать';
+  main.dataset.mode = editing ? 'save' : 'edit';
+  const cancel = panel.querySelector('[data-artist-metadata="cancel"]');
+  cancel.setAttribute('aria-hidden', String(!editing));
+  cancel.tabIndex = editing ? 0 : -1;
+  panel.querySelector('[data-artist-genres]').disabled = !editing;
+}
+
+function resetArtistMetadataForm(panel, artist) {
+  const form = panel.querySelector('[data-artist-form]');
+  form.querySelector('[name="name"]').value = artist.name || '';
+  form.querySelector('[name="sort_name"]').value = artist.sort_name || '';
+  form.querySelector('[name="disambiguation"]').value = artist.disambiguation || '';
+  form.querySelector('[name="tags"]').value = artist.tags || '';
+  form.dataset.genresDirty = 'false';
+  panel.querySelector('[data-artist-genres]').textContent = artistGenreNames(artist);
+}
+
 function artistPage(id) {
   const artist = demoArtist(id);
   if (!artist) return header('Артист не найден', 'Эта ссылка не соответствует артисту медиатеки.', link('library', 'Вся медиатека', 'button'));
@@ -379,8 +413,8 @@ function artistPage(id) {
   const pubUnknown = releases.filter(release => !providerComplete(release)).length;
   const query = normalized(ui.libraryQuery);
   const missingGroups = absentProviderGroups.filter(group => group.artistId === artist.id && !localReleases.some(release => release.releaseGroupId === group.groupId) && ui.availabilityFilter !== 'available' && normalized(`${group.title} ${group.editions.map(edition => `${edition.year} ${edition.country} ${edition.format} ${edition.disambiguation} ${edition.titles.join(' ')}`).join(' ')}`).includes(query));
-  return `<section class="artist-overview"><div><h1 tabindex="-1">${esc(artist.name)}</h1><p class="muted">${russianCount(releases.length, 'издание', 'издания', 'изданий')} · ${russianCount(tracks.length, 'позиция', 'позиции', 'позиций')} · ${russianCount(missingGroups.length, 'альбом без издания', 'альбома без издания', 'альбомов без издания')}</p><div class="artist-metrics"><span>Исходники <strong>${tracks.filter(track => trackSourceIds(track).length).length}</strong></span><span>Есть аудио <strong>${tracks.filter(trackHasAudio).length}</strong></span><span>Опубликовано <strong>${tracks.filter(track => track.published).length}</strong></span><span>Аудио по изданиям <strong>полностью: ${full} · частично: ${partial} · нет: ${audioNone} · неизвестно: ${releases.filter(release => !providerComplete(release)).length}</strong></span><span>Публикация по изданиям <strong>полностью: ${pubFull} · частично: ${pubPartial} · нет: ${pubNone} · неизвестно: ${pubUnknown}</strong></span></div></div><div class="actions">${selectionInput('artist', artist.id, `Выбрать все позиции артиста ${artist.name}`, trackIds)}${button('delete-library', 'Удалить артиста', `data-kind="artist" data-id="${esc(artist.id)}"`)}${link('library', 'К медиатеке', 'button')}</div></section>${chosenCount ? `<div class="bulk-toolbar" role="region" aria-label="Действия с выбранным">${button('preview-bulk', `Предпросмотр ${russianCount(chosenCount, 'позиции', 'позиции', 'позиций')}`, '', true)}<span class="sub">Выбраны только существующие позиции. Снимите отдельную отметку у позиции, чтобы исключить её.</span><button type="button" data-action="clear-library-selection">Снять весь выбор</button></div>` : ''}` +
-    releases.map((release, index) => { const pub = release.tracks.filter(track => track.published).length; const provider = providerReleases.find(item => item.id === release.providerId); const known = Boolean(providerComplete(release) && provider?.tracks.length); const tone = !known ? '' : pub === provider.tracks.length ? 'success' : pub ? 'warning' : 'error'; const summary = publicationCountLabel(pub, known ? provider.tracks.length : 0, known); const releaseTrackIds = release.tracks.map(track => track.id); const changedTracks = release.tracks.filter(track => track.metadataChanged).length; return `<details class="album-disclosure" data-detail-key="artist-album:${esc(release.id)}" ${index === 0 ? 'open' : ''}><summary><span class="entity">${cover(release)}<span><strong>${esc(release.title)}</strong><span class="sub">${release.year} · ${russianCount(release.tracks.length, 'позиция', 'позиции', 'позиций')} · ${release.label || 'Локальный'} · ${release.catalog}</span></span></span><span class="edition-status ${tone}">${badge(summary, tone)}${changedTracks ? badge(`Метаданные изменились у ${russianCount(changedTracks, 'позиции', 'позиций', 'позиций')}`, 'warning') : ''}</span></summary><div class="album-actions">${selectionInput('release', release.id, `Выбрать все позиции альбома ${release.title}`, releaseTrackIds)}${link(`release/${release.id}`, 'Открыть альбом', 'button')}${button('preview-release', 'Предпросмотр публикации', `data-release="${release.id}"`, true)}${release.tracks.length ? `<details class="secondary-actions" data-detail-key="artist-album-actions:${esc(release.id)}"><summary>Сравнение метаданных</summary><div class="actions">${link(`tags/${release.tracks[0].id}/artist`, 'Теги артиста', 'button')}${link(`tags/${release.tracks[0].id}/release`, 'Теги альбома', 'button')}</div></details>` : ''}</div>${release.tracks.length ? table(['Выбрать', '№', 'Композиция', 'Есть аудио', 'Связей с исходниками', 'Публикация'], release.tracks.map(track => [`<input type="checkbox" data-select-track="${track.id}" aria-label="Выбрать ${esc(track.title)}" ${selectedTrack(track.id) ? 'checked' : ''}>`, trackNumberLabel(release, track), `${link(`track/${track.id}`, track.title)}${availabilityRowHint(track)}`, track.sourceId || track.published ? 'Да' : 'Нет', track.sourceIds?.length || Number(Boolean(track.sourceId)), track.published ? badge('Опубликовано', 'success') : badge('Не опубликовано')]), '', release.tracks.map(track => availabilityRowClass(track))) : '<div class="empty">Позиции не добавлены.</div>'}</details>`; }).join('') + (missingGroups.length ? missingProviderGroupsPanel(missingGroups) : '');
+  return `<section class="artist-overview"><div><h1 tabindex="-1" data-artist-heading>${esc(artist.name)}</h1><p class="muted">${russianCount(releases.length, 'издание', 'издания', 'изданий')} · ${russianCount(tracks.length, 'позиция', 'позиции', 'позиций')} · ${russianCount(missingGroups.length, 'альбом без издания', 'альбома без издания', 'альбомов без издания')}</p><div class="artist-metrics"><span>Исходники <strong>${tracks.filter(track => trackSourceIds(track).length).length}</strong></span><span>Есть аудио <strong>${tracks.filter(trackHasAudio).length}</strong></span><span>Опубликовано <strong>${tracks.filter(track => track.published).length}</strong></span><span>Аудио по изданиям <strong>полностью: ${full} · частично: ${partial} · нет: ${audioNone} · неизвестно: ${releases.filter(release => !providerComplete(release)).length}</strong></span><span>Публикация по изданиям <strong>полностью: ${pubFull} · частично: ${pubPartial} · нет: ${pubNone} · неизвестно: ${pubUnknown}</strong></span></div></div><div class="actions">${selectionInput('artist', artist.id, `Выбрать все позиции артиста ${artist.name}`, trackIds)}${button('delete-library', 'Удалить артиста', `data-kind="artist" data-id="${esc(artist.id)}"`)}${link('library', 'К медиатеке', 'button')}</div></section>${artistMetadataPanel(artist)}${chosenCount ? `<div class="bulk-toolbar" role="region" aria-label="Действия с выбранным">${button('preview-bulk', `Предпросмотр ${russianCount(chosenCount, 'позиции', 'позиции', 'позиций')}`, '', true)}<span class="sub">Выбраны только существующие позиции. Снимите отдельную отметку у позиции, чтобы исключить её.</span><button type="button" data-action="clear-library-selection">Снять весь выбор</button></div>` : ''}` +
+    releases.map((release, index) => { const pub = release.tracks.filter(track => track.published).length; const provider = providerReleases.find(item => item.id === release.providerId); const known = Boolean(providerComplete(release) && provider?.tracks.length); const tone = !known ? '' : pub === provider.tracks.length ? 'success' : pub ? 'warning' : 'error'; const summary = publicationCountLabel(pub, known ? provider.tracks.length : 0, known); const releaseTrackIds = release.tracks.map(track => track.id); const changedTracks = release.tracks.filter(track => track.metadataChanged).length; return `<details class="album-disclosure" data-detail-key="artist-album:${esc(release.id)}" ${index === 0 ? 'open' : ''}><summary><span class="entity">${cover(release)}<span><strong>${esc(release.title)}</strong><span class="sub">${release.year} · ${russianCount(release.tracks.length, 'позиция', 'позиции', 'позиций')} · ${release.label || 'Локальный'} · ${release.catalog}</span></span></span><span class="edition-status ${tone}">${badge(summary, tone)}${changedTracks ? badge(`Метаданные изменились у ${russianCount(changedTracks, 'позиции', 'позиций', 'позиций')}`, 'warning') : ''}</span></summary><div class="album-actions">${selectionInput('release', release.id, `Выбрать все позиции альбома ${release.title}`, releaseTrackIds)}${link(`release/${release.id}`, 'Открыть альбом', 'button')}${button('preview-release', 'Предпросмотр публикации', `data-release="${release.id}"`, true)}</div>${release.tracks.length ? table(['Выбрать', '№', 'Композиция', 'Есть аудио', 'Связей с исходниками', 'Публикация'], release.tracks.map(track => [`<input type="checkbox" data-select-track="${track.id}" aria-label="Выбрать ${esc(track.title)}" ${selectedTrack(track.id) ? 'checked' : ''}>`, trackNumberLabel(release, track), `${link(`track/${track.id}`, track.title)}${availabilityRowHint(track)}`, track.sourceId || track.published ? 'Да' : 'Нет', track.sourceIds?.length || Number(Boolean(track.sourceId)), track.published ? badge('Опубликовано', 'success') : badge('Не опубликовано')]), '', release.tracks.map(track => availabilityRowClass(track))) : '<div class="empty">Позиции не добавлены.</div>'}</details>`; }).join('') + (missingGroups.length ? missingProviderGroupsPanel(missingGroups) : '');
 }
 
 function releasePage(id) {
@@ -958,6 +992,67 @@ document.addEventListener('click', event => {
   if (!(event.target instanceof Element)) return;
   const target = event.target.closest('button');
   if (!target) return;
+  const metadataAction = target.dataset.artistMetadata;
+  if (metadataAction) {
+    const panel = target.closest('[data-artist-metadata-panel]');
+    const artist = panel && demoArtist(route()[1]);
+    if (!panel || !artist) return;
+    if (metadataAction === 'main' && target.dataset.mode === 'edit') {
+      setArtistMetadataMode(panel, true);
+      panel.querySelector('[name="name"]').focus({ preventScroll: true });
+    } else if (metadataAction === 'cancel') {
+      panel.querySelector('[data-artist-genre-dialog]').close();
+      resetArtistMetadataForm(panel, artist);
+      setArtistMetadataMode(panel, false);
+      panel.querySelector('[data-artist-metadata="main"]').focus({ preventScroll: true });
+    } else if (metadataAction === 'main' && target.dataset.mode === 'save') {
+      const form = panel.querySelector('[data-artist-form]');
+      const text = name => String(form.querySelector(`[name="${name}"]`)?.value || '').trim();
+      if (!text('name')) {
+        form.querySelector('[name="name"]').focus({ preventScroll: true });
+        notify('Имя артиста не может быть пустым.');
+        return;
+      }
+      artist.name = text('name');
+      artist.sort_name = text('sort_name');
+      artist.disambiguation = text('disambiguation');
+      artist.tags = text('tags');
+      if (form.dataset.genresDirty === 'true' && window.GenreLibraryPrototype?.catalogue?.().length) {
+        const unavailable = artistGenreIds(artist).filter(id => !window.GenreLibraryPrototype.get(id));
+        artist.genres = [...new Set([...unavailable, ...window.GenreLibraryPrototype.selectedIds(form, 'genreIds')])];
+      }
+      panel.querySelector('[data-artist-genres]').textContent = artistGenreNames(artist);
+      document.querySelector('[data-artist-heading]').textContent = artist.name;
+      document.title = `${artist.name} · MeloTrove · макет v2`;
+      document.querySelector('#breadcrumb').textContent = artist.name;
+      setArtistMetadataMode(panel, false);
+      panel.querySelector('[data-artist-metadata="main"]').focus({ preventScroll: true });
+      notify('Метаданные артиста сохранены только в объекте демо. Публикации и теги композиций не изменялись.');
+    }
+    return;
+  }
+  if (target.matches('[data-artist-genres]')) {
+    const panel = target.closest('[data-artist-metadata-panel]');
+    const artist = panel && demoArtist(route()[1]);
+    const dialog = panel?.querySelector('[data-artist-genre-dialog]');
+    const form = panel?.querySelector('[data-artist-form]');
+    if (!artist || !dialog || !form) return;
+    const ids = form.dataset.genresDirty === 'true' && window.GenreLibraryPrototype?.catalogue?.().length
+      ? window.GenreLibraryPrototype.selectedIds(form, 'genreIds')
+      : artistGenreIds(artist);
+    const picker = window.GenreLibraryPrototype?.renderPicker
+      ? window.GenreLibraryPrototype.renderPicker(ids, 'genreIds')
+      : '<fieldset class="genre-picker" disabled><legend>Жанры</legend><p class="muted">Каталог недоступен. Можно сохранить запись без изменения жанров.</p></fieldset>';
+    panel.querySelector('[data-artist-genre-picker]').innerHTML = `${picker}${window.GenreLibraryPrototype?.catalogue?.().length ? '' : '<button type="button" data-action="genre-library-load">Загрузить каталог жанров в демо</button>'}`;
+    dialog.showModal();
+    target.setAttribute('aria-expanded', 'true');
+    return;
+  }
+  if (target.matches('[data-artist-genre-close]')) {
+    const dialog = target.closest('[data-artist-genre-dialog]');
+    dialog?.close();
+    return;
+  }
   if (target.dataset.folderAction) {
     switch (target.dataset.folderAction) {
       case 'cancel': folderDialog.close('cancel'); break;
@@ -1167,12 +1262,58 @@ document.addEventListener('click', event => {
   }
 });
 
+document.addEventListener('click', event => {
+  if (!(event.target instanceof Element)) return;
+  if (event.target.closest('.artist-genre-dialog [data-genre-add], .artist-genre-dialog [data-genre-remove]')) {
+    const form = event.target.closest('[data-artist-form]');
+    if (form) form.dataset.genresDirty = 'true';
+  }
+}, true);
+
 document.addEventListener('genre-library-change', () => {
   if (['settings', 'setup'].includes(route()[0])) render(false);
+  if (route()[0] === 'artist') {
+    const artist = demoArtist(route()[1]);
+    const panel = document.querySelector('[data-artist-metadata-panel]');
+    const dialog = panel?.querySelector('[data-artist-genre-dialog]');
+    if (artist && panel && dialog?.open) {
+      const form = panel.querySelector('[data-artist-form]');
+      const ids = form.dataset.genresDirty === 'true'
+        ? window.GenreLibraryPrototype.selectedIds(form, 'genreIds')
+        : artistGenreIds(artist);
+      panel.querySelector('[data-artist-genre-picker]').innerHTML = window.GenreLibraryPrototype.renderPicker(ids, 'genreIds');
+    }
+  }
+});
+
+document.addEventListener('close', event => {
+  if (!(event.target instanceof HTMLDialogElement) || !event.target.matches('[data-artist-genre-dialog]')) return;
+  const panel = event.target.closest('[data-artist-metadata-panel]');
+  const trigger = panel?.querySelector('[data-artist-genres]');
+  trigger?.setAttribute('aria-expanded', 'false');
+  trigger?.focus({ preventScroll: true });
+}, true);
+
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  const panel = document.querySelector('[data-artist-metadata-panel].editing');
+  if (!panel) return;
+  event.preventDefault();
+  const artist = demoArtist(route()[1]);
+  if (!artist) return;
+  panel.querySelector('[data-artist-genre-dialog]').close();
+  resetArtistMetadataForm(panel, artist);
+  setArtistMetadataMode(panel, false);
+  panel.querySelector('[data-artist-metadata="main"]').focus({ preventScroll: true });
 });
 
 document.addEventListener('submit', event => {
   if (!(event.target instanceof HTMLFormElement)) return;
+  if (event.target.matches('[data-artist-form]')) {
+    event.preventDefault();
+    event.target.closest('[data-artist-metadata-panel]')?.querySelector('[data-artist-metadata="main"][data-mode="save"]')?.click();
+    return;
+  }
   if (event.target.id === 'folder-path-form') {
     event.preventDefault();
     const picker = ui.folderPicker;

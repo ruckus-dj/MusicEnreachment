@@ -2,6 +2,7 @@ import fixtureData from "./original-fixtures.json";
 import {
 	desiredTags,
 	originalArtistName,
+	originalArtists,
 	originalFiles,
 	originalProviders,
 	originalReleases,
@@ -68,6 +69,7 @@ const fixtures = fixtureData as unknown as {
 
 export const incomingFixtures = {
 	...fixtures,
+	artists: originalArtists,
 	files: originalFiles as IncomingFiles,
 	releases: originalReleases,
 	providerReleases: originalProviders,

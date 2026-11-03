@@ -13,6 +13,8 @@ Authoritative design documentation (Russian). Conventions, architecture, decisio
 - deployment.md - "Do not move database between platforms expecting automatic tool migration"; server-only paths
 - external-tools.md - tool integration requirements
 - music_ingest_redesign.dbml - database schema design
+- navidrome-metadata.md - полнота редактируемых музыкальных метаданных, поля
+  артиста, upstream-покрытие Navidrome и отдельные нерешённые правила разрешения
 
 ## CONVENTIONS
 **Documentation-first**: Conventions live here (Russian), not in inline comments. When code contradicts these docs, the docs are authoritative.

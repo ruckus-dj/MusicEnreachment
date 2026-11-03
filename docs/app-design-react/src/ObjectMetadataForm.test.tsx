@@ -139,4 +139,51 @@ describe("ObjectMetadataForm", () => {
 			screen.queryByText("Заполните поле «Title»."),
 		).not.toBeInTheDocument();
 	});
+
+	it("keeps the genre control fixed-height and only submits picker changes", () => {
+		const onSave = vi.fn();
+		const genreField = {
+			value: ["legacy-unavailable-id"],
+			displayValue: "legacy genre",
+			loaded: true,
+		};
+		const { rerender } = render(
+			<ObjectMetadataForm
+				label="Artist metadata"
+				fields={initialFields}
+				genreField={genreField}
+				onSave={onSave}
+			/>,
+		);
+		const genreControl = screen.getByRole("button", { name: "Жанры" });
+		expect(genreControl).toHaveClass("h-8");
+		fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+		expect(screen.getByRole("button", { name: "Жанры" })).toBe(genreControl);
+		expect(genreControl).toHaveClass("h-8");
+		fireEvent.click(genreControl);
+		fireEvent.change(screen.getByRole("textbox", { name: "Поиск жанров" }), {
+			target: { value: "rock" },
+		});
+		fireEvent.click(screen.getByRole("checkbox", { name: "rock" }));
+		fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+		expect(onSave).toHaveBeenCalledWith(
+			expect.objectContaining({ title: "Saved title" }),
+			["legacy-unavailable-id", "demo-genre-rock"],
+		);
+
+		onSave.mockClear();
+		rerender(
+			<ObjectMetadataForm
+				label="Artist metadata"
+				fields={initialFields}
+				genreField={genreField}
+				onSave={onSave}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+		fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+		expect(onSave).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({ title: "Saved title" }),
+		);
+	});
 });

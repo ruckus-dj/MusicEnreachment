@@ -72,7 +72,8 @@
 | FileChip | Draggable button, filename, duration/codec, источник; selected, assigned, available |
 | DropRow | Позиция провайдера или локального сборника, связанные варианты, явный выбор источника публикации, evidence; пустая/заполненная |
 | Evidence | Тестовый verdict отдельно от не рассчитываемого макетом confidence/вкладов; raw/normalized значения, Δ длительности, MBID/fingerprint, решение |
-| TagMatrix | Поле / исходник / провайдер / локально / в публикации; выбор области артист/релиз/трек и конкретного файла; «Только отличия» |
+| ObjectMetadata | Постоянно видимые сведения артиста/издания; те же text-like readonly поля становятся редактируемыми, Edit/Save фиксированного размера, место отмены зарезервировано; Escape отменяет draft. Артист включает отдельный `sort_name`, уточнение, genres-picker и tags; provider identities отдельно readonly. |
+| TagMatrix | Поле / исходник / провайдер / локально / в публикации — сравнение конкретного трека и файла, «Только отличия»; не редактор сведений артиста/издания и не их общий снимок тегов. Полный целевой реестр — [метаданные Navidrome](../design/navidrome-metadata.md). |
 | GenrePicker | Только значения общей библиотеки MusicBrainz; multiselect, поиск/autocomplete, состояния загрузки/пустого каталога; свободный ввод запрещён |
 | PublicationPlan | Контекстный агрегированный preview до позиции: create/update/unchanged/unprocessable/skipped с причинами; не пункт sidebar |
 | ThemeSelect | System/light/dark, доступное имя, работает без изменения domain state |

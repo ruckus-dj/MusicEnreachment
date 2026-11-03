@@ -53,6 +53,12 @@
   регистра и пробелов по краям остаётся будущим ожиданием, а не текущим
   ограничением. Уникальность MBID/provider key и правило не более одной связи на
   provider сохраняются.
+- Для Local-артиста обязательным остаётся только отображаемое `name`;
+  `sort_name` — необязательное самостоятельное значение для сортировки. Стабильный
+  `provider_key` остаётся идентификатором Local-записи и не вычисляется из имени
+  или `sort_name`. Disambiguation, genres и tags остаются отдельными metadata и
+  не задают идентичность. Genres артиста выбираются множественно из общей
+  библиотеки жанров MusicBrainz по MBID; genres и tags не являются одним полем.
 - Роли вроде composer/lyricist/vocalist/guitarist остаются метаданными и не
   образуют artist entity или artist links. `ALBUMARTIST` задаёт artist links
   релиза, `ARTIST` — исполнителей recording/позиции.
@@ -76,7 +82,10 @@
 - В Local-формах обязательны только бизнес-поля, помеченные `[not null]` в
   соответствующей таблице DBML; nullable поля остаются необязательными. Для
   артиста это `name`, для release — `release_group_title` и `title`, для
-  recording — `title`. Неполные данные не получают drafts или unusable statuses.
+  recording — `title`. `sort_name` артиста необязателен. Жанры артиста —
+  множественный выбор из общей библиотеки MusicBrainz по MBID; tags сохраняются
+  отдельно, общего наследования tags эта модель не задаёт. Неполные данные не
+  получают drafts или unusable statuses.
   Это правило не меняет согласованную форму создания collection-релиза: она
   остаётся отдельным workflow, без публикации при создании.
 - Local-релиз поддерживает один носитель. Его упорядоченный трек-лист ссылается
@@ -153,6 +162,9 @@
   иные правила lifecycle жанров отдельно не определены; не выводить их из
   обновления каталога. Сам источник и UI выбора утверждены решением от 2026-11-01
   (см. [`genres.md`](./genres.md)).
+- Взаимодействие собственного `sort_name` артиста с явными контекстными
+  `artist_sort_names` публикации, включая приоритет и композицию для нескольких
+  артистов, не определено; не предполагать fallback или выбор порядка.
 
 ## Связанные документы
 
@@ -161,6 +173,8 @@
 - [`data-model.md`](./data-model.md) и
   [`music_ingest_redesign.dbml`](./music_ingest_redesign.dbml) — существующая
   provider-модель и её ограничения.
+- [`navidrome-metadata.md`](./navidrome-metadata.md) — будущий контракт
+  metadata публикации и сортировочных значений.
 - [`app-design/manual-release-proposal.md`](../app-design/manual-release-proposal.md),
   [`02-screens.md`](../app-design/02-screens.md) и
   [`03-data-and-evidence.md`](../app-design/03-data-and-evidence.md) — текущий

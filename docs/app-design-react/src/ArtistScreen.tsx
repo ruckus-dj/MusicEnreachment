@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TagScope } from "./TagsComparison";
 import { ObjectMetadataForm } from "./ObjectMetadataForm";
+import { demoGenres } from "./GenreLibrary";
 import { ArtistDeletionRequest } from "./ArtistDeletionRequest";
 import {
 	availabilityRowClass,
@@ -57,6 +58,7 @@ export function ArtistScreen({
 	onUpdateRelease,
 	initialTags,
 	initialReleaseId,
+	genresLoaded = false,
 }: {
 	artistId: string;
 	artists: CatalogArtist[];
@@ -74,6 +76,7 @@ export function ArtistScreen({
 	onUpdateRelease?: (release: OriginalRelease) => void;
 	initialTags?: { scope: TagScope; releaseId?: string };
 	initialReleaseId?: string;
+	genresLoaded?: boolean;
 }) {
 	const [localQuery, setLocalQuery] = useState("");
 	const [localFilter, setLocalFilter] = useState<CatalogFilterValue>("all");
@@ -176,8 +179,29 @@ export function ArtistScreen({
 		tracks.filter(predicate).length;
 	const expandedReleaseId =
 		initialTags?.scope === "release" ? initialTags.releaseId : initialReleaseId;
-	const saveArtist = (values: Record<string, string>) => {
-		const updated = { ...artist, name: values.name, genre: values.genre };
+	const saveArtist = (values: Record<string, string>, genreIds?: string[]) => {
+		const selectedGenres = genreIds
+			? [
+					...genreIds.map((id) => {
+						const known = demoGenres.find((item) => item.id === id);
+						return (
+							known ?? artist.genres?.find((genre) => genre.id === id) ?? { id }
+						);
+					}),
+					...(artist.genres ?? []).filter((genre) => !genre.id),
+				]
+			: artist.genres;
+		const updated = {
+			...artist,
+			name: values.name,
+			sortName: values.sortName,
+			disambiguation: values.disambiguation,
+			tags: values.tags
+				.split(",")
+				.map((tag) => tag.trim())
+				.filter(Boolean),
+			...(genreIds ? { genres: selectedGenres } : {}),
+		};
 		if (onUpdateArtist) onUpdateArtist(updated);
 		else
 			setLocalArtistUpdates((current) => ({
@@ -263,7 +287,12 @@ export function ArtistScreen({
 						<p className={catalogueStyles.heroKicker}>ПРОФИЛЬ АРТИСТА</p>
 						<h1>{artist.name}</h1>
 						<p className={catalogueStyles.heroGenre}>
-							{artist.genre || "Исполнитель"}
+							{artist.genres
+								?.map((genre) => genre.name)
+								.filter(Boolean)
+								.join(", ") ||
+								artist.genre ||
+								"Исполнитель"}
 						</p>
 					</div>
 					<div className={catalogueStyles.heroFoot}>
@@ -304,8 +333,36 @@ export function ArtistScreen({
 					label="Сведения об артисте"
 					fields={[
 						{ key: "name", label: "Имя", value: artist.name },
-						{ key: "genre", label: "Жанр", value: artist.genre ?? "" },
+						{
+							key: "sortName",
+							label: "Имя для сортировки",
+							value: artist.sortName ?? "",
+						},
+						{
+							key: "disambiguation",
+							label: "Уточнение",
+							value: artist.disambiguation ?? "",
+						},
+						{
+							key: "tags",
+							label: "Теги",
+							// Comma-separated values are a display-prototype convention only.
+							value: artist.tags?.join(", ") ?? "",
+						},
 					]}
+					genreField={{
+						value:
+							artist.genres?.flatMap((genre) => (genre.id ? [genre.id] : [])) ??
+							[],
+						displayValue:
+							artist.genres
+								?.map((genre) => genre.name)
+								.filter(Boolean)
+								.join(", ") ||
+							artist.genre ||
+							"",
+						loaded: genresLoaded,
+					}}
 					required={["name"]}
 					onSave={saveArtist}
 				/>

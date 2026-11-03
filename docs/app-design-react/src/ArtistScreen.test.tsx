@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 import { ArtistScreen } from "./ArtistScreen";
 import {
 	catalogData,
+	desiredTags,
 	type OriginalRelease,
 	originalFiles,
 	originalReleases,
@@ -119,7 +120,13 @@ it("shows always-visible artist and release metadata forms", () => {
 	expect(within(artistDetails).getByLabelText("Имя")).toHaveValue(
 		catalogData.artists.find((artist) => artist.id === release.artistId)?.name,
 	);
-	expect(within(artistDetails).getByLabelText("Жанр")).toBeInTheDocument();
+	expect(within(artistDetails).getByText("Жанры")).toBeInTheDocument();
+	expect(
+		within(artistDetails).getByLabelText("Имя для сортировки"),
+	).toHaveAttribute("readonly");
+	expect(within(artistDetails).getByLabelText("Уточнение")).toHaveAttribute(
+		"readonly",
+	);
 	expect(within(releaseDetails).getByLabelText("Название")).toHaveValue(
 		release.title,
 	);
@@ -156,6 +163,117 @@ it("shows always-visible artist and release metadata forms", () => {
 	expect(
 		screen.queryByRole("region", { name: "Сравнение тегов: release" }),
 	).not.toBeInTheDocument();
+});
+
+it("saves artist-owned sort metadata and canonical genres without a sort-name fallback", () => {
+	const artist = {
+		id: "artist-test",
+		name: "Artist Name",
+		sortName: "Name, Artist",
+		disambiguation: "Live project",
+		genres: [
+			{ id: "demo-genre-rock", name: "rock" },
+			{ id: "legacy-genre-id", name: "Unavailable genre" },
+		],
+		genre: "Legacy genre",
+		tags: ["ambient", "instrumental"],
+	};
+	const onUpdateArtist = vi.fn();
+	const release = {
+		...originalReleases[0],
+		artistId: artist.id,
+		tracks: originalReleases[0].tracks.map((track) => ({
+			...track,
+			artistId: artist.id,
+		})),
+	};
+	render(
+		<ArtistScreen
+			artistId={artist.id}
+			artists={[artist]}
+			releases={[release]}
+			files={originalFiles}
+			genresLoaded
+			onUpdateArtist={onUpdateArtist}
+		/>,
+	);
+	const details = screen.getByRole("region", { name: "Сведения об артисте" });
+	expect(desiredTags(release, release.tracks[0], [artist]).ARTISTSORT).toEqual([
+		"Name, Artist",
+	]);
+	const noSortName = { ...artist, sortName: undefined };
+	expect(
+		desiredTags(release, release.tracks[0], [noSortName]).ARTISTSORT,
+	).toEqual([]);
+
+	fireEvent.click(
+		within(details).getByRole("button", { name: "Редактировать" }),
+	);
+	fireEvent.change(within(details).getByLabelText("Имя для сортировки"), {
+		target: { value: "Artist, Name" },
+	});
+	fireEvent.change(within(details).getByLabelText("Теги"), {
+		target: { value: "ambient, live" },
+	});
+	fireEvent.click(within(details).getByRole("button", { name: "Жанры" }));
+	fireEvent.click(within(details).getByLabelText("electronic"));
+	fireEvent.click(within(details).getByRole("button", { name: "Сохранить" }));
+	expect(onUpdateArtist).toHaveBeenCalledWith(
+		expect.objectContaining({
+			sortName: "Artist, Name",
+			disambiguation: "Live project",
+			tags: ["ambient", "live"],
+			genre: "Legacy genre",
+			genres: [
+				{ id: "demo-genre-rock", name: "rock" },
+				{ id: "legacy-genre-id", name: "Unavailable genre" },
+				{ id: "demo-genre-electronic", name: "electronic" },
+			],
+		}),
+	);
+});
+
+it("preserves legacy and unavailable genre references when editing without a loaded picker", () => {
+	const artist = {
+		id: "artist-unloaded-genres",
+		name: "Artist Name",
+		genre: "Legacy genre",
+		genres: [{ id: "unavailable-id", name: "Unavailable genre" }],
+	};
+	const onUpdateArtist = vi.fn();
+	const release = {
+		...originalReleases[0],
+		artistId: artist.id,
+		tracks: originalReleases[0].tracks.map((track) => ({
+			...track,
+			artistId: artist.id,
+		})),
+	};
+	render(
+		<ArtistScreen
+			artistId={artist.id}
+			artists={[artist]}
+			releases={[release]}
+			files={originalFiles}
+			onUpdateArtist={onUpdateArtist}
+		/>,
+	);
+	const details = screen.getByRole("region", { name: "Сведения об артисте" });
+	fireEvent.click(
+		within(details).getByRole("button", { name: "Редактировать" }),
+	);
+	expect(within(details).getByRole("button", { name: "Жанры" })).toBeDisabled();
+	fireEvent.change(within(details).getByLabelText("Имя"), {
+		target: { value: "Renamed Artist" },
+	});
+	fireEvent.click(within(details).getByRole("button", { name: "Сохранить" }));
+	expect(onUpdateArtist).toHaveBeenCalledWith(
+		expect.objectContaining({
+			name: "Renamed Artist",
+			genre: "Legacy genre",
+			genres: [{ id: "unavailable-id", name: "Unavailable genre" }],
+		}),
+	);
 });
 
 it("keeps empty album disclosures available without preview actions", () => {

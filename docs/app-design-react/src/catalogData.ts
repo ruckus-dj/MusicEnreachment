@@ -90,12 +90,27 @@ export const recoveryFixture = original.recoveryFixture;
 export type CatalogArtist = {
 	id: string;
 	name: string;
+	sortName?: string;
+	disambiguation?: string;
+	genres?: { id?: string; name?: string }[];
+	/** Legacy display value for fixtures that predate canonical genre references. */
 	genre?: string;
+	/** Optional demo-only artist tags, edited as comma-separated values. */
+	tags?: string[];
 	color?: string;
 };
+// Explicit demo data matching the existing Japan-edition publication fixture.
+// This is not a display-name fallback or a metadata resolution policy.
+const demoSortNames: Partial<Record<string, string>> = { mira: "Mira Vale" };
+export const originalArtists: CatalogArtist[] = original.artists.map(
+	(artist) => ({
+		...artist,
+		sortName: demoSortNames[artist.id],
+	}),
+);
 export const originalArtistName = (
 	id: string | null,
-	artists: CatalogArtist[] = original.artists,
+	artists: CatalogArtist[] = originalArtists,
 ) => artists.find((artist) => artist.id === id)?.name ?? "Артист не указан";
 export interface SourceFile {
 	id: string;
@@ -125,7 +140,7 @@ export function applyMetadataPreview(
 	releases: OriginalRelease[],
 	selected: Set<string>,
 	files: SourceFiles = originalFiles,
-	artists: CatalogArtist[] = original.artists,
+	artists: CatalogArtist[] = originalArtists,
 ): OriginalRelease[] {
 	const next = structuredClone(releases);
 	for (const release of next)
@@ -160,14 +175,16 @@ export function applyMetadataPreview(
 export function desiredTags(
 	release: OriginalRelease,
 	track: OriginalTrack,
-	artists: CatalogArtist[] = original.artists,
+	artists: CatalogArtist[] = originalArtists,
 ): Record<string, string[]> {
 	const artist = artists.find((item) => item.id === track.artistId);
 	const albumArtist = artists.find((item) => item.id === release.artistId);
 	return {
 		TITLE: track.title ? [track.title] : [],
 		ARTIST: artist?.name ? [artist.name] : [],
-		ARTISTSORT: artist?.name ? [artist.name] : [],
+		// Single-artist demo: use only the explicit artist sort name, without
+		// contextual resolution or a display-name fallback.
+		ARTISTSORT: artist?.sortName ? [artist.sortName] : [],
 		ALBUM: release.title ? [release.title] : [],
 		ALBUMARTIST: release.credits?.length
 			? release.credits
@@ -210,7 +227,7 @@ const normalized = (value: string) =>
 export function metadataChanged(
 	release: OriginalRelease,
 	track: OriginalTrack,
-	artists: CatalogArtist[] = original.artists,
+	artists: CatalogArtist[] = originalArtists,
 ): boolean {
 	if (!track.published || !track.metadataBaseline) return false;
 	const tags = desiredTags(release, track, artists);
@@ -218,6 +235,7 @@ export function metadataChanged(
 		[
 			"TITLE",
 			"ARTIST",
+			"ARTISTSORT",
 			"ALBUM",
 			"ALBUMARTIST",
 			"DATE",
@@ -238,7 +256,7 @@ export function metadataChanged(
 	);
 }
 export const catalogData = {
-	artists: original.artists,
+	artists: originalArtists,
 	absentGroups: original.absentGroups,
 	releases: originalReleases.map((release) => ({
 		...release,
