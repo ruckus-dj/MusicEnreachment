@@ -38,6 +38,11 @@ updates prototype library state; Cancel/Escape discard the draft. Provider
 identities remain readonly. Source files and existing publications are not changed
 by editing object metadata; file/publication comparisons belong to a track.
 
+Disclosure groups form one vertical stack, with the same full width closed and
+open. Never put their headers in multiple columns or change grid span on open:
+expansion may move later content down, not sideways. Multi-column field grids
+are allowed inside an already expanded group, without changing its outer width.
+
 Sort names are edited only on the artist card, with no album/track overrides;
 ordered credit sort tags derive from those values without display-name fallback.
 Explicit fixture sort names are demo data. Keep default and catalog-backed metadata

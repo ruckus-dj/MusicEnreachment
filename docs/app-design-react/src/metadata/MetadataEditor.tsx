@@ -58,6 +58,8 @@ export interface MetadataEditorProps {
 
 const inputClass =
 	"h-8 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)] read-only:border-transparent read-only:bg-transparent";
+const disclosureSummaryClass =
+	"w-full cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
 const groupLabels: Record<string, string> = {
 	release: "Тип и параметры издания",
 	recording: "Даты и музыкальные сведения",
@@ -939,10 +941,10 @@ export function MetadataEditor({
 					</details>
 				</div>
 			)}
-			<div className="grid min-w-0 gap-2 sm:grid-cols-2">
+			<div data-metadata-sections className="grid min-w-0 grid-cols-1 gap-2">
 				{roles.length > 0 && (
-					<details className="min-w-0 open:col-span-full">
-						<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+					<details className="min-w-0">
+						<summary className={disclosureSummaryClass}>
 							Участники и роли ·{" "}
 							{metadataSummary(
 								fields.filter((field) => field.group === "roles"),
@@ -1136,8 +1138,8 @@ export function MetadataEditor({
 				)}
 				{(fields.some((field) => field.group === "works") ||
 					fields.some((field) => field.group === "movement")) && (
-					<details className="min-w-0 open:col-span-full">
-						<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+					<details className="min-w-0">
+						<summary className={disclosureSummaryClass}>
 							Произведения и части ·{" "}
 							{metadataSummary(
 								fields.filter(
@@ -1308,8 +1310,8 @@ export function MetadataEditor({
 					</details>
 				)}
 				{otherSections.map(([group, sectionFields]) => (
-					<details key={group} className="min-w-0 open:col-span-full">
-						<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+					<details key={group} className="min-w-0">
+						<summary className={disclosureSummaryClass}>
 							{groupHeading(group)} · {metadataSummary(sectionFields, current)}
 						</summary>
 						<section className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2">
@@ -1379,8 +1381,8 @@ export function MetadataEditor({
 				{fields
 					.filter((field) => field.kind === "lyrics")
 					.map((field) => (
-						<details key={field.key} className="min-w-0 open:col-span-full">
-							<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+						<details key={field.key} className="min-w-0">
+							<summary className={disclosureSummaryClass}>
 								Текст песни ·{" "}
 								{rows(current, field.key).some(Boolean)
 									? "заполнено"
@@ -1397,8 +1399,8 @@ export function MetadataEditor({
 						</details>
 					))}
 				{extraFields.length > 0 && (
-					<details className="min-w-0 open:col-span-full">
-						<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+					<details className="min-w-0">
+						<summary className={disclosureSummaryClass}>
 							Дополнительные теги ·{" "}
 							{extraFields.filter((field) => field.value).length} заполнено
 						</summary>

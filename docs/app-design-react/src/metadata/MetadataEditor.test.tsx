@@ -5,6 +5,39 @@ import type { MetadataValues } from "./projection";
 import { fieldsForScope, type MetadataScope } from "./registry";
 
 describe("MetadataEditor", () => {
+	it.each([
+		"release",
+		"recording",
+	] as const)("keeps %s disclosures in a single stable column", (scope) => {
+		const { container } = render(
+			<MetadataEditor
+				label="Details"
+				scope={scope}
+				values={{}}
+				onSave={vi.fn()}
+			/>,
+		);
+		const stack = container.querySelector<HTMLElement>(
+			"[data-metadata-sections]",
+		);
+		expect(stack).toHaveClass("grid-cols-1");
+		expect(stack).not.toHaveClass("sm:grid-cols-2");
+		const groups = [
+			...stack!.querySelectorAll<HTMLDetailsElement>(":scope > details"),
+		];
+		expect(groups.length).toBeGreaterThan(1);
+		for (const group of groups) {
+			expect(group.className).not.toContain("col-span");
+			expect(group.open).toBe(false);
+		}
+		const header = groups[0].querySelector("summary")!;
+		fireEvent.click(header);
+		expect(groups[0].open).toBe(true);
+		expect(groups[1].open).toBe(false);
+		expect(header).toHaveClass("w-full");
+		fireEvent.click(header);
+		expect(groups[0].open).toBe(false);
+	});
 	it("shows compact essentials first and keeps empty role rows out of the default view", () => {
 		const { container } = render(
 			<MetadataEditor
