@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { useState } from "react";
 import { LocalProviderScreen } from "./LocalProviderScreen";
+import { I18nProvider } from "./i18n/I18nProvider";
 import { parseLocalDuration } from "./localProviderModel";
 import {
 	createLocalProviderState,
@@ -67,7 +68,28 @@ it("creates and edits only by explicit action, emitting controlled current state
 		provider: "Local",
 	});
 	expect(created.items.artists[0].id).not.toBe("");
-	expect(created.notice).toContain("API и серверная часть не вызываются");
+	expect(created.notice).toEqual({ key: "recordCreated" });
+	expect(screen.getByRole("status")).toHaveTextContent(
+		"Демо: запись создана в памяти страницы. API и серверная часть не вызываются.",
+	);
+});
+
+it("localizes Local-provider UI to English without translating fixture values", () => {
+	window.localStorage.setItem("music-design-v2-language", "en");
+	render(
+		<I18nProvider>
+			<LocalProviderScreen />
+		</I18nProvider>,
+	);
+	window.localStorage.removeItem("music-design-v2-language");
+	expect(
+		screen.getByRole("heading", { name: "Local catalog" }),
+	).toBeInTheDocument();
+	expect(screen.getByRole("tab", { name: /Artists/ })).toBeInTheDocument();
+	expect(screen.getByLabelText("Search artists")).toBeInTheDocument();
+	expect(
+		screen.getByRole("heading", { name: "Mira Vale" }),
+	).toBeInTheDocument();
 });
 
 it("preserves external artist references as readonly identities and gates genre selection", () => {
@@ -86,8 +108,11 @@ it("preserves external artist references as readonly identities and gates genre 
 	if (!forma) throw new Error("Missing Forma artist option");
 	expect(forma).toHaveTextContent("mb-artist-forma");
 	fireEvent.click(screen.getByRole("button", { name: "Жанры" }));
+	fireEvent.change(screen.getByRole("searchbox", { name: "Поиск жанров" }), {
+		target: { value: "electronic" },
+	});
 	expect(
-		screen.getByRole("option", { name: "electronic" }),
+		screen.getByRole("option", { name: "Electronic" }),
 	).toBeInTheDocument();
 	fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 	// The external artist option is only a reference checkbox; its canonical key is not editable.

@@ -20,7 +20,6 @@ export function renameLocalTrack(
 export function refreshProviderHint(track: OriginalTrack): OriginalTrack {
 	return {
 		...track,
-		providerTitle: `${track.title} · кэш провайдера обновлён`,
 		providerCacheVersion: (track.providerCacheVersion || 1) + 1,
 	};
 }
@@ -35,6 +34,7 @@ export function upgradeAudioOnly(
 		...track,
 		published: {
 			...track.published,
+			readAt: new Date().toISOString(),
 			codec: file.codec,
 			sourceId: file.id,
 			tags: replaceAudioMeasurements(
@@ -42,7 +42,6 @@ export function upgradeAudioOnly(
 				projectMetadataValues(track.audioMetadata?.[file.id] ?? {}, "audio")
 					.tags,
 			),
-			readAt: "Только что · демо изменения качества аудио",
 		},
 		metadataBaseline: replaceAudioMeasurements(
 			track.metadataBaseline ?? track.published.tags,
@@ -82,10 +81,10 @@ export function explicitlyRepublish(
 			tags,
 			coverHash,
 			lyrics,
+			readAt: new Date().toISOString(),
 			codec: file.codec,
 			container: "MKA",
 			sourceId: file.id,
-			readAt: "Только что · явная перепубликация демо",
 			path:
 				track.published?.path ||
 				`/srv/music/${originalArtistName(release.artistId, artists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`,

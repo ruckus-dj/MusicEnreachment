@@ -21,7 +21,8 @@ it("renames locally and refreshes the provider hint without rewriting current pu
 	const { release, track } = baseline();
 	const next = refreshProviderHint(renameLocalTrack(track, "New local title"));
 	expect(next.title).toBe("New local title");
-	expect(next.providerTitle).toContain("кэш провайдера обновлён");
+	expect(next.providerTitle).toBe(track.providerTitle);
+	expect(next.providerCacheVersion).toBe((track.providerCacheVersion || 1) + 1);
 	expect(next.published).toEqual(track.published);
 	expect(next.metadataBaseline).toEqual(track.metadataBaseline);
 	expect(metadataChanged(release, next)).toBe(true);

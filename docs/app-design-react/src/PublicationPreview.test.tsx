@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import {
+	publicationMetadataIssueMessages,
 	applyMetadataPreview,
 	metadataChanged,
 	originalFiles,
@@ -8,6 +9,7 @@ import {
 } from "./catalogData";
 import { PublicationPreview } from "./PublicationPreview";
 import { captureMetadataPreview } from "./previewModel";
+import { formatPublicationMessage } from "./publicationMessages";
 
 const token = (ids: string[]) =>
 	captureMetadataPreview(4, "selection:test", ids);
@@ -49,7 +51,10 @@ it("matches original Mira preview counts without selecting alternative sources",
 	);
 	for (const [action, count] of Object.entries(actionCounts))
 		expect(screen.getByText(`${action}: ${count}`)).toBeInTheDocument();
-	expect(screen.getAllByRole("row")).toHaveLength(ids.length + 1);
+	const inspector = within(
+		screen.getByRole("region", { name: "Сравнить метаданные" }),
+	);
+	expect(inspector.getAllByRole("list")[0].children).toHaveLength(ids.length);
 	expect(
 		Object.values(actionCounts).reduce((sum, count) => sum + count, 0),
 	).toBe(ids.length);
@@ -102,8 +107,15 @@ it("marks invalid metadata as unprocessable and explains the validation issue", 
 		/>,
 	);
 	expect(screen.getByText("Невозможно обработать: 1")).toBeInTheDocument();
+	fireEvent.click(screen.getByRole("button", { name: /2\. Still Water/ }));
 	expect(
-		screen.getByText(/Некорректные метаданные: explicitstatus/),
+		screen.getByText(
+			formatPublicationMessage("ru", "invalidMetadata", {
+				fields: publicationMetadataIssueMessages(release, track, "ru").join(
+					"; ",
+				),
+			}),
+		),
 	).toBeInTheDocument();
 });
 

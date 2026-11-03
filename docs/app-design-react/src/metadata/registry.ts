@@ -1,3 +1,11 @@
+import type { Locale } from "../i18n/types";
+import {
+	metadataFieldMessageKey,
+	metadataMessage,
+	metadataMessageKeyFor,
+	type MetadataMessageKey,
+} from "./messages";
+
 export type MetadataScope = "release" | "recording" | "track" | "audio";
 
 export type MetadataKind =
@@ -466,4 +474,28 @@ export function fieldsForScope(scope: MetadataScope): MetadataField[] {
 
 export function fieldByKey(key: string): MetadataField | undefined {
 	return byKey.get(key);
+}
+
+/** Registry labels are presentation only; stable field keys and tag identities never vary by locale. */
+export function metadataFieldLabel(key: string, locale: Locale): string {
+	const messageKey = metadataFieldMessageKey(key);
+	return messageKey ? metadataMessage(locale, messageKey) : key;
+}
+
+const groupMessageKeys = {
+	release: "group.release",
+	recording: "group.recording",
+	track: "group.track",
+	audio: "group.audio",
+	"recording artists": "group.recordingArtists",
+	"release artists": "group.releaseArtists",
+	roles: "group.roles",
+	identifiers: "group.identifiers",
+	works: "group.works",
+	movement: "group.movement",
+} as const satisfies Record<string, MetadataMessageKey>;
+
+export function metadataGroupLabel(group: string, locale: Locale): string {
+	const key = metadataMessageKeyFor(groupMessageKeys, group);
+	return key ? metadataMessage(locale, key) : group;
 }

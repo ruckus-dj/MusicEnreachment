@@ -77,6 +77,8 @@ import {
 	resetSourceProcessingQueue,
 	sourceProcessingLocks,
 } from "./sourceProcessingModel";
+import { useI18n } from "./i18n";
+import { catalogMessage } from "./catalogMessages";
 
 const subscribeRoute = (listener: () => void) => {
 	window.addEventListener("hashchange", listener);
@@ -146,6 +148,11 @@ export function CatalogDemo({
 }: {
 	onIncomingCount?: (count: number) => void;
 } = {}) {
+	const { locale } = useI18n();
+	const msg = (
+		key: Parameters<typeof catalogMessage>[1],
+		values?: Record<string, string | number>,
+	) => catalogMessage(locale, key, values);
 	const [localProvider, setLocalProvider] = useState(createLocalProviderState);
 	const [incoming, setIncoming] = useState(createIncomingState);
 	const incomingCount = incoming.groups.filter(
@@ -240,7 +247,7 @@ export function CatalogDemo({
 				id: artist.id,
 				name: artist.name ?? "",
 				sortName: artist.sortName,
-				genre: "Локальный каталог",
+				genre: msg("localCatalog"),
 				color: "slate",
 			})),
 	];
@@ -356,15 +363,23 @@ export function CatalogDemo({
 		return true;
 	};
 	useEffect(() => {
-		const heading = document.querySelector<HTMLElement>(".demo-shell h1");
+		const heading =
+			document.querySelector<HTMLElement>("#content h1") ??
+			document.querySelector<HTMLElement>("h1");
 		if (heading) {
 			heading.tabIndex = -1;
 			heading.focus({ preventScroll: true });
-			document.title = `${heading.textContent} · MeloTrove · React-макет`;
 		}
 		const main = document.querySelector<HTMLElement>(".demo-shell");
 		if (main) main.tabIndex = -1;
 	}, [route, preview]);
+	useEffect(() => {
+		const heading =
+			document.querySelector<HTMLElement>("#content h1") ??
+			document.querySelector<HTMLElement>("h1");
+		if (heading)
+			document.title = `${heading.textContent} · ${msg("documentTitleSuffix")}`;
+	}, [route, preview, locale]);
 	const [artistId, setArtistId] = useState<string | null>(null);
 	const [query, setQuery] = useState("");
 	const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -442,9 +457,9 @@ export function CatalogDemo({
 		window.location.hash = "publications";
 	};
 	const tabs: [View, string][] = [
-		["artists", "Артисты"],
-		["albums", "Все альбомы"],
-		["tracks", "Все треки"],
+		["artists", msg("artists")],
+		["albums", msg("allAlbums")],
+		["tracks", msg("allTracks")],
 	];
 	if (preview || route === "publication-preview")
 		return (
@@ -473,15 +488,15 @@ export function CatalogDemo({
 						}
 						returnLabel={
 							previewOriginRoute.startsWith("track/")
-								? "Вернуться к треку"
-								: "Вернуться в медиатеку"
+								? msg("backToTrack")
+								: msg("backToLibrary")
 						}
 					/>
 				) : (
 					<>
-						<h1>Предпросмотр публикации</h1>
-						<p>Нет сохранённого предпросмотра метаданных.</p>
-						<a href="#library">К медиатеке</a>
+						<h1>{msg("previewTitle")}</h1>
+						<p>{msg("noSavedPreview")}</p>
+						<a href="#library">{msg("goToLibrary")}</a>
 					</>
 				)}
 			</main>
@@ -507,7 +522,12 @@ export function CatalogDemo({
 					}
 					onReleases={setImportedReleases}
 					onSuccess={(notice) => {
-						setIncoming((current) => ({ ...current, notice }));
+						setIncoming((current) => ({
+							...current,
+							notice: "",
+							noticeDescriptor: null,
+							uiNotice: notice,
+						}));
 						window.location.hash = "review";
 					}}
 					onBack={() => {
@@ -614,12 +634,12 @@ export function CatalogDemo({
 			<main className={screenLayout}>
 				<h1>
 					{!release
-						? "Издание не найдено в медиатеке"
+						? msg("libraryNotFound")
 						: artistReleaseHref(release, artists)
-							? "Переход к артисту…"
-							: "Для издания не указан артист"}
+							? msg("redirectingArtist")
+							: msg("artistMissing")}
 				</h1>
-				<a href="#library">К медиатеке</a>
+				<a href="#library">{msg("goToLibrary")}</a>
 			</main>
 		);
 	}
@@ -632,8 +652,8 @@ export function CatalogDemo({
 		if (!release || !track)
 			return (
 				<main className={screenLayout}>
-					<h1>Позиция не найдена</h1>
-					<a href="#library">К медиатеке</a>
+					<h1>{msg("trackNotFound")}</h1>
+					<a href="#library">{msg("goToLibrary")}</a>
 				</main>
 			);
 		const identity = recordingIdentity(track);
@@ -733,7 +753,15 @@ export function CatalogDemo({
 					next.groupId = group.id;
 					next.selectedTarget = null;
 					next.plan = null;
-					next.notice = `Выбрана запись Local «${release.title ?? release.release_group_title ?? ""}» для сопоставления входящих.`;
+					next.notice = "";
+					next.noticeDescriptor = null;
+					next.uiNotice = {
+						namespace: "library",
+						id: "localReleaseSelected",
+						params: {
+							title: release.title ?? release.release_group_title ?? "",
+						},
+					};
 					setIncoming(next);
 					window.location.hash = `match/${group.id}`;
 				}}
@@ -914,10 +942,10 @@ export function CatalogDemo({
 	if (route && route !== "library")
 		return (
 			<main className={screenLayout}>
-				<h1>Экран ещё не перенесён</h1>
-				<p>Маршрут: {route}. Этот сценарий пока не перенесён в React-макет.</p>
+				<h1>{msg("screenNotMoved")}</h1>
+				<p>{msg("routeNotMoved", { route })}</p>
 				<p>
-					<a href="#library">К медиатеке React</a>
+					<a href="#library">{msg("goToReactLibrary")}</a>
 				</p>
 			</main>
 		);
@@ -959,7 +987,9 @@ export function CatalogDemo({
 		>
 			<header className={catalogueStyles.pageHeader}>
 				<h1 className={catalogueStyles.pageTitle}>
-					{artistId ? artistName(artistId) : "Медиатека"}
+					{artistId
+						? artistName(artistId) || msg("artistNotSpecified")
+						: msg("library")}
 				</h1>
 				{artistId && (
 					<Button
@@ -969,7 +999,7 @@ export function CatalogDemo({
 							setView("artists");
 						}}
 					>
-						К медиатеке
+						{msg("backToLibrary")}
 					</Button>
 				)}
 			</header>
@@ -983,7 +1013,7 @@ export function CatalogDemo({
 					}}
 					className={catalogueStyles.tabs}
 				>
-					<TabList aria-label="Вид медиатеки">
+					<TabList aria-label={msg("libraryView")}>
 						{tabs.map(([key, label]) => (
 							<Tab key={key} id={key}>
 								{label}
@@ -993,12 +1023,12 @@ export function CatalogDemo({
 					<TabPanel id={view} className={catalogueStyles.tabsPanel}>
 						<div className={catalogueStyles.panelControls}>
 							<SearchField
-								aria-label="Поиск в медиатеке"
+								aria-label={msg("searchLibrary")}
 								value={query}
 								onChange={setQuery}
 								className={catalogueStyles.search}
 							>
-								<Input placeholder="Артист, альбом, трек…" />
+								<Input placeholder={msg("searchPlaceholder")} />
 							</SearchField>
 							<CatalogFilterControl value={filter} onChange={setFilter} />
 						</div>
@@ -1065,11 +1095,14 @@ export function CatalogDemo({
 										>
 											<h2>{group.title}</h2>
 											<p>
-												{artistName(group.artistId)} · альбом отсутствует в
-												медиатеке
+												{artistName(group.artistId) ||
+													msg("artistNotSpecified")}{" "}
+												· {msg("missingAlbum")}
 											</p>
 											<Select
-												aria-label={`Выберите издание для ${group.title}`}
+												aria-label={msg("chooseEditionFor", {
+													title: group.title,
+												})}
 												selectedKey={editions[group.id] ?? "none"}
 												onSelectionChange={(key) => {
 													const value =
@@ -1088,7 +1121,7 @@ export function CatalogDemo({
 												<Popover className={catalogueStyles.popover}>
 													<ListBox>
 														<ListBoxItem id="none">
-															Выберите издание
+															{msg("chooseEdition")}
 														</ListBoxItem>
 														{group.editions.map((edition) => (
 															<ListBoxItem key={edition.id} id={edition.id}>
@@ -1106,7 +1139,7 @@ export function CatalogDemo({
 													))}
 												</ol>
 											)}
-											<p>Просмотр не добавляет альбом в медиатеку.</p>
+											<p>{msg("previewDoesNotAdd")}</p>
 										</section>
 									);
 								})}

@@ -1,5 +1,11 @@
-import { fieldByKey, navidromeFields } from "./registry";
-import type { MetadataScope } from "./registry";
+import {
+	fieldByKey,
+	metadataFieldLabel,
+	type MetadataScope,
+	navidromeFields,
+} from "./registry";
+import type { Locale } from "../i18n/types";
+import { metadataMessage } from "./messages";
 
 export type MetadataValues = Record<string, string[]>;
 
@@ -11,6 +17,87 @@ export interface MetadataGenre {
 export interface MetadataIssue {
 	key: string;
 	message: string;
+	code?: MetadataIssueCode;
+	values?: Record<string, string>;
+}
+
+export type MetadataIssueCode =
+	| "projectionUnknown"
+	| "projectionScope"
+	| "projectionList"
+	| "projectionIdentity"
+	| "projectionDate"
+	| "projectionCredit";
+
+export interface MetadataValidationIssue {
+	key: string;
+	code:
+		| "unknownField"
+		| "scope"
+		| "list"
+		| "date"
+		| "integer"
+		| "number"
+		| "boolean"
+		| "advisory"
+		| "uuid";
+	values?: Record<string, string>;
+}
+
+export function metadataIssueMessage(
+	issue: MetadataIssue,
+	locale: Locale,
+): string {
+	if (!issue.code) return issue.message;
+	const values = issue.values
+		? {
+				...issue.values,
+				actual: issue.values.actual
+					? metadataMessage(
+							locale,
+							`scope.${issue.values.actual}` as `scope.${MetadataScope}`,
+						)
+					: "",
+				expected: issue.values.expected
+					? metadataMessage(
+							locale,
+							`scope.${issue.values.expected}` as `scope.${MetadataScope}`,
+						)
+					: "",
+			}
+		: undefined;
+	return metadataMessage(
+		locale,
+		`error.${issue.code}` as `error.${MetadataIssueCode}`,
+		values,
+	);
+}
+
+export function metadataValidationMessage(
+	issue: MetadataValidationIssue,
+	locale: Locale,
+): string {
+	const values = {
+		...issue.values,
+		key: metadataFieldLabel(issue.key, locale),
+		actual: issue.values?.actual
+			? metadataMessage(
+					locale,
+					`scope.${issue.values.actual}` as `scope.${MetadataScope}`,
+				)
+			: "",
+		expected: issue.values?.expected
+			? metadataMessage(
+					locale,
+					`scope.${issue.values.expected}` as `scope.${MetadataScope}`,
+				)
+			: "",
+	};
+	return metadataMessage(
+		locale,
+		`error.${issue.code}` as `error.${MetadataValidationIssue["code"]}`,
+		values,
+	);
 }
 
 const uuidPattern =
@@ -38,42 +125,74 @@ export function validateMetadataValues(
 	values: MetadataValues,
 	scope: MetadataScope,
 ): string[] {
-	const errors: string[] = [];
+	return validateMetadataIssues(values, scope).map((issue) => {
+		switch (issue.code) {
+			case "unknownField":
+				return `Unknown metadata field: ${issue.key}`;
+			case "scope":
+				return `${issue.key} belongs to ${issue.values?.actual}, not ${issue.values?.expected}`;
+			case "list":
+				return `${issue.key} must be a list of strings`;
+			case "date":
+				return `${issue.key} must be YYYY, YYYY-MM, or YYYY-MM-DD`;
+			case "integer":
+				return `${issue.key} must be a non-negative integer`;
+			case "number":
+				return `${issue.key} must be a number`;
+			case "boolean":
+				return `${issue.key} must be true or false`;
+			case "advisory":
+				return `${issue.key} must be an explicit/clean advisory value`;
+			case "uuid":
+				return `${issue.key} must be a UUID`;
+		}
+	});
+}
+
+export function validateMetadataIssues(
+	values: MetadataValues,
+	scope: MetadataScope,
+): MetadataValidationIssue[] {
+	const errors: MetadataValidationIssue[] = [];
 	for (const [key, entries] of Object.entries(values)) {
 		const field = fieldByKey(key);
 		if (!field) {
-			errors.push(`Unknown metadata field: ${key}`);
+			errors.push({ key, code: "unknownField", values: { key } });
 			continue;
 		}
 		if (field.scope !== scope) {
-			errors.push(`${key} belongs to ${field.scope}, not ${scope}`);
+			errors.push({
+				key,
+				code: "scope",
+				values: { actual: field.scope, expected: scope },
+			});
 			continue;
 		}
 		if (
 			!Array.isArray(entries) ||
 			entries.some((entry) => typeof entry !== "string")
 		) {
-			errors.push(`${key} must be a list of strings`);
+			errors.push({ key, code: "list" });
 			continue;
 		}
 		for (const value of entries) {
 			if (!value) continue;
 			if (field.kind === "date" && !validDate(value))
-				errors.push(`${key} must be YYYY, YYYY-MM, or YYYY-MM-DD`);
+				errors.push({ key, code: "date" });
 			if (field.kind === "integer" && !/^\d+$/.test(value))
-				errors.push(`${key} must be a non-negative integer`);
+				errors.push({ key, code: "integer" });
 			if (field.kind === "number" && !Number.isFinite(Number(value)))
-				errors.push(`${key} must be a number`);
+				errors.push({ key, code: "number" });
 			if (field.kind === "boolean" && !/^(true|false|1|0)$/i.test(value))
-				errors.push(`${key} must be true or false`);
+				errors.push({ key, code: "boolean" });
 			if (field.kind === "advisory" && !/^(1|2|4|0)$/.test(value))
-				errors.push(`${key} must be an explicit/clean advisory value`);
+				errors.push({ key, code: "advisory" });
 			if (
 				key.startsWith("musicbrainz_") &&
 				key !== "musicbrainz_discid" &&
 				!uuidPattern.test(value)
 			)
-				errors.push(`${key} must be a UUID`);
+				errors.push({ key, code: "uuid" });
 		}
 	}
 	return errors;
@@ -95,6 +214,7 @@ export function projectMetadataValues(
 			issues.push({
 				key,
 				message: "Неизвестное поле метаданных не опубликовано.",
+				code: "projectionUnknown",
 			});
 			continue;
 		}
@@ -103,6 +223,8 @@ export function projectMetadataValues(
 			issues.push({
 				key,
 				message: `Поле относится к области ${field.scope}, а не ${scope}.`,
+				code: "projectionScope",
+				values: { actual: field.scope, expected: scope },
 			});
 			continue;
 		}
@@ -110,6 +232,7 @@ export function projectMetadataValues(
 			issues.push({
 				key,
 				message: "Значение поля должно быть упорядоченным списком.",
+				code: "projectionList",
 			});
 			continue;
 		}
@@ -124,6 +247,7 @@ export function projectMetadataValues(
 				key,
 				message:
 					"Некорректное значение идентификатора или advisory не опубликовано.",
+				code: "projectionIdentity",
 			});
 			continue;
 		}
@@ -135,6 +259,7 @@ export function projectMetadataValues(
 				key,
 				message:
 					"Navidrome принимает частичные даты YYYY, YYYY-MM или YYYY-MM-DD.",
+				code: "projectionDate",
 			});
 		if (
 			[
@@ -150,6 +275,7 @@ export function projectMetadataValues(
 				issues.push({
 					key,
 					message: "В упорядоченном credit есть пропуск; значения не сдвинуты.",
+					code: "projectionCredit",
 				});
 		}
 		tags[field.tag] = entries.some(Boolean) ? [...entries] : [];

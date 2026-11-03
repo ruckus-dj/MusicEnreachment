@@ -50,7 +50,7 @@ it("keeps publication tags distinct and offers differences-only filtering", () =
 			files={originalFiles}
 		/>,
 	);
-	expect(screen.getByText(/Публикация: .*чтение/)).toBeInTheDocument();
+	expect(screen.getByText(/Публикация: .*прочитано/)).toBeInTheDocument();
 	const comparison = screen
 		.getByRole("heading", { name: "Контекст сравнения" })
 		.closest("section");

@@ -4,6 +4,9 @@ import type { MetadataCredit } from "./metadata/model";
 import type { MetadataValues } from "./metadata/projection";
 
 export type LocalProviderType = "artists" | "releases" | "recordings";
+export type LocalProviderNoticeDescriptor =
+	| { key: "recordCreated" }
+	| { key: "recordUpdated" };
 export type LocalProviderTrack = {
 	id: string;
 	recordingId: string;
@@ -55,7 +58,8 @@ export type LocalProviderState = {
 	creating: boolean;
 	draft: LocalProviderRecord | null;
 	items: Record<LocalProviderType, LocalProviderRecord[]>;
-	notice: string;
+	/** Legacy strings remain accepted for callers that own a Local-provider state. */
+	notice: string | LocalProviderNoticeDescriptor;
 };
 
 export const localProviderFixtures = originalFixtures.localProvider as Record<

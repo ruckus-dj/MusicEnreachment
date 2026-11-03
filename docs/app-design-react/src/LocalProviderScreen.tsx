@@ -21,9 +21,16 @@ import { demoGenres } from "./GenreLibrary";
 import { GenrePicker, type GenreReference } from "./metadata/GenrePicker";
 import { MetadataEditor } from "./metadata/MetadataEditor";
 import type { MetadataCredit } from "./metadata/model";
-import type { MetadataValues } from "./metadata/projection";
-import { validateMetadataValues } from "./metadata/projection";
+import type {
+	MetadataValidationIssue,
+	MetadataValues,
+} from "./metadata/projection";
+import {
+	metadataValidationMessage,
+	validateMetadataIssues,
+} from "./metadata/projection";
 import { fieldsForScope } from "./metadata/registry";
+import { useI18n } from "./i18n/I18nProvider";
 import {
 	createLocalProviderState,
 	formatLocalDuration,
@@ -43,37 +50,17 @@ export type LocalProviderScreenProps = {
 	onLoadGenres?: () => void | Promise<void>;
 };
 
-const typeInfo: Record<
-	LocalProviderType,
-	{ label: string; entity: string; create: string; search: string }
-> = {
-	artists: {
-		label: "Артисты",
-		entity: "Артист",
-		create: "Создать артиста",
-		search: "Поиск в артистах",
-	},
-	releases: {
-		label: "Релизы",
-		entity: "Релиз",
-		create: "Создать релиз",
-		search: "Поиск в релизах",
-	},
-	recordings: {
-		label: "Композиции",
-		entity: "Композиция",
-		create: "Создать композицию",
-		search: "Поиск в композициях",
-	},
-};
-
 function ids() {
 	return crypto.randomUUID();
 }
-function artistName(state: LocalProviderState, id: string) {
+function artistName(
+	state: LocalProviderState,
+	id: string,
+	artistNotSpecified: string,
+) {
 	return (
 		state.items.artists.find((artist) => artist.id === id)?.name ||
-		"Артист не указан"
+		artistNotSpecified
 	);
 }
 function cloneState(state: LocalProviderState) {
@@ -99,8 +86,11 @@ export function LocalProviderScreen({
 	genreOptions,
 	onLoadGenres,
 }: LocalProviderScreenProps) {
+	const { t, locale } = useI18n();
 	const [localState, setLocalState] = useState(createLocalProviderState);
-	const [submitError, setSubmitError] = useState("");
+	const [submitIssues, setSubmitIssues] = useState<MetadataValidationIssue[]>(
+		[],
+	);
 	const state = givenState ?? localState;
 	const isForm = state.editing || state.creating;
 	const focusRef = useRef<HTMLInputElement>(null);
@@ -110,12 +100,35 @@ export function LocalProviderScreen({
 	const detailHeadingRef = useRef<HTMLHeadingElement>(null);
 	const update = (next: LocalProviderState) =>
 		givenState ? onState?.(next) : setLocalState(next);
+	const typeInfo: Record<
+		LocalProviderType,
+		{ label: string; entity: string; create: string; search: string }
+	> = {
+		artists: {
+			label: t("localProvider.artists"),
+			entity: t("localProvider.artist"),
+			create: t("localProvider.createArtist"),
+			search: t("localProvider.searchArtists"),
+		},
+		releases: {
+			label: t("localProvider.releases"),
+			entity: t("localProvider.release"),
+			create: t("localProvider.createRelease"),
+			search: t("localProvider.searchReleases"),
+		},
+		recordings: {
+			label: t("localProvider.recordings"),
+			entity: t("localProvider.recording"),
+			create: t("localProvider.createRecording"),
+			search: t("localProvider.searchRecordings"),
+		},
+	};
 	const config = typeInfo[state.type];
 	const selected =
 		state.items[state.type].find((item) => item.id === state.selectedId) ??
 		null;
 	useEffect(() => {
-		if (state.notice.startsWith("Демо:") && selected) {
+		if (typeof state.notice !== "string" && selected) {
 			detailHeadingRef.current?.focus({ preventScroll: true });
 		}
 	}, [selected, state.notice]);
@@ -186,7 +199,7 @@ export function LocalProviderScreen({
 		}),
 	) as MetadataValues;
 	const updateDraft = (change: Partial<LocalProviderRecord>) => {
-		setSubmitError("");
+		setSubmitIssues([]);
 		const next = cloneState(state);
 		next.draft = { ...(next.draft ?? ({} as LocalProviderRecord)), ...change };
 		update(next);
@@ -270,7 +283,11 @@ export function LocalProviderScreen({
 	};
 	const metadataEditor = (scope: "release" | "recording") => (
 		<MetadataEditor
-			label={scope === "release" ? "Метаданные издания" : "Метаданные записи"}
+			label={
+				scope === "release"
+					? t("localProvider.releaseMetadata")
+					: t("localProvider.recordingMetadata")
+			}
 			scope={scope}
 			values={Object.fromEntries(
 				Object.entries({
@@ -287,7 +304,11 @@ export function LocalProviderScreen({
 				})) ??
 				displayedValue?.artistIds?.map((artistId) => ({
 					artistId,
-					creditName: artistName(state, artistId),
+					creditName: artistName(
+						state,
+						artistId,
+						t("localProvider.artistNotSpecified"),
+					),
 					joinPhrase: "",
 				}))
 			}
@@ -337,9 +358,9 @@ export function LocalProviderScreen({
 			<Label>
 				{label}{" "}
 				{required ? (
-					<span className={styles.required}>Обязательно</span>
+					<span className={styles.required}>{t("localProvider.required")}</span>
 				) : (
-					<span className={styles.muted}>необязательно</span>
+					<span className={styles.muted}>{t("localProvider.optional")}</span>
 				)}
 			</Label>
 			<Input
@@ -373,8 +394,8 @@ export function LocalProviderScreen({
 		<fieldset className={styles.genrePicker}>
 			<legend>
 				{state.type === "releases"
-					? "Артисты релиза · ссылки на существующих артистов"
-					: "Исполнители · ссылки на существующих артистов"}
+					? t("localProvider.releaseArtistsLinks")
+					: t("localProvider.performersLinks")}
 			</legend>
 			{state.items.artists.map((artist) => (
 				<div className={styles.localOption} key={artist.id}>
@@ -395,16 +416,13 @@ export function LocalProviderScreen({
 					<span className={styles.muted}>
 						· {artist.provider}
 						{artist.provider !== "Local"
-							? " · внешняя ссылка, только чтение"
+							? ` · ${t("localProvider.externalReadonly")}`
 							: ""}{" "}
 						· <code>{artist.key}</code>
 					</span>
 				</div>
 			))}
-			<small>
-				Выбор сохраняет принадлежность провайдеру и исходный ключ; копия записи
-				не создаётся.
-			</small>
+			<small>{t("localProvider.artistLinkExplanation")}</small>
 		</fieldset>
 	);
 	const tracks = displayedValue?.tracks ?? [];
@@ -417,7 +435,7 @@ export function LocalProviderScreen({
 	const trackRows = (
 		<div className={styles.localTracklist}>
 			<div className={styles.localTracklistHeading}>
-				<strong>Носитель 1 · позиции</strong>
+				<strong>{t("localProvider.mediumPositions")}</strong>
 				<Button
 					onPress={() =>
 						updateDraft({
@@ -434,7 +452,7 @@ export function LocalProviderScreen({
 						})
 					}
 				>
-					Добавить позицию
+					{t("localProvider.addPosition")}
 				</Button>
 			</div>
 			{tracks.length ? (
@@ -444,11 +462,13 @@ export function LocalProviderScreen({
 					);
 					return (
 						<fieldset className={styles.fieldset} key={track.id}>
-							<legend>Позиция {index + 1}</legend>
+							<legend>
+								{t("localProvider.position")} {index + 1}
+							</legend>
 							<div className={styles.localTrackActions}>
 								<Button
 									isDisabled={index === 0}
-									aria-label={`Переместить позицию ${index + 1} выше`}
+									aria-label={`${t("localProvider.movePositionUp")} ${index + 1}`}
 									onPress={() => {
 										const next = [...tracks];
 										[next[index - 1], next[index]] = [
@@ -462,7 +482,7 @@ export function LocalProviderScreen({
 								</Button>
 								<Button
 									isDisabled={index === tracks.length - 1}
-									aria-label={`Переместить позицию ${index + 1} ниже`}
+									aria-label={`${t("localProvider.movePositionDown")} ${index + 1}`}
 									onPress={() => {
 										const next = [...tracks];
 										[next[index + 1], next[index]] = [
@@ -475,20 +495,20 @@ export function LocalProviderScreen({
 									↓
 								</Button>
 								<Button
-									aria-label={`Удалить позицию ${index + 1}`}
+									aria-label={`${t("localProvider.removePosition")} ${index + 1}`}
 									onPress={() =>
 										updateDraft({
 											tracks: tracks.filter((_, i) => i !== index),
 										})
 									}
 								>
-									Удалить
+									{t("localProvider.removePosition")}
 								</Button>
 							</div>
 							<label className={styles.localField}>
-								Существующая композиция
+								{t("localProvider.existingRecording")}
 								<Select
-									aria-label="Существующая композиция"
+									aria-label={t("localProvider.existingRecording")}
 									selectedKey={track.recordingId || null}
 									onSelectionChange={(key) =>
 										changeTrack(index, { recordingId: String(key ?? "") })
@@ -510,14 +530,23 @@ export function LocalProviderScreen({
 								</Select>
 							</label>
 							<p className={styles.localTrackDefault}>
-								По умолчанию:{" "}
-								<strong>{recording?.title || "Композиция не выбрана"}</strong> ·{" "}
+								{t("localProvider.defaultValue")}{" "}
+								<strong>
+									{recording?.title || t("localProvider.recordingNotSelected")}
+								</strong>{" "}
+								·{" "}
 								{formatLocalDuration(recording?.duration_ms) ||
-									"длительность не указана"}{" "}
+									t("localProvider.durationNotSpecified")}{" "}
 								·{" "}
 								{recording?.artistIds
-									?.map((id) => artistName(state, id))
-									.join(", ") || "артисты не указаны"}
+									?.map((id) =>
+										artistName(
+											state,
+											id,
+											t("localProvider.artistNotSpecified"),
+										),
+									)
+									.join(", ") || t("localProvider.artistsNotSpecified")}
 							</p>
 							<div className={styles.localFields}>
 								<TextField
@@ -527,7 +556,7 @@ export function LocalProviderScreen({
 										changeTrack(index, { titleOverride })
 									}
 								>
-									<Label>Название в этой позиции · своё значение</Label>
+									<Label>{t("localProvider.positionTitleOverride")}</Label>
 									<Input />
 								</TextField>
 								<TextField
@@ -540,7 +569,7 @@ export function LocalProviderScreen({
 										changeTrack(index, { durationInput })
 									}
 								>
-									<Label>Длительность · своё значение</Label>
+									<Label>{t("localProvider.durationOverride")}</Label>
 									<Input
 										ref={(element) => {
 											trackDurationRefs.current[index] = element;
@@ -557,10 +586,7 @@ export function LocalProviderScreen({
 									/>
 								</TextField>
 							</div>
-							<small>
-								Номер позиции определяется порядком строки. Длительность: целые
-								секунды или М:СС.
-							</small>
+							<small>{t("localProvider.positionOrderDurationHelp")}</small>
 							<p
 								id={`track-duration-error-${index}`}
 								className={`${styles.localNote} ${styles.localError}`}
@@ -574,16 +600,13 @@ export function LocalProviderScreen({
 									)
 								}
 							>
-								Проверьте своё значение длительности: используйте целые секунды
-								или М:СС с секундами от 00 до 59.
+								{t("localProvider.invalidTrackDuration")}
 							</p>
 						</fieldset>
 					);
 				})
 			) : (
-				<p className={styles.localEmpty}>
-					Позиции не добавлены. Пустой трек-лист допустим.
-				</p>
+				<p className={styles.localEmpty}>{t("localProvider.noPositions")}</p>
 			)}
 		</div>
 	);
@@ -614,9 +637,9 @@ export function LocalProviderScreen({
 					fieldsForScope(scope).some((field) => field.key === key),
 				),
 			) as MetadataValues;
-			const metadataErrors = validateMetadataValues(metadataValues, scope);
-			if (metadataErrors.length) {
-				setSubmitError(metadataErrors.join(" "));
+			const metadataIssues = validateMetadataIssues(metadataValues, scope);
+			if (metadataIssues.length) {
+				setSubmitIssues(metadataIssues);
 				return;
 			}
 		}
@@ -677,7 +700,7 @@ export function LocalProviderScreen({
 		next.draft = null;
 		next.creating = false;
 		next.editing = false;
-		next.notice = `Демо: ${state.creating ? "запись создана" : "изменения сохранены"} в памяти страницы. API и серверная часть не вызываются.`;
+		next.notice = { key: state.creating ? "recordCreated" : "recordUpdated" };
 		update(next);
 	};
 	const startEdit = () => {
@@ -705,11 +728,19 @@ export function LocalProviderScreen({
 			.map((id) => genreOptionsById.get(id)?.name ?? item.genreNamesById?.[id])
 			.filter(Boolean)
 			.join(", ") || "—";
+	const noticeText =
+		typeof state.notice === "string"
+			? state.notice
+				? t("localProvider.legacyNotice")
+				: ""
+			: state.notice.key === "recordCreated"
+				? t("localProvider.recordCreated")
+				: t("localProvider.recordUpdated");
 	let detailFacts: Array<[string, string]> = [];
 	if (selected && state.type === "artists")
 		detailFacts = [
 			[
-				"Связанные релизы",
+				t("localProvider.relatedReleases"),
 				state.items.releases
 					.filter((release) => release.artistIds?.includes(selected.id))
 					.map((release) => release.title ?? "")
@@ -718,53 +749,63 @@ export function LocalProviderScreen({
 		];
 	if (selected && state.type === "releases")
 		detailFacts = [
-			["Группа релизов", selected.release_group_title || "—"],
+			[t("localProvider.releaseGroup"), selected.release_group_title || "—"],
 			[
-				"Артисты",
-				selected.artistIds?.map((id) => artistName(state, id)).join(", ") ||
-					"—",
+				t("localProvider.artists"),
+				selected.artistIds
+					?.map((id) =>
+						artistName(state, id, t("localProvider.artistNotSpecified")),
+					)
+					.join(", ") || "—",
 			],
-			["Основной тип", selected.primaryType || "—"],
+			[t("localProvider.mainType"), selected.primaryType || "—"],
 			[
-				"Дополнительные типы",
+				t("localProvider.additionalTypes"),
 				(Array.isArray(selected.secondaryTypes)
 					? selected.secondaryTypes.join(", ")
 					: selected.secondaryTypes) || "—",
 			],
-			["Язык", selected.language || "—"],
-			["Позиции · носитель 1", String(selected.tracks?.length || 0)],
-			["Дата", selected.release_date || "—"],
-			["Страна", selected.country_code || "—"],
-			["Лейбл", selected.label || "—"],
-			["Каталожный номер", selected.catalog_number || "—"],
+			[t("localProvider.language"), selected.language || "—"],
+			[
+				t("localProvider.positionsMediumOne"),
+				String(selected.tracks?.length || 0),
+			],
+			[t("localProvider.date"), selected.release_date || "—"],
+			[t("localProvider.country"), selected.country_code || "—"],
+			[t("localProvider.label"), selected.label || "—"],
+			[t("localProvider.catalogNumber"), selected.catalog_number || "—"],
 		];
 	if (selected && state.type === "recordings")
 		detailFacts = [
 			[
-				"Артисты",
-				selected.artistIds?.map((id) => artistName(state, id)).join(", ") ||
-					"—",
+				t("localProvider.artists"),
+				selected.artistIds
+					?.map((id) =>
+						artistName(state, id, t("localProvider.artistNotSpecified")),
+					)
+					.join(", ") || "—",
 			],
-			["Длительность", formatLocalDuration(selected.duration_ms) || "—"],
+			[
+				t("localProvider.duration"),
+				formatLocalDuration(selected.duration_ms) || "—",
+			],
 			["ISRC", selected.isrcs || "—"],
 		];
 	return (
 		<main className="mx-auto max-w-none p-3">
 			<header className={styles.pageHeader}>
-				<p className="m-0 text-xs">Ручные записи провайдера Local</p>
-				<h1 className={styles.pageTitle}>Собственный каталог</h1>
+				<p className="m-0 text-xs">{t("localProvider.manualLocalRecords")}</p>
+				<h1 className={styles.pageTitle}>{t("localProvider.ownCatalog")}</h1>
 				<p className={styles.pageDescription}>
-					Собственный каталог — ручные записи провайдера Local, а не форма
-					создания альбома медиатеки. Поиск не создаёт и не объединяет записи;
-					сначала проверьте существующие провайдеры.
+					{t("localProvider.catalogDescription")}
 				</p>
 				<span className="inline-flex rounded-sm bg-[var(--raised)] px-2 py-1 text-[10px] tracking-[.06em] text-[var(--muted)]">
-					МАКЕТ · В ПАМЯТИ
+					{t("localProvider.mockInMemory")}
 				</span>
 			</header>
 			<Tabs
 				className={styles.localTabs}
-				aria-label="Тип записей собственного каталога"
+				aria-label={t("localProvider.localRecordTypes")}
 				selectedKey={state.type}
 				onSelectionChange={(key) => {
 					const type = String(key) as LocalProviderType;
@@ -802,7 +843,9 @@ export function LocalProviderScreen({
 								<h2>{config.label}</h2>
 								<span className={styles.muted}>
 									{localItems.length}{" "}
-									{localItems.length === 1 ? "запись" : "записей"}
+									{localItems.length === 1
+										? t("localProvider.entry")
+										: t("localProvider.entries")}
 								</span>
 							</div>
 							<SearchField
@@ -831,7 +874,7 @@ export function LocalProviderScreen({
 								}}
 							>
 								<Label>{config.search}</Label>
-								<Input placeholder="Имя, название или ключ провайдера" />
+								<Input placeholder={t("localProvider.searchPlaceholder")} />
 							</SearchField>
 							<div className={styles.localListActions}>
 								<Button
@@ -863,12 +906,21 @@ export function LocalProviderScreen({
 												</strong>
 												<small>
 													{state.type === "releases"
-														? `${item.release_group_title} · ${item.artistIds?.map((id) => artistName(state, id)).join(", ") || "Артисты не указаны"}`
+														? `${item.release_group_title} · ${item.artistIds?.map((id) => artistName(state, id, t("localProvider.artistNotSpecified"))).join(", ") || t("localProvider.artistsNotSpecifiedCapitalized")}`
 														: state.type === "recordings"
 															? item.artistIds
-																	?.map((id) => artistName(state, id))
-																	.join(", ") || "Артисты не указаны"
-															: `${genreNames(item)} · ${state.items.releases.filter((release) => release.artistIds?.includes(item.id)).length} связанных релизов`}
+																	?.map((id) =>
+																		artistName(
+																			state,
+																			id,
+																			t("localProvider.artistNotSpecified"),
+																		),
+																	)
+																	.join(", ") ||
+																t(
+																	"localProvider.artistsNotSpecifiedCapitalized",
+																)
+															: `${genreNames(item)} · ${state.items.releases.filter((release) => release.artistIds?.includes(item.id)).length} ${t("localProvider.linkedReleases")}`}
 												</small>
 											</span>
 											<span className="shrink-0 text-xs text-[var(--muted)]">
@@ -878,7 +930,7 @@ export function LocalProviderScreen({
 									))
 								) : (
 									<div className={styles.localEmpty}>
-										Записей не найдено. Поиск ничего не создаёт автоматически.
+										{t("localProvider.recordsNotFound")}
 									</div>
 								)}
 							</div>
@@ -887,9 +939,9 @@ export function LocalProviderScreen({
 							className={`${styles.panel} overflow-hidden rounded-lg p-0`}
 						>
 							<div className={styles.panelHeading}>
-								<h2>Запись</h2>
+								<h2>{t("localProvider.recordDetails")}</h2>
 								<span className={styles.muted}>
-									Текущие данные · без истории
+									{t("localProvider.currentDataNoHistory")}
 								</span>
 							</div>
 							{(selected || state.creating) && displayedValue ? (
@@ -910,8 +962,10 @@ export function LocalProviderScreen({
 												{state.creating ? config.create : detailTitle}
 											</h2>
 											<p className={styles.muted}>
-												{displayedValue.provider} · {config.entity} · Ключ
-												провайдера: {displayedValue.key || "будет создан"}
+												{displayedValue.provider} · {config.entity} ·{" "}
+												{t("localProvider.providerKey")}:{" "}
+												{displayedValue.key ||
+													t("localProvider.providerKeyWillBeCreated")}
 											</p>
 										</div>
 										<div className={styles.localDetailActions}>
@@ -922,7 +976,7 @@ export function LocalProviderScreen({
 														type="button"
 														onPress={() => onMatchRelease(selected)}
 													>
-														Сопоставить входящие
+														{t("localProvider.matchIncoming")}
 													</Button>
 												)}
 											{(state.creating || selected?.provider === "Local") && (
@@ -938,8 +992,8 @@ export function LocalProviderScreen({
 													{state.creating
 														? config.create
 														: isForm
-															? "Сохранить"
-															: "Редактировать"}
+															? t("localProvider.save")
+															: t("localProvider.edit")}
 												</Button>
 											)}
 											<Button
@@ -949,14 +1003,14 @@ export function LocalProviderScreen({
 												type="button"
 												onPress={cancel}
 											>
-												Отменить
+												{t("localProvider.cancel")}
 											</Button>
 										</div>
 									</div>
 									<p className={styles.muted}>
 										{isForm
-											? "Только демонстрация в памяти. Обязательные поля отмечены."
-											: "Текущие данные · без истории"}
+											? t("localProvider.inMemoryRequiredNotice")
+											: t("localProvider.currentDataNoHistory")}
 									</p>
 									<fieldset
 										disabled={!isForm}
@@ -964,23 +1018,29 @@ export function LocalProviderScreen({
 									>
 										{state.type === "artists" && (
 											<>
-												{field("Имя", "name", true)}
-												{field("Имя для сортировки", "sortName")}
-												{field("Уточнение", "disambiguation")}
+												{field(t("localProvider.name"), "name", true)}
+												{field(t("localProvider.sortName"), "sortName")}
+												{field(
+													t("localProvider.disambiguation"),
+													"disambiguation",
+												)}
 												{genrePicker}
-												{field("Теги · через запятую", "tags")}
+												{field(t("localProvider.tagsCommaSeparated"), "tags")}
 											</>
 										)}
 										{state.type === "releases" && (
 											<>
 												{field(
-													"Название группы релизов",
+													t("localProvider.releaseGroupTitle"),
 													"release_group_title",
 													true,
 												)}
-												{field("Название издания", "title", true)}
+												{field(t("localProvider.releaseTitle"), "title", true)}
 												<div className={styles.localFields}>
-													{field("Основной тип группы релизов", "primaryType")}
+													{field(
+														t("localProvider.primaryReleaseGroupType"),
+														"primaryType",
+													)}
 													<TextField
 														className={styles.localField}
 														value={
@@ -992,22 +1052,29 @@ export function LocalProviderScreen({
 															updateDraft({ secondaryTypes })
 														}
 													>
-														<Label>Дополнительные типы · через запятую</Label>
+														<Label>
+															{t("localProvider.secondaryTypesCommaSeparated")}
+														</Label>
 														<Input />
 													</TextField>
-													{field("Язык", "language")}
-													{field("Страна", "country_code")}
-													{field("Дата", "release_date")}
-													{field("Статус", "status")}
-													{field("Упаковка", "packaging")}
-													{field("Лейбл", "label")}
-													{field("Каталожный номер", "catalog_number")}
-													{field("Штрихкод", "barcode")}
-													{field("Уточнение", "disambiguation")}
+													{field(t("localProvider.language"), "language")}
+													{field(t("localProvider.country"), "country_code")}
+													{field(t("localProvider.date"), "release_date")}
+													{field(t("localProvider.status"), "status")}
+													{field(t("localProvider.packaging"), "packaging")}
+													{field(t("localProvider.label"), "label")}
+													{field(
+														t("localProvider.catalogNumber"),
+														"catalog_number",
+													)}
+													{field(t("localProvider.barcode"), "barcode")}
+													{field(
+														t("localProvider.disambiguation"),
+														"disambiguation",
+													)}
 												</div>
 												<small>
-													Жанры релиза относятся только к релизу и не
-													наследуются артистами или композициями.
+													{t("localProvider.releaseGenreExplanation")}
 												</small>
 												{artistLinks}
 												{trackRows}
@@ -1016,7 +1083,11 @@ export function LocalProviderScreen({
 										)}
 										{state.type === "recordings" && (
 											<>
-												{field("Название композиции", "title", true)}
+												{field(
+													t("localProvider.recordingTitle"),
+													"title",
+													true,
+												)}
 												<TextField
 													className={styles.localField}
 													value={String(
@@ -1028,8 +1099,10 @@ export function LocalProviderScreen({
 													}
 												>
 													<Label>
-														Длительность{" "}
-														<span className={styles.muted}>необязательно</span>
+														{t("localProvider.duration")}{" "}
+														<span className={styles.muted}>
+															{t("localProvider.optional")}
+														</span>
 													</Label>
 													<Input
 														ref={durationRef}
@@ -1046,7 +1119,7 @@ export function LocalProviderScreen({
 													/>
 												</TextField>
 												<small>
-													Целые секунды или М:СС. Отображается как М:СС.
+													{t("localProvider.wholeSecondsOrMinutesSeconds")}
 												</small>
 												<p
 													id="local-duration-error"
@@ -1065,15 +1138,19 @@ export function LocalProviderScreen({
 														)
 													}
 												>
-													Проверьте длительность: используйте целые секунды или
-													М:СС с секундами от 00 до 59.
+													{t("localProvider.invalidDuration")}
 												</p>
-												{field("Уточнение", "disambiguation")}
+												{field(
+													t("localProvider.disambiguation"),
+													"disambiguation",
+												)}
 												<label className={styles.localField}>
-													Ненормативная лексика{" "}
-													<span className={styles.muted}>необязательно</span>
+													{t("localProvider.explicitContent")}{" "}
+													<span className={styles.muted}>
+														{t("localProvider.optional")}
+													</span>
 													<Select
-														aria-label="Ненормативная лексика"
+														aria-label={t("localProvider.explicitContent")}
 														selectedKey={displayedValue.explicit ?? ""}
 														onSelectionChange={(key) =>
 															updateDraft({
@@ -1092,15 +1169,21 @@ export function LocalProviderScreen({
 														</Button>
 														<Popover>
 															<ListBox>
-																<ListBoxItem id="">Не указано</ListBoxItem>
-																<ListBoxItem id="true">Да</ListBoxItem>
-																<ListBoxItem id="false">Нет</ListBoxItem>
+																<ListBoxItem id="">
+																	{t("localProvider.unspecified")}
+																</ListBoxItem>
+																<ListBoxItem id="true">
+																	{t("localProvider.yes")}
+																</ListBoxItem>
+																<ListBoxItem id="false">
+																	{t("localProvider.no")}
+																</ListBoxItem>
 															</ListBox>
 														</Popover>
 													</Select>
 												</label>
-												{field("ISRC · через запятую", "isrcs")}
-												{field("Теги · через запятую", "tags")}
+												{field(t("localProvider.isrcCommaSeparated"), "isrcs")}
+												{field(t("localProvider.tagsCommaSeparated"), "tags")}
 												{artistLinks}
 												{metadataEditor("recording")}
 											</>
@@ -1111,7 +1194,9 @@ export function LocalProviderScreen({
 										role="alert"
 										aria-live="assertive"
 									>
-										{submitError}
+										{submitIssues
+											.map((issue) => metadataValidationMessage(issue, locale))
+											.join(" ")}
 									</p>
 									{selected && (
 										<dl className={styles.localFacts}>
@@ -1122,7 +1207,7 @@ export function LocalProviderScreen({
 												</div>
 											))}
 											<div>
-												<dt>Ключ провайдера</dt>
+												<dt>{t("localProvider.providerKey")}</dt>
 												<dd>
 													<code>{selected.key}</code>
 												</dd>
@@ -1130,14 +1215,12 @@ export function LocalProviderScreen({
 										</dl>
 									)}
 									<div className={styles.localNote}>
-										Редактирование метаданных само по себе не запускает
-										публикацию. Удаление и поведение зависимостей этим экраном
-										не определяются.
+										{t("localProvider.metadataNoPublishNotice")}
 									</div>
 								</form>
 							) : (
 								<div className={styles.localEmpty}>
-									Выберите запись или явно создайте новую.
+									{t("localProvider.selectOrCreate")}
 								</div>
 							)}
 						</section>
@@ -1145,8 +1228,7 @@ export function LocalProviderScreen({
 				</TabPanel>
 			</Tabs>
 			<div className={styles.localNotice} role="status" aria-live="polite">
-				{state.notice ||
-					"Демонстрационные изменения сохраняются в памяти этой страницы."}
+				{noticeText || t("localProvider.changesSavedNotice")}
 			</div>
 		</main>
 	);

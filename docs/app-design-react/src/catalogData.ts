@@ -1,13 +1,22 @@
 import original from "./original-fixtures.json";
+import type { Locale } from "./i18n/types";
 import type { MetadataGenre, MetadataValues } from "./metadata/projection";
+import {
+	metadataValidationMessage,
+	validateMetadataIssues,
+	validateMetadataValues,
+} from "./metadata/projection";
 import { fieldByKey } from "./metadata/registry";
 import {
 	metadataManagedTagKeys,
 	metadataTagKeys,
 	projectMetadataValues,
-	validateMetadataValues,
 } from "./metadata/projection";
 import { navidromeFields } from "./metadata/registry";
+import {
+	resolveCatalogGenreName,
+	resolveCatalogGenreValue,
+} from "./genres/catalogue";
 
 const musicBrainzUUID =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -363,6 +372,14 @@ export function desiredTags(
 	};
 	const projected = projectMetadataValues(explicitValues).tags;
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
+	// Resolve catalog identities without recasing unrelated legacy/user values.
+	const genreReferences = track.recordingGenreRefs ?? [];
+	result.GENRE = (result.GENRE ?? []).map((value, index) => {
+		const reference = genreReferences[index];
+		return reference && reference.name === value
+			? resolveCatalogGenreName(reference)
+			: resolveCatalogGenreValue(value);
+	});
 	// The recording title cannot overwrite a release position's explicit title.
 	result.TITLE = track.title ? [track.title] : [];
 	return result;
@@ -409,6 +426,33 @@ export function publicationMetadataIssues(
 		...new Set(
 			scopes.flatMap(([values, scope]) =>
 				validateMetadataValues(values, scope),
+			),
+		),
+	];
+}
+
+/** Locale-reactive presentation of publication metadata validation issues. */
+export function publicationMetadataIssueMessages(
+	release: OriginalRelease,
+	track: OriginalTrack,
+	locale: Locale,
+	audioSourceId: string | null = track.published ? null : track.sourceId,
+): string[] {
+	const scopes = [
+		[release.metadataValues ?? {}, "release"],
+		[track.recordingMetadata ?? {}, "recording"],
+		[track.positionMetadata ?? {}, "track"],
+		[
+			audioSourceId ? (track.audioMetadata?.[audioSourceId] ?? {}) : {},
+			"audio",
+		],
+	] as const;
+	return [
+		...new Set(
+			scopes.flatMap(([values, scope]) =>
+				validateMetadataIssues(values, scope).map((issue) =>
+					metadataValidationMessage(issue, locale),
+				),
 			),
 		),
 	];

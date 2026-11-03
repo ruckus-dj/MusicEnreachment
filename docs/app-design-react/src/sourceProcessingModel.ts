@@ -1,11 +1,13 @@
 import type { SourceFiles } from "./catalogData";
+import type { SourceMessageKey } from "./sourceMessages";
 
 export type DemoStepStatus = "queued" | "running" | "succeeded" | "failed";
 
 export interface SourceProcessingStep {
 	id: "audio_inspection" | "fingerprint";
 	status: DemoStepStatus;
-	error?: string;
+	error?: SourceMessageKey;
+	attempts?: number;
 }
 
 export interface SourceProcessingFile {
@@ -20,6 +22,7 @@ export interface SourceProcessingFile {
 	observedSize?: number | string;
 	observedMtime?: string;
 	workRevision?: number;
+	blockedReason?: "work_directory_required" | "output_reset";
 }
 
 export interface RetainedSourceCopy {
@@ -27,8 +30,7 @@ export interface RetainedSourceCopy {
 	rootId: string;
 	fileId: string;
 	ownerFileId: string;
-	status: "retained" | "cleanup_failed";
-	cleanupError?: string;
+	status: "retained";
 }
 
 export interface SourceProcessingState {
@@ -87,6 +89,24 @@ export function createSourceScan(
 	};
 }
 
+/** A missing work directory blocks the staged intent without making it active. */
+export function blockStagedSourceQueue(
+	state: SourceProcessingState,
+	rootId: string,
+): SourceProcessingState {
+	return {
+		...state,
+		files: state.files.map((file) =>
+			file.rootId === rootId &&
+			file.mode === "staged" &&
+			file.status === "queued"
+				? { ...file, blockedReason: "work_directory_required" as const }
+				: file,
+		),
+	};
+}
+
+/** Fixed fixture behavior: first fingerprint attempt fails; retry succeeds. */
 export function processSourceQueue(
 	state: SourceProcessingState,
 	rootId?: string,
@@ -95,6 +115,7 @@ export function processSourceQueue(
 		if (
 			(rootId !== undefined && file.rootId !== rootId) ||
 			(file.status !== "queued" && file.status !== "failed") ||
+			file.blockedReason === "output_reset" ||
 			!file.steps.some((step) => step.status === "queued")
 		)
 			return file;
@@ -103,23 +124,28 @@ export function processSourceQueue(
 			file.mode === "staged"
 				? (file.copyId ?? `copy:${file.id}:${file.workRevision ?? 0}`)
 				: undefined;
-		const steps = file.steps.map((step) =>
-			step.status !== "queued"
-				? step
-				: step.id === "audio_inspection"
-					? { id: step.id, status: "succeeded" as const }
-					: {
-							id: step.id,
-							status: "failed" as const,
-							error:
-								"Демонстрационная ошибка fingerprint: повторите шаг после устранения причины. Файловая система в макете не проверяется.",
-						},
-		);
+		const steps = file.steps.map((step) => {
+			if (step.status !== "queued") return step;
+			const attempts = step.attempts ?? 0;
+			if (step.id === "fingerprint" && attempts === 0)
+				return {
+					id: step.id,
+					status: "failed" as const,
+					error: "fingerprintFailed" as const,
+					attempts: attempts + 1,
+				};
+			return {
+				id: step.id,
+				status: "succeeded" as const,
+				attempts: attempts + 1,
+			};
+		});
 		return {
 			...file,
 			status: steps.every((step) => step.status === "succeeded")
 				? ("completed" as const)
 				: ("failed" as const),
+			blockedReason: undefined,
 			copyId,
 			steps,
 		};
@@ -140,6 +166,20 @@ export function processSourceQueue(
 	return { files, copies: [...state.copies, ...copies] };
 }
 
+export function retryCancelledSourceFile(
+	state: SourceProcessingState,
+	fileId: string,
+): SourceProcessingState {
+	let changed = false;
+	const files = state.files.map((file) => {
+		if (file.id !== fileId || file.blockedReason !== "output_reset")
+			return file;
+		changed = true;
+		return { ...file, status: "queued" as const, blockedReason: undefined };
+	});
+	return changed ? { ...state, files } : state;
+}
+
 export function resetSourceProcessingQueue(
 	state: SourceProcessingState,
 ): SourceProcessingState {
@@ -149,6 +189,7 @@ export function resetSourceProcessingQueue(
 				? {
 						...file,
 						status: "failed" as const,
+						blockedReason: "output_reset" as const,
 						steps: file.steps.map((step) =>
 							step.status === "running"
 								? { id: step.id, status: "queued" as const }
@@ -166,64 +207,27 @@ export function retrySourceStep(
 	fileId: string,
 	stepId: SourceProcessingStep["id"],
 ): SourceProcessingState {
-	return {
-		...state,
-		files: state.files.map((file) => {
-			if (file.id !== fileId) return file;
-			const steps = file.steps.map((step) =>
-				step.id === stepId && step.status === "failed"
-					? { id: step.id, status: "queued" as const }
-					: step,
-			);
-			return {
-				...file,
-				steps,
-				status: "queued" as const,
-			};
-		}),
-	};
-}
-
-export function completeSourceStep(
-	state: SourceProcessingState,
-	fileId: string,
-	stepId: SourceProcessingStep["id"],
-): SourceProcessingState {
+	let changed = false;
 	const files = state.files.map((file) => {
 		if (file.id !== fileId) return file;
-		const steps = file.steps.map((step) =>
-			step.id === stepId && step.status === "queued"
-				? { id: step.id, status: "succeeded" as const }
-				: step,
-		);
-		const completed = steps.every((step) => step.status === "succeeded");
+		const steps = file.steps.map((step) => {
+			if (step.id !== stepId || step.status !== "failed") return step;
+			changed = true;
+			return {
+				id: step.id,
+				status: "queued" as const,
+				attempts: step.attempts,
+			};
+		});
+		if (!steps.some((step) => step.status === "queued")) return file;
 		return {
 			...file,
 			steps,
-			status: completed ? ("completed" as const) : ("failed" as const),
+			status: "queued" as const,
+			blockedReason: undefined,
 		};
 	});
-	return { ...state, files };
-}
-
-export function failSourceCopyCleanup(
-	state: SourceProcessingState,
-	copyId: string,
-): SourceProcessingState {
-	if (!eligibleSourceCopies(state).some((copy) => copy.id === copyId))
-		return state;
-	return {
-		...state,
-		copies: state.copies.map((copy) =>
-			copy.id === copyId
-				? {
-						...copy,
-						status: "cleanup_failed" as const,
-						cleanupError: "Демонстрационная ошибка очистки копии.",
-					}
-				: copy,
-		),
-	};
+	return changed ? { ...state, files } : state;
 }
 
 export function removeEligibleCopy(
@@ -251,14 +255,13 @@ export function removeRootProcessingState(
 }
 
 export function sourceProcessingLocks(state: SourceProcessingState) {
+	const active = (file: SourceProcessingFile) =>
+		["queued", "running"].includes(file.status) && !file.blockedReason;
 	const activeStagedWork = state.files.some(
-		(file) =>
-			file.mode === "staged" && ["queued", "running"].includes(file.status),
+		(file) => file.mode === "staged" && active(file),
 	);
 	return {
-		hasActiveOperations: state.files.some((file) =>
-			["queued", "running"].includes(file.status),
-		),
+		hasActiveOperations: state.files.some(active),
 		hasRetainedCopies: state.copies.length > 0,
 		blocksWorkDirectoryChange: activeStagedWork || state.copies.length > 0,
 	};

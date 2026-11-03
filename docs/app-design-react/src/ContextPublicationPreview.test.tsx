@@ -1,8 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { originalProviders, originalReleases } from "./catalogData";
+import {
+	originalProviders,
+	originalReleases,
+	publicationMetadataIssueMessages,
+} from "./catalogData";
 import type { IncomingPlan } from "./incomingModel";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
+import { formatPublicationMessage } from "./publicationMessages";
 
 it("distinguishes unprocessable selected positions from positions skipped by choice", () => {
 	const release = structuredClone(
@@ -70,8 +75,21 @@ it("distinguishes unprocessable selected positions from positions skipped by cho
 		/>,
 	);
 	expect(screen.getByText("Невозможно обработать: 1")).toBeInTheDocument();
+	fireEvent.click(
+		within(
+			screen.getByRole("region", { name: "Сравнить метаданные" }),
+		).getByRole("button", { name: /9\. Winter Birds/ }),
+	);
 	expect(
-		screen.getByText(/Некорректные метаданные: explicitstatus/),
+		screen.getByText(
+			formatPublicationMessage("ru", "invalidMetadata", {
+				fields: publicationMetadataIssueMessages(
+					release,
+					localTrack,
+					"ru",
+				).join("; "),
+			}),
+		),
 	).toBeInTheDocument();
 
 	rerender(

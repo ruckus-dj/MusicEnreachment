@@ -75,3 +75,26 @@ preserve genres when the picker is untouched or its catalog is unavailable.
 - Display credits include join phrases; plural name/ID lists remain aligned.
   Navidrome advisory values are `1`/`4` for explicit and `2` for clean, not
   booleans. Work MBIDs require UUID validation despite their grouped editor kind.
+
+## Localization and interaction regression prevention
+
+- RU/EN copy uses semantic catalogs; store persistent notices as descriptors and
+  format at render time. Do not translate metadata values, paths, filenames or
+  unknown tags. Locale changes must not remount editors, reset drafts, rerun
+  actions or move focus to the page heading. Keep `document.lang`, titles and
+  React Aria's locale synchronized.
+- The MusicBrainz snapshot is separate from `original-fixtures.json`; preserve
+  real MBIDs and source names. Exact genre-search matches must be reachable on
+  the first result page. When paging/filtering a multiselect, retain selections
+  outside the visible results. Do not mount thousands of picker options simply
+  to make an unscoped test query succeed; test the ordinary search workflow.
+- React Aria `useDrop` registers and focuses the supplied ref during keyboard
+  dragging. With a separate drop button, point that ref at the focusable button,
+  not its nonfocusable layout wrapper. Verify native mouse drag and keyboard
+  Enter/Tab/Enter, not only direct callback invocation.
+- Reserve matching feedback space before the first notice appears: fixed row
+  heights alone do not prevent the entire table moving after assignment.
+  Inspect both row dimensions and its position before add/remove.
+- Modal keyboard tests dispatch to the focused dialog and await focus restoration;
+  document-level synthetic key events do not model an event bubbling from the
+  modal. Always restore media-query mocks even when an assertion fails.

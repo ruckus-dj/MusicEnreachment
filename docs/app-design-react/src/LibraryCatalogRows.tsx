@@ -13,6 +13,11 @@ import {
 import { availabilityRowClass, type CatalogFilter } from "./availabilityRows";
 import { artistReleaseHref } from "./artistReleaseRoute";
 import { catalogueStyles, catalogueTableWidths } from "./catalogueStyles";
+import { useI18n } from "./i18n/I18nProvider";
+import {
+	libraryRowsMessage,
+	type LibraryRowsMessage,
+} from "./libraryRowsMessages";
 import {
 	Button,
 	Cell,
@@ -68,11 +73,16 @@ export function LibraryCatalogRows({
 	expanded,
 	onToggleAlbum,
 }: Props) {
+	const { locale } = useI18n();
+	const m = (
+		key: LibraryRowsMessage,
+		values?: Record<string, string | number>,
+	) => libraryRowsMessage(locale, key, values);
 	if (view === "artists") {
 		return (
 			<div
 				className={catalogueStyles.artistGrid}
-				aria-label="Артисты медиатеки"
+				aria-label={m("artistsLibrary")}
 			>
 				{artists.length ? (
 					artists.map((artist) => {
@@ -107,30 +117,41 @@ export function LibraryCatalogRows({
 										<span className={catalogueStyles.artistOverlay}>
 											<span className={catalogueStyles.artistCopy}>
 												<strong>{artist.name}</strong>
-												<span>{artist.genre || "Исполнитель"}</span>
+												<span>{artist.genre || m("performer")}</span>
 											</span>
 											<span className={catalogueStyles.artistStats}>
 												<span>
-													<strong>{own.length}</strong> изданий
-												</span>
-												<span>
-													<strong>{ownTracks.length}</strong> позиций
+													<strong>
+														{m("releasesCount", { count: own.length })}
+													</strong>
 												</span>
 												<span>
 													<strong>
-														{availableCount} / {ownTracks.length}
-													</strong>{" "}
-													аудио
+														{m("positionsCount", { count: ownTracks.length })}
+													</strong>
 												</span>
 												<span>
 													<strong>
-														{publishedCount} / {ownTracks.length}
-													</strong>{" "}
-													опубликовано
+														{m("audioCount", {
+															available: availableCount,
+															total: ownTracks.length,
+														})}
+													</strong>
 												</span>
 												<span>
-													<strong>{missingCounts.get(artist.id) || "—"}</strong>{" "}
-													без издания
+													<strong>
+														{m("publishedCount", {
+															published: publishedCount,
+															total: ownTracks.length,
+														})}
+													</strong>
+												</span>
+												<span>
+													<strong>
+														{m("missingEditionsCount", {
+															count: missingCounts.get(artist.id) || "—",
+														})}
+													</strong>
 												</span>
 											</span>
 										</span>
@@ -138,7 +159,7 @@ export function LibraryCatalogRows({
 									<div className={catalogueStyles.cardSelection}>
 										{groupCheckbox(
 											ownTracks.map((track) => track.id),
-											`Выбрать позиции артиста ${artist.name}`,
+											m("selectArtistPositions", { artist: artist.name }),
 											"artwork",
 										)}
 									</div>
@@ -147,7 +168,7 @@ export function LibraryCatalogRows({
 						);
 					})
 				) : (
-					<div className={catalogueStyles.empty}>Артистов не найдено.</div>
+					<div className={catalogueStyles.empty}>{m("noArtists")}</div>
 				)}
 			</div>
 		);
@@ -159,42 +180,39 @@ export function LibraryCatalogRows({
 	const columns =
 		view === "albums"
 			? [
-					"Выбрать",
-					"Альбом",
-					"Артист",
-					"Год / издание",
-					"Позиций",
-					"Исходники",
-					"Аудио",
-					"Публикация",
-					"Провайдер",
+					m("select"),
+					m("album"),
+					m("artist"),
+					m("yearEdition"),
+					m("positions"),
+					m("sources"),
+					m("audio"),
+					m("publication"),
+					m("provider"),
 				]
 			: [
-					"Выбор",
-					"Издание",
-					"Носитель / №",
-					"Композиция",
-					"Длительность",
-					"Источник",
-					"Параметры",
-					"Файл / путь",
-					"Публикация",
-					"Теги",
+					m("selection"),
+					m("release"),
+					m("mediumNumber"),
+					m("recording"),
+					m("duration"),
+					m("source"),
+					m("properties"),
+					m("filePath"),
+					m("publication"),
+					m("tags"),
 				];
 	return (
 		<div className={catalogueStyles.tableScroll}>
 			<Table
-				aria-label={view === "albums" ? "Альбомы медиатеки" : "Треки медиатеки"}
+				aria-label={view === "albums" ? m("albumsTable") : m("tracksTable")}
 				className={`${catalogueStyles.table} ${catalogueTableWidths[view]}`}
 			>
 				<TableHeader>
 					{columns.map((column, index) => (
 						<Column key={column} isRowHeader={index === 1}>
 							{index === 0
-								? groupCheckbox(
-										tableTrackIds,
-										"Выбрать все позиции этой таблицы",
-									)
+								? groupCheckbox(tableTrackIds, m("selectAllTablePositions"))
 								: column}
 						</Column>
 					))}
@@ -212,9 +230,7 @@ export function LibraryCatalogRows({
 							filter,
 						]}
 						renderEmptyState={() => (
-							<div className={catalogueStyles.empty}>
-								Нет результатов. Измените запрос или фильтр.
-							</div>
+							<div className={catalogueStyles.empty}>{m("noResults")}</div>
 						)}
 					>
 						{(release) => {
@@ -232,7 +248,7 @@ export function LibraryCatalogRows({
 									<Cell>
 										{groupCheckbox(
 											release.tracks.map((track) => track.id),
-											`Выбрать позиции альбома ${release.title}`,
+											m("selectAlbumPositions", { album: release.title }),
 										)}
 									</Cell>
 									<Cell>
@@ -241,7 +257,7 @@ export function LibraryCatalogRows({
 											aria-expanded={expanded === release.id}
 											onPress={() => onToggleAlbum(release.id)}
 										>
-											{release.title || "Без названия"}
+											{release.title || m("untitled")}
 										</Button>
 										<span className={catalogueStyles.sub}>
 											{artistReleaseHref(release, artists) ? (
@@ -250,10 +266,10 @@ export function LibraryCatalogRows({
 														artistReleaseHref(release, artists) ?? undefined
 													}
 												>
-													Открыть издание
+													{m("openRelease")}
 												</a>
 											) : (
-												"Артист не указан"
+												m("artistNotSpecified")
 											)}
 										</span>
 										{expanded === release.id && (
@@ -262,15 +278,15 @@ export function LibraryCatalogRows({
 													<thead>
 														<tr>
 															{[
-																"Выбрать",
-																"№",
-																"Композиция",
-																"Длительность",
-																"Источник",
-																"Параметры",
-																"Файл / путь",
-																"Публикация",
-																"Теги",
+																m("select"),
+																m("mediumNumber"),
+																m("recording"),
+																m("duration"),
+																m("source"),
+																m("properties"),
+																m("filePath"),
+																m("publication"),
+																m("tags"),
 															].map((heading, headingIndex) => (
 																<th
 																	key={heading}
@@ -284,7 +300,7 @@ export function LibraryCatalogRows({
 																	{headingIndex === 0
 																		? groupCheckbox(
 																				release.tracks.map((track) => track.id),
-																				"Выбрать все позиции альбома",
+																				m("selectAllReleasePositions"),
 																			)
 																		: heading}
 																</th>
@@ -316,7 +332,7 @@ export function LibraryCatalogRows({
 																	>
 																		{groupCheckbox(
 																			[track.id],
-																			`Выбрать ${track.title}`,
+																			m("selectTrack", { track: track.title }),
 																		)}
 																	</td>
 																	<td>{trackNumberLabel(release, track)}</td>
@@ -335,7 +351,7 @@ export function LibraryCatalogRows({
 																		</span>
 																		{track.recordingId ? null : (
 																			<span className={catalogueStyles.sub}>
-																				Новая запись
+																				{m("newRecording")}
 																			</span>
 																		)}
 																	</td>
@@ -343,18 +359,19 @@ export function LibraryCatalogRows({
 																	<td>
 																		{source?.codec ??
 																			(ids.length
-																				? "Источник не выбран"
-																				: "Нет файла")}
+																				? m("noSourceSelected")
+																				: m("noFile"))}
 																		<span className={catalogueStyles.sub}>
-																			{ids.length} исходников ·{" "}
+																			{m("sourceCount", { count: ids.length })}{" "}
+																			·{" "}
 																			{hasAudio(track)
-																				? "есть аудио"
-																				: "нет аудио"}
+																				? m("hasAudio")
+																				: m("noAudio")}
 																		</span>
 																	</td>
 																	<td>
 																		{source
-																			? `${source.codec === "FLAC" ? "24 бит / 48 кГц" : "320 кбит/с"} · ${source.codec}`
+																			? `${source.codec === "FLAC" ? m("quality24Bit48Khz") : m("quality320Kbps")} · ${source.codec}`
 																			: "—"}
 																	</td>
 																	<td>
@@ -376,10 +393,12 @@ export function LibraryCatalogRows({
 																	<td>
 																		{pub
 																			? `${pub.container} · ${pub.codec}`
-																			: "Не опубликовано"}
+																			: m("notPublished")}
 																	</td>
 																	<td>
-																		<a href={`#tags/${track.id}/track`}>Теги</a>
+																		<a href={`#tags/${track.id}/track`}>
+																			{m("tags")}
+																		</a>
 																		{pub && (
 																			<span className={catalogueStyles.sub}>
 																				{pub.tags.TITLE?.join(", ") ||
@@ -414,33 +433,37 @@ export function LibraryCatalogRows({
 												{originalArtistName(release.artistId, artists)}
 											</a>
 										) : (
-											"Артист не указан"
+											m("artistNotSpecified")
 										)}
 									</Cell>
 									<Cell>
-										{release.year || "Дата не указана"}
+										{release.year || m("dateNotSpecified")}
 										<span className={catalogueStyles.sub}>
-											{release.country || "Локальный"} ·{" "}
-											{release.catalog || "—"}
+											{release.country || m("local")} · {release.catalog || "—"}
 										</span>
 									</Cell>
 									<Cell>{release.tracks.length}</Cell>
 									<Cell>{sourceCount}</Cell>
 									<Cell>
-										{release.tracks.filter(hasAudio).length}
+										{m("audioSummary", {
+											count: release.tracks.filter(hasAudio).length,
+										})}
 										{provider?.tracks.length
 											? ` / ${provider.tracks.length}`
-											: " с аудио"}
+											: ""}
 									</Cell>
 									<Cell>
-										{published} опубликовано
+										{m("publishedCount", {
+											published,
+											total: release.tracks.length,
+										})}
 										<span className={catalogueStyles.sub}>
 											{provider?.tracks.length === release.tracks.length
-												? "Полнота известна"
-												: "Полнота неизвестна"}
+												? m("completenessKnown")
+												: m("completenessUnknown")}
 										</span>
 									</Cell>
-									<Cell>{provider ? "MusicBrainz" : "Локальный сборник"}</Cell>
+									<Cell>{provider ? "MusicBrainz" : m("localCollection")}</Cell>
 								</Row>
 							);
 						}}
@@ -457,9 +480,7 @@ export function LibraryCatalogRows({
 							filter,
 						]}
 						renderEmptyState={() => (
-							<div className={catalogueStyles.empty}>
-								Нет результатов. Измените запрос или фильтр.
-							</div>
+							<div className={catalogueStyles.empty}>{m("noResults")}</div>
 						)}
 					>
 						{({ release, track }) => {
@@ -481,7 +502,10 @@ export function LibraryCatalogRows({
 									)} ${catalogueStyles.filterRows}`}
 								>
 									<Cell>
-										{groupCheckbox([track.id], `Выбрать ${track.title}`)}
+										{groupCheckbox(
+											[track.id],
+											m("selectTrack", { track: track.title }),
+										)}
 									</Cell>
 									<Cell>
 										{artistReleaseHref(release, artists) ? (
@@ -516,15 +540,15 @@ export function LibraryCatalogRows({
 									<Cell>{duration(track.duration)}</Cell>
 									<Cell>
 										{selectedFile?.codec ??
-											(ids.length ? "Источник не выбран" : "Нет файла")}
+											(ids.length ? m("noSourceSelected") : m("noFile"))}
 										<span className={catalogueStyles.sub}>
-											{ids.length} исходников ·{" "}
-											{hasAudio(track) ? "есть аудио" : "нет аудио"}
+											{m("sourceCount", { count: ids.length })} ·{" "}
+											{hasAudio(track) ? m("hasAudio") : m("noAudio")}
 										</span>
 									</Cell>
 									<Cell>
 										{selectedFile
-											? `${selectedFile.codec === "FLAC" ? "24 бит / 48 кГц" : "320 кбит/с"} · ${selectedFile.codec}`
+											? `${selectedFile.codec === "FLAC" ? m("quality24Bit48Khz") : m("quality320Kbps")} · ${selectedFile.codec}`
 											: "—"}
 									</Cell>
 									<Cell>
@@ -540,10 +564,10 @@ export function LibraryCatalogRows({
 									<Cell>
 										{pub
 											? `${pub.container} · ${pub.codec}`
-											: "Не опубликовано"}
+											: m("notPublished")}
 									</Cell>
 									<Cell>
-										<a href={`#tags/${track.id}/track`}>Теги</a>
+										<a href={`#tags/${track.id}/track`}>{m("tags")}</a>
 										{pub && (
 											<span className={catalogueStyles.sub}>
 												{pub.tags.TITLE?.join(", ") || track.title}

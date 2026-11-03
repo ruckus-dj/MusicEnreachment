@@ -16,12 +16,20 @@ import {
 	TextField,
 } from "./ui";
 import {
-	publicationMetadataIssues,
+	publicationMetadataIssueMessages,
 	type CatalogArtist,
 	type OriginalTrack,
 } from "./catalogData";
 import { MatchingSearchPicker } from "./MatchingSearchPicker";
+import {
+	MatchingDragHandle,
+	MatchingDropZone,
+	MatchingFileChip,
+} from "./MatchingDnD";
 import { MetadataDiff, metadataSnapshotDiff } from "./publicationMetadataDiff";
+import { useI18n } from "./i18n";
+import { matchingAction, matchingMessage } from "./matchingMessages";
+import { formatUiNotice, type UiNotice } from "./uiNotice";
 import {
 	applyPlan,
 	artistName,
@@ -50,6 +58,9 @@ import {
 import {
 	comparisonTableWrap,
 	dialogFooter,
+	matchingAssignmentRegion,
+	matchingLinkedSources,
+	matchingSourceRow,
 	previewTable,
 	previewTableWrap,
 	surfacePanel,
@@ -91,6 +102,7 @@ export function MatchingScreen({
 		structuredClone(incomingFixtures.releases),
 	);
 	const [recordingQuery, setRecordingQuery] = useState("");
+	const { locale } = useI18n();
 	const state = givenState ?? localState;
 	const files = givenFiles ?? incomingFixtures.files;
 	const releases = givenReleases ?? localReleases;
@@ -101,8 +113,8 @@ export function MatchingScreen({
 	if (!group)
 		return (
 			<main className="demo-shell mx-auto max-w-[1100px] px-6 py-8">
-				<h1>Входящая группа не найдена</h1>
-				<a href="#review">К входящим</a>
+				<h1>{matchingMessage(locale, "groupNotFound")}</h1>
+				<a href="#review">{matchingMessage(locale, "backToIncoming")}</a>
 			</main>
 		);
 	state.groupId = group.id;
@@ -110,8 +122,8 @@ export function MatchingScreen({
 	if (!target)
 		return (
 			<main className="demo-shell mx-auto max-w-[1100px] px-6 py-8">
-				<h1>Цель сопоставления не найдена</h1>
-				<a href="#review">К входящим</a>
+				<h1>{matchingMessage(locale, "targetNotFound")}</h1>
+				<a href="#review">{matchingMessage(locale, "backToIncoming")}</a>
 			</main>
 		);
 	const tracks = target.tracks;
@@ -119,6 +131,11 @@ export function MatchingScreen({
 	const commitState = () => {
 		const next = structuredClone(state);
 		givenState ? onState?.(next) : setLocalState(next);
+	};
+	const setNotice = (notice: UiNotice) => {
+		state.notice = "";
+		state.noticeDescriptor = null;
+		state.uiNotice = notice;
 	};
 	const setReleases = (next: IncomingReleases) =>
 		givenReleases ? onReleases?.(next) : setLocalReleases(next);
@@ -134,7 +151,6 @@ export function MatchingScreen({
 	const inspected =
 		tracks.find((track) => track.id === selectedTrackId) ?? tracks[0];
 	const assignment = assignments[String(inspected?.id)];
-	const sourceIdsForTrack = sourceIds(assignment);
 	const selectedFile = files[selectedSourceId(assignment) ?? ""];
 	const providerTrack = findProviderTrack(
 		assignment?.providerTrackId ?? null,
@@ -155,7 +171,7 @@ export function MatchingScreen({
 		Object.values(assignments).flatMap((item) => item.sourceIds),
 	);
 	const pool = group.fileIds.filter(
-		(id) => files[id]?.available && !used.has(id),
+		(id) => usableFile(files[id]) && !used.has(id),
 	);
 	const allProviderTracks = providers.flatMap((release) =>
 		release.tracks.map((track) => ({ release, track })),
@@ -181,6 +197,20 @@ export function MatchingScreen({
 		commitState();
 	};
 	const addSource = (fileId: string, trackId: string) => {
+		if (!group.fileIds.includes(fileId) || !usableFile(files[fileId])) {
+			setNotice({ namespace: "matching", id: "unavailable" });
+			commitState();
+			return false;
+		}
+		if (sourceIds(assignments[trackId]).includes(fileId)) {
+			setNotice({
+				namespace: "matching",
+				id: "alreadyAssigned",
+				params: { file: files[fileId].name },
+			});
+			commitState();
+			return false;
+		}
 		const didAssign = assignFile(
 			group,
 			trackId,
@@ -191,11 +221,14 @@ export function MatchingScreen({
 		);
 		state.selectedFile = null;
 		state.selectedTarget = trackId;
-		state.notice = didAssign
-			? `К позиции добавлен вариант ${files[fileId].name}. Связь не меняет выбранный источник или публикацию.`
-			: `${files[fileId]?.name ?? fileId} уже связан с этой позицией или недоступен; дополнительная связь не добавлена.`;
+		setNotice({
+			namespace: "matching",
+			id: didAssign ? "assigned" : "addFailed",
+			params: { file: files[fileId]?.name ?? fileId },
+		});
 		clearPreview();
 		commitState();
+		return didAssign;
 	};
 	const setCandidate = (id: string) => {
 		group.mode = "provider";
@@ -204,8 +237,7 @@ export function MatchingScreen({
 		state.selectedTarget = null;
 		state.recordingTarget = null;
 		state.recordingResults = null;
-		state.notice =
-			"Выбрано другое издание. У каждого издания собственный черновик назначений; публикации не изменены.";
+		setNotice({ namespace: "matching", id: "candidateChanged" });
 		clearPreview();
 		commitState();
 	};
@@ -240,9 +272,10 @@ export function MatchingScreen({
 		const local = releases.find(
 			(release) => release.id === preview.localReleaseId,
 		);
-		return publicationMetadataIssues(
+		return publicationMetadataIssueMessages(
 			preview.mode === "local" ? (local ?? preview.target) : preview.target,
 			row.track ?? row.targetTrack,
+			locale,
 			selectedSourceId(row.assignment),
 		);
 	};
@@ -287,8 +320,7 @@ export function MatchingScreen({
 		if (!preview || stale || (hasDowngrade && !state.confirmDowngrade)) return;
 		setConfirming(false);
 		if (preview.inventoryVersion !== state.inventoryVersion) {
-			state.notice =
-				"Предпросмотр устарел из-за изменения инвентаря; действие не выполнено.";
+			setNotice({ namespace: "matching", id: "candidateChangeNotice" });
 			commitState();
 			return;
 		}
@@ -302,9 +334,19 @@ export function MatchingScreen({
 			artists,
 			destination,
 		);
-		state.notice = changed
-			? `Демо: ${changed} позиций опубликовано.${linkedRows.length ? ` Связи ${linkedRows.length} позиций сохранены.` : ""} Невыбранные позиции и неразмеченные файлы не изменены.`
-			: `Демо: связи ${linkedRows.length} позиций сохранены. Аудиофайлы и публикации не изменены.`;
+		setNotice(
+			changed
+				? {
+						namespace: "matching",
+						id: "planPublished",
+						params: { count: changed, linkedCount: linkedRows.length },
+					}
+				: {
+						namespace: "matching",
+						id: "linksSavedFilesUnchanged",
+						params: { count: linkedRows.length },
+					},
+		);
 		setReleases(nextReleases);
 		state.plan = null;
 		state.confirmDowngrade = false;
@@ -335,7 +377,7 @@ export function MatchingScreen({
 	const bindRecording = (recordingId: string) => {
 		const item = assignments[String(state.recordingTarget)];
 		if (!item) {
-			state.notice = "Сначала назначьте аудиофайл этой локальной позиции.";
+			setNotice({ namespace: "matching", id: "missingAssignment" });
 			commitState();
 			return;
 		}
@@ -345,8 +387,7 @@ export function MatchingScreen({
 			item.sourceMeta[item.selectedSourceId].method = item.method;
 		state.selectedTarget = state.recordingTarget;
 		state.recordingTarget = null;
-		state.notice =
-			"Связь с композицией добавлена в черновик. Название и порядок локального сборника сохранены.";
+		setNotice({ namespace: "matching", id: "recordingLinked" });
 		clearPreview();
 		commitState();
 	};
@@ -354,32 +395,23 @@ export function MatchingScreen({
 		const file = files[id];
 		if (!file) return null;
 		return (
-			<div
+			<MatchingFileChip
 				key={id}
-				draggable
-				onDragStart={(event) => {
-					event.dataTransfer.setData("text/plain", id);
-					event.dataTransfer.effectAllowed = "copy";
+				groupId={group.id}
+				fileId={id}
+				name={file.name}
+				codec={file.codec}
+				duration={duration(file.duration)}
+				path={compact ? undefined : file.path}
+				compact={compact}
+				selected={state.selectedFile === id}
+				available={group.fileIds.includes(id) && usableFile(file)}
+				locale={locale}
+				onSelect={() => {
+					state.selectedFile = state.selectedFile === id ? null : id;
+					commitState();
 				}}
-			>
-				<Button
-					type="button"
-					className={`incoming-file mb-[5px] grid w-full cursor-grab gap-[3px] rounded border border-[var(--line)] bg-[var(--surface)] p-2 text-left hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] ${state.selectedFile === id ? "selected border-[var(--accent)] bg-[var(--accent-soft)]" : ""}`}
-					onPress={() => {
-						state.selectedFile = state.selectedFile === id ? null : id;
-						commitState();
-					}}
-					aria-pressed={state.selectedFile === id}
-				>
-					<strong className="[overflow-wrap:anywhere] text-[11px]">
-						{file.name}
-					</strong>
-					<span className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
-						{file.codec} · {duration(file.duration)}
-						{compact ? "" : ` · ${file.path}`}
-					</span>
-				</Button>
-			</div>
+			/>
 		);
 	};
 	return (
@@ -394,34 +426,45 @@ export function MatchingScreen({
 		>
 			<header className="mb-4">
 				<p className="demo-eyebrow mb-[5px] text-[11px] text-[var(--muted)]">
-					<a href="#review">Все входящие</a> · Только чтение: /mnt/inbox/
+					<a href="#review">{matchingMessage(locale, "incomingLink")}</a> ·{" "}
+					{matchingMessage(locale, "readOnlyRoot")}: /mnt/inbox/
 					{group.id}
 				</p>
 				<h1 className="m-0 text-[clamp(22px,2vw,30px)] tracking-[-.025em]">
-					Разбор: {group.title}
+					{matchingMessage(locale, "matchingTitle", { group: group.title })}
 				</h1>
 				<p className="mt-1 text-[var(--muted)]">
 					{group.mode === "local"
-						? "Локальные позиции; композиции можно брать из разных альбомов."
-						: "Выбранное издание → его позиции. Наши файлы находятся отдельно справа."}
+						? matchingMessage(locale, "localTrackListHint")
+						: matchingMessage(locale, "providerTrackListHint")}
 				</p>
 			</header>
-			{state.notice && (
-				<p
+			<div
+				className="mb-2.5 h-12 min-w-0 max-[600px]:h-16"
+				data-matching-feedback
+			>
+				<div
 					role="status"
-					className="demo-notice mb-2.5 rounded border border-[var(--line)] bg-[var(--accent-soft)] px-3 py-[9px]"
+					aria-live="polite"
+					className={`h-full overflow-auto rounded px-3 py-2 text-xs ${state.uiNotice || state.notice ? "border border-[var(--line)] bg-[var(--accent-soft)]" : ""}`}
 				>
-					{state.notice}
-				</p>
-			)}
+					{state.notice ||
+						(state.uiNotice ? formatUiNotice(locale, state.uiNotice) : "")}
+				</div>
+			</div>
 			<div className="incoming-summary mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] px-3 py-[9px] text-[var(--muted)]">
 				<strong className="text-[var(--ink)]">
-					{Object.keys(assignments).length}/{tracks.length} назначено
+					{matchingMessage(locale, "assignedCount", {
+						assigned: Object.keys(assignments).length,
+						total: tracks.length,
+					})}
 				</strong>
-				<span>{pool.length} файлов свободно</span>
+				<span>
+					{matchingMessage(locale, "freeCount", { count: pool.length })}
+				</span>
 				<span>
 					{group.mode === "local"
-						? "Локальный порядок"
+						? matchingMessage(locale, "localOrder")
 						: `${target.year ?? ""} · ${target.country ?? ""} · ${target.catalog ?? ""}`}
 				</span>
 			</div>
@@ -430,7 +473,7 @@ export function MatchingScreen({
 					className={`matching-candidates ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-1 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:max-h-none`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
-						Найти издание
+						{matchingMessage(locale, "findRelease")}
 					</h2>
 					<MatchingSearchPicker
 						artists={artists}
@@ -452,25 +495,28 @@ export function MatchingScreen({
 							commitState();
 						}}
 					>
-						Локальный релиз / сборник
+						{matchingMessage(locale, "localRelease")}
 					</Button>
 				</section>
 				<section
 					className={`matching-target ${surfacePanel} max-[1250px]:row-span-2 max-[1250px]:col-start-2 max-[800px]:row-auto max-[800px]:col-auto`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
-						{String(target.title)} · {tracks.length} позиций
+						{matchingMessage(locale, "positionCount", {
+							title: String(target.title),
+							count: tracks.length,
+						})}
 					</h2>
 					<div className={comparisonTableWrap}>
 						<table className={table}>
 							<thead>
 								<tr>
-									<th>✓</th>
-									<th>№</th>
-									<th>Композиция</th>
-									<th>Длит.</th>
-									<th>Наш файл / источники</th>
-									<th>Оценка / доказательства</th>
+									<th>{matchingMessage(locale, "publishColumn")}</th>
+									<th>{matchingMessage(locale, "positionColumn")}</th>
+									<th>{matchingMessage(locale, "trackColumn")}</th>
+									<th>{matchingMessage(locale, "durationColumn")}</th>
+									<th>{matchingMessage(locale, "sourceColumn")}</th>
+									<th>{matchingMessage(locale, "evidenceColumn")}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -495,15 +541,16 @@ export function MatchingScreen({
 													? "inspected bg-[var(--accent-soft)]"
 													: ""
 											}
-											onDragOver={(event) => event.preventDefault()}
-											onDrop={(event) => {
-												event.preventDefault();
-												addSource(event.dataTransfer.getData("text/plain"), id);
-											}}
 										>
 											<td>
 												<Checkbox
-													aria-label={`Публиковать ${String(track.title)}`}
+													aria-label={matchingMessage(
+														locale,
+														"ariaPublishTrack",
+														{
+															track: String(track.title),
+														},
+													)}
 													isSelected={Boolean(
 														item?.included && usableFile(file),
 													)}
@@ -534,66 +581,107 @@ export function MatchingScreen({
 												<span className="block text-[10px] text-[var(--muted)]">
 													{artistName(String(track.artistId), artists)}
 													{group.mode === "local"
-														? ` · ${bound?.release.title ?? "Без связи с провайдером"}`
+														? ` · ${bound?.release.title ?? matchingMessage(locale, "unlinked")}`
 														: ""}
 												</span>
 											</td>
 											<td>{duration(track.duration)}</td>
-											<td>
-												{ids.length ? (
-													<div className="linked-sources">
-														{ids.map((sourceId) => (
-															<div
-																key={sourceId}
-																className="linked-source border-b border-[var(--line)] py-1.5"
-															>
-																<RadioGroup
-																	aria-label={`Источник для ${String(track.title)}`}
-																	value={currentId ?? ""}
-																	onChange={(value) =>
-																		sourceSelection(id, value)
-																	}
-																>
-																	<Radio value={sourceId}>
-																		Выбрать для публикации
-																	</Radio>
-																</RadioGroup>
-																{fileButton(sourceId, true)}
-																<Button
-																	aria-label={`Снять связь ${files[sourceId]?.name ?? sourceId} с ${String(track.title)}`}
-																	onPress={() =>
-																		mutateAssignment((draft) =>
-																			unassignFile(draft, id, sourceId),
-																		)
-																	}
-																>
-																	×
-																</Button>
-															</div>
-														))}
-													</div>
-												) : (
-													<span>Перетащите файл сюда</span>
-												)}
-												{state.selectedFile && (
-													<Button
-														onPress={() =>
-															addSource(state.selectedFile as string, id)
+											<td className="min-w-[180px]">
+												<div className={matchingAssignmentRegion}>
+													<MatchingDropZone
+														groupId={group.id}
+														trackId={id}
+														trackName={String(track.title)}
+														selectedFileId={state.selectedFile}
+														selectedFileName={
+															state.selectedFile
+																? (files[state.selectedFile]?.name ?? null)
+																: null
+														}
+														locale={locale}
+														onAssign={(fileId) => addSource(fileId, id)}
+													/>
+													<div
+														className={matchingLinkedSources}
+														role={ids.length ? "group" : undefined}
+														aria-label={
+															ids.length
+																? matchingMessage(locale, "linkedSources", {
+																		track: String(track.title),
+																	})
+																: undefined
 														}
 													>
-														Добавить вариант
-													</Button>
-												)}
+														{ids.length ? (
+															<RadioGroup
+																aria-label={matchingMessage(
+																	locale,
+																	"ariaTrackSource",
+																	{ track: String(track.title) },
+																)}
+																value={currentId ?? ""}
+																onChange={(value) => sourceSelection(id, value)}
+															>
+																{ids.map((sourceId) => (
+																	<div
+																		key={sourceId}
+																		className={matchingSourceRow}
+																	>
+																		<Radio value={sourceId}>
+																			<span
+																				className="indicator"
+																				aria-hidden="true"
+																			/>
+																			<span className="truncate text-[10px]">
+																				{files[sourceId]?.name ?? sourceId}
+																			</span>
+																		</Radio>
+																		<MatchingDragHandle
+																			groupId={group.id}
+																			fileId={sourceId}
+																			name={files[sourceId]?.name ?? sourceId}
+																			available={usableFile(files[sourceId])}
+																			locale={locale}
+																		/>
+																		<Button
+																			className="h-6 min-h-0 w-7 p-0 text-[12px]"
+																			aria-label={matchingMessage(
+																				locale,
+																				"removeSource",
+																				{
+																					file:
+																						files[sourceId]?.name ?? sourceId,
+																					track: String(track.title),
+																				},
+																			)}
+																			onPress={() =>
+																				mutateAssignment((draft) =>
+																					unassignFile(draft, id, sourceId),
+																				)
+																			}
+																		>
+																			×
+																		</Button>
+																	</div>
+																))}
+															</RadioGroup>
+														) : (
+															<span className="sr-only">
+																{matchingMessage(locale, "dropHint")}
+															</span>
+														)}
+													</div>
+												</div>
 											</td>
 											<td>
 												{file ? (
 													<>
 														<span>
 															{item?.method.startsWith("Вручную")
-																? "Вручную"
+																? matchingMessage(locale, "manual")
 																: file.confidence === "high"
-																	? "Высокий*"
-																	: "Низкий*"}
+																	? matchingMessage(locale, "highConfidence")
+																	: matchingMessage(locale, "lowConfidence")}
 														</span>
 														<Button
 															className="demo-button"
@@ -603,11 +691,11 @@ export function MatchingScreen({
 																commitState();
 															}}
 														>
-															Доказательства
+															{matchingMessage(locale, "evidenceButton")}
 														</Button>
 													</>
 												) : (
-													"Нет файла"
+													matchingMessage(locale, "noFile")
 												)}
 												{group.mode === "local" && (
 													<Button
@@ -619,7 +707,7 @@ export function MatchingScreen({
 															commitState();
 														}}
 													>
-														Найти композицию
+														{matchingMessage(locale, "recordingSearch")}
 													</Button>
 												)}
 											</td>
@@ -629,32 +717,26 @@ export function MatchingScreen({
 							</tbody>
 						</table>
 					</div>
-					<p>
-						* Политика matching-rapidfuzz-v1: порог ≥0.70. Этот макет числовую
-						уверенность не рассчитывает; уровни — демонстрационные.
-					</p>
+					<p>{matchingMessage(locale, "matchingDisclaimer")}</p>
 				</section>
 				<section
 					className={`matching-pool ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-2 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:row-auto max-[800px]:col-auto max-[800px]:max-h-none`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
-						Наши файлы · {pool.length} свободно
+						{matchingMessage(locale, "poolTitle", { count: pool.length })}
 					</h2>
 					{pool.length ? (
 						pool.map((id) => fileButton(id))
 					) : (
-						<p>Все файлы назначены.</p>
+						<p>{matchingMessage(locale, "allFilesAssigned")}</p>
 					)}
-					<p>
-						Выберите файл → «Добавить вариант» или перетащите на позицию. Это не
-						загрузка файлов с компьютера.
-					</p>
+					<p>{matchingMessage(locale, "poolInstructions")}</p>
 				</section>
 			</div>
 			{state.recordingTarget && (
 				<section className={`matching-recording ${surfacePanel} mt-3`}>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
-						Поиск композиции
+						{matchingMessage(locale, "recordingSearch")}
 					</h2>
 					<form
 						className="flex flex-wrap items-end gap-[7px] [&_.ui-field]:min-w-[190px] [&_.ui-field]:flex-1"
@@ -665,36 +747,37 @@ export function MatchingScreen({
 							commitState();
 						}}
 					>
-						<label htmlFor="recording-query">Название / артист</label>
+						<label htmlFor="recording-query">
+							{matchingMessage(locale, "searchTitleArtist")}
+						</label>
 						<TextField
 							className="ui-field"
-							aria-label="Название / артист"
+							aria-label={matchingMessage(locale, "ariaSearchTitleArtist")}
 							value={recordingQuery}
 							onChange={setRecordingQuery}
 						>
 							<Input id="recording-query" />
 						</TextField>
-						<Button type="submit">Найти композиции</Button>
+						<Button type="submit">
+							{matchingMessage(locale, "searchRecordings")}
+						</Button>
 						<Button
 							onPress={() => {
 								state.recordingTarget = null;
 								commitState();
 							}}
 						>
-							Закрыть
+							{matchingMessage(locale, "close")}
 						</Button>
 					</form>
-					<p>
-						Связывается только композиция. Название сборника, его год, порядок и
-						локальные позиции не заменяются чужим альбомом.
-					</p>
+					<p>{matchingMessage(locale, "recordingLinkHint")}</p>
 					<ul>
 						{matchingRecordings.map(({ release, track }) => (
 							<li key={String(track.id)}>
 								{String(track.title)} · {String(release.title)} ·{" "}
 								{duration(track.duration)}{" "}
 								<Button onPress={() => bindRecording(String(track.id))}>
-									Связать композицию
+									{matchingMessage(locale, "linkRecording")}
 								</Button>
 							</li>
 						))}
@@ -703,7 +786,9 @@ export function MatchingScreen({
 			)}
 			<section className={`matching-inspector ${surfacePanel} mt-3`}>
 				<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
-					Инспектор · {String(inspected.title)}
+					{matchingMessage(locale, "inspectorTitle", {
+						track: String(inspected.title),
+					})}
 				</h2>
 				<Tabs
 					className="matching-inspector-tabs min-w-0 [&_.ui-tab-panel]:pt-3"
@@ -713,9 +798,9 @@ export function MatchingScreen({
 						commitState();
 					}}
 				>
-					<TabList aria-label="Инспектор позиции">
-						<Tab id="tags">Сравнение тегов</Tab>
-						<Tab id="evidence">Почему такое совпадение</Tab>
+					<TabList aria-label={matchingMessage(locale, "ariaTrackInspector")}>
+						<Tab id="tags">{matchingMessage(locale, "tagComparison")}</Tab>
+						<Tab id="evidence">{matchingMessage(locale, "matchReason")}</Tab>
 					</TabList>
 					{state.inspector === "tags" ? (
 						<TabPanel id="tags">
@@ -728,10 +813,18 @@ export function MatchingScreen({
 											commitState();
 										}}
 									>
-										<TabList aria-label="Область тегов">
-											<Tab id="artist">Артист</Tab>
-											<Tab id="release">Альбом</Tab>
-											<Tab id="track">Трек</Tab>
+										<TabList
+											aria-label={matchingMessage(locale, "ariaTagScope")}
+										>
+											<Tab id="artist">
+												{matchingMessage(locale, "artistScope")}
+											</Tab>
+											<Tab id="release">
+												{matchingMessage(locale, "releaseScope")}
+											</Tab>
+											<Tab id="track">
+												{matchingMessage(locale, "trackScope")}
+											</Tab>
 										</TabList>
 									</Tabs>
 									<Checkbox
@@ -742,18 +835,22 @@ export function MatchingScreen({
 										}}
 									>
 										<span className="checkbox" />
-										Только отличия
+										{matchingMessage(locale, "differencesOnly")}
 									</Checkbox>
 								</div>
 								<div className={comparisonTableWrap}>
 									<table className={table}>
 										<thead>
 											<tr>
-												<th>Поле</th>
-												<th>Исходный файл</th>
-												<th>Провайдер · кэш</th>
-												<th>Локальная медиатека</th>
-												<th>Сейчас в публикации</th>
+												<th>{matchingMessage(locale, "fieldColumn")}</th>
+												<th>{matchingMessage(locale, "sourceFileColumn")}</th>
+												<th>
+													{matchingMessage(locale, "providerCacheColumn")}
+												</th>
+												<th>{matchingMessage(locale, "localLibraryColumn")}</th>
+												<th>
+													{matchingMessage(locale, "currentPublicationColumn")}
+												</th>
 											</tr>
 										</thead>
 										<tbody>
@@ -764,13 +861,13 @@ export function MatchingScreen({
 													<td>
 														{providerTrack
 															? tagValue(remoteTags, key)
-															: "Нет связи"}
+															: matchingMessage(locale, "noProviderLink")}
 													</td>
 													<td>{tagValue(localTags, key)}</td>
 													<td>
 														{publication
 															? tagValue(publicationTags, key)
-															: "Не опубликован"}
+															: matchingMessage(locale, "unpublished")}
 													</td>
 												</tr>
 											))}
@@ -778,10 +875,15 @@ export function MatchingScreen({
 									</table>
 								</div>
 								<p>
-									{selectedFile?.path ?? "Исходник не выбран"} ·{" "}
+									{selectedFile?.path ??
+										matchingMessage(locale, "noSourceSelected")}{" "}
+									·{" "}
 									{publication
-										? `Публикация: ${String(publication.path)} · чтение ${String(publication.readAt)}`
-										: "Публикация отсутствует; текущие метаданные не подставляются."}
+										? matchingMessage(locale, "publicationRead", {
+												path: String(publication.path),
+												readAt: String(publication.readAt),
+											})
+										: matchingMessage(locale, "publicationAbsent")}
 								</p>
 							</>
 						</TabPanel>
@@ -792,6 +894,7 @@ export function MatchingScreen({
 								track={inspected}
 								assignment={assignment}
 								providerArtists={artists}
+								locale={locale}
 							/>
 						</TabPanel>
 					)}
@@ -806,12 +909,19 @@ export function MatchingScreen({
 								usableFile(files[selectedSourceId(item) ?? ""]),
 						).length
 					}{" "}
-					позиций выбрано для публикации
+					{matchingMessage(locale, "selectedForPublicationCount", {
+						count: Object.values(assignments).filter(
+							(item) =>
+								item.included &&
+								usableFile(files[selectedSourceId(item) ?? ""]),
+						).length,
+					})}
 				</strong>
 				<span className="min-w-[220px] flex-1 text-[11px] text-[var(--muted)] max-[800px]:hidden">
-					{tracks.length - Object.keys(assignments).length} пустых позиций не
-					блокируют публикацию. {pool.length} файлов останутся неразмеченными во
-					входящих.
+					{matchingMessage(locale, "unassignedSummary", {
+						empty: tracks.length - Object.keys(assignments).length,
+						files: pool.length,
+					})}
 				</span>
 				<Button
 					className="demo-button max-[520px]:w-full"
@@ -824,42 +934,53 @@ export function MatchingScreen({
 					}
 					onPress={openPreview}
 				>
-					Предпросмотр публикации
+					{matchingMessage(locale, "publicationPreview")}
 				</Button>
 			</div>
 			{preview && (
 				<section
 					className={`matching-preview ${surfacePanel} mt-3.5 max-w-[min(1100px,95vw)]`}
-					aria-label="Предпросмотр публикации"
+					aria-label={matchingMessage(locale, "ariaPublicationPreview")}
 				>
-					<h2>Предпросмотр: {String(preview.target.title)}</h2>
-					<p>
-						Контекстный предпросмотр операции. Исходники сохранятся; невыбранные
-						публикации и неразмеченные файлы не изменяются.
-					</p>
+					<h2>
+						{matchingMessage(locale, "previewTitle", {
+							title: String(preview.target.title),
+						})}
+					</h2>
+					<p>{matchingMessage(locale, "previewDescription")}</p>
 					{stale && (
-						<p role="alert">
-							Инвентарь источников изменился. Создайте новый предпросмотр перед
-							подтверждением.
-						</p>
+						<p role="alert">{matchingMessage(locale, "stalePreview")}</p>
 					)}
 					<p>
-						{activeRows.length} / {previewRows.length} выбрано ·{" "}
-						{changedRows.length} изменений · {linkedRows.length} позиций:
-						сохранить связи ·{" "}
-						{group.fileIds.length -
-							new Set(activeRows.map((row) => row.file?.id)).size}{" "}
-						файлов останутся во входящих · MKA · перепаковка без перекодирования
+						{matchingMessage(locale, "previewSelected", {
+							selected: activeRows.length,
+							total: previewRows.length,
+						})}{" "}
+						·{" "}
+						{matchingMessage(locale, "previewChanges", {
+							count: changedRows.length,
+						})}{" "}
+						·{" "}
+						{matchingMessage(locale, "previewLinked", {
+							count: linkedRows.length,
+						})}{" "}
+						·{" "}
+						{matchingMessage(locale, "previewRemainingFiles", {
+							count:
+								group.fileIds.length -
+								new Set(activeRows.map((row) => row.file?.id)).size,
+						})}{" "}
+						· {matchingMessage(locale, "previewFormat")}
 					</p>
 					<div className={comparisonTableWrap}>
 						<table className={previewTable}>
 							<thead>
 								<tr>
-									<th>Включить</th>
-									<th>№ / трек</th>
-									<th>Источник</th>
-									<th>Эффективные метаданные · сейчас → после</th>
-									<th>Действие</th>
+									<th>{matchingMessage(locale, "includeColumn")}</th>
+									<th>{matchingMessage(locale, "positionTrackColumn")}</th>
+									<th>{matchingMessage(locale, "sourceColumn")}</th>
+									<th>{matchingMessage(locale, "effectiveMetadataColumn")}</th>
+									<th>{matchingMessage(locale, "actionColumn")}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -867,7 +988,13 @@ export function MatchingScreen({
 									<tr key={String(row.targetTrack.id)}>
 										<td>
 											<Checkbox
-												aria-label={`Включить ${String(row.targetTrack.title)}`}
+												aria-label={matchingMessage(
+													locale,
+													"ariaIncludeTrack",
+													{
+														track: String(row.targetTrack.title),
+													},
+												)}
 												isSelected={Boolean(
 													row.assignment?.included && row.file,
 												)}
@@ -889,22 +1016,25 @@ export function MatchingScreen({
 										<td>
 											{row.file
 												? `${row.file.name} · ${row.file.codec}`
-												: "Нет файла"}
+												: matchingMessage(locale, "noFile")}
 										</td>
 										<td>{effectiveMetadata(row)}</td>
 										<td>
 											{row.assignment?.included &&
 											row.file &&
 											metadataIssues(row).length
-												? "Невозможно обработать"
-												: row.action}
-											{row.downgrade ? " · Понижение качества" : ""}
+												? matchingMessage(locale, "unprocessed")
+												: matchingAction(locale, row.action)}
+											{row.downgrade
+												? ` · ${matchingMessage(locale, "downgrade")}`
+												: ""}
 											{row.assignment?.included &&
 												row.file &&
 												metadataIssues(row).length > 0 && (
 													<p>
-														Некорректные метаданные:{" "}
-														{metadataIssues(row).join("; ")}
+														{matchingMessage(locale, "invalidMetadata", {
+															issues: metadataIssues(row).join("; "),
+														})}
 													</p>
 												)}
 										</td>
@@ -922,7 +1052,7 @@ export function MatchingScreen({
 							}}
 						>
 							<span className="checkbox" />
-							Подтверждаю замену сжатия без потерь на сжатие с потерями
+							{matchingMessage(locale, "confirmDowngrade")}
 						</Checkbox>
 					)}
 					<div className="incoming-actions flex flex-wrap justify-end gap-2">
@@ -934,7 +1064,7 @@ export function MatchingScreen({
 							}
 							onPress={() => setConfirming(true)}
 						>
-							Подтвердить публикацию
+							{matchingMessage(locale, "confirmPublish")}
 						</Button>
 						<Button
 							onPress={() => {
@@ -942,7 +1072,7 @@ export function MatchingScreen({
 								commitState();
 							}}
 						>
-							Вернуться к объекту
+							{matchingMessage(locale, "returnToObject")}
 						</Button>
 					</div>
 				</section>
@@ -954,26 +1084,27 @@ export function MatchingScreen({
 				>
 					<Heading slot="title" id="incoming-confirm-title">
 						{changedRows.length
-							? `Опубликовать ${changedRows.length} позиций?`
-							: `Сохранить связи ${linkedRows.length} позиций?`}
+							? matchingMessage(locale, "confirmPublishCount", {
+									count: changedRows.length,
+								})
+							: matchingMessage(locale, "confirmLinksCount", {
+									count: linkedRows.length,
+								})}
 					</Heading>
-					<p>
-						Невыбранные позиции, публикации и исходники сохраняются.
-						Демонстрация не выполняет файловые операции.
-					</p>
+					<p>{matchingMessage(locale, "unchangedOnConfirm")}</p>
 					{stale && (
-						<p role="alert">
-							Инвентарь источников изменился. Пересмотрите предпросмотр.
-						</p>
+						<p role="alert">{matchingMessage(locale, "stalePreview")}</p>
 					)}
 					<div className={dialogFooter}>
-						<Button onPress={() => setConfirming(false)}>Отмена</Button>
+						<Button onPress={() => setConfirming(false)}>
+							{matchingMessage(locale, "cancel")}
+						</Button>
 						<Button
 							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 							isDisabled={stale || (hasDowngrade && !state.confirmDowngrade)}
 							onPress={confirmPublish}
 						>
-							Подтвердить
+							{matchingMessage(locale, "confirm")}
 						</Button>
 					</div>
 				</Dialog>
@@ -987,51 +1118,52 @@ function Evidence({
 	track,
 	assignment,
 	providerArtists,
+	locale,
 }: {
 	file?: SourceFile;
 	track: OriginalTrack;
 	assignment?: Assignment;
 	providerArtists: CatalogArtist[];
+	locale: import("./i18n/types").Locale;
 }) {
-	if (!file)
-		return <p>Выберите строку и файл: здесь будут сравнения признаков.</p>;
+	if (!file) return <p>{matchingMessage(locale, "noEvidenceFile")}</p>;
 	const rawTitle = file.tags.TITLE?.join("; ") ?? "";
 	const rawArtist = file.tags.ARTIST?.join("; ") ?? "";
 	const compare = (source: string, remote: string) =>
 		normalized(source) === normalized(remote)
-			? "Совпало после нормализации"
-			: "Различается";
+			? matchingMessage(locale, "equalAfterNormalization")
+			: matchingMessage(locale, "differs");
 	return (
 		<>
 			<p>
 				{assignment?.method.startsWith("Вручную")
-					? "Назначено оператором"
+					? matchingMessage(locale, "assignedByOperator")
 					: file.confidence === "high"
-						? "Высокая уверенность · демонстрационные данные"
-						: "Недостаточная уверенность · демонстрационные данные"}
+						? matchingMessage(locale, "illustrativeHighConfidence")
+						: matchingMessage(locale, "illustrativeLowConfidence")}
 			</p>
-			<strong>Числовая оценка: не рассчитана</strong>
+			<strong>{matchingMessage(locale, "numericScoreNotCalculated")}</strong>
 			<div className={comparisonTableWrap}>
 				<table className={table}>
 					<thead>
 						<tr>
-							<th>Признак</th>
-							<th>Исходное значение</th>
-							<th>Кандидат</th>
-							<th>Результат / отличие</th>
-							<th>Вес / вклад</th>
+							<th>{matchingMessage(locale, "evidenceFeature")}</th>
+							<th>{matchingMessage(locale, "sourceValue")}</th>
+							<th>{matchingMessage(locale, "candidateValue")}</th>
+							<th>{matchingMessage(locale, "resultDifference")}</th>
+							<th>{matchingMessage(locale, "weightContribution")}</th>
 						</tr>
 					</thead>
 					<tbody>
 						<tr>
-							<th>Название</th>
+							<th>{matchingMessage(locale, "trackTitle")}</th>
 							<td>{rawTitle}</td>
 							<td>{String(track.title)}</td>
 							<td>{compare(rawTitle, String(track.title))}</td>
-							<td>Не моделируется</td>
+							<td>{matchingMessage(locale, "notModeled")}</td>
 						</tr>
 						<tr>
-							<th>Артист</th>
+							<th>{matchingMessage(locale, "artist")}</th>
 							<td>{rawArtist}</td>
 							<td>{artistName(String(track.artistId), providerArtists)}</td>
 							<td>
@@ -1040,45 +1172,47 @@ function Evidence({
 									artistName(String(track.artistId), providerArtists),
 								)}
 							</td>
-							<td>Не моделируется</td>
+							<td>{matchingMessage(locale, "notModeled")}</td>
 						</tr>
 						<tr>
-							<th>Длительность</th>
+							<th>{matchingMessage(locale, "durationFeature")}</th>
 							<td>{duration(file.duration)}</td>
 							<td>{duration(track.duration)}</td>
 							<td>{Number(file.duration) - Number(track.duration)} с</td>
-							<td>Не моделируется</td>
+							<td>{matchingMessage(locale, "notModeled")}</td>
 						</tr>
 						<tr>
-							<th>Номер позиции</th>
+							<th>{matchingMessage(locale, "positionNumber")}</th>
 							<td>{tagValue(file.tags, "TRACKNUMBER")}</td>
 							<td>{String(track.position)}</td>
-							<td>Демонстрационное сравнение</td>
-							<td>Не моделируется</td>
+							<td>{matchingMessage(locale, "differs")}</td>
+							<td>{matchingMessage(locale, "notModeled")}</td>
 						</tr>
 						<tr>
-							<th>MBID композиции</th>
+							<th>{matchingMessage(locale, "recordingMbid")}</th>
 							<td>{tagValue(file.tags, "MUSICBRAINZ_TRACKID")}</td>
-							<td>{String(track.recordingId ?? "Не указан")}</td>
 							<td>
-								В исходнике нет MBID; совпадение не подтверждено идентификатором
+								{String(
+									track.recordingId ?? matchingMessage(locale, "notSpecified"),
+								)}
 							</td>
-							<td>Не моделируется</td>
+							<td>{matchingMessage(locale, "noMbidEvidence")}</td>
+							<td>{matchingMessage(locale, "notModeled")}</td>
 						</tr>
 						<tr>
-							<th>Отпечаток</th>
-							<td>{file.fingerprint ?? "Нет результата"}</td>
+							<th>{matchingMessage(locale, "fingerprint")}</th>
+							<td>
+								{file.fingerprint ??
+									matchingMessage(locale, "noFingerprintResult")}
+							</td>
 							<td>AcoustID / Chromaprint</td>
-							<td>Не используется как доказанное совпадение</td>
-							<td>Не моделируется</td>
+							<td>{matchingMessage(locale, "fingerprintNotProof")}</td>
+							<td>{matchingMessage(locale, "notModeled")}</td>
 						</tr>
 					</tbody>
 				</table>
 			</div>
-			<p>
-				Показаны сравнения демонстрационных значений. Нормализация — визуальная
-				демонстрация, не расчёт политики сопоставления.
-			</p>
+			<p>{matchingMessage(locale, "illustrativeComparison")}</p>
 		</>
 	);
 }

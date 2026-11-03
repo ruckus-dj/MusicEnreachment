@@ -23,6 +23,8 @@ import {
 import type { DeletionOperation } from "./DeletionRequest";
 import { DeletionRequest } from "./DeletionRequest";
 import { catalogueStyles } from "./catalogueStyles";
+import { useI18n } from "./i18n/I18nProvider";
+import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
 import {
 	Button,
 	Checkbox,
@@ -81,6 +83,9 @@ export function ArtistScreen({
 	genresLoaded?: boolean;
 	onLoadGenres?: () => void | Promise<void>;
 }) {
+	const { locale } = useI18n();
+	const m = (key: CatalogueMessage, values?: Record<string, string | number>) =>
+		catalogueMessage(locale, key, values);
 	const [localQuery, setLocalQuery] = useState("");
 	const [localFilter, setLocalFilter] = useState<CatalogFilterValue>("all");
 	const query = sharedQuery ?? localQuery;
@@ -172,10 +177,10 @@ export function ArtistScreen({
 		return (
 			<header className={catalogueStyles.objectHeader}>
 				<div>
-					<h1>Артист не найден</h1>
-					<p>Эта ссылка не соответствует артисту медиатеки.</p>
+					<h1>{m("artistNotFound")}</h1>
+					<p>{m("artistLinkMismatch")}</p>
 				</div>
-				<a href="#library">Вся медиатека</a>
+				<a href="#library">{m("allLibrary")}</a>
 			</header>
 		);
 	const counts = (predicate: (track: OriginalTrack) => boolean) =>
@@ -222,8 +227,8 @@ export function ArtistScreen({
 	};
 	return (
 		<section className={catalogueStyles.object}>
-			<nav className={catalogueStyles.heroBack} aria-label="Навигация">
-				<a href="#library">К медиатеке</a>
+			<nav className={catalogueStyles.heroBack} aria-label={m("navigation")}>
+				<a href="#library">{m("backToLibrary")}</a>
 			</nav>
 			<header
 				className={`${catalogueStyles.objectHeader} ${catalogueStyles.hero}`}
@@ -238,7 +243,9 @@ export function ArtistScreen({
 					<i aria-hidden="true" />
 					<div className={catalogueStyles.cardSelection}>
 						<Checkbox
-							aria-label={`Выбрать все позиции артиста ${artist.name}`}
+							aria-label={m("selectAllArtistPositions", {
+								artist: artist.name,
+							})}
 							className={catalogueStyles.cardCheckbox}
 							isSelected={ids.length > 0 && selectedCount === ids.length}
 							isIndeterminate={selectedCount > 0 && selectedCount < ids.length}
@@ -255,13 +262,15 @@ export function ArtistScreen({
 										? "−"
 										: ""}
 							</span>
-							<span className="sr-only">Выбрать все позиции артиста</span>
+							<span className="sr-only">
+								{m("selectAllArtistPositionsShort")}
+							</span>
 						</Checkbox>
 					</div>
 				</div>
 				<div className={catalogueStyles.heroBody}>
 					<div className={catalogueStyles.heroHeading}>
-						<p className={catalogueStyles.heroKicker}>ПРОФИЛЬ АРТИСТА</p>
+						<p className={catalogueStyles.heroKicker}>{m("artistProfile")}</p>
 						<h1>{artist.name}</h1>
 						<p className={catalogueStyles.heroGenre}>
 							{artist.genres
@@ -269,14 +278,16 @@ export function ArtistScreen({
 								.filter(Boolean)
 								.join(", ") ||
 								artist.genre ||
-								"Исполнитель"}
+								m("performer")}
 						</p>
 					</div>
 					<div className={catalogueStyles.heroFoot}>
 						<p className={catalogueStyles.heroStats}>
-							{artistReleases.length} изданий · {tracks.length} позиций ·{" "}
-							{counts((track) => Boolean(track.published))} опубликовано ·{" "}
-							{filteredMissingGroups.length} альбомов без издания
+							{artistReleases.length} {m("releasesCount")} · {tracks.length}{" "}
+							{m("positionsCount")} ·{" "}
+							{counts((track) => Boolean(track.published))}{" "}
+							{m("publishedCount")} · {filteredMissingGroups.length}{" "}
+							{m("missingReleaseCount")}
 						</p>
 						<div
 							className={`${catalogueStyles.actions} ${catalogueStyles.artistDanger}`}
@@ -294,7 +305,7 @@ export function ArtistScreen({
 									isDisabled={!onDeleteArtist}
 									onPress={() => onDeleteArtist?.(artist.id)}
 								>
-									Удалить артиста
+									{m("deleteArtist")}
 								</Button>
 							)}
 						</div>
@@ -307,28 +318,28 @@ export function ArtistScreen({
 			>
 				<ObjectMetadataForm
 					key={artist.id}
-					label="Сведения об артисте"
+					label={m("artistDetails")}
 					fields={[
-						{ key: "name", label: "Имя", value: artist.name },
+						{ key: "name", label: m("artistName"), value: artist.name },
 						{
 							key: "sortName",
-							label: "Имя для сортировки",
+							label: m("sortName"),
 							value: artist.sortName ?? "",
 						},
 						{
 							key: "disambiguation",
-							label: "Уточнение",
+							label: m("disambiguation"),
 							value: artist.disambiguation ?? "",
 						},
 						{
 							key: "tags",
-							label: "Теги",
+							label: m("tags"),
 							// Comma-separated values are a display-prototype convention only.
 							value: artist.tags?.join(", ") ?? "",
 						},
 					]}
 					readOnlyFields={[
-						{ key: "id", label: "ID артиста", value: artist.id },
+						{ key: "id", label: m("artistID"), value: artist.id },
 						...(
 							(
 								artist as CatalogArtist & {
@@ -365,12 +376,12 @@ export function ArtistScreen({
 			<div className={catalogueStyles.controls}>
 				<div className={catalogueStyles.panelControls}>
 					<SearchField
-						aria-label="Поиск в медиатеке"
+						aria-label={m("searchLibrary")}
 						value={query}
 						onChange={changeQuery}
 						className={catalogueStyles.search}
 					>
-						<Input placeholder="Артист, альбом, трек…" />
+						<Input placeholder={m("searchPlaceholder")} />
 					</SearchField>
 					<CatalogFilter value={filter} onChange={changeFilter} />
 				</div>
@@ -405,7 +416,7 @@ export function ArtistScreen({
 							<Disclosure className={catalogueStyles.albumCard} id={release.id}>
 								<div className={catalogueStyles.cardSelection}>
 									<Checkbox
-										aria-label={`Выбрать все позиции альбома ${release.title} · ${release.year} · ${release.catalog || "—"}`}
+										aria-label={`${m("selectAllEditionPositions")}: ${release.title} · ${release.year} · ${release.catalog || "—"}`}
 										className={catalogueStyles.cardCheckbox}
 										isSelected={
 											release.tracks.length > 0 &&
@@ -456,27 +467,28 @@ export function ArtistScreen({
 												<strong>{release.title}</strong>
 												<span className={catalogueStyles.albumMeta}>
 													{durationTotal === null
-														? "Длительность неизвестна"
-														: `${Math.floor(durationTotal / 60)}:${String(Math.round(durationTotal % 60)).padStart(2, "0")} всего`}
+														? m("durationUnknown")
+														: `${Math.floor(durationTotal / 60)}:${String(Math.round(durationTotal % 60)).padStart(2, "0")} ${m("total")}`}
 													·{" "}
 													{release.provider === "Local"
 														? "Local"
 														: release.providerId
 															? `${release.provider || "MusicBrainz"} · ${release.providerId}`
-															: "Локальное издание"}
+															: m("localRelease")}
 												</span>
 												<span className={catalogueStyles.albumMeta}>
-													{release.year} · {release.tracks.length} позиций ·{" "}
-													{release.country || "Страна не указана"} ·{" "}
-													{release.label || "Локальный"} ·{" "}
+													{release.year} · {release.tracks.length}{" "}
+													{m("positionsCount")} ·{" "}
+													{release.country || m("countryUnspecified")} ·{" "}
+													{release.label || m("local")} ·{" "}
 													{release.catalog || "—"}
 												</span>
 												<span className={catalogueStyles.albumMeta}>
 													{complete && provider
-														? `${pubCount}/${provider.tracks.length} опубликовано`
-														: `${pubCount} опубликовано · полнота неизвестна`}
+														? `${pubCount}/${provider.tracks.length} ${m("publishedCount")}`
+														: `${pubCount} ${m("publishedCount")} · ${m("providerCompletenessUnknown")}`}
 													{changes
-														? ` · Метаданные изменились у ${changes} позиций`
+														? ` · ${m("metadataChangedFor", { count: changes })}`
 														: ""}
 												</span>
 											</span>
@@ -485,7 +497,7 @@ export function ArtistScreen({
 									{onQueueDeletion && (
 										<DeletionRequest
 											iconOnly
-											triggerLabel={`Удалить альбом ${release.title} · ${release.year} · ${release.catalog || "—"}`}
+											triggerLabel={`${m("deleteAlbum")} ${release.title} · ${release.year} · ${release.catalog || "—"}`}
 											release={release}
 											onQueue={onQueueDeletion}
 										/>
@@ -517,27 +529,27 @@ export function ArtistScreen({
 											<thead>
 												<tr>
 													{[
-														"Выбрать все позиции этого издания",
-														"№",
-														"Композиция",
-														"Параметры",
-														"Есть аудио",
-														"Связей с исходниками",
-														"Публикация",
+														"selectAllEditionPositions",
+														"columnNumber",
+														"columnRecording",
+														"columnProperties",
+														"columnHasAudio",
+														"columnSourceLinks",
+														"columnPublication",
 													].map((label) => (
 														<th
 															scope="col"
 															key={label}
 															className={
-																label.startsWith("Выбрать")
+																label === "selectAllEditionPositions"
 																	? catalogueStyles.selectionColumn
 																	: undefined
 															}
 														>
-															{label.startsWith("Выбрать") ? (
+															{label === "selectAllEditionPositions" ? (
 																<Checkbox
 																	className={catalogueStyles.tableCheckbox}
-																	aria-label={label}
+																	aria-label={m(label as CatalogueMessage)}
 																	isSelected={
 																		release.tracks.length > 0 &&
 																		release.tracks.every((track) =>
@@ -579,7 +591,7 @@ export function ArtistScreen({
 																	</span>
 																</Checkbox>
 															) : (
-																label
+																m(label as CatalogueMessage)
 															)}
 														</th>
 													))}
@@ -608,7 +620,9 @@ export function ArtistScreen({
 															<td className={catalogueStyles.selectionColumn}>
 																<Checkbox
 																	className={catalogueStyles.tableCheckbox}
-																	aria-label={`Выбрать ${track.title}`}
+																	aria-label={m("selectTrack", {
+																		track: track.title,
+																	})}
 																	isSelected={selected.has(track.id)}
 																	isDisabled={!onSelect}
 																	onChange={(value) =>
@@ -635,21 +649,21 @@ export function ArtistScreen({
 																</span>
 																{track.recordingId ? null : (
 																	<span className={catalogueStyles.secondary}>
-																		Новая запись
+																		{m("newRecording")}
 																	</span>
 																)}
 																{track.observedFile && (
 																	<span className={catalogueStyles.secondary}>
-																		Файл изменён вне приложения
+																		{m("fileChangedOutsideApp")}
 																	</span>
 																)}
 															</td>
 															<td>
 																{source
-																	? `${source.codec === "FLAC" ? "24 бит / 48 кГц" : "320 кбит/с"} · ${source.codec}`
+																	? `${source.codec === "FLAC" ? m("quality24Bit48Khz") : m("quality320Kbps")} · ${source.codec}`
 																	: "—"}
 															</td>
-															<td>{hasAudio(track) ? "Да" : "Нет"}</td>
+															<td>{hasAudio(track) ? m("yes") : m("no")}</td>
 															<td>{sourceIds.length}</td>
 															<td>
 																{track.published ? (
@@ -664,12 +678,12 @@ export function ArtistScreen({
 																			<span
 																				className={catalogueStyles.secondary}
 																			>
-																				Метаданные изменились
+																				{m("metadataChanged")}
 																			</span>
 																		)}
 																	</>
 																) : (
-																	"Не опубликовано"
+																	m("notPublished")
 																)}
 															</td>
 														</tr>
@@ -678,7 +692,7 @@ export function ArtistScreen({
 											</tbody>
 										</table>
 									</div>
-									{!release.tracks.length && <p>Позиции не добавлены.</p>}
+									{!release.tracks.length && <p>{m("positionsNotAdded")}</p>}
 								</DisclosurePanel>
 							</Disclosure>
 						</div>
@@ -687,23 +701,22 @@ export function ArtistScreen({
 			</DisclosureGroup>
 			{filteredMissingGroups.length > 0 && (
 				<section className={catalogueStyles.artistPanel}>
-					<h2>Отсутствующие альбомы</h2>
-					<p>
-						Известная часть каталога провайдера. Выберите издание, чтобы
-						посмотреть его треки. Просмотр не добавляет музыку в медиатеку и не
-						скачивает файлы.
-					</p>
+					<h2>{m("missingAlbums")}</h2>
+					<p>{m("missingAlbumsDescription")}</p>
 					<div className={catalogueStyles.previewTable}>
 						<table>
 							<thead>
 								<tr>
-									{["Альбом", "Выбор издания", "Детали издания", "Треки"].map(
-										(label) => (
-											<th scope="col" key={label}>
-												{label}
-											</th>
-										),
-									)}
+									{[
+										"columnAlbum",
+										"columnChooseEdition",
+										"columnEditionDetails",
+										"columnTracks",
+									].map((label) => (
+										<th scope="col" key={label}>
+											{m(label as CatalogueMessage)}
+										</th>
+									))}
 								</tr>
 							</thead>
 							<tbody>
@@ -717,12 +730,14 @@ export function ArtistScreen({
 												{group.title}
 												<span className={catalogueStyles.secondary}>
 													{originalArtistName(group.artistId, artists)} ·
-													альбом, которого нет в медиатеке
+													{m("albumNotInLibrary")}
 												</span>
 											</th>
 											<td>
 												<Select
-													aria-label={`Выберите издание группы ${group.title}`}
+													aria-label={m("chooseEditionForGroup", {
+														group: group.title,
+													})}
 													selectedKey={absentEdition[group.id] || "none"}
 													onSelectionChange={(key) =>
 														setAbsentEdition((value) => ({
@@ -740,13 +755,14 @@ export function ArtistScreen({
 													<Popover className={catalogueStyles.popover}>
 														<ListBox>
 															<ListBoxItem id="none">
-																Выберите конкретное издание
+																{m("chooseSpecificEdition")}
 															</ListBoxItem>
 															{group.editions.map((edition) => (
 																<ListBoxItem key={edition.id} id={edition.id}>
 																	{edition.year} · {edition.country} ·{" "}
 																	{edition.format} · {edition.titles.length}{" "}
-																	поз. · {edition.disambiguation}
+																	{m("positionAbbreviation")} ·{" "}
+																	{edition.disambiguation}
 																</ListBoxItem>
 															))}
 														</ListBox>
@@ -765,7 +781,7 @@ export function ArtistScreen({
 																{index + 1}. {title}
 															</div>
 														))
-													: "Выберите конкретное издание; выбор не создаёт запись в медиатеке."}
+													: m("chooseEditionNoLibraryChange")}
 											</td>
 										</tr>
 									);

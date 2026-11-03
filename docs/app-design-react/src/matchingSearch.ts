@@ -1,5 +1,7 @@
 import type { CatalogArtist, OriginalRelease } from "./catalogData";
 import { normalized } from "./incomingModel";
+import type { Locale } from "./i18n/types";
+import { matchingSearchPickerMessages } from "./matchingSearchPickerMessages";
 
 export const DEFAULT_MATCHING_PAGE_SIZE = 10;
 
@@ -55,6 +57,12 @@ export type ExactIdentityResult<T> = {
 	message: string;
 };
 
+export type ExactIdentityMessageKey =
+	| "enterIdentity"
+	| "identityNoMatch"
+	| "identityNoData"
+	| "identityNameNoMatch";
+
 const mbidPattern =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -87,10 +95,14 @@ export function findExactMatchingIdentity(
 	query: string,
 	artists: CatalogArtist[],
 	releases: OriginalRelease[],
+	locale: Locale = "ru",
 ): ExactIdentityResult<CatalogArtist | OriginalRelease> {
 	const value = query.trim();
 	if (!value)
-		return { items: [], message: "Введите идентификатор или официальный URL." };
+		return {
+			items: [],
+			message: matchingSearchPickerMessages[locale].enterIdentity,
+		};
 
 	const pool = entity === "artist" ? artists : releases;
 	const mbid = musicBrainzMBID(value, entity);
@@ -117,13 +129,16 @@ export function findExactMatchingIdentity(
 				: []),
 		].some((identity) => mbidPattern.test(identity)),
 	);
-	const message =
+	const messageKey: ExactIdentityMessageKey =
 		mbid ||
 		value.toLocaleLowerCase().includes("musicbrainz.org") ||
 		/^[0-9a-f-]{36}$/i.test(value)
 			? hasFixtureMBID
-				? "В доступных fixture нет сущности с этим MBID или URL."
-				: "У доступных fixture нет MusicBrainz MBID/URL для точной проверки; запись не сопоставлена."
-			: "Точная идентичность не найдена в доступных fixture. Поиск по имени не выполнялся.";
-	return { items: [], message };
+				? "identityNoMatch"
+				: "identityNoData"
+			: "identityNameNoMatch";
+	return {
+		items: [],
+		message: matchingSearchPickerMessages[locale][messageKey],
+	};
 }

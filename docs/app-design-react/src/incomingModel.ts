@@ -13,6 +13,7 @@ import {
 	type SourceFile as CatalogSourceFile,
 } from "./catalogData";
 import { replaceAudioMeasurements } from "./metadata/audioMeasurements";
+import type { UiNotice } from "./uiNotice";
 
 export type TagMap = Record<string, string[]>;
 export type SourceFile = CatalogSourceFile & {
@@ -22,6 +23,14 @@ export type SourceFile = CatalogSourceFile & {
 };
 export type IncomingFiles = Record<string, SourceFile>;
 export type IncomingReleases = OriginalRelease[];
+export type IncomingReason = {
+	code: "incomplete" | "confident" | "compilation";
+	params?: Record<string, string | number>;
+};
+export type IncomingNotice = {
+	code: "automaticPublished" | "nothingToPublish";
+	params?: Record<string, string | number>;
+};
 export type Assignment = {
 	sourceIds: string[];
 	selectedSourceId: string | null;
@@ -42,7 +51,7 @@ export type IncomingGroup = {
 	mode: "local" | "provider";
 	autoEligible: boolean;
 	processed: boolean;
-	reason: string;
+	reason: IncomingReason | string;
 	drafts: Record<string, Record<string, Assignment>>;
 };
 export type IncomingState = {
@@ -59,6 +68,8 @@ export type IncomingState = {
 	recordingResults: { release: OriginalRelease; track: OriginalTrack }[] | null;
 	recordingTarget: string | null;
 	notice: string;
+	noticeDescriptor: IncomingNotice | null;
+	uiNotice?: UiNotice | null;
 	inventoryVersion: number;
 	plan: IncomingPlan | null;
 	confirmDowngrade: boolean;
@@ -76,14 +87,20 @@ export const incomingFixtures = {
 	releases: originalReleases,
 	providerReleases: originalProviders,
 };
+
+function reasonForGroup(group: IncomingGroup): IncomingReason {
+	if (group.mode === "local") return { code: "compilation" };
+	if (group.autoEligible) {
+		const count = group.fileIds.length;
+		return { code: "confident", params: { count, total: count } };
+	}
+	return { code: "incomplete" };
+}
+
 export const artistName = (
 	artistId: string,
 	artists: CatalogArtist[] = fixtures.artists,
-) =>
-	String(
-		artists.find((artist) => artist.id === artistId)?.name ??
-			"Артист не указан",
-	);
+) => artists.find((artist) => artist.id === artistId)?.name ?? "";
 export const providerReleases: IncomingReleases = originalProviders;
 export const normalized = (value: unknown) =>
 	String(value ?? "")
@@ -102,7 +119,10 @@ export const usableFile = (file?: SourceFile) =>
 
 export function createIncomingState(): IncomingState {
 	return {
-		groups: structuredClone(fixtures.incomingGroups),
+		groups: structuredClone(fixtures.incomingGroups).map((group) => ({
+			...group,
+			reason: reasonForGroup(group),
+		})),
 		groupId: "north",
 		selectedFile: null,
 		selectedTarget: null,
@@ -115,6 +135,8 @@ export function createIncomingState(): IncomingState {
 		recordingResults: null,
 		recordingTarget: null,
 		notice: "",
+		noticeDescriptor: null,
+		uiNotice: null,
 		inventoryVersion: 0,
 		plan: null,
 		confirmDowngrade: false,

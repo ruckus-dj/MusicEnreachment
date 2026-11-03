@@ -1,8 +1,20 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { I18nProvider, useI18n } from "../i18n";
 import { MetadataEditor } from "./MetadataEditor";
 import type { MetadataValues } from "./projection";
 import { fieldsForScope, type MetadataScope } from "./registry";
+import { audioMeasurementKeys } from "./audioMeasurements";
+import { genreCatalog } from "../genres/catalogue";
+
+function LanguageSwitch() {
+	const { setPreference } = useI18n();
+	return (
+		<button type="button" onClick={() => setPreference("ru")}>
+			Switch to Russian
+		</button>
+	);
+}
 
 describe("MetadataEditor", () => {
 	it.each([
@@ -232,12 +244,19 @@ describe("MetadataEditor", () => {
 		for (const summary of document.querySelectorAll("details > summary"))
 			fireEvent.click(summary);
 		fireEvent.click(screen.getByRole("button", { name: "Жанры" }));
-		fireEvent.click(screen.getByRole("option", { name: "ambient" }));
+		const genre = genreCatalog.find(
+			(item) => item.name.toLocaleLowerCase() === "ambient",
+		);
+		if (!genre) throw new Error("ambient genre is absent from the catalogue");
+		fireEvent.change(screen.getByRole("searchbox", { name: "Поиск жанров" }), {
+			target: { value: "ambient" },
+		});
+		fireEvent.click(screen.getByRole("option", { name: genre.name }));
 		fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 		fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 		expect(onSave).toHaveBeenCalledWith(
 			{ album: ["Album"] },
-			{ genres: [{ id: "demo-genre-ambient", name: "ambient" }] },
+			{ genres: [{ id: genre.id, name: genre.name }] },
 		);
 	});
 
@@ -339,13 +358,107 @@ it("uses one genre picker rather than a second free-text genre editor", () => {
 	).toHaveLength(0);
 	expect(screen.getAllByRole("button", { name: "Жанры" })).toHaveLength(1);
 	fireEvent.click(screen.getByRole("button", { name: "Жанры" }));
-	fireEvent.click(screen.getByRole("option", { name: "rock" }));
+	const rock = genreCatalog.find(
+		(genre) => genre.name.toLocaleLowerCase() === "rock",
+	);
+	if (!rock) throw new Error("rock genre is absent from the catalogue");
+	fireEvent.change(screen.getByRole("searchbox", { name: "Поиск жанров" }), {
+		target: { value: "rock" },
+	});
+	fireEvent.click(screen.getByRole("option", { name: rock.name }));
 	fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 	fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 	expect(onSave).toHaveBeenCalledWith(
-		expect.objectContaining({ genre: ["rock"] }),
+		expect.objectContaining({ genre: [rock.name] }),
 		expect.objectContaining({
-			genres: [{ id: "demo-genre-rock", name: "rock" }],
+			genres: [
+				{
+					id: rock.id,
+					name: rock.name,
+				},
+			],
 		}),
+	);
+});
+
+it("localizes basic audio fields while keeping measurements readonly and unknown values intact", () => {
+	localStorage.setItem("music-design-v2-language", "en");
+	const onSave = vi.fn();
+	const values = {
+		replaygain_track_gain: ["-7.5"],
+		r128_track_gain: ["-256"],
+		encodedby: ["Encoder A"],
+		unknown_vendor_tag: ["preserve me"],
+	};
+	const { container } = render(
+		<I18nProvider>
+			<MetadataEditor
+				label="Audio metadata"
+				scope="audio"
+				values={values}
+				onSave={onSave}
+			/>
+		</I18nProvider>,
+	);
+
+	expect(screen.getByRole("textbox", { name: "Encoded by" })).toHaveValue(
+		"Encoder A",
+	);
+	expect(
+		screen.getByRole("heading", { name: "Audio measurements" }),
+	).toBeInTheDocument();
+	for (const key of audioMeasurementKeys) {
+		const measurement = container.querySelector<HTMLElement>(
+			`[data-metadata-keys="${key}"]`,
+		);
+		expect(measurement, key).toBeInTheDocument();
+		expect(
+			measurement?.querySelector("input, textarea, select, button"),
+		).toBeNull();
+	}
+
+	fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+	fireEvent.change(screen.getByRole("textbox", { name: "Encoded by" }), {
+		target: { value: "Encoder B" },
+	});
+	fireEvent.click(screen.getByRole("button", { name: "Save" }));
+	expect(onSave).toHaveBeenCalledWith({
+		...values,
+		encodedby: ["Encoder B"],
+	});
+});
+
+it("retranslates validation errors when the locale changes without saving again", () => {
+	localStorage.setItem("music-design-v2-language", "en");
+	render(
+		<I18nProvider>
+			<LanguageSwitch />
+			<MetadataEditor
+				label="Recording metadata"
+				scope="recording"
+				values={{ originaldate: ["2024"] }}
+				onSave={vi.fn()}
+			/>
+		</I18nProvider>,
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+	const datesSummary = screen
+		.getAllByText(/Dates and musical details/)
+		.find((element) => element.tagName === "SUMMARY");
+	if (!datesSummary) throw new Error("Missing dates disclosure");
+	fireEvent.click(datesSummary);
+	fireEvent.change(
+		screen.getByRole("textbox", { name: "Original release date" }),
+		{
+			target: { value: "2024-13" },
+		},
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Save" }));
+	expect(screen.getByRole("alert")).toHaveTextContent(
+		"Original release date must be YYYY, YYYY-MM, or YYYY-MM-DD",
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Switch to Russian" }));
+	expect(screen.getByRole("alert")).toHaveTextContent(
+		"Некорректное значение поля «Дата первоначального выпуска»",
 	);
 });

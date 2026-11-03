@@ -2,6 +2,8 @@ import { MetadataEditor } from "./MetadataEditor";
 import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
 import type { CatalogArtist, OriginalRelease } from "../catalogData";
+import { useI18n } from "../i18n/I18nProvider";
+import { metadataEditorMessages } from "./editorMessages";
 
 type ReleaseWithExtras = OriginalRelease & {
 	disambiguation?: string;
@@ -78,20 +80,23 @@ export function ReleaseMetadataEditor({
 	onSave: (updated: OriginalRelease) => void | Promise<void>;
 	local?: boolean;
 }) {
+	const { locale } = useI18n();
+	const m = (key: keyof typeof metadataEditorMessages.en) =>
+		metadataEditorMessages[locale][key];
 	const values = releaseValues(release);
 	const extended = release as ReleaseWithExtras;
 	const extras = [
 		{
 			key: "disambiguation",
-			label: "Уточнение",
+			label: m("disambiguation"),
 			value: extended.disambiguation ?? "",
 		},
-		{ key: "tags", label: "Теги", value: extended.tags?.join(", ") ?? "" },
+		{ key: "tags", label: m("tags"), value: extended.tags?.join(", ") ?? "" },
 	];
 	return (
 		<div className="grid min-w-0 gap-3">
 			<MetadataEditor
-				label="Сведения об издании"
+				label={m("releaseDetails")}
 				scope="release"
 				values={values}
 				requiredKeys={["album"]}
@@ -167,15 +172,15 @@ export function ReleaseMetadataEditor({
 			/>
 			<details className="rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3">
 				<summary className="cursor-pointer font-semibold">
-					Связи с провайдером · {release.provider ?? "не указан"}
+					{m("providerLinks")} · {release.provider ?? m("unspecified")}
 				</summary>
 				<dl className="mt-3 grid min-w-0 gap-2 text-sm sm:grid-cols-2">
 					<div className="min-w-0">
-						<dt className="text-[var(--muted)]">Провайдер</dt>
+						<dt className="text-[var(--muted)]">{m("provider")}</dt>
 						<dd className="m-0 break-all">{release.provider ?? ""}</dd>
 					</div>
 					<div className="min-w-0">
-						<dt className="text-[var(--muted)]">ID провайдера</dt>
+						<dt className="text-[var(--muted)]">{m("providerId")}</dt>
 						<dd className="m-0 break-all">{release.providerId ?? ""}</dd>
 					</div>
 				</dl>

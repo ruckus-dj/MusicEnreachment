@@ -34,6 +34,8 @@ import {
 	previewTableWrap,
 } from "./matchingStyles";
 import { navidromeFields } from "./metadata/registry";
+import { useI18n } from "./i18n/I18nProvider";
+import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
 
 type Scope = "artist" | "release" | "track";
 const artistGroups = new Set(["recording artists", "release artists"]);
@@ -59,6 +61,9 @@ export function ReleaseMetadataComparison({
 	files: SourceFiles;
 	showAllFields?: boolean;
 }) {
+	const { locale } = useI18n();
+	const m = (key: CatalogueMessage, values?: Record<string, string | number>) =>
+		catalogueMessage(locale, key, values);
 	const [trackId, setTrackId] = useState(release.tracks[0]?.id ?? "");
 	const [scope, setScope] = useState<Scope>("release");
 	const [differencesOnly, setDifferencesOnly] = useState(false);
@@ -108,33 +113,34 @@ export function ReleaseMetadataComparison({
 			return { key, label: field.label, values, different: distinct.size > 1 };
 		})
 		.filter((row) => !differencesOnly || row.different);
-	const scopes: [Scope, string][] = [
-		["artist", "Артист"],
-		["release", "Альбом"],
-		["track", "Трек"],
+	const scopes: [Scope, CatalogueMessage][] = [
+		["artist", "artistScope"],
+		["release", "releaseScope"],
+		["track", "trackScope"],
 	];
 	return (
-		<section className={metadataPanel} aria-label="Сравнение метаданных">
-			<h2 className={metadataPanelHeading}>Сравнение метаданных</h2>
+		<section className={metadataPanel} aria-label={m("metadataComparison")}>
+			<h2 className={metadataPanelHeading}>{m("metadataComparison")}</h2>
 			{release.manual && (
 				<p>
-					Тип: {release.metadata?.type || "—"} · Исполнители:{" "}
+					{m("typeLabel")}: {release.metadata?.type || "—"} ·{" "}
+					{m("artistsLabel")}:{" "}
 					{release.credits
 						?.map((credit) => credit.credit || credit.name)
 						.filter(Boolean)
-						.join(", ") || "не указаны"}
+						.join(", ") || m("notSpecified")}
 				</p>
 			)}
 			<div className={comparisonControls}>
 				<Select
-					aria-label="Позиция сравнения"
+					aria-label={m("comparisonPosition")}
 					selectedKey={track.id}
 					onSelectionChange={(key) => {
 						setTrackId(String(key));
 						setFileOverride(undefined);
 					}}
 				>
-					<Label>Позиция</Label>
+					<Label>{m("position")}</Label>
 					<Button>
 						<SelectValue />
 						<span aria-hidden="true">⌄</span>
@@ -150,18 +156,18 @@ export function ReleaseMetadataComparison({
 					</Popover>
 				</Select>
 				<Select
-					aria-label="Исходный файл сравнения"
+					aria-label={m("sourceFileComparison")}
 					selectedKey={fileId ?? ""}
 					onSelectionChange={(key) => setFileOverride(String(key) || null)}
 				>
-					<Label>Исходный файл</Label>
+					<Label>{m("sourceFile")}</Label>
 					<Button>
 						<SelectValue />
 						<span aria-hidden="true">⌄</span>
 					</Button>
 					<Popover>
 						<ListBox>
-							<ListBoxItem id="">Исходник не выбран</ListBoxItem>
+							<ListBoxItem id="">{m("noSourceSelected")}</ListBoxItem>
 							{linkedFileIds.map(
 								(id) =>
 									files[id] && (
@@ -174,27 +180,27 @@ export function ReleaseMetadataComparison({
 					</Popover>
 				</Select>
 			</div>
-			<div className={comparisonFilter} aria-label="Область тегов">
+			<div className={comparisonFilter} aria-label={m("tagScope")}>
 				<Tabs
 					selectedKey={scope}
 					onSelectionChange={(key) => setScope(key as Scope)}
 				>
-					<TabList aria-label="Область тегов">
+					<TabList aria-label={m("tagScope")}>
 						{scopes.map(([id, label]) => (
 							<Tab key={id} id={id}>
-								{label}
+								{m(label)}
 							</Tab>
 						))}
 					</TabList>
 				</Tabs>
 				<Checkbox isSelected={differencesOnly} onChange={setDifferencesOnly}>
 					<span className="checkbox" />
-					Только отличия
+					{m("differencesOnly")}
 				</Checkbox>
 				{showAllFields && (
 					<Checkbox isSelected={allFields} onChange={setAllFields}>
 						<span className="checkbox" />
-						Все поля
+						{m("allFields")}
 					</Checkbox>
 				)}
 			</div>
@@ -203,14 +209,14 @@ export function ReleaseMetadataComparison({
 					<thead>
 						<tr>
 							{[
-								"Поле",
-								"Исходный файл",
-								"Провайдер · кэш",
-								"Локальная медиатека",
-								"Сейчас в публикации",
+								"columnField",
+								"sourceFile",
+								"columnProviderCache",
+								"columnLocalLibrary",
+								"columnCurrentlyPublished",
 							].map((heading) => (
 								<th className={previewTableHeading} scope="col" key={heading}>
-									{heading}
+									{m(heading as CatalogueMessage)}
 								</th>
 							))}
 						</tr>
@@ -228,7 +234,9 @@ export function ReleaseMetadataComparison({
 									<td className={previewTableCell} key={`${key}:${index}`}>
 										{value === null ? (
 											<span className="block text-[11px] text-[var(--muted)]">
-												{index === 1 ? "Нет связи" : "Не опубликован"}
+												{index === 1
+													? m("noProviderLink")
+													: m("publicationMissing")}
 											</span>
 										) : value.length ? (
 											value.map((item, itemIndex) => (
@@ -248,14 +256,17 @@ export function ReleaseMetadataComparison({
 				</table>
 			</div>
 			<p className={comparisonNote}>
-				{file?.path ?? "Исходник не выбран"}
+				{file?.path ?? m("noSourceChosen")}
 				<br />
 				{track.published
-					? `Публикация: ${track.published.path} · чтение ${track.published.readAt} (демо)`
-					: "Публикация отсутствует; пустая колонка не подменяется текущими метаданными."}
+					? m("publicationPathRead", {
+							path: track.published.path,
+							readAt: track.published.readAt,
+						})
+					: m("noPublicationColumn")}
 			</p>
 			<a href={`#tags/${track.id}/release`}>
-				Открыть подробное сравнение альбома
+				{m("openDetailedReleaseComparison")}
 			</a>
 		</section>
 	);

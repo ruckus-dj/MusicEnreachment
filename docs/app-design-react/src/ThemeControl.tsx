@@ -1,14 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button, Tooltip, TooltipTrigger } from "./ui";
 import { applyTheme, type Theme } from "./theme";
+import { useI18n } from "./i18n";
+import { shell } from "./i18n/namespaces/shell";
 
 const storageKey = "music-design-v2-theme";
 const themes: Theme[] = ["system", "light", "dark"];
-const labels: Record<Theme, string> = {
-	system: "как в системе",
-	light: "светлая",
-	dark: "тёмная",
-};
 
 function initialTheme(): Theme {
 	try {
@@ -72,8 +69,15 @@ function ThemeIcon({ theme }: { theme: Theme }) {
 }
 
 export function ThemeControl() {
+	const { locale } = useI18n();
+	const copy = shell[locale];
+	const labels: Record<Theme, string> = {
+		system: copy.systemTheme,
+		light: copy.light,
+		dark: copy.dark,
+	};
 	const [theme, setTheme] = useState<Theme>(initialTheme);
-	const [warning, setWarning] = useState("");
+	const [warning, setWarning] = useState(false);
 	useEffect(() => {
 		const media = window.matchMedia?.("(prefers-color-scheme: dark)");
 		const apply = () =>
@@ -91,28 +95,28 @@ export function ThemeControl() {
 			<TooltipTrigger>
 				<Button
 					className="h-[26px] w-7 !min-h-0 rounded-[4px] border border-[var(--control)] bg-[var(--surface)] !p-0 text-[var(--ink)] motion-safe:transition-[background-color,border-color] motion-safe:duration-[120ms] motion-reduce:transition-none hover:border-[var(--accent)] hover:bg-[var(--raised)] data-[hovered]:border-[var(--accent)] data-[hovered]:bg-[var(--raised)] data-[pressed]:bg-[var(--accent-soft)] data-[focus-visible]:outline-2 data-[focus-visible]:outline-[var(--focus)] data-[focus-visible]:outline-offset-2 [&_svg]:size-[15px]"
-					aria-label={`Тема: ${currentLabel}. Следующая: ${nextLabel}`}
+					aria-label={`${copy.theme}: ${currentLabel}. ${copy.nextTheme}: ${nextLabel}`}
 					onPress={() => {
 						const next = nextTheme(theme);
 						setTheme(next);
 						try {
 							localStorage.setItem(storageKey, next);
-							setWarning("");
+							setWarning(false);
 						} catch {
-							setWarning("Тема изменена; браузер не разрешил сохранить выбор.");
+							setWarning(true);
 						}
 					}}
 				>
 					<ThemeIcon theme={theme} />
 				</Button>
-				<Tooltip>{`Тема: ${currentLabel}`}</Tooltip>
+				<Tooltip>{`${copy.theme}: ${currentLabel}`}</Tooltip>
 			</TooltipTrigger>
 			{warning && (
 				<span
 					className="max-w-[220px] text-[10px] text-[var(--warning)]"
 					role="status"
 				>
-					{warning}
+					{copy.themeWarning}
 				</span>
 			)}
 		</div>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "../i18n";
 import { Button, Dialog, Heading, Modal } from "../ui";
 import { essentialMetadataFields, metadataSummary } from "./editorLayout";
 import { GenrePicker, type GenreReference } from "./GenrePicker";
@@ -12,13 +13,25 @@ import {
 	writeMetadataCredits,
 	writeMetadataWorks,
 } from "./model";
-import { type MetadataValues, validateMetadataValues } from "./projection";
+import {
+	type MetadataValidationIssue,
+	type MetadataValues,
+	validateMetadataIssues,
+	metadataValidationMessage,
+} from "./projection";
 import {
 	fieldByKey,
 	fieldsForScope,
+	metadataFieldLabel,
+	metadataGroupLabel,
 	type MetadataField,
 	type MetadataScope,
 } from "./registry";
+import {
+	metadataExtraFieldLabel,
+	metadataMessage,
+	type MetadataMessageKey,
+} from "./messages";
 
 type ArtistOption = {
 	id: string;
@@ -62,18 +75,6 @@ const inputClass =
 	"h-8 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)] read-only:border-transparent read-only:bg-transparent";
 const disclosureSummaryClass =
 	"w-full cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold hover:bg-[var(--raised)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] focus-visible:outline-offset-2";
-const groupLabels: Record<string, string> = {
-	release: "Тип и параметры издания",
-	recording: "Даты и музыкальные сведения",
-	track: "Дополнительно о позиции",
-	audio: "Аудио",
-	"recording artists": "Исполнители записи",
-	"release artists": "Исполнители издания",
-	roles: "Участники и роли",
-	identifiers: "Идентификаторы",
-	works: "Произведения",
-	movement: "Часть произведения",
-};
 const audioMeasurementKeySet = new Set<string>(audioMeasurementKeys);
 const linkedArtistKeys = (scope: MetadataScope) =>
 	scope === "release"
@@ -91,10 +92,6 @@ const linkedArtistKeys = (scope: MetadataScope) =>
 				"artistsort",
 				"artistssort",
 			];
-
-function fieldLabel(key: string) {
-	return fieldByKey(key)?.label ?? key;
-}
 
 function rows(values: MetadataValues, key: string) {
 	return values[key] ?? [];
@@ -133,15 +130,20 @@ function marker(keys: string[]) {
 
 function SimpleField({
 	field,
+	locale,
+	m,
 	value,
 	readOnly,
 	onChange,
 }: {
 	field: MetadataField;
+	locale: "en" | "ru";
+	m: (key: MetadataMessageKey) => string;
 	value: string[];
 	readOnly: boolean;
 	onChange: (value: string[]) => void;
 }) {
+	const label = metadataFieldLabel(field.key, locale);
 	const scalar = [
 		"text",
 		"date",
@@ -160,13 +162,13 @@ function SimpleField({
 	const values = value.length ? value : [""];
 	return (
 		<div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-			<span>{field.label}</span>
+			<span>{label}</span>
 			{scalar ? (
 				<>
 					{field.kind === "boolean" || field.kind === "advisory" ? (
 						<select
 							{...marker([field.key])}
-							aria-label={field.label}
+							aria-label={label}
 							disabled={readOnly}
 							className={inputClass}
 							value={value[0] ?? ""}
@@ -174,17 +176,17 @@ function SimpleField({
 								onChange(event.target.value ? [event.target.value] : [])
 							}
 						>
-							<option value="">Не задано</option>
+							<option value="">{m("state.unspecified")}</option>
 							{(field.kind === "boolean"
 								? [
-										["1", "Да"],
-										["0", "Нет"],
+										["1", m("value.yes")],
+										["0", m("value.no")],
 									]
 								: [
-										["0", "Не указано"],
-										["2", "Чистая версия"],
-										["1", "Ненормативное содержание"],
-										["4", "Ненормативное содержание (legacy)"],
+										["0", m("value.unrated")],
+										["2", m("value.clean")],
+										["1", m("value.explicit")],
+										["4", m("value.explicitLegacy")],
 									]
 							).map(([v, label]) => (
 								<option key={v} value={v}>
@@ -195,7 +197,7 @@ function SimpleField({
 					) : field.kind === "lyrics" ? (
 						<textarea
 							{...marker([field.key])}
-							aria-label={field.label}
+							aria-label={label}
 							readOnly={readOnly}
 							className={`${inputClass} h-24 resize-y py-1`}
 							value={value[0] ?? ""}
@@ -206,7 +208,7 @@ function SimpleField({
 					) : (
 						<input
 							{...marker([field.key])}
-							aria-label={field.label}
+							aria-label={label}
 							readOnly={readOnly}
 							className={inputClass}
 							type={type}
@@ -226,9 +228,7 @@ function SimpleField({
 							}
 						/>
 					)}
-					{field.kind === "date" && (
-						<span>Допустимая точность: YYYY, YYYY-MM или YYYY-MM-DD.</span>
-					)}
+					{field.kind === "date" && <span>{m("hint.datePrecision")}</span>}
 				</>
 			) : (
 				<>
@@ -236,7 +236,7 @@ function SimpleField({
 						<div key={`${field.key}-${index}`} className="relative min-w-0">
 							<input
 								{...marker([field.key])}
-								aria-label={`${field.label}${values.length > 1 ? ` ${index + 1}` : ""}`}
+								aria-label={`${label}${values.length > 1 ? ` ${index + 1}` : ""}`}
 								readOnly={readOnly}
 								className={`${inputClass} pointer-coarse:h-10 ${readOnly ? "" : "pr-28 pointer-coarse:pr-44"}`}
 								value={item}
@@ -253,21 +253,21 @@ function SimpleField({
 								className={`absolute right-1 top-0 flex h-8 items-center gap-0.5 pointer-coarse:h-10 pointer-coarse:[&_button]:min-w-10 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 ${readOnly ? "invisible" : ""}`}
 							>
 								<Button
-									aria-label={`Выше: ${field.label} ${index + 1}`}
+									aria-label={`${m("action.moveUp")}: ${label} ${index + 1}`}
 									isDisabled={readOnly || index === 0}
 									onPress={() => onChange(move(values, index, -1))}
 								>
 									↑
 								</Button>
 								<Button
-									aria-label={`Ниже: ${field.label} ${index + 1}`}
+									aria-label={`${m("action.moveDown")}: ${label} ${index + 1}`}
 									isDisabled={readOnly || index === values.length - 1}
 									onPress={() => onChange(move(values, index, 1))}
 								>
 									↓
 								</Button>
 								<Button
-									aria-label={`Убрать: ${field.label} ${index + 1}`}
+									aria-label={`${m("action.remove")}: ${label} ${index + 1}`}
 									isDisabled={readOnly}
 									onPress={() =>
 										onChange(values.filter((_, row) => row !== index))
@@ -277,7 +277,7 @@ function SimpleField({
 								</Button>
 								{index === values.length - 1 && (
 									<Button
-										aria-label={`Добавить значение: ${field.label}`}
+										aria-label={`${m("action.addValue")}: ${label}`}
 										isDisabled={readOnly}
 										onPress={() => onChange([...values, ""])}
 									>
@@ -349,6 +349,8 @@ export function MetadataEditor({
 	requiredKeys = [],
 	extraFields = [],
 }: MetadataEditorProps) {
+	const { locale } = useI18n();
+	const m = (key: MetadataMessageKey) => metadataMessage(locale, key);
 	const [internalEditing, setInternalEditing] = useState(false);
 	const editing = controlledEditing ?? internalEditing;
 	const controlled = controlledEditing !== undefined;
@@ -359,7 +361,15 @@ export function MetadataEditor({
 	const [dirtyGenres, setDirtyGenres] = useState(false);
 	const [draftExtras, setDraftExtras] = useState<Record<string, string>>({});
 	const [dirtyExtras, setDirtyExtras] = useState<Set<string>>(new Set());
-	const [error, setError] = useState("");
+	const [error, setError] = useState<
+		| {
+				kind: "validation";
+				issues: MetadataValidationIssue[];
+				requiredField?: string;
+		  }
+		| { kind: "save" }
+		| { kind: "external"; message: string }
+	>();
 	const [saving, setSaving] = useState(false);
 	const [confirm, setConfirm] = useState(false);
 	const [pending, setPending] = useState<{
@@ -384,12 +394,12 @@ export function MetadataEditor({
 		if (controlled) {
 			controlledValues.current = { ...controlledValues.current, [key]: next };
 			onDraftChange?.(controlledValues.current);
-			setError("");
+			setError(undefined);
 			return;
 		}
 		setDraft((state) => ({ ...state, [key]: next }));
 		setDirty((state) => new Set(state).add(key));
-		setError("");
+		setError(undefined);
 	};
 	const begin = () => {
 		if (controlled) return;
@@ -410,7 +420,7 @@ export function MetadataEditor({
 		);
 		setDirtyExtras(new Set());
 		setDirty(new Set());
-		setError("");
+		setError(undefined);
 		setInternalEditing(true);
 	};
 	const cancel = () => {
@@ -418,7 +428,7 @@ export function MetadataEditor({
 		setInternalEditing(false);
 		setConfirm(false);
 		setPending(undefined);
-		setError("");
+		setError(undefined);
 		setDraft({});
 		setDirty(new Set());
 		setDraftCredits([]);
@@ -431,7 +441,7 @@ export function MetadataEditor({
 	};
 	const complete = async (next: MetadataValues, details?: SaveDetails) => {
 		setSaving(true);
-		setError("");
+		setError(undefined);
 		try {
 			if (details) await onSave(next, details);
 			else await onSave(next);
@@ -450,8 +460,8 @@ export function MetadataEditor({
 			setPending(undefined);
 			setError(
 				reason instanceof Error
-					? reason.message
-					: "Не удалось сохранить метаданные.",
+					? { kind: "external", message: reason.message }
+					: { kind: "save" },
 			);
 		} finally {
 			setSaving(false);
@@ -463,19 +473,17 @@ export function MetadataEditor({
 				.filter((key) => fieldByKey(key)?.scope === scope)
 				.map((key) => [key, draft[key] ?? []]),
 		) as MetadataValues;
-		const errors = validateMetadataValues(changedValues, scope);
+		const errors = validateMetadataIssues(changedValues, scope);
 		const missingRequired = requiredKeys.find(
 			(key) => !(draft[key] ?? values[key] ?? []).some((value) => value.trim()),
 		);
-		if (missingRequired)
-			errors.push(`${fieldLabel(missingRequired)} обязательно для заполнения.`);
-		if (errors.length) {
-			setError(errors.join(" "));
-			const invalidKey =
-				missingRequired ??
-				[...dirty].find((key) =>
-					errors.some((message) => message.includes(key)),
-				);
+		if (errors.length || missingRequired) {
+			setError({
+				kind: "validation",
+				issues: errors,
+				requiredField: missingRequired,
+			});
+			const invalidKey = missingRequired ?? errors[0]?.key;
 			if (invalidKey) {
 				const candidates = [
 					...(editorRef.current?.querySelectorAll<HTMLElement>(
@@ -657,7 +665,25 @@ export function MetadataEditor({
 				? genres
 				: rows(current, "genre").map((name): Genre => ({ name }))
 	).map((genre) => ({ ...genre, name: genre.name ?? genre.id ?? "" }));
-	const groupHeading = (group: string) => groupLabels[group] ?? group;
+	const groupHeading = (group: string) => metadataGroupLabel(group, locale);
+	const displayedError = error
+		? error.kind === "validation"
+			? [
+					...error.issues.map((issue) =>
+						metadataValidationMessage(issue, locale),
+					),
+					...(error.requiredField
+						? [
+								metadataMessage(locale, "error.required", {
+									field: metadataFieldLabel(error.requiredField, locale),
+								}),
+							]
+						: []),
+				].join(" ")
+			: error.kind === "save"
+				? m("error.save")
+				: error.message
+		: "";
 	const roleKeys = fields
 		.filter((field) => field.group === "roles")
 		.map((field) => field.key);
@@ -687,7 +713,11 @@ export function MetadataEditor({
 						isDisabled={hideActions || readOnly || saving}
 						onPress={editing ? save : begin}
 					>
-						{saving ? "Сохранение…" : editing ? "Сохранить" : "Редактировать"}
+						{saving
+							? m("action.saving")
+							: editing
+								? m("action.save")
+								: m("action.edit")}
 					</Button>
 					<Button
 						className={`w-[132px] shrink-0 ${!hideActions && editing ? "visible" : "invisible"}`}
@@ -695,19 +725,23 @@ export function MetadataEditor({
 						aria-hidden={!editing}
 						onPress={cancel}
 					>
-						Отменить
+						{m("action.cancel")}
 					</Button>
 				</div>
 			</div>
 			{foreignFields.length > 0 && (
 				<p className="m-0 text-xs text-[var(--muted)]">
-					Разрешение метаданных ожидает подтверждения; значения других областей
-					не редактируются.
+					{m("label.foreignFields")}
 				</p>
 			)}
 			{scope === "audio" && (
-				<section aria-label="Измерения аудио" className="grid min-w-0 gap-2">
-					<h3 className="m-0 text-sm font-semibold">Измерения аудио</h3>
+				<section
+					aria-label={m("group.audioMeasurements")}
+					className="grid min-w-0 gap-2"
+				>
+					<h3 className="m-0 text-sm font-semibold">
+						{m("group.audioMeasurements")}
+					</h3>
 					<dl className="m-0 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
 						{audioMeasurementKeys.map((key) => {
 							const field = fieldByKey(key);
@@ -719,10 +753,10 @@ export function MetadataEditor({
 									className="grid min-w-0 gap-1 rounded border border-[var(--line)] p-2"
 								>
 									<dt className="text-xs text-[var(--muted)]">
-										{field?.label ?? key}
+										{field ? metadataFieldLabel(field.key, locale) : key}
 									</dt>
 									<dd className="m-0 break-words text-sm text-[var(--ink)]">
-										{measured || "Не рассчитано"}
+										{measured || m("state.notCalculated")}
 									</dd>
 								</div>
 							);
@@ -734,12 +768,14 @@ export function MetadataEditor({
 				editableFields.some((field) => field.kind === "genres") ||
 				genres !== undefined) && (
 				<section className="grid min-w-0 gap-2">
-					<h3 className="m-0 text-sm font-semibold">Основное</h3>
+					<h3 className="m-0 text-sm font-semibold">{m("group.basic")}</h3>
 					<div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
 						{basicFields.map((field) => (
 							<SimpleField
 								key={field.key}
 								field={field}
+								locale={locale}
+								m={m}
 								value={rows(current, field.key)}
 								readOnly={
 									!editing ||
@@ -754,7 +790,7 @@ export function MetadataEditor({
 							.map((field) => (
 								<div key={field.key} {...marker([field.key])}>
 									<GenrePicker
-										label={field.label}
+										label={metadataFieldLabel(field.key, locale)}
 										readOnly={!editing}
 										loaded={genresLoaded}
 										onLoad={onLoadGenres}
@@ -812,21 +848,19 @@ export function MetadataEditor({
 									);
 									return (
 										<span key={`${credit.artistId}-${index}`}>
-											{credit.creditName ||
-												linked?.name ||
-												"Исполнитель не указан"}
+											{credit.creditName || linked?.name || m("state.noArtist")}
 											{credit.joinPhrase}
 										</span>
 									);
 								})
 							) : (
-								<span>Не указаны</span>
+								<span>{m("state.noCredits")}</span>
 							)}
 						</span>
 					</div>
 					<details>
 						<summary className="cursor-pointer text-xs text-[var(--muted)]">
-							Состав исполнителей и порядок
+							{m("label.artistComposition")}
 						</summary>
 						<section
 							{...marker(creditKeys)}
@@ -845,10 +879,10 @@ export function MetadataEditor({
 										className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-4"
 									>
 										<label className="grid gap-1 text-xs text-[var(--muted)]">
-											<span>Связанный исполнитель</span>
+											<span>{m("label.linkedArtist")}</span>
 											<select
 												{...marker([creditKeys[0]])}
-												aria-label={`Связанный исполнитель ${index + 1}`}
+												aria-label={`${m("label.linkedArtist")} ${index + 1}`}
 												className={inputClass}
 												disabled={!editing || !artists.length}
 												value={credit.artistId}
@@ -868,7 +902,7 @@ export function MetadataEditor({
 													});
 												}}
 											>
-												<option value="">Не связан</option>
+												<option value="">{m("label.unlinked")}</option>
 												{artists.map((artist) => (
 													<option key={artist.id} value={artist.id}>
 														{artist.name}
@@ -878,7 +912,7 @@ export function MetadataEditor({
 										</label>
 										<KeyInput
 											fieldKey={creditKeys[0]}
-											label="Имя в зачёте"
+											label={m("label.creditName")}
 											value={credit.creditName}
 											readOnly={!editing}
 											onChange={(creditName) =>
@@ -887,14 +921,14 @@ export function MetadataEditor({
 										/>
 										<KeyInput
 											fieldKey={creditKeys[2]}
-											label="MusicBrainz ID исполнителя"
+											label={m("label.artistMusicBrainz")}
 											value={credit.mbid ?? ""}
 											readOnly
 											onChange={() => undefined}
 										/>
 										<KeyInput
 											fieldKey="credit-joinphrase"
-											label="Фраза соединения"
+											label={m("label.joinPhrase")}
 											value={credit.joinPhrase}
 											readOnly={!editing}
 											onChange={(joinPhrase) =>
@@ -905,7 +939,7 @@ export function MetadataEditor({
 											fieldKey={
 												scope === "release" ? "albumartistsort" : "artistsort"
 											}
-											label="Сортировка исполнителя"
+											label={m("label.artistSort")}
 											value={linked?.sortName ?? ""}
 											readOnly
 											onChange={() => undefined}
@@ -913,7 +947,7 @@ export function MetadataEditor({
 										{!readOnly && editing && (
 											<div className="flex gap-1">
 												<Button
-													aria-label={`Выше исполнителя ${index + 1}`}
+													aria-label={`${m("action.moveUp")} ${m("label.artistSort")} ${index + 1}`}
 													isDisabled={readOnly || !editing || index === 0}
 													onPress={() =>
 														writeArtistCredits(move(editedCredits, index, -1))
@@ -922,7 +956,7 @@ export function MetadataEditor({
 													↑
 												</Button>
 												<Button
-													aria-label={`Ниже исполнителя ${index + 1}`}
+													aria-label={`${m("action.moveDown")} ${m("label.artistSort")} ${index + 1}`}
 													isDisabled={
 														readOnly ||
 														!editing ||
@@ -935,7 +969,7 @@ export function MetadataEditor({
 													↓
 												</Button>
 												<Button
-													aria-label={`Убрать исполнителя ${index + 1}`}
+													aria-label={`${m("action.remove")} ${m("group.releaseArtists")} ${index + 1}`}
 													isDisabled={readOnly || !editing}
 													onPress={() => {
 														const next = editedCredits.filter(
@@ -944,7 +978,7 @@ export function MetadataEditor({
 														writeArtistCredits(next);
 													}}
 												>
-													Убрать
+													{m("action.remove")}
 												</Button>
 											</div>
 										)}
@@ -963,12 +997,11 @@ export function MetadataEditor({
 										writeArtistCredits(next);
 									}}
 								>
-									Добавить исполнителя
+									{m("action.addArtist")}
 								</Button>
 							)}
 							<p className="m-0 text-xs text-[var(--muted)]">
-								Идентификаторы и имена сортировки берутся из связанных карточек
-								артистов.
+								{m("hint.artistIdentity")}
 							</p>
 						</section>
 					</details>
@@ -978,10 +1011,11 @@ export function MetadataEditor({
 				{roles.length > 0 && (
 					<details className="min-w-0">
 						<summary className={disclosureSummaryClass}>
-							Участники и роли ·{" "}
+							{groupHeading("roles")} ·{" "}
 							{metadataSummary(
 								fields.filter((field) => field.group === "roles"),
 								current,
+								locale,
 							)}
 						</summary>
 						<section
@@ -1028,7 +1062,7 @@ export function MetadataEditor({
 										className="grid gap-2 border-b border-[var(--line)] pb-2 last:border-0"
 									>
 										<h4 className="m-0 text-xs font-semibold">
-											{roleField.label}
+											{metadataFieldLabel(roleField.key, locale)}
 										</h4>
 										{(roleContributors.length
 											? roleContributors
@@ -1040,7 +1074,7 @@ export function MetadataEditor({
 											>
 												<KeyInput
 													fieldKey={roleField.key}
-													label="Имя участника"
+													label={m("label.contributorName")}
 													value={contributor.name}
 													readOnly={!editing}
 													onChange={(name) => {
@@ -1052,7 +1086,7 @@ export function MetadataEditor({
 												{idField && (
 													<KeyInput
 														fieldKey={idField.key}
-														label="MusicBrainz ID участника"
+														label={m("label.contributorMusicBrainz")}
 														value={contributor.mbid ?? ""}
 														readOnly={!editing}
 														onChange={(mbid) => {
@@ -1065,7 +1099,7 @@ export function MetadataEditor({
 												{sortField && (
 													<KeyInput
 														fieldKey={sortField.key}
-														label={sortField.label}
+														label={metadataFieldLabel(sortField.key, locale)}
 														value={contributor.sortName ?? ""}
 														readOnly={!editing}
 														onChange={(sortName) => {
@@ -1078,7 +1112,7 @@ export function MetadataEditor({
 												{role === "performer" && (
 													<KeyInput
 														fieldKey={undefined}
-														label="Инструмент"
+														label={m("label.instrument")}
 														value={contributor.instrument ?? ""}
 														readOnly={!editing}
 														onChange={(instrument) => {
@@ -1091,7 +1125,7 @@ export function MetadataEditor({
 												{editing && (
 													<div className="flex gap-1">
 														<Button
-															aria-label={`Выше: ${roleField.label} ${index + 1}`}
+															aria-label={`${m("action.moveUp")}: ${metadataFieldLabel(roleField.key, locale)} ${index + 1}`}
 															isDisabled={!editing || index === 0}
 															onPress={() => {
 																writeRole(move(roleContributors, index, -1));
@@ -1100,7 +1134,7 @@ export function MetadataEditor({
 															↑
 														</Button>
 														<Button
-															aria-label={`Ниже: ${roleField.label} ${index + 1}`}
+															aria-label={`${m("action.moveDown")}: ${metadataFieldLabel(roleField.key, locale)} ${index + 1}`}
 															isDisabled={
 																!editing ||
 																index === roleContributors.length - 1
@@ -1112,7 +1146,7 @@ export function MetadataEditor({
 															↓
 														</Button>
 														<Button
-															aria-label={`Убрать ${roleField.label} ${index + 1}`}
+															aria-label={`${m("action.remove")} ${metadataFieldLabel(roleField.key, locale)} ${index + 1}`}
 															isDisabled={!editing}
 															onPress={() => {
 																writeRole(
@@ -1122,7 +1156,7 @@ export function MetadataEditor({
 																);
 															}}
 														>
-															Убрать
+															{m("action.remove")}
 														</Button>
 													</div>
 												)}
@@ -1136,7 +1170,7 @@ export function MetadataEditor({
 													writeRole([...roleContributors, { name: "" }]);
 												}}
 											>
-												Добавить участника
+												{m("action.addContributor")}
 											</Button>
 										)}
 									</div>
@@ -1144,9 +1178,9 @@ export function MetadataEditor({
 							})}
 							{editing && roleOptions.length > 0 && (
 								<label className="grid max-w-sm gap-1 text-xs text-[var(--muted)]">
-									<span>Добавить роль</span>
+									<span>{m("label.addRole")}</span>
 									<select
-										aria-label="Добавить роль"
+										aria-label={m("label.addRole")}
 										className={inputClass}
 										value=""
 										onChange={(event) => {
@@ -1157,10 +1191,10 @@ export function MetadataEditor({
 												]);
 										}}
 									>
-										<option value="">Выберите роль…</option>
+										<option value="">{m("label.selectRole")}</option>
 										{roleOptions.map((field) => (
 											<option key={field.role} value={field.role}>
-												{field.label}
+												{metadataFieldLabel(field.key, locale)}
 											</option>
 										))}
 									</select>
@@ -1173,13 +1207,14 @@ export function MetadataEditor({
 					fields.some((field) => field.group === "movement")) && (
 					<details className="min-w-0">
 						<summary className={disclosureSummaryClass}>
-							Произведения и части ·{" "}
+							{m("group.worksMovement")} ·{" "}
 							{metadataSummary(
 								fields.filter(
 									(field) =>
 										field.group === "works" || field.group === "movement",
 								),
 								current,
+								locale,
 							)}
 						</summary>
 						{fields.some((field) => field.group === "works") && (
@@ -1200,7 +1235,7 @@ export function MetadataEditor({
 									>
 										<KeyInput
 											fieldKey="work"
-											label="Название произведения"
+											label={m("label.workTitle")}
 											value={work.title}
 											readOnly={!editing}
 											onChange={(title) => {
@@ -1216,7 +1251,7 @@ export function MetadataEditor({
 										/>
 										<KeyInput
 											fieldKey="musicbrainz_workid"
-											label="MusicBrainz ID произведения"
+											label={m("label.workMusicBrainz")}
 											value={work.mbid ?? ""}
 											readOnly={!editing}
 											onChange={(mbid) => {
@@ -1233,7 +1268,7 @@ export function MetadataEditor({
 										{editing && (
 											<div className="contents">
 												<Button
-													aria-label={`Выше произведения ${index + 1}`}
+													aria-label={`${m("action.moveUp")} ${m("group.works")} ${index + 1}`}
 													isDisabled={!editing || index === 0}
 													onPress={() => {
 														const written = writeMetadataWorks(
@@ -1250,7 +1285,7 @@ export function MetadataEditor({
 													↑
 												</Button>
 												<Button
-													aria-label={`Ниже произведения ${index + 1}`}
+													aria-label={`${m("action.moveDown")} ${m("group.works")} ${index + 1}`}
 													isDisabled={
 														!editing ||
 														index === readMetadataWorks(current).length - 1
@@ -1270,7 +1305,7 @@ export function MetadataEditor({
 													↓
 												</Button>
 												<Button
-													aria-label={`Убрать произведение ${index + 1}`}
+													aria-label={`${m("action.remove")} ${m("group.works")} ${index + 1}`}
 													isDisabled={!editing}
 													onPress={() => {
 														const written = writeMetadataWorks(
@@ -1286,7 +1321,7 @@ export function MetadataEditor({
 														);
 													}}
 												>
-													Убрать
+													{m("action.remove")}
 												</Button>
 											</div>
 										)}
@@ -1308,7 +1343,7 @@ export function MetadataEditor({
 											);
 										}}
 									>
-										Добавить произведение
+										{m("action.addWork")}
 									</Button>
 								)}
 							</section>
@@ -1332,6 +1367,8 @@ export function MetadataEditor({
 											<SimpleField
 												key={field.key}
 												field={field}
+												locale={locale}
+												m={m}
 												value={rows(current, field.key)}
 												readOnly={!editing}
 												onChange={(next) => setValue(field.key, next)}
@@ -1345,7 +1382,8 @@ export function MetadataEditor({
 				{otherSections.map(([group, sectionFields]) => (
 					<details key={group} className="min-w-0">
 						<summary className={disclosureSummaryClass}>
-							{groupHeading(group)} · {metadataSummary(sectionFields, current)}
+							{groupHeading(group)} ·{" "}
+							{metadataSummary(sectionFields, current, locale)}
 						</summary>
 						<section className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2">
 							<h3 className="m-0 text-sm font-semibold">
@@ -1368,7 +1406,7 @@ export function MetadataEditor({
 										field.kind === "genres" ? (
 											<div key={field.key} {...marker([field.key])}>
 												<GenrePicker
-													label={field.label}
+													label={metadataFieldLabel(field.key, locale)}
 													readOnly={!editing}
 													loaded={genresLoaded}
 													onLoad={onLoadGenres}
@@ -1397,6 +1435,8 @@ export function MetadataEditor({
 											<SimpleField
 												key={field.key}
 												field={field}
+												locale={locale}
+												m={m}
 												value={rows(current, field.key)}
 												readOnly={
 													!editing ||
@@ -1416,14 +1456,16 @@ export function MetadataEditor({
 					.map((field) => (
 						<details key={field.key} className="min-w-0">
 							<summary className={disclosureSummaryClass}>
-								Текст песни ·{" "}
+								{m("group.lyrics")} ·{" "}
 								{rows(current, field.key).some(Boolean)
-									? "заполнено"
-									: "Не заполнено"}
+									? m("state.filled")
+									: m("state.empty")}
 							</summary>
 							<section className="grid gap-2 p-2" {...marker([field.key])}>
 								<SimpleField
 									field={field}
+									locale={locale}
+									m={m}
 									value={rows(current, field.key)}
 									readOnly={!editing}
 									onChange={(next) => setValue(field.key, next)}
@@ -1434,12 +1476,13 @@ export function MetadataEditor({
 				{extraFields.length > 0 && (
 					<details className="min-w-0">
 						<summary className={disclosureSummaryClass}>
-							Дополнительные теги ·{" "}
-							{extraFields.filter((field) => field.value).length} заполнено
+							{m("group.extraTags")} ·{" "}
+							{extraFields.filter((field) => field.value).length}{" "}
+							{m("state.filled")}
 						</summary>
 						<section className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2">
 							<h3 className="m-0 text-sm font-semibold">
-								Дополнительные сведения
+								{m("group.extraDetails")}
 							</h3>
 							<div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
 								{extraFields.map((field) => (
@@ -1447,9 +1490,15 @@ export function MetadataEditor({
 										key={field.key}
 										className="grid min-w-0 gap-1 text-xs text-[var(--muted)]"
 									>
-										<span>{field.label}</span>
+										<span>
+											{metadataExtraFieldLabel(field.key, field.label, locale)}
+										</span>
 										<input
-											aria-label={field.label}
+											aria-label={metadataExtraFieldLabel(
+												field.key,
+												field.label,
+												locale,
+											)}
 											className={inputClass}
 											readOnly={!editing}
 											value={
@@ -1463,7 +1512,7 @@ export function MetadataEditor({
 												setDirtyExtras((state) =>
 													new Set(state).add(field.key),
 												);
-												setError("");
+												setError(undefined);
 											}}
 										/>
 									</label>
@@ -1473,9 +1522,9 @@ export function MetadataEditor({
 					</details>
 				)}
 			</div>
-			{error && (
+			{displayedError && (
 				<p role="alert" className="m-0 text-sm text-[var(--error)]">
-					{error}
+					{displayedError}
 				</p>
 			)}
 			{confirm && (
@@ -1489,11 +1538,8 @@ export function MetadataEditor({
 						}
 					}}
 				>
-					<Dialog
-						aria-label="Подтверждение затронутых позиций"
-						className="grid gap-3"
-					>
-						<Heading slot="title">Изменения затронут связанные позиции</Heading>
+					<Dialog aria-label={m("label.confirmImpact")} className="grid gap-3">
+						<Heading slot="title">{m("label.affected")}</Heading>
 						<ul className="m-0 list-disc pl-5">
 							{impact.map((position) => (
 								<li key={position}>{position}</li>
@@ -1501,7 +1547,7 @@ export function MetadataEditor({
 						</ul>
 						<div className="flex gap-2">
 							<Button isDisabled={saving} onPress={confirmSave}>
-								Подтвердить сохранение
+								{m("action.confirmSave")}
 							</Button>
 							<Button
 								isDisabled={saving}
@@ -1510,7 +1556,7 @@ export function MetadataEditor({
 									setPending(undefined);
 								}}
 							>
-								Вернуться к редактированию
+								{m("action.returnEdit")}
 							</Button>
 						</div>
 					</Dialog>

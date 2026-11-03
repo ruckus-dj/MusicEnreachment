@@ -7,11 +7,23 @@ import type {
 } from "./catalogData";
 import type { DeletionOperation } from "./DeletionRequest";
 import { deletionDialog, deletionFooter } from "./matchingStyles";
+import { useI18n } from "./i18n/I18nProvider";
+import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
 
-type DependencySection = { title: string; items: string[] };
+type DependencySection = {
+	title: CatalogueMessage;
+	releaseTitle?: string;
+	items: {
+		label: string;
+		position?: number;
+		published?: boolean;
+		state?: "deleted" | "kept";
+	}[];
+};
 
 type ArtistDeletionPlan = DeletionOperation & {
 	dependencies: DependencySection[];
+	summary: { releases: number; recordings: number; positions: number };
 };
 
 export function artistDeletionPlan(
@@ -61,41 +73,45 @@ export function artistDeletionPlan(
 	];
 	const dependencies: DependencySection[] = [
 		{
-			title: "Релизы (будут удалены)",
-			items: relatedReleases.map(
-				(release) => release.title || "Релиз без названия",
-			),
+			title: "artistDeletionRelatedReleases",
+			items: relatedReleases.map((release) => ({ label: release.title })),
 		},
 		{
-			title:
-				"Композиции (напрямую связанные с артистом будут удалены; прочие сохраняются)",
-			items: recordings.map(
-				(track) =>
-					`${track.title} · ${track.recordingId} · ${directRecordingIds.has(track.recordingId ?? "") ? "будет удалён" : "сохранится"}`,
-			),
+			title: "artistDeletionRecordings",
+			items: recordings.map((track) => ({
+				label: `${track.title} · ${track.recordingId}`,
+				state: directRecordingIds.has(track.recordingId ?? "")
+					? "deleted"
+					: "kept",
+			})),
 		},
 		...relatedReleases.map((release) => ({
-			title: `Позиции релиза «${release.title}» (будут удалены; включая неопубликованные)`,
-			items: release.tracks.map(
-				(track) =>
-					`${String(track.position).padStart(2, "0")} · ${track.title}${track.published ? " · опубликована" : " · без публикации"}`,
-			),
+			title: "releasePositionsWillBeDeleted" as const,
+			releaseTitle: release.title,
+			items: release.tracks.map((track) => ({
+				label: track.title,
+				position: track.position,
+				published: Boolean(track.published),
+			})),
 		})),
 		{
-			title:
-				"Позиции удаляемых композиций в сохраняемых релизах (будут удалены)",
+			title: "artistDeletionPositionsInSavedReleases",
 			items: affected
 				.filter(
 					({ release, track }) =>
 						!relatedReleases.includes(release) &&
 						directRecordingIds.has(track.recordingId ?? ""),
 				)
-				.map(
-					({ release, track }) =>
-						`${release.title} · ${String(track.position).padStart(2, "0")} · ${track.title}${track.published ? " · опубликована" : " · без публикации"}`,
-				),
+				.map(({ release, track }) => ({
+					label: `${release.title} · ${track.title}`,
+					position: track.position,
+					published: Boolean(track.published),
+				})),
 		},
-	].filter((section) => section.items.length);
+	] satisfies DependencySection[];
+	const visibleDependencies = dependencies.filter(
+		(section) => section.items.length,
+	);
 
 	return {
 		kind: "artist",
@@ -108,7 +124,12 @@ export function artistDeletionPlan(
 		paths: publications.flatMap(({ track }) =>
 			track.published ? [track.published.path] : [],
 		),
-		dependencies,
+		dependencies: visibleDependencies,
+		summary: {
+			releases: relatedReleases.length,
+			recordings: directRecordingIds.size,
+			positions: affectedTracks.size,
+		},
 	};
 }
 
@@ -124,6 +145,9 @@ export function ArtistDeletionRequest({
 	onQueue: (operation: DeletionOperation) => void;
 }) {
 	const [open, setOpen] = useState(false);
+	const { locale } = useI18n();
+	const m = (key: CatalogueMessage, values?: Record<string, string | number>) =>
+		catalogueMessage(locale, key, values);
 	const plan = artistDeletionPlan(artistId, artists, releases);
 	if (!plan) return null;
 
@@ -133,7 +157,7 @@ export function ArtistDeletionRequest({
 				className="border-[color-mix(in_srgb,var(--error)_45%,var(--control))]! bg-transparent! text-[var(--error)]!"
 				onPress={() => setOpen(true)}
 			>
-				Удалить артиста
+				{m("deleteArtist")}
 			</Button>
 			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
 				<Dialog
@@ -141,22 +165,35 @@ export function ArtistDeletionRequest({
 					className={deletionDialog}
 				>
 					<Heading slot="title" id="artist-deletion-title">
-						Удалить: {plan.target}?
+						{m("deleteQuestion", { target: plan.target })}
 					</Heading>
-					<p>{plan.scope}</p>
 					<p>
-						Перед удалением строк будут безопасно удалены только файлы
-						публикаций, принадлежащие приложению ({plan.publications}). После
-						этого удаляются строки публикаций и указанные сущности медиатеки.
-						Записи провайдера сохраняются; чужие/общие файлы не затрагиваются.
+						{m("artistDeletionSummary", {
+							releases: plan.summary.releases,
+							recordings: plan.summary.recordings,
+							positions: plan.summary.positions,
+						})}
 					</p>
+					<p>{m("artistDeletionSafety", { count: plan.publications })}</p>
 					{plan.dependencies.map((section) => (
-						<section key={section.title}>
-							<h3 className="mt-1.5 mb-0 text-xs">{section.title}</h3>
+						<section key={`${section.title}:${section.releaseTitle ?? ""}`}>
+							<h3 className="mt-1.5 mb-0 text-xs">
+								{m(section.title)}
+								{section.releaseTitle ? ` · ${section.releaseTitle}` : ""}
+							</h3>
 							<ul className="m-0 pl-5">
-								{section.items.map((item) => (
-									<li className="my-[3px] [overflow-wrap:anywhere]" key={item}>
-										{item}
+								{section.items.map((item, index) => (
+									<li
+										className="my-[3px] [overflow-wrap:anywhere]"
+										key={`${item.label}:${index}`}
+									>
+										{item.position === undefined
+											? item.label || m("unnamedRelease")
+											: `${item.position.toString().padStart(2, "0")} · ${item.label}`}
+										{item.published !== undefined &&
+											` · ${m(item.published ? "published" : "unpublished")}`}
+										{item.state &&
+											` · ${m(item.state === "deleted" ? "willBeDeleted" : "willBeKept")}`}
 									</li>
 								))}
 							</ul>
@@ -171,14 +208,11 @@ export function ArtistDeletionRequest({
 							))}
 						</ul>
 					) : (
-						<p>Текущих публикаций в этой области нет.</p>
+						<p>{m("noCurrentPublications")}</p>
 					)}
-					<p>
-						Запрос появится в текущих операциях. Выполнение меняет только данные
-						макета в памяти; реальные файлы не удаляются.
-					</p>
+					<p>{m("deletionRequestNotice")}</p>
 					<div className={deletionFooter}>
-						<Button onPress={() => setOpen(false)}>Отмена</Button>
+						<Button onPress={() => setOpen(false)}>{m("cancel")}</Button>
 						<Button
 							className="border-[var(--error)]! text-[var(--error)]!"
 							onPress={() => {
@@ -195,7 +229,7 @@ export function ArtistDeletionRequest({
 								});
 							}}
 						>
-							Подтвердить
+							{m("confirm")}
 						</Button>
 					</div>
 				</Dialog>

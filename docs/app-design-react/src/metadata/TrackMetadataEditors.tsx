@@ -3,6 +3,8 @@ import type { MetadataCredit } from "./model";
 import type { MetadataGenre, MetadataValues } from "./projection";
 import type { CatalogArtist, OriginalTrack, SourceFiles } from "../catalogData";
 import { originalProviders } from "../catalogData";
+import { useI18n } from "../i18n/I18nProvider";
+import { metadataEditorMessages } from "./editorMessages";
 
 type TrackWithExtras = OriginalTrack & { disambiguation?: string };
 
@@ -81,6 +83,15 @@ export function TrackMetadataEditors({
 	) => void;
 	recordingImpact?: string[];
 }) {
+	const { locale } = useI18n();
+	const m = (
+		key: keyof typeof metadataEditorMessages.en,
+		values: Record<string, string | number> = {},
+	) =>
+		metadataEditorMessages[locale][key].replace(
+			/\{([^}]+)\}/g,
+			(_, name: string) => String(values[name] ?? `{${name}}`),
+		);
 	const recording = recordingValues(track);
 	const position: MetadataValues = {
 		track: [
@@ -99,7 +110,7 @@ export function TrackMetadataEditors({
 	const recordingExtras = [
 		{
 			key: "disambiguation",
-			label: "Уточнение композиции",
+			label: m("recordingDisambiguation"),
 			value: extended.disambiguation ?? "",
 		},
 	];
@@ -107,7 +118,7 @@ export function TrackMetadataEditors({
 	const positionExtras = [
 		{
 			key: "titleOverride",
-			label: "Название позиции (переопределение)",
+			label: m("positionTitleOverride"),
 			value:
 				track.positionTitleOverride ??
 				(titleBaseline !== undefined && track.title !== titleBaseline
@@ -119,10 +130,10 @@ export function TrackMetadataEditors({
 	return (
 		<div
 			className="grid min-w-0 gap-3"
-			aria-label={`Метаданные позиции ${track.id}`}
+			aria-label={`${m("positionDetails")} ${track.id}`}
 		>
 			<MetadataEditor
-				label="Сведения о композиции"
+				label={m("recordingDetails")}
 				scope="recording"
 				values={recording}
 				artists={artists.map(({ id, name, sortName }) => ({
@@ -179,12 +190,15 @@ export function TrackMetadataEditors({
 			/>
 			<details className="rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3">
 				<summary className="cursor-pointer font-semibold">
-					Позиция в издании · {positionExtras[0].value || track.title} · №{" "}
-					{position.track?.[0] ?? ""} · диск {position.disc?.[0] ?? "1"}
+					{m("positionSummary", {
+						title: positionExtras[0].value || track.title,
+						number: position.track?.[0] ?? "",
+						disc: position.disc?.[0] ?? "1",
+					})}
 				</summary>
 				<div className="mt-3">
 					<MetadataEditor
-						label="Позиция в издании"
+						label={m("positionDetails")}
 						scope="track"
 						values={position}
 						extraFields={positionExtras}
@@ -218,19 +232,19 @@ export function TrackMetadataEditors({
 					/>
 				</div>
 			</details>
-			<section className="min-w-0" aria-label="Метаданные аудио для публикации">
+			<section className="min-w-0" aria-label={m("audioMetadata")}>
 				<details className="rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3">
 					<summary className="cursor-pointer font-semibold">
-						Громкость и кодирование ·{" "}
+						{m("volumeEncoding")} ·{" "}
 						{track.sourceId
 							? (files[track.sourceId]?.name ?? track.sourceId)
-							: "нет выбранного исходника"}
+							: m("noSelectedSource")}
 					</summary>
 					<div className="mt-3">
 						{track.sourceId && audioSources.includes(track.sourceId) ? (
 							<MetadataEditor
 								key={track.sourceId}
-								label={`${files[track.sourceId]?.name ?? track.sourceId} · выбран для публикации`}
+								label={`${files[track.sourceId]?.name ?? track.sourceId} · ${m("selectedForPublication")}`}
 								scope="audio"
 								values={mergedValues(track.audioMetadata?.[track.sourceId])}
 								onSave={(values) =>
@@ -245,20 +259,21 @@ export function TrackMetadataEditors({
 							/>
 						) : (
 							<p className="m-0 text-sm text-[var(--muted)]">
-								Нет выбранного связанного аудиоварианта.
+								{m("noLinkedVariant")}
 							</p>
 						)}
 						{track.sourceId && !audioSources.includes(track.sourceId) && (
 							<p className="m-0 text-sm text-[var(--muted)]">
-								Выбранный для публикации файл отсутствует среди связанных
-								вариантов; метаданные файла не изменены.
+								{m("selectedFileUnavailable")}
 							</p>
 						)}
 						{audioSources.some((id) => id !== track.sourceId) && (
 							<details className="mt-3">
 								<summary className="cursor-pointer text-sm font-semibold">
-									Другие аудиоварианты ·{" "}
-									{audioSources.filter((id) => id !== track.sourceId).length}
+									{m("otherAudioVariants", {
+										count: audioSources.filter((id) => id !== track.sourceId)
+											.length,
+									})}
 								</summary>
 								<div className="mt-3 grid min-w-0 gap-3">
 									{audioSources
@@ -266,7 +281,7 @@ export function TrackMetadataEditors({
 										.map((sourceId) => (
 											<MetadataEditor
 												key={sourceId}
-												label={`${files[sourceId]?.name ?? sourceId} · только просмотр`}
+												label={`${files[sourceId]?.name ?? sourceId} · ${m("readOnly")}`}
 												scope="audio"
 												values={mergedValues(track.audioMetadata?.[sourceId])}
 												readOnly

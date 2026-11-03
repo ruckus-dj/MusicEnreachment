@@ -100,22 +100,26 @@ it("plans deletion across primary and credited releases and shared compositions"
 	expect(plan?.dependencies).toEqual(
 		expect.arrayContaining([
 			expect.objectContaining({
-				title: "Релизы (будут удалены)",
-				items: ["Primary album", "Credited album"],
+				title: "artistDeletionRelatedReleases",
+				items: [{ label: "Primary album" }, { label: "Credited album" }],
 			}),
 			expect.objectContaining({
-				title:
-					"Композиции (напрямую связанные с артистом будут удалены; прочие сохраняются)",
+				title: "artistDeletionRecordings",
 				items: [
-					"shared-position · direct-recording · будет удалён",
-					"other-credit-position · other-recording · сохранится",
-					"credited-position · credited-recording · сохранится",
+					{ label: "shared-position · direct-recording", state: "deleted" },
+					{ label: "other-credit-position · other-recording", state: "kept" },
+					{ label: "credited-position · credited-recording", state: "kept" },
 				],
 			}),
 			expect.objectContaining({
-				title:
-					"Позиции удаляемых композиций в сохраняемых релизах (будут удалены)",
-				items: ["Shared recording album · 01 · shared-position · опубликована"],
+				title: "artistDeletionPositionsInSavedReleases",
+				items: [
+					{
+						label: "Shared recording album · shared-position",
+						position: 1,
+						published: true,
+					},
+				],
 			}),
 		]),
 	);

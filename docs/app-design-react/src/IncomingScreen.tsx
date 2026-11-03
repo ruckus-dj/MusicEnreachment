@@ -20,10 +20,19 @@ import {
 	findTarget,
 	providerReleases,
 	type IncomingFiles,
+	type IncomingGroup,
 	type IncomingReleases,
 	type IncomingState,
 } from "./incomingModel";
 import type { CatalogArtist } from "./catalogData";
+import { useI18n } from "./i18n";
+import {
+	incomingFilesCount,
+	incomingGroupsCount,
+	incomingMessage,
+	type IncomingMessage,
+} from "./incomingMessages";
+import { formatUiNotice } from "./uiNotice";
 
 const mobileQuery = "(max-width: 599px)";
 
@@ -65,6 +74,22 @@ export function IncomingScreen({
 	onFiles,
 	onReleases,
 }: IncomingScreenProps) {
+	const { locale } = useI18n();
+	const msg = (
+		key: IncomingMessage,
+		values?: Record<string, string | number>,
+	) => incomingMessage(locale, key, values);
+	const renderReason = (reason: IncomingGroup["reason"]) => {
+		if (typeof reason === "string") return reason;
+		switch (reason.code) {
+			case "incomplete":
+				return msg("incompleteReason");
+			case "confident":
+				return msg("confidentReason", reason.params);
+			case "compilation":
+				return msg("compilationReason");
+		}
+	};
 	const isMobile = useIsMobile();
 	const [localState, setLocalState] = useState(createIncomingState);
 	const [localFiles, setLocalFiles] = useState<IncomingFiles>(() =>
@@ -115,9 +140,11 @@ export function IncomingScreen({
 			artists,
 			destination,
 		);
-		state.notice = count
-			? `Демо: автоматически опубликовано ${count} позиций Small Hours. Неполные группы остались в ручном разборе. Файловые операции не выполнялись.`
-			: "Нет новых полностью уверенных релизов. Автопубликация не повторяет и не понижает качество.";
+		state.notice = "";
+		state.noticeDescriptor = null;
+		state.uiNotice = count
+			? { namespace: "incoming", id: "automaticPublished", params: { count } }
+			: { namespace: "incoming", id: "nothingToPublish" };
 		if (givenReleases) onReleases?.(nextReleases);
 		else setLocalReleases(nextReleases);
 		updateState();
@@ -130,52 +157,51 @@ export function IncomingScreen({
 		>
 			<PageHeader className="mb-[10px] min-w-0">
 				<p className="mb-[3px] text-xs text-[var(--muted)]">
-					Входящие · исходные теги → сопоставление → публикация
+					{msg("workflow")}
 				</p>
 				<div className="flex items-center justify-between gap-[14px] max-[600px]:items-start max-[600px]:flex-col">
 					<div className="min-w-0">
 						<h1 className="m-0 text-xl leading-[1.25] text-[var(--ink)] [text-wrap:balance]">
-							Входящие альбомы
+							{msg("title")}
 						</h1>
 						<p className="mt-[3px] mb-0 text-xs text-[var(--muted)]">
-							Группы из исходных тегов → поиск издания → назначения →
-							публикация. Неполные данные допустимы.
+							{msg("introduction")}
 						</p>
 					</div>
 					<Button
 						className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90 max-[600px]:w-full"
 						onPress={runAuto}
 					>
-						Запустить обработку · демо
+						{msg("process")}
 					</Button>
 				</div>
 			</PageHeader>
 			<ol
 				className="mb-[10px] grid list-none grid-cols-4 gap-0 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--raised)] p-0 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1"
-				aria-label="Этапы обработки"
+				aria-label={msg("stages")}
 			>
 				<li className="flex min-w-0 items-center gap-2 px-[10px] py-2 text-[11px] text-[var(--muted)] max-[600px]:min-h-10">
 					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
 						01
 					</b>
-					<span className="min-w-0">Сгруппировать файлы</span>
+					<span className="min-w-0">{msg("groupFiles")}</span>
 				</li>
 				<li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t max-[600px]:border-[var(--line)]">
 					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
 						02
 					</b>
-					<span className="min-w-0">Сопоставить</span>
+					<span className="min-w-0">{msg("match")}</span>
 				</li>
 				<li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[900px]:border-l-0 max-[900px]:border-t max-[900px]:border-[var(--line)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t">
 					<b className="grid h-[22px] w-[22px] flex-[0_0_22px] place-items-center rounded-full bg-[var(--accent-soft)] font-mono text-[10px] text-[var(--accent)]">
 						03
 					</b>
 					<span className="min-w-0">
-						Все позиции уверенные{" "}
+						{msg("allConfidentAutomatic")}{" "}
 						<i className="text-[var(--accent)] not-italic" aria-hidden="true">
 							→
 						</i>{" "}
-						автоматически
+						{msg("automaticDirection")}
 					</span>
 				</li>
 				<li className="flex min-w-0 items-center gap-2 border-l border-[var(--line)] px-[10px] py-2 text-[11px] text-[var(--muted)] max-[900px]:border-t max-[900px]:border-[var(--line)] max-[600px]:min-h-10 max-[600px]:border-l-0 max-[600px]:border-t">
@@ -183,20 +209,27 @@ export function IncomingScreen({
 						04
 					</b>
 					<span className="min-w-0">
-						Иначе{" "}
+						{msg("otherwiseManual")}{" "}
 						<i className="text-[var(--accent)] not-italic" aria-hidden="true">
 							→
 						</i>{" "}
-						ручной разбор, в том числе частичный
+						{msg("manualDirection")}
 					</span>
 				</li>
 			</ol>
-			{state.notice && (
+			{(state.uiNotice || state.notice || state.noticeDescriptor) && (
 				<p
 					role="status"
 					className="mb-[10px] border-l-[3px] border-[var(--accent)] bg-[var(--accent-soft)] px-[10px] py-[7px] text-xs text-[var(--ink)]"
 				>
-					{state.notice}
+					{state.notice ||
+						(state.uiNotice
+							? formatUiNotice(locale, state.uiNotice)
+							: state.noticeDescriptor?.code === "automaticPublished"
+								? msg("automaticNotice", state.noticeDescriptor.params)
+								: state.noticeDescriptor
+									? msg("noAutomaticNotice")
+									: "")}
 				</p>
 			)}
 			<Panel className="mb-[10px]" aria-labelledby="incoming-groups-heading">
@@ -206,21 +239,21 @@ export function IncomingScreen({
 							className="m-0 text-[13px] font-semibold"
 							id="incoming-groups-heading"
 						>
-							Текущие группы
+							{msg("currentGroups")}
 						</h2>
 						<span className="mt-0.5 block text-xs text-[var(--muted)]">
-							{rows.length} группы · очередь источников
+							{incomingGroupsCount(locale, rows.length)}
 						</span>
 					</div>
 				</header>
 				{isMobile ? (
 					<ul
-						aria-label="Текущие группы входящих альбомов"
+						aria-label={msg("groupList")}
 						className="m-0 grid list-none gap-2 p-2"
 					>
 						{rows.length === 0 ? (
 							<li className="py-6 text-center text-[var(--muted)]">
-								Входящих групп пока нет.
+								{msg("noGroups")}
 							</li>
 						) : (
 							rows.map(
@@ -245,20 +278,21 @@ export function IncomingScreen({
 														{group.title}
 													</Link>
 													<p className="m-0 mt-0.5 text-xs text-[var(--muted)]">
-														{artistName(group.artistId, artists)}
+														{artistName(group.artistId, artists) ||
+															msg("artistNotSpecified")}
 													</p>
 												</div>
 												<Link
 													className="inline-flex min-h-10 shrink-0 items-center rounded-[3px] border border-[var(--line)] px-3 hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline"
 													href={`#match/${group.id}`}
 												>
-													Открыть
+													{msg("open")}
 												</Link>
 											</div>
 											<dl className="m-0 grid grid-cols-2 gap-x-3 gap-y-1 text-xs [font-variant-numeric:tabular-nums]">
 												<div>
 													<dt className="inline text-[var(--muted)]">
-														Файлы:{" "}
+														{msg("files")}{" "}
 													</dt>
 													<dd className="inline m-0 font-semibold">
 														{group.fileIds.length}
@@ -266,7 +300,7 @@ export function IncomingScreen({
 												</div>
 												<div>
 													<dt className="inline text-[var(--muted)]">
-														Назначено:{" "}
+														{msg("assigned")}{" "}
 													</dt>
 													<dd className="inline m-0 font-semibold">
 														{assignedCount} / {tracks.length}
@@ -274,7 +308,7 @@ export function IncomingScreen({
 												</div>
 												<div>
 													<dt className="inline text-[var(--muted)]">
-														Свободно:{" "}
+														{msg("free")}{" "}
 													</dt>
 													<dd className="inline m-0 font-semibold">
 														{freeCount}
@@ -282,7 +316,7 @@ export function IncomingScreen({
 												</div>
 												<div>
 													<dt className="inline text-[var(--muted)]">
-														Опубликовано:{" "}
+														{msg("published")}{" "}
 													</dt>
 													<dd className="inline m-0 font-semibold">
 														{publishedCount} / {tracks.length}
@@ -290,7 +324,7 @@ export function IncomingScreen({
 												</div>
 											</dl>
 											<p className="m-0 text-xs text-[var(--muted)]">
-												{group.reason}
+												{renderReason(group.reason)}
 											</p>
 										</li>
 									);
@@ -301,7 +335,7 @@ export function IncomingScreen({
 				) : (
 					<div className="min-w-0 overflow-x-auto">
 						<Table
-							aria-label="Текущие группы входящих альбомов"
+							aria-label={msg("groupList")}
 							className="w-full min-w-[1040px] border-collapse text-xs [font-variant-numeric:tabular-nums] [&_tbody_tr:last-child_td]:border-b-0 max-[900px]:min-w-[970px]"
 						>
 							<TableHeader>
@@ -310,47 +344,47 @@ export function IncomingScreen({
 									isRowHeader
 									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
 								>
-									Альбом / папка
+									{msg("albumFolder")}
 								</Column>
 								<Column
 									id="files"
 									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
 								>
-									Входящие
+									{msg("incoming")}
 								</Column>
 								<Column
 									id="assigned"
 									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
 								>
-									Назначено
+									{msg("assignedHeading")}
 								</Column>
 								<Column
 									id="free"
 									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
 								>
-									Свободно
+									{msg("freeHeading")}
 								</Column>
 								<Column
 									id="mode"
 									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
 								>
-									Режим
+									{msg("mode")}
 								</Column>
 								<Column
 									id="published"
 									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-right align-middle text-[10px] font-semibold whitespace-nowrap"
 								>
-									Опубликовано
+									{msg("publishedHeading")}
 								</Column>
 								<Column
 									id="reason"
 									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
 								>
-									Причина
+									{msg("reason")}
 								</Column>
 								<Column
 									id="action"
-									aria-label="Действие"
+									aria-label={msg("action")}
 									className="border-b border-[var(--line)] bg-[var(--raised)] px-2 py-1.5 text-left align-middle text-[10px] font-semibold whitespace-nowrap"
 								/>
 							</TableHeader>
@@ -361,7 +395,7 @@ export function IncomingScreen({
 											colSpan={8}
 											className="!p-6 text-center text-[var(--muted)]"
 										>
-											Входящих групп пока нет.
+											{msg("noGroups")}
 										</Cell>
 									</Row>
 								)}
@@ -387,7 +421,8 @@ export function IncomingScreen({
 														{group.title}
 													</Link>
 													<span className="text-[10px] text-[var(--muted)]">
-														{artistName(group.artistId, artists)}
+														{artistName(group.artistId, artists) ||
+															msg("artistNotSpecified")}
 													</span>
 													<code className="font-mono text-[9px] leading-[1.4] text-[var(--muted)] wrap-anywhere">
 														/mnt/inbox/{group.id}
@@ -398,7 +433,12 @@ export function IncomingScreen({
 												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
 													{group.fileIds.length}
 												</span>
-												<span className="text-[var(--muted)]"> файлов</span>
+												<span className="text-[var(--muted)]">
+													{incomingFilesCount(
+														locale,
+														group.fileIds.length,
+													).replace(/^\d+\s*/, "")}
+												</span>
 											</Cell>
 											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
 												<span className="inline-flex min-w-6 justify-center rounded-[3px] border border-[var(--line)] bg-[var(--raised)] px-[5px] py-px text-[11px] font-semibold text-[var(--ink)]">
@@ -431,10 +471,10 @@ export function IncomingScreen({
 														aria-hidden="true"
 													/>
 													{group.processed
-														? "Опубликовано автоматически"
+														? msg("publishedAutomatically")
 														: group.autoEligible
-															? "Готов к автоматике"
-															: "Ручная обработка"}
+															? msg("readyForAutomatic")
+															: msg("manualProcessing")}
 												</span>
 											</Cell>
 											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle whitespace-nowrap [font-variant-numeric:tabular-nums]">
@@ -447,14 +487,14 @@ export function IncomingScreen({
 												</span>
 											</Cell>
 											<Cell className="min-w-40 max-w-[270px] border-b border-[var(--line)] px-2 py-1.5 text-left align-middle text-[10px] text-[var(--muted)] wrap-anywhere">
-												{group.reason}
+												{renderReason(group.reason)}
 											</Cell>
 											<Cell className="border-b border-[var(--line)] px-2 py-1.5 text-left align-middle">
 												<Link
 													className="inline-flex min-h-7 items-center whitespace-nowrap rounded-[3px] border border-[var(--line)] px-[7px] py-[3px] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline max-[600px]:min-h-10"
 													href={`#match/${group.id}`}
 												>
-													Открыть
+													{msg("open")}
 												</Link>
 											</Cell>
 										</Row>
@@ -467,28 +507,22 @@ export function IncomingScreen({
 			</Panel>
 			<div className="grid grid-cols-2 gap-[10px] max-[600px]:grid-cols-1">
 				<Panel className="m-0 p-[10px]">
-					<h2 className="mb-1.5 mt-0 text-[13px]">
-						Как пройти ручной сценарий
-					</h2>
+					<h2 className="mb-1.5 mt-0 text-[13px]">{msg("manualScenario")}</h2>
 					<ol className="m-0 list-decimal pl-5 text-[11px] text-[var(--muted)] [&>li+li]:mt-[3px]">
-						<li>Откройте Northern Lines: уверенные назначения заполнены.</li>
-						<li>Назначьте 03 — Northbound (live?) на позицию 03.</li>
-						<li>
-							Оставьте позиции 09–10 пустыми; фрагмент останется во входящих.
-						</li>
-						<li>Предпросмотр → подтвердить публикацию выбранных позиций.</li>
+						<li>{msg("manualStep1")}</li>
+						<li>{msg("manualStep2")}</li>
+						<li>{msg("manualStep3")}</li>
+						<li>{msg("manualStep4")}</li>
 					</ol>
 				</Panel>
 				<Panel className="m-0 p-[10px]">
 					<h2 className="mb-1.5 mt-0 text-[13px]">
-						Сборник, которого нет у провайдера
+						{msg("missingProviderCompilation")}
 					</h2>
 					<p className="mb-[7px] mt-0 text-[11px] text-[var(--muted)]">
-						Road Notes сохраняет собственное название и порядок. Композиции
-						можно найти в других изданиях; альбом провайдера не заменяет
-						локальный сборник.
+						{msg("compilationDescription")}
 					</p>
-					<Link href="#match/mix">Открыть локальный сборник</Link>
+					<Link href="#match/mix">{msg("openCompilation")}</Link>
 				</Panel>
 			</div>
 		</main>

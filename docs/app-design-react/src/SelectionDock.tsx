@@ -7,6 +7,11 @@ import {
 } from "./DeletionRequest";
 import { Button, Dialog, Heading, Modal } from "./ui";
 import { catalogueStyles } from "./catalogueStyles";
+import { useI18n } from "./i18n/I18nProvider";
+import {
+	libraryRowsMessage,
+	type LibraryRowsMessage,
+} from "./libraryRowsMessages";
 
 type FrozenPublication = {
 	releaseId: string;
@@ -27,6 +32,11 @@ export function SelectionDock({
 	onPreview: (ids: string[]) => void;
 	onQueueDeletion: (operation: DeletionOperation) => void;
 }) {
+	const { locale } = useI18n();
+	const m = (
+		key: LibraryRowsMessage,
+		values?: Record<string, string | number>,
+	) => libraryRowsMessage(locale, key, values);
 	const [open, setOpen] = useState(false);
 	const [frozen, setFrozen] = useState<FrozenPublication[]>([]);
 	const [frozenSelectionCount, setFrozenSelectionCount] = useState(0);
@@ -67,19 +77,23 @@ export function SelectionDock({
 				<div
 					className={catalogueStyles.dock}
 					role="region"
-					aria-label="Выбранные позиции"
+					aria-label={m("selectSelectedPositions")}
 				>
-					<span role="status">Выбрано позиций: {selected.size}</span>
+					<span role="status">
+						{m("selectedPositionsCount", { count: selected.size })}
+					</span>
 					<div className={catalogueStyles.dockActions}>
 						<Button
 							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 							onPress={() => onPreview([...selected])}
 						>
-							Опубликовать
+							{m("publish")}
 						</Button>
-						<Button onPress={openDeleteConfirmation}>Удалить публикации</Button>
+						<Button onPress={openDeleteConfirmation}>
+							{m("deletePublications")}
+						</Button>
 						<Button onPress={() => onSelect([...selected], false)}>
-							Снять выбор
+							{m("clearSelection")}
 						</Button>
 					</div>
 				</div>
@@ -90,22 +104,18 @@ export function SelectionDock({
 					className={catalogueStyles.dockDialog}
 				>
 					<Heading slot="title" id="selection-deletion-title">
-						Удалить выбранные публикации?
+						{m("deleteSelectedPublicationsQuestion")}
 					</Heading>
 					<p>
-						Выбрано позиций: {frozenSelectionCount}. Текущих публикаций в
-						зафиксированном выборе: {frozen.length}. Без публикации пропущено:{" "}
-						{skippedUnpublished}.
+						{m("frozenDeletionCounts", {
+							selected: frozenSelectionCount,
+							published: frozen.length,
+							skipped: skippedUnpublished,
+						})}
 					</p>
-					<p>
-						Будут затронуты только перечисленные текущие публикации. Позиции,
-						альбомы, композиции, исходники и записи провайдера не удаляются.
-					</p>
+					<p>{m("selectedPublicationScope")}</p>
 					{frozen.length > currentPublications.length && (
-						<p role="status">
-							Данные публикаций изменились после открытия подтверждения;
-							изменённые публикации будут пропущены.
-						</p>
+						<p role="status">{m("changedPublications")}</p>
 					)}
 					{currentPublications.length ? (
 						<ul>
@@ -118,15 +128,11 @@ export function SelectionDock({
 							))}
 						</ul>
 					) : (
-						<p>Текущих публикаций для удаления нет.</p>
+						<p>{m("noPublicationsToDelete")}</p>
 					)}
-					<p>
-						Асинхронная операция. Прототип только ставит демонстрационный запрос
-						в список операций: реальные файлы и демонстрационные записи не
-						удаляются.
-					</p>
+					<p>{m("deletionDemoNotice")}</p>
 					<div className={catalogueStyles.dockDialogFooter}>
-						<Button onPress={() => setOpen(false)}>Отмена</Button>
+						<Button onPress={() => setOpen(false)}>{m("cancel")}</Button>
 						<Button
 							className="border-[var(--error)]! bg-[var(--error)]! text-white!"
 							isDisabled={!currentPublications.length}
@@ -140,7 +146,7 @@ export function SelectionDock({
 								setOpen(false);
 							}}
 						>
-							Подтвердить удаление
+							{m("confirmDeletion")}
 						</Button>
 					</div>
 				</Dialog>

@@ -32,9 +32,21 @@ import {
 	previewTableHeading,
 	previewTableWrap,
 } from "./matchingStyles";
-import { navidromeFields } from "./metadata/registry";
+import { navidromeFields, metadataFieldLabel } from "./metadata/registry";
+import { useI18n } from "./i18n/I18nProvider";
+import {
+	formatTrackMessage,
+	trackMessage,
+	type TrackMessage,
+} from "./trackMessages";
 
 export type TagScope = "artist" | "release" | "track";
+
+const scopeMessage: Record<TagScope, TrackMessage> = {
+	artist: "scopeArtist",
+	release: "scopeRelease",
+	track: "scopeTrack",
+};
 
 const artistGroups = new Set(["recording artists", "release artists"]);
 const fieldsForTab = (tab: TagScope) =>
@@ -54,21 +66,26 @@ export function TagsComparison({
 	files,
 	scope,
 	initialTrackId,
+	initialFileId,
 	onPreview,
 	onSelectFile,
 	allowScopeChange = false,
 	showAllFields = false,
+	fixedContext = false,
 }: {
 	releases: OriginalRelease[];
 	artists?: CatalogArtist[];
 	files: SourceFiles;
 	scope: TagScope;
 	initialTrackId?: string;
+	initialFileId?: string | null;
 	onPreview?: (ids: string[]) => void;
 	onSelectFile?: (trackId: string, fileId: string) => void;
 	allowScopeChange?: boolean;
 	showAllFields?: boolean;
+	fixedContext?: boolean;
 }) {
+	const { locale } = useI18n();
 	const tracks = releases.flatMap((release) =>
 		release.tracks.map((track) => ({ release, track })),
 	);
@@ -80,10 +97,13 @@ export function TagsComparison({
 	const [allFields, setAllFields] = useState(false);
 	const [activeScope, setActiveScope] = useState<TagScope>(scope);
 	useEffect(() => setActiveScope(scope), [scope]);
+	useEffect(() => {
+		if (fixedContext && initialTrackId) setTrackId(initialTrackId);
+	}, [fixedContext, initialTrackId]);
 	const selected =
 		tracks.find(({ track }) => track.id === trackId) ??
 		(initialTrackId ? undefined : tracks[0]);
-	if (!selected) return <p>Позиции отсутствуют.</p>;
+	if (!selected) return <p>{trackMessage(locale, "noPositions")}</p>;
 	const { release, track } = selected;
 	const linkedFileIds = [
 		...new Set([
@@ -91,8 +111,11 @@ export function TagsComparison({
 			...(track.sourceId ? [track.sourceId] : []),
 		]),
 	];
-	const fileId =
-		fileOverride === undefined
+	const fileId = fixedContext
+		? initialFileId === undefined
+			? track.sourceId
+			: initialFileId
+		: fileOverride === undefined
 			? track.sourceId
 			: fileOverride && linkedFileIds.includes(fileOverride)
 				? fileOverride
@@ -120,7 +143,7 @@ export function TagsComparison({
 			];
 			return {
 				key,
-				label: field.label,
+				label: metadataFieldLabel(field.key, locale),
 				values,
 				different:
 					new Set(values.map((value) => JSON.stringify(value ?? []))).size > 1,
@@ -130,76 +153,91 @@ export function TagsComparison({
 	return (
 		<section
 			className={metadataPanel}
-			aria-label={`Сравнение тегов: ${activeScope}`}
+			aria-label={formatTrackMessage(locale, "tagsFor", {
+				scope: trackMessage(locale, scopeMessage[activeScope]),
+			})}
 		>
-			<div className={comparisonControls}>
-				<Select
-					aria-label="Позиция сравнения"
-					selectedKey={track.id}
-					onSelectionChange={(key) => {
-						setTrackId(String(key));
-						setFileOverride(undefined);
-					}}
-				>
-					<Label>Позиция</Label>
-					<Button>
-						<SelectValue />
-						<span aria-hidden="true">⌄</span>
-					</Button>
-					<Popover>
-						<ListBox>
-							{tracks.map(({ release: itemRelease, track: item }) => (
-								<ListBoxItem key={item.id} id={item.id}>
-									{String(item.position).padStart(2, "0")} · {item.title} ·{" "}
-									{itemRelease.title}
+			{fixedContext ? (
+				<header className="grid gap-1 border-b border-[var(--line)] pb-2">
+					<h3 className="m-0 text-sm font-semibold">
+						{trackMessage(locale, "tagsTitle")}
+					</h3>
+					<p className="m-0 text-xs text-[var(--muted)]">
+						{track.title} · {trackMessage(locale, "fixedFile")}:{" "}
+						{file?.name ?? trackMessage(locale, "noSourceSelected")}
+						{file &&
+							` · ${file.codec} · ${Math.floor(file.duration / 60)}:${String(Math.round(file.duration % 60)).padStart(2, "0")}`}
+					</p>
+				</header>
+			) : (
+				<div className={comparisonControls}>
+					<Select
+						aria-label={trackMessage(locale, "comparisonPosition")}
+						selectedKey={track.id}
+						onSelectionChange={(key) => {
+							setTrackId(String(key));
+							setFileOverride(undefined);
+						}}
+					>
+						<Label>{trackMessage(locale, "position")}</Label>
+						<Button>
+							<SelectValue />
+							<span aria-hidden="true">⌄</span>
+						</Button>
+						<Popover>
+							<ListBox>
+								{tracks.map(({ release: itemRelease, track: item }) => (
+									<ListBoxItem key={item.id} id={item.id}>
+										{String(item.position).padStart(2, "0")} · {item.title} ·{" "}
+										{itemRelease.title}
+									</ListBoxItem>
+								))}
+							</ListBox>
+						</Popover>
+					</Select>
+					<Select
+						aria-label={trackMessage(locale, "comparisonSourceFile")}
+						selectedKey={fileId ?? ""}
+						onSelectionChange={(key) => {
+							const value = String(key);
+							setFileOverride(value || null);
+							if (value) onSelectFile?.(track.id, value);
+						}}
+					>
+						<Label>{trackMessage(locale, "sourceFile")}</Label>
+						<Button>
+							<SelectValue />
+							<span aria-hidden="true">⌄</span>
+						</Button>
+						<Popover>
+							<ListBox>
+								<ListBoxItem id="">
+									{trackMessage(locale, "noSourceSelected")}
 								</ListBoxItem>
-							))}
-						</ListBox>
-					</Popover>
-				</Select>
-				<Select
-					aria-label="Исходный файл для сравнения"
-					selectedKey={fileId ?? ""}
-					onSelectionChange={(key) => {
-						const value = String(key);
-						setFileOverride(value || null);
-						if (value) onSelectFile?.(track.id, value);
-					}}
-				>
-					<Label>Исходный файл</Label>
-					<Button>
-						<SelectValue />
-						<span aria-hidden="true">⌄</span>
-					</Button>
-					<Popover>
-						<ListBox>
-							<ListBoxItem id="">Исходник не выбран</ListBoxItem>
-							{linkedFileIds.map(
-								(id) =>
-									files[id] && (
-										<ListBoxItem key={id} id={id}>
-											{files[id].name}
-										</ListBoxItem>
-									),
-							)}
-						</ListBox>
-					</Popover>
-				</Select>
-				<span className="block text-[11px] text-[var(--muted)]">
-					Кэш провайдера: 26.09.2026 10:20 · идентификаторы демонстрационные
-				</span>
-			</div>
-			{allowScopeChange && (
+								{linkedFileIds.map(
+									(id) =>
+										files[id] && (
+											<ListBoxItem key={id} id={id}>
+												{files[id].name}
+											</ListBoxItem>
+										),
+								)}
+							</ListBox>
+						</Popover>
+					</Select>
+				</div>
+			)}
+			{allowScopeChange && !fixedContext && (
 				<Tabs
 					selectedKey={activeScope}
 					onSelectionChange={(key) => setActiveScope(key as TagScope)}
 				>
-					<TabList aria-label="Область тегов">
+					<TabList aria-label={trackMessage(locale, "comparisonContext")}>
 						{(
 							[
-								["artist", "Артист"],
-								["release", "Альбом"],
-								["track", "Трек"],
+								["artist", trackMessage(locale, "scopeArtist")],
+								["release", trackMessage(locale, "scopeRelease")],
+								["track", trackMessage(locale, "scopeTrack")],
 							] as const
 						).map(([key, label]) => (
 							<Tab key={key} id={key}>
@@ -212,7 +250,7 @@ export function TagsComparison({
 			{showAllFields && (
 				<Checkbox isSelected={allFields} onChange={setAllFields}>
 					<span className="checkbox" />
-					Все поля
+					{trackMessage(locale, "allFields")}
 				</Checkbox>
 			)}
 			<div className={previewTableWrap}>
@@ -220,11 +258,11 @@ export function TagsComparison({
 					<thead>
 						<tr>
 							{[
-								"Поле",
-								"Исходный файл",
-								"Провайдер · кэш",
-								"Локальная медиатека",
-								"Сейчас в публикации",
+								trackMessage(locale, "field"),
+								trackMessage(locale, "sourceFile"),
+								trackMessage(locale, "providerCache"),
+								trackMessage(locale, "localLibrary"),
+								trackMessage(locale, "currentPublicationColumn"),
 							].map((heading) => (
 								<th className={previewTableHeading} scope="col" key={heading}>
 									{heading}
@@ -245,7 +283,9 @@ export function TagsComparison({
 									<td className={previewTableCell} key={`${key}:${index}`}>
 										{value === null ? (
 											<span className="block text-[11px] text-[var(--muted)]">
-												{index === 1 ? "Нет связи" : "Не опубликован"}
+												{index === 1
+													? trackMessage(locale, "noProviderLink")
+													: trackMessage(locale, "notPublished")}
 											</span>
 										) : value.length ? (
 											value.map((item, itemIndex) => (
@@ -265,20 +305,23 @@ export function TagsComparison({
 				</table>
 			</div>
 			<p className={comparisonNote}>
-				{file?.path ?? "Исходник не выбран"}
+				{file?.path ?? trackMessage(locale, "noSourceSelected")}
 				<br />
 				{track.published
-					? `Публикация: ${track.published.path} · чтение ${track.published.readAt} (демо)`
-					: "Публикация отсутствует; пустая колонка не подменяется текущими метаданными."}
+					? formatTrackMessage(locale, "publicationPath", {
+							path: track.published.path,
+							readAt: track.published.readAt,
+						})
+					: trackMessage(locale, "publicationAbsentNote")}
 			</p>
 			<div className={objectActions}>
 				<Checkbox isSelected={differencesOnly} onChange={setDifferencesOnly}>
 					<span className="checkbox" />
-					Только отличия
+					{trackMessage(locale, "onlyDifferences")}
 				</Checkbox>
 				{onPreview && (
 					<Button onPress={() => onPreview([track.id])}>
-						Предпросмотр публикации
+						{trackMessage(locale, "previewPublication")}
 					</Button>
 				)}
 			</div>

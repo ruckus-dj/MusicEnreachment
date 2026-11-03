@@ -1,14 +1,17 @@
 import { type ReactNode, useSyncExternalStore } from "react";
 import { ThemeControl } from "./ThemeControl";
 import { Link } from "./ui";
+import { LanguageControl } from "./LanguageControl";
+import { useI18n } from "./i18n";
+import { shell } from "./i18n/namespaces/shell";
 
 const sections = [
-	["review", "Входящие"],
-	["library", "Медиатека"],
-	["local", "Собственный каталог"],
-	["sources", "Источники"],
-	["operations", "Операции"],
-	["settings", "Настройки"],
+	["review", "review"],
+	["library", "library"],
+	["local", "local"],
+	["sources", "sources"],
+	["operations", "operations"],
+	["settings", "settings"],
 ] as const;
 const subscribe = (listener: () => void) => {
 	window.addEventListener("hashchange", listener);
@@ -22,6 +25,8 @@ export function DesignShell({
 	children: ReactNode;
 	incomingCount?: number;
 }) {
+	const { locale } = useI18n();
+	const copy = shell[locale];
 	const route = useSyncExternalStore(
 		subscribe,
 		() => window.location.hash.slice(1).split("/")[0] || "library",
@@ -51,7 +56,7 @@ export function DesignShell({
 					document.querySelector<HTMLElement>("#content main")?.focus();
 				}}
 			>
-				К содержимому
+				{copy.skip}
 			</a>
 			<div className="grid h-dvh grid-cols-[174px_minmax(0,1fr)] grid-rows-[42px_minmax(0,1fr)] max-[599px]:flex max-[599px]:h-auto max-[599px]:min-h-dvh max-[599px]:flex-col">
 				<aside className="row-span-2 flex flex-col overflow-auto border-r border-[var(--line)] bg-[var(--surface)] px-2 py-4 max-[599px]:visible max-[599px]:overflow-visible max-[599px]:border-r-0 max-[599px]:border-b max-[599px]:py-2">
@@ -65,15 +70,10 @@ export function DesignShell({
 						>
 							mt
 						</span>
-						<span>
-							MeloTrove
-							<small className="mt-[3px] block text-[12px] text-[var(--muted)]">
-								АРХИВНАЯ МАСТЕРСКАЯ
-							</small>
-						</span>
+						<span>MeloTrove</span>
 					</Link>
 					<nav
-						aria-label="Основная навигация"
+						aria-label={copy.navigation}
 						className="grid gap-[3px] max-[599px]:flex max-[599px]:flex-wrap"
 					>
 						{sections.map(([id, label]) => (
@@ -83,7 +83,7 @@ export function DesignShell({
 								aria-current={section === id ? "page" : undefined}
 								className="flex min-h-[34px] items-center gap-2 rounded px-2 py-1.5 !text-[var(--ink)] hover:bg-[var(--raised)] aria-[current=page]:bg-[var(--accent-soft)] aria-[current=page]:!text-[var(--accent)] aria-[current=page]:font-semibold max-[599px]:min-h-10"
 							>
-								{label}
+								{copy[label]}
 								{id === "review" && (
 									<span className="ml-auto text-[12px] text-[var(--muted)]">
 										{incomingCount}
@@ -97,30 +97,20 @@ export function DesignShell({
 							className="block px-2 py-1.5 text-[12px] text-[var(--muted)]"
 							href="#setup"
 						>
-							Первый запуск
+							{copy.setup}
 						</a>
-						<a
-							className="block px-2 py-1.5 text-[12px] text-[var(--muted)]"
-							href="#components"
-						>
-							Визуальная система
-						</a>
-						<p className="mt-4 border-t border-[var(--line)] px-2 pt-3 text-[12px] text-[var(--muted)]">
-							Независимая концепция
-							<br />
-							Плотный каталог · v2
+						<p className="mt-4 px-2 text-xs text-[var(--muted)]">
+							{copy.prototypeDisclosure}
 						</p>
 					</div>
 				</aside>
 				<header className="flex items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-[12px] text-[var(--muted)] max-[599px]:min-h-[42px] max-[599px]:flex-wrap">
 					<span>
 						<span className="hidden max-[599px]:inline">MeloTrove · </span>
-						{sections.find(([id]) => id === section)?.[1] ?? "MeloTrove"}
+						{copy[sections.find(([id]) => id === section)?.[1] ?? "library"]}
 					</span>
 					<div className="flex items-center gap-2">
-						<span className="text-[12px] max-[599px]:hidden">
-							МАКЕТ · ТЕСТОВЫЕ ДАННЫЕ
-						</span>
+						<LanguageControl />
 						<ThemeControl />
 					</div>
 				</header>

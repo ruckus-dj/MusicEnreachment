@@ -27,6 +27,8 @@ import {
 	upgradeAudioOnly,
 } from "./trackActionModel";
 import { dialogFooter, objectActions } from "./matchingStyles";
+import { useI18n } from "./i18n";
+import { operationMessage as message } from "./operationMessages";
 
 export function TrackActions({
 	release,
@@ -43,6 +45,7 @@ export function TrackActions({
 	files?: SourceFiles;
 	artists?: CatalogArtist[];
 }) {
+	const { locale } = useI18n();
 	const [action, setAction] = useState<
 		"rename" | "upgrade" | "republish" | null
 	>(null);
@@ -62,38 +65,34 @@ export function TrackActions({
 		<>
 			<DisclosureGroup>
 				<Disclosure id="track-actions">
-					<Button slot="trigger">Другие действия</Button>
+					<Button slot="trigger">{message(locale, "otherTrackActions")}</Button>
 					<DisclosurePanel>
 						<div className={objectActions}>
 							<Button onPress={() => open("rename")}>
-								Изменить локальное название
+								{message(locale, "editLocalTitle")}
 							</Button>
 							<Button
 								onPress={() => {
 									onMutate(refreshProviderHint);
-									setNotice(
-										"Кэш провайдера обновлён отдельно. Публикация и снимок метаданных не изменились.",
-									);
+									setNotice(message(locale, "providerCacheRefreshed"));
 								}}
 							>
-								Обновить кэш провайдера
+								{message(locale, "refreshProviderCache")}
 							</Button>
 							{track.published?.codec === "MP3" && file?.codec === "FLAC" && (
 								<Button onPress={() => open("upgrade")}>
-									Демо: улучшить только качество аудио
+									{message(locale, "upgradeAudio")}
 								</Button>
 							)}
 							{track.published && (
 								<Button
-									onPress={() => {
-										if (file) open("republish");
-										else
-											setNotice(
-												"Для явной перепубликации нужно выбрать исходник. Альтернативный вариант автоматически не выбирается.",
-											);
-									}}
+									onPress={() =>
+										file
+											? open("republish")
+											: setNotice(message(locale, "chooseSource"))
+									}
 								>
-									Перепубликовать явно
+									{message(locale, "republishExplicit")}
 								</Button>
 							)}
 						</div>
@@ -110,8 +109,8 @@ export function TrackActions({
 			{notice && <p role="status">{notice}</p>}
 			<Modal
 				isOpen={action !== null}
-				onOpenChange={(open) => {
-					if (!open) setAction(null);
+				onOpenChange={(isOpen) => {
+					if (!isOpen) setAction(null);
 				}}
 				isDismissable
 			>
@@ -121,22 +120,18 @@ export function TrackActions({
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (action === "republish" && downgradeRequired && !downgrade) {
-								setNotice("Понижение отменено: требуется явное подтверждение.");
+								setNotice(message(locale, "downgradeRequired"));
 								document
-									.querySelector<HTMLElement>(".demo-downgrade input")
+									.querySelector<HTMLElement>(".track-downgrade input")
 									?.focus();
 								return;
 							}
 							if (action === "rename") {
 								onMutate((current) => renameLocalTrack(current, title));
-								setNotice(
-									"Локальное название изменено. Сравните с текущей публикацией; её теги ещё прежние.",
-								);
+								setNotice(message(locale, "renamePreserves"));
 							} else if (action === "upgrade") {
 								onMutate((current) => upgradeAudioOnly(current, files));
-								setNotice(
-									"Демо: изменилось только аудио. Теги, обложка, текст песни и прежний снимок метаданных публикации сохранены.",
-								);
+								setNotice(message(locale, "audioUpgraded"));
 							} else if (action === "republish") {
 								onMutate((current) =>
 									explicitlyRepublish(
@@ -147,48 +142,44 @@ export function TrackActions({
 										artists,
 									),
 								);
-								setNotice(
-									"Демо: явная перепубликация выполнена; текущее состояние и снимок метаданных заменены.",
-								);
+								setNotice(message(locale, "republished"));
 							}
 							setAction(null);
 						}}
 					>
 						<Heading slot="title" id="track-action-title">
 							{action === "rename"
-								? "Изменить только локальные теги"
+								? message(locale, "editTagsOnly")
 								: action === "upgrade"
-									? "Улучшить только аудио?"
-									: "Явно перепубликовать из выбранного исходника?"}
+									? message(locale, "upgradeAudioTitle")
+									: message(locale, "republishTitle")}
 						</Heading>
 						{action === "rename" ? (
 							<>
 								<TextField
-									aria-label="Название позиции"
+									aria-label={message(locale, "trackTitle")}
 									value={title}
 									onChange={setTitle}
 									isRequired
 								>
-									<Label>Название позиции</Label>
+									<Label>{message(locale, "trackTitle")}</Label>
 									<Input />
 								</TextField>
-								<p>
-									Исходник, кэш провайдера и текущая публикация останутся
-									прежними.
-								</p>
+								<p>{message(locale, "renamePreserves")}</p>
 							</>
 						) : (
 							<>
 								<p>
-									{track.title} · {file?.path} · {file?.codec}
+									{message(locale, "sourceAndFormat", {
+										title: track.title,
+										path: file?.path ?? "",
+										codec: file?.codec ?? "",
+									})}
 								</p>
 								<p>
 									{action === "upgrade"
-										? "Метаданные, встроенная обложка и текст песни текущей публикации сохраняются без изменений."
-										: "Полная подготовка и замена выполняются, даже если данные не изменились. Это отдельное действие, а не обычный повтор."}
-								</p>
-								<p>
-									Демонстрация: файловая подготовка и запись не выполняются.
+										? message(locale, "publicationPreserves")
+										: message(locale, "republishDescription")}
 								</p>
 							</>
 						)}
@@ -196,23 +187,23 @@ export function TrackActions({
 							<Checkbox
 								isSelected={downgrade}
 								onChange={setDowngrade}
-								className="demo-downgrade"
+								className="track-downgrade"
 							>
 								<span className="checkbox" aria-hidden="true">
 									{downgrade ? "✓" : ""}
 								</span>
-								Понижение качества подтверждаю
+								{message(locale, "confirmDowngrade")}
 							</Checkbox>
 						)}
 						<div className={dialogFooter}>
 							<Button type="button" onPress={() => setAction(null)}>
-								Отмена
+								{message(locale, "cancelAction")}
 							</Button>
 							<Button
 								type="submit"
 								className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
 							>
-								Подтвердить
+								{message(locale, "confirmAction")}
 							</Button>
 						</div>
 					</form>

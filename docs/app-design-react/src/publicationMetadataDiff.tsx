@@ -5,7 +5,12 @@ import {
 	type CatalogArtist,
 } from "./catalogData";
 import { navidromeFields } from "./metadata/registry";
-import { Button, Disclosure, DisclosurePanel, Heading } from "./ui";
+import { useI18n } from "./i18n";
+import {
+	publicationFieldLabel,
+	publicationGroupLabel,
+	publicationMessage,
+} from "./publicationMessages";
 
 export type MetadataChange = {
 	key: string;
@@ -32,8 +37,8 @@ const groupLabels: Record<string, string> = {
 	audio: "Аудио",
 };
 
-const displayValue = (value: string[]) =>
-	value.length ? value.join(" · ") : "Нет значения";
+const displayValue = (value: string[], empty: string) =>
+	value.length ? value.join(" · ") : empty;
 
 export function metadataTagDiff(
 	before: Record<string, string[]>,
@@ -112,46 +117,90 @@ export function metadataSnapshotDiff(
 			before: beforeExtras.lyrics ? [beforeExtras.lyrics] : [],
 			after: afterExtras.lyrics ? [afterExtras.lyrics] : [],
 		});
-	if (extraChanges.length)
-		groups.push({
-			key: "content",
-			label: "Вложенное содержимое",
-			changes: extraChanges,
-		});
+	const cover = extraChanges.filter((change) => change.key === "cover");
+	const lyrics = extraChanges.filter((change) => change.key === "lyrics");
+	if (cover.length)
+		groups.push({ key: "artwork", label: "Обложка", changes: cover });
+	if (lyrics.length)
+		groups.push({ key: "lyrics", label: "Текст песни", changes: lyrics });
 	return groups;
 }
 
 export function MetadataDiff({ groups }: { groups: MetadataChangeGroup[] }) {
-	if (!groups.length)
-		return <p>Эффективные метаданные совпадают с публикацией.</p>;
+	const { locale } = useI18n();
+	const value = (change: MetadataChange, values: string[]) => {
+		if (change.key === "cover")
+			return (
+				values
+					.map((item) => {
+						const key = {
+							Есть: "artworkPresent",
+							"Есть · текущая": "artworkCurrent",
+							"Есть · новая": "artworkNew",
+						}[item] as
+							| "artworkPresent"
+							| "artworkCurrent"
+							| "artworkNew"
+							| undefined;
+						return key ? publicationMessage(locale, key) : item;
+					})
+					.join(" · ") || publicationMessage(locale, "noValue")
+			);
+		return displayValue(values, publicationMessage(locale, "noValue"));
+	};
+	if (!groups.length) return <p>{publicationMessage(locale, "noChanges")}</p>;
 	return (
-		<Disclosure className="min-w-0 border-0 py-0">
-			<Heading>
-				<Button slot="trigger" className="w-full justify-start text-left">
-					Изменённых полей:{" "}
-					{groups.reduce((count, group) => count + group.changes.length, 0)}
-				</Button>
-			</Heading>
-			<DisclosurePanel>
-				<dl className="grid gap-2 text-xs">
-					{groups.map((group) => (
-						<div key={group.key}>
-							<dt className="font-semibold">{group.label}</dt>
-							<dd>
-								{group.changes.map((change) => (
-									<div
-										className="break-words whitespace-pre-wrap"
-										key={change.key}
-									>
-										{change.label}: {displayValue(change.before)} →{" "}
-										{displayValue(change.after)}
-									</div>
-								))}
-							</dd>
+		<div
+			className="grid max-h-48 min-w-0 gap-2 overflow-y-auto text-xs"
+			aria-label={publicationMessage(locale, "changedFields")}
+		>
+			{groups.map((group) => (
+				<section
+					key={group.key}
+					aria-label={publicationGroupLabel(locale, group.key, group.label)}
+				>
+					<h3 className="mb-1 mt-0 text-[11px] font-semibold">
+						{publicationGroupLabel(locale, group.key, group.label)}
+					</h3>
+					<div className="grid grid-cols-[minmax(72px,.7fr)_minmax(0,1fr)_minmax(0,1fr)] gap-x-1 text-[10px] text-[var(--muted)]">
+						<span>{publicationMessage(locale, "field")}</span>
+						<span>{publicationMessage(locale, "current")}</span>
+						<span>{publicationMessage(locale, "after")}</span>
+					</div>
+					{group.changes.map((change) => (
+						<div
+							key={change.key}
+							className="grid min-w-0 grid-cols-[minmax(72px,.7fr)_minmax(0,1fr)_minmax(0,1fr)] gap-x-1 border-b border-[var(--line)]/70 py-1 last:border-0"
+						>
+							<strong
+								className="truncate font-medium"
+								title={publicationFieldLabel(locale, change.key, change.label)}
+							>
+								{publicationFieldLabel(locale, change.key, change.label)}
+							</strong>
+							{change.key === "lyrics" ? (
+								<>
+									<pre className="m-0 max-h-16 overflow-auto whitespace-pre-wrap break-words font-sans">
+										{value(change, change.before)}
+									</pre>
+									<pre className="m-0 max-h-16 overflow-auto whitespace-pre-wrap break-words font-sans">
+										{value(change, change.after)}
+									</pre>
+								</>
+							) : (
+								<>
+									<span className="max-h-16 min-w-0 overflow-auto break-words">
+										{value(change, change.before)}
+									</span>
+									<span className="max-h-16 min-w-0 overflow-auto break-words">
+										{value(change, change.after)}
+									</span>
+								</>
+							)}
 						</div>
 					))}
-				</dl>
-			</DisclosurePanel>
-		</Disclosure>
+				</section>
+			))}
+		</div>
 	);
 }

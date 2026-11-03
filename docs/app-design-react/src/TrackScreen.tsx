@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import {
 	Button,
 	Disclosure,
@@ -26,6 +27,8 @@ import {
 	MetadataDiff,
 	publicationMetadataDiff,
 } from "./publicationMetadataDiff";
+import { useI18n } from "./i18n/I18nProvider";
+import { formatTrackMessage, trackMessage } from "./trackMessages";
 
 const duration = (seconds: number) =>
 	`${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
@@ -60,8 +63,19 @@ export function TrackScreen({
 	files?: SourceFiles;
 	artists?: CatalogArtist[];
 }) {
+	const { locale } = useI18n();
+	const [inspectionFileId, setInspectionFileId] = useState<string>();
+	const tagComparisonRef = useRef<HTMLDetailsElement>(null);
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
 	const file = track.sourceId ? files[track.sourceId] : undefined;
+	const inspectedFileId =
+		inspectionFileId && sourceIds.includes(inspectionFileId)
+			? inspectionFileId
+			: track.sourceId;
+	const inspectSource = (id: string) => {
+		setInspectionFileId(id);
+		if (tagComparisonRef.current) tagComparisonRef.current.open = true;
+	};
 	const provider = originalProviders.find((item) =>
 		item.tracks.some((candidate) => candidate.id === track.providerTrackId),
 	);
@@ -74,17 +88,17 @@ export function TrackScreen({
 		? null
 		: track.observedFile?.state === "changed" ||
 				track.observedFile?.state === "drift"
-			? "изменён вне приложения"
+			? trackMessage(locale, "fileChanged")
 			: track.observedFile?.state === "missing" &&
 					track.observedFile.rootAvailable === true
-				? "отсутствует"
+				? trackMessage(locale, "fileMissing")
 				: track.observedFile?.state === "missing" ||
 						track.observedFile?.state === "output-unavailable"
-					? "выходной каталог недоступен; наличие файла не установлено"
+					? trackMessage(locale, "publicationRootUnavailable")
 					: track.observedFile?.state === "available" ||
 							track.observedFile?.state === "unchanged"
-						? "отклонений не отмечено"
-						: "состояние файла не проверено";
+						? trackMessage(locale, "noDeviations")
+						: trackMessage(locale, "fileStateNotChecked");
 	return (
 		<section className={catalogueStyles.object}>
 			<header className={catalogueStyles.objectHeader}>
@@ -93,8 +107,8 @@ export function TrackScreen({
 						{String(track.position).padStart(2, "0")} · {track.title}
 					</h1>
 					<p>
-						{originalArtistName(track.artistId, artists)} / {release.title} ·
-						позиция конкретного издания
+						{originalArtistName(track.artistId, artists)} / {release.title} ·{" "}
+						{trackMessage(locale, "trackPosition")}
 					</p>
 				</div>
 				{artistReleaseHref(release, artists ?? catalogData.artists) ? (
@@ -104,10 +118,10 @@ export function TrackScreen({
 							undefined
 						}
 					>
-						К артисту и изданию
+						{trackMessage(locale, "artistAndRelease")}
 					</a>
 				) : (
-					<a href="#library">К медиатеке</a>
+					<a href="#library">{trackMessage(locale, "library")}</a>
 				)}
 			</header>
 			{(onMutate || onRecordingChange) && (
@@ -124,81 +138,101 @@ export function TrackScreen({
 			)}
 			<div className={catalogueStyles.objectColumns}>
 				<section className={catalogueStyles.panel}>
-					<details className={catalogueStyles.trackDetails}>
-						<summary>
-							Аудио и публикация ·{" "}
-							{file
-								? `${file.codec} · ${duration(file.duration)}`
-								: "исходник не выбран"}{" "}
-							·{" "}
-							{track.published
-								? `${track.published.container} · ${track.published.codec}`
-								: "не опубликована"}
-						</summary>
-						<h2>Исходник для публикации</h2>
-						{sourceIds.length ? (
-							<RadioGroup
-								aria-label="Исходник для публикации"
-								value={track.sourceId ?? ""}
-								onChange={onSource}
-							>
-								{sourceIds.map((id) => {
-									const source = files[id];
-									return source ? (
-										<Radio
-											key={id}
-											value={id}
-											className={catalogueStyles.source}
-										>
+					<h2>{trackMessage(locale, "audioSources")}</h2>
+					<p className="mb-2 text-xs text-[var(--muted)]">
+						{trackMessage(locale, "publicationSourceHelp")}
+					</p>
+					{sourceIds.length ? (
+						<RadioGroup
+							aria-label={trackMessage(locale, "publicationSource")}
+							value={track.sourceId ?? ""}
+							onChange={onSource}
+						>
+							{sourceIds.map((id) => {
+								const source = files[id];
+								if (!source) return null;
+								const selectedForPublication = track.sourceId === id;
+								return (
+									<div
+										key={id}
+										className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-[var(--line)] py-2 last:border-0"
+									>
+										<Radio value={id} className={catalogueStyles.source}>
 											<span
 												aria-hidden="true"
 												className={catalogueStyles.radioDot}
 											/>
-											<span>
-												<strong>{source.name}</strong>
+											<span className="min-w-0">
+												<strong className="block truncate">
+													{source.name}
+												</strong>
 												<span className={catalogueStyles.secondaryInline}>
 													{source.codec} · {duration(source.duration)} ·{" "}
-													{source.size}
+													{source.available
+														? trackMessage(locale, "available")
+														: trackMessage(locale, "unavailable")}
+												</span>
+												<span className="block text-[11px] text-[var(--muted)]">
+													{selectedForPublication
+														? trackMessage(locale, "selectedForPublication")
+														: trackMessage(locale, "chooseForPublication")}
 												</span>
 											</span>
 										</Radio>
-									) : null;
-								})}
-							</RadioGroup>
-						) : (
-							<p>Связанных вариантов нет.</p>
-						)}
-						<p>
-							Переключатель явно выбирает один исходник для публикации. Текущая
-							публикация не меняется автоматически.
-						</p>
-					</details>
+										<Button
+											aria-pressed={inspectedFileId === id}
+											onPress={() => inspectSource(id)}
+										>
+											{inspectedFileId === id
+												? trackMessage(locale, "inspectingTags")
+												: trackMessage(locale, "inspectTags")}
+										</Button>
+									</div>
+								);
+							})}
+						</RadioGroup>
+					) : (
+						<p>{trackMessage(locale, "noLinkedSources")}</p>
+					)}
 				</section>
 				<section className={catalogueStyles.panel}>
-					<h2>Публикация</h2>
-					<p aria-label="Состояние метаданных публикации">
+					<h2>{trackMessage(locale, "publication")}</h2>
+					<p aria-label={trackMessage(locale, "metadataState")}>
 						<strong>
 							{track.published
 								? changed
-									? `Метаданные изменились · ${changes.reduce((count, group) => count + group.changes.length, 0)} изменений`
-									: "Метаданные совпадают с публикацией"
-								: "Публикации ещё нет"}
+									? formatTrackMessage(locale, "metadataChanged", {
+											count: changes.reduce(
+												(count, group) => count + group.changes.length,
+												0,
+											),
+										})
+									: trackMessage(locale, "metadataMatches")
+								: trackMessage(locale, "noPublication")}
 						</strong>
 					</p>
 					{track.published && (
 						<details>
-							<summary>Сравнить эффективные метаданные</summary>
+							<summary>
+								{trackMessage(locale, "compareEffectiveMetadata")}
+							</summary>
 							<MetadataDiff groups={changes} />
 						</details>
 					)}
-					{outputStatus && <p>Файл публикации: {outputStatus}.</p>}
+					{outputStatus && (
+						<p>
+							{trackMessage(locale, "publicationFileStatus")}: {outputStatus}.
+						</p>
+					)}
 					<div className={catalogueStyles.actions}>
 						{track.published && (
 							<Button onPress={() => onMetadataPreview([track.id])}>
-								Обновить метаданные
+								{trackMessage(locale, "updateMetadata")}
 							</Button>
 						)}
-						<Button onPress={onPreview}>Предпросмотр публикации</Button>
+						<Button onPress={onPreview}>
+							{trackMessage(locale, "previewPublication")}
+						</Button>
 					</div>
 					{onMutate && (
 						<TrackActions
@@ -211,45 +245,50 @@ export function TrackScreen({
 						/>
 					)}
 					<details className={catalogueStyles.trackDetails}>
-						<summary>Состояние и технические сведения</summary>
+						<summary>{trackMessage(locale, "technicalDetails")}</summary>
 						<dl className={catalogueStyles.facts}>
-							<dt>Композиция</dt>
+							<dt>{trackMessage(locale, "composition")}</dt>
 							<dd>
 								{track.recordingTitle ||
 									providerTrack?.title ||
 									(track.recordingId
-										? "Связанная композиция"
-										: "Без связи с провайдером")}
+										? trackMessage(locale, "linkedRecording")
+										: trackMessage(locale, "unlinkedRecording"))}
 							</dd>
-							<dt>Файл на диске</dt>
+							<dt>{trackMessage(locale, "fileState")}</dt>
 							<dd>
-								{track.observedFile
-									? "Файл изменён вне приложения"
-									: "Изменения не отмечены"}
+								{outputStatus ??
+									(track.observedFile
+										? trackMessage(locale, "fileChangedOutside")
+										: trackMessage(locale, "noFileChangesMarked"))}
 							</dd>
-							<dt>Формат исходника</dt>
+							<dt>{trackMessage(locale, "sourceFormat")}</dt>
 							<dd>
 								{file
-									? `${file.codec} · ${duration(file.duration)} · ${file.size}`
-									: "Не выбран"}
+									? `${file.codec} · ${duration(file.duration)}`
+									: trackMessage(locale, "notSelected")}
 							</dd>
-							<dt>Формат публикации</dt>
+							<dt>{trackMessage(locale, "publicationFormat")}</dt>
 							<dd>
 								{track.published
 									? `${track.published.container} · ${track.published.codec}`
-									: "Не опубликована"}
+									: trackMessage(locale, "noPublication")}
 							</dd>
 						</dl>
 						<dl className={catalogueStyles.facts}>
-							<dt>Путь исходника</dt>
-							<dd>{file?.path ?? "Не выбран"}</dd>
-							<dt>Идентификатор композиции</dt>
-							<dd>{track.recordingId ?? "Нет связи"}</dd>
-							<dt>Подсказка провайдера</dt>
-							<dd>{track.providerTitle || providerTrack?.title || "Нет"}</dd>
+							<dt>{trackMessage(locale, "path")}</dt>
+							<dd>{file?.path ?? trackMessage(locale, "notSelected")}</dd>
+							<dt>{trackMessage(locale, "composition")}</dt>
+							<dd>{track.recordingId ?? trackMessage(locale, "noLink")}</dd>
+							<dt>{trackMessage(locale, "providerHint")}</dt>
+							<dd>
+								{track.providerTitle ||
+									providerTrack?.title ||
+									trackMessage(locale, "noProviderHint")}
+							</dd>
 							{track.observedFile?.mtime && (
 								<>
-									<dt>Внешнее изменение файла · время наблюдения</dt>
+									<dt>{trackMessage(locale, "externalChangeTime")}</dt>
 									<dd>{track.observedFile.mtime}</dd>
 								</>
 							)}
@@ -257,34 +296,36 @@ export function TrackScreen({
 						{track.published && (
 							<Disclosure className={catalogueStyles.trackPublication}>
 								<Heading>
-									<Button slot="trigger">Текущая публикация</Button>
+									<Button slot="trigger">
+										{trackMessage(locale, "currentPublication")}
+									</Button>
 								</Heading>
 								<DisclosurePanel>
 									<dl className={catalogueStyles.facts}>
-										<dt>Путь</dt>
+										<dt>{trackMessage(locale, "path")}</dt>
 										<dd>{track.published.path}</dd>
-										<dt>Снимок тегов</dt>
+										<dt>{trackMessage(locale, "tagSnapshot")}</dt>
 										<dd>
 											{Object.entries(track.published.tags)
 												.map(([key, values]) => `${key}: ${values.join(" · ")}`)
 												.join("; ")}
 										</dd>
-										<dt>Прочитано</dt>
+										<dt>{trackMessage(locale, "readAt")}</dt>
 										<dd>{track.published.readAt}</dd>
 									</dl>
 								</DisclosurePanel>
 							</Disclosure>
 						)}
-						<p>
-							Локальные изменения сравниваются с последним успешным состоянием
-							публикации.
-						</p>
+						<p>{trackMessage(locale, "localChangesHelp")}</p>
 					</details>
 				</section>
 			</div>
-			<details className="grid min-w-0 gap-3 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3">
+			<details
+				ref={tagComparisonRef}
+				className="grid min-w-0 gap-3 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3"
+			>
 				<summary className="cursor-pointer font-semibold">
-					Сравнить теги файла и публикации
+					{trackMessage(locale, "compareFileAndPublication")}
 				</summary>
 				<TagsComparison
 					releases={[release]}
@@ -292,8 +333,9 @@ export function TrackScreen({
 					files={files}
 					scope="track"
 					initialTrackId={track.id}
+					initialFileId={inspectedFileId}
 					onPreview={onMetadataPreview}
-					allowScopeChange
+					fixedContext
 				/>
 			</details>
 		</section>

@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { Button } from "./ui";
 import { demoGenres } from "./GenreLibrary";
 import { GenrePicker } from "./metadata/GenrePicker";
+import { useI18n } from "./i18n/I18nProvider";
+import { catalogueMessage } from "./catalogueMessages";
 
 export type MetadataField = { key: string; label: string; value: string };
 type GenreField = {
@@ -26,6 +28,11 @@ export function ObjectMetadataForm({
 	genreField?: GenreField;
 	onSave: (values: Record<string, string>, genres?: string[]) => void;
 }) {
+	const { locale } = useI18n();
+	const m = (
+		key: Parameters<typeof catalogueMessage>[1],
+		values?: Record<string, string | number>,
+	) => catalogueMessage(locale, key, values);
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState<Record<string, string>>({});
 	const [draftGenres, setDraftGenres] = useState<string[]>([]);
@@ -52,7 +59,7 @@ export function ObjectMetadataForm({
 			({ key }) => required.includes(key) && !draft[key]?.trim(),
 		);
 		if (missing) {
-			setError(`Заполните поле «${missing.label}».`);
+			setError(missing.label);
 			return;
 		}
 		const values = Object.fromEntries(
@@ -85,7 +92,7 @@ export function ObjectMetadataForm({
 						className="w-[132px] shrink-0"
 						onPress={editing ? save : beginEdit}
 					>
-						{editing ? "Сохранить" : "Редактировать"}
+						{editing ? m("save") : m("edit")}
 					</Button>
 					<Button
 						className={`w-[132px] shrink-0 ${editing ? "visible" : "invisible"}`}
@@ -93,7 +100,7 @@ export function ObjectMetadataForm({
 						aria-hidden={!editing}
 						onPress={cancel}
 					>
-						Отменить
+						{m("cancel")}
 					</Button>
 				</div>
 			</div>
@@ -151,7 +158,7 @@ export function ObjectMetadataForm({
 				))}
 			</div>
 			<p aria-live="polite" className="m-0 min-h-4 text-xs text-[var(--error)]">
-				{error}
+				{error ? m("requiredField", { field: error }) : ""}
 			</p>
 		</section>
 	);

@@ -12,6 +12,8 @@ import {
 	type MatchingSearchEntity,
 } from "./matchingSearch";
 import { matchingSearchControls, matchingSearchResult } from "./matchingStyles";
+import { useI18n } from "./i18n/I18nProvider";
+import { matchingSearchPickerMessages } from "./matchingSearchPickerMessages";
 
 type Props = {
 	artists: CatalogArtist[];
@@ -30,6 +32,15 @@ export function MatchingSearchPicker({
 	onSelectRelease,
 	pageSize = DEFAULT_MATCHING_PAGE_SIZE,
 }: Props) {
+	const { locale } = useI18n();
+	const m = (
+		key: keyof typeof matchingSearchPickerMessages.en,
+		values: Record<string, string | number> = {},
+	) =>
+		matchingSearchPickerMessages[locale][key].replace(
+			/\{([^}]+)\}/g,
+			(_, name: string) => String(values[name] ?? `{${name}}`),
+		);
 	const [entity, setEntity] = useState<MatchingSearchEntity>("release");
 	const [mode, setMode] = useState<SearchMode>("text");
 	const [query, setQuery] = useState("");
@@ -40,7 +51,6 @@ export function MatchingSearchPicker({
 		"idle",
 	);
 	const [error, setError] = useState("");
-	const [exactMessage, setExactMessage] = useState("");
 
 	const availableReleases = selectedArtistId
 		? releases.filter((release) => release.artistId === selectedArtistId)
@@ -51,11 +61,18 @@ export function MatchingSearchPicker({
 				? searchMatchingArtists(submittedQuery, artists)
 				: searchMatchingReleases(submittedQuery, availableReleases, artists)
 			: [];
-	const exactMatches =
+	const exactResult =
 		status === "ready" && mode === "identity"
-			? findExactMatchingIdentity(entity, submittedQuery, artists, releases)
-					.items
-			: [];
+			? findExactMatchingIdentity(
+					entity,
+					submittedQuery,
+					artists,
+					releases,
+					locale,
+				)
+			: null;
+	const exactMatches = exactResult?.items ?? [];
+	const exactMessage = exactResult?.message ?? "";
 	const results = mode === "identity" ? exactMatches : textMatches;
 	const pageResult = matchingPage(results, page, pageSize);
 	const showArtistReleases = entity === "artist" && selectedArtistId !== null;
@@ -69,25 +86,15 @@ export function MatchingSearchPicker({
 		setSubmittedQuery(value);
 		setPage(0);
 		setSelectedArtistId(null);
-		setExactMessage("");
 		setError("");
 		setStatus("loading");
 		await Promise.resolve();
 		try {
-			if (mode === "identity") {
-				const result = findExactMatchingIdentity(
-					entity,
-					value,
-					artists,
-					releases,
-				);
-				setExactMessage(result.message);
-			}
+			if (mode === "identity")
+				findExactMatchingIdentity(entity, value, artists, releases, locale);
 			setStatus("ready");
 		} catch {
-			setError(
-				"Не удалось обработать поиск по fixture. Измените запрос и попробуйте снова.",
-			);
+			setError(m("searchError"));
 			setStatus("error");
 		}
 	};
@@ -110,7 +117,8 @@ export function MatchingSearchPicker({
 				{release.country}
 			</span>
 			<span className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
-				{release.tracks.length} позиций · {release.catalog}
+				{m("releaseTrackCount", { count: release.tracks.length })} ·{" "}
+				{release.catalog}
 			</span>
 			<code className="[overflow-wrap:anywhere] text-[10px] text-[var(--muted)]">
 				{release.id}
@@ -133,7 +141,7 @@ export function MatchingSearchPicker({
 			<div
 				className={matchingSearchControls}
 				role="group"
-				aria-label="Тип поиска"
+				aria-label={m("searchType")}
 			>
 				<Button
 					type="button"
@@ -145,7 +153,7 @@ export function MatchingSearchPicker({
 						setSelectedArtistId(null);
 					}}
 				>
-					Издания
+					{m("releases")}
 				</Button>
 				<Button
 					type="button"
@@ -157,13 +165,13 @@ export function MatchingSearchPicker({
 						setSelectedArtistId(null);
 					}}
 				>
-					Артисты
+					{m("artists")}
 				</Button>
 			</div>
 			<div
 				className={matchingSearchControls}
 				role="group"
-				aria-label="Способ поиска"
+				aria-label={m("searchMethod")}
 			>
 				<Button
 					type="button"
@@ -174,7 +182,7 @@ export function MatchingSearchPicker({
 						setPage(0);
 					}}
 				>
-					По названию
+					{m("byName")}
 				</Button>
 				<Button
 					type="button"
@@ -185,34 +193,36 @@ export function MatchingSearchPicker({
 						setPage(0);
 					}}
 				>
-					Точный ID / URL
+					{m("exactIdUrl")}
 				</Button>
 			</div>
 			<form onSubmit={submit}>
 				<Label htmlFor="matching-provider-query">
 					{mode === "identity"
-						? "Идентификатор fixture или MusicBrainz MBID / URL"
+						? m("identityLabel")
 						: entity === "artist"
-							? "Имя артиста"
-							: "Артист, издание, каталог или ID"}
+							? m("artistNameLabel")
+							: m("releaseSearchLabel")}
 				</Label>
 				<div className="matching-search my-1.5 mb-2 flex gap-1.5">
 					{mode === "identity" ? (
 						<TextField
-							aria-label="Идентификатор или MusicBrainz URL"
+							aria-label={m("identityAriaLabel")}
 							value={query}
 							onChange={setQuery}
 						>
 							<Input
 								id="matching-provider-query"
-								placeholder="MBID, официальный URL или fixture ID"
+								placeholder={m("identityPlaceholder")}
 							/>
 						</TextField>
 					) : (
 						<SearchField
-							aria-label={
-								entity === "artist" ? "Поиск артистов" : "Поиск изданий"
-							}
+							aria-label={m(
+								entity === "artist"
+									? "artistSearchAriaLabel"
+									: "releaseSearchAriaLabel",
+							)}
 							value={query}
 							onChange={setQuery}
 						>
@@ -220,24 +230,24 @@ export function MatchingSearchPicker({
 								id="matching-provider-query"
 								placeholder={
 									entity === "artist"
-										? "Имя артиста…"
-										: "Артист, альбом, каталог…"
+										? m("artistPlaceholder")
+										: m("releasePlaceholder")
 								}
 							/>
 						</SearchField>
 					)}
-					<Button type="submit">Найти</Button>
+					<Button type="submit">{m("search")}</Button>
 				</div>
 			</form>
 			<p className="text-[11px] text-[var(--muted)]">
-				Демо-поиск использует только записи и идентификаторы из неизменяемых
-				fixture. Размер страницы: {pageSize}.
+				{m("availableRecords", { pageSize })}
 			</p>
 			{showArtistReleases && (
 				<p className="flex flex-wrap items-center gap-2 text-xs">
 					<span>
-						Издания выбранного артиста:{" "}
-						{artistName(selectedArtistId ?? "", artists)}
+						{m("releasesForArtist", {
+							artist: artistName(selectedArtistId ?? "", artists),
+						})}
 					</span>
 					<Button
 						type="button"
@@ -246,22 +256,21 @@ export function MatchingSearchPicker({
 							setPage(0);
 						}}
 					>
-						К результатам артистов
+						{m("artistResults")}
 					</Button>
 				</p>
 			)}
-			{status === "loading" && <p role="status">Поиск по fixture…</p>}
+			{status === "loading" && <p role="status">{m("searching")}</p>}
 			{status === "error" && <p role="alert">{error}</p>}
 			{status === "ready" && !hasResult && (
 				<p className={matchingSearchResult} role="status">
 					{mode === "identity"
-						? exactMessage ||
-							"Точная идентичность не найдена. Похожее имя не используется вместо MBID."
+						? exactMessage || m("identityNotFound")
 						: !submittedQuery
-							? "Введите запрос и нажмите «Найти»; список не фильтруется до отправки."
+							? m("enterQuery")
 							: showArtistReleases
-								? "У выбранного артиста в fixture нет доступных изданий."
-								: "Совпадений в fixture нет. Поиск выполняется только по текущим демонстрационным данным."}
+								? m("noArtistReleases")
+								: m("noMatches")}
 				</p>
 			)}
 			{status === "ready" && hasResult && (
@@ -280,11 +289,11 @@ export function MatchingSearchPicker({
 											<strong>{(item as CatalogArtist).name}</strong>
 											<span className="text-[10px] text-[var(--muted)]">
 												{(item as CatalogArtist).disambiguation ||
-													"Без уточнения"}{" "}
-												· ID fixture: {item.id}
+													m("artistDisambiguation")}{" "}
+												· {m("artistId", { id: item.id })}
 											</span>
 											<span className="text-[10px] text-[var(--muted)]">
-												Выбрать артиста и показать его издания
+												{m("showArtistReleases")}
 											</span>
 										</Button>
 									) : (
@@ -298,17 +307,17 @@ export function MatchingSearchPicker({
 							isDisabled={currentPage <= 0}
 							onPress={() => setPage(currentPage - 1)}
 						>
-							Назад
+							{m("previous")}
 						</Button>
 						<span aria-live="polite">
-							Страница {currentPage + 1} из {resultPageCount}
+							{m("page", { current: currentPage + 1, total: resultPageCount })}
 						</span>
 						<Button
 							type="button"
 							isDisabled={currentPage + 1 >= resultPageCount}
 							onPress={() => setPage(currentPage + 1)}
 						>
-							Дальше
+							{m("next")}
 						</Button>
 					</div>
 				</>

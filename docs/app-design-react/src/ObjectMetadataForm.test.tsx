@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ObjectMetadataForm } from "./ObjectMetadataForm";
+import { I18nProvider, useI18n } from "./i18n/I18nProvider";
 
 const initialFields = [
 	{ key: "title", label: "Title", value: "Saved title" },
@@ -31,6 +32,20 @@ function Harness({
 	);
 }
 
+function LocalePreferenceControls() {
+	const { setPreference } = useI18n();
+	return (
+		<div>
+			<button type="button" onClick={() => setPreference("en")}>
+				Use English
+			</button>
+			<button type="button" onClick={() => setPreference("ru")}>
+				Use Russian
+			</button>
+		</div>
+	);
+}
+
 describe("ObjectMetadataForm", () => {
 	it("edits and saves using the same DOM controls, preserving fixed action dimensions", () => {
 		const onSave = vi.fn();
@@ -57,7 +72,7 @@ describe("ObjectMetadataForm", () => {
 		const providerInput = screen.getByRole("textbox", { name: "Provider" });
 		const edit = screen.getByRole("button", { name: "Редактировать" });
 		const cancel = screen.getByRole("button", {
-			name: "Отменить",
+			name: "Отмена",
 			hidden: true,
 		});
 		const fieldGrid = title.closest("label")?.parentElement;
@@ -72,7 +87,7 @@ describe("ObjectMetadataForm", () => {
 		fireEvent.click(edit);
 		expect(screen.getByRole("textbox", { name: "Title" })).toBe(title);
 		expect(screen.getByRole("textbox", { name: "Artist" })).toBe(artist);
-		expect(screen.getByRole("button", { name: "Отменить" })).toBe(cancel);
+		expect(screen.getByRole("button", { name: "Отмена" })).toBe(cancel);
 		expect(cancel.className).toContain("visible");
 		expect(title).not.toHaveProperty("readOnly", true);
 		expect(providerInput).toHaveProperty("readOnly", true);
@@ -103,7 +118,7 @@ describe("ObjectMetadataForm", () => {
 		const edit = screen.getByRole("button", { name: "Редактировать" });
 		fireEvent.click(edit);
 		fireEvent.change(title, { target: { value: "Discard me" } });
-		fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+		fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
 		expect(title).toHaveValue("Saved title");
 		expect(title).toHaveProperty("readOnly", true);
 		expect(edit).toHaveFocus();
@@ -140,6 +155,37 @@ describe("ObjectMetadataForm", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("retains the shared edit draft when the locale changes", () => {
+		const onSave = vi.fn();
+		render(
+			<I18nProvider>
+				<LocalePreferenceControls />
+				<ObjectMetadataForm
+					label="Object metadata"
+					fields={initialFields}
+					required={["title"]}
+					onSave={onSave}
+				/>
+			</I18nProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Use English" }));
+		fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+		const title = screen.getByRole("textbox", { name: "Title" });
+		fireEvent.change(title, { target: { value: "Unsaved draft" } });
+
+		fireEvent.click(screen.getByRole("button", { name: "Use Russian" }));
+		expect(title).toHaveValue("Unsaved draft");
+		expect(
+			screen.getByRole("button", { name: "Сохранить" }),
+		).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+		expect(onSave).toHaveBeenCalledExactlyOnceWith({
+			title: "Unsaved draft",
+			artist: "Saved artist",
+		});
+	});
+
 	it("keeps the genre control fixed-height and only submits picker changes", () => {
 		const onSave = vi.fn();
 		const genreField = {
@@ -164,12 +210,15 @@ describe("ObjectMetadataForm", () => {
 		fireEvent.change(screen.getByRole("searchbox", { name: "Поиск жанров" }), {
 			target: { value: "rock" },
 		});
-		fireEvent.click(screen.getByRole("option", { name: "rock" }));
+		fireEvent.change(screen.getByRole("searchbox", { name: "Поиск жанров" }), {
+			target: { value: "rock" },
+		});
+		fireEvent.click(screen.getByRole("option", { name: "Rock" }));
 		fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 		fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 		expect(onSave).toHaveBeenCalledWith(
 			expect.objectContaining({ title: "Saved title" }),
-			["legacy-unavailable-id", "demo-genre-rock"],
+			["legacy-unavailable-id", "0e3fc579-2d24-4f20-9dae-736e1ec78798"],
 		);
 
 		onSave.mockClear();

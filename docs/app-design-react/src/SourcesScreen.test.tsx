@@ -5,130 +5,53 @@ import { initialSourceRoots, SourcesScreen } from "./SourcesScreen";
 import {
 	createSourceScan,
 	initialSourceProcessingState,
-	processSourceQueue,
 	type SourceProcessingState,
 } from "./sourceProcessingModel";
 
-it("refuses root removal while an operation is active", () => {
-	const onRemove = vi.fn();
-	render(
+function renderSources({
+	workDirectory = "",
+	initialProcessingState = initialSourceProcessingState,
+	onRemove = vi.fn(),
+	onProcessingState = vi.fn(),
+}: {
+	workDirectory?: string;
+	initialProcessingState?: SourceProcessingState;
+	onRemove?: (id: string) => void;
+	onProcessingState?: (state: SourceProcessingState) => void;
+} = {}) {
+	const view = render(
 		<SourcesScreen
 			roots={initialSourceRoots}
 			onRoots={vi.fn()}
 			files={originalFiles}
 			removed={new Set()}
 			onRemove={onRemove}
-		/>,
-	);
-	fireEvent.click(
-		screen.getByText("Демонстрация удаления источника", { exact: true }),
-	);
-	fireEvent.click(
-		screen.getByRole("checkbox", {
-			name: "Для /mnt/music выполняется операция",
-		}),
-	);
-	fireEvent.click(
-		screen.getAllByRole("button", { name: "Удалить каталог" })[1],
-	);
-	expect(screen.getByRole("status")).toHaveTextContent("Удаление отклонено");
-	expect(onRemove).not.toHaveBeenCalled();
-	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-});
-
-it("uses the registered root identity and inventory count for removal confirmation", () => {
-	render(
-		<SourcesScreen
-			roots={initialSourceRoots}
-			onRoots={vi.fn()}
-			files={originalFiles}
-			removed={new Set()}
-			onRemove={vi.fn()}
-		/>,
-	);
-	fireEvent.click(
-		screen.getByText("Демонстрация удаления источника", { exact: true }),
-	);
-	const libraryRow = screen.getByText("root-library").closest("tr");
-	expect(libraryRow).toHaveTextContent("/mnt/music");
-	expect(libraryRow).toHaveTextContent("2");
-	if (!libraryRow) throw new Error("Missing library root row");
-	fireEvent.click(
-		within(libraryRow).getByRole("button", { name: "Удалить каталог" }),
-	);
-	expect(screen.getByRole("dialog")).toHaveTextContent("/mnt/music");
-	expect(screen.getByRole("dialog")).toHaveTextContent(
-		"Записей о файлах в инвентаре: 2",
-	);
-});
-
-it("does not invent a processing mode or require a work directory for source admission", () => {
-	const onRoots = vi.fn();
-	render(
-		<SourcesScreen
-			roots={initialSourceRoots}
-			onRoots={onRoots}
-			files={originalFiles}
-			removed={new Set()}
-			onRemove={vi.fn()}
-		/>,
-	);
-	fireEvent.click(screen.getByRole("button", { name: "Добавить источник" }));
-	fireEvent.change(screen.getByRole("textbox", { name: "Имя источника" }), {
-		target: { value: "New source" },
-	});
-	fireEvent.click(
-		screen.getAllByRole("button", { name: "Добавить источник" })[1],
-	);
-	expect(onRoots).not.toHaveBeenCalled();
-	fireEvent.click(screen.getByRole("radio", { name: "Через рабочую копию" }));
-	fireEvent.click(
-		screen.getAllByRole("button", { name: "Добавить источник" })[1],
-	);
-	expect(onRoots).toHaveBeenCalledWith(
-		expect.arrayContaining([
-			expect.objectContaining({
-				name: "New source",
-				id: expect.any(String),
-				mode: "staged",
-				available: null,
-			}),
-		]),
-	);
-});
-
-it("scan queues without copies; explicit processing creates staged failure and copy", () => {
-	const onProcessingState = vi.fn();
-	render(
-		<SourcesScreen
-			roots={initialSourceRoots}
-			onRoots={vi.fn()}
-			files={originalFiles}
-			removed={new Set()}
-			onRemove={vi.fn()}
-			workDirectory="/mnt/work"
+			workDirectory={workDirectory}
+			initialProcessingState={initialProcessingState}
 			onProcessingState={onProcessingState}
 		/>,
 	);
+	return { ...view, onRemove, onProcessingState };
+}
 
+function sourceRow(name: string) {
+	const row = screen
+		.getAllByRole("row")
+		.find((candidate) => within(candidate).queryByText(name));
+	if (!row) throw new Error(`Missing source row: ${name}`);
+	return row;
+}
+
+it("automatically starts fixed processing from Scan and retries only the failed step", () => {
+	const onProcessingState = vi.fn();
+	renderSources({ workDirectory: "/mnt/work", onProcessingState });
+	const inboxRow = sourceRow("Входящие");
 	fireEvent.click(
-		screen.getAllByRole("button", { name: "Сканировать · демо" })[0],
+		within(inboxRow).getByRole("button", { name: "Сканировать и обработать" }),
 	);
-	let state: SourceProcessingState = onProcessingState.mock.lastCall?.[0];
+
+	let state = onProcessingState.mock.lastCall?.[0] as SourceProcessingState;
 	expect(state.files.length).toBeGreaterThan(0);
-	expect(
-		state.files.every(
-			(file) =>
-				file.status === "queued" &&
-				file.steps.every((step) => step.status === "queued"),
-		),
-	).toBe(true);
-	expect(state.copies).toEqual([]);
-
-	fireEvent.click(
-		screen.getAllByRole("button", { name: "Обработать найденные · демо" })[0],
-	);
-	state = onProcessingState.mock.lastCall?.[0];
 	expect(
 		state.files.every(
 			(file) =>
@@ -138,87 +61,133 @@ it("scan queues without copies; explicit processing creates staged failure and c
 		),
 	).toBe(true);
 	expect(state.copies).toHaveLength(state.files.length);
-	expect(state.copies.every((copy) => copy.status === "retained")).toBe(true);
-	expect(screen.getAllByText(/Защищена: обработка не завершена/).length).toBe(
-		state.copies.length,
+	expect(screen.getAllByRole("alert")).toHaveLength(state.files.length);
+
+	const first = state.files[0];
+	if (!first) throw new Error("Missing failed processing file");
+	fireEvent.click(
+		screen.getAllByRole("button", { name: "Повторить: Fingerprint" })[0],
+	);
+	state = onProcessingState.mock.lastCall?.[0] as SourceProcessingState;
+	expect(state.files.find((file) => file.id === first.id)?.status).toBe(
+		"completed",
+	);
+	expect(state.files.find((file) => file.id === first.id)?.steps).toMatchObject(
+		[
+			{ id: "audio_inspection", status: "succeeded" },
+			{ id: "fingerprint", status: "succeeded" },
+		],
+	);
+	expect(state.files.slice(1).every((file) => file.status === "failed")).toBe(
+		true,
+	);
+	expect(screen.queryByText(/демо|демонстрац/i)).not.toBeInTheDocument();
+});
+
+it("keeps staged processing intent and offers Settings when no work directory is configured", () => {
+	const onProcessingState = vi.fn();
+	renderSources({ onProcessingState });
+	const inboxRow = sourceRow("Входящие");
+	fireEvent.click(
+		within(inboxRow).getByRole("button", { name: "Сканировать и обработать" }),
+	);
+
+	const state = onProcessingState.mock.lastCall?.[0] as SourceProcessingState;
+	expect(state.files.length).toBeGreaterThan(0);
+	expect(
+		state.files.every(
+			(file) =>
+				file.status === "queued" &&
+				file.blockedReason === "work_directory_required",
+		),
+	).toBe(true);
+	const rowStatus = screen
+		.getAllByRole("status")
+		.find((status) =>
+			within(status).queryByRole("link", { name: "Настроить в Настройках" }),
+		);
+	expect(rowStatus).toBeVisible();
+	expect(rowStatus).toHaveTextContent(
+		"Файлы найдены. Для обработки через копию выберите рабочую папку в Настройках.",
+	);
+	expect(
+		within(rowStatus!).getByRole("link", { name: "Настроить в Настройках" }),
+	).toHaveAttribute("href", "#settings");
+});
+
+it("places removal in the exact source row, confirms its inventory, and removes only that source", () => {
+	const onProcessingState = vi.fn();
+	const { onRemove } = renderSources({
+		onProcessingState,
+	});
+	const libraryRow = sourceRow("Музыкальная библиотека");
+	fireEvent.click(
+		within(libraryRow).getByRole("button", {
+			name: "Удалить источник Музыкальная библиотека",
+		}),
+	);
+	expect(screen.getByRole("dialog")).toHaveTextContent("/mnt/music");
+	expect(screen.getByRole("dialog")).toHaveTextContent(
+		"Записей о файлах в инвентаре: 2",
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Подтвердить удаление" }));
+	expect(onRemove).toHaveBeenCalledWith("root-library");
+	const remaining = onProcessingState.mock
+		.lastCall?.[0] as SourceProcessingState;
+	expect(remaining.files.every((file) => file.rootId !== "root-library")).toBe(
+		true,
 	);
 });
 
-it("root removal clears only that root's processing state and rechecks active work at confirmation", () => {
-	const inbox = processSourceQueue(
-		createSourceScan(
-			initialSourceProcessingState,
-			"root-inbox",
-			"staged",
-			originalFiles,
-		),
-		"root-inbox",
-	);
-	const initial = createSourceScan(
-		inbox,
+it("blocks removal for active root work and revalidates changed inventory at confirmation", () => {
+	const active = createSourceScan(
+		initialSourceProcessingState,
 		"root-library",
 		"in_place",
 		originalFiles,
 	);
-	const onProcessingState = vi.fn();
 	const onRemove = vi.fn();
-	const firstRender = render(
+	const first = renderSources({ initialProcessingState: active, onRemove });
+	const libraryRow = sourceRow("Музыкальная библиотека");
+	const removeButton = within(libraryRow).getByRole("button", {
+		name: "Удалить источник Музыкальная библиотека",
+	});
+	fireEvent.click(removeButton);
+	expect(screen.getByRole("status")).toHaveTextContent(
+		"Удаление заблокировано: для этого источника есть записи в очереди или выполняется обработка. Дождитесь завершения и повторите попытку.",
+	);
+	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+	const onProcessingState = vi.fn();
+	first.unmount();
+	const second = renderSources({ onRemove, onProcessingState });
+	const secondRow = sourceRow("Музыкальная библиотека");
+	fireEvent.click(
+		within(secondRow).getByRole("button", {
+			name: "Удалить источник Музыкальная библиотека",
+		}),
+	);
+	const changedFiles = structuredClone(originalFiles);
+	const changedLocation = Object.values(changedFiles)
+		.flatMap((file) => file.locations ?? [])
+		.find((location) => location.rootId === "root-library");
+	if (!changedLocation) throw new Error("Missing library inventory fixture");
+	changedLocation.id = `${changedLocation.id}-changed`;
+	second.rerender(
 		<SourcesScreen
 			roots={initialSourceRoots}
 			onRoots={vi.fn()}
-			files={originalFiles}
+			files={changedFiles}
 			removed={new Set()}
 			onRemove={onRemove}
-			initialProcessingState={initial}
+			initialProcessingState={initialSourceProcessingState}
 			onProcessingState={onProcessingState}
 		/>,
 	);
-	fireEvent.click(
-		screen.getByText("Демонстрация удаления источника", { exact: true }),
-	);
-	const inboxRow = screen.getByText("root-inbox").closest("tr");
-	if (!inboxRow) throw new Error("Missing inbox root row");
-	fireEvent.click(
-		within(inboxRow).getByRole("button", { name: "Удалить каталог" }),
-	);
-	fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
-	expect(onRemove).toHaveBeenCalledWith("root-inbox");
-	const remaining: SourceProcessingState = onProcessingState.mock.lastCall?.[0];
-	expect(remaining.files.length).toBeGreaterThan(0);
-	expect(remaining.files.every((file) => file.rootId === "root-library")).toBe(
-		true,
-	);
-	expect(remaining.copies).toEqual([]);
-
-	const active = createSourceScan(
-		initialSourceProcessingState,
-		"root-inbox",
-		"staged",
-		originalFiles,
-	);
-	const guardedRemove = vi.fn();
-	firstRender.unmount();
-	const { unmount } = render(
-		<SourcesScreen
-			roots={initialSourceRoots}
-			onRoots={vi.fn()}
-			files={originalFiles}
-			removed={new Set()}
-			onRemove={guardedRemove}
-			workDirectory="/mnt/work"
-			initialProcessingState={active}
-		/>,
-	);
-	fireEvent.click(
-		screen.getByText("Демонстрация удаления источника", { exact: true }),
-	);
-	const activeRow = screen.getByText("root-inbox").closest("tr");
-	if (!activeRow) throw new Error("Missing active root row");
-	fireEvent.click(
-		within(activeRow).getByRole("button", { name: "Удалить каталог" }),
-	);
-	expect(screen.getByRole("status")).toHaveTextContent("Удаление отклонено");
+	fireEvent.click(screen.getByRole("button", { name: "Подтвердить удаление" }));
 	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-	expect(guardedRemove).not.toHaveBeenCalled();
-	unmount();
+	expect(screen.getByRole("status")).toHaveTextContent(
+		"инвентарь источника изменился",
+	);
+	expect(onRemove).not.toHaveBeenCalled();
 });

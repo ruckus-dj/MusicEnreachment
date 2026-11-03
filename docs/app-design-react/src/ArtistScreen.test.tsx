@@ -218,9 +218,12 @@ it("saves artist-owned sort metadata and canonical genres without a sort-name fa
 		target: { value: "ambient, live" },
 	});
 	fireEvent.click(within(details).getByRole("button", { name: "Жанры" }));
+	fireEvent.change(screen.getByRole("searchbox", { name: "Поиск жанров" }), {
+		target: { value: "electronic" },
+	});
 	fireEvent.click(
 		within(screen.getByRole("dialog")).getByRole("option", {
-			name: "electronic",
+			name: "Electronic",
 		}),
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Готово" }));
@@ -234,7 +237,11 @@ it("saves artist-owned sort metadata and canonical genres without a sort-name fa
 			genres: expect.arrayContaining([
 				{ id: "demo-genre-rock", name: "rock" },
 				{ id: "legacy-genre-id", name: "Unavailable genre" },
-				{ id: "demo-genre-electronic", name: "electronic" },
+				{
+					id: "89255676-1f14-4dd8-bbad-fca839d6aff4",
+					name: "Electronic",
+					sourceName: "electronic",
+				},
 			]),
 		}),
 	);
@@ -458,7 +465,7 @@ it("reports changes through the unified artist filter and retains collapsed albu
 	expect(onFilterChange).toHaveBeenNthCalledWith(1, "missing");
 	expect(onFilterChange).toHaveBeenNthCalledWith(2, "published");
 	const albumCheckbox = screen.getAllByRole("checkbox", {
-		name: `Выбрать все позиции альбома ${artistRelease.title} · ${artistRelease.year} · ${artistRelease.catalog || "—"}`,
+		name: `Выбрать все позиции этого издания: ${artistRelease.title} · ${artistRelease.year} · ${artistRelease.catalog || "—"}`,
 	})[0];
 	expect(albumCheckbox).toBePartiallyChecked();
 	const albumTrigger = screen.getByRole("button", {
@@ -502,7 +509,7 @@ it("selects only the album's tracks and keeps the artist aggregate partial", () 
 		/>,
 	);
 	const album = screen.getByRole("checkbox", {
-		name: `Выбрать все позиции альбома ${release.title} · ${release.year} · ${release.catalog || "—"}`,
+		name: `Выбрать все позиции этого издания: ${release.title} · ${release.year} · ${release.catalog || "—"}`,
 	});
 	expect(album).toBePartiallyChecked();
 	const artist = screen.getByRole("checkbox", {
@@ -576,7 +583,7 @@ it("selects a collapsed album without opening it", () => {
 	});
 	expect(trigger).toHaveAttribute("aria-expanded", "false");
 	const checkbox = screen.getByRole("checkbox", {
-		name: `Выбрать все позиции альбома ${release.title} · ${release.year} · ${release.catalog || "—"}`,
+		name: `Выбрать все позиции этого издания: ${release.title} · ${release.year} · ${release.catalog || "—"}`,
 	});
 	const card = commonAncestor(checkbox, trigger);
 	if (!card) throw new Error("Album controls do not share a card");

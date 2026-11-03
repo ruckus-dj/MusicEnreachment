@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 import {
 	Button,
-	Checkbox,
 	Dialog,
-	Disclosure,
-	DisclosureGroup,
-	DisclosurePanel,
 	Heading,
 	Input,
 	Label,
@@ -22,20 +18,21 @@ import {
 import { DirectoryPicker } from "./DirectoryPicker";
 import type { SourceFiles } from "./catalogData";
 import {
-	completeSourceStep,
+	blockStagedSourceQueue,
 	createSourceScan,
 	eligibleSourceCopies,
-	failSourceCopyCleanup,
 	initialSourceProcessingState,
 	processSourceQueue,
 	removeEligibleCopy,
 	removeRootProcessingState,
-	resetSourceProcessingQueue,
 	retrySourceStep,
+	retryCancelledSourceFile,
 	type SourceProcessingState,
 } from "./sourceProcessingModel";
 import { rootLocations } from "./sourceInventory";
 import { formStyles as styles } from "./formStyles";
+import { useI18n } from "./i18n";
+import { sourceMessage, type SourceMessageKey } from "./sourceMessages";
 
 type Mode = "in_place" | "staged";
 export interface SourceRoot {
@@ -81,6 +78,8 @@ export const initialSourceRoots: SourceRoot[] = [
 	},
 ];
 
+type RootRemoval = { id: string; path: string; locations: string[] };
+
 export function SourcesScreen({
 	roots,
 	onRoots,
@@ -100,35 +99,96 @@ export function SourcesScreen({
 	initialProcessingState?: SourceProcessingState;
 	onProcessingState?: (state: SourceProcessingState) => void;
 }) {
+	const { locale } = useI18n();
+	const m = (key: SourceMessageKey, values?: Record<string, string | number>) =>
+		sourceMessage(locale, key, values);
 	const [adding, setAdding] = useState(false);
 	const [name, setName] = useState("");
 	const [path, setPath] = useState("/mnt/music");
 	const [mode, setMode] = useState<Mode | "">("");
 	const [picker, setPicker] = useState(false);
-	const [busy, setBusy] = useState(false);
 	const [notice, setNotice] = useState("");
 	const [processing, setProcessing] = useState(initialProcessingState);
-	const [removal, setRemoval] = useState<{
-		id: string;
-		path: string;
-		locations: string[];
-	} | null>(null);
+	const [removal, setRemoval] = useState<RootRemoval | null>(null);
+
 	useEffect(
 		() => onProcessingState?.(processing),
 		[onProcessingState, processing],
 	);
+	useEffect(() => {
+		if (!workDirectory) return;
+		setProcessing((current) => {
+			if (
+				!current.files.some(
+					(file) => file.blockedReason === "work_directory_required",
+				)
+			)
+				return current;
+			return processSourceQueue(current);
+		});
+	}, [workDirectory]);
+
 	const updateProcessing = (next: SourceProcessingState) => setProcessing(next);
+	const hasActiveRootWork = (rootId: string) =>
+		processing.files.some(
+			(file) =>
+				file.rootId === rootId &&
+				["queued", "running"].includes(file.status) &&
+				!file.blockedReason,
+		);
+	const statusLabel = (status: string) => {
+		const key: Record<string, SourceMessageKey> = {
+			queued: "statusQueued",
+			running: "statusRunning",
+			succeeded: "statusSucceeded",
+			failed: "statusFailed",
+			completed: "statusCompleted",
+		};
+		return key[status] ? m(key[status]) : status;
+	};
+	const requestRootRemoval = (root: SourceRoot) => {
+		if (hasActiveRootWork(root.id)) {
+			setNotice(m("rootActive"));
+			return;
+		}
+		setRemoval({
+			id: root.id,
+			path: root.path,
+			locations: rootLocations(files, root.id)
+				.map((location) => location.id)
+				.sort(),
+		});
+	};
+	const scanAndProcess = (root: SourceRoot) => {
+		if (root.available !== true) return;
+		const scanned = createSourceScan(processing, root.id, root.mode, files);
+		const queued = scanned.files.filter(
+			(file) =>
+				file.rootId === root.id &&
+				file.status === "queued" &&
+				file.steps.some((step) => step.status === "queued"),
+		);
+		if (root.mode === "staged" && !workDirectory) {
+			updateProcessing(blockStagedSourceQueue(scanned, root.id));
+			setNotice(m("workDirectoryRequired"));
+			return;
+		}
+		updateProcessing(processSourceQueue(scanned, root.id));
+		setNotice(
+			queued.length
+				? m("scanStarted", { path: root.path, count: queued.length })
+				: m("noInventory"),
+		);
+	};
+
 	return (
 		<section className={styles.page}>
 			<header
 				className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-3`}
 			>
 				<div>
-					<h1 className={styles.pageTitle}>Источники</h1>
-					<p className={styles.pageDescription}>
-						Серверные пути, политика источника — только чтение. Режим обработки
-						выбирается отдельно; файлы не загружаются перетаскиванием.
-					</p>
+					<h1 className={styles.pageTitle}>{m("title")}</h1>
+					<p className={styles.pageDescription}>{m("description")}</p>
 				</div>
 				<div className={styles.objectActions}>
 					<Button
@@ -139,7 +199,7 @@ export function SourcesScreen({
 							setMode("");
 						}}
 					>
-						Добавить источник
+						{m("addSource")}
 					</Button>
 				</div>
 			</header>
@@ -150,61 +210,54 @@ export function SourcesScreen({
 			)}
 			{adding && (
 				<section className={styles.panel}>
-					<h2>Новый источник</h2>
+					<h2>{m("newSource")}</h2>
 					<TextField
 						className={`${styles.searchField} max-w-none`}
 						value={name}
 						onChange={setName}
 					>
-						<Label>Имя источника</Label>
-						<Input placeholder="Например, Музыкальная библиотека" />
+						<Label>{m("name")}</Label>
+						<Input placeholder={m("namePlaceholder")} />
 					</TextField>
 					<TextField
 						className={`${styles.searchField} max-w-none`}
 						value={path}
 						isReadOnly
 					>
-						<Label>Каталог на сервере</Label>
+						<Label>{m("serverDirectory")}</Label>
 						<Input />
 					</TextField>
-					<Button onPress={() => setPicker(true)}>Выбрать папку</Button>
-					<p>Только каталог; файлы не загружаются.</p>
+					<Button onPress={() => setPicker(true)}>{m("chooseFolder")}</Button>
+					<p>{m("onlyDirectory")}</p>
 					<RadioGroup
 						className="my-3 grid gap-1"
-						aria-label="Режим обработки · выберите явно"
+						aria-label={m("processingMode")}
 						value={mode}
 						onChange={(value) => setMode(value as Mode)}
 					>
 						<Radio className={styles.modeChoice} value="in_place">
-							На месте
+							{m("inPlace")}
 						</Radio>
 						<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
-							Анализ выполняется по исходному файлу; сам источник остаётся
-							только для чтения.
+							{m("inPlaceHelp")}
 						</p>
 						<Radio className={styles.modeChoice} value="staged">
-							Через рабочую копию
+							{m("staged")}
 						</Radio>
 						<p className="my-[3px] ml-[25px] text-xs text-[var(--muted)]">
-							Для обработки создаётся принадлежащая работе рабочая копия аудио в
-							общей рабочей папке сервера. Папка требуется до обработки, но не
-							для добавления источника.
+							{m("stagedHelp")}
 						</p>
 					</RadioGroup>
-					<p>
-						Политика источника: только чтение — независимо от выбранного режима.
-					</p>
+					<p>{m("sourcePolicy")}</p>
 					<div className={styles.objectActions}>
 						<Button
 							onPress={() => {
 								if (!name.trim()) {
-									setNotice("Укажите имя источника.");
+									setNotice(m("nameRequired"));
 									return;
 								}
 								if (!mode) {
-									setNotice(
-										"Явно выберите режим обработки: «На месте» или «Через рабочую копию».",
-									);
+									setNotice(m("modeRequired"));
 									return;
 								}
 								onRoots([
@@ -219,31 +272,29 @@ export function SourcesScreen({
 									},
 								]);
 								setAdding(false);
-								setNotice(
-									`Демо: источник добавлен только в макет, режим «${mode === "staged" ? "Через рабочую копию" : "На месте"}». Серверный каталог не открывался и не сканировался; рабочая папка требуется только перед обработкой.`,
-								);
+								setNotice(m("sourceAdded"));
 							}}
 						>
-							Добавить источник
+							{m("addSource")}
 						</Button>
-						<Button onPress={() => setAdding(false)}>Отмена</Button>
+						<Button onPress={() => setAdding(false)}>{m("cancel")}</Button>
 					</div>
 				</section>
 			)}
 			<section className={styles.panel}>
-				<h2>Подключённые каталоги</h2>
+				<h2>{m("connectedFolders")}</h2>
 				<div className={styles.tableWrap}>
 					<table className={styles.table}>
 						<thead>
 							<tr>
 								{[
-									"Имя",
-									"Путь",
-									"Режим обработки",
-									"Политика источника",
-									"Доступность",
-									"Последняя проверка",
-									"Действия",
+									m("nameColumn"),
+									m("pathColumn"),
+									m("modeColumn"),
+									m("policyColumn"),
+									m("availabilityColumn"),
+									m("checkedColumn"),
+									m("actionsColumn"),
 								].map((label) => (
 									<th key={label} scope="col">
 										{label}
@@ -252,23 +303,23 @@ export function SourcesScreen({
 							</tr>
 						</thead>
 						<tbody>
-							{roots.map((root, index) => (
-								<tr key={`${root.path}:${index}`}>
+							{roots.map((root) => (
+								<tr key={root.id}>
 									<td>{root.name}</td>
 									<td>
 										<code>{root.path}</code>
 									</td>
 									<td>
 										<div className="grid max-w-none gap-[5px] text-xs text-[var(--muted)]">
-											<Label>Режим обработки: {root.name}</Label>
+											<Label>{m("modeFor", { name: root.name })}</Label>
 											<Select
 												selectedKey={root.mode}
-												aria-label={`Режим обработки: ${root.name}`}
+												aria-label={m("modeFor", { name: root.name })}
 												onSelectionChange={(key) => {
 													const next = String(key) as Mode;
 													onRoots(
-														roots.map((item, position) =>
-															index === position
+														roots.map((item) =>
+															item.id === root.id
 																? { ...item, mode: next }
 																: item,
 														),
@@ -280,113 +331,62 @@ export function SourcesScreen({
 												</Button>
 												<Popover>
 													<ListBox>
-														<ListBoxItem id="in_place">На месте</ListBoxItem>
-														<ListBoxItem id="staged">
-															Через рабочую копию
+														<ListBoxItem id="in_place">
+															{m("inPlace")}
 														</ListBoxItem>
+														<ListBoxItem id="staged">{m("staged")}</ListBoxItem>
 													</ListBox>
 												</Popover>
 											</Select>
 										</div>
-										<p className="my-2">
-											Изменение влияет на будущую обработку.
-										</p>
+										<p className="my-2">{m("futureMode")}</p>
 										{root.mode === "staged" && (
 											<p>
-												Общая рабочая папка: {workDirectory || "Не выбрана"} ·{" "}
-												<a href="#settings">Настроить</a>
+												{m("workDirectory")}: {workDirectory || "—"} ·{" "}
+												<a href="#settings">{m("configure")}</a>
 											</p>
 										)}
 									</td>
-									<td>Только чтение</td>
+									<td>{m("sourcePolicy")}</td>
 									<td>
 										{root.available === null
-											? "Демо · не проверен"
+											? m("notChecked")
 											: root.available
-												? "Доступен"
-												: "Недоступен"}
+												? m("available")
+												: m("unavailable")}
 									</td>
 									<td>{root.checked}</td>
 									<td>
-										{root.available === null ? (
-											<Button
-												onPress={() => {
-													onRoots(
-														roots.map((item) =>
-															item.id === root.id
-																? {
-																		...item,
-																		available: true,
-																		checked: "Только что · демо",
-																	}
-																: item,
-														),
-													);
-													setNotice(
-														"Демо: источник отмечен доступным. Реальная файловая система не проверялась.",
-													);
-												}}
-											>
-												Проверить доступность · демо
-											</Button>
-										) : root.available ? (
-											<a href="#review">Разобрать группы</a>
-										) : (
-											<Button
-												onPress={() =>
-													setNotice(
-														"Демо: /mnt/archive недоступен. Управляемые публикации сохранены.",
-													)
-												}
-											>
-												Проверить
-											</Button>
-										)}
-										<Button
-											isDisabled={root.available !== true}
-											onPress={() => {
-												updateProcessing(
-													createSourceScan(
-														processing,
-														root.id,
-														root.mode,
-														files,
-													),
-												);
-												setNotice(
-													`Демо-сканирование ${root.path}: в очередь передано ${rootLocations(files, root.id).length} записей инвентаря. Файловая система не читалась; рабочая папка не нужна для scan. Обработка не запускалась.`,
-												);
-											}}
-										>
-											Сканировать · демо
-										</Button>
-										<Button
-											isDisabled={root.available !== true}
-											onPress={() => {
-												if (root.mode === "staged" && !workDirectory) {
-													setNotice(
-														`Обработка ${root.path} не начата: задайте общую рабочую папку в Настройках. Сам scan не требует её.`,
-													);
-													return;
-												}
-												updateProcessing(
-													processSourceQueue(
-														createSourceScan(
-															processing,
-															root.id,
-															root.mode,
-															files,
-														),
-														root.id,
-													),
-												);
-												setNotice(
-													`Демо: явно запущена обработка очереди ${root.path}; проверка аудио выполнена, fingerprint завершился демонстрационной ошибкой. Файловая система не читалась.`,
-												);
-											}}
-										>
-											Обработать найденные · демо
-										</Button>
+										<div className="flex flex-wrap items-center gap-2">
+											{removed.has(root.id) ? (
+												<span>{m("rootRemoved")}</span>
+											) : (
+												<>
+													{root.available === true && (
+														<a href="#review">{m("reviewGroups")}</a>
+													)}
+													<Button
+														isDisabled={root.available !== true}
+														onPress={() => scanAndProcess(root)}
+													>
+														{m("scan")}
+													</Button>
+													<Button
+														aria-label={m("rootActionLabel", {
+															name: root.name,
+														})}
+														onPress={() => requestRootRemoval(root)}
+													>
+														{m("removeRoot")}
+													</Button>
+													{root.available === false && (
+														<p className="basis-full text-xs text-[var(--muted)]">
+															{m("checkUnavailable")}
+														</p>
+													)}
+												</>
+											)}
+										</div>
 									</td>
 								</tr>
 							))}
@@ -398,78 +398,84 @@ export function SourcesScreen({
 				className={styles.panel}
 				aria-labelledby="source-processing-title"
 			>
-				<h2 id="source-processing-title">Обработка файлов · демо</h2>
-				<p>
-					Сканирование только ставит записи в очередь. Обработка, создание
-					рабочей копии и проверка аудио запускаются отдельно; fingerprint в
-					демонстрации завершается ошибкой. Повтор запускается явно.
-				</p>
-				<p className="text-xs text-[var(--muted)]">
-					В продукте повторное сканирование сравнивает size и mtime. В исходных
-					fixtures нет реального stat: макет не подтверждает свежесть файла на
-					сервере.
-				</p>
-				<Button
-					onPress={() =>
-						updateProcessing(resetSourceProcessingQueue(processing))
-					}
-				>
-					Сбросить очередь · демо
-				</Button>
-				<Button
-					onPress={() => {
-						if (
-							!workDirectory &&
-							processing.files.some(
-								(file) => file.mode === "staged" && file.status !== "completed",
-							)
-						) {
-							setNotice(
-								"Обработка не начата: задайте рабочую папку в Настройках. Очередь и результаты сохранены.",
-							);
-							return;
-						}
-						updateProcessing(processSourceQueue(processing));
-					}}
-				>
-					Запустить / перезапустить обработку · демо
-				</Button>
+				<h2 id="source-processing-title">{m("processingTitle")}</h2>
+				<p>{m("processingDescription")}</p>
+				<p className="text-xs text-[var(--muted)]">{m("freshness")}</p>
 				{processing.files.length === 0 ? (
-					<p>Нет файлов, переданных в обработку.</p>
+					<p>{m("noFiles")}</p>
 				) : (
 					<ul className="m-0 grid gap-3 pl-5">
 						{processing.files.map((file) => (
 							<li key={file.id}>
-								<strong>{file.path}</strong> · {file.status}
+								<strong>{file.path}</strong> ·{" "}
+								{m("fileStatus", { status: statusLabel(file.status) })}
+								{file.blockedReason && (
+									<p role="status">
+										{file.blockedReason === "output_reset"
+											? m("outputResetCancelled")
+											: m("workDirectoryRequired")}{" "}
+										{file.blockedReason === "work_directory_required" && (
+											<a href="#settings">{m("configureInSettings")}</a>
+										)}
+									</p>
+								)}
+								{file.blockedReason === "output_reset" && (
+									<Button
+										onPress={() => {
+											const retried = retryCancelledSourceFile(
+												processing,
+												file.id,
+											);
+											if (file.mode === "staged" && !workDirectory) {
+												updateProcessing(
+													blockStagedSourceQueue(retried, file.rootId),
+												);
+												setNotice(m("workDirectoryRequired"));
+												return;
+											}
+											updateProcessing(
+												processSourceQueue(retried, file.rootId),
+											);
+										}}
+									>
+										{m("retryCancelled")}
+									</Button>
+								)}
 								<ul className="grid gap-2 pl-5">
 									{file.steps.map((step) => (
 										<li key={step.id}>
 											{step.id === "audio_inspection"
-												? "Проверка аудио"
-												: "Fingerprint"}
-											: {step.status}
-											{step.error && <span role="alert"> · {step.error}</span>}
+												? m("stepAudio")
+												: m("stepFingerprint")}
+											: {statusLabel(step.status)}
+											{step.error && <p role="alert">{m(step.error)}</p>}
 											{step.status === "failed" && (
 												<Button
-													onPress={() =>
+													aria-label={m("retryStep", {
+														step:
+															step.id === "audio_inspection"
+																? m("stepAudio")
+																: m("stepFingerprint"),
+													})}
+													onPress={() => {
+														const retried = retrySourceStep(
+															processing,
+															file.id,
+															step.id,
+														);
+														if (file.mode === "staged" && !workDirectory) {
+															updateProcessing(
+																blockStagedSourceQueue(retried, file.rootId),
+															);
+															setNotice(m("workDirectoryRequired"));
+															return;
+														}
 														updateProcessing(
-															retrySourceStep(processing, file.id, step.id),
-														)
-													}
+															processSourceQueue(retried, file.rootId),
+														);
+													}}
 												>
-													Повторить шаг
-												</Button>
-											)}
-											{step.status === "queued" && (
-												<Button
-													onPress={() =>
-														updateProcessing(
-															completeSourceStep(processing, file.id, step.id),
-														)
-													}
-													isDisabled={file.mode === "staged" && !file.copyId}
-												>
-													Завершить шаг · демо
+													{m("retry")}
 												</Button>
 											)}
 										</li>
@@ -479,13 +485,10 @@ export function SourcesScreen({
 						))}
 					</ul>
 				)}
-				<h3>Сохранённые рабочие копии</h3>
-				<p>
-					Принадлежат приложению; физические исходники и публикации ими не
-					затрагиваются.
-				</p>
+				<h3>{m("retainedCopies")}</h3>
+				<p>{m("copyOwnership")}</p>
 				{processing.copies.length === 0 ? (
-					<p>Нет сохранённых копий.</p>
+					<p>{m("noCopies")}</p>
 				) : (
 					<ul className="m-0 grid gap-2 pl-5">
 						{processing.copies.map((copy) => {
@@ -494,37 +497,19 @@ export function SourcesScreen({
 							);
 							return (
 								<li key={copy.id}>
-									{copy.fileId} · {copy.status} ·{" "}
-									{eligible
-										? "Можно очистить"
-										: "Защищена: обработка не завершена"}
-									{copy.cleanupError && (
-										<span role="alert">
-											{" "}
-											· Ошибка очистки: {copy.cleanupError}
-										</span>
-									)}
+									{copy.fileId} ·{" "}
+									{eligible ? m("copyEligible") : m("copyProtected")}
 									{eligible && (
-										<>
-											<Button
-												onPress={() =>
-													updateProcessing(
-														failSourceCopyCleanup(processing, copy.id),
-													)
-												}
-											>
-												Смоделировать ошибку очистки
-											</Button>
-											<Button
-												onPress={() =>
-													updateProcessing(
-														removeEligibleCopy(processing, copy.id),
-													)
-												}
-											>
-												Очистить копию · демо
-											</Button>
-										</>
+										<Button
+											onPress={() => {
+												updateProcessing(
+													removeEligibleCopy(processing, copy.id),
+												);
+												setNotice(m("copyRemoved"));
+											}}
+										>
+											{m("removeCopy")}
+										</Button>
 									)}
 								</li>
 							);
@@ -532,103 +517,10 @@ export function SourcesScreen({
 					</ul>
 				)}
 			</section>
-			<DisclosureGroup className="mt-2">
-				<Disclosure>
-					<Button slot="trigger">Демонстрация удаления источника</Button>
-					<DisclosurePanel>
-						<section className={styles.panel}>
-							<h2>Удаление каталога источника</h2>
-							<p>
-								Подтверждение показывает точный путь и число записей инвентаря.
-								Файлы на диске и текущие публикации не затрагиваются. Включите
-								активную операцию, чтобы увидеть отказ.
-							</p>
-							<Checkbox isSelected={busy} onChange={setBusy}>
-								Для /mnt/music выполняется операция
-							</Checkbox>
-							<div className={styles.tableWrap}>
-								<table className={styles.table}>
-									<thead>
-										<tr>
-											{[
-												"Идентификатор",
-												"Путь на сервере",
-												"Записей",
-												"Сценарий",
-												"Действие",
-											].map((label) => (
-												<th scope="col" key={label}>
-													{label}
-												</th>
-											))}
-										</tr>
-									</thead>
-									<tbody>
-										{roots.map((root) => (
-											<tr key={root.id}>
-												<td>{root.id}</td>
-												<td>{root.path}</td>
-												<td>{rootLocations(files, root.id).length}</td>
-												<td>
-													{root.id === "root-library"
-														? "Последний FLAC-исходник снимает связь; MP3 не выбирается автоматически"
-														: "Удаляется только inventory root; физический источник и публикации сохраняются"}
-												</td>
-												<td>
-													{removed.has(root.id) ? (
-														"Удалён в демо"
-													) : (
-														<Button
-															onPress={() => {
-																if (
-																	busy ||
-																	processing.files.some(
-																		(file) =>
-																			file.rootId === root.id &&
-																			["queued", "running"].includes(
-																				file.status,
-																			),
-																	)
-																) {
-																	setNotice(
-																		"Удаление отклонено: для этого каталога источника выполняется операция.",
-																	);
-																	return;
-																}
-																setRemoval({
-																	id: root.id,
-																	path: root.path,
-																	locations: rootLocations(files, root.id)
-																		.map((location) => location.id)
-																		.sort(),
-																});
-															}}
-														>
-															Удалить каталог
-														</Button>
-													)}
-												</td>
-											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
-							<p>
-								После удаления последней записи связи позиций снимаются, кэш
-								анализа по SHA-256 сохраняется. Выбранный файл очищается без
-								автопереключения. Публикация и медиатека остаются.
-							</p>
-						</section>
-					</DisclosurePanel>
-				</Disclosure>
-			</DisclosureGroup>
+			<p>{m("unavailablePublications")}</p>
 			<p>
-				Недоступность исходного диска не удаляет существующие управляемые
-				публикации.
-			</p>
-			<p>
-				Общая рабочая папка рабочих копий: {workDirectory || "не выбрана"} ·{" "}
-				<a href="#settings">Настроить в Настройках</a>
+				{m("workDirectory")}: {workDirectory || "—"} ·{" "}
+				<a href="#settings">{m("configureInSettings")}</a>
 			</p>
 			{picker && (
 				<DirectoryPicker
@@ -647,68 +539,43 @@ export function SourcesScreen({
 				}}
 				isDismissable
 			>
-				<Dialog aria-labelledby="remove-root-title">
-					<Heading slot="title" id="remove-root-title">
-						Удалить каталог источника {removal?.path}?
+				<Dialog aria-label={m("deleteDialogLabel")}>
+					<Heading slot="title">
+						{m("rootConfirmTitle", { path: removal?.path ?? "" })}
 					</Heading>
 					<p>
-						Путь: {removal?.path}
+						<code>{removal?.path}</code>
 						<br />
-						Записей о файлах в инвентаре: {removal?.locations.length}.
+						{m("rootConfirmCount", { count: removal?.locations.length ?? 0 })}
 					</p>
-					<p>
-						Удаляются только запись каталога, связанные с ней записи о файлах и
-						сведения об источнике. Физические исходники, объекты медиатеки и
-						текущие публикации сохраняются.
-					</p>
-					<p>
-						Связь позиции с источником сохраняется, если у файла осталась запись
-						в другом каталоге. При удалении последней записи о файле связи с ним
-						снимаются; кэш анализа по SHA-256 остаётся. Выбранный исходник
-						очищается без автоматической замены.
-					</p>
-					<p>
-						Перед подтверждением список файлов и наличие выполняемой операции
-						будут перепроверены. Демо не обращается к реальной файловой системе.
-					</p>
-					<Button onPress={() => setRemoval(null)}>Отмена</Button>
+					<p>{m("rootConfirmScope")}</p>
+					<p>{m("rootConfirmRecheck")}</p>
+					<Button onPress={() => setRemoval(null)}>{m("cancel")}</Button>
 					<Button
 						onPress={() => {
 							if (!removal) return;
-							if (
-								busy ||
-								processing.files.some(
-									(file) =>
-										file.rootId === removal.id &&
-										["queued", "running"].includes(file.status),
-								)
-							) {
-								setNotice(
-									"Подтверждение устарело: для каталога выполняется операция; каталог не удалён. Пересмотрите состояние и подтвердите удаление повторно.",
-								);
+							if (hasActiveRootWork(removal.id)) {
+								setNotice(m("rootActive"));
+								setRemoval(null);
 								return;
-							} else if (
-								rootLocations(files, removal.id)
-									.map((location) => location.id)
-									.sort()
-									.join("|") !== removal.locations.join("|")
-							)
-								setNotice(
-									"Подтверждение устарело: список файлов в инвентаре изменился. Пересмотрите данные.",
-								);
-							else {
-								updateProcessing(
-									removeRootProcessingState(processing, removal.id),
-								);
-								onRemove(removal.id);
-								setNotice(
-									`Демо: каталог ${removal.path} удалён из инвентаря. Принадлежащие приложению рабочие копии источника очищены; физические исходники, публикации и медиатека не изменились; другой исходник автоматически не выбран.`,
-								);
 							}
+							const currentLocations = rootLocations(files, removal.id)
+								.map((location) => location.id)
+								.sort();
+							if (currentLocations.join("|") !== removal.locations.join("|")) {
+								setNotice(m("rootChanged"));
+								setRemoval(null);
+								return;
+							}
+							updateProcessing(
+								removeRootProcessingState(processing, removal.id),
+							);
+							onRemove(removal.id);
+							setNotice(m("rootRemoved"));
 							setRemoval(null);
 						}}
 					>
-						Подтвердить
+						{m("confirm")}
 					</Button>
 				</Dialog>
 			</Modal>

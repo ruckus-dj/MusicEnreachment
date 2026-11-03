@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Button, Dialog, Heading, Modal, Tooltip, TooltipTrigger } from "./ui";
 import type { OriginalRelease, OriginalTrack } from "./catalogData";
 import { deletionDialog, deletionFooter } from "./matchingStyles";
+import { useI18n } from "./i18n/I18nProvider";
+import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
 
 export interface DeletionOperation {
 	kind?: "library" | "publication" | "artist";
@@ -74,13 +76,22 @@ export function DeletionRequest({
 	triggerLabel?: string;
 }) {
 	const [open, setOpen] = useState(false);
+	const { locale } = useI18n();
+	const m = (key: CatalogueMessage, values?: Record<string, string | number>) =>
+		catalogueMessage(locale, key, values);
 	const plan = deletionPlan(release, track);
+	const displayedTarget = track
+		? `${release.title} · ${String(track.position).padStart(2, "0")} · ${track.title}`
+		: release.title || m("unnamedRelease");
+	const displayedScope = track
+		? m("deletePublicationScope")
+		: m("deleteReleaseScope", { count: release.tracks.length });
 	return (
 		<>
 			{iconOnly ? (
 				<TooltipTrigger>
 					<Button
-						aria-label={triggerLabel ?? "Удалить альбом"}
+						aria-label={triggerLabel ?? m("deleteAlbum")}
 						className="artist-album-delete ui-button--danger text-[var(--error)]"
 						onPress={() => setOpen(true)}
 					>
@@ -98,30 +109,27 @@ export function DeletionRequest({
 							<path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6" />
 						</svg>
 					</Button>
-					<Tooltip>Удалить альбом</Tooltip>
+					<Tooltip>{m("deleteAlbum")}</Tooltip>
 				</TooltipTrigger>
 			) : (
 				<Button onPress={() => setOpen(true)}>
-					{track ? "Удалить публикацию" : "Удалить альбом"}
+					{track ? m("deletePublication") : m("deleteAlbum")}
 				</Button>
 			)}
 			<Modal isOpen={open} onOpenChange={setOpen} isDismissable>
 				<Dialog aria-labelledby="deletion-title" className={deletionDialog}>
 					<Heading slot="title" id="deletion-title">
-						Удалить: {plan.target}?
+						{m("deleteQuestion", { target: displayedTarget })}
 					</Heading>
-					<p>{plan.scope}</p>
-					<p>
-						Перед удалением строк будут безопасно удалены только файлы
-						публикаций, принадлежащие приложению ({plan.publications}). После
-						этого удаляются строки публикаций и указанные сущности медиатеки.
-						Записи провайдера сохраняются; чужие/общие файлы не затрагиваются.
-					</p>
+					<p>{displayedScope}</p>
+					<p>{m("ownedFilesDeletion", { count: plan.publications })}</p>
 					{!track && (
 						<>
-							<h3 className="mt-1.5 mb-0 text-xs">Релиз (будет удалён)</h3>
+							<h3 className="mt-1.5 mb-0 text-xs">
+								{m("releaseWillBeDeleted")}
+							</h3>
 							<p>{release.title}</p>
-							<h3 className="mt-1.5 mb-0 text-xs">Композиции (сохраняются)</h3>
+							<h3 className="mt-1.5 mb-0 text-xs">{m("recordingsKept")}</h3>
 							<ul className="m-0 pl-5">
 								{[
 									...new Map(
@@ -139,7 +147,7 @@ export function DeletionRequest({
 								))}
 							</ul>
 							<h3 className="mt-1.5 mb-0 text-xs">
-								Позиции релиза (будут удалены; включая неопубликованные)
+								{m("releasePositionsWillBeDeleted")}
 							</h3>
 							<ul className="m-0 pl-5">
 								{release.tracks.map((item) => (
@@ -149,7 +157,7 @@ export function DeletionRequest({
 									>
 										{release.title} · {String(item.position).padStart(2, "0")} ·{" "}
 										{item.title} ·{" "}
-										{item.published ? "опубликована" : "без публикации"}
+										{m(item.published ? "published" : "unpublished")}
 									</li>
 								))}
 							</ul>
@@ -164,14 +172,11 @@ export function DeletionRequest({
 							))}
 						</ul>
 					) : (
-						<p>Текущих публикаций в этой области нет.</p>
+						<p>{m("noCurrentPublications")}</p>
 					)}
-					<p>
-						Запрос появится в текущих операциях. Выполнение меняет только данные
-						макета в памяти; реальные файлы не удаляются.
-					</p>
+					<p>{m("deletionRequestNotice")}</p>
 					<div className={deletionFooter}>
-						<Button onPress={() => setOpen(false)}>Отмена</Button>
+						<Button onPress={() => setOpen(false)}>{m("cancel")}</Button>
 						<Button
 							className="border-[var(--error)]! text-[var(--error)]!"
 							onPress={() => {
@@ -179,7 +184,7 @@ export function DeletionRequest({
 								onQueue(plan);
 							}}
 						>
-							Подтвердить
+							{m("confirm")}
 						</Button>
 					</div>
 				</Dialog>

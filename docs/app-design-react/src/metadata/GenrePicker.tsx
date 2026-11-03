@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useI18n } from "../i18n";
 import {
 	Button,
 	Dialog,
@@ -10,7 +11,8 @@ import {
 	Modal,
 	SearchField,
 } from "../ui";
-import { demoGenres } from "../GenreLibrary";
+import { genreCatalog, resolveCatalogGenreName } from "../genres/catalogue";
+import { metadataMessage } from "./messages";
 
 export type GenreReference = { id?: string; name: string };
 type GenreOption = { id: string; name: string };
@@ -22,8 +24,8 @@ export function GenrePicker({
 	loaded,
 	onLoad,
 	displayValue,
-	label = "Жанры",
-	options = demoGenres,
+	label,
+	options = genreCatalog,
 }: {
 	value: GenreReference[];
 	onChange: (next: GenreReference[]) => void;
@@ -34,25 +36,54 @@ export function GenrePicker({
 	label?: string;
 	options?: readonly GenreOption[];
 }) {
+	const { locale } = useI18n();
+	const m = (key: Parameters<typeof metadataMessage>[1]) =>
+		metadataMessage(locale, key);
+	const pickerLabel = label ?? m("genre.label");
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState("");
+	const [visibleCount, setVisibleCount] = useState(60);
 	const [loading, setLoading] = useState(false);
 	const [loadError, setLoadError] = useState("");
 	const catalog = useMemo(
 		() => new Map(options.map((item) => [item.id, item])),
 		[options],
 	);
-	const selected = useMemo(
-		() => new Set(value.map((item) => item.id ?? item.name)),
-		[value],
-	);
+	const catalogId = (item: GenreReference): string | undefined =>
+		item.id ??
+		options.find(
+			(option) =>
+				resolveCatalogGenreName(option) === resolveCatalogGenreName(item),
+		)?.id;
+	const selected = useMemo(() => {
+		const keys = value.flatMap((item) => {
+			return [item.id ?? item.name, catalogId(item)].filter(
+				(key): key is string => Boolean(key),
+			);
+		});
+		return new Set(keys);
+	}, [options, value]);
+	const search = query.trim().toLocaleLowerCase("en");
 	const filtered = options.filter((item) =>
-		item.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+		item.name.toLocaleLowerCase("en").includes(search),
 	);
-	const visibleKeys = new Set(filtered.map((item) => item.id));
+	// Exact and prefix matches must not disappear behind a page of subgenres.
+	if (search) {
+		const rank = (name: string) => {
+			const normalized = name.toLocaleLowerCase("en");
+			return normalized === search ? 0 : normalized.startsWith(search) ? 1 : 2;
+		};
+		filtered.sort((left, right) => rank(left.name) - rank(right.name));
+	}
+	const shownOptions = filtered.slice(0, visibleCount);
+	const visibleKeys = new Set(shownOptions.map((item) => item.id));
 
 	const remove = (key: string) =>
-		onChange(value.filter((item) => (item.id ?? item.name) !== key));
+		onChange(
+			value
+				.filter((item) => (item.id ?? item.name) !== key)
+				.map((item) => ({ ...item, name: resolveCatalogGenreName(item) })),
+		);
 	const load = async () => {
 		if (!onLoad || loading) return;
 		setLoading(true);
@@ -60,7 +91,7 @@ export function GenrePicker({
 		try {
 			await onLoad();
 		} catch {
-			setLoadError("Не удалось загрузить каталог жанров.");
+			setLoadError("genre.loadError");
 		} finally {
 			setLoading(false);
 		}
@@ -68,19 +99,22 @@ export function GenrePicker({
 
 	return (
 		<div className="grid min-w-0 content-start gap-1 text-xs text-[var(--muted)]">
-			<span>{label}</span>
+			<span>{pickerLabel}</span>
 			<div className="min-w-0">
 				<button
 					type="button"
-					aria-label={label}
+					aria-label={pickerLabel}
 					aria-haspopup={readOnly ? undefined : "dialog"}
 					aria-expanded={readOnly ? undefined : open}
 					onClick={() => !readOnly && setOpen(true)}
 					className={`h-8 w-full truncate rounded-[var(--control-radius)] border px-2 text-left text-sm text-[var(--ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)] ${readOnly ? "border-transparent bg-transparent" : "border-b-[var(--control)] border-x-transparent border-t-transparent bg-transparent"}`}
 				>
 					{readOnly
-						? displayValue || value.map((item) => item.name).join(", ") || "—"
-						: value.map((item) => item.name).join(", ") || "Выбрать жанры…"}
+						? value.length
+							? value.map((item) => resolveCatalogGenreName(item)).join(", ")
+							: displayValue || "—"
+						: value.map((item) => resolveCatalogGenreName(item)).join(", ") ||
+							m("genre.choose")}
 				</button>
 			</div>
 			{!readOnly && (
@@ -88,7 +122,10 @@ export function GenrePicker({
 					isOpen={open}
 					onOpenChange={(nextOpen) => {
 						setOpen(nextOpen);
-						if (!nextOpen) setQuery("");
+						if (!nextOpen) {
+							setQuery("");
+							setVisibleCount(60);
+						}
 					}}
 					isDismissable
 					className="max-h-[min(80vh,560px)] overflow-y-auto"
@@ -102,11 +139,11 @@ export function GenrePicker({
 							}
 						}}
 					>
-						<Dialog aria-label={`${label} — выбор`}>
-							<Heading slot="title">{label}</Heading>
+						<Dialog aria-label={`${pickerLabel} — ${m("genre.chooseDialog")}`}>
+							<Heading slot="title">{pickerLabel}</Heading>
 							{value.length > 0 && (
 								<div
-									aria-label="Выбранные жанры"
+									aria-label={m("genre.selected")}
 									className="mb-2 flex flex-wrap gap-1"
 								>
 									{value.map((item) => {
@@ -116,9 +153,9 @@ export function GenrePicker({
 												key={key}
 												className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] px-2 py-1 text-sm"
 											>
-												{item.name}
+												{resolveCatalogGenreName(item)}
 												<Button
-													aria-label={`Убрать ${item.name}`}
+													aria-label={`${m("action.remove")} ${resolveCatalogGenreName(item)}`}
 													onPress={() => remove(key)}
 													className="min-h-6 px-1 py-0"
 												>
@@ -131,48 +168,48 @@ export function GenrePicker({
 							)}
 							{!loaded ? (
 								<div className="grid gap-2 text-sm">
-									<p className="m-0">
-										Каталог жанров не загружен. Сохранённый выбор останется без
-										изменений.
-									</p>
+									<p className="m-0">{m("genre.notLoaded")}</p>
 									{onLoad ? (
 										<Button onPress={load} isDisabled={loading}>
 											{loading
-												? "Загрузка…"
+												? m("state.loading")
 												: loadError
-													? "Повторить загрузку"
-													: "Загрузить каталог"}
+													? m("action.retry")
+													: m("action.loadCatalog")}
 										</Button>
 									) : (
-										<Link href="#settings">Перейти к настройкам каталога</Link>
+										<Link href="#settings">{m("action.settings")}</Link>
 									)}
 									{loadError && (
 										<p role="alert" className="m-0 text-[var(--error)]">
-											{loadError}
+											{m("genre.loadError")}
 										</p>
 									)}
 								</div>
 							) : (
 								<>
 									<SearchField
-										aria-label="Поиск жанров"
+										aria-label={m("genre.search")}
 										value={query}
-										onChange={setQuery}
+										onChange={(nextQuery) => {
+											setQuery(nextQuery);
+											setVisibleCount(60);
+										}}
 										autoFocus
 									>
-										<Input placeholder="Поиск жанров…" />
+										<Input placeholder={m("genre.searchPlaceholder")} />
 									</SearchField>
 									{options.length === 0 ? (
 										<p role="status" className="text-sm">
-											Каталог жанров пуст.
+											{m("genre.empty")}
 										</p>
 									) : filtered.length === 0 ? (
 										<p role="status" className="text-sm">
-											Совпадений не найдено.
+											{m("genre.noMatches")}
 										</p>
 									) : (
 										<ListBox
-											aria-label="Доступные жанры"
+											aria-label={m("genre.available")}
 											selectionMode="multiple"
 											escapeKeyBehavior="none"
 											selectedKeys={
@@ -185,34 +222,53 @@ export function GenrePicker({
 											onSelectionChange={(keys) => {
 												const nextKeys =
 													keys === "all"
-														? filtered.map((item) => item.id)
+														? shownOptions.map((item) => item.id)
 														: Array.from(keys, String);
-												const retained = value.filter((item) => {
-													const key = item.id ?? item.name;
-													return !catalog.has(key) || !visibleKeys.has(key);
-												});
+												const retained = value
+													.filter((item) => {
+														const key = catalogId(item) ?? item.name;
+														return !catalog.has(key) || !visibleKeys.has(key);
+													})
+													.map((item) => ({
+														...item,
+														name: resolveCatalogGenreName(item),
+													}));
 												const next = filtered
 													.filter((item) => nextKeys.includes(item.id))
-													.map((item) => ({ id: item.id, name: item.name }));
+													.map((item) => ({
+														id: item.id,
+														name: resolveCatalogGenreName(item),
+													}));
 												onChange([...retained, ...next]);
 											}}
 											className="mt-2 max-h-56 overflow-y-auto"
 										>
-											{filtered.map((item) => (
+											{shownOptions.map((item) => (
 												<ListBoxItem
 													key={item.id}
 													id={item.id}
 													textValue={item.name}
 												>
-													{item.name}
+													{resolveCatalogGenreName(item)}
 												</ListBoxItem>
 											))}
 										</ListBox>
 									)}
+									{shownOptions.length < filtered.length && (
+										<Button
+											className="mt-2 w-full"
+											onPress={() => setVisibleCount((count) => count + 60)}
+										>
+											{m("genre.more")} ·{" "}
+											{filtered.length - shownOptions.length}
+										</Button>
+									)}
 								</>
 							)}
 							<div className="mt-3 flex justify-end">
-								<Button onPress={() => setOpen(false)}>Готово</Button>
+								<Button onPress={() => setOpen(false)}>
+									{m("action.done")}
+								</Button>
 							</div>
 						</Dialog>
 					</div>

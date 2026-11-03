@@ -245,9 +245,10 @@ it("shares the loaded genre catalog with artist metadata editors", async () => {
 	window.location.hash = "settings";
 	try {
 		render(<CatalogDemo />);
+		fireEvent.click(screen.getByRole("tab", { name: "Жанры" }));
 		fireEvent.click(
 			screen.getByRole("button", {
-				name: "Загрузить / обновить каталог в демо",
+				name: "Обновить каталог жанров",
 			}),
 		);
 		window.location.hash = "artist/mira";
@@ -407,10 +408,10 @@ it("shows artist cards with a separate aggregate checkbox and real artist link",
 
 	expect(artistLink).toHaveAttribute("href", "#artist/mira");
 	expect(within(artistCard).getAllByRole("link")).toContain(artistLink);
-	expect(artistCard).toHaveTextContent("изданий");
-	expect(artistCard).toHaveTextContent("позиций");
-	expect(artistCard).toHaveTextContent("аудио");
-	expect(artistCard).toHaveTextContent("опубликовано");
+	expect(artistCard).toHaveTextContent("Изданий:");
+	expect(artistCard).toHaveTextContent("Позиций:");
+	expect(artistCard).toHaveTextContent("Аудио:");
+	expect(artistCard).toHaveTextContent("Опубликовано:");
 	expect(
 		within(artistCard).getByRole("checkbox", {
 			name: "Выбрать позиции артиста Mira Vale",
@@ -667,15 +668,15 @@ it("keeps global selected-item actions separate from the current artist controls
 		);
 		expect(window.location.hash).toBe("#publication-preview");
 		expect(
-			screen
-				.getAllByRole("link", {
-					name: `${firstSelectedTrack.position}. ${firstSelectedTrack.title}`,
-				})
-				.find(
-					(link) =>
-						link.getAttribute("href") === `#track/${firstSelectedTrack.id}`,
-				),
-		).toHaveAttribute("href", `#track/${firstSelectedTrack.id}`);
+			screen.queryByRole("link", {
+				name: `${firstSelectedTrack.position}. ${firstSelectedTrack.title}`,
+			}),
+		).not.toBeInTheDocument();
+		expect(
+			document.querySelector(
+				`button[data-position-id="${firstSelectedTrack.id}"]`,
+			),
+		).toHaveAttribute("aria-pressed", "true");
 	} finally {
 		window.location.hash = previousHash;
 	}

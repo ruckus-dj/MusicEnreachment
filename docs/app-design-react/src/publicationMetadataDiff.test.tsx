@@ -1,12 +1,19 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { effectivePublicationTags, originalReleases } from "./catalogData";
 import {
-	MetadataDiff,
 	metadataSnapshotDiff,
 	metadataTagDiff,
 	publicationMetadataDiff,
 } from "./publicationMetadataDiff";
-import { render, screen } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	within,
+	waitFor,
+} from "@testing-library/react";
+import { PublicationInspector } from "./PublicationInspector";
+import { publicationMessage } from "./publicationMessages";
 
 it("shows thematic old-to-new values, including cleared tags, artwork, and lyrics", () => {
 	const release = structuredClone(
@@ -28,18 +35,33 @@ it("shows thematic old-to-new values, including cleared tags, artwork, and lyric
 	track.lyrics = null;
 
 	const groups = publicationMetadataDiff(release, track);
-	render(<MetadataDiff groups={groups} />);
+	expect(groups.map((group) => group.key)).toContain("artwork");
+	expect(groups.map((group) => group.key)).toContain("lyrics");
+	render(
+		<PublicationInspector
+			locale="ru"
+			items={[
+				{
+					id: track.id,
+					position: String(track.position),
+					title: track.title,
+					groups,
+				},
+			]}
+		/>,
+	);
+	expect(screen.getByText("Комментарий")).toBeInTheDocument();
+	expect(screen.getByText("Old comment")).toBeInTheDocument();
+	const artwork = screen.getByRole("region", { name: "Обложка" });
+	const lyrics = screen.getByRole("region", { name: "Текст песни" });
 	expect(
-		screen.getByText(/Комментарий: Old comment → Нет значения/),
+		within(artwork).getByText(publicationMessage("ru", "artworkPresent")),
 	).toBeInTheDocument();
-	expect(
-		screen.getByText(/Встроенная обложка: Есть → Нет значения/),
-	).toBeInTheDocument();
-	expect(
-		screen.getByText(/Текст песни: Old lyrics → Нет значения/),
-	).toBeInTheDocument();
+	expect(screen.getByText("Old lyrics")).toBeInTheDocument();
+	expect(within(artwork).getByText("Нет значения")).toBeInTheDocument();
+	expect(within(lyrics).getByText("Нет значения")).toBeInTheDocument();
 	expect(screen.getByText("Композиция")).toBeInTheDocument();
-	expect(screen.getByText("Вложенное содержимое")).toBeInTheDocument();
+	expect(within(lyrics).getByRole("table")).toBeInTheDocument();
 });
 
 it("includes additional tag keys and shows actual changed lyrics and cover state", () => {
@@ -54,20 +76,88 @@ it("includes additional tag keys and shows actual changed lyrics and cover state
 			after: ["after"],
 		}),
 	]);
-	const { container } = render(
-		<MetadataDiff
-			groups={metadataSnapshotDiff(
-				{},
-				{},
-				{ coverHash: "old-cover", lyrics: "Before\nsecond line" },
-				{ coverHash: "new-cover", lyrics: "After\nnew line" },
-			)}
+	const snapshotGroups = metadataSnapshotDiff(
+		{},
+		{},
+		{ coverHash: "old-cover", lyrics: "Before\nsecond line" },
+		{ coverHash: "new-cover", lyrics: "After\nnew line" },
+	);
+	render(
+		<PublicationInspector
+			locale="en"
+			items={[
+				{ id: "t1", position: "1", title: "Track", groups: snapshotGroups },
+			]}
 		/>,
 	);
-	expect(screen.getByText(/Есть · текущая → Есть · новая/)).toBeInTheDocument();
-	expect(container.textContent).toContain(
-		"Before\nsecond line → After\nnew line",
+	const artwork = screen.getByRole("region", { name: "Artwork" });
+	const lyrics = screen.getByRole("region", { name: "Lyrics" });
+	const table = within(artwork).getByRole("table");
+	expect(
+		within(table).getByRole("columnheader", { name: "Current" }),
+	).toBeInTheDocument();
+	expect(
+		within(table).getByRole("columnheader", { name: "After" }),
+	).toBeInTheDocument();
+	const coverRow = within(table).getByRole("row", {
+		name: /Artwork.*Present.*current.*Present.*new/,
+	});
+	expect(within(coverRow).getAllByText(/Present/)).toHaveLength(2);
+	expect(
+		within(artwork).getByText(publicationMessage("en", "artworkCurrent")),
+	).toBeInTheDocument();
+	expect(
+		within(artwork).getByText(publicationMessage("en", "artworkNew")),
+	).toBeInTheDocument();
+	expect(within(lyrics).getByRole("table")).toBeInTheDocument();
+	const lyricsTable = within(lyrics).getByRole("table");
+	expect(
+		within(lyricsTable).getByText("Before\nsecond line", {
+			normalizer: (text) => text,
+		}),
+	).toBeInTheDocument();
+	expect(
+		within(lyricsTable).getByText("After\nnew line", {
+			normalizer: (text) => text,
+		}),
+	).toBeInTheDocument();
+});
+
+it("opens the narrow inspector as a dialog and returns focus after Escape", async () => {
+	const originalMatchMedia = window.matchMedia;
+	Object.defineProperty(window, "matchMedia", {
+		configurable: true,
+		value: vi.fn().mockReturnValue({ matches: true }),
+	});
+	const { unmount } = render(
+		<PublicationInspector
+			locale="en"
+			items={[
+				{ id: "position-1", position: "1", title: "Track one", groups: [] },
+				{ id: "position-2", position: "2", title: "Track two", groups: [] },
+			]}
+		/>,
 	);
+	const trigger = screen.getByRole("button", {
+		name: /1\. Track one/,
+	});
+	try {
+		trigger.focus();
+		fireEvent.click(trigger);
+		const dialog = screen.getByRole("dialog");
+		expect(dialog).toBeInTheDocument();
+		fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+		await waitFor(() =>
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+		);
+		await waitFor(() => expect(trigger).toHaveFocus());
+	} finally {
+		unmount();
+		Object.defineProperty(window, "matchMedia", {
+			configurable: true,
+			value: originalMatchMedia,
+		});
+	}
 });
 
 it("projects audio-scoped tags from the audio that metadata-only publication preserves", () => {
@@ -111,4 +201,38 @@ it("compares tag values exactly, including case, whitespace, and Unicode form", 
 	expect(
 		metadataTagDiff({ TITLE: ["Song"] }, { TITLE: ["song"] }),
 	).toHaveLength(1);
+});
+
+it("keeps metadata value boundaries and significant whitespace visible", () => {
+	const groups = metadataTagDiff(
+		{ TITLE: ["A · B", "  spaced  value  "] },
+		{ TITLE: ["A", "B", "  spaced  value  "] },
+	);
+	render(
+		<PublicationInspector
+			locale="en"
+			items={[
+				{
+					id: "values",
+					position: "1",
+					title: "Values",
+					groups,
+				},
+			]}
+		/>,
+	);
+	const row = within(screen.getByRole("table")).getByRole("row", {
+		name: /Title/i,
+	});
+	const lists = within(row).getAllByRole("list");
+	expect(
+		within(lists[0])
+			.getAllByRole("listitem")
+			.map((item) => item.querySelector("pre")?.textContent),
+	).toEqual(["A · B", "  spaced  value  "]);
+	expect(
+		within(lists[1])
+			.getAllByRole("listitem")
+			.map((item) => item.querySelector("pre")?.textContent),
+	).toEqual(["A", "B", "  spaced  value  "]);
 });

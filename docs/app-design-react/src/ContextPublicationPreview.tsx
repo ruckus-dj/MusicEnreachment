@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { useI18n } from "./i18n";
+import type { UiNotice } from "./uiNotice";
 import { Button, Checkbox, Dialog, Heading, Modal } from "./ui";
 import {
-	publicationMetadataIssues,
+	publicationMetadataIssueMessages,
 	type CatalogArtist,
 	type OriginalRelease,
 } from "./catalogData";
@@ -15,18 +17,43 @@ import {
 	sourceIds,
 	usableFile,
 } from "./incomingModel";
-import { MetadataDiff, metadataSnapshotDiff } from "./publicationMetadataDiff";
+import { metadataSnapshotDiff } from "./publicationMetadataDiff";
+import { PublicationInspector } from "./PublicationInspector";
+import type { PublicationInspection } from "./PublicationInspector";
+import {
+	formatPublicationMessage,
+	publicationMessage,
+} from "./publicationMessages";
 import {
 	choosePublicationOutput,
 	fixturePublicationDestination,
 } from "./publicationOutput";
 import { originalArtistName } from "./catalogData";
-import {
-	dialogFooter,
-	objectActions,
-	previewTable,
-	previewTableWrap,
-} from "./matchingStyles";
+import { dialogFooter, objectActions } from "./matchingStyles";
+
+const actionMessage = {
+	Создать: "create",
+	Обновить: "update",
+	"Без изменений": "unchangedAction",
+	"Невозможно обработать": "unprocessable",
+	Пропустить: "skip",
+} as const;
+
+function displayReason(locale: "en" | "ru", reason: string) {
+	if (reason.startsWith("Некорректные метаданные:"))
+		return formatPublicationMessage(locale, "invalidMetadata", {
+			fields: reason.slice("Некорректные метаданные: ".length),
+		});
+	const keys = {
+		"Позиция исключена из плана": "positionExcluded",
+		"Файл не выбран": "fileNotSelected",
+		"Источник и эффективные теги совпадают с публикацией": "sourceAndTagsSame",
+		"Будут обновлены выбранные метаданные и аудио": "selectedMetadataAndAudio",
+		"Новая публикация из выбранного источника": "newPublicationSelectedSource",
+	} as const;
+	const key = keys[reason as keyof typeof keys];
+	return key ? publicationMessage(locale, key) : reason;
+}
 
 export function ContextPublicationPreview({
 	destination = fixturePublicationDestination,
@@ -52,17 +79,18 @@ export function ContextPublicationPreview({
 	confirmDowngrade: boolean;
 	onPlan: (plan: IncomingPlan | null, confirmDowngrade?: boolean) => void;
 	onReleases: (releases: OriginalRelease[]) => void;
-	onSuccess: (notice: string) => void;
+	onSuccess: (notice: UiNotice) => void;
 	onBack: () => void;
 }) {
+	const { locale } = useI18n();
 	const [error, setError] = useState("");
 	const [confirming, setConfirming] = useState(false);
 	if (!plan)
 		return (
 			<section>
-				<h1>Предпросмотр публикации</h1>
-				<p>Нет сохранённого плана публикации. Откройте издание или позицию.</p>
-				<a href="#library">К медиатеке</a>
+				<h1>{publicationMessage(locale, "noPlanTitle")}</h1>
+				<p>{publicationMessage(locale, "noSavedPlan")}</p>
+				<a href="#library">{publicationMessage(locale, "toLibrary")}</a>
 			</section>
 		);
 
@@ -81,21 +109,24 @@ export function ContextPublicationPreview({
 		const metadataRelease =
 			plan.mode === "local" ? (existing ?? plan.target) : plan.target;
 		const metadataTrack = row.track ?? row.targetTrack;
-		const metadataIssues = publicationMetadataIssues(
+		const metadataIssues = publicationMetadataIssueMessages(
 			metadataRelease,
 			metadataTrack,
+			locale,
 			sourceId,
 		);
 		if (metadataIssues.length)
 			return {
 				row,
 				action: "Невозможно обработать",
-				reason: `Некорректные метаданные: ${metadataIssues.join("; ")}`,
+				reason: formatPublicationMessage(locale, "invalidMetadata", {
+					fields: metadataIssues.join("; "),
+				}),
 			};
 		if (!row.file) {
 			const reason = !sourceId
 				? "Файл не выбран"
-				: "Выбранный файл недоступен для этой операции";
+				: publicationMessage(locale, "selectedFileUnavailable");
 			return { row, action: "Пропустить", reason };
 		}
 		return {
@@ -164,11 +195,65 @@ export function ContextPublicationPreview({
 			},
 		});
 	};
+	const inspections: PublicationInspection[] = classified.map(
+		({ row, action, reason }) => {
+			const output = row.file
+				? choosePublicationOutput(row.file, {
+						...destination,
+						artist: originalArtistName(plan.target.artistId, artists),
+						year: plan.target.year,
+						release: plan.target.title,
+						position: row.targetTrack.position,
+						title: row.targetTrack.title,
+					})
+				: null;
+			return {
+				id: String(row.targetTrack.id),
+				position: String(row.targetTrack.position),
+				title: row.targetTrack.title,
+				action: publicationMessage(
+					locale,
+					actionMessage[action as keyof typeof actionMessage],
+				),
+				reason: `${displayReason(locale, reason)}${row.downgrade && row.assignment?.included ? ` · ${publicationMessage(locale, "qualityDowngrade")}` : ""}`,
+				source: row.file
+					? `${row.file.name} · ${row.file.codec}`
+					: selectedSourceId(row.assignment)
+						? publicationMessage(locale, "unavailableSource")
+						: publicationMessage(locale, "noSource"),
+				outputPath:
+					row.previous?.path ??
+					output?.path ??
+					publicationMessage(locale, "pathUnavailable"),
+				container:
+					row.previous?.codec ??
+					output?.container ??
+					publicationMessage(locale, "noFormat"),
+				included: Boolean(row.assignment?.included && row.file),
+				includeDisabled: !row.file,
+				includeLabel: formatPublicationMessage(locale, "includeTrack", {
+					title: row.targetTrack.title,
+				}),
+				onInclude: (included) =>
+					updateIncluded(String(row.targetTrack.id), included),
+				groups: metadataSnapshotDiff(
+					row.previous?.tags ?? {},
+					row.nextTags,
+					{
+						coverHash: row.previous?.coverHash ?? null,
+						lyrics: row.previous?.lyrics ?? null,
+					},
+					{
+						coverHash: (row.track ?? row.targetTrack).coverHash ?? null,
+						lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
+					},
+				),
+			};
+		},
+	);
 	const confirm = () => {
 		if (plan.inventoryVersion !== inventoryVersion) {
-			setError(
-				"Инвентарь источников изменился. Создайте новый предпросмотр перед подтверждением.",
-			);
+			setError(publicationMessage(locale, "inventoryChanged"));
 			return;
 		}
 		if (!canConfirm) return;
@@ -201,9 +286,11 @@ export function ContextPublicationPreview({
 		);
 		onReleases(next);
 		onPlan(null, false);
-		onSuccess(
-			`Демо: ${applied} позиций опубликовано.${links.length ? ` Связи ${links.length} позиций сохранены.` : ""} Невыбранные позиции и неразмеченные файлы не изменены.`,
-		);
+		onSuccess({
+			namespace: "publication",
+			id: "applySuccess",
+			params: { count: applied, linkCount: links.length },
+		});
 		setConfirming(false);
 	};
 
@@ -215,132 +302,47 @@ export function ContextPublicationPreview({
 			<header className="demo-object-header mb-3 flex flex-wrap items-center justify-between gap-3">
 				<div className="min-w-0 [overflow-wrap:anywhere]">
 					<h1 id="context-publication-title">
-						Предпросмотр: {plan.target.title}
+						{formatPublicationMessage(locale, "contextTitle", {
+							title: plan.target.title,
+						})}
 					</h1>
 					<p className="mt-[5px] max-w-[760px] text-[var(--muted)]">
-						Контекстный предпросмотр операции. Это не отдельный список
-						публикаций.
+						{publicationMessage(locale, "contextDescription")}
 					</p>
 				</div>
-				<Button onPress={onBack}>Вернуться к объекту</Button>
+				<Button onPress={onBack}>
+					{publicationMessage(locale, "returnToObject")}
+				</Button>
 			</header>
 			{(stale || error) && (
 				<p role="alert">
-					{error ||
-						"Инвентарь источников изменился. Создайте новый предпросмотр перед подтверждением."}
+					{error || publicationMessage(locale, "inventoryChanged")}
 				</p>
 			)}
 			<p
 				className="demo-preview-counts flex flex-wrap gap-2 py-3"
-				aria-label="Сводка действий"
+				aria-label={publicationMessage(locale, "actionSummary")}
 			>
 				{counts.map(({ action, count }) => (
 					<span
 						key={action}
 						className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]"
 					>
-						{action}: {count}
+						{publicationMessage(
+							locale,
+							actionMessage[action as keyof typeof actionMessage],
+						)}
+						: {count}
 					</span>
 				))}
 				<span className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]">
-					MKA · перепаковка без перекодирования
+					{publicationMessage(locale, "formatLossless")}
 				</span>
 			</p>
-			<div className={previewTableWrap}>
-				<table className={previewTable}>
-					<thead>
-						<tr>
-							<th>Включить</th>
-							<th>№ / трек</th>
-							<th>Источник</th>
-							<th>Сейчас опубликовано</th>
-							<th>Будет записано</th>
-							<th>Действие</th>
-						</tr>
-					</thead>
-					<tbody>
-						{classified.map(({ row, action, reason }) => (
-							<tr key={row.targetTrack.id}>
-								<td>
-									<Checkbox
-										aria-label={`Включить ${row.targetTrack.title}`}
-										isSelected={Boolean(row.assignment?.included && row.file)}
-										isDisabled={!row.file}
-										onChange={(checked) =>
-											updateIncluded(String(row.targetTrack.id), checked)
-										}
-									>
-										<span className="checkbox" />
-									</Checkbox>
-								</td>
-								<td>
-									{row.targetTrack.position} · {row.targetTrack.title}
-								</td>
-								<td>
-									{row.file
-										? `${row.file.name} · ${row.file.codec}`
-										: selectedSourceId(row.assignment)
-											? "Выбранный источник недоступен"
-											: "Источник не выбран"}
-								</td>
-								<td>
-									{row.previous
-										? `${row.previous.codec} · ${row.previous.tags.TITLE?.join(" · ") ?? ""}`
-										: "Нет публикации"}
-								</td>
-								<td>
-									{row.nextTags.TITLE?.join(" · ") ?? "—"}
-									<br />
-									{row.nextTags.ALBUM?.join(" · ") ?? "—"}
-									{row.file && (
-										<p className="text-xs wrap-anywhere">
-											<code>
-												{row.previous?.path ??
-													choosePublicationOutput(row.file, {
-														...destination,
-														artist: originalArtistName(
-															plan.target.artistId,
-															artists,
-														),
-														year: plan.target.year,
-														release: plan.target.title,
-														position: row.targetTrack.position,
-														title: row.targetTrack.title,
-													}).path}
-											</code>
-										</p>
-									)}
-								</td>
-								<td>
-									<strong>{action}</strong>
-									<p>{reason}</p>
-									{row.downgrade && row.assignment?.included
-										? " · Понижение качества"
-										: ""}
-									<MetadataDiff
-										groups={metadataSnapshotDiff(
-											row.previous?.tags ?? {},
-											row.nextTags,
-											{
-												coverHash: row.previous?.coverHash ?? null,
-												lyrics: row.previous?.lyrics ?? null,
-											},
-											{
-												coverHash:
-													(row.track ?? row.targetTrack).coverHash ?? null,
-												lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
-											},
-										)}
-									/>
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			</div>
+			<PublicationInspector items={inspections} locale={locale} />
 			<p>
-				<strong>Исходники сохранятся.</strong> Не включённые позиции и их
-				текущие публикации не изменятся. Файлы без назначения не удаляются.
+				<strong>{publicationMessage(locale, "sourcesPreserved")}</strong>{" "}
+				{publicationMessage(locale, "noDelete")}
 			</p>
 			{downgrades.length > 0 && (
 				<Checkbox
@@ -348,7 +350,9 @@ export function ContextPublicationPreview({
 					onChange={(checked) => onPlan(plan, checked)}
 				>
 					<span className="checkbox" />
-					Подтверждаю отдельное понижение качества ({downgrades.length} поз.)
+					{formatPublicationMessage(locale, "confirmDowngrade", {
+						count: downgrades.length,
+					})}
 				</Checkbox>
 			)}
 			<div className={objectActions}>
@@ -357,9 +361,9 @@ export function ContextPublicationPreview({
 					isDisabled={!canConfirm}
 					onPress={() => setConfirming(true)}
 				>
-					Подтвердить публикацию
+					{publicationMessage(locale, "confirmPublication")}
 				</Button>
-				<Button onPress={onBack}>Отмена</Button>
+				<Button onPress={onBack}>{publicationMessage(locale, "cancel")}</Button>
 			</div>
 			<Modal isOpen={confirming} onOpenChange={setConfirming}>
 				<Dialog
@@ -370,33 +374,36 @@ export function ContextPublicationPreview({
 						<div className="grid gap-2">
 							<Heading slot="title" id="context-publication-confirm-title">
 								{changed.length
-									? `Опубликовать ${changed.length} позиций?`
-									: `Сохранить связи ${links.length} позиций?`}
+									? formatPublicationMessage(locale, "writeSelectedCount", {
+											count: changed.length,
+										})
+									: formatPublicationMessage(locale, "saveLinksCount", {
+											count: links.length,
+										})}
 							</Heading>
 							<p>
-								{plan.target.title}. Будут изменены только выбранные строки
-								плана. Остальные позиции и существующие публикации сохраняются.
+								{formatPublicationMessage(locale, "confirmSelectedRows", {
+									title: plan.target.title,
+								})}
 							</p>
 							{links.length > 0 && (
 								<p>
-									{links.length} позиций получат новые связи с источниками;
-									выбранный источник и текущая публикация сохраняются.
+									{formatPublicationMessage(locale, "sourceLinksCount", {
+										count: links.length,
+									})}
 								</p>
 							)}
 							{downgrades.length > 0 && (
 								<p>
-									Подтверждено отдельное понижение качества для{" "}
-									{downgrades.length} поз.
+									{formatPublicationMessage(locale, "confirmQualityDown", {
+										count: downgrades.length,
+									})}
 								</p>
 							)}
-							<p>
-								Неразмеченные файлы останутся во входящих. Все исходники
-								сохраняются. Демо: запись аудиофайлов не выполняется.
-							</p>
+							<p>{publicationMessage(locale, "unmatchedFiles")}</p>
 							{(stale || error) && (
 								<p role="alert">
-									{error ||
-										"Инвентарь источников изменился. Создайте новый предпросмотр перед подтверждением."}
+									{error || publicationMessage(locale, "inventoryChanged")}
 								</p>
 							)}
 							<div className={dialogFooter}>
@@ -405,9 +412,11 @@ export function ContextPublicationPreview({
 									isDisabled={!canConfirm}
 									onPress={confirm}
 								>
-									Подтвердить
+									{publicationMessage(locale, "confirm")}
 								</Button>
-								<Button onPress={close}>Отмена</Button>
+								<Button onPress={close}>
+									{publicationMessage(locale, "cancel")}
+								</Button>
 							</div>
 						</div>
 					)}

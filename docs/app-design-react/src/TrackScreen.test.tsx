@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { originalFiles, originalReleases } from "./catalogData";
 import { TrackScreen } from "./TrackScreen";
+import { formatTrackMessage, trackMessage } from "./trackMessages";
 
 it("shows every linked audio variant and requests an explicit source change", () => {
 	const release = originalReleases.find((item) => item.id === "north");
@@ -17,9 +18,11 @@ it("shows every linked audio variant and requests an explicit source change", ()
 			onPreview={vi.fn()}
 		/>,
 	);
-	fireEvent.click(screen.getByText(/Аудио и публикация/));
 	const variants = screen.getAllByRole("radio");
 	expect(variants).toHaveLength(2);
+	expect(screen.getByText("01 - First Light.flac")).toBeInTheDocument();
+	expect(screen.getByText(/FLAC · 4:12 · Доступен/)).toBeInTheDocument();
+	expect(screen.getByText("Выбран для публикации")).toBeInTheDocument();
 	fireEvent.click(variants[1]);
 	expect(onSource).toHaveBeenCalledWith(track.sourceIds?.[1]);
 	expect(track.published).toEqual(before);
@@ -40,8 +43,14 @@ it("opens a contextual metadata preview without requiring selection", () => {
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Обновить метаданные" }));
 	expect(onPreview).toHaveBeenCalledOnce();
-	fireEvent.click(screen.getByText("Сравнить теги файла и публикации"));
+	fireEvent.click(screen.getByText("Сравнить теги источника и публикации"));
 	expect(screen.getByRole("table")).toBeInTheDocument();
+	expect(
+		screen.queryByRole("combobox", { name: "Позиция сравнения" }),
+	).not.toBeInTheDocument();
+	expect(
+		screen.queryByRole("combobox", { name: "Исходный файл для сравнения" }),
+	).not.toBeInTheDocument();
 });
 
 it("reports cover and lyrics metadata changes and observed file time", () => {
@@ -67,9 +76,15 @@ it("reports cover and lyrics metadata changes and observed file time", () => {
 			onPreview={vi.fn()}
 		/>,
 	);
-	expect(screen.getByText(/Метаданные изменились/)).toBeInTheDocument();
-	expect(screen.getByText("Файл изменён вне приложения")).toBeInTheDocument();
-	fireEvent.click(screen.getByText("Состояние и технические сведения"));
+	expect(
+		screen.getByText(
+			formatTrackMessage("ru", "metadataChanged", { count: 19 }),
+		),
+	).toBeInTheDocument();
+	expect(
+		screen.getByText(trackMessage("ru", "fileChanged")),
+	).toBeInTheDocument();
+	fireEvent.click(screen.getByText("Технические сведения"));
 	expect(screen.getByText("2026-10-31T12:34:56Z")).toBeInTheDocument();
 });
 
@@ -91,10 +106,9 @@ it("does not report a missing publication when its output root is unavailable", 
 		/>,
 	);
 	expect(
-		screen.getByText(
-			/выходной каталог недоступен; наличие файла не установлено/,
-		),
-	).toBeInTheDocument();
+		screen.getAllByText(trackMessage("ru", "publicationRootUnavailable"))
+			.length,
+	).toBeGreaterThan(0);
 	expect(
 		screen.queryByText(/^Файл публикации: отсутствует\.$/),
 	).not.toBeInTheDocument();
@@ -117,7 +131,9 @@ it("reports missing output only when the root was available for inspection", () 
 			onPreview={vi.fn()}
 		/>,
 	);
-	expect(screen.getByText("Файл публикации: отсутствует.")).toBeInTheDocument();
+	expect(
+		screen.getAllByText(trackMessage("ru", "fileMissing")).length,
+	).toBeGreaterThan(0);
 });
 
 it("keeps the current publication path and tag snapshot in its own disclosure", () => {
@@ -144,8 +160,7 @@ it("keeps the current publication path and tag snapshot in its own disclosure", 
 	});
 	expect(publicationTrigger).toHaveAttribute("aria-expanded", "false");
 	expect(screen.getByText(localPath)).not.toBeVisible();
-	fireEvent.click(screen.getByText(/Аудио и публикация/));
-	fireEvent.click(screen.getByText("Состояние и технические сведения"));
+	fireEvent.click(screen.getByText("Технические сведения"));
 	expect(screen.getByText(localPath)).toBeInTheDocument();
 	fireEvent.click(publicationTrigger);
 	expect(screen.getByText(published.path)).toBeInTheDocument();
@@ -160,4 +175,31 @@ it("keeps the current publication path and tag snapshot in its own disclosure", 
 	expect(
 		screen.queryByText("Путь и снимок публикации"),
 	).not.toBeInTheDocument();
+});
+
+it("lets the operator inspect another linked source without changing the publication source", () => {
+	const release = originalReleases.find((item) => item.id === "north");
+	const track = release?.tracks.find((item) => item.id === "north-t1");
+	if (!release || !track?.sourceId || !track.sourceIds?.[1])
+		throw new Error("Missing multi-source track fixture");
+	const onSource = vi.fn();
+	render(
+		<TrackScreen
+			release={release}
+			track={track}
+			onSource={onSource}
+			onPreview={vi.fn()}
+		/>,
+	);
+	fireEvent.click(screen.getByRole("button", { name: /Посмотреть теги/ }));
+	expect(onSource).not.toHaveBeenCalled();
+	expect(screen.getByRole("table")).toBeInTheDocument();
+	expect(
+		screen.getByText(
+			new RegExp(
+				`Сравниваемый файл: ${originalFiles[track.sourceIds[1]].name}`,
+			),
+		),
+	).toBeInTheDocument();
+	expect(screen.getByRole("radio", { checked: true })).toBeChecked();
 });

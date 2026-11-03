@@ -2,6 +2,7 @@ import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { CatalogDemo } from "./CatalogDemo";
 import { DesignShell } from "./DesignShell";
+import { I18nProvider } from "./i18n";
 import "./tailwind.css";
 
 const root = document.getElementById("root");
@@ -16,6 +17,8 @@ function PrototypeApp() {
 if (!root) throw new Error("Missing design root");
 createRoot(root).render(
 	<StrictMode>
-		<PrototypeApp />
+		<I18nProvider>
+			<PrototypeApp />
+		</I18nProvider>
 	</StrictMode>,
 );

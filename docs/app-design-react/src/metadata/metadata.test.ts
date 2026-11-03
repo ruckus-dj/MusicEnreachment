@@ -1,9 +1,17 @@
 import { expect, it } from "vitest";
-import { fieldByKey, fieldsForScope, navidromeFields } from "./registry";
+import {
+	fieldByKey,
+	fieldsForScope,
+	metadataFieldLabel,
+	metadataGroupLabel,
+	navidromeFields,
+} from "./registry";
 import {
 	metadataKeyToTag,
 	projectMetadataValues,
 	validateMetadataValues,
+	validateMetadataIssues,
+	metadataValidationMessage,
 } from "./projection";
 import {
 	readMetadataCredits,
@@ -61,6 +69,44 @@ it("registers the complete unique 89-field Navidrome mapping", () => {
 	expect(fieldByKey("artistsort")?.derived).toBe(true);
 	expect(fieldByKey("musicbrainz_artistid")?.kind).toBe("identity");
 	expect(fieldByKey("script")?.scope).toBe("release");
+});
+
+it("localizes every registered field and group without changing registry identities", () => {
+	for (const field of navidromeFields) {
+		expect(metadataFieldLabel(field.key, "en"), field.key).not.toBe(field.key);
+		expect(metadataFieldLabel(field.key, "ru")).toBe(field.label);
+	}
+	expect(metadataFieldLabel("unknown_vendor_tag", "en")).toBe(
+		"unknown_vendor_tag",
+	);
+	expect(metadataGroupLabel("recording artists", "en")).toBe(
+		"Recording artists",
+	);
+	expect(metadataGroupLabel("recording artists", "ru")).toBe(
+		"Исполнители записи",
+	);
+	expect(fieldByKey("artist")).toMatchObject({
+		key: "artist",
+		tag: "ARTIST",
+		group: "recording artists",
+	});
+});
+
+it("keeps structured validation messages locale-aware while preserving the legacy string API", () => {
+	const issues = validateMetadataIssues(
+		{ releasedate: ["2026-02-30"] },
+		"release",
+	);
+	expect(issues).toEqual([{ key: "releasedate", code: "date" }]);
+	expect(metadataValidationMessage(issues[0], "en")).toBe(
+		"Release date must be YYYY, YYYY-MM, or YYYY-MM-DD",
+	);
+	expect(metadataValidationMessage(issues[0], "ru")).toBe(
+		"Некорректное значение поля «Дата выпуска»: ожидается формат YYYY, YYYY-MM или YYYY-MM-DD",
+	);
+	expect(
+		validateMetadataValues({ releasedate: ["2026-02-30"] }, "release"),
+	).toEqual(["releasedate must be YYYY, YYYY-MM, or YYYY-MM-DD"]);
 });
 
 it("keeps descriptive identifiers editable and does not synthesize entity MBIDs", () => {
