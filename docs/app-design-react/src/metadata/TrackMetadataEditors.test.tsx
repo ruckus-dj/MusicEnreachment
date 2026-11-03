@@ -53,9 +53,11 @@ it("saves recording data without changing the track-owned publication or source"
 });
 
 it("edits audio metadata only for the selected source and preserves other variant data", () => {
-	const { track } = fixture();
+	const track = structuredClone(fixture().track);
 	const variants = track.sourceIds ?? [];
 	if (variants.length < 2) throw new Error("Expected two source variants");
+	const otherSourceId = variants.find((id) => id !== track.sourceId) ?? "";
+	track.audioMetadata = { [otherSourceId]: { encodedby: ["Existing"] } };
 	let updated = track;
 	render(
 		<TrackMetadataEditors
@@ -71,15 +73,11 @@ it("edits audio metadata only for the selected source and preserves other varian
 	const audio = screen.getByRole("region", {
 		name: "Метаданные аудио для публикации",
 	});
+	fireEvent.click(within(audio).getByText(/Громкость и кодирование/));
 	const selectedEditor = within(audio).getByRole("region", {
 		name: `${originalFiles[track.sourceId ?? ""]?.name} · выбран для публикации`,
 	});
-	const otherEditor = within(audio).getByRole("region", {
-		name: `${originalFiles[variants.find((id) => id !== track.sourceId) ?? ""]?.name} · не выбран`,
-	});
-	expect(
-		within(otherEditor).getByRole("button", { name: "Редактировать" }),
-	).toBeDisabled();
+	expect(within(audio).queryByText(/не выбран/)).not.toBeInTheDocument();
 	fireEvent.click(
 		within(selectedEditor).getByRole("button", { name: "Редактировать" }),
 	);
@@ -92,9 +90,9 @@ it("edits audio metadata only for the selected source and preserves other varian
 	expect(updated.audioMetadata?.[track.sourceId ?? ""]?.encodedby).toEqual([
 		"Test encoder",
 	]);
-	expect(
-		updated.audioMetadata?.[variants.find((id) => id !== track.sourceId) ?? ""],
-	).toBeUndefined();
+	expect(updated.audioMetadata?.[otherSourceId]).toEqual({
+		encodedby: ["Existing"],
+	});
 	expect(updated.sourceId).toBe(track.sourceId);
 });
 
@@ -111,6 +109,9 @@ it("updates positional fields without mutating the shared recording source", () 
 				updated = update(updated);
 			}}
 		/>,
+	);
+	fireEvent.click(
+		screen.getByText(/Позиция в издании ·.*№/, { selector: "summary" }),
 	);
 	const position = screen.getByRole("region", { name: "Позиция в издании" });
 	fireEvent.click(
@@ -174,4 +175,34 @@ it.each([
 		if (!release) throw new Error("Missing release");
 		expect(desiredTags(release, item).TITLE).toEqual([item.title]);
 	}
+});
+it("inspects another audio slot without changing the publication source", () => {
+	const { track } = fixture();
+	const other = track.sourceIds?.find((id) => id !== track.sourceId);
+	if (!other) throw new Error("Missing alternate audio fixture");
+	const onMutate = vi.fn();
+	render(
+		<TrackMetadataEditors
+			track={{
+				...track,
+				audioMetadata: { [other]: { encodedby: ["Alternate encoder"] } },
+			}}
+			artists={[]}
+			files={originalFiles}
+			genresLoaded
+			onMutate={onMutate}
+		/>,
+	);
+	fireEvent.click(screen.getByText(/Громкость и кодирование ·/));
+	fireEvent.click(screen.getByText(/Другие аудиоварианты ·/));
+	const region = screen.getByRole("region", {
+		name: `${originalFiles[other].name} · только просмотр`,
+	});
+	expect(within(region).getByLabelText("Закодировано")).toHaveValue(
+		"Alternate encoder",
+	);
+	expect(
+		within(region).getByRole("button", { name: "Редактировать" }),
+	).toBeDisabled();
+	expect(onMutate).not.toHaveBeenCalled();
 });

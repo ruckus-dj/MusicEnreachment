@@ -10,7 +10,10 @@ runtime-макет удалён и не служит live reference. Проду�
 Из корня репозитория:
 
 - `task design:run` — отдельный Vite-сервер на порту 5175.
-- `task verify` — общий gate, включая TypeScript, тесты и сборку стенда.
+- `task design:check` — проверка fixtures, TypeScript, тесты и сборка только стенда.
+
+Для изменений макета и документации по просьбе владельца не запускаются
+проверки приложения и его CI.
 
 Стек: React 19, TypeScript, Vite, Tailwind 4, React Aria Components;
 TanStack Query включён в зависимости для асинхронных демонстрационных сценариев.

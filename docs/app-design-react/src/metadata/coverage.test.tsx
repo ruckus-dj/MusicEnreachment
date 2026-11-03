@@ -2,13 +2,13 @@ import {
 	fireEvent,
 	render,
 	screen,
-	within,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { MetadataEditor } from "./MetadataEditor";
-import { fieldsForScope, type MetadataScope } from "./registry";
 import type { MetadataValues } from "./projection";
+import { fieldsForScope, type MetadataScope } from "./registry";
 
 const scopes: MetadataScope[] = ["release", "recording", "track", "audio"];
 
@@ -28,6 +28,8 @@ it.each(
 		/>,
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+	for (const summary of container.querySelectorAll("details > summary"))
+		fireEvent.click(summary);
 	const rendered = markedKeys(container);
 	const keys = rendered.flatMap((node) =>
 		node.getAttribute("data-metadata-keys")!.split(","),
@@ -127,6 +129,8 @@ it("saves and reopens typed scalar values, explicit clears, contributors, works,
 		/>,
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+	for (const summary of view.container.querySelectorAll("details > summary"))
+		fireEvent.click(summary);
 	fireEvent.change(screen.getByRole("textbox", { name: "Название" }), {
 		target: { value: "New title" },
 	});
@@ -188,6 +192,8 @@ it("saves and reopens typed scalar values, explicit clears, contributors, works,
 		/>,
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+	for (const summary of view.container.querySelectorAll("details > summary"))
+		fireEvent.click(summary);
 	expect(screen.getByRole("textbox", { name: "Название" })).toHaveValue(
 		"New title",
 	);

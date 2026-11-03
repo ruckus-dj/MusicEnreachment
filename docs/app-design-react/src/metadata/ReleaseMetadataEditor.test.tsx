@@ -43,6 +43,10 @@ it("shows legacy fields and preserves precise release dates", () => {
 	expect(screen.getByLabelText("Дата выпуска")).toHaveValue("2020-04-09");
 	expect(screen.getByLabelText("Каталожный номер")).toHaveValue("CAT-1");
 	expect(screen.getByLabelText("Лейбл")).toHaveValue("Label");
+	expect(screen.getByText(/Связи с провайдером/)).toBeInTheDocument();
+	expect(screen.getByText("provider-1")).not.toBeVisible();
+	fireEvent.click(screen.getByText(/Связи с провайдером/));
+	expect(screen.getByText("provider-1")).toBeInTheDocument();
 });
 
 it("saves edited metadata without truncating a partial date or reordering credits", async () => {

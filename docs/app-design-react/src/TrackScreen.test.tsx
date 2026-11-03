@@ -17,6 +17,7 @@ it("shows every linked audio variant and requests an explicit source change", ()
 			onPreview={vi.fn()}
 		/>,
 	);
+	fireEvent.click(screen.getByText(/Аудио и публикация/));
 	const variants = screen.getAllByRole("radio");
 	expect(variants).toHaveLength(2);
 	fireEvent.click(variants[1]);
@@ -39,6 +40,7 @@ it("opens a contextual metadata preview without requiring selection", () => {
 	);
 	fireEvent.click(screen.getByRole("button", { name: "Обновить метаданные" }));
 	expect(onPreview).toHaveBeenCalledOnce();
+	fireEvent.click(screen.getByText("Сравнить теги файла и публикации"));
 	expect(screen.getByRole("table")).toBeInTheDocument();
 });
 
@@ -69,7 +71,7 @@ it("reports cover and lyrics metadata changes and observed file time", () => {
 		screen.getByText(/Изменились: .*Встроенная обложка, Текст песни/),
 	).toBeInTheDocument();
 	expect(screen.getByText("Файл изменён вне приложения")).toBeInTheDocument();
-	fireEvent.click(screen.getByText("Пути и технические сведения"));
+	fireEvent.click(screen.getByText("Состояние и технические сведения"));
 	expect(screen.getByText("2026-10-31T12:34:56Z")).toBeInTheDocument();
 });
 
@@ -96,6 +98,9 @@ it("keeps the current publication path and tag snapshot in its own disclosure", 
 		name: "Текущая публикация",
 	});
 	expect(publicationTrigger).toHaveAttribute("aria-expanded", "false");
+	expect(screen.getByText(localPath)).not.toBeVisible();
+	fireEvent.click(screen.getByText(/Аудио и публикация/));
+	fireEvent.click(screen.getByText("Состояние и технические сведения"));
 	expect(screen.getByText(localPath)).toBeInTheDocument();
 	fireEvent.click(publicationTrigger);
 	expect(screen.getByText(published.path)).toBeInTheDocument();

@@ -178,78 +178,107 @@ export function TrackMetadataEditors({
 					(onRecordingChange ?? onMutate)(update);
 				}}
 			/>
-			<MetadataEditor
-				label="Позиция в издании"
-				scope="track"
-				values={position}
-				extraFields={positionExtras}
-				requiredKeys={["track"]}
-				onSave={(values, details) => {
-					const displayedNumber = values.track?.[0] ?? "";
-					const medium = Number(values.disc?.[0] ?? "1");
-					onMutate((current) => ({
-						...current,
-						displayedNumber,
-						mediumPosition:
-							Number(displayedNumber) ||
-							current.mediumPosition ||
-							current.position,
-						medium:
-							Number.isFinite(medium) && medium > 0 ? medium : current.medium,
-						positionMetadata: values,
-						...(details?.extraValues?.titleOverride !== undefined
-							? {
-									positionTitleOverride: details.extraValues.titleOverride,
-									title:
-										details.extraValues.titleOverride ||
-										recordingTitleBaseline(current) ||
-										current.title,
-								}
-							: {}),
-					}));
-				}}
-			/>
-			<section
-				className="grid min-w-0 gap-3"
-				aria-label="Метаданные аудио для публикации"
-			>
-				<h2 className="m-0 text-sm font-semibold">
-					Метаданные аудио для публикации
-				</h2>
-				{audioSources.length ? (
-					audioSources.map((sourceId) => {
-						const source = files[sourceId];
-						const isSelected = sourceId === track.sourceId;
-						return (
+			<details className="rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3">
+				<summary className="cursor-pointer font-semibold">
+					Позиция в издании · {positionExtras[0].value || track.title} · №{" "}
+					{position.track?.[0] ?? ""} · диск {position.disc?.[0] ?? "1"}
+				</summary>
+				<div className="mt-3">
+					<MetadataEditor
+						label="Позиция в издании"
+						scope="track"
+						values={position}
+						extraFields={positionExtras}
+						requiredKeys={["track"]}
+						onSave={(values, details) => {
+							const displayedNumber = values.track?.[0] ?? "";
+							const medium = Number(values.disc?.[0] ?? "1");
+							onMutate((current) => ({
+								...current,
+								displayedNumber,
+								mediumPosition:
+									Number(displayedNumber) ||
+									current.mediumPosition ||
+									current.position,
+								medium:
+									Number.isFinite(medium) && medium > 0
+										? medium
+										: current.medium,
+								positionMetadata: values,
+								...(details?.extraValues?.titleOverride !== undefined
+									? {
+											positionTitleOverride: details.extraValues.titleOverride,
+											title:
+												details.extraValues.titleOverride ||
+												recordingTitleBaseline(current) ||
+												current.title,
+										}
+									: {}),
+							}));
+						}}
+					/>
+				</div>
+			</details>
+			<section className="min-w-0" aria-label="Метаданные аудио для публикации">
+				<details className="rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3">
+					<summary className="cursor-pointer font-semibold">
+						Громкость и кодирование ·{" "}
+						{track.sourceId
+							? (files[track.sourceId]?.name ?? track.sourceId)
+							: "нет выбранного исходника"}
+					</summary>
+					<div className="mt-3">
+						{track.sourceId && audioSources.includes(track.sourceId) ? (
 							<MetadataEditor
-								key={sourceId}
-								label={`${source?.name ?? sourceId}${isSelected ? " · выбран для публикации" : " · не выбран"}`}
+								key={track.sourceId}
+								label={`${files[track.sourceId]?.name ?? track.sourceId} · выбран для публикации`}
 								scope="audio"
-								values={mergedValues(track.audioMetadata?.[sourceId])}
-								readOnly={!isSelected}
+								values={mergedValues(track.audioMetadata?.[track.sourceId])}
 								onSave={(values) =>
 									onMutate((current) => ({
 										...current,
 										audioMetadata: {
 											...current.audioMetadata,
-											[sourceId]: values,
+											[track.sourceId as string]: values,
 										},
 									}))
 								}
 							/>
-						);
-					})
-				) : (
-					<p className="m-0 text-sm text-[var(--muted)]">
-						Нет связанных аудиовариантов.
-					</p>
-				)}
-				{track.sourceId && !audioSources.includes(track.sourceId) && (
-					<p className="m-0 text-sm text-[var(--muted)]">
-						Выбранный для публикации файл отсутствует среди связанных вариантов;
-						метаданные файла не изменены.
-					</p>
-				)}
+						) : (
+							<p className="m-0 text-sm text-[var(--muted)]">
+								Нет выбранного связанного аудиоварианта.
+							</p>
+						)}
+						{track.sourceId && !audioSources.includes(track.sourceId) && (
+							<p className="m-0 text-sm text-[var(--muted)]">
+								Выбранный для публикации файл отсутствует среди связанных
+								вариантов; метаданные файла не изменены.
+							</p>
+						)}
+						{audioSources.some((id) => id !== track.sourceId) && (
+							<details className="mt-3">
+								<summary className="cursor-pointer text-sm font-semibold">
+									Другие аудиоварианты ·{" "}
+									{audioSources.filter((id) => id !== track.sourceId).length}
+								</summary>
+								<div className="mt-3 grid min-w-0 gap-3">
+									{audioSources
+										.filter((id) => id !== track.sourceId)
+										.map((sourceId) => (
+											<MetadataEditor
+												key={sourceId}
+												label={`${files[sourceId]?.name ?? sourceId} · только просмотр`}
+												scope="audio"
+												values={mergedValues(track.audioMetadata?.[sourceId])}
+												readOnly
+												onSave={() => undefined}
+											/>
+										))}
+								</div>
+							</details>
+						)}
+					</div>
+				</details>
 			</section>
 		</div>
 	);

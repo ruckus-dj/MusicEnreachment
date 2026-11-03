@@ -1,23 +1,24 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Button, Dialog, Heading, Modal } from "../ui";
+import { essentialMetadataFields, metadataSummary } from "./editorLayout";
 import { GenrePicker, type GenreReference } from "./GenrePicker";
 import {
+	type MetadataContributor,
+	type MetadataCredit,
 	readMetadataContributors,
 	readMetadataCredits,
 	readMetadataWorks,
 	writeMetadataContributors,
 	writeMetadataCredits,
 	writeMetadataWorks,
-	type MetadataCredit,
-	type MetadataContributor,
 } from "./model";
-import { validateMetadataValues, type MetadataValues } from "./projection";
+import { type MetadataValues, validateMetadataValues } from "./projection";
 import {
-	fieldsForScope,
 	fieldByKey,
+	fieldsForScope,
 	type MetadataField,
 	type MetadataScope,
 } from "./registry";
-import { Button, Dialog, Heading, Modal } from "../ui";
 
 type ArtistOption = {
 	id: string;
@@ -58,13 +59,14 @@ export interface MetadataEditorProps {
 const inputClass =
 	"h-8 min-w-0 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)] read-only:border-transparent read-only:bg-transparent";
 const groupLabels: Record<string, string> = {
-	release: "Издание",
-	recording: "Композиция",
-	track: "Позиция в издании",
+	release: "Тип и параметры издания",
+	recording: "Даты и музыкальные сведения",
+	track: "Дополнительно о позиции",
 	audio: "Аудио",
 	"recording artists": "Исполнители записи",
 	"release artists": "Исполнители издания",
 	roles: "Участники и роли",
+	identifiers: "Идентификаторы",
 	works: "Произведения",
 	movement: "Часть произведения",
 };
@@ -226,12 +228,12 @@ function SimpleField({
 			) : (
 				<>
 					{values.map((item, index) => (
-						<div key={`${field.key}-${index}`} className="flex min-w-0 gap-1">
+						<div key={`${field.key}-${index}`} className="relative min-w-0">
 							<input
 								{...marker([field.key])}
 								aria-label={`${field.label}${values.length > 1 ? ` ${index + 1}` : ""}`}
 								readOnly={readOnly}
-								className={inputClass}
+								className={`${inputClass} pointer-coarse:h-10 ${readOnly ? "" : "pr-28 pointer-coarse:pr-44"}`}
 								value={item}
 								onChange={(event) =>
 									onChange(
@@ -242,8 +244,8 @@ function SimpleField({
 								}
 							/>
 							<div
-								className={`flex shrink-0 gap-1 ${readOnly ? "invisible" : ""}`}
 								aria-hidden={readOnly}
+								className={`absolute right-1 top-0 flex h-8 items-center gap-0.5 pointer-coarse:h-10 pointer-coarse:[&_button]:min-w-10 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 ${readOnly ? "invisible" : ""}`}
 							>
 								<Button
 									aria-label={`Выше: ${field.label} ${index + 1}`}
@@ -268,21 +270,18 @@ function SimpleField({
 								>
 									×
 								</Button>
+								{index === values.length - 1 && (
+									<Button
+										aria-label={`Добавить значение: ${field.label}`}
+										isDisabled={readOnly}
+										onPress={() => onChange([...values, ""])}
+									>
+										+
+									</Button>
+								)}
 							</div>
 						</div>
 					))}
-					<div
-						className={`min-h-[30px] ${readOnly ? "invisible" : ""}`}
-						aria-hidden={readOnly}
-					>
-						<Button
-							isDisabled={readOnly}
-							className="justify-self-start"
-							onPress={() => onChange([...value, ""])}
-						>
-							Добавить значение
-						</Button>
-					</div>
 				</>
 			)}
 		</div>
@@ -362,7 +361,12 @@ export function MetadataEditor({
 		values: MetadataValues;
 		details?: SaveDetails;
 	}>();
+	const [addedRoles, setAddedRoles] = useState<string[]>([]);
+	useEffect(() => {
+		if (!editing) setAddedRoles([]);
+	}, [editing]);
 	const actionRef = useRef<HTMLButtonElement>(null);
+	const editorRef = useRef<HTMLElement>(null);
 	const fields = useMemo(() => fieldsForScope(scope), [scope]);
 	const current = controlled || !editing ? values : draft;
 	const controlledValues = useRef(values);
@@ -381,6 +385,7 @@ export function MetadataEditor({
 	};
 	const begin = () => {
 		if (controlled) return;
+		setAddedRoles([]);
 		setDraft({ ...values });
 		const context = scope === "release" ? "albumartist" : "artist";
 		setDraftCredits(
@@ -413,6 +418,7 @@ export function MetadataEditor({
 		setDirtyGenres(false);
 		setDraftExtras({});
 		setDirtyExtras(new Set());
+		setAddedRoles([]);
 		requestAnimationFrame(() => actionRef.current?.focus());
 	};
 	const complete = async (next: MetadataValues, details?: SaveDetails) => {
@@ -457,6 +463,32 @@ export function MetadataEditor({
 			errors.push(`${fieldLabel(missingRequired)} обязательно для заполнения.`);
 		if (errors.length) {
 			setError(errors.join(" "));
+			const invalidKey =
+				missingRequired ??
+				[...dirty].find((key) =>
+					errors.some((message) => message.includes(key)),
+				);
+			if (invalidKey) {
+				const candidates = [
+					...(editorRef.current?.querySelectorAll<HTMLElement>(
+						"[data-metadata-keys]",
+					) ?? []),
+				].filter((node) =>
+					node
+						.getAttribute("data-metadata-keys")
+						?.split(",")
+						.includes(invalidKey),
+				);
+				const marked =
+					candidates.find((node) => node.matches("input, select, textarea")) ??
+					candidates[0];
+				let ancestor: HTMLElement | null = marked ?? null;
+				while (ancestor) {
+					if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+					ancestor = ancestor.parentElement;
+				}
+				requestAnimationFrame(() => marked?.focus());
+			}
 			return;
 		}
 		const update: MetadataValues = { ...values };
@@ -523,9 +555,13 @@ export function MetadataEditor({
 			field.group === "recording artists"
 		)
 			consumed.add(field.key);
-		const list = sections.get(field.group) ?? [];
+		const sectionGroup =
+			field.kind === "identity" && field.group !== "roles"
+				? "identifiers"
+				: field.group;
+		const list = sections.get(sectionGroup) ?? [];
 		list.push(field);
-		sections.set(field.group, list);
+		sections.set(sectionGroup, list);
 	}
 	const artistGroup =
 		scope === "release" ? "release artists" : "recording artists";
@@ -534,13 +570,41 @@ export function MetadataEditor({
 	const roles = fields.filter(
 		(field) => field.kind === "contributors" && field.role,
 	);
-	const otherSections = [...sections.entries()].filter(
+	const remainingSections = [...sections.entries()].filter(
 		([group]) =>
 			group !== artistGroup &&
 			group !== "roles" &&
 			group !== "works" &&
 			group !== "movement",
 	);
+	const basicFields = essentialMetadataFields(fields, scope);
+	const basicKeys = new Set(basicFields.map((field) => field.key));
+	for (const field of fields)
+		if (field.kind === "genres") basicKeys.add(field.key);
+	const otherSections = remainingSections
+		.map(
+			([group, groupFields]) =>
+				[
+					group,
+					groupFields.filter(
+						(field) =>
+							!basicKeys.has(field.key) &&
+							field.kind !== "lyrics" &&
+							!consumed.has(field.key),
+					),
+				] as [string, MetadataField[]],
+		)
+		.filter(([, groupFields]) => groupFields.length > 0);
+	const roleOptions = roles.filter(
+		(field) => !addedRoles.includes(field.role ?? field.key),
+	);
+	const activeRoles = roles.filter((field) => {
+		const role = field.role ?? field.key;
+		return (
+			addedRoles.includes(role) ||
+			readRoleContributors(current, role).length > 0
+		);
+	});
 	const editedCredits =
 		editing && !controlled
 			? draftCredits
@@ -584,9 +648,13 @@ export function MetadataEditor({
 				: rows(current, "genre").map((name): Genre => ({ name }))
 	).map((genre) => ({ ...genre, name: genre.name ?? genre.id ?? "" }));
 	const groupHeading = (group: string) => groupLabels[group] ?? group;
+	const roleKeys = fields
+		.filter((field) => field.group === "roles")
+		.map((field) => field.key);
 
 	return (
 		<section
+			ref={editorRef}
 			aria-label={label}
 			className="grid min-w-0 gap-3 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3"
 			onKeyDown={(event) => {
@@ -627,571 +695,749 @@ export function MetadataEditor({
 					не редактируются.
 				</p>
 			)}
-			{artistFields.length > 0 && (
-				<section
-					{...marker(creditKeys)}
-					className="grid gap-2 rounded border border-[var(--line)] p-2"
-				>
-					<h3 className="m-0 text-sm font-semibold">
-						{groupHeading(artistGroup)}
-					</h3>
-					{(editedCredits.length
-						? editedCredits
-						: [{ artistId: "", creditName: "", joinPhrase: "" }]
-					).map((credit, index) => {
-						const linked = artists.find(
-							(artist) => artist.id === credit.artistId,
-						);
-						return (
-							<div
-								key={`${credit.artistId}-${index}`}
-								className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-4"
-							>
-								<label className="grid gap-1 text-xs text-[var(--muted)]">
-									<span>Связанный исполнитель</span>
-									<select
-										{...marker([creditKeys[0]])}
-										aria-label={`Связанный исполнитель ${index + 1}`}
-										className={inputClass}
-										disabled={!editing || !artists.length}
-										value={credit.artistId}
-										onChange={(event) => {
-											const selectedId = event.target.value;
-											const selectedArtist = artists.find(
-												(artist) => artist.id === selectedId,
+			{(basicFields.length > 0 ||
+				fields.some((field) => field.kind === "genres") ||
+				genres !== undefined) && (
+				<section className="grid min-w-0 gap-2">
+					<h3 className="m-0 text-sm font-semibold">Основное</h3>
+					<div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+						{basicFields.map((field) => (
+							<SimpleField
+								key={field.key}
+								field={field}
+								value={rows(current, field.key)}
+								readOnly={
+									!editing ||
+									(field.kind === "identity" &&
+										!["asin", "musicbrainz_discid"].includes(field.key))
+								}
+								onChange={(next) => setValue(field.key, next)}
+							/>
+						))}
+						{fields
+							.filter((field) => field.kind === "genres")
+							.map((field) => (
+								<div key={field.key} {...marker([field.key])}>
+									<GenrePicker
+										label={field.label}
+										readOnly={!editing}
+										loaded={genresLoaded}
+										onLoad={onLoadGenres}
+										value={genresValue}
+										onChange={(next) => {
+											if (controlled) {
+												onDraftChange?.(
+													{
+														...values,
+														genre: next.map((item) => item.name),
+													},
+													{ genres: next },
+												);
+												return;
+											}
+											setDraftGenres(next);
+											setDirtyGenres(true);
+											setValue(
+												"genre",
+												next.map((item) => item.name),
 											);
-											setCredit(index, {
-												artistId: selectedId,
-												mbid:
-													selectedArtist?.mbid ??
-													(selectedId === credit.artistId
-														? (credit.mbid ?? "")
-														: ""),
-												creditName: selectedArtist?.name ?? "",
-											});
+										}}
+									/>
+								</div>
+							))}
+						{genres !== undefined &&
+							!fields.some((field) => field.kind === "genres") && (
+								<GenrePicker
+									readOnly={!editing}
+									loaded={genresLoaded}
+									onLoad={onLoadGenres}
+									value={genresValue}
+									onChange={(next) => {
+										if (controlled) {
+											onDraftChange?.(values, { genres: next });
+											return;
+										}
+										setDraftGenres(next);
+										setDirtyGenres(true);
+									}}
+								/>
+							)}
+					</div>
+				</section>
+			)}
+			{artistFields.length > 0 && (
+				<div className="grid gap-2 rounded border border-[var(--line)] p-2">
+					<div className="flex flex-wrap items-center gap-2 text-sm">
+						<strong>{groupHeading(artistGroup)}</strong>
+						<span className="flex flex-wrap items-center text-[var(--muted)]">
+							{editedCredits.length ? (
+								editedCredits.map((credit, index) => {
+									const linked = artists.find(
+										(artist) => artist.id === credit.artistId,
+									);
+									return (
+										<span key={`${credit.artistId}-${index}`}>
+											{credit.creditName ||
+												linked?.name ||
+												"Исполнитель не указан"}
+											{credit.joinPhrase}
+										</span>
+									);
+								})
+							) : (
+								<span>Не указаны</span>
+							)}
+						</span>
+					</div>
+					<details>
+						<summary className="cursor-pointer text-xs text-[var(--muted)]">
+							Состав исполнителей и порядок
+						</summary>
+						<section
+							{...marker(creditKeys)}
+							className="grid gap-2 rounded border border-[var(--line)] p-2"
+						>
+							{(editedCredits.length
+								? editedCredits
+								: [{ artistId: "", creditName: "", joinPhrase: "" }]
+							).map((credit, index) => {
+								const linked = artists.find(
+									(artist) => artist.id === credit.artistId,
+								);
+								return (
+									<div
+										key={`${credit.artistId}-${index}`}
+										className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-4"
+									>
+										<label className="grid gap-1 text-xs text-[var(--muted)]">
+											<span>Связанный исполнитель</span>
+											<select
+												{...marker([creditKeys[0]])}
+												aria-label={`Связанный исполнитель ${index + 1}`}
+												className={inputClass}
+												disabled={!editing || !artists.length}
+												value={credit.artistId}
+												onChange={(event) => {
+													const selectedId = event.target.value;
+													const selectedArtist = artists.find(
+														(artist) => artist.id === selectedId,
+													);
+													setCredit(index, {
+														artistId: selectedId,
+														mbid:
+															selectedArtist?.mbid ??
+															(selectedId === credit.artistId
+																? (credit.mbid ?? "")
+																: ""),
+														creditName: selectedArtist?.name ?? "",
+													});
+												}}
+											>
+												<option value="">Не связан</option>
+												{artists.map((artist) => (
+													<option key={artist.id} value={artist.id}>
+														{artist.name}
+													</option>
+												))}
+											</select>
+										</label>
+										<KeyInput
+											fieldKey={creditKeys[0]}
+											label="Имя в зачёте"
+											value={credit.creditName}
+											readOnly={!editing}
+											onChange={(creditName) =>
+												setCredit(index, { creditName })
+											}
+										/>
+										<KeyInput
+											fieldKey={creditKeys[2]}
+											label="MusicBrainz ID исполнителя"
+											value={credit.mbid ?? ""}
+											readOnly
+											onChange={() => undefined}
+										/>
+										<KeyInput
+											fieldKey="credit-joinphrase"
+											label="Фраза соединения"
+											value={credit.joinPhrase}
+											readOnly={!editing}
+											onChange={(joinPhrase) =>
+												setCredit(index, { joinPhrase })
+											}
+										/>
+										<KeyInput
+											fieldKey={
+												scope === "release" ? "albumartistsort" : "artistsort"
+											}
+											label="Сортировка исполнителя"
+											value={linked?.sortName ?? ""}
+											readOnly
+											onChange={() => undefined}
+										/>
+										{!readOnly && editing && (
+											<div className="flex gap-1">
+												<Button
+													aria-label={`Выше исполнителя ${index + 1}`}
+													isDisabled={readOnly || !editing || index === 0}
+													onPress={() =>
+														writeArtistCredits(move(editedCredits, index, -1))
+													}
+												>
+													↑
+												</Button>
+												<Button
+													aria-label={`Ниже исполнителя ${index + 1}`}
+													isDisabled={
+														readOnly ||
+														!editing ||
+														index === editedCredits.length - 1
+													}
+													onPress={() =>
+														writeArtistCredits(move(editedCredits, index, 1))
+													}
+												>
+													↓
+												</Button>
+												<Button
+													aria-label={`Убрать исполнителя ${index + 1}`}
+													isDisabled={readOnly || !editing}
+													onPress={() => {
+														const next = editedCredits.filter(
+															(_, row) => row !== index,
+														);
+														writeArtistCredits(next);
+													}}
+												>
+													Убрать
+												</Button>
+											</div>
+										)}
+									</div>
+								);
+							})}
+							{editing && (
+								<Button
+									isDisabled={!editing}
+									className="justify-self-start"
+									onPress={() => {
+										const next = [
+											...editedCredits,
+											{ artistId: "", creditName: "", joinPhrase: "" },
+										];
+										writeArtistCredits(next);
+									}}
+								>
+									Добавить исполнителя
+								</Button>
+							)}
+							<p className="m-0 text-xs text-[var(--muted)]">
+								Идентификаторы и имена сортировки берутся из связанных карточек
+								артистов.
+							</p>
+						</section>
+					</details>
+				</div>
+			)}
+			<div className="grid min-w-0 gap-2 sm:grid-cols-2">
+				{roles.length > 0 && (
+					<details className="min-w-0 open:col-span-full">
+						<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+							Участники и роли ·{" "}
+							{metadataSummary(
+								fields.filter((field) => field.group === "roles"),
+								current,
+							)}
+						</summary>
+						<section
+							{...marker(roleKeys)}
+							className="grid gap-2 rounded border border-[var(--line)] p-2"
+						>
+							{activeRoles.map((roleField) => {
+								const role = roleField.role ?? roleField.key;
+								const sortField = fields.find(
+									(field) => field.role === role && field.key.endsWith("sort"),
+								);
+								const roleContributors = readRoleContributors(
+									current,
+									role,
+								).map((contributor, index) => ({
+									...contributor,
+									...(sortField?.key && rows(current, sortField.key)[index]
+										? { sortName: rows(current, sortField.key)[index] }
+										: {}),
+								}));
+								const idKey = `musicbrainz_${role}id`;
+								const writeRole = (next: MetadataContributor[]) => {
+									const written = writeRoleContributors(current, role, next);
+									setValue(roleField.key, written[roleField.key] ?? []);
+									setValue(idKey, written[idKey] ?? []);
+									if (role === "performer")
+										setDraft((state) => {
+											const cleaned = { ...state };
+											delete cleaned.performerinstrument;
+											return cleaned;
+										});
+									if (sortField)
+										setValue(
+											sortField.key,
+											next.map((item) => item.sortName ?? ""),
+										);
+								};
+								const idField = fields.find(
+									(field) => field.role === role && field.kind === "identity",
+								);
+								return (
+									<div
+										key={role}
+										className="grid gap-2 border-b border-[var(--line)] pb-2 last:border-0"
+									>
+										<h4 className="m-0 text-xs font-semibold">
+											{roleField.label}
+										</h4>
+										{(roleContributors.length
+											? roleContributors
+											: [{ name: "" }]
+										).map((contributor, index) => (
+											<div
+												key={`${role}-${index}`}
+												className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"
+											>
+												<KeyInput
+													fieldKey={roleField.key}
+													label="Имя участника"
+													value={contributor.name}
+													readOnly={!editing}
+													onChange={(name) => {
+														const next = [...roleContributors];
+														next[index] = { ...next[index], name };
+														writeRole(next);
+													}}
+												/>
+												{idField && (
+													<KeyInput
+														fieldKey={idField.key}
+														label="MusicBrainz ID участника"
+														value={contributor.mbid ?? ""}
+														readOnly={!editing}
+														onChange={(mbid) => {
+															const next = [...roleContributors];
+															next[index] = { ...next[index], mbid };
+															writeRole(next);
+														}}
+													/>
+												)}
+												{sortField && (
+													<KeyInput
+														fieldKey={sortField.key}
+														label={sortField.label}
+														value={contributor.sortName ?? ""}
+														readOnly={!editing}
+														onChange={(sortName) => {
+															const next = [...roleContributors];
+															next[index] = { ...next[index], sortName };
+															writeRole(next);
+														}}
+													/>
+												)}
+												{role === "performer" && (
+													<KeyInput
+														fieldKey={undefined}
+														label="Инструмент"
+														value={contributor.instrument ?? ""}
+														readOnly={!editing}
+														onChange={(instrument) => {
+															const next = [...roleContributors];
+															next[index] = { ...next[index], instrument };
+															writeRole(next);
+														}}
+													/>
+												)}
+												{editing && (
+													<div className="flex gap-1">
+														<Button
+															aria-label={`Выше: ${roleField.label} ${index + 1}`}
+															isDisabled={!editing || index === 0}
+															onPress={() => {
+																writeRole(move(roleContributors, index, -1));
+															}}
+														>
+															↑
+														</Button>
+														<Button
+															aria-label={`Ниже: ${roleField.label} ${index + 1}`}
+															isDisabled={
+																!editing ||
+																index === roleContributors.length - 1
+															}
+															onPress={() => {
+																writeRole(move(roleContributors, index, 1));
+															}}
+														>
+															↓
+														</Button>
+														<Button
+															aria-label={`Убрать ${roleField.label} ${index + 1}`}
+															isDisabled={!editing}
+															onPress={() => {
+																writeRole(
+																	roleContributors.filter(
+																		(_, row) => row !== index,
+																	),
+																);
+															}}
+														>
+															Убрать
+														</Button>
+													</div>
+												)}
+											</div>
+										))}
+										{editing && (
+											<Button
+												isDisabled={!editing}
+												className="justify-self-start"
+												onPress={() => {
+													writeRole([...roleContributors, { name: "" }]);
+												}}
+											>
+												Добавить участника
+											</Button>
+										)}
+									</div>
+								);
+							})}
+							{editing && roleOptions.length > 0 && (
+								<label className="grid max-w-sm gap-1 text-xs text-[var(--muted)]">
+									<span>Добавить роль</span>
+									<select
+										aria-label="Добавить роль"
+										className={inputClass}
+										value=""
+										onChange={(event) => {
+											if (event.target.value)
+												setAddedRoles((items) => [
+													...items,
+													event.target.value,
+												]);
 										}}
 									>
-										<option value="">Не связан</option>
-										{artists.map((artist) => (
-											<option key={artist.id} value={artist.id}>
-												{artist.name}
+										<option value="">Выберите роль…</option>
+										{roleOptions.map((field) => (
+											<option key={field.role} value={field.role}>
+												{field.label}
 											</option>
 										))}
 									</select>
 								</label>
-								<KeyInput
-									fieldKey={creditKeys[0]}
-									label="Имя в зачёте"
-									value={credit.creditName}
-									readOnly={!editing}
-									onChange={(creditName) => setCredit(index, { creditName })}
-								/>
-								<KeyInput
-									fieldKey={creditKeys[2]}
-									label="MusicBrainz ID исполнителя"
-									value={credit.mbid ?? ""}
-									readOnly
-									onChange={() => undefined}
-								/>
-								<KeyInput
-									fieldKey="credit-joinphrase"
-									label="Фраза соединения"
-									value={credit.joinPhrase}
-									readOnly={!editing}
-									onChange={(joinPhrase) => setCredit(index, { joinPhrase })}
-								/>
-								<KeyInput
-									fieldKey={
-										scope === "release" ? "albumartistsort" : "artistsort"
-									}
-									label="Сортировка исполнителя"
-									value={linked?.sortName ?? ""}
-									readOnly
-									onChange={() => undefined}
-								/>
-								<div
-									className={`flex gap-1 ${!readOnly && editing ? "" : "invisible"}`}
-									aria-hidden={readOnly || !editing}
-								>
-									<Button
-										aria-label={`Выше исполнителя ${index + 1}`}
-										isDisabled={readOnly || !editing || index === 0}
-										onPress={() =>
-											writeArtistCredits(move(editedCredits, index, -1))
-										}
-									>
-										↑
-									</Button>
-									<Button
-										aria-label={`Ниже исполнителя ${index + 1}`}
-										isDisabled={
-											readOnly || !editing || index === editedCredits.length - 1
-										}
-										onPress={() =>
-											writeArtistCredits(move(editedCredits, index, 1))
-										}
-									>
-										↓
-									</Button>
-									<Button
-										aria-label={`Убрать исполнителя ${index + 1}`}
-										isDisabled={readOnly || !editing}
-										onPress={() => {
-											const next = editedCredits.filter(
-												(_, row) => row !== index,
-											);
-											writeArtistCredits(next);
-										}}
-									>
-										Убрать
-									</Button>
-								</div>
-							</div>
-						);
-					})}
-					<div
-						className={`min-h-[30px] ${editing ? "" : "invisible"}`}
-						aria-hidden={!editing}
-					>
-						<Button
-							isDisabled={!editing}
-							className="justify-self-start"
-							onPress={() => {
-								const next = [
-									...editedCredits,
-									{ artistId: "", creditName: "", joinPhrase: "" },
-								];
-								writeArtistCredits(next);
-							}}
-						>
-							Добавить исполнителя
-						</Button>
-					</div>
-				</section>
-			)}
-			{roles.length > 0 && (
-				<section
-					{...marker(
-						fields
-							.filter((field) => field.group === "roles")
-							.map((field) => field.key),
-					)}
-					className="grid gap-2 rounded border border-[var(--line)] p-2"
-				>
-					<h3 className="m-0 text-sm font-semibold">{groupHeading("roles")}</h3>
-					{roles.map((roleField) => {
-						const role = roleField.role ?? roleField.key;
-						const sortField = fields.find(
-							(field) => field.role === role && field.key.endsWith("sort"),
-						);
-						const roleContributors = readRoleContributors(current, role).map(
-							(contributor, index) => ({
-								...contributor,
-								...(sortField?.key && rows(current, sortField.key)[index]
-									? { sortName: rows(current, sortField.key)[index] }
-									: {}),
-							}),
-						);
-						const idKey = `musicbrainz_${role}id`;
-						const writeRole = (next: MetadataContributor[]) => {
-							const written = writeRoleContributors(current, role, next);
-							setValue(roleField.key, written[roleField.key] ?? []);
-							setValue(idKey, written[idKey] ?? []);
-							if (role === "performer")
-								setDraft((state) => {
-									const cleaned = { ...state };
-									delete cleaned.performerinstrument;
-									return cleaned;
-								});
-							if (sortField)
-								setValue(
-									sortField.key,
-									next.map((item) => item.sortName ?? ""),
-								);
-						};
-						const idField = fields.find(
-							(field) => field.role === role && field.kind === "identity",
-						);
-						return (
-							<div
-								key={role}
-								className="grid gap-2 border-b border-[var(--line)] pb-2 last:border-0"
+							)}
+						</section>
+					</details>
+				)}
+				{(fields.some((field) => field.group === "works") ||
+					fields.some((field) => field.group === "movement")) && (
+					<details className="min-w-0 open:col-span-full">
+						<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+							Произведения и части ·{" "}
+							{metadataSummary(
+								fields.filter(
+									(field) =>
+										field.group === "works" || field.group === "movement",
+								),
+								current,
+							)}
+						</summary>
+						{fields.some((field) => field.group === "works") && (
+							<section
+								{...marker(["work", "musicbrainz_workid"])}
+								className="grid gap-2 rounded border border-[var(--line)] p-2"
 							>
-								<h4 className="m-0 text-xs font-semibold">{roleField.label}</h4>
-								{(roleContributors.length
-									? roleContributors
-									: [{ name: "" }]
-								).map((contributor, index) => (
+								<h3 className="m-0 text-sm font-semibold">
+									{groupHeading("works")}
+								</h3>
+								{(readMetadataWorks(current).length
+									? readMetadataWorks(current)
+									: [{ title: "" }]
+								).map((work, index) => (
 									<div
-										key={`${role}-${index}`}
-										className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"
+										key={`work-${index}`}
+										className="grid gap-2 sm:grid-cols-2"
 									>
 										<KeyInput
-											fieldKey={roleField.key}
-											label="Имя участника"
-											value={contributor.name}
+											fieldKey="work"
+											label="Название произведения"
+											value={work.title}
 											readOnly={!editing}
-											onChange={(name) => {
-												const next = [...roleContributors];
-												next[index] = { ...next[index], name };
-												writeRole(next);
+											onChange={(title) => {
+												const next = [...readMetadataWorks(current)];
+												next[index] = { ...next[index], title };
+												const written = writeMetadataWorks(current, next);
+												setValue("work", written.work);
+												setValue(
+													"musicbrainz_workid",
+													written.musicbrainz_workid,
+												);
 											}}
 										/>
-										{idField && (
-											<KeyInput
-												fieldKey={idField.key}
-												label="MusicBrainz ID участника"
-												value={contributor.mbid ?? ""}
-												readOnly={!editing}
-												onChange={(mbid) => {
-													const next = [...roleContributors];
-													next[index] = { ...next[index], mbid };
-													writeRole(next);
-												}}
-											/>
+										<KeyInput
+											fieldKey="musicbrainz_workid"
+											label="MusicBrainz ID произведения"
+											value={work.mbid ?? ""}
+											readOnly={!editing}
+											onChange={(mbid) => {
+												const next = [...readMetadataWorks(current)];
+												next[index] = { ...next[index], mbid };
+												const written = writeMetadataWorks(current, next);
+												setValue("work", written.work);
+												setValue(
+													"musicbrainz_workid",
+													written.musicbrainz_workid,
+												);
+											}}
+										/>
+										{editing && (
+											<div className="contents">
+												<Button
+													aria-label={`Выше произведения ${index + 1}`}
+													isDisabled={!editing || index === 0}
+													onPress={() => {
+														const written = writeMetadataWorks(
+															current,
+															move(readMetadataWorks(current), index, -1),
+														);
+														setValue("work", written.work);
+														setValue(
+															"musicbrainz_workid",
+															written.musicbrainz_workid,
+														);
+													}}
+												>
+													↑
+												</Button>
+												<Button
+													aria-label={`Ниже произведения ${index + 1}`}
+													isDisabled={
+														!editing ||
+														index === readMetadataWorks(current).length - 1
+													}
+													onPress={() => {
+														const written = writeMetadataWorks(
+															current,
+															move(readMetadataWorks(current), index, 1),
+														);
+														setValue("work", written.work);
+														setValue(
+															"musicbrainz_workid",
+															written.musicbrainz_workid,
+														);
+													}}
+												>
+													↓
+												</Button>
+												<Button
+													aria-label={`Убрать произведение ${index + 1}`}
+													isDisabled={!editing}
+													onPress={() => {
+														const written = writeMetadataWorks(
+															current,
+															readMetadataWorks(current).filter(
+																(_, row) => row !== index,
+															),
+														);
+														setValue("work", written.work);
+														setValue(
+															"musicbrainz_workid",
+															written.musicbrainz_workid,
+														);
+													}}
+												>
+													Убрать
+												</Button>
+											</div>
 										)}
-										{sortField && (
-											<KeyInput
-												fieldKey={sortField.key}
-												label={sortField.label}
-												value={contributor.sortName ?? ""}
-												readOnly={!editing}
-												onChange={(sortName) => {
-													const next = [...roleContributors];
-													next[index] = { ...next[index], sortName };
-													writeRole(next);
-												}}
-											/>
-										)}
-										{role === "performer" && (
-											<KeyInput
-												fieldKey={undefined}
-												label="Инструмент"
-												value={contributor.instrument ?? ""}
-												readOnly={!editing}
-												onChange={(instrument) => {
-													const next = [...roleContributors];
-													next[index] = { ...next[index], instrument };
-													writeRole(next);
-												}}
-											/>
-										)}
-										<div
-											className={`flex gap-1 ${editing ? "" : "invisible"}`}
-											aria-hidden={!editing}
-										>
-											<Button
-												aria-label={`Выше: ${roleField.label} ${index + 1}`}
-												isDisabled={!editing || index === 0}
-												onPress={() => {
-													writeRole(move(roleContributors, index, -1));
-												}}
-											>
-												↑
-											</Button>
-											<Button
-												aria-label={`Ниже: ${roleField.label} ${index + 1}`}
-												isDisabled={
-													!editing || index === roleContributors.length - 1
-												}
-												onPress={() => {
-													writeRole(move(roleContributors, index, 1));
-												}}
-											>
-												↓
-											</Button>
-											<Button
-												aria-label={`Убрать ${roleField.label} ${index + 1}`}
-												isDisabled={!editing}
-												onPress={() => {
-													writeRole(
-														roleContributors.filter((_, row) => row !== index),
-													);
-												}}
-											>
-												Убрать
-											</Button>
-										</div>
 									</div>
 								))}
-								<div
-									className={`min-h-[30px] ${editing ? "" : "invisible"}`}
-									aria-hidden={!editing}
-								>
+								{editing && (
 									<Button
 										isDisabled={!editing}
 										className="justify-self-start"
 										onPress={() => {
-											writeRole([...roleContributors, { name: "" }]);
+											const written = writeMetadataWorks(current, [
+												...readMetadataWorks(current),
+												{ title: "" },
+											]);
+											setValue("work", written.work);
+											setValue(
+												"musicbrainz_workid",
+												written.musicbrainz_workid,
+											);
 										}}
 									>
-										Добавить участника
+										Добавить произведение
 									</Button>
-								</div>
-							</div>
-						);
-					})}
-				</section>
-			)}
-			{fields.some((field) => field.group === "works") && (
-				<section
-					{...marker(["work", "musicbrainz_workid"])}
-					className="grid gap-2 rounded border border-[var(--line)] p-2"
-				>
-					<h3 className="m-0 text-sm font-semibold">{groupHeading("works")}</h3>
-					{(readMetadataWorks(current).length
-						? readMetadataWorks(current)
-						: [{ title: "" }]
-					).map((work, index) => (
-						<div key={`work-${index}`} className="grid gap-2 sm:grid-cols-2">
-							<KeyInput
-								fieldKey="work"
-								label="Название произведения"
-								value={work.title}
-								readOnly={!editing}
-								onChange={(title) => {
-									const next = [...readMetadataWorks(current)];
-									next[index] = { ...next[index], title };
-									const written = writeMetadataWorks(current, next);
-									setValue("work", written.work);
-									setValue("musicbrainz_workid", written.musicbrainz_workid);
-								}}
-							/>
-							<KeyInput
-								fieldKey="musicbrainz_workid"
-								label="MusicBrainz ID произведения"
-								value={work.mbid ?? ""}
-								readOnly={!editing}
-								onChange={(mbid) => {
-									const next = [...readMetadataWorks(current)];
-									next[index] = { ...next[index], mbid };
-									const written = writeMetadataWorks(current, next);
-									setValue("work", written.work);
-									setValue("musicbrainz_workid", written.musicbrainz_workid);
-								}}
-							/>
-							<div
-								className={`contents ${editing ? "" : "invisible"}`}
-								aria-hidden={!editing}
+								)}
+							</section>
+						)}
+						{fields.some((field) => field.group === "movement") && (
+							<section
+								{...marker(
+									fields
+										.filter((field) => field.group === "movement")
+										.map((field) => field.key),
+								)}
+								className="grid gap-2 rounded border border-[var(--line)] p-2"
 							>
-								<Button
-									aria-label={`Выше произведения ${index + 1}`}
-									isDisabled={!editing || index === 0}
-									onPress={() => {
-										const written = writeMetadataWorks(
-											current,
-											move(readMetadataWorks(current), index, -1),
-										);
-										setValue("work", written.work);
-										setValue("musicbrainz_workid", written.musicbrainz_workid);
-									}}
-								>
-									↑
-								</Button>
-								<Button
-									aria-label={`Ниже произведения ${index + 1}`}
-									isDisabled={
-										!editing || index === readMetadataWorks(current).length - 1
-									}
-									onPress={() => {
-										const written = writeMetadataWorks(
-											current,
-											move(readMetadataWorks(current), index, 1),
-										);
-										setValue("work", written.work);
-										setValue("musicbrainz_workid", written.musicbrainz_workid);
-									}}
-								>
-									↓
-								</Button>
-								<Button
-									aria-label={`Убрать произведение ${index + 1}`}
-									isDisabled={!editing}
-									onPress={() => {
-										const written = writeMetadataWorks(
-											current,
-											readMetadataWorks(current).filter(
-												(_, row) => row !== index,
+								<h3 className="m-0 text-sm font-semibold">
+									{groupHeading("movement")}
+								</h3>
+								<div className="grid gap-2 sm:grid-cols-3">
+									{fields
+										.filter((field) => field.group === "movement")
+										.map((field) => (
+											<SimpleField
+												key={field.key}
+												field={field}
+												value={rows(current, field.key)}
+												readOnly={!editing}
+												onChange={(next) => setValue(field.key, next)}
+											/>
+										))}
+								</div>
+							</section>
+						)}
+					</details>
+				)}
+				{otherSections.map(([group, sectionFields]) => (
+					<details key={group} className="min-w-0 open:col-span-full">
+						<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+							{groupHeading(group)} · {metadataSummary(sectionFields, current)}
+						</summary>
+						<section className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2">
+							<h3 className="m-0 text-sm font-semibold">
+								{groupHeading(group)}
+							</h3>
+							<div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+								{sectionFields
+									.filter(
+										(field) =>
+											!basicKeys.has(field.key) &&
+											field.kind !== "lyrics" &&
+											!consumed.has(field.key) &&
+											!(
+												field.kind === "identity" &&
+												(field.key === "musicbrainz_artistid" ||
+													field.key === "musicbrainz_albumartistid")
 											),
-										);
-										setValue("work", written.work);
-										setValue("musicbrainz_workid", written.musicbrainz_workid);
-									}}
-								>
-									Убрать
-								</Button>
+									)
+									.map((field) =>
+										field.kind === "genres" ? (
+											<div key={field.key} {...marker([field.key])}>
+												<GenrePicker
+													label={field.label}
+													readOnly={!editing}
+													loaded={genresLoaded}
+													onLoad={onLoadGenres}
+													value={genresValue}
+													onChange={(next) => {
+														if (controlled) {
+															onDraftChange?.(
+																{
+																	...values,
+																	genre: next.map((item) => item.name),
+																},
+																{ genres: next },
+															);
+															return;
+														}
+														setDraftGenres(next);
+														setDirtyGenres(true);
+														setValue(
+															"genre",
+															next.map((item) => item.name),
+														);
+													}}
+												/>
+											</div>
+										) : (
+											<SimpleField
+												key={field.key}
+												field={field}
+												value={rows(current, field.key)}
+												readOnly={
+													!editing ||
+													(field.kind === "identity" &&
+														!["asin", "musicbrainz_discid"].includes(field.key))
+												}
+												onChange={(next) => setValue(field.key, next)}
+											/>
+										),
+									)}
 							</div>
-						</div>
-					))}
-					<div className={editing ? "" : "invisible"} aria-hidden={!editing}>
-						<Button
-							isDisabled={!editing}
-							className="justify-self-start"
-							onPress={() => {
-								const written = writeMetadataWorks(current, [
-									...readMetadataWorks(current),
-									{ title: "" },
-								]);
-								setValue("work", written.work);
-								setValue("musicbrainz_workid", written.musicbrainz_workid);
-							}}
-						>
-							Добавить произведение
-						</Button>
-					</div>
-				</section>
-			)}
-			{fields.some((field) => field.group === "movement") && (
-				<section
-					{...marker(
-						fields
-							.filter((field) => field.group === "movement")
-							.map((field) => field.key),
-					)}
-					className="grid gap-2 rounded border border-[var(--line)] p-2"
-				>
-					<h3 className="m-0 text-sm font-semibold">
-						{groupHeading("movement")}
-					</h3>
-					<div className="grid gap-2 sm:grid-cols-3">
-						{fields
-							.filter((field) => field.group === "movement")
-							.map((field) => (
+						</section>
+					</details>
+				))}
+				{fields
+					.filter((field) => field.kind === "lyrics")
+					.map((field) => (
+						<details key={field.key} className="min-w-0 open:col-span-full">
+							<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+								Текст песни ·{" "}
+								{rows(current, field.key).some(Boolean)
+									? "заполнено"
+									: "Не заполнено"}
+							</summary>
+							<section className="grid gap-2 p-2" {...marker([field.key])}>
 								<SimpleField
-									key={field.key}
 									field={field}
 									value={rows(current, field.key)}
 									readOnly={!editing}
 									onChange={(next) => setValue(field.key, next)}
 								/>
-							))}
-					</div>
-				</section>
-			)}
-			{otherSections.map(([group, sectionFields]) => (
-				<section
-					key={group}
-					className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
-				>
-					<h3 className="m-0 text-sm font-semibold">{groupHeading(group)}</h3>
-					<div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-						{sectionFields
-							.filter(
-								(field) =>
-									!consumed.has(field.key) &&
-									!(
-										field.kind === "identity" &&
-										(field.key === "musicbrainz_artistid" ||
-											field.key === "musicbrainz_albumartistid")
-									),
-							)
-							.map((field) =>
-								field.kind === "genres" ? (
-									<div key={field.key} {...marker([field.key])}>
-										<GenrePicker
-											label={field.label}
+							</section>
+						</details>
+					))}
+				{extraFields.length > 0 && (
+					<details className="min-w-0 open:col-span-full">
+						<summary className="cursor-pointer rounded border border-[var(--line)] p-2 text-sm font-semibold">
+							Дополнительные теги ·{" "}
+							{extraFields.filter((field) => field.value).length} заполнено
+						</summary>
+						<section className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2">
+							<h3 className="m-0 text-sm font-semibold">
+								Дополнительные сведения
+							</h3>
+							<div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+								{extraFields.map((field) => (
+									<label
+										key={field.key}
+										className="grid min-w-0 gap-1 text-xs text-[var(--muted)]"
+									>
+										<span>{field.label}</span>
+										<input
+											aria-label={field.label}
+											className={inputClass}
 											readOnly={!editing}
-											loaded={genresLoaded}
-											onLoad={onLoadGenres}
-											value={genresValue}
-											onChange={(next) => {
-												if (controlled) {
-													onDraftChange?.(
-														{
-															...values,
-															genre: next.map((item) => item.id ?? item.name),
-														},
-														{ genres: next },
-													);
-													return;
-												}
-												setDraftGenres(next);
-												setDirtyGenres(true);
-												setValue(
-													"genre",
-													next.map((item) => item.id ?? item.name),
+											value={
+												editing ? (draftExtras[field.key] ?? "") : field.value
+											}
+											onChange={(event) => {
+												setDraftExtras((state) => ({
+													...state,
+													[field.key]: event.target.value,
+												}));
+												setDirtyExtras((state) =>
+													new Set(state).add(field.key),
 												);
+												setError("");
 											}}
 										/>
-									</div>
-								) : (
-									<SimpleField
-										key={field.key}
-										field={field}
-										value={rows(current, field.key)}
-										readOnly={
-											!editing ||
-											(field.kind === "identity" &&
-												!["asin", "musicbrainz_discid"].includes(field.key))
-										}
-										onChange={(next) => setValue(field.key, next)}
-									/>
-								),
-							)}
-					</div>
-				</section>
-			))}
-			{genres !== undefined &&
-				!fields.some((field) => field.kind === "genres") && (
-					<section className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2">
-						<h3 className="m-0 text-sm font-semibold">Жанры</h3>
-						<GenrePicker
-							readOnly={!editing}
-							loaded={genresLoaded}
-							onLoad={onLoadGenres}
-							value={genresValue}
-							onChange={(next) => {
-								if (controlled) {
-									onDraftChange?.(values, { genres: next });
-									return;
-								}
-								setDraftGenres(next);
-								setDirtyGenres(true);
-							}}
-						/>
-					</section>
+									</label>
+								))}
+							</div>
+						</section>
+					</details>
 				)}
-			{extraFields.length > 0 && (
-				<section className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2">
-					<h3 className="m-0 text-sm font-semibold">Дополнительные сведения</h3>
-					<div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-						{extraFields.map((field) => (
-							<label
-								key={field.key}
-								className="grid min-w-0 gap-1 text-xs text-[var(--muted)]"
-							>
-								<span>{field.label}</span>
-								<input
-									aria-label={field.label}
-									className={inputClass}
-									readOnly={!editing}
-									value={editing ? (draftExtras[field.key] ?? "") : field.value}
-									onChange={(event) => {
-										setDraftExtras((state) => ({
-											...state,
-											[field.key]: event.target.value,
-										}));
-										setDirtyExtras((state) => new Set(state).add(field.key));
-										setError("");
-									}}
-								/>
-							</label>
-						))}
-					</div>
-				</section>
-			)}
-			{fields.some(
-				(field) =>
-					field.kind === "identity" &&
-					["musicbrainz_artistid", "musicbrainz_albumartistid"].includes(
-						field.key,
-					),
-			) && (
-				<p className="m-0 text-xs text-[var(--muted)]">
-					Связанные идентификаторы исполнителей управляются каталогом; свободное
-					редактирование идентичности недоступно.
-				</p>
-			)}
+			</div>
 			{error && (
 				<p role="alert" className="m-0 text-sm text-[var(--error)]">
 					{error}

@@ -244,6 +244,14 @@ prose was moved into docs/app-design-react/.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 
+**Owner-approved prototype exception (2026-11-03)**: when changes are confined
+to the standalone design prototype and documentation, use `task design:check`
+and live prototype checks instead. Do not run or wait for application gates or
+application CI for that work. The `quality-gates` commit hook runs application
+verification, so skip that hook only for such artifact-only commits after the
+prototype check; use `[skip ci]` to avoid triggering application CI. This
+exception does not apply when application code is changed.
+
 Coordinate local full gates across all agent worktrees: run only one `task verify`
 or commit hook at a time. Parallel code work does not authorize concurrent full
 PostgreSQL integration suites. If a gate times out, inspect active tests and DB

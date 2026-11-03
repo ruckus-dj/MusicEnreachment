@@ -122,122 +122,72 @@ export function TrackScreen({
 					<a href="#library">К медиатеке</a>
 				)}
 			</header>
+			{(onMutate || onRecordingChange) && (
+				<TrackMetadataEditors
+					track={track}
+					artists={artists ?? catalogData.artists}
+					files={files}
+					genresLoaded={genresLoaded}
+					onLoadGenres={onLoadGenres}
+					onMutate={onMutate ?? (() => undefined)}
+					onRecordingChange={onRecordingChange}
+					recordingImpact={recordingImpact}
+				/>
+			)}
 			<div className={catalogueStyles.objectColumns}>
 				<section className={catalogueStyles.panel}>
-					<h2>Связанные аудиоварианты</h2>
-					{sourceIds.length ? (
-						<RadioGroup
-							aria-label="Исходник для публикации"
-							value={track.sourceId ?? ""}
-							onChange={onSource}
-						>
-							{sourceIds.map((id) => {
-								const source = files[id];
-								return source ? (
-									<Radio key={id} value={id} className={catalogueStyles.source}>
-										<span
-											aria-hidden="true"
-											className={catalogueStyles.radioDot}
-										/>
-										<span>
-											<strong>{source.name}</strong>
-											<span className={catalogueStyles.secondaryInline}>
-												{source.codec} · {duration(source.duration)} ·{" "}
-												{source.size}
-											</span>
-										</span>
-									</Radio>
-								) : null;
-							})}
-						</RadioGroup>
-					) : (
-						<p>Связанных вариантов нет.</p>
-					)}
-					<p>
-						Переключатель явно выбирает один исходник для публикации. Текущая
-						публикация не меняется автоматически.
-					</p>
-				</section>
-				<section className={catalogueStyles.panel}>
-					<h2>Состояние позиции</h2>
-					<dl className={catalogueStyles.facts}>
-						<dt>Формат исходника</dt>
-						<dd>
+					<details className={catalogueStyles.trackDetails}>
+						<summary>
+							Аудио и публикация ·{" "}
 							{file
-								? `${file.codec} · ${duration(file.duration)} · ${file.size}`
-								: "Не выбран"}
-						</dd>
-						<dt>Композиция</dt>
-						<dd>
-							{track.recordingTitle ||
-								providerTrack?.title ||
-								(track.recordingId
-									? "Связанная композиция"
-									: "Без связи с провайдером")}
-						</dd>
-						<dt>Формат публикации</dt>
-						<dd>
+								? `${file.codec} · ${duration(file.duration)}`
+								: "исходник не выбран"}{" "}
+							·{" "}
 							{track.published
 								? `${track.published.container} · ${track.published.codec}`
-								: "Не опубликована"}
-						</dd>
-						<dt>Метаданные</dt>
-						<dd>
-							{changed
-								? `Изменились: ${changes.join(", ")}`
-								: "Совпадают со снимком публикации"}
-						</dd>
-						<dt>Файл на диске</dt>
-						<dd>
-							{track.observedFile
-								? "Файл изменён вне приложения"
-								: "Изменения не отмечены"}
-						</dd>
-					</dl>
-					<details className={catalogueStyles.trackDetails}>
-						<summary>Пути и технические сведения</summary>
-						<dl className={catalogueStyles.facts}>
-							<dt>Путь исходника</dt>
-							<dd>{file?.path ?? "Не выбран"}</dd>
-							<dt>Идентификатор композиции</dt>
-							<dd>{track.recordingId ?? "Нет связи"}</dd>
-							<dt>Подсказка провайдера</dt>
-							<dd>{track.providerTitle || providerTrack?.title || "Нет"}</dd>
-							{track.observedFile?.mtime && (
-								<>
-									<dt>Внешнее изменение файла · время наблюдения</dt>
-									<dd>{track.observedFile.mtime}</dd>
-								</>
-							)}
-						</dl>
+								: "не опубликована"}
+						</summary>
+						<h2>Исходник для публикации</h2>
+						{sourceIds.length ? (
+							<RadioGroup
+								aria-label="Исходник для публикации"
+								value={track.sourceId ?? ""}
+								onChange={onSource}
+							>
+								{sourceIds.map((id) => {
+									const source = files[id];
+									return source ? (
+										<Radio
+											key={id}
+											value={id}
+											className={catalogueStyles.source}
+										>
+											<span
+												aria-hidden="true"
+												className={catalogueStyles.radioDot}
+											/>
+											<span>
+												<strong>{source.name}</strong>
+												<span className={catalogueStyles.secondaryInline}>
+													{source.codec} · {duration(source.duration)} ·{" "}
+													{source.size}
+												</span>
+											</span>
+										</Radio>
+									) : null;
+								})}
+							</RadioGroup>
+						) : (
+							<p>Связанных вариантов нет.</p>
+						)}
+						<p>
+							Переключатель явно выбирает один исходник для публикации. Текущая
+							публикация не меняется автоматически.
+						</p>
 					</details>
-					{track.published && (
-						<Disclosure className={catalogueStyles.trackPublication}>
-							<Heading>
-								<Button slot="trigger">Текущая публикация</Button>
-							</Heading>
-							<DisclosurePanel>
-								<dl className={catalogueStyles.facts}>
-									<dt>Путь</dt>
-									<dd>{track.published.path}</dd>
-									<dt>Снимок тегов</dt>
-									<dd>
-										{Object.entries(track.published.tags)
-											.map(([key, values]) => `${key}: ${values.join(" · ")}`)
-											.join("; ")}
-									</dd>
-									<dt>Прочитано</dt>
-									<dd>{track.published.readAt}</dd>
-								</dl>
-							</DisclosurePanel>
-						</Disclosure>
-					)}
-					<p>
-						Локальные изменения сравниваются с последним успешным состоянием
-						публикации; версия кэша и наблюдение за файлом не подменяют снимок
-						публикации.
-					</p>
-					<h3>Публикация</h3>
+				</section>
+				<section className={catalogueStyles.panel}>
+					<h2>Публикация</h2>
 					<div className={catalogueStyles.actions}>
 						{track.published && (
 							<Button onPress={() => onMetadataPreview([track.id])}>
@@ -256,29 +206,98 @@ export function TrackScreen({
 							onQueueDeletion={onQueueDeletion}
 						/>
 					)}
+					<details className={catalogueStyles.trackDetails}>
+						<summary>Состояние и технические сведения</summary>
+						<dl className={catalogueStyles.facts}>
+							<dt>Композиция</dt>
+							<dd>
+								{track.recordingTitle ||
+									providerTrack?.title ||
+									(track.recordingId
+										? "Связанная композиция"
+										: "Без связи с провайдером")}
+							</dd>
+							<dt>Метаданные</dt>
+							<dd>
+								{changed
+									? `Изменились: ${changes.join(", ")}`
+									: "Совпадают со снимком публикации"}
+							</dd>
+							<dt>Файл на диске</dt>
+							<dd>
+								{track.observedFile
+									? "Файл изменён вне приложения"
+									: "Изменения не отмечены"}
+							</dd>
+							<dt>Формат исходника</dt>
+							<dd>
+								{file
+									? `${file.codec} · ${duration(file.duration)} · ${file.size}`
+									: "Не выбран"}
+							</dd>
+							<dt>Формат публикации</dt>
+							<dd>
+								{track.published
+									? `${track.published.container} · ${track.published.codec}`
+									: "Не опубликована"}
+							</dd>
+						</dl>
+						<dl className={catalogueStyles.facts}>
+							<dt>Путь исходника</dt>
+							<dd>{file?.path ?? "Не выбран"}</dd>
+							<dt>Идентификатор композиции</dt>
+							<dd>{track.recordingId ?? "Нет связи"}</dd>
+							<dt>Подсказка провайдера</dt>
+							<dd>{track.providerTitle || providerTrack?.title || "Нет"}</dd>
+							{track.observedFile?.mtime && (
+								<>
+									<dt>Внешнее изменение файла · время наблюдения</dt>
+									<dd>{track.observedFile.mtime}</dd>
+								</>
+							)}
+						</dl>
+						{track.published && (
+							<Disclosure className={catalogueStyles.trackPublication}>
+								<Heading>
+									<Button slot="trigger">Текущая публикация</Button>
+								</Heading>
+								<DisclosurePanel>
+									<dl className={catalogueStyles.facts}>
+										<dt>Путь</dt>
+										<dd>{track.published.path}</dd>
+										<dt>Снимок тегов</dt>
+										<dd>
+											{Object.entries(track.published.tags)
+												.map(([key, values]) => `${key}: ${values.join(" · ")}`)
+												.join("; ")}
+										</dd>
+										<dt>Прочитано</dt>
+										<dd>{track.published.readAt}</dd>
+									</dl>
+								</DisclosurePanel>
+							</Disclosure>
+						)}
+						<p>
+							Локальные изменения сравниваются с последним успешным состоянием
+							публикации.
+						</p>
+					</details>
 				</section>
 			</div>
-			{(onMutate || onRecordingChange) && (
-				<TrackMetadataEditors
-					track={track}
-					artists={artists ?? catalogData.artists}
+			<details className="grid min-w-0 gap-3 rounded-[var(--control-radius)] border border-[var(--line)] bg-[var(--surface)] p-3">
+				<summary className="cursor-pointer font-semibold">
+					Сравнить теги файла и публикации
+				</summary>
+				<TagsComparison
+					releases={[release]}
+					artists={artists}
 					files={files}
-					genresLoaded={genresLoaded}
-					onLoadGenres={onLoadGenres}
-					onMutate={onMutate ?? (() => undefined)}
-					onRecordingChange={onRecordingChange}
-					recordingImpact={recordingImpact}
+					scope="track"
+					initialTrackId={track.id}
+					onPreview={onMetadataPreview}
+					allowScopeChange
 				/>
-			)}
-			<TagsComparison
-				releases={[release]}
-				artists={artists}
-				files={files}
-				scope="track"
-				initialTrackId={track.id}
-				onPreview={onMetadataPreview}
-				allowScopeChange
-			/>
+			</details>
 		</section>
 	);
 }

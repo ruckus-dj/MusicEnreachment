@@ -10,6 +10,11 @@ live prototype or independent authority; current product decisions remain in
 Keep production `frontend/` unchanged. Preserve approved behavior, fields,
 identities, data and product semantics. Do not add screenshot artifacts.
 
+For prototype/documentation-only work, the owner explicitly requested scoped
+verification: `task design:check` and live prototype checks, not application
+`task verify`, application CI, or waiting for the platform matrix. Do not
+reintroduce application checks through the commit hook for such changes.
+
 Use React 19, TypeScript, Vite, Tailwind 4 and react-aria-components. The fixture
 at `src/original-fixtures.json` is canonical, self-contained demo data. Do not
 regenerate it from a retired prototype or add invented source hashes/provenance.
@@ -22,8 +27,12 @@ static utility strings. Keep the minimal Tailwind CSS entry to directives and
 configuration only; do not add handwritten CSS selectors, component rules,
 `@apply`, CSS-in-JS, or runtime class translators.
 
-Artist and release details are always-visible, text-like readonly fields, not
-track-tag comparison tables. Edit enables the same fields in place; the fixed-size
+Artist details and release/recording basics are always-visible, text-like
+readonly fields, not track-tag comparison tables. Additional metadata uses
+thematic disclosures available in both modes; do not expand every group on Edit,
+render an empty form for every role, or repeat all metadata in a default-open
+comparison table. Keep each field in one editing group and preserve the shared
+draft when groups close. Edit enables the same visible fields in place; the fixed-size
 Edit/Save action and reserved Cancel space must not shift the layout. Saving
 updates prototype library state; Cancel/Escape discard the draft. Provider
 identities remain readonly. Source files and existing publications are not changed
@@ -42,7 +51,8 @@ preserve genres when the picker is untouched or its catalog is unavailable.
   another with stale values.
 - Keep the Edit/Save button `type="button"`; request form submission explicitly
   on Save. Changing its native type during a press can submit immediately when
-  entering edit mode. Reserve readonly action space for credits, roles and works.
+  entering edit mode. Keep compact action tracks without adding empty action rows
+  or placeholder forms for unused roles to the default view.
 - React Aria pickers render in a portal: scope their tests to the dialog and
   close it before interacting with the underlying form. Escape closes only the
   picker; it must not discard the parent draft.
