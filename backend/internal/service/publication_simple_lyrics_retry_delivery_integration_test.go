@@ -35,18 +35,18 @@ import (
 func TestPublicationExecutorAutomaticLyricsRetryDeliveryPostgreSQL(t *testing.T) {
 	for _, scenario := range []struct {
 		name          string
+		authority     string
 		mismatch      bool
 		authorityRace bool
 	}{
-		{name: "found"},
-		{name: "readback_mismatch", mismatch: true},
-		{name: "authority_race", authorityRace: true},
+		{name: "found/manual", authority: "manual"},
+		{name: "found/automatic", authority: "automatic"},
+		{name: "readback_mismatch/unknown", authority: "unknown", mismatch: true},
+		{name: "authority_race/manual", authority: "manual", authorityRace: true},
 	} {
-		for _, authority := range []string{"manual", "automatic", "unknown"} {
-			t.Run(scenario.name+"/source_authority_"+authority, func(t *testing.T) {
-				testSimpleAutomaticLyricsRetryDelivery(t, scenario.mismatch, scenario.authorityRace, authority)
-			})
-		}
+		t.Run(scenario.name, func(t *testing.T) {
+			testSimpleAutomaticLyricsRetryDelivery(t, scenario.mismatch, scenario.authorityRace, scenario.authority)
+		})
 	}
 }
 

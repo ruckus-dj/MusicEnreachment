@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
@@ -26,6 +27,12 @@ type automaticLyricsExecutorCommands struct {
 	transport *automaticRetryCommands
 }
 
+type automaticLyricsRetryScenario struct {
+	name          string
+	mismatch      bool
+	authorityRace bool
+}
+
 func (commands *automaticLyricsExecutorCommands) Run(ctx context.Context, executable string, args ...string) (PublicationCommandResult, error) {
 	if len(args) == 1 && args[0] == "-version" {
 		return commands.versions.Run(ctx, executable, args...)
@@ -38,18 +45,18 @@ func (commands *automaticLyricsExecutorCommands) RunFile(ctx context.Context, re
 }
 
 func TestPublicationExecutorAutomaticLyricsRetryNativeReadback(t *testing.T) {
-	for _, mismatch := range []bool{false, true} {
-		name := "found"
-		if mismatch {
-			name = "readback_mismatch"
-		}
-		t.Run(name, func(t *testing.T) {
-			testPublicationExecutorAutomaticLyricsRetryNativeReadback(t, mismatch)
+	for _, scenario := range []automaticLyricsRetryScenario{
+		{name: "found"},
+		{name: "readback_mismatch", mismatch: true},
+		{name: "authority_race", authorityRace: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			testPublicationExecutorAutomaticLyricsRetryNativeReadback(t, scenario)
 		})
 	}
 }
 
-func testPublicationExecutorAutomaticLyricsRetryNativeReadback(t *testing.T, mismatch bool) {
+func testPublicationExecutorAutomaticLyricsRetryNativeReadback(t *testing.T, scenario automaticLyricsRetryScenario) {
 	t.Helper()
 	ctx := context.Background()
 	transport := &automaticRetryCommands{probeJSON: automaticRetryProbeFixture(t)}
@@ -117,8 +124,15 @@ func testPublicationExecutorAutomaticLyricsRetryNativeReadback(t *testing.T, mis
 	}
 	lookup := &automaticRetryLookup{}
 	fixture.executor.lyrics = NewPublicationLyricsResolver(automaticRetryEnabled{}, lookup)
-	if mismatch {
+	if scenario.mismatch {
 		fixture.executor.metadata = &automaticRetryMissingLyricsWriter{}
+	}
+	currentAllowed := true
+	if scenario.authorityRace {
+		lookup.onLookup = func() error {
+			currentAllowed = false
+			return nil
+		}
 	}
 	fixture.repository.obsoleteOutput = func(context.Context, persistence.PublicationDeliveryGuard, string) (*persistence.PublicationObsoleteOutputCandidate, error) {
 		return nil, nil
@@ -129,7 +143,7 @@ func testPublicationExecutorAutomaticLyricsRetryNativeReadback(t *testing.T, mis
 		if guard.OperationID != fixture.operationID || guard.ExpectedPositionID != fixture.positionID {
 			t.Fatalf("result currentness received unexpected delivery guard: %+v", guard)
 		}
-		return true, nil
+		return currentAllowed, nil
 	}
 	commitCalls := 0
 	fixture.repository.commit = func(_ context.Context, guard persistence.PublicationDeliveryGuard, result persistence.PublicationResult) (bool, error) {
@@ -141,15 +155,36 @@ func testPublicationExecutorAutomaticLyricsRetryNativeReadback(t *testing.T, mis
 	}
 
 	deliveryErr := fixture.executor.ExecutePublicationDelivery(ctx, fixture.operationID, fixture.riverJobID, 1)
-	if deliveryErr != nil {
+	if scenario.authorityRace {
+		if deliveryErr == nil || !strings.Contains(deliveryErr.Error(), "publication inputs or current generation changed before installation") {
+			t.Fatalf("authority race did not reject delivery at the late currentness check: %v", deliveryErr)
+		}
+	} else if deliveryErr != nil {
 		t.Fatalf("execute real automatic-lyrics retry: %v", deliveryErr)
 	}
 	if len(lookup.requests) != 1 || lookup.requests[0].Artist != "Artist" || lookup.requests[0].Title != "Track" || lookup.requests[0].Duration <= 0 || lookup.requests[0].Duration == math.Trunc(lookup.requests[0].Duration) {
 		t.Fatalf("automatic lookup calls/metadata do not match frozen CURRENT: %+v", lookup.requests)
 	}
+	if scenario.authorityRace {
+		if currentChecks != 1 || commitCalls != 0 {
+			t.Fatalf("authority-race currentness/commit calls=%d/%d; want one check and no commit", currentChecks, commitCalls)
+		}
+		got, readErr := os.ReadFile(currentPath)
+		if readErr != nil || sha256SumHex(got) != digest {
+			t.Fatalf("denied authority race changed CURRENT bytes: read error=%v", readErr)
+		}
+		finalCapture, readErr := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true})
+		if readErr != nil || !reflect.DeepEqual(finalCapture.Tags["LYRICS"], []string{currentLyrics}) {
+			t.Fatalf("denied authority race changed CURRENT lyrics=%#v err=%v", finalCapture.Tags["LYRICS"], readErr)
+		}
+		if err := artwork.VerifyEquivalent(ctx, currentPath); err != nil {
+			t.Fatalf("denied authority race changed CURRENT audio/artwork: %v", err)
+		}
+		return
+	}
 	finalCapture, err := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true})
 	wantLyrics := []string{automaticRetryLyrics}
-	if mismatch {
+	if scenario.mismatch {
 		wantLyrics = nil
 		writer, ok := fixture.executor.metadata.(*automaticRetryMissingLyricsWriter)
 		if !ok || writer.calls != 2 {
@@ -169,10 +204,10 @@ func testPublicationExecutorAutomaticLyricsRetryNativeReadback(t *testing.T, mis
 	if projection.Authority != "automatic" || projection.Source != "lrclib" || projection.AuthorityMetadataRevision != input.AutomaticLyricsRetry.ExpectedMetadataRevision {
 		t.Fatalf("committed automatic lyrics authority projection=%+v", projection)
 	}
-	if mismatch && (projection.Outcome != persistence.PublicationOptionalLyricsRebuiltWithoutLyrics || projection.OutcomeWarningCode != "readback_mismatch") {
+	if scenario.mismatch && (projection.Outcome != persistence.PublicationOptionalLyricsRebuiltWithoutLyrics || projection.OutcomeWarningCode != "readback_mismatch") {
 		t.Fatalf("mismatch result did not record rebuilt-without-lyrics projection: %+v", projection)
 	}
-	if !mismatch && projection.Outcome != persistence.PublicationOptionalLyricsExactRoundTrip {
+	if !scenario.mismatch && projection.Outcome != persistence.PublicationOptionalLyricsExactRoundTrip {
 		t.Fatalf("successful result did not record exact round-trip projection: %+v", projection)
 	}
 	if len(fixture.repository.guards) == 0 {
