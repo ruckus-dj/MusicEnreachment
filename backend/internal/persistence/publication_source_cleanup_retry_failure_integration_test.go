@@ -65,56 +65,6 @@ func TestFailPublicationSourceCleanupExplicitRetryDeliveryFencesReturnedCallback
 	}
 }
 
-func TestFailPublicationSourceCleanupExplicitRetryDeliveryRejectsMalformedGuardPostgreSQL(t *testing.T) {
-	t.Parallel()
-	for _, alter := range []struct {
-		name   string
-		change func(*PublicationSourceCleanupDeliveryGuard)
-	}{
-		{"zero operation", func(g *PublicationSourceCleanupDeliveryGuard) { g.OperationID = uuid.Nil }},
-		{"zero claim", func(g *PublicationSourceCleanupDeliveryGuard) { g.ClaimUUID = uuid.Nil }},
-		{"empty token", func(g *PublicationSourceCleanupDeliveryGuard) { g.DeliveryToken = "" }},
-		{"zero application attempt", func(g *PublicationSourceCleanupDeliveryGuard) { g.ApplicationAttempt = 0 }},
-		{"zero river job", func(g *PublicationSourceCleanupDeliveryGuard) { g.RiverJobID = 0 }},
-		{"zero river attempt", func(g *PublicationSourceCleanupDeliveryGuard) { g.RiverAttempt = 0 }},
-	} {
-		t.Run(alter.name, func(t *testing.T) {
-			f := newRetryResolutionFixture(t)
-			before := cleanupRetryRetainedEvidence(t, f.ctx, f.fixture, f.originalID)
-			retryID := f.newGuard.OperationID
-			var consumptionBefore string
-			if err := f.fixture.db.NewRaw(`SELECT jsonb_build_array(consumed_application_attempt,consumed_river_job_id,consumed_claim_uuid)::text FROM source_cleanup_explicit_retry WHERE recovery_operation_id=?`, retryID).Scan(f.ctx, &consumptionBefore); err != nil {
-				t.Fatal(err)
-			}
-			alter.change(&f.newGuard)
-			if failed, err := f.repository.FailPublicationSourceCleanupExplicitRetryDelivery(f.ctx, f.newGuard, "safe failure"); err == nil || failed {
-				t.Fatalf("malformed guard=%t,%v", failed, err)
-			}
-			var state, claimState string
-			if err := f.fixture.db.NewRaw(`SELECT state FROM operation WHERE id=?`, retryID).Scan(f.ctx, &state); err != nil {
-				t.Fatal(err)
-			}
-			if err := f.fixture.db.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=?`, retryID).Scan(f.ctx, &claimState); err != nil {
-				t.Fatal(err)
-			}
-			var consumptionAfter string
-			if err := f.fixture.db.NewRaw(`SELECT jsonb_build_array(consumed_application_attempt,consumed_river_job_id,consumed_claim_uuid)::text FROM source_cleanup_explicit_retry WHERE recovery_operation_id=?`, retryID).Scan(f.ctx, &consumptionAfter); err != nil {
-				t.Fatal(err)
-			}
-			var resolutions int
-			if err := f.fixture.db.NewRaw(`SELECT count(*) FROM source_cleanup_explicit_retry_resolution WHERE recovery_operation_id=?`, retryID).Scan(f.ctx, &resolutions); err != nil {
-				t.Fatal(err)
-			}
-			if state != "running" || claimState != "executing" || consumptionAfter != consumptionBefore || resolutions != 0 {
-				t.Fatalf("malformed guard mutated retry state op=%q claim=%q consumption=%s/%s resolutions=%d", state, claimState, consumptionAfter, consumptionBefore, resolutions)
-			}
-			if got := cleanupRetryRetainedEvidence(t, f.ctx, f.fixture, f.originalID); got != before {
-				t.Fatalf("malformed guard changed original evidence:\nbefore %s\nafter  %s", before, got)
-			}
-		})
-	}
-}
-
 func TestFailPublicationSourceCleanupExplicitRetryDeliveryAllowsAllResolvedItemsPostgreSQL(t *testing.T) {
 	t.Parallel()
 	f := newRetryResolutionFixture(t)

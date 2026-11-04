@@ -17,9 +17,17 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func TestNormalizedSourceAnalysisAdmissionClaimAndTerminalReleaseWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func TestNormalizedSourceAnalysisLifecycleScenariosWithPostgreSQL(t *testing.T) {
 	database := testpostgres.OpenMigratedWithRiver(t)
+	runNormalizedSourceAnalysisAdmissionClaimAndTerminalRelease(t, database)
+	runSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEvent(t, database)
+	runEnumeratedWorkAdmitsPendingMetadataWithoutTools(t, database)
+	runNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOperationInsert(t, database)
+	runNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmission(t, database)
+	runNormalizedSourceAnalysisTerminalReleasesToolAndWorkHolds(t, database)
+}
+
+func runNormalizedSourceAnalysisAdmissionClaimAndTerminalRelease(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -96,9 +104,8 @@ func TestNormalizedSourceAnalysisAdmissionClaimAndTerminalReleaseWithPostgreSQL(
 	}
 }
 
-func TestSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEventWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	fixture := newNormalizedWorkOperation(t, "/srv/matching-reconcile-success", true,
+func runSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEvent(t *testing.T, database *bun.DB) {
+	fixture := normalizedWorkOperationWithDatabase(t, database, "/srv/matching-reconcile-success", true,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
 	ctx := context.Background()
 	operation := fixture.batchOperation(t)
@@ -137,33 +144,29 @@ func TestSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEventWithPostgreSQL(
 	if count != 1 {
 		t.Fatalf("successful settlement created %d matching events, want exactly one", count)
 	}
-}
 
-func TestIncompleteNormalizedAnalysisDoesNotEmitMatchingEventWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	fixture := newNormalizedWorkOperation(t, "/srv/matching-reconcile-incomplete", true,
+	// An incomplete requested success is a failure and must not emit an event.
+	incomplete := normalizedWorkOperationWithDatabase(t, database, "/srv/matching-reconcile-incomplete", true,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
-	ctx := context.Background()
-	operation := fixture.batchOperation(t)
-	if err := fixture.admit(t, ctx, operation); err != nil {
+	incompleteOperation := incomplete.batchOperation(t)
+	if err := incomplete.admit(t, ctx, incompleteOperation); err != nil {
 		t.Fatalf("admit analysis: %v", err)
 	}
-	if _, err := fixture.database.NewRaw(`UPDATE operation SET state='running' WHERE id=?`, operation.ID).Exec(ctx); err != nil {
+	if _, err := database.NewRaw(`UPDATE operation SET state='running' WHERE id=?`, incompleteOperation.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID,
-		persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: *operation.RiverJobID}, "succeeded", "completed", ""); err != nil {
+	if err := incomplete.repository.SettleNormalizedSourceAnalysisDelivery(ctx, incompleteOperation.ID,
+		persistence.SourceAnalysisOperationDelivery{Attempt: incompleteOperation.Attempt, JobID: *incompleteOperation.RiverJobID}, "succeeded", "completed", ""); err != nil {
 		t.Fatalf("settle incomplete success request: %v", err)
 	}
-	stored, err := persistence.NewSetupManagerRepository(fixture.database).GetOperation(ctx, operation.ID)
+	stored, err := persistence.NewSetupManagerRepository(database).GetOperation(ctx, incompleteOperation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stored.State != "failed" || stored.Stage != "incomplete" {
 		t.Fatalf("incomplete requested success settled as %s/%s", stored.State, stored.Stage)
 	}
-	var count int
-	if err := fixture.database.NewRaw(`SELECT count(*) FROM incoming_matching_reconcile_event WHERE source_operation_id=?`, operation.ID).Scan(ctx, &count); err != nil {
+	if err := database.NewRaw(`SELECT count(*) FROM incoming_matching_reconcile_event WHERE source_operation_id=?`, incompleteOperation.ID).Scan(ctx, &count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
@@ -171,9 +174,7 @@ func TestIncompleteNormalizedAnalysisDoesNotEmitMatchingEventWithPostgreSQL(t *t
 	}
 }
 
-func TestEnumeratedWorkAdmitsPendingMetadataWithoutToolsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runEnumeratedWorkAdmitsPendingMetadataWithoutTools(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -228,9 +229,7 @@ func TestEnumeratedWorkAdmitsPendingMetadataWithoutToolsWithPostgreSQL(t *testin
 	assertOperationHoldCounts(t, ctx, database, operation.ID, 1, 0)
 }
 
-func TestNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOperationInsertWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOperationInsert(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -284,9 +283,7 @@ func TestNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOper
 	}
 }
 
-func TestNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmissionWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmission(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -362,9 +359,7 @@ func TestNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmissionWit
 	}
 }
 
-func TestNormalizedSourceAnalysisTerminalReleasesToolAndWorkHoldsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runNormalizedSourceAnalysisTerminalReleasesToolAndWorkHolds(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -547,6 +542,11 @@ type normalizedAnalysisFixture struct {
 func newNormalizedWorkOperation(t *testing.T, path string, shaEnabled bool, steps []persistence.SourceAnalysisStepInput) normalizedAnalysisFixture {
 	t.Helper()
 	database := testpostgres.OpenMigratedWithRiver(t)
+	return normalizedWorkOperationWithDatabase(t, database, path, shaEnabled, steps)
+}
+
+func normalizedWorkOperationWithDatabase(t *testing.T, database *bun.DB, path string, shaEnabled bool, steps []persistence.SourceAnalysisStepInput) normalizedAnalysisFixture {
+	t.Helper()
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, repository, path)

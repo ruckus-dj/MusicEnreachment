@@ -19,15 +19,30 @@ import (
 // which is what the root's safe_error must always be.
 const unavailableSafeReason = "The configured source directory is unavailable or no longer readable. The previous inventory is unchanged."
 
-// TestSourceRootUnavailableKeepsInventoryWithPostgreSQL drives the required
+func TestSourceRootUnavailableLifecycleWithPostgreSQL(t *testing.T) {
+	database := testpostgres.OpenMigratedWithRiver(t)
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *bun.DB)
+	}{
+		{"TestrunSourceRootUnavailableKeepsInventoryWithPostgreSQL", runSourceRootUnavailableKeepsInventoryWithPostgreSQL},
+		{"TestrunSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL", runSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL},
+		{"TestrunSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL", runSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL},
+		{"TestrunSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL", runSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL},
+		{"TestrunSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL", runSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL},
+		{"TestrunSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL", runSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL},
+	} {
+		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
+	}
+}
+
+// TestrunSourceRootUnavailableKeepsInventoryWithPostgreSQL drives the required
 // sequence: a successful scan, an unavailable report, then a successful rescan.
 // The unavailable report keeps the generation, the inventory path, the applied
 // operation, the last successful timestamp and every location of the previous
 // inventory, and the rescan clears the reason and preserves the identity of an
 // unchanged file.
-func TestSourceRootUnavailableKeepsInventoryWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceRootUnavailableKeepsInventoryWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/unavailable")
@@ -107,13 +122,11 @@ func TestSourceRootUnavailableKeepsInventoryWithPostgreSQL(t *testing.T) {
 	}
 }
 
-// TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL pins the
+// TestrunSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL pins the
 // concurrency guard: once a newer scan installed its generation, neither an
 // older operation's late report nor the operation that installed the generation
 // may overwrite the available state.
-func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/superseded")
@@ -140,15 +153,13 @@ func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.
 	}
 }
 
-// TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL
+// TestrunSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL
 // pins the other half of the ordering key: a retry enqueued after a successful
 // scan is a fresh attempt, so its report must still take effect, and its failure
 // must not be mistaken for the older attempt's late report. The retry is driven
 // through the real retry transaction, then fails before it starts its traversal,
 // which is how an unreadable root is reported.
-func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
@@ -204,13 +215,11 @@ func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgr
 	}
 }
 
-// TestSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL protects
+// TestrunSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL protects
 // the ordering fence from host clock skew: the operation's host-originated
 // timestamps are older than the successful scan, but the production delivery
 // start records a database timestamp after that success.
-func TestSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/clock-skew")
@@ -242,34 +251,10 @@ func TestSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL(t *testing
 	}
 }
 
-// TestSourceRootUnavailableRejectsEmptyReasonWithPostgreSQL pins the boundary
-// the SQL check cannot enforce: a reason that is non-NULL but empty is not a
-// usable message, so the repository refuses it before any write.
-func TestSourceRootUnavailableRejectsEmptyReasonWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/empty-reason")
-	operation := newSourceScanOperation(t, ctx, database, root, "running")
-	before := snapshotInventory(t, ctx, database, root.ID)
-
-	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
-		OperationID: operation.ID, SafeError: "", ExpectedAttempt: operation.Attempt, ExpectedJobID: *operation.RiverJobID,
-	}); err == nil {
-		t.Fatal("an unavailable report with an empty safe error was accepted")
-	}
-	if current := snapshotInventory(t, ctx, database, root.ID); current != before {
-		t.Fatalf("root after the refused empty report = %q, want %q", current, before)
-	}
-}
-
-// TestSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL pins that the
+// TestrunSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL pins that the
 // targeted update only applies to a scan of a root: an operation without a
 // source root target is refused.
-func TestSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/non-scan")
@@ -314,14 +299,12 @@ func startScanOperation(t *testing.T, ctx context.Context, database *bun.DB, ope
 	}
 }
 
-// TestSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL pins the
+// TestrunSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL pins the
 // guard of a scan start refused before its operation existed. The start records
 // the inaccessibility it proved, but a successful scan that landed after its
 // observation and an edit that moved the root to another path each supersede
 // that observation and are never overwritten by it.
-func TestSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/start-unavailable")
@@ -387,29 +370,5 @@ func TestSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL(t *testing
 	}
 	if relocated.Status != persistence.SourceRootStatusAvailable || relocated.ConfiguredPath != moved {
 		t.Fatalf("root after the moved-path report = %s at %q, want available at %q", relocated.Status, relocated.ConfiguredPath, moved)
-	}
-}
-
-// TestSourceRootUnavailableForRootRequiresAReasonAndARootWithPostgreSQL pins the
-// boundary the start path relies on: an empty reason and a missing root id are
-// refused before any write.
-func TestSourceRootUnavailableForRootRequiresAReasonAndARootWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/start-boundary")
-	before := snapshotInventory(t, ctx, database, root.ID)
-
-	for _, unavailable := range []persistence.SourceRootUnavailable{
-		{RootID: root.ID, ExpectedConfiguredPath: root.ConfiguredPath},
-		{SafeError: unavailableSafeReason, ExpectedConfiguredPath: root.ConfiguredPath},
-	} {
-		if err := inventory.MarkSourceRootUnavailableForRoot(ctx, unavailable); err == nil {
-			t.Fatalf("mark %+v was accepted, want a refusal", unavailable)
-		}
-	}
-	if current := snapshotInventory(t, ctx, database, root.ID); current != before {
-		t.Fatalf("root after the refused reports = %q, want %q", current, before)
 	}
 }

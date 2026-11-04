@@ -19,9 +19,22 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func TestSourceAnalysisApplyCacheAndRetryLifecycleWithPostgreSQL(t *testing.T) {
 	database := testpostgres.OpenMigratedWithRiver(t)
+	runSourceAnalysisStepAppliesAndPromotion(t, database)
+	runSourceProbeCacheRegistersWhenSHACompletesFirst(t, database)
+	runSourceFingerprintSelectionCleanupAfterReruns(t, database)
+	runFailedAnalysisStepRetryRetainsPriorSelection(t, database)
+	runSuccessfulProbeRetryClearsPriorProbeFailure(t, database)
+}
+
+func TestSourceAnalysisConcurrentPromotionAndCanonicalApplyWithPostgreSQL(t *testing.T) {
+	database := testpostgres.OpenMigratedWithRiver(t)
+	runFingerprintPromotionAndDigestlessRerunSerializeAcrossRoots(t, database)
+	runConcurrentSourceSHA256ApplyUsesOneCanonicalVariant(t, database)
+}
+
+func runSourceAnalysisStepAppliesAndPromotion(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -211,9 +224,7 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 	}
 }
 
-func TestFingerprintPromotionAndDigestlessRerunSerializeAcrossRootsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runFingerprintPromotionAndDigestlessRerunSerializeAcrossRoots(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -318,9 +329,7 @@ func TestFingerprintPromotionAndDigestlessRerunSerializeAcrossRootsWithPostgreSQ
 	}
 }
 
-func TestSourceProbeCacheRegistersWhenSHACompletesFirstWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceProbeCacheRegistersWhenSHACompletesFirst(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -364,9 +373,7 @@ func TestSourceProbeCacheRegistersWhenSHACompletesFirstWithPostgreSQL(t *testing
 	}
 }
 
-func TestSourceFingerprintSelectionCleanupAfterRerunsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceFingerprintSelectionCleanupAfterReruns(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -467,9 +474,7 @@ func TestSourceFingerprintSelectionCleanupAfterRerunsWithPostgreSQL(t *testing.T
 	}
 }
 
-func TestConcurrentSourceSHA256ApplyUsesOneCanonicalVariantWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runConcurrentSourceSHA256ApplyUsesOneCanonicalVariant(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -530,11 +535,9 @@ func TestConcurrentSourceSHA256ApplyUsesOneCanonicalVariantWithPostgreSQL(t *tes
 	}
 }
 
-func TestFailedAnalysisStepRetryRetainsPriorSelectionWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runFailedAnalysisStepRetryRetainsPriorSelection(t *testing.T, database *bun.DB) {
 	for _, step := range []persistence.SourceStepName{persistence.SourceStepProbe, persistence.SourceStepSHA256} {
 		t.Run(string(step), func(t *testing.T) {
-			database := testpostgres.OpenMigratedWithRiver(t)
 			ctx := context.Background()
 			repository := persistence.NewSourceInventoryRepository(database)
 			root := createInventoryRoot(t, ctx, repository, "/srv/failed-step-"+string(step))
@@ -604,9 +607,7 @@ func TestFailedAnalysisStepRetryRetainsPriorSelectionWithPostgreSQL(t *testing.T
 	}
 }
 
-func TestSuccessfulProbeRetryClearsPriorProbeFailureWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSuccessfulProbeRetryClearsPriorProbeFailure(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -711,7 +712,7 @@ func (fixture *analysisStepFixture) claim(step persistence.SourceStepName) int {
 func insertVerifiedAnalysisTool(t *testing.T, ctx context.Context, database *bun.DB, packageKind, executable, version, banner string) persistence.SourceAnalysisToolSelection {
 	t.Helper()
 	kind := tools.PackageKind(packageKind)
-	releaseIdentity := packageKind + "-test-release"
+	releaseIdentity := packageKind + "-test-" + uuid.NewString()
 	relativePath := testManagedRelativePath(t, kind, "darwin", releaseIdentity)
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: packageKind, PlatformGOOS: "darwin", PlatformGOARCH: "arm64",

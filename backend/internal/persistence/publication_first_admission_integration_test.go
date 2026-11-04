@@ -11,245 +11,314 @@ import (
 	"image/png"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"success", "callback error", "stale source", "enqueue rollback", "detached callback input", "pending cover", "selected cover"} {
-		t.Run(scenario, func(t *testing.T) {
-			t.Parallel()
+	for _, group := range []struct {
+		name      string
+		scenarios []string
+	}{
+		{name: "rejections", scenarios: []string{"callback error", "stale source", "enqueue rollback"}},
+		{name: "admissions", scenarios: []string{"success", "pending cover", "selected cover"}},
+	} {
+		t.Run(group.name, func(t *testing.T) {
 			ctx := context.Background()
 			db := testpostgres.OpenMigratedWithRiver(t)
 			initializeRiver(t, ctx, db)
-			repo := NewSetupManagerRepository(db)
-			releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
-			if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'first admission fixture')`, releaseID); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'first admission fixture')`, trackID); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
-				t.Fatal(err)
-			}
-			var selectedCover []byte
-			var selectedGeneration uuid.UUID
-			if scenario == "pending cover" || scenario == "selected cover" {
-				selectedCover = publicationAdmissionPNG(t)
-				coverRepo := NewLibraryRepository(db)
-				cover, err := coverRepo.ReadReleaseCover(ctx, releaseID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				pending, err := coverRepo.SetPendingReleaseCover(ctx, releaseID, cover.Revision, uuid.New(), selectedCover, "image/png")
-				if err != nil {
-					t.Fatal(err)
-				}
-				if scenario == "selected cover" {
-					applied, err := coverRepo.ApplyPendingReleaseCover(ctx, releaseID, pending.Revision, *pending.PendingGeneration)
-					if err != nil {
-						t.Fatal(err)
-					}
-					selectedGeneration = *applied.SelectedGeneration
-				}
-			}
-			var epoch uuid.UUID
-			if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {
-				t.Fatal(err)
-			}
-			rootPath, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatalf("canonicalize fixture root: %v", err)
-			}
-			const relative = "track.flac"
-			now := time.Date(2025, time.January, 2, 3, 4, 5, 123456000, time.UTC)
-			rootID, locationID, workID, variantID, scanID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-			_, err = db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,enabled,status) VALUES (?,?, 'Source',1,?,true,'available')`, rootID, rootPath, rootPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,finished_at) VALUES (?,'scan_source','succeeded','succeeded','{}'::jsonb,now())`, scanID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = db.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes,analysis_policy_version,ffprobe_version,ffprobe_json,observed_tags,inspected_at,applied_operation_id,audio_stream_count) VALUES (?,42,1,'ffprobe 1','{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2}]}','{}'::jsonb,?,?,1)`, variantID, now, scanID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = db.ExecContext(ctx, `INSERT INTO source_location(id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,media_variant_id) VALUES (?,?,?,42,?,1,'audio',?)`, locationID, rootID, relative, now, variantID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = db.ExecContext(ctx, `INSERT INTO source_analysis_work(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id,current_location_id) VALUES (?,?,?,?,?,?,42,?,false,?,?)`, workID, locationID, rootID, rootPath, rootPath, relative, now, scanID, locationID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = db.ExecContext(ctx, `INSERT INTO source_work_variant_identity(work_id,media_variant_id) VALUES (?,?)`, workID, variantID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = db.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id,step,state,success_probe_variant_id,success_reuse_origin) VALUES (?,'probe','succeeded',?,'executed')`, workID, variantID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, uuid.New(), trackID, variantID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if scenario == "stale source" {
-				if _, err := db.ExecContext(ctx, `UPDATE source_location SET relative_path='renamed.flac' WHERE id=?`, locationID); err != nil {
-					t.Fatal(err)
-				}
-			}
-			installationID := uuid.New()
-			verified := time.Now().UTC()
-			versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
-			installPath := "ffmpeg/release-1"
-			if runtime.GOOS == "windows" {
-				installPath = `ffmpeg\release-1`
-			}
-			if err := repo.CreateInstallation(ctx, &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: installPath, State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}); err != nil {
-				t.Fatal(err)
-			}
-			frozenPath := filepath.ToSlash(installPath)
-			selections := []SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffmpeg", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffmpegBanner}, {PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffprobe", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffprobeBanner}}
-			lossless, channels := true, 2
-			audioFacts := PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Channels: &channels, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}
-			input := PublicationInputs{Version: PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio", InitialLyrics: &PublicationInitialLyricsInput{ExpectedMetadataRevision: 0}, Audio: &PublicationAudioInput{WorkID: workID, RootID: rootID, LocationID: locationID, MediaVariantID: variantID, ProbeResultID: variantID, ConfiguredRootPath: rootPath, InventoryRootPath: rootPath, RelativePath: relative, SizeBytes: 42, MTime: now, AnalysisPolicyVersion: 1, FFProbeVersion: "ffprobe 1", AudioFacts: audioFacts}, Format: publication.AudioFormatSource, DesiredTags: map[string][]string{"TITLE": {"Fixture"}}, Tools: selections}
-			frozen, err := json.Marshal(input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			source := &PublicationSourceSelection{RootID: rootID, LocationID: locationID, WorkID: workID, MediaVariantID: variantID, ConfiguredPath: rootPath, InventoryPath: rootPath, RelativePath: relative, SizeBytes: 42, MTime: now, HoldUUID: uuid.New()}
-			request := PublicationAdmission{PositionID: positionID, ExpectedReleaseID: releaseID, ExpectedEpoch: epoch, CandidateGeneration: uuid.New(), IntentKind: "audio", ToolsReadRequired: true, Tools: selections, Source: source, FrozenInputs: frozen, NamespaceManifest: []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/provisional.flac", RelativePath: "root/provisional.flac", NodeKind: "file"}}}
-			callbackErr := errors.New("planner rejected preview")
-			inserter := &publicationAdmissionInserter{failAfterInsert: scenario == "enqueue rollback"}
-			called := false
-			first := FirstPublicationAdmission{PublicationAdmission: request, PreviewDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PrepareFirst: func(_ context.Context, snap FirstPublicationAdmissionSnapshot, got PublicationAdmission) ([]PublicationNamespaceNode, error) {
-				called = true
-				if snap.PreviewDigest != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
-					t.Errorf("digest %q", snap.PreviewDigest)
-				}
-				if snap.Context == nil || snap.Context.Library == nil || snap.Context.Library.ActiveEpoch != epoch || len(snap.Context.Sources) != 1 || snap.Context.Sources[0].Selection.LocationID != locationID {
-					t.Errorf("authoritative context %+v", snap.Context)
-				}
-				if scenario == "pending cover" && (snap.Context.EffectiveCover.State != "absent" || snap.CoverInput.State != "absent") {
-					t.Errorf("pending cover leaked into effective receipt: summary=%+v receipt=%+v", snap.Context.EffectiveCover, snap.CoverInput)
-				}
-				if scenario == "selected cover" && (snap.Context.EffectiveCover.State != "value" || snap.CoverInput.State != "value" || !bytes.Equal(snap.CoverInput.Bytes, selectedCover)) {
-					t.Errorf("selected cover was not captured: summary=%+v receipt=%+v", snap.Context.EffectiveCover, snap.CoverInput)
-				}
-				if scenario == "selected cover" {
-					*snap.CoverInput.Generation = uuid.New()
-					snap.CoverInput.Bytes[0] ^= 0xff
-					*snap.CoverInput.MIME = "image/jpeg"
-				}
-				if len(snap.Installations) != 1 || len(snap.Settings) == 0 { /* settings are deployment-dependent */
-					if len(snap.Installations) != 1 {
-						t.Errorf("installations %+v", snap.Installations)
-					}
-				}
-				if got.Source == nil || got.Source.LocationID != locationID || len(got.Tools) != 2 {
-					t.Errorf("planner request %+v", got)
-				}
-				if scenario == "callback error" {
-					return nil, callbackErr
-				}
-				if scenario == "detached callback input" {
-					got.FrozenInputs[0] = ' '
-					got.Tools[0].Version = "mutated"
-				}
-				return []PublicationNamespaceNode{{CanonicalKey: "final", RelativePath: "Русский", NodeKind: "dir", DirectoryScope: "final"}, {CanonicalKey: "final/Русский.flac", RelativePath: "Русский/Русский.flac", NodeKind: "file"}}, nil
-			}}
-			op, err := repo.AdmitFirstPublicationFromPreview(ctx, first, inserter)
-			if scenario == "callback error" {
-				if !errors.Is(err, callbackErr) || !called {
-					t.Fatalf("error %v, called %v", err, called)
-				}
-				assertNoAdmissionArtifacts(t, ctx, db, request, nil)
-				return
-			}
-			if scenario == "stale source" {
-				if !errors.Is(err, ErrPublicationAdmissionConflict) {
-					t.Fatalf("stale source error %v", err)
-				}
-				assertNoAdmissionArtifacts(t, ctx, db, request, nil)
-				return
-			}
-			if scenario == "enqueue rollback" {
-				if err == nil {
-					t.Fatal("expected enqueue failure")
-				}
-				assertNoAdmissionArtifacts(t, ctx, db, request, nil)
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			receipt, err := scanPublicationAttemptCoverInput(ctx, db, op)
-			if err != nil {
-				t.Fatalf("read inserted cover receipt: %v", err)
-			}
-			if scenario == "selected cover" {
-				if receipt.State != "value" || receipt.Generation == nil || *receipt.Generation != selectedGeneration || !bytes.Equal(receipt.Bytes, selectedCover) || receipt.MIME == nil || *receipt.MIME != "image/png" {
-					t.Fatalf("receipt did not freeze effective bytes: %+v", receipt)
-				}
-				for _, column := range []string{"generation", "image_bytes", "image_mime", "image_sha256", "image_size"} {
-					if _, err := db.ExecContext(ctx, "UPDATE publication_attempt_cover_input SET "+column+"=NULL WHERE operation_id=?", op); err == nil {
-						t.Errorf("receipt tuple with %s omitted was accepted", column)
-					}
-				}
-				if _, err := db.ExecContext(ctx, `UPDATE publication_attempt_cover_input SET generation=? WHERE operation_id=?`, uuid.Nil, op); err == nil {
-					t.Error("zero receipt generation was accepted")
-				}
-				if _, err := db.ExecContext(ctx, `UPDATE publication_attempt_cover_input SET image_sha256=? WHERE operation_id=?`, bytes.Repeat([]byte{0x7f}, 32), op); err == nil {
-					t.Error("incorrect same-length receipt digest was accepted")
-				}
-				otherRelease := uuid.New()
-				if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'other')`, otherRelease); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := db.ExecContext(ctx, `UPDATE publication_attempt_cover_input SET release_id=? WHERE operation_id=?`, otherRelease, op); err == nil {
-					t.Error("receipt release inconsistent with attempt position was accepted")
-				}
-				if _, err := NewLibraryRepository(db).ReturnReleaseCoverToAutomatic(ctx, releaseID, receipt.Revision); err != nil {
-					t.Fatal(err)
-				}
-				frozen, err := scanPublicationAttemptCoverInput(ctx, db, op)
-				if err != nil || !bytes.Equal(frozen.Bytes, selectedCover) {
-					t.Fatalf("authority change altered attempt receipt: %+v, %v", frozen, err)
-				}
-			} else if scenario == "pending cover" && receipt.State != "absent" {
-				t.Fatalf("pending manual bytes entered receipt: %+v", receipt)
-			} else if scenario != "selected cover" && scenario != "pending cover" && receipt.State != "absent" {
-				t.Fatalf("absent authority receipt = %+v", receipt)
-			}
-			if scenario == "detached callback input" {
-				original, err := DecodePublicationInputs(request.FrozenInputs)
-				if err != nil || original.Tools[0].Version != "ffmpeg 7.0 + ffprobe 7.0" {
-					t.Fatalf("original frozen inputs mutated: %+v %v", original, err)
-				}
-			}
-			if inserter.args.Kind() != "publish_track_v1" || inserter.args.(publication.TrackArgs).OperationID != op {
-				t.Fatalf("job args %+v", inserter.args)
-			}
-			var count int
-			if err := db.NewRaw(`SELECT count(*) FROM publication_namespace_reservation r JOIN publication_namespace_claim c ON c.id=r.namespace_claim_id WHERE r.position_id=? AND r.generation=? AND c.relative_path='Русский/Русский.flac'`, positionID, request.CandidateGeneration).Scan(ctx, &count); err != nil || count != 1 {
-				t.Fatalf("final manifest reservation %d (%v)", count, err)
-			}
-			if err := db.NewRaw(`SELECT count(*) FROM operation_tool_read_hold WHERE operation_id=?`, op).Scan(ctx, &count); err != nil || count != 1 {
-				t.Fatalf("tool holds %d (%v)", count, err)
-			}
-			if err := db.NewRaw(`SELECT count(*) FROM publication_source_hold WHERE operation_id=?`, op).Scan(ctx, &count); err != nil || count != 1 {
-				t.Fatalf("source holds %d (%v)", count, err)
+			fixture := newFirstAdmissionFixture(t, ctx, db)
+			for _, scenario := range group.scenarios {
+				t.Run(scenario, func(t *testing.T) {
+					runFirstAdmissionScenario(t, fixture, scenario)
+				})
 			}
 		})
+	}
+}
+
+type firstAdmissionFixture struct {
+	ctx        context.Context
+	db         *bun.DB
+	repo       *SetupManagerRepository
+	epoch      uuid.UUID
+	rootPath   string
+	rootID     uuid.UUID
+	locationID uuid.UUID
+	workID     uuid.UUID
+	variantID  uuid.UUID
+	now        time.Time
+	selections []SourceAnalysisToolSelection
+	audioFacts PersistedAudioFacts
+}
+
+func newFirstAdmissionFixture(t *testing.T, ctx context.Context, db *bun.DB) *firstAdmissionFixture {
+	t.Helper()
+	repo := NewSetupManagerRepository(db)
+	var epoch uuid.UUID
+	if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {
+		t.Fatal(err)
+	}
+	rootPath, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("canonicalize fixture root: %v", err)
+	}
+	const relative = "track.flac"
+	now := time.Date(2025, time.January, 2, 3, 4, 5, 123456000, time.UTC)
+	rootID, locationID, workID, variantID, scanID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path,enabled,status) VALUES (?,?, 'Source',1,?,true,'available')`, rootID, rootPath, rootPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO operation(id,kind,state,stage,input_snapshot,finished_at) VALUES (?,'scan_source','succeeded','succeeded','{}'::jsonb,now())`, scanID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes,analysis_policy_version,ffprobe_version,ffprobe_json,observed_tags,inspected_at,applied_operation_id,audio_stream_count) VALUES (?,42,1,'ffprobe 1','{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2}]}','{}'::jsonb,?,?,1)`, variantID, now, scanID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_location(id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,media_variant_id) VALUES (?,?,?,42,?,1,'audio',?)`, locationID, rootID, relative, now, variantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_analysis_work(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id,current_location_id) VALUES (?,?,?,?,?,?,42,?,false,?,?)`, workID, locationID, rootID, rootPath, rootPath, relative, now, scanID, locationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_work_variant_identity(work_id,media_variant_id) VALUES (?,?)`, workID, variantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id,step,state,success_probe_variant_id,success_reuse_origin) VALUES (?,'probe','succeeded',?,'executed')`, workID, variantID); err != nil {
+		t.Fatal(err)
+	}
+	installationID := uuid.New()
+	verified := time.Now().UTC()
+	versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
+	installPath := "ffmpeg/release-1"
+	if runtime.GOOS == "windows" {
+		installPath = `ffmpeg\release-1`
+	}
+	if err := repo.CreateInstallation(ctx, &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: installPath, State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}); err != nil {
+		t.Fatal(err)
+	}
+	frozenPath := filepath.ToSlash(installPath)
+	selections := []SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffmpeg", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffmpegBanner}, {PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffprobe", Version: "ffmpeg 7.0 + ffprobe 7.0", VersionBanner: ffprobeBanner}}
+	lossless, channels := true, 2
+	audioFacts := PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &lossless, Channels: &channels, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}
+	return &firstAdmissionFixture{ctx: ctx, db: db, repo: repo, epoch: epoch, rootPath: rootPath, rootID: rootID,
+		locationID: locationID, workID: workID, variantID: variantID, now: now, selections: selections, audioFacts: audioFacts}
+}
+
+func runFirstAdmissionScenario(t *testing.T, fixture *firstAdmissionFixture, scenario string) {
+	t.Helper()
+	ctx, db := fixture.ctx, fixture.db
+	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'first admission fixture')`, releaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'first admission fixture')`, trackID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, uuid.New(), trackID, fixture.variantID); err != nil {
+		t.Fatal(err)
+	}
+	var selectedCover []byte
+	var selectedGeneration uuid.UUID
+	if scenario == "pending cover" || scenario == "selected cover" {
+		selectedCover = publicationAdmissionPNG(t)
+		coverRepo := NewLibraryRepository(db)
+		cover, err := coverRepo.ReadReleaseCover(ctx, releaseID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, err := coverRepo.SetPendingReleaseCover(ctx, releaseID, cover.Revision, uuid.New(), selectedCover, "image/png")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scenario == "selected cover" {
+			applied, err := coverRepo.ApplyPendingReleaseCover(ctx, releaseID, pending.Revision, *pending.PendingGeneration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selectedGeneration = *applied.SelectedGeneration
+		}
+	}
+	const relative = "track.flac"
+	input := PublicationInputs{Version: PublicationInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion, IntentKind: "audio",
+		InitialLyrics: &PublicationInitialLyricsInput{ExpectedMetadataRevision: 0},
+		Audio: &PublicationAudioInput{WorkID: fixture.workID, RootID: fixture.rootID, LocationID: fixture.locationID,
+			MediaVariantID: fixture.variantID, ProbeResultID: fixture.variantID, ConfiguredRootPath: fixture.rootPath,
+			InventoryRootPath: fixture.rootPath, RelativePath: relative, SizeBytes: 42, MTime: fixture.now,
+			AnalysisPolicyVersion: 1, FFProbeVersion: "ffprobe 1", AudioFacts: fixture.audioFacts},
+		Format: publication.AudioFormatSource, DesiredTags: map[string][]string{"TITLE": {"Fixture"}}, Tools: fixture.selections}
+	frozen, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &PublicationSourceSelection{RootID: fixture.rootID, LocationID: fixture.locationID, WorkID: fixture.workID,
+		MediaVariantID: fixture.variantID, ConfiguredPath: fixture.rootPath, InventoryPath: fixture.rootPath,
+		RelativePath: relative, SizeBytes: 42, MTime: fixture.now, HoldUUID: uuid.New()}
+	base := scenarioName(scenario)
+	filename := "Русский-" + base + ".flac"
+	finalRelativePath := "Русский-" + base + "/" + filename
+	request := PublicationAdmission{PositionID: positionID, ExpectedReleaseID: releaseID, ExpectedEpoch: fixture.epoch,
+		CandidateGeneration: uuid.New(), IntentKind: "audio", ToolsReadRequired: true, Tools: fixture.selections, Source: source,
+		FrozenInputs: frozen, NamespaceManifest: []PublicationNamespaceNode{{CanonicalKey: "root-" + base, RelativePath: "root-" + base, NodeKind: "dir", DirectoryScope: "root-" + base},
+			{CanonicalKey: "root-" + base + "/provisional.flac", RelativePath: "root-" + base + "/provisional.flac", NodeKind: "file"}}}
+	callbackErr := errors.New("planner rejected preview")
+	inserter := &publicationAdmissionInserter{failAfterInsert: scenario == "enqueue rollback"}
+	called := false
+	first := FirstPublicationAdmission{PublicationAdmission: request, PreviewDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PrepareFirst: func(_ context.Context, snap FirstPublicationAdmissionSnapshot, got PublicationAdmission) ([]PublicationNamespaceNode, error) {
+		called = true
+		if snap.PreviewDigest != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+			t.Errorf("digest %q", snap.PreviewDigest)
+		}
+		if snap.Context == nil || snap.Context.Library == nil || snap.Context.Library.ActiveEpoch != fixture.epoch || len(snap.Context.Sources) != 1 || snap.Context.Sources[0].Selection.LocationID != fixture.locationID {
+			t.Errorf("authoritative context %+v", snap.Context)
+		}
+		if scenario == "pending cover" && (snap.Context.EffectiveCover.State != "absent" || snap.CoverInput.State != "absent") {
+			t.Errorf("pending cover leaked into effective receipt: summary=%+v receipt=%+v", snap.Context.EffectiveCover, snap.CoverInput)
+		}
+		if scenario == "selected cover" && (snap.Context.EffectiveCover.State != "value" || snap.CoverInput.State != "value" || !bytes.Equal(snap.CoverInput.Bytes, selectedCover)) {
+			t.Errorf("selected cover was not captured: summary=%+v receipt=%+v", snap.Context.EffectiveCover, snap.CoverInput)
+		}
+		if scenario == "selected cover" {
+			*snap.CoverInput.Generation = uuid.New()
+			snap.CoverInput.Bytes[0] ^= 0xff
+			*snap.CoverInput.MIME = "image/jpeg"
+		}
+		if len(snap.Installations) != 1 {
+			t.Errorf("installations %+v", snap.Installations)
+		}
+		if got.Source == nil || got.Source.LocationID != fixture.locationID || len(got.Tools) != 2 {
+			t.Errorf("planner request %+v", got)
+		}
+		if scenario == "callback error" {
+			return nil, callbackErr
+		}
+		if scenario == "success" {
+			got.FrozenInputs[0] = ' '
+			got.Tools[0].Version = "mutated"
+		}
+		return []PublicationNamespaceNode{{CanonicalKey: "final-" + base, RelativePath: "Русский-" + base, NodeKind: "dir", DirectoryScope: "final-" + base},
+			{CanonicalKey: "final-" + base + "/" + filename, RelativePath: finalRelativePath, NodeKind: "file"}}, nil
+	}}
+	if scenario == "stale source" {
+		if _, err := db.ExecContext(ctx, `UPDATE source_location SET relative_path='renamed.flac' WHERE id=?`, fixture.locationID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	op, err := fixture.repo.AdmitFirstPublicationFromPreview(ctx, first, inserter)
+	if scenario == "callback error" {
+		if !errors.Is(err, callbackErr) || !called {
+			t.Fatalf("error %v, called %v", err, called)
+		}
+		assertNoAdmissionArtifacts(t, ctx, db, request, nil)
+		return
+	}
+	if scenario == "stale source" {
+		if !errors.Is(err, ErrPublicationAdmissionConflict) {
+			t.Fatalf("stale source error %v", err)
+		}
+		assertNoAdmissionArtifacts(t, ctx, db, request, nil)
+		if _, err := db.ExecContext(ctx, `UPDATE source_location SET relative_path=? WHERE id=?`, relative, fixture.locationID); err != nil {
+			t.Fatalf("restore source after stale-source rejection: %v", err)
+		}
+		return
+	}
+	if scenario == "enqueue rollback" {
+		if err == nil || !strings.Contains(err.Error(), "injected failure after River row insertion") || inserter.id == 0 {
+			t.Fatalf("expected failure after an actual River insertion: id=%d err=%v", inserter.id, err)
+		}
+		args, ok := inserter.args.(publication.TrackArgs)
+		if !ok || args.OperationID == uuid.Nil {
+			t.Fatalf("inserted River job has invalid operation arguments: %+v", inserter.args)
+		}
+		assertNoAdmissionArtifacts(t, ctx, db, request, &args.OperationID)
+		var sourceHolds int
+		if err := db.NewRaw(`SELECT count(*) FROM publication_source_hold WHERE operation_id=?`, args.OperationID).Scan(ctx, &sourceHolds); err != nil || sourceHolds != 0 {
+			t.Fatalf("failed admission left source holds: %d (%v)", sourceHolds, err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := scanPublicationAttemptCoverInput(ctx, db, op)
+	if err != nil {
+		t.Fatalf("read inserted cover receipt: %v", err)
+	}
+	if scenario == "selected cover" {
+		if receipt.State != "value" || receipt.Generation == nil || *receipt.Generation != selectedGeneration || !bytes.Equal(receipt.Bytes, selectedCover) || receipt.MIME == nil || *receipt.MIME != "image/png" {
+			t.Fatalf("receipt did not freeze effective bytes: %+v", receipt)
+		}
+		for _, column := range []string{"generation", "image_bytes", "image_mime", "image_sha256", "image_size"} {
+			if _, err := db.ExecContext(ctx, "UPDATE publication_attempt_cover_input SET "+column+"=NULL WHERE operation_id=?", op); err == nil {
+				t.Errorf("receipt tuple with %s omitted was accepted", column)
+			}
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE publication_attempt_cover_input SET generation=? WHERE operation_id=?`, uuid.Nil, op); err == nil {
+			t.Error("zero receipt generation was accepted")
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE publication_attempt_cover_input SET image_sha256=? WHERE operation_id=?`, bytes.Repeat([]byte{0x7f}, 32), op); err == nil {
+			t.Error("incorrect same-length receipt digest was accepted")
+		}
+		otherRelease := uuid.New()
+		if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'other')`, otherRelease); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE publication_attempt_cover_input SET release_id=? WHERE operation_id=?`, otherRelease, op); err == nil {
+			t.Error("receipt release inconsistent with attempt position was accepted")
+		}
+		if _, err := NewLibraryRepository(db).ReturnReleaseCoverToAutomatic(ctx, releaseID, receipt.Revision); err != nil {
+			t.Fatal(err)
+		}
+		frozenCover, err := scanPublicationAttemptCoverInput(ctx, db, op)
+		if err != nil || !bytes.Equal(frozenCover.Bytes, selectedCover) {
+			t.Fatalf("authority change altered attempt receipt: %+v, %v", frozenCover, err)
+		}
+	} else if receipt.State != "absent" {
+		t.Fatalf("%s authority receipt = %+v", scenario, receipt)
+	}
+	if scenario == "success" {
+		original, err := DecodePublicationInputs(request.FrozenInputs)
+		if err != nil || original.Tools[0].Version != "ffmpeg 7.0 + ffprobe 7.0" {
+			t.Fatalf("original frozen inputs mutated: %+v %v", original, err)
+		}
+	}
+	if inserter.args.Kind() != "publish_track_v1" || inserter.args.(publication.TrackArgs).OperationID != op {
+		t.Fatalf("job args %+v", inserter.args)
+	}
+	var count int
+	if err := db.NewRaw(`SELECT count(*) FROM publication_namespace_reservation r JOIN publication_namespace_claim c ON c.id=r.namespace_claim_id WHERE r.position_id=? AND r.generation=? AND c.relative_path=?`, positionID, request.CandidateGeneration, finalRelativePath).Scan(ctx, &count); err != nil || count != 1 {
+		t.Fatalf("final manifest reservation %d (%v)", count, err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM operation_tool_read_hold WHERE operation_id=?`, op).Scan(ctx, &count); err != nil || count != 1 {
+		t.Fatalf("tool holds %d (%v)", count, err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM publication_source_hold WHERE operation_id=?`, op).Scan(ctx, &count); err != nil || count != 1 {
+		t.Fatalf("source holds %d (%v)", count, err)
+	}
+}
+
+func scenarioName(scenario string) string {
+	switch scenario {
+	case "callback error":
+		return "callback-error"
+	case "enqueue rollback":
+		return "enqueue-rollback"
+	case "pending cover":
+		return "pending-cover"
+	case "selected cover":
+		return "selected-cover"
+	default:
+		return scenario
 	}
 }
 

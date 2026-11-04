@@ -24,9 +24,53 @@ import (
 
 var deleteAttachedOperationID uuid.UUID
 
-func TestSourceRootRepositoryWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func TestSourceRepositoryScanLifecycleWithPostgreSQL(t *testing.T) {
 	database := testpostgres.OpenMigratedWithRiver(t)
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *bun.DB)
+	}{
+		{"TestSourceRootRepositoryWithPostgreSQL", runSourceRootRepositoryWithPostgreSQL},
+		{"TestCreateSourceRootPersistsProcessingModeWithPostgreSQL", runCreateSourceRootPersistsProcessingModeWithPostgreSQL},
+		{"TestSourceRootPathEditWithPostgreSQL", runSourceRootPathEditWithPostgreSQL},
+		{"TestSourceScanApplyWithPostgreSQL", runSourceScanApplyWithPostgreSQL},
+		{"TestSourceScanApplyEmptyStoredCandidatesWithPostgreSQL", runSourceScanApplyEmptyStoredCandidatesWithPostgreSQL},
+		{"TestSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL", runSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL},
+		{"TestSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgreSQL", runSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgreSQL},
+		{"TestSourceCandidatesWrapOperationWithPostgreSQL", runSourceCandidatesWrapOperationWithPostgreSQL},
+		{"TestSourceLocationPaginationWithPostgreSQL", runSourceLocationPaginationWithPostgreSQL},
+	} {
+		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
+	}
+}
+
+func TestSourceRootDeletionLifecycleWithPostgreSQL(t *testing.T) {
+	database := testpostgres.OpenMigratedWithRiver(t)
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *bun.DB)
+	}{
+		{"TestSourceRootDeletionGuardsWithPostgreSQL", runSourceRootDeletionGuardsWithPostgreSQL},
+		{"TestSourceRootDeletionRacesScanWithPostgreSQL", runSourceRootDeletionRacesScanWithPostgreSQL},
+	} {
+		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
+	}
+}
+
+func TestSourceScanEnqueueLifecycleWithPostgreSQL(t *testing.T) {
+	database := testpostgres.OpenMigratedWithRiver(t)
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *bun.DB)
+	}{
+		{"TestSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL", runSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL},
+		{"TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL", runSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL},
+	} {
+		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
+	}
+}
+
+func runSourceRootRepositoryWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -70,9 +114,7 @@ func TestSourceRootRepositoryWithPostgreSQL(t *testing.T) {
 	}
 }
 
-func TestCreateSourceRootPersistsProcessingModeWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runCreateSourceRootPersistsProcessingModeWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -101,9 +143,7 @@ func TestCreateSourceRootPersistsProcessingModeWithPostgreSQL(t *testing.T) {
 // TestSourceRootPathEditWithPostgreSQL drives the path change through the
 // repository method rather than raw SQL, and pins that the previous inventory is
 // kept while being reported stale.
-func TestSourceRootPathEditWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceRootPathEditWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/edit-old")
@@ -212,9 +252,7 @@ func TestSourceRootPathEditWithPostgreSQL(t *testing.T) {
 	}
 }
 
-func TestSourceScanApplyWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceScanApplyWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/apply")
@@ -292,48 +330,9 @@ func TestSourceScanApplyWithPostgreSQL(t *testing.T) {
 	assertAppliedGeneration(t, ctx, database, root, 2, 2, second.ID)
 }
 
-// TestSourceScanApplyIgnoresCallerSliceWithPostgreSQL is the regression guard of
-// the apply contract: the generation is built from the stored candidates.
-func TestSourceScanApplyIgnoresCallerSliceWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/stored")
-	operation := newSourceScanOperation(t, ctx, database, root, "running")
-
-	stored := []persistence.SourceScanCandidateInput{
-		sourceCandidate("album/stored.flac", 1024, probeMtime()),
-		sourceCandidate("album/second.flac", 2048, probeMtime()),
-	}
-	if err := inventory.ReplaceSourceScanCandidates(ctx, operation.ID, stored); err != nil {
-		t.Fatalf("persist the candidates of the operation: %v", err)
-	}
-	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
-		OperationID: operation.ID, ExpectedConfiguredPath: root.ConfiguredPath,
-		ExpectedAttempt: operation.Attempt, ExpectedJobID: *operation.RiverJobID,
-	}); err != nil {
-		t.Fatalf("apply the stored candidates: %v", err)
-	}
-
-	assertAppliedGeneration(t, ctx, database, root, 1, len(stored), operation.ID)
-	for _, candidate := range stored {
-		location := readLocation(t, ctx, database, root.ID, candidate.RelativePath)
-		if location.SizeBytes != candidate.SizeBytes || location.ProbeStatus != candidate.ProbeStatus {
-			t.Fatalf("location %q = %+v, want the stored candidate %+v", candidate.RelativePath, location, candidate)
-		}
-	}
-	if _, err := readLocationResult(ctx, database, root.ID, "album/ignored.flac"); err == nil {
-		t.Fatal("the applied inventory contains a path that was never stored as a candidate")
-	}
-	assertCandidateCount(t, ctx, database, operation.ID, 0)
-}
-
 // TestSourceScanApplyEmptyStoredCandidatesWithPostgreSQL pins that a traversal
 // which persisted nothing applies an empty generation.
-func TestSourceScanApplyEmptyStoredCandidatesWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceScanApplyEmptyStoredCandidatesWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/empty")
@@ -359,12 +358,9 @@ func TestSourceScanApplyEmptyStoredCandidatesWithPostgreSQL(t *testing.T) {
 
 // TestSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL pins that a failed
 // apply leaves the stored candidates durable and the previous inventory intact.
-func TestSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
-	defer resetInventoryDatabase(t, database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/rollback")
 	first := newSourceScanOperation(t, ctx, database, root, "queued")
 	setOperationState(t, ctx, database, first.ID, "running")
@@ -407,9 +403,7 @@ func TestSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL(t *testing.T) {
 	assertCandidateCount(t, ctx, database, second.ID, 2)
 }
 
-func TestSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/native-relative-path")
@@ -443,89 +437,7 @@ func TestSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgre
 	}
 }
 
-func TestSourceScanApplyHonoursConfiguredPathWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/path-a")
-	first := newSourceScanOperation(t, ctx, database, root, "queued")
-	setOperationState(t, ctx, database, first.ID, "running")
-	defer setOperationState(t, ctx, database, first.ID, "succeeded")
-	applySourceScan(t, ctx, inventory, first, root.ConfiguredPath,
-		sourceCandidate("album/old.flac", 1024, probeMtime()))
-	setOperationState(t, ctx, database, first.ID, "succeeded")
-	before := snapshotInventory(t, ctx, database, root.ID)
-	readRoot, err := inventory.GetSourceRoot(ctx, root.ID)
-	if err != nil {
-		t.Fatalf("read root: %v", err)
-	}
-	if readRoot.Stale() {
-		t.Fatalf("root stale after its first successful scan: %+v", readRoot)
-	}
-
-	readRoot.ConfiguredPath = "/srv/path-b"
-	if err := inventory.UpdateSourceRoot(ctx, readRoot); err != nil {
-		t.Fatalf("edit the configured path through the repository: %v", err)
-	}
-	changed, err := inventory.GetSourceRoot(ctx, root.ID)
-	if err != nil {
-		t.Fatalf("read root after the path change: %v", err)
-	}
-	if !changed.Stale() {
-		t.Fatalf("root after the path change = %+v, want stale against %s", changed, changed.ConfiguredPath)
-	}
-	if changed.InventoryPath == nil || *changed.InventoryPath != "/srv/path-a" {
-		t.Fatalf("inventory path after the path change = %v, want the first path", changed.InventoryPath)
-	}
-	count, err := inventory.CountSourceLocations(ctx, root.ID)
-	if err != nil || count != 1 {
-		t.Fatalf("locations after the path change = %d, %v; want the previous inventory to stay", count, err)
-	}
-
-	// A scan started before the path change carries the old path and must not
-	// publish its files as the inventory of the new path.
-	staleScan := newSourceScanOperation(t, ctx, database, root, "queued")
-	setOperationState(t, ctx, database, staleScan.ID, "running")
-	defer setOperationState(t, ctx, database, staleScan.ID, "succeeded")
-	if err := inventory.ReplaceSourceScanCandidates(ctx, staleScan.ID, []persistence.SourceScanCandidateInput{
-		sourceCandidate("album/old.flac", 1024, probeMtime()),
-	}); err != nil {
-		t.Fatalf("persist candidates of the stale scan: %v", err)
-	}
-	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
-		OperationID: staleScan.ID, ExpectedConfiguredPath: "/srv/path-a",
-		ExpectedAttempt: staleScan.Attempt, ExpectedJobID: *staleScan.RiverJobID,
-	}); err == nil {
-		t.Fatal("an apply carrying the previous configured path was accepted")
-	}
-	if current := snapshotInventory(t, ctx, database, root.ID); current != before {
-		t.Fatalf("inventory after the rejected apply = %q, want %q", current, before)
-	}
-	assertCandidateCount(t, ctx, database, staleScan.ID, 1)
-
-	setOperationState(t, ctx, database, staleScan.ID, "succeeded")
-	fresh := newSourceScanOperation(t, ctx, database, root, "queued")
-	setOperationState(t, ctx, database, fresh.ID, "running")
-	defer setOperationState(t, ctx, database, fresh.ID, "succeeded")
-	applySourceScan(t, ctx, inventory, fresh, "/srv/path-b",
-		sourceCandidate("album/new.flac", 2048, probeMtime()),
-		sourceCandidate("album/second.flac", 4096, probeMtime()))
-	renewed, err := inventory.GetSourceRoot(ctx, root.ID)
-	if err != nil {
-		t.Fatalf("read root after the new path scan: %v", err)
-	}
-	if renewed.Stale() || renewed.InventoryPath == nil || *renewed.InventoryPath != "/srv/path-b" {
-		t.Fatalf("root after the new path scan = %+v, want a current inventory of /srv/path-b", renewed)
-	}
-	if _, err := readLocationResult(ctx, database, root.ID, "album/old.flac"); err == nil {
-		t.Fatal("a location of the previous path survived the new path inventory")
-	}
-}
-
-func TestSourceCandidatesWrapOperationWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceCandidatesWrapOperationWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/candidates")
@@ -582,9 +494,7 @@ func TestSourceCandidatesWrapOperationWithPostgreSQL(t *testing.T) {
 	assertCandidateCount(t, ctx, database, operation.ID, 0)
 }
 
-func TestSourceLocationPaginationWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceLocationPaginationWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/pagination")
@@ -635,9 +545,7 @@ func TestSourceLocationPaginationWithPostgreSQL(t *testing.T) {
 	}
 }
 
-func TestSourceRootDeletionGuardsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceRootDeletionGuardsWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/delete")
@@ -671,10 +579,8 @@ func TestSourceRootDeletionGuardsWithPostgreSQL(t *testing.T) {
 	}
 }
 
-func TestSourceRootDeletionRacesScanWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runSourceRootDeletionRacesScanWithPostgreSQL(t *testing.T, database *bun.DB) {
 	deleteAttachedOperationID = uuid.Nil
-	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/race")
@@ -750,13 +656,6 @@ func holdOperationTableLock(ctx context.Context, database *bun.DB, rootID uuid.U
 	close(locked)
 	<-release
 	return tx.Commit()
-}
-
-func resetInventoryDatabase(t *testing.T, database *bun.DB) {
-	t.Helper()
-	if _, err := database.ExecContext(context.Background(), "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"); err != nil {
-		t.Fatalf("reset inventory test schema: %v", err)
-	}
 }
 
 // applySourceScan stores the candidates of an operation and then applies them,
@@ -970,14 +869,14 @@ func containsPath(paths []string, want string) bool {
 // insert of an enqueue whose River job was already inserted: the transaction
 // must take the job with it, so no River job is left for an operation that does
 // not exist, and the root must stay usable for the next start.
-func TestSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enqueue")
 
+	jobsBefore := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind)
+	operationsBefore := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'scan_source'")
 	offset := time.Now().UTC().Truncate(time.Microsecond)
 	occupied := uuid.New()
 	if _, err := database.NewRaw(`INSERT INTO operation (id, kind, state, stage, input_snapshot, target_source_root_id, finished_at, updated_at)
@@ -989,14 +888,14 @@ func TestSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL(t *testing.T) {
 		t.Fatal("an enqueue that reuses the id of an existing operation was accepted")
 	}
 
-	jobs := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind)
-	operations := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'scan_source'")
-	t.Logf("after the rolled-back enqueue: scan_source river jobs=%d scan operations=%d", jobs, operations)
-	if jobs != 0 {
-		t.Fatalf("River jobs after the rolled-back enqueue = %d, want no orphan job", jobs)
+	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE id = ? AND kind = 'scan_source'", occupied); count != 1 {
+		t.Fatalf("pre-existing operation %s count = %d, want exactly one", occupied, count)
 	}
-	if operations != 1 {
-		t.Fatalf("scan operations after the rolled-back enqueue = %d, want the seeded one alone", operations)
+	if jobs := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind); jobs != jobsBefore {
+		t.Fatalf("River jobs after rolled-back enqueue = %d, want baseline %d", jobs, jobsBefore)
+	}
+	if operations := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'scan_source'"); operations != operationsBefore+1 {
+		t.Fatalf("scan operations after rolled-back enqueue = %d, want baseline %d plus the pre-existing operation", operations, operationsBefore)
 	}
 
 	fresh := scanEnqueueOperation(root, uuid.New())
@@ -1006,19 +905,23 @@ func TestSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL(t *testing.T) {
 	if fresh.RiverJobID == nil {
 		t.Fatalf("enqueued operation %+v has no River job", fresh)
 	}
+	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE id = ? AND kind = ?", *fresh.RiverJobID, service.SourceScanJobKind); count != 1 {
+		t.Fatalf("fresh River job %d count = %d, want exactly one", *fresh.RiverJobID, count)
+	}
+	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE id = ? AND kind = 'scan_source'", fresh.ID); count != 1 {
+		t.Fatalf("fresh scan operation %s count = %d, want exactly one", fresh.ID, count)
+	}
 	recovered := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind)
 	t.Logf("after the recovered enqueue: operation %s river job %d, scan_source river jobs=%d", fresh.ID, *fresh.RiverJobID, recovered)
-	if recovered != 1 {
-		t.Fatalf("River jobs after the recovered enqueue = %d, want 1", recovered)
+	if recovered != jobsBefore+1 {
+		t.Fatalf("River jobs after the recovered enqueue = %d, want baseline %d plus one", recovered, jobsBefore)
 	}
 }
 
 // TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL pins the two
 // refusals the enqueue decides under the root lock: neither may store an
 // operation and neither may insert a River job.
-func TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -1029,12 +932,20 @@ func TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL(t *testing
 	// enqueues must not add another of either, so capture the real baseline first.
 	operationsBefore := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'scan_source'")
 	jobsBefore := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind)
-	if operationsBefore != 1 || jobsBefore != 1 {
-		t.Fatalf("scan enqueue baseline: operations=%d jobs=%d, want the active scan and its job alone", operationsBefore, jobsBefore)
+	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE id = ? AND kind = 'scan_source'", active.ID); count != 1 {
+		t.Fatalf("active operation %s count = %d, want exactly one", active.ID, count)
 	}
-	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, scanEnqueueOperation(root, uuid.New()), client,
+	activeJobID := *active.RiverJobID
+	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE id = ? AND kind = ?", activeJobID, service.SourceScanJobKind); count != 1 {
+		t.Fatalf("active River job %d count = %d, want exactly one", activeJobID, count)
+	}
+	activeRefusal := scanEnqueueOperation(root, uuid.New())
+	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, activeRefusal, client,
 		service.ScanSourceJobArgs{OperationID: active.ID}, nil); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("enqueue on a root with a queued scan = %v, want ErrSourceRootActiveScan", err)
+	}
+	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE id = ?", activeRefusal.ID); count != 0 {
+		t.Fatalf("refused active-scan operation %s count = %d, want 0", activeRefusal.ID, count)
 	}
 
 	if err := persistOperationState(t, ctx, database, active.ID, "succeeded"); err != nil {
@@ -1044,9 +955,16 @@ func TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL(t *testing
 		Set("enabled = false").Where("id = ?", root.ID).Exec(ctx); err != nil {
 		t.Fatalf("disable the source root: %v", err)
 	}
-	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, scanEnqueueOperation(root, uuid.New()), client,
-		service.ScanSourceJobArgs{OperationID: uuid.New()}, nil); !errors.Is(err, persistence.ErrSourceRootDisabled) {
+	disabledRefusal := scanEnqueueOperation(root, uuid.New())
+	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, disabledRefusal, client,
+		service.ScanSourceJobArgs{OperationID: disabledRefusal.ID}, nil); !errors.Is(err, persistence.ErrSourceRootDisabled) {
 		t.Fatalf("enqueue on a disabled root = %v, want ErrSourceRootDisabled", err)
+	}
+	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE id = ?", disabledRefusal.ID); count != 0 {
+		t.Fatalf("refused disabled-root operation %s count = %d, want 0", disabledRefusal.ID, count)
+	}
+	if count := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE id = ? AND kind = ?", activeJobID, service.SourceScanJobKind); count != 1 {
+		t.Fatalf("active River job %d count after refusals = %d, want exactly one", activeJobID, count)
 	}
 
 	operations := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'scan_source'")

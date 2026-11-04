@@ -20,78 +20,89 @@ import (
 const matchingAcquisitionGuardArtistID = "11111111-1111-4111-8111-111111111111"
 
 func TestMatchingAcquisitionRejectsInvalidInitialBrowseCursorPostgres(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		offset int
-	}{{name: "nonzero initial cursor", offset: 100}, {name: "valid initial cursor", offset: 0}} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			fixture := newMatchingAcquisitionGuardFixture(t)
-			fixture.settleInitialArtistAndClaimWake()
-			phase, child := fixture.firstBrowse(test.offset)
-			if test.offset != 0 {
-				assertMatchingAcquisitionGuardRejectsWithoutMutation(t, fixture, phase, []persistence.MatchingProviderRequest{child})
-				return
-			}
-			changed, err := fixture.repository.AdvanceMatchingAcquisitionForDelivery(fixture.ctx, fixture.river, fixture.parentID,
-				fixture.parent.Attempt, fixture.parentJobID, fixture.claim, 0, phase, []persistence.MatchingProviderRequest{child})
-			if err != nil || !changed {
-				t.Fatalf("advance valid initial browse: changed=%v err=%v", changed, err)
-			}
-		})
+	t.Parallel()
+	fixture := newMatchingAcquisitionGuardFixture(t)
+	fixture.settleInitialArtistAndClaimWake()
+	invalid, invalidChild := fixture.firstBrowse(100)
+	assertMatchingAcquisitionGuardRejectsWithoutMutation(t, fixture, invalid, []persistence.MatchingProviderRequest{invalidChild})
+	valid, validChild := fixture.firstBrowse(0)
+	changed, err := fixture.repository.AdvanceMatchingAcquisitionForDelivery(fixture.ctx, fixture.river, fixture.parentID,
+		fixture.parent.Attempt, fixture.parentJobID, fixture.claim, 0, valid, []persistence.MatchingProviderRequest{validChild})
+	if err != nil || !changed {
+		t.Fatalf("advance valid initial browse after rejection: changed=%v err=%v", changed, err)
 	}
 }
 
 func TestMatchingAcquisitionRejectsTamperedContinuationPostgres(t *testing.T) {
-	tests := []struct {
+	t.Parallel()
+	fixture := newMatchingAcquisitionGuardFixture(t)
+	fixture.settleInitialArtistAndClaimWake()
+	fixture.advanceFirstCatalogPage()
+	fixture.settleFirstBrowseAndClaimWake()
+	valid, child := fixture.nextCatalogPage()
+	for _, probe := range []struct {
 		name   string
 		tamper func(*persistence.MatchingAcquisitionPhase)
 	}{
 		{name: "artist id", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
-			phase.Output = json.RawMessage(`{"artist_mbid":"22222222-2222-4222-8222-222222222222","next_offset":100,"complete":false,"catalog_count":200,"covered_releases":100,"release_ids":["release-0","release-1"],"next_request_id":"` + uuid.NewString() + `","next_cache_key":"artist-release-browse:` + matchingAcquisitionGuardArtistID + `:100:100"}`)
+			phase.Output = mutateMatchingAcquisitionGuardJSON(t, phase.Output, func(output map[string]json.RawMessage) {
+				output["artist_mbid"] = json.RawMessage(`"22222222-2222-4222-8222-222222222222"`)
+			})
 		}},
 		{name: "next request id", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
-			phase.Output = json.RawMessage(`{"artist_mbid":"` + matchingAcquisitionGuardArtistID + `","next_offset":100,"complete":false,"catalog_count":200,"covered_releases":100,"release_ids":["release-0","release-1"],"next_request_id":"22222222-2222-4222-8222-222222222222","next_cache_key":"artist-release-browse:` + matchingAcquisitionGuardArtistID + `:100:100"}`)
+			phase.Output = mutateMatchingAcquisitionGuardJSON(t, phase.Output, func(output map[string]json.RawMessage) {
+				output["next_request_id"] = json.RawMessage(fmt.Sprintf("%q", uuid.NewString()))
+			})
 		}},
 		{name: "input cursor", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
-			phase.Input = json.RawMessage(`{"artist_mbid":"` + matchingAcquisitionGuardArtistID + `","offset":1,"limit":100}`)
+			phase.Input = mutateMatchingAcquisitionGuardJSON(t, phase.Input, func(input map[string]json.RawMessage) {
+				input["offset"] = json.RawMessage(`1`)
+			})
 		}},
 		{name: "input limit", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
-			phase.Input = json.RawMessage(`{"artist_mbid":"` + matchingAcquisitionGuardArtistID + `","offset":100,"limit":99}`)
+			phase.Input = mutateMatchingAcquisitionGuardJSON(t, phase.Input, func(input map[string]json.RawMessage) {
+				input["limit"] = json.RawMessage(`101`)
+			})
 		}},
 		{name: "accepted payload hash", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
 			var provenance []map[string]string
 			if err := json.Unmarshal(phase.ResponseProvenance, &provenance); err != nil {
-				panic(err)
+				t.Fatal(err)
 			}
 			provenance[0]["payload_sha256"] = "0000000000000000000000000000000000000000000000000000000000000000"
 			phase.ResponseProvenance, _ = json.Marshal(provenance)
 		}},
-		{name: "valid continuation", tamper: func(*persistence.MatchingAcquisitionPhase) {}},
+	} {
+		invalid := cloneMatchingAcquisitionGuardPhase(valid)
+		probe.tamper(&invalid)
+		assertMatchingAcquisitionGuardRejectsWithoutMutation(t, fixture, invalid, []persistence.MatchingProviderRequest{child})
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			fixture := newMatchingAcquisitionGuardFixture(t)
-			fixture.settleInitialArtistAndClaimWake()
-			fixture.advanceFirstCatalogPage()
-			fixture.settleFirstBrowseAndClaimWake()
-			phase, child := fixture.nextCatalogPage()
-			test.tamper(&phase)
-			if test.name != "valid continuation" {
-				assertMatchingAcquisitionGuardRejectsWithoutMutation(t, fixture, phase, []persistence.MatchingProviderRequest{child})
-			}
-			changed, err := fixture.repository.AdvanceMatchingAcquisitionForDelivery(fixture.ctx, fixture.river, fixture.parentID,
-				fixture.parent.Attempt, fixture.parentJobID, fixture.claim, 1, phase, []persistence.MatchingProviderRequest{child})
-			if test.name == "valid continuation" {
-				if err != nil || !changed {
-					t.Fatalf("advance valid continuation: changed=%v err=%v", changed, err)
-				}
-			} else if err == nil || changed {
-				t.Fatalf("tampered continuation was accepted: changed=%v err=%v", changed, err)
-			}
-		})
+	changed, err := fixture.repository.AdvanceMatchingAcquisitionForDelivery(fixture.ctx, fixture.river, fixture.parentID,
+		fixture.parent.Attempt, fixture.parentJobID, fixture.claim, 1, valid, []persistence.MatchingProviderRequest{child})
+	if err != nil || !changed {
+		t.Fatalf("advance valid continuation after rejected proofs: changed=%v err=%v", changed, err)
 	}
+}
+
+func mutateMatchingAcquisitionGuardJSON(t *testing.T, raw json.RawMessage, mutate func(map[string]json.RawMessage)) json.RawMessage {
+	t.Helper()
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		t.Fatalf("decode acquisition guard JSON: %v", err)
+	}
+	mutate(object)
+	encoded, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("encode acquisition guard JSON: %v", err)
+	}
+	return encoded
+}
+
+func cloneMatchingAcquisitionGuardPhase(phase persistence.MatchingAcquisitionPhase) persistence.MatchingAcquisitionPhase {
+	phase.Input = append(json.RawMessage(nil), phase.Input...)
+	phase.Output = append(json.RawMessage(nil), phase.Output...)
+	phase.ResponseProvenance = append(json.RawMessage(nil), phase.ResponseProvenance...)
+	return phase
 }
 
 type matchingAcquisitionGuardFixture struct {

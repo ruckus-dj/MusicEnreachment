@@ -295,7 +295,12 @@ windows_pkgconfig="$(cygpath -w "$pkgconfig")"
 windows_bin="$(cygpath -w "$prefix/bin")"
 version="$(PKG_CONFIG_PATH="$pkgconfig" pkg-config --modversion vips)"
 test "$version" = "8.18.7"
-cmp -s <(pacman -Q | sort) "$prefix/share/native-sources/MSYS2-PACKAGE-VERSIONS.txt"
+packages="$(pacman -Q | sort)"
+recorded_packages="$(< "$prefix/share/native-sources/MSYS2-PACKAGE-VERSIONS.txt")"
+if [[ "$packages" != "$recorded_packages" ]]; then
+  printf '%s\n' 'Windows native SDK package versions do not match the active toolchain' >&2
+  exit 1
+fi
 printf '%s\n' "$windows_bin" >> "$GITHUB_PATH"
 printf 'PKG_CONFIG_PATH=%s\n' "$windows_pkgconfig" >> "$GITHUB_ENV"
 printf 'VIPSHOME=%s\n' "$windows_prefix" >> "$GITHUB_ENV"

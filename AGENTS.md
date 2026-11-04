@@ -246,6 +246,9 @@ prose was moved into docs/app-design-react/.
   assume `COPYING`. libvips 8.18.7 uses `LICENSE`, and libtiff 4.7.1 uses
   `LICENSE.md`. A successful dependency compilation followed by failed notice
   staging is still a failed Windows gate, not a validated platform.
+- The minimal MSYS2 toolchain does not include every Unix utility (`cmp` is
+  absent). Compare SDK package manifests with Bash builtins instead of adding
+  an undeclared command dependency after an expensive native build.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 

@@ -13,9 +13,38 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(t *testing.T) {
-	t.Parallel()
+func TestApplySourceEnumerationRegularLifecycleWithPostgreSQL(t *testing.T) {
 	database := testpostgres.OpenMigratedWithRiver(t)
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *bun.DB)
+	}{
+		{"TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope", runApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope},
+		{"TestApplySourceEnumerationReplacesCompletedInPlaceWork", runApplySourceEnumerationReplacesCompletedInPlaceWork},
+		{"TestDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMutation", runDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMutation},
+		{"TestApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone", runApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone},
+		{"TestApplySourceEnumerationRejectsStaleDeliveryWithoutMutation", runApplySourceEnumerationRejectsStaleDeliveryWithoutMutation},
+	} {
+		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
+	}
+}
+
+func TestApplySourceEnumerationCleanupMarkerLifecycleWithPostgreSQL(t *testing.T) {
+	database := testpostgres.OpenMigratedWithRiver(t)
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *bun.DB)
+	}{
+		{"TestApplySourceEnumerationInvalidatesExactCleanupMarkerPostgreSQL", runApplySourceEnumerationInvalidatesExactCleanupMarkerPostgreSQL},
+		{"TestApplySourceEnumerationStaleDeliveryPreservesCleanupMarkerPostgreSQL", runApplySourceEnumerationStaleDeliveryPreservesCleanupMarkerPostgreSQL},
+		{"TestApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgreSQL", runApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgreSQL},
+		{"TestApplySourceEnumerationDeferredCommitFailurePreservesCleanupMarkerPostgreSQL", runApplySourceEnumerationDeferredCommitFailurePreservesCleanupMarkerPostgreSQL},
+	} {
+		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
+	}
+}
+
+func runApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration")
@@ -157,9 +186,7 @@ func TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(
 	}
 }
 
-func TestApplySourceEnumerationReplacesCompletedInPlaceWork(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runApplySourceEnumerationReplacesCompletedInPlaceWork(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-in-place-execution")
@@ -216,9 +243,7 @@ func TestApplySourceEnumerationReplacesCompletedInPlaceWork(t *testing.T) {
 	}
 }
 
-func TestDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMutation(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMutation(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	rootA := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-root-a")
@@ -241,9 +266,7 @@ func TestDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMu
 	}
 }
 
-func TestApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-artifact")
@@ -310,9 +333,7 @@ func TestApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone(t *testin
 	}
 }
 
-func TestApplySourceEnumerationRejectsStaleDeliveryWithoutMutation(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runApplySourceEnumerationRejectsStaleDeliveryWithoutMutation(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-fence")
@@ -337,9 +358,8 @@ func TestApplySourceEnumerationRejectsStaleDeliveryWithoutMutation(t *testing.T)
 	assertCandidateCount(t, ctx, database, operation.ID, 1)
 }
 
-func TestApplySourceEnumerationInvalidatesExactCleanupMarkerPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database, ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t)
+func runApplySourceEnumerationInvalidatesExactCleanupMarkerPostgreSQL(t *testing.T, database *bun.DB) {
+	ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t, database, "cleanup-invalidates")
 	accepted := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, accepted.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
 		t.Fatal(err)
@@ -353,9 +373,8 @@ func TestApplySourceEnumerationInvalidatesExactCleanupMarkerPostgreSQL(t *testin
 	}
 }
 
-func TestApplySourceEnumerationStaleDeliveryPreservesCleanupMarkerPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database, ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t)
+func runApplySourceEnumerationStaleDeliveryPreservesCleanupMarkerPostgreSQL(t *testing.T, database *bun.DB) {
+	ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t, database, "cleanup-stale-delivery")
 	operation := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, operation.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
 		t.Fatal(err)
@@ -368,9 +387,8 @@ func TestApplySourceEnumerationStaleDeliveryPreservesCleanupMarkerPostgreSQL(t *
 	assertEnumerationCleanupMarker(t, ctx, database, root.ID, true)
 }
 
-func TestApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database, ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t)
+func runApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgreSQL(t *testing.T, database *bun.DB) {
+	ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t, database, "cleanup-unreadable-scope")
 	oldLocation := readLocation(t, ctx, database, root.ID, "album/track.flac")
 	operation := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, operation.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
@@ -399,9 +417,8 @@ func TestApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgr
 	assertEnumerationCleanupMarker(t, ctx, database, root.ID, false)
 }
 
-func TestApplySourceEnumerationDeferredCommitFailurePreservesCleanupMarkerPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database, ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t)
+func runApplySourceEnumerationDeferredCommitFailurePreservesCleanupMarkerPostgreSQL(t *testing.T, database *bun.DB) {
+	ctx, inventory, root, mtime := newEnumerationCleanupMarkerFixture(t, database, "cleanup-deferred-commit")
 	if _, err := database.ExecContext(ctx, `CREATE FUNCTION reject_cleanup_marker_delete_commit() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN RAISE EXCEPTION 'injected cleanup marker delete commit failure'; END $$`); err != nil {
 		t.Fatal(err)
@@ -422,12 +439,11 @@ func TestApplySourceEnumerationDeferredCommitFailurePreservesCleanupMarkerPostgr
 	assertEnumerationCleanupMarker(t, ctx, database, root.ID, true)
 }
 
-func newEnumerationCleanupMarkerFixture(t *testing.T) (*bun.DB, context.Context, *persistence.SourceInventoryRepository, *persistence.SourceRoot, time.Time) {
+func newEnumerationCleanupMarkerFixture(t *testing.T, database *bun.DB, suffix string) (context.Context, *persistence.SourceInventoryRepository, *persistence.SourceRoot, time.Time) {
 	t.Helper()
-	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-cleanup-marker")
+	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-"+suffix)
 	mtime := probeMtime()
 	seed := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, seed.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("album/track.flac", 5, mtime)}); err != nil {
@@ -459,7 +475,7 @@ func newEnumerationCleanupMarkerFixture(t *testing.T) (*bun.DB, context.Context,
 		t.Fatalf("seed exact cleanup marker: %v", err)
 	}
 	assertEnumerationCleanupMarker(t, ctx, database, root.ID, true)
-	return database, ctx, inventory, root, mtime
+	return ctx, inventory, root, mtime
 }
 
 func assertEnumerationCleanupMarker(t *testing.T, ctx context.Context, database *bun.DB, rootID uuid.UUID, want bool) {

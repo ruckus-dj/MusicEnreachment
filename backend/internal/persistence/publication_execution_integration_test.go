@@ -100,26 +100,6 @@ func TestPublicationDeliveryClaimAcquiresAndPersistsTransitionPostgreSQL(t *test
 	}
 }
 
-func TestPublicationDeliveryInvalidGuardDoesNotTransitionPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newPublicationExecutionFixture(t)
-	f.guard.DeliveryToken = ""
-	outcome, err := NewSetupManagerRepository(f.db).ClaimPublicationDelivery(context.Background(), f.guard)
-	if err == nil || outcome != PublicationDeliveryBlocked {
-		t.Fatalf("invalid guard = %q, %v", outcome, err)
-	}
-	var operationState, phase string
-	if err := f.db.NewRaw(`SELECT state FROM operation WHERE id=?`, f.guard.OperationID).Scan(context.Background(), &operationState); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.db.NewRaw(`SELECT phase FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(context.Background(), &phase); err != nil {
-		t.Fatal(err)
-	}
-	if operationState != "queued" || phase != "queued" {
-		t.Fatalf("invalid guard mutated rows: operation=%s attempt=%s", operationState, phase)
-	}
-}
-
 func TestPublicationDeliveryClaimBlocksStaleFencesButReplacesSameAttemptIdentityPostgreSQL(t *testing.T) {
 	t.Parallel()
 	f := newPublicationExecutionFixture(t)

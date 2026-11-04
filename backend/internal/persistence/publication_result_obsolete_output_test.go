@@ -1,8 +1,10 @@
 package persistence
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -66,5 +68,10 @@ func TestValidateObsoletePublicationOutputCleanupProof(t *testing.T) {
 	}
 	if err := validatePublicationDeliveryGuard(PublicationDeliveryGuard{}); err == nil {
 		t.Fatal("incomplete publication delivery guard accepted")
+	}
+	incomplete := guard
+	incomplete.DeliveryToken = ""
+	if outcome, err := new(SetupManagerRepository).ClaimPublicationDelivery(context.Background(), incomplete); outcome != PublicationDeliveryBlocked || !errors.Is(err, errInvalidPublicationDeliveryGuard) {
+		t.Fatalf("malformed guard claim outcome=%q err=%v, want blocked and an invalid guard error", outcome, err)
 	}
 }
