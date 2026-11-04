@@ -8,23 +8,24 @@ mobile-first interface is not a product goal.
 ## Filesystem model
 
 MeloTrove treats configured source directories as external inputs, not as
-the managed library. Sources are read-only here: MeloTrove never creates,
-changes or deletes anything inside them, and they remain separate from the
-writable output directory containing managed publications.
+the managed library. Inventory and analysis only read sources; sources remain
+separate from the writable output directory containing managed publications.
+The separately enabled publication source-cleanup workflow may remove a source
+file after successful publication, subject to its ownership and freshness checks.
 
 Deleting a registered source root is not a file operation. It removes only that
 root's inventory rows from the database and leaves the source files on disk and
-the managed output library in place. Deleting the source files themselves is not
-available in this slice: no operation in this build removes or modifies a file
-below a source root. It is future functionality, planned as a separate,
-explicitly enabled operator setting that may delete a source file only after a
-successful publication.
+the managed output library in place. Removing a registered root is not the
+publication source-cleanup action and never authorizes deletion of host source
+files. Current gaps in association and owned-copy cleanup are tracked in plan 13.
 
 A source root is registered by its absolute path on the server that runs
 MeloTrove, never by a path on the browser workstation. The current slice reads a
 source in either of two per-root modes: `in_place` reads the source directly;
 `staged` creates a temporary audio copy under the managed output path and analyzes
-that copy. There is no separate work-directory setting or mount. Source roots and
+that copy. The approved target instead requires one independent operator-selected
+work directory for staged copies; that setting and its reset lifecycle are not
+yet implemented. Source roots and
 runtime paths are database-backed settings, not environment variables. Scan
 reconciliation updates locations in observed areas and removes locations in
 unreadable areas; existing managed publications remain untouched.
@@ -284,8 +285,9 @@ existing results.
 
 Analysis applies the same freshness criterion as scan: a location is current when
 its observed size and mtime match. In `in_place` mode tools read the source; in
-`staged` mode they read its output-managed temporary copy. Automatic analysis never
-creates, changes or deletes a file below a source root. Eligible staged copies are
+`staged` mode they currently read its output-managed temporary copy. This differs
+from the approved independent work-directory contract tracked in plan 13. Automatic
+analysis never creates, changes or deletes a file below a source root. Eligible staged copies are
 removed only by an explicit cleanup action; a failed cleanup retains the ownership
 record for a later explicit attempt. Changing the required output path validates
 the new path and, when no execution is running or claimed, invalidates queued work
@@ -295,13 +297,14 @@ After a successful scan observes changed size or mtime, the stored results no
 longer describe the location and are replaced by new analysis. Deleting a root
 removes only that root's inventory rows; source files and managed output remain.
 
-Outside this slice remain: scheduled scans, automatic retry/backoff, a full
-re-analysis button, incoming groups, matching
-itself with AcoustID and MusicBrainz, confidence, the local library and
-publication. The single-audio-stream check exists only as the matching gate; no
-grouping, matching or publication runs. No shipped operation deletes a source
-file; deleting a source file after a successful publication remains a later,
-explicitly enabled setting.
+**Current implementation:** incoming groups, matching with AcoustID and
+MusicBrainz, the local library, and publication are implemented. This does not
+establish full parity with the latest approved product contract; remaining
+corrections and parity work are tracked in
+[`docs/plans/todo/13-main-interface-design-parity.md`](docs/plans/todo/13-main-interface-design-parity.md).
+Scheduled scans, automatic retry/backoff and a full re-analysis button remain
+outside the current scan slice. Publication source cleanup is a separate,
+explicitly enabled workflow, not a scan or analysis action.
 
 Scan reconciliation updates locations in successfully observed areas and removes
 locations from an unreadable file, root or subtree in the affected scope; roots
@@ -311,8 +314,8 @@ stale: the UI keeps listing files with the path where they were found
 can be added or deleted, but not disabled. Deleting a root, after explicit
 confirmation of its path and record count, removes only that root's inventory
 rows from the database: source files on disk and the managed output library stay
-untouched. No shipped operation deletes a source file; that remains a later,
-explicitly enabled setting.
+untouched. Publication source cleanup has separate explicit authorization and
+does not run merely because a root was deleted.
 
 ## Security and network exposure
 

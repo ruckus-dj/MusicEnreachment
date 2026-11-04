@@ -155,10 +155,6 @@ func TestPublicationProviderTagAuthorityLifecyclePostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	providerGuard, _ := startPublicationReconciliationForResult(t, ctx, repo, f.guard.Epoch, f.guard.ExpectedPositionID)
-	providerDecision, err := repo.EvaluatePublicationReconciliationCurrent(ctx, releaseID, providerGuard, endpoint, identity)
-	if err != nil || providerDecision.Action != ProviderTagsRequired {
-		t.Fatalf("independent provider update was blocked by unknown audio authority: decision=%+v err=%v", providerDecision, err)
-	}
 	authorityRevision, authorityLocation, authorityVariant := uuid.New(), uuid.New(), uuid.New()
 	if _, err := f.db.ExecContext(ctx, `INSERT INTO position_source_authority(position_id,mode,revision,publication_epoch,publication_generation,source_location_id,media_variant_id) VALUES (?,'manual',?,?,?,?,?)`, f.guard.ExpectedPositionID, authorityRevision, current.Record.Epoch, current.Record.Generation, authorityLocation, authorityVariant); err != nil {
 		t.Fatal(err)

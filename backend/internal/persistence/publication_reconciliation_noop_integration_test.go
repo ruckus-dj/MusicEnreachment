@@ -46,6 +46,33 @@ func TestPublicationReconciliationLocalNoopAcknowledgementPostgreSQL(t *testing.
 	}
 }
 
+func TestPublicationReconciliationAcceptsM4AFormatPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := preparePublicationResultFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if committed, err := repo.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
+		t.Fatalf("establish current publication = %v, %v", committed, err)
+	}
+	position := f.guard.ExpectedPositionID
+	var release, generation uuid.UUID
+	if err := f.db.NewRaw(`SELECT release_id FROM release_track WHERE id=?`, position).Scan(ctx, &release); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, position).Scan(ctx, &generation); err != nil {
+		t.Fatal(err)
+	}
+	seedLocalNoopAuthority(t, ctx, f.db, f.guard.Epoch, position, generation)
+	if _, err := f.db.NewRaw(`UPDATE app_setting SET setting_value=? WHERE setting_name='publication_format'`, "m4a").Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	guard, _ := startPublicationReconciliationForResult(t, ctx, repo, f.guard.Epoch, position)
+	decision, err := repo.EvaluatePublicationReconciliationCurrent(ctx, release, guard, "", "")
+	if err != nil || decision.Action != AllNoop || decision.Noop == nil {
+		t.Fatalf("valid m4a local-only evaluation = %+v, %v", decision, err)
+	}
+}
+
 func TestPublicationReconciliationLocalNoopRetainsNewerGenerationPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

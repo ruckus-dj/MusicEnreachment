@@ -3,7 +3,8 @@
 По решению владельца от 2026-11-03 это единственный текущий графический
 эталон. Стенд независим от приложения в `frontend/`. Тексты прежней
 спецификации сохранены рядом (`01-product-and-flows.md`, `02-screens.md`,
-`03-data-and-evidence.md`, `DESIGN.md`, `manual-release-proposal.md`); старый
+`03-data-and-evidence.md`, `DESIGN.md` и историческое
+`manual-release-proposal.md`); старый
 runtime-макет удалён и не служит live reference. Продуктовые решения — в
 [`../design/decisions.md`](../design/decisions.md).
 

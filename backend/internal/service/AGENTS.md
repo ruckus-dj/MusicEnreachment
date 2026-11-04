@@ -85,9 +85,11 @@ For real-tool upgrade fixtures, replace synthetic tools and source facts before
 first admission. Establish any legacy multiimage CURRENT fixture before upgrade
 admission, then let the production service capture its witness. Do not handcraft
 the frozen upgrade inputs or replace real command/probe results to make it pass.
-Stale pending-input proof rejection preserves the worker's claimed `dispatched`
-event; it need not create a `pending` event. Assert retained dirty scope, live
-delivery ownership and absence of a false park/ACK rather than an invented state.
+Stale no-op proof rejection preserves the worker's claimed `dispatched` event;
+it need not create a `pending` event. Assert retained dirty scope, live delivery
+ownership and absence of a false ACK rather than an invented state. Metadata-only
+provider changes are no-op reconciliation, not accepted-graph parking or automatic
+CURRENT rewrites; AUDIO quality evaluation remains independent.
 
 ## ANTI-PATTERNS
 - Empty safe error messages in Operations.Fail (enforced at runtime)
@@ -99,6 +101,15 @@ delivery ownership and absence of a false park/ACK rather than an invented state
   execution graph; keep the journal-free retry/redelivery tests as the baseline.
   A dormant admission entry point does not make executor coverage obsolete: a
   seeded frozen-input fixture can still exercise the live delivery path.
+- When retiring an automatic publication producer, retire its direct unit tests
+  and producer-private helper tests in the same change. Preserve shared native
+  executor and confirmed-update coverage; do not restore the forbidden producer
+  merely to satisfy old test references. Prove the replacement policy by consuming
+  reconciliation after provider refresh, not just observing the queued event.
+  CURRENT projection assertions must use the actual `TrackPublication` model;
+  it has a generation and observed metadata/assets, not a `metadata_revision`
+  column. Prove a real unprotected provider patch differs from CURRENT before
+  claiming that a no-rewrite test covers changed metadata.
 - Publication fixture edits must read the current metadata revision rather than
   assume zero after admission. Insert tool read holds and set `tools_read_required`
   in one transaction: deferred consistency checks reject either half alone.

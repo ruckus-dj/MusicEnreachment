@@ -4,12 +4,13 @@ package persistence
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/uptrace/bun"
 )
 
@@ -24,7 +25,7 @@ type pendingGraphFixture struct {
 	release    uuid.UUID
 	position   uuid.UUID
 	guard      PublicationReconciliationDeliveryGuard
-	witness    *PublicationReconciliationInputsPending
+	witness    *PublicationReconciliationNoop
 	releaseKey string
 }
 
@@ -89,13 +90,13 @@ func preparePendingGraphFixture(t *testing.T) pendingGraphFixture {
 	}
 	guard, _ := startPublicationReconciliationForResult(t, ctx, repo, f.guard.Epoch, position)
 	decision, err := repo.EvaluatePublicationReconciliationCurrent(ctx, release, guard, source.Endpoint, pendingGraphTestIdentity)
-	if err != nil || decision.Action != InputsPending || decision.InputsPending == nil {
-		t.Fatalf("accepted graph missing-evidence baseline = %+v, %v", decision, err)
+	if err != nil || decision.Action != AllNoop || decision.Noop == nil {
+		t.Fatalf("metadata-only missing-evidence baseline = %+v, %v", decision, err)
 	}
-	return pendingGraphFixture{f: f, repo: repo, cache: cache, source: source, release: release, position: position, guard: guard, witness: decision.InputsPending, releaseKey: pendingGraphTestReleaseKey}
+	return pendingGraphFixture{f: f, repo: repo, cache: cache, source: source, release: release, position: position, guard: guard, witness: decision.Noop, releaseKey: pendingGraphTestReleaseKey}
 }
 
-func TestPublicationReconciliationParksOnlyPendingAcceptedGraphPostgreSQL(t *testing.T) {
+func TestPublicationReconciliationAcknowledgesMetadataOnlyChangesPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fixture := preparePendingGraphFixture(t)
@@ -105,148 +106,95 @@ func TestPublicationReconciliationParksOnlyPendingAcceptedGraphPostgreSQL(t *tes
 	}); err == nil {
 		t.Fatal("strict provider-tag reader accepted a release without accepted track evidence")
 	}
-	parked, err := fixture.repo.ParkPublicationReconciliationInputsPending(ctx, fixture.witness)
-	if err != nil || !parked {
-		t.Fatalf("park pending accepted graph = %v, %v", parked, err)
-	}
-	var state, stage, safeError string
-	if err := fixture.f.db.NewRaw(`SELECT state,stage,safe_error FROM operation WHERE id=?`, fixture.guard.OperationID).Scan(ctx, &state, &stage, &safeError); err != nil {
+	var before TrackPublication
+	if err := fixture.f.db.NewSelect().Model(&before).Where("position_id=?", fixture.position).Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var dirty, completed int
-	if err := fixture.f.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=?`, fixture.guard.OutputEpoch, fixture.position).Scan(ctx, &dirty); err != nil {
+	acknowledged, err := fixture.repo.AcknowledgePublicationReconciliationNoop(ctx, fixture.guard, fixture.witness)
+	if err != nil || !acknowledged {
+		t.Fatalf("acknowledge metadata-only change = %v, %v", acknowledged, err)
+	}
+	var after TrackPublication
+	if err := fixture.f.db.NewSelect().Model(&after).Where("position_id=?", fixture.position).Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
+	var completed int
 	if err := fixture.f.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_event WHERE operation_id=? AND state='completed'`, fixture.guard.OperationID).Scan(ctx, &completed); err != nil {
 		t.Fatal(err)
 	}
-	if state != "failed" || stage != "waiting" || safeError != PublicationReconciliationAcceptedGraphPendingReason || dirty == 0 || completed != 1 {
-		t.Fatalf("parked operation/event/dirty = %s/%s/%q completed=%d dirty=%d", state, stage, safeError, completed, dirty)
+	if before.Generation != after.Generation || string(before.ActualMetadata) != string(after.ActualMetadata) || string(before.ActualAssets) != string(after.ActualAssets) || completed != 1 {
+		t.Fatalf("metadata-only reconciliation changed CURRENT or failed to complete: generation %s/%s metadata=%t assets=%t completed=%d", before.Generation, after.Generation, string(before.ActualMetadata) == string(after.ActualMetadata), string(before.ActualAssets) == string(after.ActualAssets), completed)
 	}
 	assertAcceptedRefreshWakesPendingGraph(t, ctx, fixture)
 }
 
-func TestPublicationReconciliationPendingGraphProofRejectsChangesPostgreSQL(t *testing.T) {
-	for _, change := range []string{"current_generation", "configuration", "request_generation"} {
-		t.Run(change, func(t *testing.T) {
-			t.Parallel()
-			ctx := context.Background()
-			fixture := preparePendingGraphFixture(t)
-			var baselineGeneration uuid.UUID
-			if err := fixture.f.db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, fixture.position).Scan(ctx, &baselineGeneration); err != nil {
-				t.Fatal(err)
-			}
-			expectedGeneration := baselineGeneration
-			switch change {
-			case "current_generation":
-				var original uuid.UUID
-				if err := fixture.f.db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, fixture.position).Scan(ctx, &original); err != nil {
-					t.Fatal(err)
-				}
-				changed := uuid.New()
-				if err := fixture.f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-					if _, err := tx.NewRaw(`UPDATE track_publication SET generation=? WHERE position_id=?`, changed, fixture.position).Exec(ctx); err != nil {
-						return err
-					}
-					_, err := tx.NewRaw(`UPDATE position_source_authority SET publication_generation=? WHERE position_id=?`, changed, fixture.position).Exec(ctx)
-					return err
-				}); err != nil {
-					t.Fatal(err)
-				}
-				expectedGeneration = changed
-				parked, err := fixture.repo.ParkPublicationReconciliationInputsPending(ctx, fixture.witness)
-				if err != nil || parked {
-					t.Fatalf("changed CURRENT generation parked = %v, %v", parked, err)
-				}
-			case "configuration":
-				if _, err := fixture.f.db.NewRaw(`UPDATE app_setting SET setting_value='changed-identity' WHERE setting_name='musicbrainz_config_identity'`).Exec(ctx); err != nil {
-					t.Fatal(err)
-				}
-				if parked, err := fixture.repo.ParkPublicationReconciliationInputsPending(ctx, fixture.witness); err == nil || parked {
-					t.Fatalf("changed configuration parked = %v, %v", parked, err)
-				}
-			case "request_generation":
-				if err := fixture.f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-					return fixture.repo.RequestPublicationReconciliationWith(ctx, tx, fixture.guard.OutputEpoch, []uuid.UUID{fixture.position}, []string{"successor_request"})
-				}); err != nil {
-					t.Fatal(err)
-				}
-				if parked, err := fixture.repo.ParkPublicationReconciliationInputsPending(ctx, fixture.witness); err != nil || parked {
-					t.Fatalf("successor generation parked stale proof = %v, %v", parked, err)
-				}
-			}
-			var dirty, active, completed int
-			if err := fixture.f.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=?`, fixture.guard.OutputEpoch, fixture.position).Scan(ctx, &dirty); err != nil {
-				t.Fatal(err)
-			}
-			// A rejected proof leaves the original delivery live. The fixture's
-			// claimed delivery is dispatched, not pending, so an obligation is
-			// retained by any active pending or dispatched event.
-			if err := fixture.f.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_event WHERE output_epoch=? AND position_id=? AND state IN ('pending','dispatched')`, fixture.guard.OutputEpoch, fixture.position).Scan(ctx, &active); err != nil {
-				t.Fatal(err)
-			}
-			if err := fixture.f.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_event WHERE output_epoch=? AND position_id=? AND state='completed'`, fixture.guard.OutputEpoch, fixture.position).Scan(ctx, &completed); err != nil {
-				t.Fatal(err)
-			}
-			var evaluated sql.NullInt64
-			var parkedReason, retryNotBefore sql.NullString
-			if err := fixture.f.db.NewRaw(`SELECT evaluated_generation,parked_reason,retry_not_before::text FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, fixture.guard.OutputEpoch, fixture.position).Scan(ctx, &evaluated, &parkedReason, &retryNotBefore); err != nil {
-				t.Fatal(err)
-			}
-			var currentGeneration uuid.UUID
-			if err := fixture.f.db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, fixture.position).Scan(ctx, &currentGeneration); err != nil {
-				t.Fatal(err)
-			}
-			var eventState, operationState, jobState string
-			var claimed bool
-			var token uuid.UUID
-			var jobID int64
-			var riverAttempt int
-			if err := fixture.f.db.NewRaw(`SELECT state,delivery_claimed,claim_token,registered_job_id FROM publication_reconciliation_event WHERE operation_id=?`, fixture.guard.OperationID).Scan(ctx, &eventState, &claimed, &token, &jobID); err != nil {
-				t.Fatal(err)
-			}
-			if err := fixture.f.db.NewRaw(`SELECT state FROM operation WHERE id=?`, fixture.guard.OperationID).Scan(ctx, &operationState); err != nil {
-				t.Fatal(err)
-			}
-			if err := fixture.f.db.NewRaw(`SELECT state,attempt FROM river_job WHERE id=?`, fixture.guard.RiverJobID).Scan(ctx, &jobState, &riverAttempt); err != nil {
-				t.Fatal(err)
-			}
-			if dirty == 0 || active == 0 || completed != 0 {
-				t.Fatalf("rejected proof lost obligation: dirty=%d active=%d completed=%d", dirty, active, completed)
-			}
-			if evaluated.Valid || parkedReason.Valid || retryNotBefore.Valid {
-				t.Fatalf("rejected proof parked an evaluated generation: evaluated=%v reason=%v retry=%v", evaluated, parkedReason, retryNotBefore)
-			}
-			if currentGeneration != expectedGeneration {
-				t.Fatalf("rejected proof changed CURRENT: %s want %s", currentGeneration, expectedGeneration)
-			}
-			// The claimed delivery keeps its own live River job, so the dispatcher
-			// cannot hand the work to another worker.
-			if eventState != "dispatched" || !claimed || token != fixture.guard.ClaimToken || jobID != fixture.guard.RiverJobID || operationState != "running" || jobState != "running" || riverAttempt != fixture.guard.RiverAttempt {
-				t.Fatalf("rejected proof lost delivery ownership: event=%s claimed=%v token=%s job=%d operation=%s river=%s/%d", eventState, claimed, token, jobID, operationState, jobState, riverAttempt)
-			}
-		})
-	}
-}
-
-func TestPublicationReconciliationAcceptedRefreshBeforePendingGraphParkPostgreSQL(t *testing.T) {
+func TestPublicationReconciliationMetadataRefreshCreatesNoRewritePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fixture := preparePendingGraphFixture(t)
+	if acknowledged, err := fixture.repo.AcknowledgePublicationReconciliationNoop(ctx, fixture.guard, fixture.witness); err != nil || !acknowledged {
+		t.Fatalf("acknowledge initial pending-graph metadata-only event = %v, %v", acknowledged, err)
+	}
+	var before TrackPublication
+	if err := fixture.f.db.NewSelect().Model(&before).Where("position_id=?", fixture.position).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
 	assertAcceptedRefreshWakesPendingGraph(t, ctx, fixture)
-	parked, err := fixture.repo.ParkPublicationReconciliationInputsPending(ctx, fixture.witness)
-	if err != nil || parked {
-		t.Fatalf("accepted-refresh stale pending proof parked = %v, %v", parked, err)
-	}
-	var dirty, pending int
-	if err := fixture.f.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=?`, fixture.guard.OutputEpoch, fixture.position).Scan(ctx, &dirty); err != nil {
+	var providerContext *PublicationProviderTagContext
+	if err := fixture.f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return readPublicationProviderTagContextForPositionTx(ctx, tx, fixture.release, fixture.position, fixture.source.Endpoint, pendingGraphTestIdentity, false, &providerContext)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.f.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_event WHERE output_epoch=? AND position_id=? AND state='pending'`, fixture.guard.OutputEpoch, fixture.position).Scan(ctx, &pending); err != nil {
+	patch, err := BuildPublicationProviderCanonicalTagPatch(*providerContext)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if dirty == 0 || pending == 0 {
-		t.Fatalf("accepted-refresh race lost obligation: dirty=%d pending=%d", dirty, pending)
+	protection, err := BuildPublicationProviderTagProtection(providerContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata PublicationCommitMetadata
+	if err := strictMetadata(before.ActualMetadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	desired, err := publication.ApplyProviderTagPatch(metadata.Tags, patch, protection.Keys)
+	if err != nil || reflect.DeepEqual(desired, metadata.Tags) {
+		t.Fatalf("refreshed provider must offer a real unprotected CURRENT tag change: desired=%v current=%v err=%v", desired, metadata.Tags, err)
+	}
+	inserter := new(reconciliationDeliveryInserter)
+	if dispatched, err := fixture.repo.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || dispatched != 1 {
+		t.Fatalf("dispatch provider-refresh reconciliation = %d, %v", dispatched, err)
+	}
+	jobID, operationID := inserter.ids[0], inserter.args[0].OperationID
+	if _, err := fixture.f.db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	guard, outcome, err := fixture.repo.ClaimPublicationReconciliationDelivery(ctx, operationID, jobID, 1)
+	if err != nil || outcome != PublicationReconciliationClaimed {
+		t.Fatalf("claim provider-refresh reconciliation = %s, %v", outcome, err)
+	}
+	decision, err := fixture.repo.EvaluatePublicationReconciliationCurrent(ctx, fixture.release, guard, fixture.source.Endpoint, pendingGraphTestIdentity)
+	if err != nil || decision.Action != AllNoop || decision.Noop == nil {
+		t.Fatalf("provider-refresh-only reconciliation decision = %+v, %v", decision, err)
+	}
+	if acknowledged, err := fixture.repo.AcknowledgePublicationReconciliationNoop(ctx, guard, decision.Noop); err != nil || !acknowledged {
+		t.Fatalf("acknowledge provider-refresh-only event = %v, %v", acknowledged, err)
+	}
+	var after TrackPublication
+	if err := fixture.f.db.NewSelect().Model(&after).Where("position_id=?", fixture.position).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var pendingEvents int
+	if err := fixture.f.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_event WHERE output_epoch=? AND position_id=? AND state='pending'`, fixture.guard.OutputEpoch, fixture.position).Scan(ctx, &pendingEvents); err != nil {
+		t.Fatal(err)
+	}
+	var attempts int
+	if err := fixture.f.db.NewRaw(`SELECT count(*) FROM track_publication_attempt WHERE operation_id=?`, operationID).Scan(ctx, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if before.Generation != after.Generation || string(before.ActualMetadata) != string(after.ActualMetadata) || string(before.ActualAssets) != string(after.ActualAssets) || pendingEvents != 0 || attempts != 0 {
+		t.Fatalf("provider refresh reconciliation rewrote CURRENT or failed to complete: generation %s/%s metadata=%t assets=%t pending=%d attempts=%d", before.Generation, after.Generation, string(before.ActualMetadata) == string(after.ActualMetadata), string(before.ActualAssets) == string(after.ActualAssets), pendingEvents, attempts)
 	}
 }
 
@@ -256,7 +204,36 @@ func assertAcceptedRefreshWakesPendingGraph(t *testing.T, ctx context.Context, f
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.cache.ApplySuccessfulResponse(ctx, ProviderSuccessfulResponse{Ticket: refresh, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{"id":"` + fixture.releaseKey + `"}`), Graph: publicationProviderTagAuthorityGraph()}); err != nil {
+	graph := publicationProviderTagAuthorityGraph()
+	const refreshedTitle = "Refreshed provider release"
+	graph.Releases[0].Title = refreshedTitle
+	var raw map[string]any
+	if err := json.Unmarshal(graph.Releases[0].RawSource, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["title"] = refreshedTitle
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph.Releases[0].RawSource = encoded
+	for index := range graph.Entities {
+		entity := &graph.Entities[index]
+		if entity.Kind != "release" {
+			continue
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(entity.Fields, &fields); err != nil {
+			t.Fatal(err)
+		}
+		fields["title"] = refreshedTitle
+		entity.Fields, err = json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entity.Name, entity.RawSource = refreshedTitle, encoded
+	}
+	if err := fixture.cache.ApplySuccessfulResponse(ctx, ProviderSuccessfulResponse{Ticket: refresh, FetchedAt: time.Now().UTC(), Payload: encoded, Graph: graph}); err != nil {
 		t.Fatal(err)
 	}
 	var requested int64

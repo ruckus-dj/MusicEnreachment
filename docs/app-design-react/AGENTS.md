@@ -1,14 +1,32 @@
 # React design prototype
 
-This is a standalone design artifact, never part of the production frontend.
+This is a standalone design artifact, never part of the production frontend at
+runtime.
 By owner decision on 2026-11-03, this React prototype is the sole current
 graphical reference. Retired static-prototype runtime files are not retained or
 copied here. The moved Markdown files are preserved design prose, not a separate
 live prototype or independent authority; current product decisions remain in
 `../design/decisions.md`.
 
-Keep production `frontend/` unchanged. Preserve approved behavior, fields,
-identities, data and product semantics. Do not add screenshot artifacts.
+For prototype-only tasks, keep production `frontend/` unchanged. The owner has
+explicitly approved porting prototype presentation modules into production with
+production API/controllers, while keeping this prototype standalone. UI/UX
+improvements are synchronized in both surfaces. Preserve approved behavior,
+fields, identities, data and product semantics. Do not add screenshot artifacts.
+
+## Approved prototype-to-production port
+
+- Copy/adapt presentation modules into production; production code must not import
+  from `docs/app-design-react/`, and must not use prototype demo fixtures or
+  prototype execution/data models. Connect the port to production APIs and
+  controllers.
+- Prefer controlled view extraction with production-owned adapters. Port prototype
+  `ui/index.tsx`, static style modules, tokens in `index.html`, i18n,
+  metadata editor, `MatchingDnD`, and `LocalProviderScreen` where suitable.
+- Preserve production concurrency/SSE behavior and directory controllers. Do not
+  replace them with prototype workflows. No blanket shared-package prerequisite
+  is required before porting.
+- Development does not require backwards compatibility or theme-key compatibility.
 
 For prototype/documentation-only work, the owner explicitly requested scoped
 verification: `task design:check` and live prototype checks, not application
