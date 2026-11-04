@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	postgres "github.com/fergusstrange/embedded-postgres/v2"
@@ -94,7 +95,14 @@ func TestEmbeddedStopReclaimsOwnedClusterWorkDirectory(t *testing.T) {
 	if err := os.WriteFile(sentinel, []byte("preserve"), 0600); err != nil {
 		t.Fatalf("write parent sentinel: %v", err)
 	}
-	server := postgres.NewDatabase(postgres.DefaultConfig().Version(postgres.V18).Port(0).Storage(postgres.Storage{WorkDir: parent}))
+	config := postgres.DefaultConfig().Version(postgres.V18).Port(0).Storage(postgres.Storage{WorkDir: parent})
+	if runtime.GOOS == "windows" {
+		if err := ensureCurrentUserDefaultDACL(); err != nil {
+			t.Fatalf("prepare Windows token default DACL: %v", err)
+		}
+		config = config.Environment("PG_RESTRICT_EXEC=1")
+	}
+	server := postgres.NewDatabase(config)
 	if err := server.Start(); err != nil {
 		t.Fatalf("start independent embedded PostgreSQL: %v", err)
 	}

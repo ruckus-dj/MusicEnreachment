@@ -28,7 +28,7 @@ func (runner *staleResultPreparationCommand) Run(_ context.Context, name string,
 }
 
 func (runner *staleResultPreparationCommand) RunFile(_ context.Context, request tools.FileCommandRequest) (PublicationCommandResult, error) {
-	if filepath.Base(request.Executable) != "ffprobe" || request.Input == nil {
+	if strings.TrimSuffix(filepath.Base(request.Executable), ".exe") != "ffprobe" || request.Input == nil {
 		return PublicationCommandResult{}, fmt.Errorf("unexpected publication file command %+v", request)
 	}
 	return PublicationCommandResult{
