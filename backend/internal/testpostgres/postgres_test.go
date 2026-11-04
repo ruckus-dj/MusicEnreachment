@@ -20,6 +20,67 @@ func TestReleaseFixtureSkipsSQLForOwnedCluster(t *testing.T) {
 	}
 }
 
+func TestFixtureDatabaseCreateQueryCloneStrategyPolicy(t *testing.T) {
+	tests := []struct {
+		name, template string
+		clone          bool
+		want           string
+	}{
+		{name: "untemplated databases do not use clone", want: `CREATE DATABASE "fixture"`},
+		{name: "ordinary template copy", template: "template", want: `CREATE DATABASE "fixture" TEMPLATE "template"`},
+		{name: "clone template copy", template: "template", clone: true, want: `CREATE DATABASE "fixture" TEMPLATE "template" STRATEGY FILE_COPY`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := fixtureDatabaseCreateQuery("fixture", test.template, test.clone); got != test.want {
+				t.Fatalf("fixture create query = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRunFixtureCreateSessionCloneLifecycle(t *testing.T) {
+	setErr := errors.New("set failed")
+	createErr := errors.New("create failed")
+	resetErr := errors.New("reset failed")
+	tests := []struct {
+		name      string
+		setErr    error
+		createErr error
+		resetErr  error
+		wantCalls string
+		wantErr   error
+		created   bool
+	}{
+		{name: "success resets before return", wantCalls: "scer", created: true},
+		{name: "set failure discards without create", setErr: setErr, wantCalls: "sd", wantErr: setErr},
+		{name: "create failure still resets without retry", createErr: createErr, wantCalls: "scr", wantErr: createErr},
+		{name: "reset failure discards after registration", resetErr: resetErr, wantCalls: "scerd", wantErr: resetErr, created: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var calls string
+			created := false
+			err := runFixtureCreateSession(true,
+				func() error { calls += "s"; return test.setErr },
+				func() error { calls += "c"; return test.createErr },
+				func() error { calls += "r"; return test.resetErr },
+				func() error { calls += "d"; return nil },
+				func() { calls += "e"; created = true },
+			)
+			if calls != test.wantCalls {
+				t.Fatalf("session calls = %q, want %q", calls, test.wantCalls)
+			}
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("session error = %v, want %v", err, test.wantErr)
+			}
+			if created != test.created {
+				t.Fatalf("database registered = %v, want %v", created, test.created)
+			}
+		})
+	}
+}
+
 func TestReleaseFixtureDropsExternalDatabase(t *testing.T) {
 	wantErr := errors.New("drop failed")
 	called := false

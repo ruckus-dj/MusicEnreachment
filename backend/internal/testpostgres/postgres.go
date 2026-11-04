@@ -4,7 +4,9 @@ package testpostgres
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -41,6 +43,8 @@ var process struct {
 	resourcesMu     sync.Mutex
 	serverOnce      sync.Once
 	serverErr       error
+	cloneEnabled    bool
+	cloneDiagnostic string
 	server          *postgres.EmbeddedPostgres
 	ownedDisposable bool
 	clusterWorkDir  string
@@ -63,6 +67,11 @@ var process struct {
 	dropNanos        atomic.Int64
 	clusterReclaimed atomic.Int64
 }
+
+type cloneProbeCleanupError struct{ err error }
+
+func (err cloneProbeCleanupError) Error() string { return err.err.Error() }
+func (err cloneProbeCleanupError) Unwrap() error { return err.err }
 
 // Open creates an empty, uniquely named database owned by this test. The
 // TEST_DATABASE_URL value, when supplied, is treated only as an admin endpoint:
@@ -283,6 +292,7 @@ func adminDatabase(t *testing.T) *bun.DB {
 			}
 			process.server = server
 			info := server.Info()
+			process.clusterWorkDir = info.WorkDir
 			process.ownedDisposable = info.WorkDir != "" && info.DataDir != "" && filepath.Clean(filepath.Dir(info.DataDir)) == filepath.Clean(info.WorkDir)
 			process.adminURL = server.ConnectionURL()
 		}
@@ -300,6 +310,23 @@ func adminDatabase(t *testing.T) *bun.DB {
 			_ = process.adminDB.Close()
 			process.adminDB = nil
 			process.serverErr = fmt.Errorf("connect to PostgreSQL admin endpoint: %w", err)
+			return
+		}
+		if process.ownedDisposable && runtime.GOOS == "darwin" {
+			var err error
+			process.cloneEnabled, process.cloneDiagnostic, err = initializeCloneStrategy(process.adminDB, process.clusterWorkDir)
+			if err != nil {
+				process.serverErr = fmt.Errorf("initialize PostgreSQL clone strategy: %w", err)
+				return
+			}
+		}
+		if process.cloneEnabled {
+			fmt.Fprintln(os.Stderr, process.cloneDiagnostic)
+		} else {
+			fmt.Fprintln(os.Stderr, "PostgreSQL database clone strategy: ordinary COPY")
+			if process.cloneDiagnostic != "" {
+				fmt.Fprintf(os.Stderr, "PostgreSQL clone fallback: %s\n", process.cloneDiagnostic)
+			}
 		}
 	})
 	if process.serverErr != nil {
@@ -459,10 +486,8 @@ func createDatabase(t *testing.T, admin *bun.DB, name, template string) {
 func createDatabaseForFixture(t *testing.T, admin *bun.DB, name, template string, span *fixtureSpan) {
 	t.Helper()
 	totalStarted := time.Now()
-	query := "CREATE DATABASE " + quoteIdentifier(name)
-	if template != "" {
-		query += " TEMPLATE " + quoteIdentifier(template)
-	}
+	useClone := template != "" && process.cloneEnabled
+	query := fixtureDatabaseCreateQuery(name, template, useClone)
 	ctx := context.Background()
 	start := time.Now()
 	connection, err := admin.Conn(ctx)
@@ -471,17 +496,93 @@ func createDatabaseForFixture(t *testing.T, admin *bun.DB, name, template string
 		t.Fatalf("acquire PostgreSQL clone connection: %v", err)
 	}
 	start = time.Now()
-	_, err = connection.ExecContext(ctx, query)
-	span.record("clone_exec", time.Since(start), err)
+	createErr := runFixtureCreateSession(useClone,
+		func() error {
+			_, err := connection.ExecContext(ctx, "SET file_copy_method = 'clone'")
+			return err
+		},
+		func() error {
+			_, err := connection.ExecContext(ctx, query)
+			return err
+		},
+		func() error {
+			resetCtx, cancelReset := context.WithTimeout(context.Background(), cleanupTimeout)
+			defer cancelReset()
+			_, err := connection.ExecContext(resetCtx, "RESET file_copy_method")
+			return err
+		},
+		func() error { return connection.Raw(func(any) error { return driver.ErrBadConn }) },
+		func() { registerResource(name) },
+	)
+	span.record("clone_exec", time.Since(start), createErr)
 	closeErr := connection.Close()
-	if err != nil {
-		t.Fatalf("create isolated PostgreSQL database: %v", err)
+	if createErr != nil {
+		t.Fatalf("create isolated PostgreSQL database: %v", createErr)
 	}
-	registerResource(name)
 	if closeErr != nil {
 		t.Fatalf("close PostgreSQL clone connection: %v", closeErr)
 	}
 	process.createNanos.Add(int64(time.Since(totalStarted)))
+}
+
+func runFixtureCreateSession(useClone bool, setClone, create, reset, discard func() error, onCreated func()) error {
+	if useClone {
+		if err := setClone(); err != nil {
+			_ = discard()
+			return fmt.Errorf("enable PostgreSQL file clone strategy: %w", err)
+		}
+	}
+	createErr := create()
+	if createErr == nil {
+		onCreated()
+	}
+	if useClone {
+		if err := reset(); err != nil {
+			_ = discard()
+			if createErr == nil {
+				return fmt.Errorf("reset PostgreSQL file clone strategy: %w", err)
+			}
+		}
+	}
+	if createErr != nil {
+		return fmt.Errorf("create isolated PostgreSQL database: %w", createErr)
+	}
+	return nil
+}
+
+func fixtureDatabaseCreateQuery(name, template string, useClone bool) string {
+	query := "CREATE DATABASE " + quoteIdentifier(name)
+	if template != "" {
+		query += " TEMPLATE " + quoteIdentifier(template)
+		if useClone {
+			query += " STRATEGY FILE_COPY"
+		}
+	}
+	return query
+}
+
+func initializeCloneStrategy(admin *bun.DB, workDir string) (bool, string, error) {
+	var cloneAvailable bool
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	if err := admin.NewRaw("SELECT EXISTS (SELECT 1 FROM pg_settings WHERE name = 'file_copy_method' AND 'clone' = ANY(enumvals))").Scan(ctx, &cloneAvailable); err != nil {
+		return false, "", fmt.Errorf("query PostgreSQL file_copy_method support: %w", err)
+	}
+	if !cloneAvailable {
+		return false, "PostgreSQL file_copy_method does not offer clone", nil
+	}
+	available, diagnostic, err := probeCloneFileCopy(workDir)
+	if err != nil {
+		var cleanupErr cloneProbeCleanupError
+		if errors.As(err, &cleanupErr) {
+			return false, "", err
+		}
+		return false, fmt.Sprintf("filesystem clone probe failed: %v", err), nil
+	}
+	if !available {
+		return false, diagnostic, nil
+	}
+	return true, "PostgreSQL database clone strategy: macOS file clone", nil
 }
 
 func databaseURL(t *testing.T, name string) string {
