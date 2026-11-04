@@ -79,7 +79,13 @@ func newAnalysisDispatchFixtureWithoutPendingWork(t *testing.T, processingMode s
 func newAnalysisDispatchFixtureConfigured(t *testing.T, preparer service.SourceAnalysisPreparing, processingMode string, sha256Enabled bool) analysisDispatchFixture {
 	t.Helper()
 	ctx := context.Background()
+	phaseStarted := time.Now()
+	phase := func(name string) {
+		t.Logf("testhelper.phase fixture=analysis_dispatch phase=%s duration=%s", name, time.Since(phaseStarted))
+		phaseStarted = time.Now()
+	}
 	database := testpostgres.OpenMigratedWithRiver(t)
+	phase("database")
 	databaseURL := testpostgres.URL(t, database)
 	settingsRepository := persistence.NewSettingsRepository(database)
 	toolsRoot := t.TempDir()
@@ -96,8 +102,10 @@ func newAnalysisDispatchFixtureConfigured(t *testing.T, preparer service.SourceA
 	if _, err := registry.InitializePlatform(ctx, platform.Platform); err != nil {
 		t.Fatalf("initialize the instance platform: %v", err)
 	}
+	phase("settings")
 	probeLog := filepath.Join(toolsRoot, "probe-log")
 	installationID, helperPath := writeAnalysisDispatchFFmpeg(t, ctx, database, settingsRepository, toolsRoot, platform)
+	phase("helper")
 
 	setup := persistence.NewSetupManagerRepository(database)
 	inventory := persistence.NewSourceInventoryRepository(database)
@@ -139,7 +147,9 @@ func newAnalysisDispatchFixtureConfigured(t *testing.T, preparer service.SourceA
 	if preparer != nil {
 		worker.WithPreparer(preparer)
 	}
+	phase("seed")
 	client, listenerPool := startAnalysisDispatchRiver(t, databaseURL, database, worker)
+	phase("river")
 	t.Cleanup(func() { listenerPool.Close() })
 	t.Cleanup(func() { stopRiverClient(t, client) })
 	slot.RiverInserter = client

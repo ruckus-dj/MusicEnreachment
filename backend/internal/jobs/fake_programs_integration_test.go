@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
@@ -34,6 +35,10 @@ type scanningProbeConfig struct {
 }
 
 func cachedFakeProgram(name string) (string, error) {
+	started := time.Now()
+	defer func() {
+		fmt.Fprintf(os.Stderr, "testhelper.phase program=%s phase=ready_wait duration=%s\n", name, time.Since(started))
+	}()
 	fakeProgramsOnce.Do(func() {
 		fakeProgramsDir, fakeProgramsErr = os.MkdirTemp("", "melotrove-jobs-fakes-")
 		if fakeProgramsErr != nil {
@@ -46,8 +51,11 @@ func cachedFakeProgram(name string) (string, error) {
 			{"scanningprobe", "./testdata/scanningprobe"},
 		} {
 			build := exec.Command("go", "build", "-o", filepath.Join(fakeProgramsDir, program.name), program.packagePath)
-			if output, err := build.CombinedOutput(); err != nil {
-				fakeProgramsErr = fmt.Errorf("build %s helper: %w: %s", program.name, err, output)
+			buildStarted := time.Now()
+			output, buildErr := build.CombinedOutput()
+			fmt.Fprintf(os.Stderr, "testhelper.phase program=%s phase=compile duration=%s\n", program.name, time.Since(buildStarted))
+			if buildErr != nil {
+				fakeProgramsErr = fmt.Errorf("build %s helper: %w: %s", program.name, buildErr, output)
 				return
 			}
 		}
