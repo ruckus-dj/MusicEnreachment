@@ -4,9 +4,11 @@ package testpostgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -36,26 +38,30 @@ const (
 
 var process struct {
 	sync.Mutex
-	resourcesMu   sync.Mutex
-	serverOnce    sync.Once
-	serverErr     error
-	server        *postgres.EmbeddedPostgres
-	adminURL      string
-	adminDB       *bun.DB
-	template      string
-	riverTemplate string
-	resources     []string
-	cleanups      []func() error
+	resourcesMu     sync.Mutex
+	serverOnce      sync.Once
+	serverErr       error
+	server          *postgres.EmbeddedPostgres
+	ownedDisposable bool
+	clusterWorkDir  string
+	adminURL        string
+	adminDB         *bun.DB
+	template        string
+	riverTemplate   string
+	resources       []string
+	cleanups        []func() error
 
 	familiesMu sync.Mutex
 	families   map[string]int
 
-	createdTest     atomic.Int64
-	createdTemplate atomic.Int64
-	dropAttempts    atomic.Int64
-	dropped         atomic.Int64
-	createNanos     atomic.Int64
-	dropNanos       atomic.Int64
+	createdTest      atomic.Int64
+	createdTemplate  atomic.Int64
+	fixtureID        atomic.Int64
+	dropAttempts     atomic.Int64
+	dropped          atomic.Int64
+	createNanos      atomic.Int64
+	dropNanos        atomic.Int64
+	clusterReclaimed atomic.Int64
 }
 
 // Open creates an empty, uniquely named database owned by this test. The
@@ -63,27 +69,40 @@ var process struct {
 // tests never reset or drop the database named by that URL.
 func Open(t *testing.T) *bun.DB {
 	t.Helper()
+	span := newFixtureSpan(t)
+	defer span.finishOpen()
+	t.Cleanup(func() { span.log(t) })
 	admin := adminDatabase(t)
 	name := resourcePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
-	createDatabase(t, admin, name, "")
+	createDatabaseForFixture(t, admin, name, "", span)
 	process.createdTest.Add(1)
 	recordFamily(t.Name())
-	registerResource(name)
 	databaseURL := databaseURL(t, name)
+	poolStart := time.Now()
 	database, err := openPool(databaseURL)
 	if err != nil {
+		span.record("pool_open_ping", time.Since(poolStart), err)
 		t.Fatalf("open isolated PostgreSQL database: %v", err)
 	}
 	if err := database.PingContext(context.Background()); err != nil {
-		_ = database.Close()
+		closeStart := time.Now()
+		closeErr := database.Close()
+		span.record("pool_close", time.Since(closeStart), closeErr)
+		span.record("pool_open_ping", time.Since(poolStart), err)
 		t.Fatalf("connect to isolated PostgreSQL database: %v", err)
 	}
+	span.record("pool_open_ping", time.Since(poolStart), nil)
+	ownedDisposable := process.ownedDisposable
 	t.Cleanup(func() {
-		if err := dropRegisteredDatabase(name); err != nil {
+		if err := releaseFixtureDatabase(name, span, ownedDisposable); err != nil {
 			t.Errorf("drop isolated PostgreSQL database %s: %v", name, err)
 		}
 	})
-	t.Cleanup(func() { _ = database.Close() })
+	t.Cleanup(func() {
+		start := time.Now()
+		err := database.Close()
+		span.record("pool_close", time.Since(start), err)
+	})
 	return database
 }
 
@@ -104,27 +123,40 @@ func OpenMigratedWithRiver(t *testing.T) *bun.DB {
 
 func openTemplate(t *testing.T, withRiver bool) *bun.DB {
 	t.Helper()
+	span := newFixtureSpan(t)
+	defer span.finishOpen()
+	t.Cleanup(func() { span.log(t) })
 	admin := adminDatabase(t)
 	template := migratedTemplate(t, admin, withRiver)
 	name := resourcePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
-	createDatabase(t, admin, name, template)
+	createDatabaseForFixture(t, admin, name, template, span)
 	process.createdTest.Add(1)
 	recordFamily(t.Name())
-	registerResource(name)
+	poolStart := time.Now()
 	database, err := openPool(databaseURL(t, name))
 	if err != nil {
+		span.record("pool_open_ping", time.Since(poolStart), err)
 		t.Fatalf("open migrated PostgreSQL database: %v", err)
 	}
 	if err := database.PingContext(context.Background()); err != nil {
-		_ = database.Close()
+		closeStart := time.Now()
+		closeErr := database.Close()
+		span.record("pool_close", time.Since(closeStart), closeErr)
+		span.record("pool_open_ping", time.Since(poolStart), err)
 		t.Fatalf("connect to migrated PostgreSQL database: %v", err)
 	}
+	span.record("pool_open_ping", time.Since(poolStart), nil)
+	ownedDisposable := process.ownedDisposable
 	t.Cleanup(func() {
-		if err := dropRegisteredDatabase(name); err != nil {
+		if err := releaseFixtureDatabase(name, span, ownedDisposable); err != nil {
 			t.Errorf("drop isolated PostgreSQL database %s: %v", name, err)
 		}
 	})
-	t.Cleanup(func() { _ = database.Close() })
+	t.Cleanup(func() {
+		start := time.Now()
+		err := database.Close()
+		span.record("pool_close", time.Since(start), err)
+	})
 	return database
 }
 
@@ -156,11 +188,15 @@ func Run(m *testing.M) int {
 			code = 1
 		}
 	}
-	fmt.Fprintf(os.Stderr, "testpostgres: created=%d dropped=%d create_time=%s drop_time=%s templates=%d drop_attempts=%d\n",
+	fmt.Fprintf(os.Stderr, "testpostgres: created=%d dropped=%d create_time=%s drop_time=%s templates=%d drop_attempts=%d",
 		process.createdTest.Load(), process.dropped.Load(),
 		time.Duration(process.createNanos.Load()).Round(time.Millisecond),
 		time.Duration(process.dropNanos.Load()).Round(time.Millisecond),
 		process.createdTemplate.Load(), process.dropAttempts.Load())
+	if process.clusterReclaimed.Load() > 0 {
+		fmt.Fprintf(os.Stderr, " cluster_reclaimed=%d cluster_path=%s", process.clusterReclaimed.Load(), process.clusterWorkDir)
+	}
+	fmt.Fprintln(os.Stderr)
 	if families := largestFixtureFamilies(); families != "" {
 		fmt.Fprintf(os.Stderr, "testpostgres: largest_fixture_families=%s\n", families)
 	}
@@ -246,6 +282,8 @@ func adminDatabase(t *testing.T) *bun.DB {
 				return
 			}
 			process.server = server
+			info := server.Info()
+			process.ownedDisposable = info.WorkDir != "" && info.DataDir != "" && filepath.Clean(filepath.Dir(info.DataDir)) == filepath.Clean(info.WorkDir)
 			process.adminURL = server.ConnectionURL()
 		}
 		parsed, err := url.Parse(process.adminURL)
@@ -338,6 +376,70 @@ func applyMigrations(t *testing.T, database *bun.DB) {
 	}
 }
 
+type fixturePhase struct {
+	DurationNS int64  `json:"duration_ns"`
+	Error      string `json:"error,omitempty"`
+}
+
+type fixturePhaseLog struct {
+	Event     string                  `json:"event"`
+	FixtureID int64                   `json:"fixture_id"`
+	TestName  string                  `json:"test_name"`
+	Phases    map[string]fixturePhase `json:"phases"`
+}
+
+type fixtureSpan struct {
+	mu        sync.Mutex
+	id        int64
+	testName  string
+	started   time.Time
+	openTotal time.Duration
+	phases    map[string]fixturePhase
+}
+
+func newFixtureSpan(t *testing.T) *fixtureSpan {
+	return &fixtureSpan{
+		id:       process.fixtureID.Add(1),
+		testName: t.Name(),
+		started:  time.Now(),
+		phases:   make(map[string]fixturePhase),
+	}
+}
+
+func (span *fixtureSpan) finishOpen() {
+	span.mu.Lock()
+	span.openTotal = time.Since(span.started)
+	span.mu.Unlock()
+}
+
+func (span *fixtureSpan) record(name string, duration time.Duration, err error) {
+	phase := fixturePhase{DurationNS: int64(duration)}
+	if err != nil {
+		phase.Error = err.Error()
+	}
+	span.mu.Lock()
+	span.phases[name] = phase
+	span.mu.Unlock()
+}
+
+func (span *fixtureSpan) log(t *testing.T) {
+	span.mu.Lock()
+	phases := make(map[string]fixturePhase, len(span.phases)+1)
+	for name, phase := range span.phases {
+		phases[name] = phase
+	}
+	phases["open_total"] = fixturePhase{DurationNS: int64(span.openTotal)}
+	span.mu.Unlock()
+	encoded, err := json.Marshal(fixturePhaseLog{
+		Event: "testpostgres.phase", FixtureID: span.id, TestName: span.testName, Phases: phases,
+	})
+	if err != nil {
+		t.Errorf("encode PostgreSQL fixture phase log: %v", err)
+		return
+	}
+	t.Logf("testpostgres.phase %s", encoded)
+}
+
 func createDatabase(t *testing.T, admin *bun.DB, name, template string) {
 	t.Helper()
 	query := "CREATE DATABASE " + quoteIdentifier(name)
@@ -352,6 +454,34 @@ func createDatabase(t *testing.T, admin *bun.DB, name, template string) {
 	if err != nil {
 		t.Fatalf("create isolated PostgreSQL database: %v", err)
 	}
+}
+
+func createDatabaseForFixture(t *testing.T, admin *bun.DB, name, template string, span *fixtureSpan) {
+	t.Helper()
+	totalStarted := time.Now()
+	query := "CREATE DATABASE " + quoteIdentifier(name)
+	if template != "" {
+		query += " TEMPLATE " + quoteIdentifier(template)
+	}
+	ctx := context.Background()
+	start := time.Now()
+	connection, err := admin.Conn(ctx)
+	span.record("clone_connection_acquire", time.Since(start), err)
+	if err != nil {
+		t.Fatalf("acquire PostgreSQL clone connection: %v", err)
+	}
+	start = time.Now()
+	_, err = connection.ExecContext(ctx, query)
+	span.record("clone_exec", time.Since(start), err)
+	closeErr := connection.Close()
+	if err != nil {
+		t.Fatalf("create isolated PostgreSQL database: %v", err)
+	}
+	registerResource(name)
+	if closeErr != nil {
+		t.Fatalf("close PostgreSQL clone connection: %v", closeErr)
+	}
+	process.createNanos.Add(int64(time.Since(totalStarted)))
 }
 
 func databaseURL(t *testing.T, name string) string {
@@ -413,12 +543,55 @@ func dropRegisteredDatabase(name string) error {
 	return dropAndUnregister(name, dropDatabase)
 }
 
+func dropRegisteredDatabaseForFixture(name string, span *fixtureSpan) error {
+	return dropAndUnregister(name, func(name string) error { return dropDatabaseForFixture(name, span) })
+}
+
+func dropDatabaseForFixture(name string, span *fixtureSpan) error {
+	totalStarted := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	process.dropAttempts.Add(1)
+	start := time.Now()
+	connection, err := process.adminDB.Conn(ctx)
+	span.record("drop_connection_acquire", time.Since(start), err)
+	if err != nil {
+		return err
+	}
+	start = time.Now()
+	_, err = connection.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdentifier(name)+" WITH (FORCE)")
+	span.record("drop_exec", time.Since(start), err)
+	closeErr := connection.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	process.dropped.Add(1)
+	process.dropNanos.Add(int64(time.Since(totalStarted)))
+	return nil
+}
+
 func dropAndUnregister(name string, drop func(string) error) error {
 	if err := drop(name); err != nil {
 		return err
 	}
 	unregisterResource(name)
 	return nil
+}
+
+func releaseFixtureDatabase(name string, span *fixtureSpan, ownedDisposable bool) error {
+	return releaseFixture(name, ownedDisposable, func() error {
+		return dropRegisteredDatabaseForFixture(name, span)
+	})
+}
+
+func releaseFixture(_ string, ownedDisposable bool, drop func() error) error {
+	if ownedDisposable {
+		return nil
+	}
+	return drop()
 }
 
 func cleanupProcess() error {
@@ -429,27 +602,72 @@ func cleanupProcess() error {
 	process.Lock()
 	server := process.server
 	admin := process.adminDB
-	process.Unlock()
-	var failures []string
-	for index := len(cleanups) - 1; index >= 0; index-- {
-		if err := cleanups[index](); err != nil {
-			failures = append(failures, err.Error())
-		}
-	}
-	for index := len(resources) - 1; index >= 0; index-- {
-		if err := dropRegisteredDatabase(resources[index]); err != nil {
-			failures = append(failures, err.Error())
-		}
-	}
-	if admin != nil {
-		if err := admin.Close(); err != nil {
-			failures = append(failures, err.Error())
-		}
-	}
 	if server != nil {
-		if err := server.Stop(); err != nil {
+		// Info can be cleared by Stop; capture the work directory while the
+		// cluster is still running.
+		process.clusterWorkDir = server.Info().WorkDir
+	}
+	process.Unlock()
+	ownedDisposable := process.ownedDisposable
+	return cleanupResources(cleanupPlan{
+		resources: resources, cleanups: cleanups, ownedDisposable: ownedDisposable,
+		drop: dropRegisteredDatabase,
+		closeAdmin: func() error {
+			if admin == nil {
+				return nil
+			}
+			return admin.Close()
+		},
+		stop: func() error {
+			if server == nil {
+				return nil
+			}
+			return server.Stop()
+		},
+		clear: func() {
+			process.resourcesMu.Lock()
+			process.resources = nil
+			process.resourcesMu.Unlock()
+			if ownedDisposable && server != nil {
+				process.clusterReclaimed.Add(int64(len(resources)))
+			}
+		},
+	})
+}
+
+type cleanupPlan struct {
+	resources       []string
+	cleanups        []func() error
+	ownedDisposable bool
+	drop            func(string) error
+	closeAdmin      func() error
+	stop            func() error
+	clear           func()
+}
+
+func cleanupResources(plan cleanupPlan) error {
+	var failures []string
+	for index := len(plan.cleanups) - 1; index >= 0; index-- {
+		if err := plan.cleanups[index](); err != nil {
 			failures = append(failures, err.Error())
 		}
+	}
+	if !plan.ownedDisposable {
+		for index := len(plan.resources) - 1; index >= 0; index-- {
+			if err := plan.drop(plan.resources[index]); err != nil {
+				failures = append(failures, err.Error())
+			}
+		}
+	}
+	if err := plan.closeAdmin(); err != nil {
+		failures = append(failures, err.Error())
+	}
+	stopErr := plan.stop()
+	if stopErr != nil {
+		failures = append(failures, stopErr.Error())
+	}
+	if plan.ownedDisposable && stopErr == nil {
+		plan.clear()
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))

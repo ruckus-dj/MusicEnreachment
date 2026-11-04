@@ -19,7 +19,7 @@ import (
 
 // PublicationExecutor owns the entry point for one River publication delivery.
 type PublicationExecutor struct {
-	repository     *persistence.SetupManagerRepository
+	repository     publicationExecutorRepository
 	registry       *settings.Registry
 	platform       tools.Platform
 	coordinator    *publication.Coordinator
@@ -30,12 +30,44 @@ type PublicationExecutor struct {
 	metadata       PublicationMetadataWriter
 }
 
+type publicationExecutorRepository interface {
+	publicationPinnedToolsRepository
+	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
+	ReadPublicationAttempt(context.Context, uuid.UUID) (*persistence.TrackPublicationAttempt, error)
+	ClaimPublicationDelivery(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationDeliveryClaimOutcome, error)
+	PublicationPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error)
+	PublicationManualLyricsPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error)
+	PublicationAttemptCoverInputForDelivery(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationAttemptCoverInput, bool, error)
+	PublicationSourceHoldForDelivery(context.Context, persistence.PublicationDeliveryGuard) (uuid.UUID, bool, error)
+	CheckPublicationSourceHoldForDelivery(context.Context, persistence.PublicationDeliveryGuard, uuid.UUID) (persistence.PublicationSourceHold, bool, error)
+	ReadPublicationObsoleteOutputCandidate(context.Context, persistence.PublicationDeliveryGuard, string) (*persistence.PublicationObsoleteOutputCandidate, error)
+	CheckPublicationResultCurrent(context.Context, persistence.PublicationDeliveryGuard) (bool, error)
+	CommitPublicationResult(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationResult) (bool, error)
+}
+
+var _ publicationExecutorRepository = (*persistence.SetupManagerRepository)(nil)
+
 // GlobalPublicationMutationResource serializes publication execution with
 // process-local mutations to publication metadata and the output namespace.
 const GlobalPublicationMutationResource = "publication-global-mutation"
 
 func NewPublicationExecutor(
 	repository *persistence.SetupManagerRepository,
+	registry *settings.Registry,
+	platform tools.Platform,
+	coordinator *publication.Coordinator,
+	bootUUID uuid.UUID,
+	commands PublicationCommandRunner,
+) *PublicationExecutor {
+	var repositoryDependency publicationExecutorRepository
+	if repository != nil {
+		repositoryDependency = repository
+	}
+	return newPublicationExecutor(repositoryDependency, registry, platform, coordinator, bootUUID, commands)
+}
+
+func newPublicationExecutor(
+	repository publicationExecutorRepository,
 	registry *settings.Registry,
 	platform tools.Platform,
 	coordinator *publication.Coordinator,

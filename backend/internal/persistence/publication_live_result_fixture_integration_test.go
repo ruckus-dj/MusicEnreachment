@@ -32,10 +32,20 @@ func publicationFixtureInt64(value int64) *int64 {
 // rewrite attempt using only the live frozen-input/result contract.
 func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture, *SetupManagerRepository, PublicationInputs, PublicationStageObservation) {
 	t.Helper()
+	return prepareManualLyricsCommitFixtureFromResult(t, preparePublicationResultFixture(t), "")
+}
+
+func prepareManualLyricsCommitFixtureWithDatabase(t *testing.T, db *bun.DB, scope string) (publicationExecutionFixture, *SetupManagerRepository, PublicationInputs, PublicationStageObservation) {
+	t.Helper()
+	return prepareManualLyricsCommitFixtureFromResult(t, preparePublicationResultFixtureWithDatabase(t, db, scope), scope)
+}
+
+func prepareManualLyricsCommitFixtureFromResult(t *testing.T, f publicationExecutionFixture, scope string) (publicationExecutionFixture, *SetupManagerRepository, PublicationInputs, PublicationStageObservation) {
+	t.Helper()
 	ctx := context.Background()
-	f := preparePublicationResultFixture(t)
 	repository := NewSetupManagerRepository(f.db)
 	input := publicationInputsFixture(t, "rewrite")
+	scopePublicationInputs(&input, scope)
 	currentGeneration := input.Rewrite.CurrentGeneration
 	currentIdentity := PublicationFileIdentity{SizeBytes: publicationFixtureInt64(10), MTime: publicationFixtureInt64(20), SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	input.Version = PublicationInputsVersion
@@ -46,7 +56,7 @@ func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture
 	input.Format = publication.AudioFormatSource
 	input.Rewrite = &PublicationRewriteInput{
 		CurrentGeneration: currentGeneration,
-		RelativePath:      "root/final.flac",
+		RelativePath:      scopePublicationPath("root/final.flac", scope),
 		Ownership:         currentIdentity,
 		AudioFacts:        input.Rewrite.AudioFacts,
 	}
@@ -77,10 +87,10 @@ func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture
 	})
 	observation.QualityPolicyVersion = input.QualityPolicyVersion
 
-	nodes := []PublicationNamespaceNode{
+	nodes := scopePublicationManifest([]PublicationNamespaceNode{
 		{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"},
 		{CanonicalKey: "root/final.flac", RelativePath: "root/final.flac", NodeKind: "file"},
-	}
+	}, scope)
 	manifest := mustJSON(struct {
 		Version int                        `json:"version"`
 		Nodes   []PublicationNamespaceNode `json:"nodes"`
@@ -117,7 +127,7 @@ func prepareManualLyricsCommitFixture(t *testing.T) (publicationExecutionFixture
 			return err
 		}
 		for _, node := range nodes {
-			digest := sha256.Sum256([]byte(node.CanonicalKey))
+			digest := publicationNamespaceKeyDigest(node.CanonicalKey)
 			claimID := uuid.New()
 			var owner any = f.guard.ExpectedPositionID
 			var directoryScope any

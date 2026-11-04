@@ -4,8 +4,12 @@ package testpostgres
 
 import (
 	"context"
+	"database/sql"
+	"os"
+	"path/filepath"
 	"testing"
 
+	postgres "github.com/fergusstrange/embedded-postgres/v2"
 	"github.com/uptrace/bun"
 )
 
@@ -79,6 +83,61 @@ func TestOpenCreatesIndependentEmptyAndMigratedDatabases(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestEmbeddedStopReclaimsOwnedClusterWorkDirectory(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") != "" {
+		t.Skip("embedded cluster lifecycle is not used with an external PostgreSQL server")
+	}
+	parent := t.TempDir()
+	sentinel := filepath.Join(parent, "parent-sentinel")
+	if err := os.WriteFile(sentinel, []byte("preserve"), 0600); err != nil {
+		t.Fatalf("write parent sentinel: %v", err)
+	}
+	server := postgres.NewDatabase(postgres.DefaultConfig().Version(postgres.V18).Port(0).Storage(postgres.Storage{WorkDir: parent}))
+	if err := server.Start(); err != nil {
+		t.Fatalf("start independent embedded PostgreSQL: %v", err)
+	}
+	stopped := false
+	t.Cleanup(func() {
+		if !stopped {
+			if err := server.Stop(); err != nil {
+				t.Errorf("stop independent embedded PostgreSQL after test failure: %v", err)
+			}
+		}
+	})
+	info := server.Info()
+	if info.WorkDir == "" || filepath.Dir(info.WorkDir) != parent {
+		t.Fatalf("embedded work directory %q is not a child of %q", info.WorkDir, parent)
+	}
+	if info.DataDir == "" || filepath.Dir(info.DataDir) != info.WorkDir {
+		t.Fatalf("default data directory %q is not owned by work directory %q", info.DataDir, info.WorkDir)
+	}
+	admin, err := sql.Open("pgx", server.ConnectionURL())
+	if err != nil {
+		_ = server.Stop()
+		t.Fatalf("open independent embedded admin pool: %v", err)
+	}
+	for _, name := range []string{"testpostgres_cleanup_one", "testpostgres_cleanup_two"} {
+		if _, err := admin.ExecContext(context.Background(), "CREATE DATABASE "+quoteIdentifier(name)); err != nil {
+			_ = admin.Close()
+			_ = server.Stop()
+			t.Fatalf("create independent cluster database %s: %v", name, err)
+		}
+	}
+	if err := admin.Close(); err != nil {
+		t.Fatalf("close independent embedded admin pool: %v", err)
+	}
+	if err := server.Stop(); err != nil {
+		t.Fatalf("stop independent embedded PostgreSQL: %v", err)
+	}
+	stopped = true
+	if _, err := os.Stat(info.WorkDir); !os.IsNotExist(err) {
+		t.Fatalf("owned work directory remains after stop: stat err=%v", err)
+	}
+	if contents, err := os.ReadFile(sentinel); err != nil || string(contents) != "preserve" {
+		t.Fatalf("parent sentinel after stop = %q, err=%v", contents, err)
+	}
 }
 
 func TestDropRegistryRetainsFailedDropsAndRemovesSuccessfulDrops(t *testing.T) {

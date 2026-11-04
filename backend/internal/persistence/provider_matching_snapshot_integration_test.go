@@ -205,7 +205,12 @@ func TestMusicBrainzMatchingSnapshotUsesAcceptedSourceProjection(t *testing.T) {
 
 func TestMusicBrainzMatchingSnapshotKeepsReleaseCollectionsSourceScoped(t *testing.T) {
 	t.Parallel()
+	dbFixtureStarted := time.Now()
 	db := testpostgres.OpenMigratedWithRiver(t)
+	t.Logf("phase=db_fixture duration=%s", time.Since(dbFixtureStarted))
+	bodyStarted := time.Now()
+	defer func() { t.Logf("phase=scenario_body duration=%s", time.Since(bodyStarted)) }()
+	setupStarted := time.Now()
 	ctx := context.Background()
 	repository := persistence.NewProviderCacheRepository(db)
 	const identity = "source-scoped-collections"
@@ -250,8 +255,14 @@ func TestMusicBrainzMatchingSnapshotKeepsReleaseCollectionsSourceScoped(t *testi
 			t.Fatal(err)
 		}
 	}
-	apply(sourceA, "lookup-a", lookup("Artist A", "", "Recording A", false))
-	apply(sourceB, "lookup-b", lookup("Artist B", "Explicit B credit", "Recording B", true))
+	t.Logf("phase=provider_setup duration=%s", time.Since(setupStarted))
+	applyAndLog := func(source persistence.ProviderSource, key string, graph persistence.ProviderGraph) {
+		started := time.Now()
+		apply(source, key, graph)
+		t.Logf("phase=refresh_apply source=%s key=%s duration=%s", source.ID, key, time.Since(started))
+	}
+	applyAndLog(sourceA, "lookup-a", lookup("Artist A", "", "Recording A", false))
+	applyAndLog(sourceB, "lookup-b", lookup("Artist B", "Explicit B credit", "Recording B", true))
 
 	// A lower-authority search summary can add sparse evidence, but must not
 	// replace source B's accepted lookup names or collection projection.
@@ -259,7 +270,7 @@ func TestMusicBrainzMatchingSnapshotKeepsReleaseCollectionsSourceScoped(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	apply(sourceB, "search-b", staleGraph)
+	applyAndLog(sourceB, "search-b", staleGraph)
 
 	read := func(source persistence.ProviderSource) persistence.MatchingRelease {
 		t.Helper()
@@ -272,7 +283,13 @@ func TestMusicBrainzMatchingSnapshotKeepsReleaseCollectionsSourceScoped(t *testi
 		}
 		return snapshot.Releases[0]
 	}
-	releaseA, releaseB := read(sourceA), read(sourceB)
+	readAndLog := func(source persistence.ProviderSource) persistence.MatchingRelease {
+		started := time.Now()
+		release := read(source)
+		t.Logf("phase=snapshot_read source=%s key=%s duration=%s", source.ID, releaseKey, time.Since(started))
+		return release
+	}
+	releaseA, releaseB := readAndLog(sourceA), readAndLog(sourceB)
 	if len(releaseA.Credits) != 1 || releaseA.Credits[0].Name != "Artist A" || len(releaseA.Tracks) != 1 || releaseA.Tracks[0].Position != 0 || releaseA.Tracks[0].RecordingTitle != "Recording A" {
 		t.Fatalf("source A projection was overwritten: %#v", releaseA)
 	}

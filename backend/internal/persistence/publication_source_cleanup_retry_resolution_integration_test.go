@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 )
 
 type retryResolutionFixture struct {
@@ -25,8 +26,20 @@ type retryResolutionFixture struct {
 
 func newRetryResolutionFixture(t *testing.T) retryResolutionFixture {
 	t.Helper()
+	return newRetryResolutionFixtureWithDatabase(t, nil, "")
+}
+
+func newRetryResolutionFixtureWithDatabase(t *testing.T, db *bun.DB, scope string) retryResolutionFixture {
+	t.Helper()
 	ctx := context.Background()
-	fixture, repository, variantID := publicationSourceCleanupReadyFixture(t)
+	var fixture publicationExecutionFixture
+	var repository *SetupManagerRepository
+	var variantID uuid.UUID
+	if db == nil {
+		fixture, repository, variantID = publicationSourceCleanupReadyFixture(t)
+	} else {
+		fixture, repository, variantID = publicationSourceCleanupReadyFixtureWithDatabase(t, db, scope)
+	}
 	if _, err := fixture.db.NewRaw(`UPDATE track_source SET decision_method='automatic',policy_version='cleanup-remove-v1' WHERE media_variant_id=?`, variantID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}

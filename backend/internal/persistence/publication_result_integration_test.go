@@ -18,6 +18,7 @@ import (
 func publicationResultForFixture(f publicationExecutionFixture) PublicationResult {
 	size, mtime := int64(10), int64(20)
 	observation := newValidPublicationStageObservation()
+	observation.RelativePath = scopePublicationPath(observation.RelativePath, f.namespaceScope)
 	return PublicationResult{
 		Observation: observation,
 		InstalledOwnership: PublicationCurrentOwnership{Version: PublicationCurrentOwnershipVersion, Identity: PublicationFileIdentity{
@@ -264,8 +265,8 @@ func TestCommitPublicationResultManualLyricsFreshnessPostgreSQL(t *testing.T) {
 func alignManualPublicationResultTarget(t *testing.T, ctx context.Context, f publicationExecutionFixture, observation *PublicationStageObservation) {
 	t.Helper()
 	seedManualPublicationResultChoice(t, ctx, f)
-	observation.RelativePath = "root/final.flac"
-	nodes := []PublicationNamespaceNode{{NodeKind: "file", RelativePath: observation.RelativePath}}
+	observation.RelativePath = scopePublicationPath("root/final.flac", f.namespaceScope)
+	nodes := scopePublicationManifest([]PublicationNamespaceNode{{NodeKind: "file", RelativePath: "root/final.flac"}}, f.namespaceScope)
 	raw, err := json.Marshal(struct {
 		Version int                        `json:"version"`
 		Nodes   []PublicationNamespaceNode `json:"nodes"`
@@ -324,15 +325,25 @@ func assertManualLyricsResultUnchanged(t *testing.T, ctx context.Context, f publ
 
 func preparePublicationResultFixture(t *testing.T) publicationExecutionFixture {
 	t.Helper()
+	return preparePublicationResultFixtureFromExecution(t, newPublicationExecutionFixture(t), "")
+}
+
+func preparePublicationResultFixtureWithDatabase(t *testing.T, db *bun.DB, scope string) publicationExecutionFixture {
+	t.Helper()
+	return preparePublicationResultFixtureFromExecution(t, newPublicationExecutionFixtureWithDatabase(t, db, scope), scope)
+}
+
+func preparePublicationResultFixtureFromExecution(t *testing.T, f publicationExecutionFixture, scope string) publicationExecutionFixture {
+	t.Helper()
 	ctx := context.Background()
-	f := newPublicationExecutionFixture(t)
+	nodes := scopePublicationManifest([]PublicationNamespaceNode{
+		{CanonicalKey: "album", RelativePath: "album", NodeKind: "dir", DirectoryScope: "album"},
+		{CanonicalKey: "album/track.flac", RelativePath: "album/track.flac", NodeKind: "file"},
+	}, scope)
 	manifest, err := json.Marshal(struct {
 		Version int                        `json:"version"`
 		Nodes   []PublicationNamespaceNode `json:"nodes"`
-	}{Version: 1, Nodes: []PublicationNamespaceNode{
-		{CanonicalKey: "album", RelativePath: "album", NodeKind: "dir", DirectoryScope: "album"},
-		{CanonicalKey: "album/track.flac", RelativePath: "album/track.flac", NodeKind: "file"},
-	}})
+	}{Version: 1, Nodes: nodes})
 	if err != nil {
 		t.Fatal(err)
 	}

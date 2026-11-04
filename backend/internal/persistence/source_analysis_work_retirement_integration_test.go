@@ -15,7 +15,12 @@ import (
 
 func TestEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T) {
 	t.Parallel()
+	dbFixtureStarted := time.Now()
 	database := testpostgres.OpenMigratedWithRiver(t)
+	t.Logf("phase=db_fixture duration=%s", time.Since(dbFixtureStarted))
+	bodyStarted := time.Now()
+	defer func() { t.Logf("phase=scenario_body duration=%s", time.Since(bodyStarted)) }()
+	baselineSetupStarted := time.Now()
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/retained-work-change")
@@ -26,9 +31,13 @@ func TestEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("store initial enumeration: %v", err)
 	}
+	t.Logf("phase=enumeration_baseline_setup duration=%s", time.Since(baselineSetupStarted))
+	initialApplyStarted := time.Now()
 	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(first, root, nil)); err != nil {
 		t.Fatalf("apply initial enumeration: %v", err)
 	}
+	t.Logf("phase=initial_apply duration=%s", time.Since(initialApplyStarted))
+	artifactSeedStarted := time.Now()
 	location := readLocation(t, ctx, database, root.ID, "track.flac")
 	var workID uuid.UUID
 	if err := database.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=?`, location.ID).Scan(ctx, &workID); err != nil {
@@ -44,15 +53,21 @@ func TestEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T) {
 	insertStagedAnalysisArtifact(t, ctx, database, workID, first.ID, first.Attempt, *first.RiverJobID, "retirement/owned-copy", 5, mtime)
 	setOperationState(t, ctx, database, first.ID, "succeeded")
 
+	t.Logf("phase=artifact_seed duration=%s", time.Since(artifactSeedStarted))
+	changedSetupStarted := time.Now()
 	second := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, second.ID, []persistence.SourceScanCandidateInput{
 		enumerationCandidate("track.flac", 6, mtime.Add(time.Second)),
 	}); err != nil {
 		t.Fatalf("store changed enumeration: %v", err)
 	}
+	t.Logf("phase=changed_setup duration=%s", time.Since(changedSetupStarted))
+	changedApplyStarted := time.Now()
 	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, nil)); err != nil {
 		t.Fatalf("apply changed enumeration: %v", err)
 	}
+	t.Logf("phase=changed_apply duration=%s", time.Since(changedApplyStarted))
+	assertionsStarted := time.Now()
 	var attached, artifacts, mappings int
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id IS NULL`, workID).Scan(ctx, &attached); err != nil {
 		t.Fatalf("read retired work: %v", err)
@@ -77,6 +92,7 @@ func TestEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T) {
 	if replacementCount != 1 || current.SizeBytes != 6 {
 		t.Fatalf("replacement work count/size = %d/%d, want 1/6", replacementCount, current.SizeBytes)
 	}
+	t.Logf("phase=assertions duration=%s", time.Since(assertionsStarted))
 }
 
 func TestDeletingRootRetainsArtifactWorkAndMissingArtifactFreeWorkIsDeleted(t *testing.T) {

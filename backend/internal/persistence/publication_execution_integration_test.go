@@ -14,8 +14,9 @@ import (
 )
 
 type publicationExecutionFixture struct {
-	db    *bun.DB
-	guard PublicationDeliveryGuard
+	db             *bun.DB
+	guard          PublicationDeliveryGuard
+	namespaceScope string
 }
 
 func newPublicationExecutionFixture(t *testing.T) publicationExecutionFixture {
@@ -23,8 +24,18 @@ func newPublicationExecutionFixture(t *testing.T) publicationExecutionFixture {
 	ctx := context.Background()
 	db := testpostgres.OpenMigratedWithRiver(t)
 	initializeRiver(t, ctx, db)
+	return newPublicationExecutionFixtureWithDatabase(t, db, "")
+}
+
+// newPublicationExecutionFixtureWithDatabase reuses a migrated database and
+// initialized River schema. A non-empty scope prefixes the fixture's namespace.
+func newPublicationExecutionFixtureWithDatabase(t *testing.T, db *bun.DB, scope string) publicationExecutionFixture {
+	t.Helper()
+	ctx := context.Background()
 	positionID, operationID, candidateID := uuid.New(), uuid.New(), uuid.New()
-	frozenInputs, err := json.Marshal(publicationInputsFixture(t, "audio"))
+	inputs := publicationInputsFixture(t, "audio")
+	scopePublicationInputs(&inputs, scope)
+	frozenInputs, err := json.Marshal(inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,16 +74,32 @@ func newPublicationExecutionFixture(t *testing.T) publicationExecutionFixture {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	return publicationExecutionFixture{db: db, guard: PublicationDeliveryGuard{
+	return publicationExecutionFixture{db: db, namespaceScope: scope, guard: PublicationDeliveryGuard{
 		OperationID: operationID, ApplicationAttempt: 1, RiverJobID: jobID, RiverAttempt: 1,
 		ClaimUUID: uuid.New(), BootUUID: uuid.New(), DeliveryToken: uuid.NewString(), Epoch: epoch,
 		CandidateGeneration: candidateID, ExpectedPositionID: positionID,
 	}}
 }
 
-func TestPublicationDeliveryClaimAcquiresAndPersistsTransitionPostgreSQL(t *testing.T) {
+func TestPublicationDeliveryLifecyclePostgreSQL(t *testing.T) {
 	t.Parallel()
-	f := newPublicationExecutionFixture(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
+	for _, scenario := range []struct {
+		name string
+		run  func(*testing.T, *bun.DB)
+	}{
+		{"claim and replay", runPublicationDeliveryClaimAcquiresAndPersistsTransition},
+		{"stale fences and replacement", runPublicationDeliveryClaimBlocksStaleFencesButReplacesSameAttemptIdentity},
+		{"running River identity", runPublicationDeliveryReclaimsEqualRiverAttemptWithRunningJob},
+		{"retry preparation", runPublicationDeliveryRetryReplacesExecutingClaimAndRestartsPreparation},
+		{"concurrent claims", runPublicationDeliveryConcurrentEqualAttemptClaimsSerializeToOneLiveGuard},
+	} {
+		t.Run(scenario.name, func(t *testing.T) { scenario.run(t, db) })
+	}
+}
+
+func runPublicationDeliveryClaimAcquiresAndPersistsTransition(t *testing.T, db *bun.DB) {
+	f := newPublicationExecutionFixtureWithDatabase(t, db, uuid.NewString())
 	repo := NewSetupManagerRepository(f.db)
 	outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard)
 	if err != nil || outcome != PublicationDeliveryAcquired {
@@ -100,9 +127,8 @@ func TestPublicationDeliveryClaimAcquiresAndPersistsTransitionPostgreSQL(t *test
 	}
 }
 
-func TestPublicationDeliveryClaimBlocksStaleFencesButReplacesSameAttemptIdentityPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newPublicationExecutionFixture(t)
+func runPublicationDeliveryClaimBlocksStaleFencesButReplacesSameAttemptIdentity(t *testing.T, db *bun.DB) {
+	f := newPublicationExecutionFixtureWithDatabase(t, db, uuid.NewString())
 	ctx := context.Background()
 	repo := NewSetupManagerRepository(f.db)
 	if got, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || got != PublicationDeliveryAcquired {
@@ -151,9 +177,8 @@ func TestPublicationDeliveryClaimBlocksStaleFencesButReplacesSameAttemptIdentity
 	}
 }
 
-func TestPublicationDeliveryReclaimsEqualRiverAttemptWithRunningJobPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newPublicationExecutionFixture(t)
+func runPublicationDeliveryReclaimsEqualRiverAttemptWithRunningJob(t *testing.T, db *bun.DB) {
+	f := newPublicationExecutionFixtureWithDatabase(t, db, uuid.NewString())
 	ctx := context.Background()
 	repo := NewSetupManagerRepository(f.db)
 	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
@@ -201,9 +226,8 @@ func TestPublicationDeliveryReclaimsEqualRiverAttemptWithRunningJobPostgreSQL(t 
 	}
 }
 
-func TestPublicationDeliveryRetryReplacesExecutingClaimAndRestartsPreparationPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newPublicationExecutionFixture(t)
+func runPublicationDeliveryRetryReplacesExecutingClaimAndRestartsPreparation(t *testing.T, db *bun.DB) {
+	f := newPublicationExecutionFixtureWithDatabase(t, db, uuid.NewString())
 	ctx := context.Background()
 	repo := NewSetupManagerRepository(f.db)
 	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
@@ -275,9 +299,8 @@ func TestPublicationDeliveryRetryReplacesExecutingClaimAndRestartsPreparationPos
 	}
 }
 
-func TestPublicationDeliveryConcurrentEqualAttemptClaimsSerializeToOneLiveGuardPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newPublicationExecutionFixture(t)
+func runPublicationDeliveryConcurrentEqualAttemptClaimsSerializeToOneLiveGuard(t *testing.T, db *bun.DB) {
+	f := newPublicationExecutionFixtureWithDatabase(t, db, uuid.NewString())
 	ctx := context.Background()
 	repo := NewSetupManagerRepository(f.db)
 	guards := []PublicationDeliveryGuard{f.guard, f.guard}

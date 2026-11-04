@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/uptrace/bun"
 )
 
 type publicationSourceCleanupTestInserter struct {
@@ -36,8 +37,22 @@ func (inserter *publicationSourceCleanupTestInserter) InsertTx(ctx context.Conte
 
 func publicationSourceCleanupReadyFixture(t *testing.T) (publicationExecutionFixture, *SetupManagerRepository, uuid.UUID) {
 	t.Helper()
-	ctx := context.Background()
 	f := preparePublicationResultFixture(t)
+	return publicationSourceCleanupReadyFixtureFromResult(t, f)
+}
+
+// publicationSourceCleanupReadyFixtureWithDatabase reuses the caller's migrated
+// database; it sets publication_remove_sources=true, so shared-db callers own
+// saving and restoring that global setting around their fixture group.
+func publicationSourceCleanupReadyFixtureWithDatabase(t *testing.T, db *bun.DB, scope string) (publicationExecutionFixture, *SetupManagerRepository, uuid.UUID) {
+	t.Helper()
+	f := preparePublicationResultFixtureWithDatabase(t, db, scope)
+	return publicationSourceCleanupReadyFixtureFromResult(t, f)
+}
+
+func publicationSourceCleanupReadyFixtureFromResult(t *testing.T, f publicationExecutionFixture) (publicationExecutionFixture, *SetupManagerRepository, uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
 	repo := NewSetupManagerRepository(f.db)
 	_, _, variantID, _ := pubSourceProtectionHoldWithFixture(t, f)
 	var hold PublicationSourceHold

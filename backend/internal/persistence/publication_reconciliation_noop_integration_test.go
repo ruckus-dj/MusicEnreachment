@@ -4,18 +4,35 @@ package persistence
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
 // This covers the provider-free local projection no-op path only. It does not
 // exercise automatic quality policy or provider reconciliation.
-func TestPublicationReconciliationLocalNoopAcknowledgementPostgreSQL(t *testing.T) {
+func TestPublicationReconciliationNoopFeaturePostgreSQL(t *testing.T) {
 	t.Parallel()
+	db := testpostgres.OpenMigratedWithRiver(t)
+	initializeRiver(t, context.Background(), db)
+	scenarios := []func(*testing.T, *bun.DB, string){
+		scenarioPublicationReconciliationLocalNoopAcknowledgement,
+		scenarioPublicationReconciliationAcceptsM4AFormat,
+		scenarioPublicationReconciliationNoopIgnoresUnrelatedProviderBinding,
+		scenarioPublicationReconciliationLocalNoopRejectsChangedWitness,
+		scenarioPublicationReconciliationLocalNoopRetainsNewerGeneration,
+	}
+	for _, scenario := range scenarios {
+		scenario(t, db, uuid.NewString())
+	}
+}
+
+func scenarioPublicationReconciliationLocalNoopAcknowledgement(t *testing.T, db *bun.DB, scope string) {
 	ctx := context.Background()
-	f := preparePublicationResultFixture(t)
+	f := preparePublicationResultFixtureWithDatabase(t, db, scope)
 	repo := NewSetupManagerRepository(f.db)
 	if committed, err := repo.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
 		t.Fatalf("establish current publication = %v, %v", committed, err)
@@ -46,10 +63,11 @@ func TestPublicationReconciliationLocalNoopAcknowledgementPostgreSQL(t *testing.
 	}
 }
 
-func TestPublicationReconciliationAcceptsM4AFormatPostgreSQL(t *testing.T) {
-	t.Parallel()
+func scenarioPublicationReconciliationAcceptsM4AFormat(t *testing.T, db *bun.DB, scope string) {
+	restoreFormat := preservePublicationFormat(t, db)
+	defer restoreFormat()
 	ctx := context.Background()
-	f := preparePublicationResultFixture(t)
+	f := preparePublicationResultFixtureWithDatabase(t, db, scope)
 	repo := NewSetupManagerRepository(f.db)
 	if committed, err := repo.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
 		t.Fatalf("establish current publication = %v, %v", committed, err)
@@ -73,10 +91,9 @@ func TestPublicationReconciliationAcceptsM4AFormatPostgreSQL(t *testing.T) {
 	}
 }
 
-func TestPublicationReconciliationLocalNoopRetainsNewerGenerationPostgreSQL(t *testing.T) {
-	t.Parallel()
+func scenarioPublicationReconciliationLocalNoopRetainsNewerGeneration(t *testing.T, db *bun.DB, scope string) {
 	ctx := context.Background()
-	f := preparePublicationResultFixture(t)
+	f := preparePublicationResultFixtureWithDatabase(t, db, scope)
 	repo := NewSetupManagerRepository(f.db)
 	if committed, err := repo.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
 		t.Fatalf("establish current publication = %v, %v", committed, err)
@@ -121,10 +138,9 @@ func TestPublicationReconciliationLocalNoopRetainsNewerGenerationPostgreSQL(t *t
 	}
 }
 
-func TestPublicationReconciliationNoopIgnoresUnrelatedProviderBindingPostgreSQL(t *testing.T) {
-	t.Parallel()
+func scenarioPublicationReconciliationNoopIgnoresUnrelatedProviderBinding(t *testing.T, db *bun.DB, scope string) {
 	ctx := context.Background()
-	f := preparePublicationResultFixture(t)
+	f := preparePublicationResultFixtureWithDatabase(t, db, scope)
 	repo := NewSetupManagerRepository(f.db)
 	if committed, err := repo.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
 		t.Fatalf("establish CURRENT: committed=%v err=%v", committed, err)
@@ -157,12 +173,13 @@ func TestPublicationReconciliationNoopIgnoresUnrelatedProviderBindingPostgreSQL(
 	}
 }
 
-func TestPublicationReconciliationLocalNoopRejectsChangedWitnessPostgreSQL(t *testing.T) {
+func scenarioPublicationReconciliationLocalNoopRejectsChangedWitness(t *testing.T, db *bun.DB, scope string) {
 	for _, change := range []string{"metadata", "source_authority", "missing_authority", "format", "current", "claim"} {
 		t.Run(change, func(t *testing.T) {
-			t.Parallel()
+			restoreFormat := preservePublicationFormat(t, db)
+			defer restoreFormat()
 			ctx := context.Background()
-			f := preparePublicationResultFixture(t)
+			f := preparePublicationResultFixtureWithDatabase(t, db, scope+"-"+change+"-"+uuid.NewString())
 			repo := NewSetupManagerRepository(f.db)
 			if committed, err := repo.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
 				t.Fatalf("establish CURRENT: committed=%v err=%v", committed, err)
@@ -223,6 +240,27 @@ func seedLocalNoopAuthority(t *testing.T, ctx context.Context, db *bun.DB, epoch
 	}
 }
 
+func preservePublicationFormat(t *testing.T, db *bun.DB) func() {
+	t.Helper()
+	var previous string
+	err := db.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='publication_format'`).Scan(context.Background(), &previous)
+	present := err == nil
+	if err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
+	return func() {
+		if present {
+			if _, err := db.ExecContext(context.Background(), `INSERT INTO app_setting(setting_name,setting_value) VALUES ('publication_format',?) ON CONFLICT(setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`, previous); err != nil {
+				t.Errorf("restore publication format: %v", err)
+			}
+			return
+		}
+		if _, err := db.ExecContext(context.Background(), `DELETE FROM app_setting WHERE setting_name='publication_format'`); err != nil {
+			t.Errorf("restore absent publication format: %v", err)
+		}
+	}
+}
+
 func assertNoopProjectionAndAttemptUnchanged(t *testing.T, ctx context.Context, db *bun.DB, position, generation, operation uuid.UUID) {
 	t.Helper()
 	var current, attempt, extraJobs int
@@ -232,7 +270,7 @@ func assertNoopProjectionAndAttemptUnchanged(t *testing.T, ctx context.Context, 
 	if err := db.NewRaw(`SELECT count(*) FROM track_publication_attempt WHERE operation_id=?`, operation).Scan(ctx, &attempt); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='publish_track_v1'`).Scan(ctx, &extraJobs); err != nil {
+	if err := db.NewRaw(`SELECT count(*) FROM river_job j JOIN operation o ON o.river_job_id=j.id WHERE j.kind='publish_track_v1' AND o.input_snapshot->>'position_id'=?`, position.String()).Scan(ctx, &extraJobs); err != nil {
 		t.Fatal(err)
 	}
 	if current != 1 || attempt != 0 || extraJobs != 1 {
