@@ -16,7 +16,7 @@ import (
 
 func TestCleanupOperationDeliveryTransitionUsesPostgreSQLFences(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	repository := persistence.NewSetupManagerRepository(db)
 	operations := service.NewOperations(repository)
 	ctx := context.Background()

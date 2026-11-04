@@ -86,8 +86,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux amd64
-            runner: ubuntu-24.04
           - name: Linux arm64
             runner: ubuntu-24.04-arm
           - name: macOS x64
@@ -146,11 +144,31 @@ jobs:
         run: |
           Join-Path '${{ steps.windows-cxx.outputs.msys2-location }}' 'mingw64\bin' |
             Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Compute Windows native library cache key
+        id: native-vips-key
+        if: runner.os == 'Windows'
+        env:
+          MSYS2_BASH: ${{ steps.windows-cxx.outputs.msys2-location }}\usr\bin\bash.exe
+        run: node tools/prepare-windows-vips.mjs --cache-key
+      - name: Restore validated Windows native library cache
+        id: native-vips-cache
+        if: runner.os == 'Windows'
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}\native-vips
+          key: ${{ steps.native-vips-key.outputs.key }}
       - name: Build pinned native Windows image libraries
         if: runner.os == 'Windows'
         env:
           MSYS2_BASH: ${{ steps.windows-cxx.outputs.msys2-location }}\usr\bin\bash.exe
+          NATIVE_VIPS_CACHE_HIT: ${{ steps.native-vips-cache.outputs.cache-hit }}
         run: task native:windows-vips
+      - name: Save validated Windows native library cache
+        if: runner.os == 'Windows' && success() && steps.native-vips-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}\native-vips
+          key: ${{ steps.native-vips-key.outputs.key }}
       - name: Install macOS libvips
         if: runner.os == 'macOS'
         run: brew install vips pkg-config
@@ -176,9 +194,6 @@ jobs:
           CC: gcc
           CXX: g++
         run: go test -tags=integration -count=1 -p 8 -parallel 8 ./...
-      - name: Test frontend
-        working-directory: frontend
-        run: npm test
       - name: Build frontend
         working-directory: frontend
         run: npm run build

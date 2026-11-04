@@ -21,7 +21,7 @@ type publicationExecutionFixture struct {
 func newPublicationExecutionFixture(t *testing.T) publicationExecutionFixture {
 	t.Helper()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	initializeRiver(t, ctx, db)
 	positionID, operationID, candidateID := uuid.New(), uuid.New(), uuid.New()
 	frozenInputs, err := json.Marshal(publicationInputsFixture(t, "audio"))

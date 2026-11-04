@@ -21,7 +21,7 @@ import (
 // that any executable was downloaded or verified.
 func TestC07FailedInstallRetryAllowsIncompleteInstallHistory(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewSetupManagerRepository(db)
 	client := c07RiverClient(t, ctx, db)
@@ -69,7 +69,7 @@ func TestC07FailedInstallRetryAllowsIncompleteInstallHistory(t *testing.T) {
 
 func TestC07OldFailedRetryRefusedAfterDifferentReadyVersion(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewSetupManagerRepository(db)
 	client := c07RiverClient(t, ctx, db)
@@ -122,7 +122,7 @@ func TestC07OldFailedRetryRefusedAfterDifferentReadyVersion(t *testing.T) {
 
 func TestC07LegacyMultipleReadyInstallationsPreservedAndBlockAdmission(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewSetupManagerRepository(db)
 	client := c07RiverClient(t, ctx, db)

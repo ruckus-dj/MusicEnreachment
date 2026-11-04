@@ -16,7 +16,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
-	"github.com/riverqueue/river/rivermigrate"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
@@ -27,7 +26,7 @@ var deleteAttachedOperationID uuid.UUID
 
 func TestSourceRootRepositoryWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -73,7 +72,7 @@ func TestSourceRootRepositoryWithPostgreSQL(t *testing.T) {
 
 func TestCreateSourceRootPersistsProcessingModeWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -104,7 +103,7 @@ func TestCreateSourceRootPersistsProcessingModeWithPostgreSQL(t *testing.T) {
 // kept while being reported stale.
 func TestSourceRootPathEditWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/edit-old")
@@ -215,7 +214,7 @@ func TestSourceRootPathEditWithPostgreSQL(t *testing.T) {
 
 func TestSourceScanApplyWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/apply")
@@ -297,7 +296,7 @@ func TestSourceScanApplyWithPostgreSQL(t *testing.T) {
 // the apply contract: the generation is built from the stored candidates.
 func TestSourceScanApplyIgnoresCallerSliceWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/stored")
@@ -334,7 +333,7 @@ func TestSourceScanApplyIgnoresCallerSliceWithPostgreSQL(t *testing.T) {
 // which persisted nothing applies an empty generation.
 func TestSourceScanApplyEmptyStoredCandidatesWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/empty")
@@ -362,7 +361,7 @@ func TestSourceScanApplyEmptyStoredCandidatesWithPostgreSQL(t *testing.T) {
 // apply leaves the stored candidates durable and the previous inventory intact.
 func TestSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	defer resetInventoryDatabase(t, database)
@@ -410,7 +409,7 @@ func TestSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL(t *testing.T) {
 
 func TestSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/native-relative-path")
@@ -446,7 +445,7 @@ func TestSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgre
 
 func TestSourceScanApplyHonoursConfiguredPathWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/path-a")
@@ -526,7 +525,7 @@ func TestSourceScanApplyHonoursConfiguredPathWithPostgreSQL(t *testing.T) {
 
 func TestSourceCandidatesWrapOperationWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/candidates")
@@ -585,7 +584,7 @@ func TestSourceCandidatesWrapOperationWithPostgreSQL(t *testing.T) {
 
 func TestSourceLocationPaginationWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/pagination")
@@ -638,7 +637,7 @@ func TestSourceLocationPaginationWithPostgreSQL(t *testing.T) {
 
 func TestSourceRootDeletionGuardsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/delete")
@@ -675,7 +674,7 @@ func TestSourceRootDeletionGuardsWithPostgreSQL(t *testing.T) {
 func TestSourceRootDeletionRacesScanWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	deleteAttachedOperationID = uuid.Nil
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/race")
@@ -973,7 +972,7 @@ func containsPath(paths []string, want string) bool {
 // not exist, and the root must stay usable for the next start.
 func TestSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -1019,7 +1018,7 @@ func TestSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL(t *testing.T) {
 // operation and neither may insert a River job.
 func TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -1078,18 +1077,11 @@ func countScanEnqueueRows(t *testing.T, ctx context.Context, database *bun.DB, q
 	return count
 }
 
-// openScanEnqueueRiver applies River's own schema and returns an insert-only
-// client: the enqueue transaction is proven against the real river_job table.
+// openScanEnqueueRiver returns an insert-only client using River's real schema
+// from the isolated application-and-River template.
 func openScanEnqueueRiver(t *testing.T, database *bun.DB) *river.Client[*sql.Tx] {
 	t.Helper()
 	driver := riverdatabasesql.New(database.DB)
-	migrator, err := rivermigrate.New(driver, nil)
-	if err != nil {
-		t.Fatalf("create River migrator: %v", err)
-	}
-	if _, err := migrator.Migrate(context.Background(), rivermigrate.DirectionUp, nil); err != nil {
-		t.Fatalf("apply River migrations: %v", err)
-	}
 	client, err := river.NewClient(driver, &river.Config{})
 	if err != nil {
 		t.Fatalf("create insert-only River client: %v", err)

@@ -13,7 +13,7 @@ import (
 
 func TestIncomingMatchingReconcileOutboxFencesRiverAttemptsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	eventID := uuid.New()
@@ -70,7 +70,7 @@ func TestIncomingMatchingReconcileOutboxFencesRiverAttemptsWithPostgreSQL(t *tes
 
 func TestIncomingMatchingReconcileClaimCanBeReleasedAndRetriedWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	eventID := uuid.New()

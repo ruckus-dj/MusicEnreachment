@@ -365,7 +365,7 @@ func newAutomaticMatchingTargetFenceFixtureWithDatabase(t *testing.T, database *
 	ctx := context.Background()
 	db := database
 	if db == nil {
-		db = testpostgres.OpenMigrated(t)
+		db = testpostgres.OpenMigratedWithRiver(t)
 	}
 	incoming := newIncomingMatchFixture(t, ctx, db)
 	setup := persistence.NewSetupManagerRepository(db)

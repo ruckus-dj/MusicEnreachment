@@ -14,7 +14,7 @@ import (
 // decision: the revision is the fence binding the automatic apply to its input.
 func TestApplyCurrentMatchingEvaluationUsesPersistedUniqueDecisionPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)

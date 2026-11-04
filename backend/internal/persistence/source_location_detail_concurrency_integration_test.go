@@ -22,7 +22,7 @@ import (
 // view containing neither.
 func TestSourceLocationDetailIsOneSnapshotAcrossAnalysisApplyWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), analysisRaceTimeout)
 	defer cancel()
 	inventory := persistence.NewSourceInventoryRepository(database)
@@ -80,7 +80,7 @@ func TestSourceLocationDetailIsOneSnapshotAcrossAnalysisApplyWithPostgreSQL(t *t
 // fail because the concurrent unlink/delete committed.
 func TestSourceLocationDetailSurvivesConcurrentOrphanVariantDeleteWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), analysisRaceTimeout)
 	defer cancel()
 	inventory := persistence.NewSourceInventoryRepository(database)

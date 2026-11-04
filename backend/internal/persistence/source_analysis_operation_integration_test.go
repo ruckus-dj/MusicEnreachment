@@ -19,7 +19,7 @@ import (
 
 func TestNormalizedSourceAnalysisAdmissionClaimAndTerminalReleaseWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -173,7 +173,7 @@ func TestIncompleteNormalizedAnalysisDoesNotEmitMatchingEventWithPostgreSQL(t *t
 
 func TestEnumeratedWorkAdmitsPendingMetadataWithoutToolsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -230,7 +230,7 @@ func TestEnumeratedWorkAdmitsPendingMetadataWithoutToolsWithPostgreSQL(t *testin
 
 func TestNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOperationInsertWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -286,7 +286,7 @@ func TestNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOper
 
 func TestNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmissionWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -364,7 +364,7 @@ func TestNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmissionWit
 
 func TestNormalizedSourceAnalysisTerminalReleasesToolAndWorkHoldsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -419,7 +419,7 @@ func insertAnalysisFPCalcFixture(t *testing.T, ctx context.Context, database *bu
 
 func TestNormalizedSourceAnalysisConcurrentAdmissionQueuesWorkOnceWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -546,7 +546,7 @@ type normalizedAnalysisFixture struct {
 
 func newNormalizedWorkOperation(t *testing.T, path string, shaEnabled bool, steps []persistence.SourceAnalysisStepInput) normalizedAnalysisFixture {
 	t.Helper()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, repository, path)

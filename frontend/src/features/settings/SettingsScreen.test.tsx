@@ -1,4 +1,3 @@
-import { JSDOM } from "jsdom";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -10,8 +9,17 @@ import {
   within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import type { OperationResponse } from "../../api/generated/client.schemas";
+import { createMemoryStorage } from "../../test/memoryStorage";
 import { selectDirectoryPath } from "../../test/selectDirectoryPath";
 import { nextResponse, server } from "../../test/server";
 import { SettingsScreen } from "./SettingsScreen";
@@ -185,10 +193,7 @@ beforeEach(() => {
       this.dispatchEvent(new Event("close"));
     },
   });
-  vi.stubGlobal(
-    "localStorage",
-    new JSDOM("", { url: "http://localhost" }).window.localStorage,
-  );
+  vi.stubGlobal("localStorage", createMemoryStorage());
   localStorage.clear();
   TestEventSource.instances = [];
   vi.stubGlobal("EventSource", TestEventSource);
@@ -1500,7 +1505,14 @@ describe("SettingsScreen", () => {
     const operationLoaded = new Promise<void>((resolve) => {
       markOperationLoaded = resolve;
     });
-    let releasePreflight!: (response: Response) => void;
+    let releasePreflight: (response: Response) => void = () => {};
+    let preflightReleased = false;
+    onTestFinished(() => {
+      if (!preflightReleased) {
+        preflightReleased = true;
+        releasePreflight(new HttpResponse(null, { status: 500 }));
+      }
+    });
     let preflightStarted!: () => void;
     const pendingPreflight = new Promise<void>((resolve) => {
       preflightStarted = resolve;
@@ -1529,7 +1541,10 @@ describe("SettingsScreen", () => {
         preflightCalls += 1;
         if (preflightCalls === 1) {
           return new Promise<Response>((resolve) => {
-            releasePreflight = resolve;
+            releasePreflight = (response) => {
+              preflightReleased = true;
+              resolve(response);
+            };
             preflightStarted();
           });
         }
@@ -1580,6 +1595,10 @@ describe("SettingsScreen", () => {
       );
       await changedSource;
     });
+    const oldPreflightResponse = nextResponseFor(
+      "/api/tools/move/preflight",
+      "POST",
+    );
     await act(async () => {
       releasePreflight(
         json({
@@ -1588,6 +1607,7 @@ describe("SettingsScreen", () => {
           managed_file_count: 1,
         }),
       );
+      await oldPreflightResponse;
     });
     expect(path).toHaveValue("/srv/destination-draft");
     expect(
@@ -1596,7 +1616,9 @@ describe("SettingsScreen", () => {
       }),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
+    const checkMove = screen.getByRole("button", { name: "Проверить перенос" });
+    await waitFor(() => expect(checkMove).toBeEnabled());
+    fireEvent.click(checkMove);
     await within(moveDialog).findByText("/srv/tools-external-change");
     const confirmMove = within(moveDialog).getByRole("button", {
       name: "Подтвердить перенос",

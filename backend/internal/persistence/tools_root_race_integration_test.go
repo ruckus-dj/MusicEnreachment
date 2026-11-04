@@ -21,7 +21,7 @@ import (
 
 func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	settingsRepository := persistence.NewSettingsRepository(database)
@@ -182,7 +182,7 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 
 func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	settingsRepository := persistence.NewSettingsRepository(database)
 	setupRepository := persistence.NewSetupManagerRepository(database)
@@ -396,7 +396,7 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 
 func TestGenericSettingsWritesSerializeActiveSelectionsAndCanonicalizeRootsPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	settingsRepository := persistence.NewSettingsRepository(database)
 	setupRepository := persistence.NewSetupManagerRepository(database)

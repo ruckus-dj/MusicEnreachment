@@ -18,7 +18,7 @@ import (
 func TestReadManualLyricsReceiptProjectionPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	lyrics := "[ar:日本語]\r\n[00:01.00]Привет — café\r\n"
 	digestBytes := sha256.Sum256([]byte(lyrics))
 	digest := hex.EncodeToString(digestBytes[:])

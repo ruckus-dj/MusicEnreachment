@@ -20,7 +20,7 @@ import (
 // this Unix runner.
 func TestSourceRootConfiguredPathPlatformsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 

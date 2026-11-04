@@ -15,7 +15,7 @@ import (
 
 func TestProviderRefreshRequestsBoundedPublicationReconciliationPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	cache := persistence.NewProviderCacheRepository(db)
 	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name,setting_value) VALUES('musicbrainz_config_identity','refresh-cfg') ON CONFLICT(setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`).Exec(ctx); err != nil {

@@ -15,7 +15,7 @@ import (
 func TestIncomingMatchRepositoryRejectsUnsupportedPolicyWithoutChangingPublishedResultPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)
 

@@ -20,7 +20,7 @@ import (
 // any executable was downloaded or verified.
 func TestC07ExplicitActivationRequiresCompletionAndReadyTarget(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewSetupManagerRepository(db)
 	client := c07RiverClient(t, ctx, db)
@@ -49,7 +49,7 @@ func TestC07FinalizeActivatesOnlyBeforeSetupCompletion(t *testing.T) {
 		completed := completed
 		t.Run(map[bool]string{false: "initial", true: "completed"}[completed], func(t *testing.T) {
 			t.Parallel()
-			db := testpostgres.OpenMigrated(t)
+			db := testpostgres.OpenMigratedWithRiver(t)
 			ctx := context.Background()
 			repo := persistence.NewSetupManagerRepository(db)
 			client := c07RiverClient(t, ctx, db)
@@ -89,7 +89,7 @@ func TestC07FinalizeActivatesOnlyBeforeSetupCompletion(t *testing.T) {
 
 func TestC07StaleDeliveryCannotFailOrFinalizeRetryTarget(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewSetupManagerRepository(db)
 	client := c07RiverClient(t, ctx, db)

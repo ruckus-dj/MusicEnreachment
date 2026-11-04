@@ -16,7 +16,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
-	"github.com/riverqueue/river/rivermigrate"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -38,7 +37,7 @@ type sourceScanStartIntegration struct {
 func newSourceScanStartIntegration(t *testing.T, platform settings.PlatformState, completeSetup bool) sourceScanStartIntegration {
 	t.Helper()
 	ctx := context.Background()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	client := openSourceScanRiver(t, database)
 	registry := settings.New(persistence.NewSettingsRepository(database), nil)
 	if completeSetup {
@@ -66,13 +65,6 @@ func newSourceScanStartIntegration(t *testing.T, platform settings.PlatformState
 func openSourceScanRiver(t *testing.T, database *bun.DB) *river.Client[*sql.Tx] {
 	t.Helper()
 	driver := riverdatabasesql.New(database.DB)
-	migrator, err := rivermigrate.New(driver, nil)
-	if err != nil {
-		t.Fatalf("create River migrator: %v", err)
-	}
-	if _, err := migrator.Migrate(context.Background(), rivermigrate.DirectionUp, nil); err != nil {
-		t.Fatalf("apply River migrations: %v", err)
-	}
 	client, err := river.NewClient(driver, &river.Config{})
 	if err != nil {
 		t.Fatalf("create insert-only River client: %v", err)

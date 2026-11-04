@@ -16,7 +16,7 @@ import (
 
 func TestSourceScanPreparedAnalysisCandidateTransportWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	manager := persistence.NewSetupManagerRepository(database)

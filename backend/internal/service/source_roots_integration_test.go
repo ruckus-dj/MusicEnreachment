@@ -41,7 +41,7 @@ func (repository *sourceRootDeleteBarrier) DeleteSourceRoot(ctx context.Context,
 
 func newSourceRootsIntegration(t *testing.T) sourceRootsIntegration {
 	t.Helper()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	inventory := persistence.NewSourceInventoryRepository(database)
 	tools, output := t.TempDir(), t.TempDir()
 	return sourceRootsIntegration{

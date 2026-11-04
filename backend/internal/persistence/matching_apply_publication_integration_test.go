@@ -38,7 +38,7 @@ func TestMatchingPublisherAtomicallyAdmitsAutomaticApplyPostgreSQL(t *testing.T)
 
 func runMatchingApplyPublicationCase(t *testing.T, review, failApply bool) {
 	t.Helper()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	client := openScanEnqueueRiver(t, db)

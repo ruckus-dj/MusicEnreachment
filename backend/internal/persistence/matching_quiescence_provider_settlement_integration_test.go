@@ -18,7 +18,7 @@ import (
 func TestQuiescedObsoleteAutomaticRunSettlesProviderWithoutParentWakePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	setup := persistence.NewSetupManagerRepository(db)
 	inventory := persistence.NewSourceInventoryRepository(db)

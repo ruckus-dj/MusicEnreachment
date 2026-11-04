@@ -16,7 +16,7 @@ import (
 
 func TestManualReleaseMatchingAdmissionIsIdempotentAndAtomicPostgres(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	if err := persistence.NewIncomingMatchCandidateRepository(db).Replace(ctx, fixture.evaluation(nil)); err != nil {
@@ -111,7 +111,7 @@ func TestManualReleaseMatchingAdmissionIsIdempotentAndAtomicPostgres(t *testing.
 
 func TestManualReleaseMatchingAdmissionRollsBackFailedEnqueuePostgres(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	if err := persistence.NewIncomingMatchCandidateRepository(db).Replace(ctx, fixture.evaluation(nil)); err != nil {
@@ -157,7 +157,7 @@ func TestManualReleaseMatchingAdmissionRollsBackFailedEnqueuePostgres(t *testing
 
 func TestManualReleaseMatchingAdmissionSupportsNeverEvaluatedGroupPostgres(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	var state persistence.IncomingGroupingState

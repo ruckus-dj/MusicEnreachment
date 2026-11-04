@@ -5,8 +5,8 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryStorage } from "../test/memoryStorage";
 import { resetThemeSessionPreference, ThemeSelect } from "./ThemeSelect";
 
 describe("ThemeSelect", () => {
@@ -17,11 +17,8 @@ describe("ThemeSelect", () => {
 
   beforeEach(() => {
     resetThemeSessionPreference();
-    vi.stubGlobal(
-      "localStorage",
-      new JSDOM("", { url: "http://localhost" }).window.localStorage,
-    );
-    window.localStorage.clear();
+    vi.stubGlobal("localStorage", createMemoryStorage());
+    localStorage.clear();
     matches = false;
     mediaChange = undefined;
     addEventListener = vi.fn((event: string, listener: EventListener) => {
@@ -86,16 +83,10 @@ describe("ThemeSelect", () => {
   });
 
   it("continues to work in memory when localStorage is unavailable", () => {
-    vi.spyOn(
-      Object.getPrototypeOf(window.localStorage),
-      "getItem",
-    ).mockImplementation(() => {
+    vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
       throw new Error("storage unavailable");
     });
-    vi.spyOn(
-      Object.getPrototypeOf(window.localStorage),
-      "setItem",
-    ).mockImplementation(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw new Error("storage unavailable");
     });
     const { unmount } = render(<ThemeSelect />);
@@ -123,10 +114,7 @@ describe("ThemeSelect", () => {
     ).toHaveValue("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
 
-    vi.spyOn(
-      Object.getPrototypeOf(window.localStorage),
-      "getItem",
-    ).mockImplementation(() => {
+    vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
       throw new Error("storage unavailable");
     });
     unmount();
@@ -140,10 +128,7 @@ describe("ThemeSelect", () => {
 
   it("keeps a chosen preference across remount when the write fails", () => {
     window.localStorage.setItem("melotrove-theme", "light");
-    vi.spyOn(
-      Object.getPrototypeOf(window.localStorage),
-      "setItem",
-    ).mockImplementation(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw new Error("storage unavailable");
     });
     const { unmount } = render(<ThemeSelect />);

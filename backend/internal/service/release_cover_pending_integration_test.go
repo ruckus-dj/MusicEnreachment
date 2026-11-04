@@ -14,7 +14,7 @@ import (
 )
 
 func TestReleaseCoverSavePersistsPendingWithoutPublicationAuthorityPostgreSQL(t *testing.T) {
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	releaseID := uuid.New()
 	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,?)`, releaseID, "Cover fixture"); err != nil {

@@ -17,7 +17,7 @@ import (
 )
 
 func TestLibraryMetadataLyricsHTTPPostgreSQL(t *testing.T) {
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	releaseID := uuid.New()
 	trackID, positionID := uuid.New(), uuid.New()
 	if _, err := db.ExecContext(t.Context(), `INSERT INTO local_release(id,title,metadata) VALUES(?,?,'{"other":{"keep":true}}')`, releaseID, "Album"); err != nil {

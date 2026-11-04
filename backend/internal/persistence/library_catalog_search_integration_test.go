@@ -11,7 +11,7 @@ import (
 )
 
 func TestLibraryCatalogSearchNormalizesUnicodeWhitespaceAndKeepsLiteralTotalsPostgreSQL(t *testing.T) {
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	matchingID := uuid.New()
 	otherID := uuid.New()

@@ -17,7 +17,7 @@ import (
 
 func TestOutputAdmissionSessionPinsGateAndConnectionAcrossTransactions(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	repository := NewSetupManagerRepository(database)
 	ctx := context.Background()
 	entered := make(chan int)
@@ -58,7 +58,7 @@ func TestOutputAdmissionSessionPinsGateAndConnectionAcrossTransactions(t *testin
 
 func TestCleanupDeliverySessionSerializesSameOperation(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	repository := NewSetupManagerRepository(database)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

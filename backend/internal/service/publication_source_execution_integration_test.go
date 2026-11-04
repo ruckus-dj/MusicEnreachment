@@ -70,7 +70,7 @@ type publicationDeliveryScenario struct {
 func testPublicationSourceExecution(t *testing.T, target string, confirmation ...any) {
 	t.Helper()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	driver := riverdatabasesql.New(db.DB)
 	migrator, err := rivermigrate.New(driver, nil)
 	if err != nil {

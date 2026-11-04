@@ -16,7 +16,7 @@ import (
 
 func TestLibraryMetadataManualSyncedLyricsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	driver := riverdatabasesql.New(database.DB)
 	migrator, err := rivermigrate.New(driver, nil)

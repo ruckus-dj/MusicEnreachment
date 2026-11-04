@@ -22,7 +22,7 @@ import (
 func TestFirstPublicationAdmissionGuardsPhantomTrackSourcePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	initializeRiver(t, ctx, db)
 	repo := NewSetupManagerRepository(db)
 	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()

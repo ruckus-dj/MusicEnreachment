@@ -37,7 +37,7 @@ func (inserter *coverBatchInserter) InsertTx(ctx context.Context, tx *sql.Tx, ar
 func TestReleaseCoverBatchAdmissionAtomicFanoutPostgreSQL(t *testing.T) {
 	for _, scenario := range []string{"success", "second_insert_failure", "busy", "retry_pending", "retry_automatic"} {
 		t.Run(scenario, func(t *testing.T) {
-			db := testpostgres.OpenMigrated(t)
+			db := testpostgres.OpenMigratedWithRiver(t)
 			ctx := context.Background()
 			client := openPublicationRetryRiver(t, ctx, db)
 			repository := NewSetupManagerRepository(db)

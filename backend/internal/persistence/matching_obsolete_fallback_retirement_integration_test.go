@@ -18,7 +18,7 @@ import (
 )
 
 func TestObsoleteAutomaticFallbackRunRetirementPreservesCurrentGenerationPostgreSQL(t *testing.T) {
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 
 	callbackExecuted := false
 	testAutomaticFallbackFiniteFlowWithDatabase(t, true, false, true, true, false, nil, nil, db,

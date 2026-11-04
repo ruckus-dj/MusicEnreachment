@@ -15,7 +15,7 @@ import (
 
 func TestCurrentMatchingRequestsCoalesceAndAcknowledgeObservedGenerationPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(db)
 	groupID := uuid.New()

@@ -15,7 +15,7 @@ import (
 
 func TestSourceInventorySchemaWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	repository := persistence.NewSetupManagerRepository(database)
 	ctx := context.Background()
 
@@ -145,7 +145,7 @@ func TestSourceInventorySchemaWithPostgreSQL(t *testing.T) {
 
 func TestSourceScanCandidatesFollowOperationWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	repository := persistence.NewSetupManagerRepository(database)
 	ctx := context.Background()
 	root := createSourceRoot(t, ctx, repository, database, "/srv/candidate-incoming", "Candidates")
@@ -181,7 +181,7 @@ func TestSourceScanCandidatesFollowOperationWithPostgreSQL(t *testing.T) {
 
 func TestActiveSourceScanUniquenessWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	repository := persistence.NewSetupManagerRepository(database)
 	ctx := context.Background()
 	root := createSourceRoot(t, ctx, repository, database, "/srv/active-scan-incoming", "ActiveScan")
@@ -257,7 +257,7 @@ func TestActiveSourceScanUniquenessWithPostgreSQL(t *testing.T) {
 
 func TestSourceRootDeletionSetsOperationTargetToNullWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	repository := persistence.NewSetupManagerRepository(database)
 	ctx := context.Background()
 	root := createSourceRoot(t, ctx, repository, database, "/srv/terminal-incoming", "Terminal")

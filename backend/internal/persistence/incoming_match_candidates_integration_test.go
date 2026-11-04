@@ -19,7 +19,7 @@ import (
 
 func TestIncomingMatchCandidatesPersistAndFenceWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)
@@ -146,7 +146,7 @@ func TestIncomingMatchCandidatesPersistAndFenceWithPostgreSQL(t *testing.T) {
 
 func TestApplyCurrentMatchingEvaluationMaterializesGroupAtomicallyPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)
@@ -194,7 +194,7 @@ func TestApplyCurrentMatchingEvaluationMaterializesGroupAtomicallyPostgreSQL(t *
 
 func TestApplyCurrentMatchingEvaluationRejectsStaleRevisionAndManualVariantConflictPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)
@@ -289,7 +289,7 @@ func matchingApplyEvidence(t *testing.T, fixture *incomingMatchFixture, trackID 
 
 func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	identity := "incoming-match-integration"

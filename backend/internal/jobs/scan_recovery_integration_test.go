@@ -33,7 +33,7 @@ import (
 // install policy the same recovery runs is asserted unchanged at the end.
 func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -349,7 +349,7 @@ func requireScanRecoverySHASetting(t *testing.T, ctx context.Context, database *
 
 func TestLegacyInstallStartupRecoveryPreservesTerminalInstallationStatesPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 
 	settingsRepository := persistence.NewSettingsRepository(database)

@@ -18,7 +18,7 @@ import (
 // seeds the existing legacy evaluation row with that capture's exact authority.
 func TestManualMatchingPreviewContinuesAgainstVersionTwoTargetCapturePostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	incoming := newIncomingMatchFixture(t, ctx, db)
 	candidates := persistence.NewIncomingMatchCandidateRepository(db)

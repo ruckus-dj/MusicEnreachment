@@ -18,7 +18,7 @@ import (
 
 func TestManualMatchingPartialAssignmentKeepsOmittedMemberPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)
@@ -65,7 +65,7 @@ func TestManualMatchingPartialAssignmentKeepsOmittedMemberPostgreSQL(t *testing.
 
 func TestManualMatchingAdditivePositionReuseReceiptPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)

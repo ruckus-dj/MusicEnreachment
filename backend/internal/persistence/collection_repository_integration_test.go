@@ -15,7 +15,7 @@ import (
 
 func TestCollectionFoundationLinksCreditsAndTrackSourcesWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 
 	artist := uuid.New()
@@ -229,7 +229,7 @@ func seedCollectionProviderFixtures(t *testing.T, db *bun.DB) collectionProvider
 // which the manual-replacement rejection case never reaches.
 func TestCollectionFoundationProviderIdentityLinkWritesWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixtures := seedCollectionProviderFixtures(t, db)
 	repository := persistence.NewCollectionRepository(db)
@@ -289,7 +289,7 @@ func TestCollectionFoundationProviderIdentityLinkWritesWithPostgreSQL(t *testing
 // automatic branch of the CHECK.
 func TestCollectionFoundationDecisionConstraintsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixtures := seedCollectionProviderFixtures(t, db)
 
@@ -335,7 +335,7 @@ func TestCollectionFoundationDecisionConstraintsWithPostgreSQL(t *testing.T) {
 // carries no version, and a blank or whitespace-only version is still rejected.
 func TestCollectionFoundationPolicyVersionIsOpaqueWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixtures := seedCollectionProviderFixtures(t, db)
 

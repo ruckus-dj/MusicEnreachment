@@ -47,7 +47,7 @@ func (transactionTestArgs) Kind() string { return "setup_manager_integration_tes
 
 func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	toolsRoot, err := settings.NormalizePath(t.TempDir())
@@ -151,7 +151,7 @@ func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 
 func TestActivateInstallationWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	ready := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
@@ -196,7 +196,7 @@ func TestActivateInstallationWithPostgreSQL(t *testing.T) {
 
 func TestSetupActivationStopsAfterCompletion(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	first := createReadyInstallation(t, ctx, repository, "fpcalc", "linux", "amd64", "1.5.1")
@@ -223,7 +223,7 @@ func TestSetupActivationStopsAfterCompletion(t *testing.T) {
 
 func TestCommitToolsRootMoveSwitchesSettingAndOperationAtomically(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	settingsRepository := persistence.NewSettingsRepository(database)
@@ -382,7 +382,7 @@ func TestCommitToolsRootMoveSwitchesSettingAndOperationAtomically(t *testing.T) 
 
 func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	ready := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
@@ -468,7 +468,7 @@ func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 
 func TestDeleteInstallationUsesToolsRootAfterCompletedMove(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	installation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
@@ -534,7 +534,7 @@ func TestDeleteInstallationUsesToolsRootAfterCompletedMove(t *testing.T) {
 
 func TestDeleteInstallationAfterMoveWithoutPreservingOldFiles(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	installation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
@@ -606,7 +606,7 @@ func TestDeleteInstallationAfterMoveWithoutPreservingOldFiles(t *testing.T) {
 
 func TestDeleteInstallationBeforeMoveDoesNotRestoreDeletedInstallation(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	installation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
@@ -646,7 +646,7 @@ func TestDeleteInstallationBeforeMoveDoesNotRestoreDeletedInstallation(t *testin
 
 func TestCommitToolsRootMoveWithoutSavedRootReturnsError(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "copying", InputSnapshot: json.RawMessage(`{}`)}
@@ -664,7 +664,7 @@ func TestCommitToolsRootMoveWithoutSavedRootReturnsError(t *testing.T) {
 
 func TestDeleteInstallationCallbackFailureRollsBackRow(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	installation := createReadyInstallation(t, ctx, repository, "fpcalc", "linux", "amd64", "1.5.1")
@@ -684,7 +684,7 @@ func TestDeleteInstallationCallbackFailureRollsBackRow(t *testing.T) {
 
 func TestDeleteInstallationAndRetryUseConsistentOperationLockOrder(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	repository := persistence.NewSetupManagerRepository(database)
@@ -940,7 +940,7 @@ func waitForDatabaseLockWait(t *testing.T, ctx context.Context, database *bun.DB
 
 func TestActivateInstallationConflictsWithActiveMoveWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	installation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
@@ -962,7 +962,7 @@ func TestActivateInstallationConflictsWithActiveMoveWithPostgreSQL(t *testing.T)
 
 func TestInstallationRelativePathMustMatchVersionIdentityWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	unsafe := &persistence.ToolInstallation{
@@ -991,7 +991,7 @@ func TestInstallationRelativePathMustMatchVersionIdentityWithPostgreSQL(t *testi
 
 func TestActiveOperationExclusivityWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	first := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
@@ -1036,7 +1036,7 @@ func TestActiveOperationExclusivityWithPostgreSQL(t *testing.T) {
 
 func TestRepositoryStateTransitionsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	installation := &persistence.ToolInstallation{ID: uuid.New(), PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", SourceName: "test", ReleaseIdentity: "1.0", RelativePath: "fpcalc/1.0", State: "preparing"}

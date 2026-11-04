@@ -1,4 +1,3 @@
-import { JSDOM } from "jsdom";
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -16,6 +15,7 @@ import type {
   SetupStateBody,
   SourceRootResponse,
 } from "../api/generated/client.schemas";
+import { createMemoryStorage } from "../test/memoryStorage";
 import { server } from "../test/server";
 import { AppShell } from "./AppShell";
 
@@ -105,9 +105,13 @@ function pendingSourcesRequest() {
 }
 beforeEach(() => {
   window.location.hash = "";
-  vi.stubGlobal(
-    "localStorage",
-    new JSDOM("", { url: "http://localhost" }).window.localStorage,
+  vi.stubGlobal("localStorage", createMemoryStorage());
+  server.use(
+    http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
+    http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
+    http.get("/api/sources/:sourceId/locations", () =>
+      HttpResponse.json({ locations: [] }),
+    ),
   );
 });
 afterEach(() => {

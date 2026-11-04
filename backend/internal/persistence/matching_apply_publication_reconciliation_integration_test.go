@@ -22,7 +22,7 @@ import (
 
 func TestAutomaticMatchingApplyRequestsPublicationReconciliationPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)
@@ -75,7 +75,7 @@ func TestAutomaticMatchingApplyDoesNotRequestReconciliationForReviewOrManualAuth
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			db := testpostgres.OpenMigrated(t)
+			db := testpostgres.OpenMigratedWithRiver(t)
 			ctx := context.Background()
 			fixture := newIncomingMatchFixture(t, ctx, db)
 			repository := persistence.NewIncomingMatchCandidateRepository(db)
@@ -123,7 +123,7 @@ func TestAutomaticMatchingApplyDoesNotRequestReconciliationForReviewOrManualAuth
 
 func TestAutomaticMatchingApplyRollbackRemovesReconciliationPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)

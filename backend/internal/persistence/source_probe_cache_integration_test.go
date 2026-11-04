@@ -19,7 +19,7 @@ import (
 
 func TestSourceProbeCacheKeepsVersionedDigestlessWinnersWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 
@@ -79,7 +79,7 @@ func TestSourceProbeCacheKeepsVersionedDigestlessWinnersWithPostgreSQL(t *testin
 
 func TestSourceProbeCacheSupportsLargeExactFFProbeBannerWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 

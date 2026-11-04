@@ -20,7 +20,7 @@ import (
 // so a commit-time failure never leaves an orphan operation or River job.
 func TestSourceAnalysisEnqueueRollsBackAtCommitWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -89,7 +89,7 @@ func requirePostgresError(t *testing.T, err error, code, messageFragment string)
 // referenced by that work cannot be deleted while the work is retained.
 func TestSourceAnalysisEnqueueHoldsPreviousVariantWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)

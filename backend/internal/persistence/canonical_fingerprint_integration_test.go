@@ -14,7 +14,7 @@ import (
 
 func TestCanonicalFingerprintWinnerKeepsStableIDAndUnknownRerunCleansUp(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	digest := make([]byte, 32)
 	digest[0] = 1
@@ -77,7 +77,7 @@ func TestCanonicalFingerprintWinnerKeepsStableIDAndUnknownRerunCleansUp(t *testi
 
 func TestPromoteDigestlessFingerprintAfterSHA(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	stamp := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 

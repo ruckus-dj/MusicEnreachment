@@ -17,7 +17,7 @@ import (
 
 func TestOutputResetClearsOnlyPublicationNamespaceStatePostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, db)
 	oldRoot, newRoot := nativeTestPath(t, "/music/old"), nativeTestPath(t, "/music/new")

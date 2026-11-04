@@ -16,7 +16,7 @@ import (
 func admitCleanupOutcomeFixture(t *testing.T) (context.Context, *SetupManagerRepository, uuid.UUID, SourceAnalysisArtifactCleanupFence) {
 	t.Helper()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
 	id := insertCleanupAcceptanceArtifact(t, ctx, db, SourceAnalysisArtifactCleanupEligible)
 	client := &cleanupAcceptanceInserter{jobID: 981236}

@@ -14,7 +14,7 @@ import (
 
 func TestReadReleaseCoverCandidatesWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	releaseID, nonMusicBrainzReleaseID := uuid.New(), uuid.New()
 	providerID, providerReleaseID := uuid.New(), uuid.New()

@@ -28,7 +28,7 @@ func (sourceAnalysisControlRuntime) ReadRuntimeSettings(context.Context) (settin
 // transaction, rather than accepting it only through the service/API fakes.
 func TestSourceAnalysisRetryServiceNormalizedAdmissionWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, repository, "/srv/source-analysis-control")

@@ -45,7 +45,7 @@ func TestLibraryPublicationsApplySavedLyricsPostgreSQL(t *testing.T) {
 	for _, state := range []librarymetadata.ValueState{librarymetadata.StateValue, librarymetadata.StateExplicitEmpty} {
 		t.Run(string(state), func(t *testing.T) {
 			ctx := context.Background()
-			db := testpostgres.OpenMigrated(t)
+			db := testpostgres.OpenMigratedWithRiver(t)
 			migrator, err := rivermigrate.New(riverdatabasesql.New(db.DB), nil)
 			if err != nil {
 				t.Fatal(err)

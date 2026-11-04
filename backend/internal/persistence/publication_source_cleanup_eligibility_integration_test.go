@@ -15,7 +15,7 @@ import (
 func TestReadPublicationSourceCleanupAssessmentIncludesAlternativesAndSharedBorrowersPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
 	positionID, siblingPositionID, releaseID, trackID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	for _, query := range []struct {

@@ -13,7 +13,7 @@ import (
 
 func TestIncomingMatchingReconcileSnapshotUsesPersistedMetadataAndAuthority(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingGroupingRepository(db)

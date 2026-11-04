@@ -16,7 +16,7 @@ import (
 func TestIncomingGroupingInvalidatesOnMetadataAndRootMutationOnly(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	repository := persistence.NewSourceInventoryRepository(database)
 	grouping := persistence.NewIncomingGroupingRepository(database)
 	root := createInventoryRoot(t, ctx, repository, "/srv/incoming-group-invalidation")

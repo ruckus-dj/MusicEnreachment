@@ -1,4 +1,3 @@
-import { JSDOM } from "jsdom";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -23,6 +22,7 @@ import type {
   OperationResponse,
   SetupStateBody,
 } from "../../api/generated/client.schemas";
+import { createMemoryStorage } from "../../test/memoryStorage";
 import { selectDirectoryPath } from "../../test/selectDirectoryPath";
 import { server } from "../../test/server";
 import { SetupManager } from "./SetupManager";
@@ -110,15 +110,27 @@ beforeEach(() => {
       this.open = false;
     },
   });
-  vi.stubGlobal(
-    "localStorage",
-    new JSDOM("", { url: "http://localhost" }).window.localStorage,
-  );
+  vi.stubGlobal("localStorage", createMemoryStorage());
   TestEventSource.instances = [];
   TestEventSource.onCreated = undefined;
   vi.stubGlobal("EventSource", TestEventSource);
   server.use(
     http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
+    http.get("/api/tools/installations", () =>
+      HttpResponse.json({ installations: [] }),
+    ),
+    http.get("/api/tools/catalog", ({ request }) =>
+      HttpResponse.json({
+        package_kind: new URL(request.url).searchParams.get("package_kind"),
+        releases: [],
+        platform: {
+          diagnostic: false,
+          supported: true,
+          goos: "linux",
+          goarch: "amd64",
+        },
+      }),
+    ),
   );
 });
 afterEach(() => {
@@ -580,6 +592,9 @@ describe("SetupManager", () => {
         }),
       ),
       http.post("/api/tools/installations", start),
+      http.get(`/api/operations/${operation.id}`, () =>
+        HttpResponse.json(operation),
+      ),
     );
     renderSetup(state(paths));
     await selectVersion("ffmpeg", "8.0");

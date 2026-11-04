@@ -21,7 +21,7 @@ import (
 
 func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	manager := persistence.NewSetupManagerRepository(database)
 	inventory := persistence.NewSourceInventoryRepository(database)
@@ -73,7 +73,7 @@ func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
 
 func TestHistoricalSourceScanRetryUsesCurrentGenerationPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	databaseURL := testpostgres.URL(t, database)
 	ctx := context.Background()
 	manager := persistence.NewSetupManagerRepository(database)

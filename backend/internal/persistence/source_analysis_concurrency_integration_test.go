@@ -31,7 +31,7 @@ const analysisRaceTimeout = 20 * time.Second
 // race.
 func TestSourceAnalysisEnqueueRefusesMoveCommittedUnderLockWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -70,7 +70,7 @@ func TestSourceAnalysisEnqueueRefusesMoveCommittedUnderLockWithPostgreSQL(t *tes
 // reverse check of the tools move is decided under the shared lock as well.
 func TestToolsMoveEnqueueRefusesAnalysisCommittedUnderLockWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)

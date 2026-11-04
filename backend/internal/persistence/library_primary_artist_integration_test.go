@@ -14,7 +14,7 @@ import (
 
 func TestSetLibraryPrimaryArtistWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewLibraryRepository(db)
 	releaseID, artistA, artistB, outsideArtist := uuid.New(), uuid.New(), uuid.New(), uuid.New()

@@ -25,7 +25,7 @@ import (
 // StartProviderOperation, River persistence, and the production worker's fetch.
 func TestProviderFetchWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	repo := persistence.NewSetupManagerRepository(db)

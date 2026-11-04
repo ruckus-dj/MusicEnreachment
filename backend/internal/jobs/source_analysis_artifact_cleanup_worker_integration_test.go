@@ -23,7 +23,7 @@ import (
 func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	riverClient := openCleanupWorkerRiver(t, db.DB)
 	repository := persistence.NewSetupManagerRepository(db)
 	settingsRepository := persistence.NewSettingsRepository(db)

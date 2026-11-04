@@ -18,7 +18,7 @@ import (
 
 func TestAcoustIDCredentialFenceWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSettingsRepository(database)
 
@@ -85,7 +85,7 @@ func TestAcoustIDCredentialFenceWithPostgreSQL(t *testing.T) {
 
 func TestAcoustIDSameKeySaveRepairsOnlyExplicitly(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSettingsRepository(database)
 	key := "opaque-inconsistent-key"

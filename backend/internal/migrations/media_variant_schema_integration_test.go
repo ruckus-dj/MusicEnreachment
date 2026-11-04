@@ -57,8 +57,7 @@ func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChanges
 // resource holds, and the untouched install/move constraints.
 func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 
 	t.Run("locations_start_without_a_variant", func(t *testing.T) {
@@ -295,8 +294,7 @@ func readStoredAnalysis(t *testing.T, ctx context.Context, database *bun.DB, ope
 // and an active analysis with its normalized work hold must still refuse deletion.
 func TestSourceMediaVariantTerminalRootDeletionWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 
 	t.Run("succeeded_analysis_survives_root_deletion", func(t *testing.T) {

@@ -115,7 +115,7 @@ type matchingAcquisitionGuardFixture struct {
 
 func newMatchingAcquisitionGuardFixture(t *testing.T) *matchingAcquisitionGuardFixture {
 	t.Helper()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	incoming := newIncomingMatchFixture(t, ctx, db)
 	const identity = "matching-acquisition-guard-config"

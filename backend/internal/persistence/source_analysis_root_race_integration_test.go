@@ -28,7 +28,7 @@ type analysisRaceFixture struct {
 func newAnalysisRaceFixture(t *testing.T, path string) analysisRaceFixture {
 	t.Helper()
 	ctx := context.Background()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, path)
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())

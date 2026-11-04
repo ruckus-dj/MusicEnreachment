@@ -16,7 +16,7 @@ import (
 
 func TestLibraryMetadataPersistsPerOwnerAndPreservesOtherMetadata(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewLibraryRepository(db)
 	release, recording, track, positionA, positionB := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()

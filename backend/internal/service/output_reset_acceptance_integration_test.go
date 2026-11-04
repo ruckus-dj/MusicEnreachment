@@ -31,7 +31,7 @@ import (
 // This acceptance test deliberately uses a non-empty old output directory: the
 // setup save path must not probe it as an empty first-run destination.
 func TestOutputResetAcceptanceSaveChangedRootPreservesRuntimeAndOldFiles(t *testing.T) {
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	oldRoot := t.TempDir()
 	oldFile := filepath.Join(oldRoot, "album", "track.flac")
@@ -78,7 +78,7 @@ func TestOutputResetAcceptanceSaveChangedRootPreservesRuntimeAndOldFiles(t *test
 }
 
 func TestOutputResetAcceptanceSameCanonicalPopulatedRootDoesNotJournal(t *testing.T) {
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	setup, _, _ := outputResetAcceptanceSetup(t, database, root)
@@ -104,7 +104,7 @@ func TestOutputResetAcceptanceSameCanonicalPopulatedRootDoesNotJournal(t *testin
 }
 
 func TestOutputResetAcceptancePreparingRecoveryOwnsOnlyCreatedDirectories(t *testing.T) {
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	oldRoot := t.TempDir()
 	_, registry, _ := outputResetAcceptanceSetup(t, database, oldRoot)
@@ -161,7 +161,7 @@ func TestOutputResetAcceptancePreparingRecoveryOwnsOnlyCreatedDirectories(t *tes
 }
 
 func TestOutputResetAcceptanceIntentWithoutDurableIdentityFailsClosed(t *testing.T) {
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	oldRoot := t.TempDir()
 	_, registry, _ := outputResetAcceptanceSetup(t, database, oldRoot)
@@ -234,7 +234,7 @@ func TestOutputResetAcceptanceIntentWithoutDurableIdentityFailsClosed(t *testing
 }
 
 func TestOutputResetAcceptanceCommittedRecoveryRetainsDirectories(t *testing.T) {
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	oldRoot := t.TempDir()
 	_, registry, _ := outputResetAcceptanceSetup(t, database, oldRoot)
@@ -324,7 +324,7 @@ func TestOutputResetProcessCrashChild(t *testing.T) {
 }
 
 func TestOutputResetProcessCrashAfterDurablePrepareRecoversOwnedDirectories(t *testing.T) {
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	oldRoot := t.TempDir()
 	_, registry, repository := outputResetAcceptanceSetup(t, database, oldRoot)

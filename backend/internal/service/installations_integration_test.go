@@ -18,7 +18,7 @@ import (
 
 func TestDeleteFailedInstallationPreservesUnownedTargetsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	installation := &persistence.ToolInstallation{
@@ -67,7 +67,7 @@ func TestDeleteFailedInstallationPreservesUnownedTargetsWithPostgreSQL(t *testin
 
 func TestDeleteReadyInstallationRemovesOnlyManagedTargetsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	installation := &persistence.ToolInstallation{

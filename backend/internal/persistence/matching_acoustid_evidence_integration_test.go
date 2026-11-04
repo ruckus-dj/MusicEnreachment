@@ -15,7 +15,7 @@ import (
 // from the selected persisted fingerprint provenance, not merely the work ID.
 func TestAcoustIDRequestIdentityFollowsCurrentFingerprintWinnerPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixtureWithSelectedFingerprint(t, ctx, db)
 	captures, err := persistence.NewIncomingGroupingRepository(db).CurrentCaptures(ctx)

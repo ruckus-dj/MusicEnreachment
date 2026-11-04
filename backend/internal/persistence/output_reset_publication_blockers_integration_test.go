@@ -25,7 +25,7 @@ type publicationResetFixture struct {
 func newPublicationResetFixture(t *testing.T) publicationResetFixture {
 	t.Helper()
 	ctx := context.Background()
-	f := publicationResetFixture{db: testpostgres.OpenMigrated(t), position: uuid.New(), operation: uuid.New()}
+	f := publicationResetFixture{db: testpostgres.OpenMigratedWithRiver(t), position: uuid.New(), operation: uuid.New()}
 	initializeRiver(t, ctx, f.db)
 	f.oldRoot, f.newRoot = nativeTestPath(t, "/music/old"), nativeTestPath(t, "/music/new")
 	if err := NewSettingsRepository(f.db).Set(ctx, "output_directory", f.oldRoot); err != nil {

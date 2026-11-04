@@ -14,7 +14,7 @@ import (
 
 func TestCreateStandaloneReleaseEmptyAndRoundTripsNormalizedRowsPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewLibraryRepository(db)
 
@@ -99,7 +99,7 @@ func TestCreateStandaloneReleaseEmptyAndRoundTripsNormalizedRowsPostgreSQL(t *te
 
 func TestCreateStandaloneReleaseConflictDoesNotLeakNewIdentitiesPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewLibraryRepository(db)
 	releaseID := uuid.New()

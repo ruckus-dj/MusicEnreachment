@@ -16,7 +16,7 @@ import (
 func TestStartNormalizedSourceAnalysisDeliveryReplacesAdmissionToolHoldsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	t.Run("current selection replaces admission selection", func(t *testing.T) {
-		database := testpostgres.OpenMigrated(t)
+		database := testpostgres.OpenMigratedWithRiver(t)
 		ctx := context.Background()
 		repository := persistence.NewSourceInventoryRepository(database)
 		_, operation, admissionTool := queuedToolAnalysis(t, ctx, database, repository, "/srv/analysis-delivery-reselect")
@@ -41,7 +41,7 @@ func TestStartNormalizedSourceAnalysisDeliveryReplacesAdmissionToolHoldsWithPost
 	})
 
 	t.Run("staged root resolves current tools and records staged execution", func(t *testing.T) {
-		database := testpostgres.OpenMigrated(t)
+		database := testpostgres.OpenMigratedWithRiver(t)
 		ctx := context.Background()
 		repository := persistence.NewSourceInventoryRepository(database)
 		root, operation, admissionTool := queuedToolAnalysis(t, ctx, database, repository, "/srv/analysis-delivery-staged")

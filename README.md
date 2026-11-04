@@ -89,9 +89,10 @@ the repository root. Enable the hook with `pre-commit install`. The pre-commit
 hook intentionally runs the complete `task verify`; it can be split into faster
 stages later if repository growth makes that necessary.
 
-GitHub Actions CI runs the full backend integration suite — plus the frontend
-tests and build — on Linux (`amd64`, `arm64`), macOS (`amd64`, `arm64`) and
-Windows (`amd64`). These native test jobs do not require Docker; a separate
+GitHub Actions CI runs the full backend integration/native suite and production
+frontend/backend builds on Linux (`amd64`, `arm64`), macOS (`amd64`, `arm64`) and
+Windows (`amd64`). The full frontend JSDOM suite runs once in Linux amd64
+`verify`, not again in every native job. These native jobs do not require Docker; a separate
 Docker Compose smoke job checks the deployment.
 
 Backend matching uses the vendored MIT-licensed RapidFuzz C++ library through

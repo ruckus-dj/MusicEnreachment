@@ -547,7 +547,7 @@ type testContainer struct {
 // InsertTx path the repositories use exactly as production does.
 func startSourceApplicationDatabase(t *testing.T) testContainer {
 	t.Helper()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	databaseURL := testpostgres.URL(t, database)
 	databaseSQL := database.DB
 

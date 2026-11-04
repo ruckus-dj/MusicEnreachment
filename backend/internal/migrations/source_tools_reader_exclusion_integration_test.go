@@ -15,11 +15,10 @@ import (
 
 func TestSourceToolsReaderExclusionWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.Open(t)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	// Reader transitions require the final scan-reader shape as well as the
 	// normalized exclusion; exercise the complete forward contract together.
-	testpostgres.ResetAndMigrate(t, database)
 
 	rootID, scanID, moveID := uuid.New(), uuid.New(), uuid.New()
 	otherRootID, otherScanID := uuid.New(), uuid.New()

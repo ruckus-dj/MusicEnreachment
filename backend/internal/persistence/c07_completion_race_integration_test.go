@@ -25,7 +25,7 @@ import (
 // merely being scheduled after completion has happened.
 func TestC07CompletionSerializesPostSetupAdmission(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), analysisRaceTimeout)
 	defer cancel()
 	fixture := newC07CompletionFixture(t, ctx, db)
@@ -55,7 +55,7 @@ func TestC07CompletionSerializesPostSetupAdmission(t *testing.T) {
 
 func TestC07CompletionSerializesPostSetupFinalization(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), analysisRaceTimeout)
 	defer cancel()
 	fixture := newC07CompletionFixture(t, ctx, db)
@@ -103,7 +103,7 @@ func TestC07CompletionSerializesPostSetupFinalization(t *testing.T) {
 
 func TestC07InitialFinalizationBeforeCompletionUsesFreshActiveIDs(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), analysisRaceTimeout)
 	defer cancel()
 	fixture := newC07CompletionFixtureWithoutFPCalc(t, ctx, db)
@@ -138,7 +138,7 @@ func TestC07InitialFinalizationBeforeCompletionUsesFreshActiveIDs(t *testing.T) 
 
 func TestC07PreCompletionSecondPackageAdmissionLeavesNoOrphans(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newC07CompletionFixture(t, ctx, db)
 	client := c07RiverClient(t, ctx, db)

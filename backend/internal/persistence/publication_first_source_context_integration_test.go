@@ -15,7 +15,7 @@ import (
 func TestReadLibraryFirstPublicationContextUsesCurrentCompatibleAssociatedSourcePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
 
 	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
@@ -121,7 +121,7 @@ func TestReadLibraryFirstPublicationContextUsesCurrentCompatibleAssociatedSource
 func TestReadLibraryFirstPublicationContextKeepsHealthySelectedAlternativePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
 
 	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()

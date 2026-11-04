@@ -14,7 +14,7 @@ import (
 
 func TestManualMatchingAcceptsWriterEvaluationEvidencePostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	groupingRepository := persistence.NewIncomingGroupingRepository(db)

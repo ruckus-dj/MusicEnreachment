@@ -16,6 +16,9 @@ import (
 	postgres "github.com/fergusstrange/embedded-postgres/v2"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/riverqueue/river"
+	riverdatabasesql "github.com/riverqueue/river/riverdriver/riverdatabasesql"
+	rivermigrate "github.com/riverqueue/river/rivermigrate"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -31,15 +34,16 @@ const (
 
 var process struct {
 	sync.Mutex
-	resourcesMu sync.Mutex
-	serverOnce  sync.Once
-	serverErr   error
-	server      *postgres.EmbeddedPostgres
-	adminURL    string
-	adminDB     *bun.DB
-	template    string
-	resources   []string
-	cleanups    []func() error
+	resourcesMu   sync.Mutex
+	serverOnce    sync.Once
+	serverErr     error
+	server        *postgres.EmbeddedPostgres
+	adminURL      string
+	adminDB       *bun.DB
+	template      string
+	riverTemplate string
+	resources     []string
+	cleanups      []func() error
 }
 
 // Open creates an empty, uniquely named database owned by this test. The
@@ -61,7 +65,7 @@ func Open(t *testing.T) *bun.DB {
 		t.Fatalf("connect to isolated PostgreSQL database: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := dropDatabase(name); err != nil {
+		if err := dropRegisteredDatabase(name); err != nil {
 			t.Errorf("drop isolated PostgreSQL database %s: %v", name, err)
 		}
 	})
@@ -74,8 +78,20 @@ func Open(t *testing.T) *bun.DB {
 // modified by individual tests.
 func OpenMigrated(t *testing.T) *bun.DB {
 	t.Helper()
+	return openTemplate(t, false)
+}
+
+// OpenMigratedWithRiver clones the process-local application and River schema
+// template. River migrations are applied once to the template, never per test.
+func OpenMigratedWithRiver(t *testing.T) *bun.DB {
+	t.Helper()
+	return openTemplate(t, true)
+}
+
+func openTemplate(t *testing.T, withRiver bool) *bun.DB {
+	t.Helper()
 	admin := adminDatabase(t)
-	template := migratedTemplate(t, admin)
+	template := migratedTemplate(t, admin, withRiver)
 	name := resourcePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, template)
 	registerResource(name)
@@ -88,7 +104,7 @@ func OpenMigrated(t *testing.T) *bun.DB {
 		t.Fatalf("connect to migrated PostgreSQL database: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := dropDatabase(name); err != nil {
+		if err := dropRegisteredDatabase(name); err != nil {
 			t.Errorf("drop isolated PostgreSQL database %s: %v", name, err)
 		}
 	})
@@ -151,6 +167,7 @@ func adminDatabase(t *testing.T) *bun.DB {
 			// These clusters are disposable; crash durability is not under test.
 			config := postgres.DefaultConfig().Version(postgres.V18).Port(0).StartParameters(map[string]string{
 				"fsync": "off", "full_page_writes": "off", "synchronous_commit": "off",
+				"wal_level": "minimal", "max_wal_senders": "0",
 			})
 			if runtime.GOOS == "windows" {
 				// Embedded PostgreSQL creates restricted child-process tokens. Keep
@@ -192,12 +209,16 @@ func adminDatabase(t *testing.T) *bun.DB {
 	return process.adminDB
 }
 
-func migratedTemplate(t *testing.T, admin *bun.DB) string {
+func migratedTemplate(t *testing.T, admin *bun.DB, withRiver bool) string {
 	t.Helper()
 	process.Lock()
 	defer process.Unlock()
-	if process.template != "" {
-		return process.template
+	template := &process.template
+	if withRiver {
+		template = &process.riverTemplate
+	}
+	if *template != "" {
+		return *template
 	}
 	name := resourcePrefix + "template_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, "")
@@ -206,7 +227,11 @@ func migratedTemplate(t *testing.T, admin *bun.DB) string {
 	if err != nil {
 		t.Fatalf("open migrated PostgreSQL template: %v", err)
 	}
+	closed := false
 	defer func() {
+		if closed {
+			return
+		}
 		if err := templateDB.Close(); err != nil {
 			t.Errorf("close migrated PostgreSQL template: %v", err)
 		}
@@ -215,7 +240,24 @@ func migratedTemplate(t *testing.T, admin *bun.DB) string {
 		t.Fatalf("connect to migrated PostgreSQL template: %v", err)
 	}
 	applyMigrations(t, templateDB)
-	process.template = name
+	if withRiver {
+		driver := riverdatabasesql.New(templateDB.DB)
+		migrator, err := rivermigrate.New(driver, nil)
+		if err != nil {
+			t.Fatalf("create River template migrator: %v", err)
+		}
+		if _, err := migrator.Migrate(context.Background(), rivermigrate.DirectionUp, nil); err != nil {
+			t.Fatalf("apply River template migrations: %v", err)
+		}
+		if _, err := river.NewClient(driver, &river.Config{}); err != nil {
+			t.Fatalf("verify River template client: %v", err)
+		}
+	}
+	if err := templateDB.Close(); err != nil {
+		t.Fatalf("close migrated PostgreSQL template: %v", err)
+	}
+	closed = true
+	*template = name
 	return name
 }
 
@@ -276,11 +318,34 @@ func registerResource(name string) {
 	process.resourcesMu.Unlock()
 }
 
+func unregisterResource(name string) {
+	process.resourcesMu.Lock()
+	defer process.resourcesMu.Unlock()
+	for index, resource := range process.resources {
+		if resource == name {
+			process.resources = append(process.resources[:index], process.resources[index+1:]...)
+			return
+		}
+	}
+}
+
 func dropDatabase(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	_, err := process.adminDB.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdentifier(name)+" WITH (FORCE)")
 	return err
+}
+
+func dropRegisteredDatabase(name string) error {
+	return dropAndUnregister(name, dropDatabase)
+}
+
+func dropAndUnregister(name string, drop func(string) error) error {
+	if err := drop(name); err != nil {
+		return err
+	}
+	unregisterResource(name)
+	return nil
 }
 
 func cleanupProcess() error {
@@ -299,7 +364,7 @@ func cleanupProcess() error {
 		}
 	}
 	for index := len(resources) - 1; index >= 0; index-- {
-		if err := dropDatabase(resources[index]); err != nil {
+		if err := dropRegisteredDatabase(resources[index]); err != nil {
 			failures = append(failures, err.Error())
 		}
 	}

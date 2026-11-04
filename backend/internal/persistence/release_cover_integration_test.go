@@ -20,7 +20,7 @@ import (
 )
 
 func TestReleaseCoverAuthorityCASAndManualPendingIsolationPostgreSQL(t *testing.T) {
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	releaseID := uuid.New()
 	if _, err := db.NewRaw(`INSERT INTO local_release(id) VALUES (?)`, releaseID).Exec(ctx); err != nil {
@@ -153,7 +153,7 @@ func TestReleaseCoverImageValidationRequiresDecodableMatchingMIME(t *testing.T) 
 }
 
 func TestReleaseCoverAuthorityRejectsPartialImageTuplesPostgreSQL(t *testing.T) {
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	data := releaseCoverPNG(t)
 	digest := sha256.Sum256(data)

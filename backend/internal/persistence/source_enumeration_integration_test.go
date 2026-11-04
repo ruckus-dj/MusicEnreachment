@@ -15,7 +15,7 @@ import (
 
 func TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration")
@@ -159,7 +159,7 @@ func TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(
 
 func TestApplySourceEnumerationReplacesCompletedInPlaceWork(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-in-place-execution")
@@ -218,7 +218,7 @@ func TestApplySourceEnumerationReplacesCompletedInPlaceWork(t *testing.T) {
 
 func TestDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMutation(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	rootA := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-root-a")
@@ -243,7 +243,7 @@ func TestDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMu
 
 func TestApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-artifact")
@@ -312,7 +312,7 @@ func TestApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone(t *testin
 
 func TestApplySourceEnumerationRejectsStaleDeliveryWithoutMutation(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-fence")
@@ -424,7 +424,7 @@ func TestApplySourceEnumerationDeferredCommitFailurePreservesCleanupMarkerPostgr
 
 func newEnumerationCleanupMarkerFixture(t *testing.T) (*bun.DB, context.Context, *persistence.SourceInventoryRepository, *persistence.SourceRoot, time.Time) {
 	t.Helper()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-cleanup-marker")

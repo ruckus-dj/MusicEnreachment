@@ -76,7 +76,7 @@ func (validator *recordingScanPathValidator) ValidateSourcePath(ctx context.Cont
 // which the next successful scan restores.
 func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

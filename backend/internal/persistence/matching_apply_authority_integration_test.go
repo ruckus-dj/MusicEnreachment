@@ -22,7 +22,7 @@ import (
 // delivers the old job. It intentionally does not exercise publisher admission.
 func TestMatchingApplyWorkerDoesNotOverrideManualUnlinkPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	candidates := persistence.NewIncomingMatchCandidateRepository(db)

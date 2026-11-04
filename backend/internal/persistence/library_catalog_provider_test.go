@@ -44,7 +44,7 @@ func TestLibraryCatalogEditionMalformedLocalMetadataDoesNotGuessProviderValues(t
 func catalogProviderStringPointer(value string) *string { return &value }
 
 func TestLibraryCatalogProviderPositionCountUsesConfiguredSourcePostgreSQL(t *testing.T) {
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	providerID, sourceA, sourceB := uuid.New(), uuid.New(), uuid.New()
 	providerReleaseID, localReleaseID := uuid.New(), uuid.New()

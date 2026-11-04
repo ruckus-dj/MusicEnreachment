@@ -19,7 +19,7 @@ import (
 // while a rejected admission must not touch the grouping state at all.
 func TestIncomingGroupingInvalidatesOnExplicitFingerprintRerunAdmissionWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	grouping := persistence.NewIncomingGroupingRepository(database)

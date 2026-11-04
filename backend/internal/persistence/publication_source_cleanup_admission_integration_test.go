@@ -39,7 +39,7 @@ func (inserter *publicationSourceCleanupTestInserter) InsertTx(ctx context.Conte
 func TestPublicationSourceCleanupAdmissionRequiresEnabledSettingPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
 	positionID := uuid.New()
 	inserter := new(publicationSourceCleanupTestInserter)
@@ -74,7 +74,7 @@ func TestPublicationSourceCleanupAdmissionRequiresEnabledSettingPostgreSQL(t *te
 func TestPublicationSourceCleanupAdmissionRejectsMalformedSettingPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
 	if _, err := db.ExecContext(ctx, `INSERT INTO app_setting(setting_name,setting_value) VALUES ('publication_remove_sources','sometimes')`); err != nil {
 		t.Fatal(err)

@@ -37,7 +37,7 @@ func (fixture acquisitionProviderFixture) DownloadFront(_ context.Context, _ str
 func TestInitialCoverAcquisitionUsesSavedBytesAndProtectsManualSavePostgreSQL(t *testing.T) {
 	for _, scenario := range []string{"saved_local", "provider_failure", "provider_truncated", "provider_oversized", "manual_race", "canceled"} {
 		t.Run(scenario, func(t *testing.T) {
-			db := testpostgres.OpenMigrated(t)
+			db := testpostgres.OpenMigratedWithRiver(t)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			releaseID := uuid.New()

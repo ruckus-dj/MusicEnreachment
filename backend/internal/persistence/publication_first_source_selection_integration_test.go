@@ -31,7 +31,7 @@ type firstSourceSelectionFixture struct {
 func newFirstSourceSelectionFixture(t *testing.T) firstSourceSelectionFixture {
 	t.Helper()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
 	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
 	for _, query := range []struct {

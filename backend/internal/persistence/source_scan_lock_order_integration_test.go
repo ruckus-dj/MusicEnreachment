@@ -15,7 +15,7 @@ import (
 
 func TestSourceScanRetryLocksRootBeforeOperationWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	inventory := persistence.NewSourceInventoryRepository(database)

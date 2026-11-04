@@ -15,7 +15,7 @@ import (
 
 func TestToolsExecutionClaimFencesDeliveryAndProtectsHistoryPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	jobID := int64(9001)

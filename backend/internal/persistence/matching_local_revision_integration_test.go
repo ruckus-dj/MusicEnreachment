@@ -14,7 +14,7 @@ import (
 
 func TestMaterializeMatchingLocalAdvancesExistingMetadataRevisionsPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	releaseID, trackID, recordingID := uuid.New(), uuid.New(), uuid.New()
 	for _, statement := range []struct {

@@ -166,6 +166,11 @@ prose was moved into docs/app-design-react/.
 - Run the final `task verify` only after delegated edits and formatting finish.
   A gate against a partially written helper or an unformatted in-flight test is
   not a valid baseline; wait for the edit completion notification before rerunning.
+- The normal `quality-gates` commit hook runs `task verify` and can serve as that
+  final gate. Do not routinely repeat the same full gate manually immediately
+  before or after the hook on an unchanged tree. This removes duplicate work,
+  not the hook: no success stamps, skipped hooks, cached test-success shortcuts,
+  or replacement with a partial suite.
 - Association fixtures must supply object-valued JSON metadata (for example `{}`),
   not a nil `json.RawMessage` that Bun can serialize as JSON `null`.
 - Cleanup reset tests must cover several owners sharing one operation/job: cancel

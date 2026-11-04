@@ -29,7 +29,7 @@ func nativeTestPath(t *testing.T, value string) string {
 
 func TestRunOutputResetRequestJournalsAndCommitsAtomically(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
@@ -89,7 +89,7 @@ func TestRunOutputResetRequestJournalsAndCommitsAtomically(t *testing.T) {
 
 func TestOutputResetPersistsOnlyPreflightedMissingAncestorChain(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	existing, err := filepath.EvalSymlinks(t.TempDir())
@@ -126,7 +126,7 @@ func TestOutputResetPersistsOnlyPreflightedMissingAncestorChain(t *testing.T) {
 
 func TestOutputResetRejectsUnplannedMissingAncestorWithoutCreatingIt(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
@@ -178,7 +178,7 @@ func TestOutputResetRejectsUnplannedMissingAncestorWithoutCreatingIt(t *testing.
 
 func TestOutputResetFailureBlocksAdmissionsUntilRecovery(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
@@ -213,7 +213,7 @@ func TestOutputResetFailureBlocksAdmissionsUntilRecovery(t *testing.T) {
 
 func TestRunOutputResetRequestAllowsInitialOutputDirectoryAndRejectsInvalidRequests(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
@@ -265,7 +265,7 @@ func TestRunOutputResetRequestAllowsInitialOutputDirectoryAndRejectsInvalidReque
 
 func TestOutputResetRejectsStaleToolsRootWithoutChangingRuntimeSettings(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
@@ -308,7 +308,7 @@ func TestOutputResetRejectsStaleToolsRootWithoutChangingRuntimeSettings(t *testi
 
 func TestOutputResetCommitsRuntimeSemanticsTogetherWithOutputRoot(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)

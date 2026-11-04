@@ -15,7 +15,7 @@ import (
 
 func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	localOnlyID, linkedID := uuid.New(), uuid.New()
 	artistA, artistB := uuid.New(), uuid.New()

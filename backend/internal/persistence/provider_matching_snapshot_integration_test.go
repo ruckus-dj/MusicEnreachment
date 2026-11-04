@@ -17,7 +17,7 @@ import (
 
 func TestMusicBrainzMatchingSnapshotUsesAcceptedSourceProjection(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewProviderCacheRepository(db)
 	const identity = "matching-snapshot"
@@ -205,7 +205,7 @@ func TestMusicBrainzMatchingSnapshotUsesAcceptedSourceProjection(t *testing.T) {
 
 func TestMusicBrainzMatchingSnapshotKeepsReleaseCollectionsSourceScoped(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewProviderCacheRepository(db)
 	const identity = "source-scoped-collections"

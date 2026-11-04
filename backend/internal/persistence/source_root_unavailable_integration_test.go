@@ -27,7 +27,7 @@ const unavailableSafeReason = "The configured source directory is unavailable or
 // unchanged file.
 func TestSourceRootUnavailableKeepsInventoryWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/unavailable")
@@ -113,7 +113,7 @@ func TestSourceRootUnavailableKeepsInventoryWithPostgreSQL(t *testing.T) {
 // may overwrite the available state.
 func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/superseded")
@@ -148,7 +148,7 @@ func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.
 // which is how an unreadable root is reported.
 func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
@@ -210,7 +210,7 @@ func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgr
 // start records a database timestamp after that success.
 func TestSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/clock-skew")
@@ -247,7 +247,7 @@ func TestSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL(t *testing
 // usable message, so the repository refuses it before any write.
 func TestSourceRootUnavailableRejectsEmptyReasonWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/empty-reason")
@@ -269,7 +269,7 @@ func TestSourceRootUnavailableRejectsEmptyReasonWithPostgreSQL(t *testing.T) {
 // source root target is refused.
 func TestSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/non-scan")
@@ -321,7 +321,7 @@ func startScanOperation(t *testing.T, ctx context.Context, database *bun.DB, ope
 // that observation and are never overwritten by it.
 func TestSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/start-unavailable")
@@ -395,7 +395,7 @@ func TestSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL(t *testing
 // refused before any write.
 func TestSourceRootUnavailableForRootRequiresAReasonAndARootWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/start-boundary")

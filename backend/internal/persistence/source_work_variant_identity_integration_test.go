@@ -18,7 +18,7 @@ func TestSourceWorkVariantIdentityAndGroupingAllowUnrequestedMetadataWithPostgre
 	for _, state := range []string{"not_requested", "skipped"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
-			db := testpostgres.OpenMigrated(t)
+			db := testpostgres.OpenMigratedWithRiver(t)
 			ctx := context.Background()
 			repository := persistence.NewSourceInventoryRepository(db)
 			root := createInventoryRoot(t, ctx, repository, "/srv/work-variant-optional-metadata")
@@ -51,7 +51,7 @@ func TestSourceWorkVariantIdentityAndGroupingAllowUnrequestedMetadataWithPostgre
 
 func TestSourceWorkVariantIdentityDigestlessReadinessRetryAndCleanupWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(db)
 	root := createInventoryRoot(t, ctx, repository, "/srv/work-variant-digestless")
@@ -157,7 +157,7 @@ func TestSourceWorkVariantIdentityDigestlessReadinessRetryAndCleanupWithPostgreS
 
 func TestSourceWorkVariantIdentityRequestedSHAReadinessAndCanonicalSharingWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(db)
 	root := createInventoryRoot(t, ctx, repository, "/srv/work-variant-sha")

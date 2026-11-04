@@ -37,7 +37,7 @@ func TestFailMatchingDeliveryRequiresCurrentFreshFencePostgreSQL(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			db := testpostgres.OpenMigrated(t)
+			db := testpostgres.OpenMigratedWithRiver(t)
 			ctx := context.Background()
 			fixture := newIncomingMatchFixture(t, ctx, db)
 			repository := persistence.NewSetupManagerRepository(db)

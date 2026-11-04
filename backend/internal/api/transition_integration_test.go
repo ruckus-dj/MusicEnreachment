@@ -35,7 +35,7 @@ func testInstallationRelativePath(goos, packageKind, release string) string {
 
 func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()

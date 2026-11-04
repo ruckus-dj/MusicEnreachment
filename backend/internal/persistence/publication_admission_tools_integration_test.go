@@ -30,7 +30,7 @@ func publicationFFmpegVersionFixture() (json.RawMessage, string, string) {
 func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	initializeRiver(t, ctx, db)
 	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
 	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'tools admission')`, releaseID); err != nil {

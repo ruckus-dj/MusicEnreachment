@@ -45,7 +45,7 @@ func (inserter *libraryProviderRefreshInserter) InsertTx(ctx context.Context, tx
 func TestLibraryProviderRefreshAdmissionBindsAndEnqueuesAtomicallyPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	initializeRiver(t, ctx, db)
 	identity := "cfg-library-refresh"
 	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name,setting_value) VALUES('musicbrainz_config_identity',?)`, identity).Exec(ctx); err != nil {

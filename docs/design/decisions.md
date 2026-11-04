@@ -1352,10 +1352,14 @@ filesystem/race proofs не обещаются.
 
 - Репозиторий размещается на GitHub.
 - GitHub CI выполняет полный `task verify` на Linux x64. Отдельная matrix
-  запускает unit tests и production build на реальных GitHub-hosted runners для
+  запускает все Go integration/native tests и production build на реальных GitHub-hosted runners для
   Linux arm64, macOS x64/arm64 и Windows x64; Linux x64 уже покрыт полным
   verify job. Windows arm64 не является поддерживаемой платформой и не входит
   в build matrix.
+- Полный frontend JSDOM-suite выполняется один раз в Linux x64 `verify`
+  (согласовано владельцем 2026-11-04). Нативная matrix сохраняет TypeScript-проверку,
+  production-сборки frontend/backend и все платформенные Go/native-проверки;
+  одинаковый JSDOM-suite на каждой платформе не повторяется.
 - Linux-only Compose smoke job собирает production image, запускает PostgreSQL и
   приложение, ждёт Docker health, проверяет live/ready, embedded UI и immutable
   asset cache, затем проверяет graceful SIGTERM с exit code `0`.

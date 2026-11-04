@@ -15,7 +15,7 @@ import (
 
 func TestDigestlessMetadataPromotesAfterSHAWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(db)
 	client := openScanEnqueueRiver(t, db)
@@ -67,7 +67,7 @@ func TestDigestlessMetadataPromotesAfterSHAWithPostgreSQL(t *testing.T) {
 
 func TestPromoteDigestlessMetadataLosingToCanonicalRewiresAndDeletes(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(db)
 	client := openScanEnqueueRiver(t, db)

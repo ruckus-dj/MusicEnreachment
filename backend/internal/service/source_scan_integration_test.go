@@ -87,7 +87,7 @@ func readSourceScanWorkIDs(t *testing.T, ctx context.Context, database *bun.DB, 
 
 func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	tree := t.TempDir()

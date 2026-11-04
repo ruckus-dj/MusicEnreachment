@@ -6,10 +6,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { JSDOM } from "jsdom";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InstallationResponse } from "../../api/generated/client.schemas";
+import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { SetupTools } from "./SetupTools";
 
@@ -52,10 +52,7 @@ function mockCatalogAndOperations(installations: InstallationResponse[]) {
 }
 
 beforeEach(() => {
-  vi.stubGlobal(
-    "localStorage",
-    new JSDOM("", { url: "http://localhost" }).window.localStorage,
-  );
+  vi.stubGlobal("localStorage", createMemoryStorage());
 });
 
 afterEach(() => {

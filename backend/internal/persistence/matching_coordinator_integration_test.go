@@ -24,7 +24,7 @@ import (
 
 func TestMatchingAcquisitionAdvancesArtistResponseToBrowseAtomicallyPostgres(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	const identity = "matching-acquisition-config"
@@ -192,7 +192,7 @@ func TestMatchingAcquisitionAdvancesArtistResponseToBrowseAtomicallyPostgres(t *
 
 func TestMatchingCoordinatorAdmissionIdempotencyAndFencesPostgres(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	const identity = "matching-admission-config"
@@ -420,7 +420,7 @@ func TestMatchingCoordinatorAdmissionIdempotencyAndFencesPostgres(t *testing.T) 
 
 func TestMatchingCoordinatorAdmissionRollsBackWhenRiverInsertFailsPostgres(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	const identity = "matching-admission-rollback-config"
@@ -476,7 +476,7 @@ func TestMatchingCoordinatorAdmissionRollsBackWhenRiverInsertFailsPostgres(t *te
 
 func TestMatchingCoordinatorConcurrentChildFailuresRecordOneWakeEachPostgres(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	const identity = "matching-concurrent-config"

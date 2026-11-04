@@ -12,7 +12,7 @@ import (
 
 func TestOutputAdmissionGateSharedAndExclusiveCoordination(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 
 	readerRelease, releaseReader := coordinationRelease(t)
 	readerAcquired := make(chan struct{})

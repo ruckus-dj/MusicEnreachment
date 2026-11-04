@@ -47,7 +47,7 @@ func (i *publicationAdmissionInserter) InsertTx(ctx context.Context, tx *sql.Tx,
 func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	initializeRiver(t, ctx, db)
 	positions := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
 	release, tracks := uuid.New(), []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}

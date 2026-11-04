@@ -117,7 +117,7 @@ func testSimpleAutomaticLyricsRetryDelivery(t *testing.T, mismatch, authorityRac
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	migrator, err := rivermigrate.New(riverdatabasesql.New(db.DB), nil)
 	if err != nil {
 		t.Fatal(err)

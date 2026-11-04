@@ -26,7 +26,7 @@ import (
 // failed apply leaves both inventory and links untouched.
 func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -215,7 +215,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 // scoped to the owning root.
 func TestSourceAnalysisDeletionCleanupWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 

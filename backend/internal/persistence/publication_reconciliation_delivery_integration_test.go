@@ -264,7 +264,7 @@ func (i *reconciliationDeliveryInserter) InsertTx(ctx context.Context, tx *sql.T
 func reconciliationDeliveryFixture(t *testing.T) (*SetupManagerRepository, context.Context, uuid.UUID, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	initializeRiver(t, ctx, db)
 	position, release, track := uuid.New(), uuid.New(), uuid.New()
 	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'reconciliation')`, release); err != nil {

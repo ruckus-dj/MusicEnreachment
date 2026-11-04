@@ -16,7 +16,7 @@ import (
 
 func TestAcoustIDCachePublicationFenceWaitsForAcceptedWriterPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	var source ProviderSource
 	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {

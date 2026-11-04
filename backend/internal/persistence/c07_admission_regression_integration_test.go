@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
-	"github.com/riverqueue/river/rivermigrate"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -27,7 +26,7 @@ import (
 // claimed by this fixture.
 func TestC07AdmissionAllowsOneInitialVersionPerPackage(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewSetupManagerRepository(db)
 	client := c07RiverClient(t, ctx, db)
@@ -64,7 +63,7 @@ func TestC07AdmissionAllowsOneInitialVersionPerPackage(t *testing.T) {
 
 func TestC07ConcurrentSamePackageAdmissionLeavesNoOrphans(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := persistence.NewSetupManagerRepository(db)
 	client := c07RiverClient(t, ctx, db)
@@ -96,16 +95,9 @@ func TestC07ConcurrentSamePackageAdmissionLeavesNoOrphans(t *testing.T) {
 	assertC07OnlyRows(t, ctx, db, 1, 1)
 }
 
-func c07RiverClient(t *testing.T, ctx context.Context, db *bun.DB) persistence.RiverInserter {
+func c07RiverClient(t *testing.T, _ context.Context, db *bun.DB) persistence.RiverInserter {
 	t.Helper()
 	driver := riverdatabasesql.New(db.DB)
-	migrator, err := rivermigrate.New(driver, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
-		t.Fatal(err)
-	}
 	client, err := river.NewClient(driver, &river.Config{})
 	if err != nil {
 		t.Fatal(err)

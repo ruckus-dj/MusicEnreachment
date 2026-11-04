@@ -14,7 +14,7 @@ import (
 
 func TestAttachTrackSourcePromotesOnlyTheConfirmedPairPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	variantID, trackID, otherTrackID := uuid.New(), uuid.New(), uuid.New()
 	associationID := uuid.New()

@@ -45,7 +45,8 @@ function source(url: string) {
     .reverse()
     .find(
       (instance) =>
-        new URL(instance.url, window.location.href).pathname === url,
+        new URL(instance.url, window.location.href).pathname === url &&
+        !instance.close.mock.calls.length,
     );
   if (!stream) throw new Error(`No EventSource for ${url}`);
   return stream;
@@ -270,6 +271,7 @@ describe("automatic source analysis after a successful scan", () => {
     fireEvent.click(
       await screen.findByRole("link", { name: location.relative_path }),
     );
+    await waitFor(() => expect(scanStream.close).toHaveBeenCalledOnce());
 
     // The location's active analysis ID is already persisted in REST; opening
     // the inspector must observe it rather than issue a new analysis request.
@@ -279,9 +281,11 @@ describe("automatic source analysis after a successful scan", () => {
     expect(
       await screen.findByText("Этап анализа поставлен в очередь."),
     ).toBeVisible();
-    const analysisStream = await waitFor(() =>
-      source("/api/operations/events"),
-    );
+    const analysisStream = await waitFor(() => {
+      const active = source("/api/operations/events");
+      if (active === scanStream) throw new Error("Inspector stream not opened");
+      return active;
+    });
     expect(analysisStarts).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("button", { name: /анализировать/i }),

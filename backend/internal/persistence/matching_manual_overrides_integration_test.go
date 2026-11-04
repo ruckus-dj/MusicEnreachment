@@ -16,7 +16,7 @@ import (
 
 func TestManualMatchingTrackOverridesAreLocalAndFencedPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)
@@ -167,7 +167,7 @@ func TestManualMatchingTrackOverridesAreLocalAndFencedPostgreSQL(t *testing.T) {
 
 func TestManualMatchingSequentialOverridesPreserveNestedKeysPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)

@@ -33,7 +33,7 @@ func (inserter providerOperationTestInserter) InsertTx(ctx context.Context, tx *
 
 func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewProviderCacheRepository(db)
 	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name, setting_value) VALUES('musicbrainz_config_identity', 'cfg-1') ON CONFLICT (setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`).Exec(ctx); err != nil {
@@ -278,7 +278,7 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 
 func TestProviderOperationDeliveryClaimIsAttemptFenced(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name, setting_value) VALUES('musicbrainz_config_identity', 'cfg-provider-op')`).Exec(ctx); err != nil {
 		t.Fatal(err)
@@ -391,7 +391,7 @@ func TestProviderOperationDeliveryClaimIsAttemptFenced(t *testing.T) {
 
 func TestProviderOperationAndRiverInsertRollbackTogether(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name, setting_value) VALUES('musicbrainz_config_identity', 'cfg-provider-rollback')`).Exec(ctx); err != nil {
 		t.Fatal(err)
@@ -459,7 +459,7 @@ func TestProviderOperationAndRiverInsertRollbackTogether(t *testing.T) {
 
 func TestProviderSourceProjectionAuthorityAndEndpointIsolation(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name, setting_value) VALUES('musicbrainz_config_identity', 'cfg-source') ON CONFLICT (setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`).Exec(ctx); err != nil {
 		t.Fatal(err)
@@ -595,7 +595,7 @@ func TestProviderSourceProjectionAuthorityAndEndpointIsolation(t *testing.T) {
 
 func TestMusicBrainzStableSourceIdentityAndConfigurationSwitchback(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	registry := settings.New(persistence.NewSettingsRepository(db), nil)
 	cache := persistence.NewProviderCacheRepository(db)

@@ -39,7 +39,7 @@ func sameSnapshotIntent(left, right json.RawMessage) bool {
 
 func TestOutputResetCancelsQueuedNormalizedAnalysisAndRetainsSuccesses(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	client := openScanEnqueueRiver(t, database)
 	manager := persistence.NewSetupManagerRepository(database)

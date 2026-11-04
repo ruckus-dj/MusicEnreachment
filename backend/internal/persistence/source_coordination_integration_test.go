@@ -19,7 +19,7 @@ const coordinationWaitTimeout = 5 * time.Second
 
 func TestSourceFingerprintMutationGatePrecedesRootLocks(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	root := &SourceRoot{ID: uuid.New(), ConfiguredPath: "/source/fingerprint-gate", DisplayName: "Fingerprint gate", Enabled: true}
 	if err := NewSourceInventoryRepository(database).CreateSourceRoot(ctx, root); err != nil {
@@ -65,7 +65,7 @@ func TestSourceFingerprintMutationGatePrecedesRootLocks(t *testing.T) {
 
 func TestToolsMoveGateWaitsForReadersAndRollbackReleases(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 
 	readerRelease, releaseReader := coordinationRelease(t)
 	readerAcquired := make(chan struct{})
@@ -114,7 +114,7 @@ func TestToolsMoveGateWaitsForReadersAndRollbackReleases(t *testing.T) {
 
 func TestPackageSelectionReadersShareAndActivationWaits(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	readerRelease, releaseReader := coordinationRelease(t)
 	readerAcquired := make(chan struct{})
 	reader := startCoordinationTransaction(t, database, func(ctx context.Context, tx bun.Tx) error {
@@ -146,7 +146,7 @@ func TestPackageSelectionReadersShareAndActivationWaits(t *testing.T) {
 
 func TestSourceRootAndInstallationRowCoordination(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	rootRepository := NewSourceInventoryRepository(database)
 	rootA := &SourceRoot{ID: uuid.New(), ConfiguredPath: "/source/a", DisplayName: "A", Enabled: true}
@@ -246,7 +246,7 @@ func TestSourceRootAndInstallationRowCoordination(t *testing.T) {
 
 func TestToolsRootsLockRequiresEveryRequestedRoot(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	rootRepository := NewSourceInventoryRepository(database)
 	root := &SourceRoot{ID: uuid.New(), ConfiguredPath: "/source/registered", DisplayName: "Registered", Enabled: true}

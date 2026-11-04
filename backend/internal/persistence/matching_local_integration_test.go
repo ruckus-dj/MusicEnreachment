@@ -14,7 +14,7 @@ import (
 
 func TestMatchingLocalConfirmIsAdditiveAndReplaysWithoutProviderUsePostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	// Reuse the analysis fixture's existing media identities; no provider
@@ -118,7 +118,7 @@ func TestMatchingLocalConfirmIsAdditiveAndReplaysWithoutProviderUsePostgreSQL(t 
 
 func TestMatchingLocalCanSelectOnlyPureLocalReleaseAndAddSources(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	media := make(map[uuid.UUID]uuid.UUID)

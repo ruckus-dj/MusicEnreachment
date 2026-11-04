@@ -18,7 +18,7 @@ import (
 
 func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/publish-analysis")
 	op := publishTestScan(t, ctx, db, root.ID)
@@ -112,7 +112,7 @@ func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 
 func TestPublishPreparedSourceScanAnalysisDefersMoveBlockedSteps(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/publish-deferred")
 	op := publishTestScan(t, ctx, db, root.ID)
@@ -178,7 +178,7 @@ func TestPublishPreparedSourceScanAnalysisDefersMoveBlockedSteps(t *testing.T) {
 
 func TestPublishPreparedSourceScanAnalysisDoesNotBackfillUnchangedWork(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/publish-unchanged")
 	op := publishTestScan(t, ctx, db, root.ID)
@@ -244,7 +244,7 @@ func TestPublishPreparedSourceScanAnalysisDoesNotBackfillUnchangedWork(t *testin
 
 func TestPreparedRescanPreservesMappedDigestlessWorkIdentity(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/publish-mapped-digestless")
 	op := publishTestScan(t, ctx, db, root.ID)
@@ -346,7 +346,7 @@ func TestPreparedRescanPreservesMappedDigestlessWorkIdentity(t *testing.T) {
 
 func TestPublishPreparedSourceScanAnalysisLocksSharedDigestsInOrder(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	rootA := publishTestRoot(t, ctx, db, "/srv/publish-order-a")
@@ -422,7 +422,7 @@ func TestPublishPreparedSourceScanAnalysisLocksSharedDigestsInOrder(t *testing.T
 
 func TestPublishPreparedSourceScanAnalysisOrdersRetainedAndNewDigests(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	rootA := publishTestRoot(t, ctx, db, "/srv/publish-retained-a")

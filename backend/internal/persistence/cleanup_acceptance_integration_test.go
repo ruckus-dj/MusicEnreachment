@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
-	"github.com/riverqueue/river/rivermigrate"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
@@ -49,7 +48,7 @@ func (cleanupAcceptanceArgs) Kind() string { return SourceAnalysisArtifactCleanu
 
 func TestCleanupAcceptanceAdmissionAndAtomicRollback(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repo := NewSetupManagerRepository(db)
 	artifactID := insertCleanupAcceptanceArtifact(t, ctx, db, SourceAnalysisArtifactCleanupEligible)
@@ -98,21 +97,16 @@ func TestCleanupAcceptanceAdmissionAndAtomicRollback(t *testing.T) {
 	}
 }
 
-func initializeRiver(t *testing.T, ctx context.Context, db *bun.DB) {
+func initializeRiver(t *testing.T, _ context.Context, db *bun.DB) {
 	t.Helper()
 	driver := riverdatabasesql.New(db.DB)
-	migrator, err := rivermigrate.New(driver, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
-		t.Fatal(err)
+	if _, err := river.NewClient(driver, &river.Config{}); err != nil {
+		t.Fatalf("create River client: %v", err)
 	}
 }
 
 func insertCleanupAcceptanceArtifact(t *testing.T, ctx context.Context, db *bun.DB, state string) uuid.UUID {
 	t.Helper()
-	initializeRiver(t, ctx, db)
 	rootID, locationID, workID, creatorID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	jobID := cleanupAcceptanceJobID.Add(1) + 700000
 	rootPath := "/cleanup-acceptance/" + uuid.NewString()

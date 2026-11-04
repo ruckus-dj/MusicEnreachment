@@ -37,7 +37,7 @@ func (artistReviewCachedProvider) PrepareOperation(context.Context, string, stri
 func TestAutomaticArtistSearchReviewIsPublishedFromAcceptedEmptyReceiptPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewSetupManagerRepository(db)
 	inventory := persistence.NewSourceInventoryRepository(db)
@@ -491,7 +491,7 @@ type automaticArtistReviewDelivery struct {
 func prepareAutomaticArtistReviewDelivery(t *testing.T, payload json.RawMessage) *automaticArtistReviewDelivery {
 	t.Helper()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	sourceFixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewSetupManagerRepository(db)
 	inventory := persistence.NewSourceInventoryRepository(db)

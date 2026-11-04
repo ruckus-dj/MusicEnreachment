@@ -79,7 +79,7 @@ func newAnalysisDispatchFixtureWithoutPendingWork(t *testing.T, processingMode s
 func newAnalysisDispatchFixtureConfigured(t *testing.T, preparer service.SourceAnalysisPreparing, processingMode string, sha256Enabled bool) analysisDispatchFixture {
 	t.Helper()
 	ctx := context.Background()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	databaseURL := testpostgres.URL(t, database)
 	settingsRepository := persistence.NewSettingsRepository(database)
 	toolsRoot := t.TempDir()

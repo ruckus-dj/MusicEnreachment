@@ -14,7 +14,7 @@ import (
 func TestPositionSourceAuthorityIsIndependentAndGenerationBoundPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
 	releaseID, trackID := uuid.New(), uuid.New()
 	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'authority fixture')`, releaseID); err != nil {

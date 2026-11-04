@@ -18,7 +18,7 @@ import (
 func TestReadLibraryRecordingSearchCacheConfigurationFenceAfterLockWait(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	identity := "recording-search-config-before"
 	providerID, sourceID, recordingKey := uuid.New(), uuid.New(), uuid.New().String()
 	recordingID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:recording:"+recordingKey))

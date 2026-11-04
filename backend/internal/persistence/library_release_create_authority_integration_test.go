@@ -75,7 +75,7 @@ func providerCreateRequest(f createProviderRecordingFixture, cover *persistence.
 
 func TestCreateStandaloneReleaseProviderRecordingAcceptedAuthorityPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	f := setupCreateProviderRecordingFixture(t, db, true)
 	result, err := persistence.NewLibraryRepository(db).CreateStandaloneRelease(ctx, providerCreateRequest(f, nil))
@@ -127,7 +127,7 @@ func TestCreateStandaloneReleaseProviderRecordingStaleConfigurationRejectsMapped
 	t.Parallel()
 	for _, mapped := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unmapped", true: "mapped"}[mapped], func(t *testing.T) {
-			db := testpostgres.OpenMigrated(t)
+			db := testpostgres.OpenMigratedWithRiver(t)
 			ctx := context.Background()
 			f := setupCreateProviderRecordingFixture(t, db, false)
 			var localID uuid.UUID
@@ -185,7 +185,7 @@ func TestCreateStandaloneReleaseProviderRecordingStaleConfigurationRejectsMapped
 
 func TestCreateStandaloneReleaseSavedCoverDigestFailureRollsBackProviderRecordingAuthorityPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	f := setupCreateProviderRecordingFixture(t, db, true)
 	coverID := uuid.New()

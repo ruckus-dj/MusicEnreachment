@@ -14,7 +14,7 @@ import (
 
 func TestIncomingGroupingCorrectionsCASAndInvalidationWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := NewIncomingGroupingRepository(db)
 	state, err := repository.State(ctx)

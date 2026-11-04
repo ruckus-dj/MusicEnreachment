@@ -107,8 +107,11 @@ tasks:
       - go build -o ../build/backend/ ./cmd/server
 
   test:
-    desc: Run backend, frontend, and tools tests concurrently
-    deps: [go:test, frontend:test, tools:test]
+    desc: Run test suites without oversubscribing backend and browser workers
+    cmds:
+      - task: go:test
+      - task: frontend:test
+      - task: tools:test
 
   frontend:test:
     internal: true

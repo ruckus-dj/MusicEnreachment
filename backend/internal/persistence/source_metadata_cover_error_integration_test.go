@@ -13,7 +13,7 @@ import (
 )
 
 func TestCanonicalMetadataRetainsAndReplacesOptionalCoverDiagnosticPostgreSQL(t *testing.T) {
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	digest := make([]byte, 32)
 	digest[0] = 1

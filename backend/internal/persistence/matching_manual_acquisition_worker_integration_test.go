@@ -23,7 +23,7 @@ import (
 
 func TestManualReleaseMatchingWorkerPublishesAcceptedLookupPostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	databaseURL := testpostgres.URL(t, db)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()

@@ -37,7 +37,7 @@ func (inserter *manualCacheReuseRiverInserter) InsertTx(ctx context.Context, tx 
 
 func TestManualLookupCacheReuseRunsProviderWorkerAndSealsExactResponsePostgreSQL(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	fixture := newIncomingMatchFixture(t, ctx, db)

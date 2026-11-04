@@ -17,7 +17,7 @@ import (
 
 func TestRecoverInterruptedNormalizedSourceAnalysisReturnsOnlyOwnedUnfinishedStepsToPendingWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -132,7 +132,7 @@ func TestRecoverInterruptedNormalizedSourceAnalysisReturnsOnlyOwnedUnfinishedSte
 
 func TestRecoverInterruptedNormalizedSourceAnalysisDoesNotClearLiveNewDeliveryWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -197,7 +197,7 @@ func TestRecoverInterruptedNormalizedSourceAnalysisDoesNotClearLiveNewDeliveryWi
 
 func TestRecoverInterruptedNormalizedSourceAnalysisCleansCompletedArtifactAfterCrashWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -265,7 +265,7 @@ func TestRecoverInterruptedNormalizedSourceAnalysisCleansCompletedArtifactAfterC
 
 func TestRecoverInterruptedNormalizedSourceAnalysisOldFenceCannotRetireNewBorrowerWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)

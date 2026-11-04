@@ -20,7 +20,7 @@ import (
 // delivered under the scan job kind instead of the generic operation kind.
 func TestScanRetryThroughTheOperationsServiceWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	inventory := persistence.NewSourceInventoryRepository(database)

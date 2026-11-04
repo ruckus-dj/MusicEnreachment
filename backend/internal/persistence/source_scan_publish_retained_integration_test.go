@@ -16,7 +16,7 @@ import (
 
 func TestApplySourceScanRetainsSelectedFingerprintAndClearsSupersededProbeIntent(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/retained-analysis")
 	previousScan := publishTestScan(t, ctx, db, root.ID)
@@ -81,7 +81,7 @@ func TestApplySourceScanRetainsSelectedFingerprintAndClearsSupersededProbeIntent
 
 func TestApplySourceScanRejectsForgedRetainedFingerprintAtomically(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/forged-retained-analysis")
 	previousScan := publishTestScan(t, ctx, db, root.ID)
@@ -140,7 +140,7 @@ func TestApplySourceScanRejectsForgedRetainedFingerprintAtomically(t *testing.T)
 
 func TestApplySourceScanUsesSHA256FingerprintCacheWithoutMutation(t *testing.T) {
 	t.Parallel()
-	db := testpostgres.OpenMigrated(t)
+	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/cached-retained-analysis")
 	previousScan := publishTestScan(t, ctx, db, root.ID)

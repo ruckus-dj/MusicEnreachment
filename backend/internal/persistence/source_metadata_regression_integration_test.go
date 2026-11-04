@@ -21,7 +21,7 @@ import (
 // or observation time; a later tag-only result cannot erase the complete capture.
 func TestSourceMetadataCoverObservationOutranksTagOnlyWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -118,7 +118,7 @@ func TestSourceMetadataCoverObservationOutranksTagOnlyWithPostgreSQL(t *testing.
 // after database timestamp precision normalization.
 func TestSourceMetadataEqualObservationTimeUsesGreatestUUIDWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)

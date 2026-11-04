@@ -21,7 +21,7 @@ import (
 
 func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -213,7 +213,7 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 
 func TestFingerprintPromotionAndDigestlessRerunSerializeAcrossRootsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -320,7 +320,7 @@ func TestFingerprintPromotionAndDigestlessRerunSerializeAcrossRootsWithPostgreSQ
 
 func TestSourceProbeCacheRegistersWhenSHACompletesFirstWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -366,7 +366,7 @@ func TestSourceProbeCacheRegistersWhenSHACompletesFirstWithPostgreSQL(t *testing
 
 func TestSourceFingerprintSelectionCleanupAfterRerunsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -469,7 +469,7 @@ func TestSourceFingerprintSelectionCleanupAfterRerunsWithPostgreSQL(t *testing.T
 
 func TestConcurrentSourceSHA256ApplyUsesOneCanonicalVariantWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -534,7 +534,7 @@ func TestFailedAnalysisStepRetryRetainsPriorSelectionWithPostgreSQL(t *testing.T
 	t.Parallel()
 	for _, step := range []persistence.SourceStepName{persistence.SourceStepProbe, persistence.SourceStepSHA256} {
 		t.Run(string(step), func(t *testing.T) {
-			database := testpostgres.OpenMigrated(t)
+			database := testpostgres.OpenMigratedWithRiver(t)
 			ctx := context.Background()
 			repository := persistence.NewSourceInventoryRepository(database)
 			root := createInventoryRoot(t, ctx, repository, "/srv/failed-step-"+string(step))
@@ -606,7 +606,7 @@ func TestFailedAnalysisStepRetryRetainsPriorSelectionWithPostgreSQL(t *testing.T
 
 func TestSuccessfulProbeRetryClearsPriorProbeFailureWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)

@@ -130,7 +130,7 @@ func holdSourceScanRetryRootDeletion(ctx context.Context, database *bun.DB, root
 // the previous successful inventory exactly as it was.
 func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
@@ -219,7 +219,7 @@ func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
 // its state and its candidates and no job is left behind.
 func TestSourceScanRetryIsAtomicWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
@@ -257,7 +257,7 @@ func TestSourceScanRetryIsAtomicWithPostgreSQL(t *testing.T) {
 // operation or drop the candidates of the failed attempt.
 func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
@@ -338,7 +338,7 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 // the scan instead of resurrecting a job for a root that is gone.
 func TestSourceScanRetrySerializesWithRootDeletionWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.OpenMigrated(t)
+	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
