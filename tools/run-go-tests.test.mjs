@@ -82,12 +82,29 @@ const passEvent = `${JSON.stringify({ Package: "p", Action: "pass", Elapsed: 0.2
 test("runner finalizes artifacts on success and includes the final JSON line", async (t) => {
 	const f = await fixture(t);
 	const fake = fakeProcess({ json: passEvent.trimEnd() });
+	let invokedWith;
 	const result = await runGoTests({
 		root: f.root,
-		spawnProcess: () => { process.nextTick(fake.finish); return fake.child; },
+		spawnProcess: (...args) => { invokedWith = args; process.nextTick(fake.finish); return fake.child; },
 		stdout: f.output,
 		stderr: f.errors,
 		propagateSignal: assert.fail,
+	});
+	assert.equal(invokedWith[0], "go");
+	assert.deepEqual(invokedWith[1], [
+		"test",
+		"-json",
+		"-tags=integration",
+		"-count=1",
+		"-p",
+		"2",
+		"-parallel",
+		"8",
+		"./...",
+	]);
+	assert.deepEqual(invokedWith[2], {
+		cwd: path.join(f.root, "backend"),
+		stdio: ["inherit", "pipe", "pipe"],
 	});
 	assert.equal(result.packages.p.status, "pass");
 	assert.equal((await readFile(path.join(f.root, "build/test-results/go.jsonl"), "utf8")), passEvent.trimEnd());

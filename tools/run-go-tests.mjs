@@ -107,7 +107,7 @@ export async function runGoTests({
 			"-tags=integration",
 			"-count=1",
 			"-p",
-			"8",
+			"2",
 			"-parallel",
 			"8",
 			"./...",
