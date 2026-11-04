@@ -118,52 +118,80 @@ func TestClaimPublicationSourceCleanupExplicitRetryDeliveryConcurrentPostgreSQL(
 
 func TestClaimPublicationSourceCleanupExplicitRetryDeliveryRejectsStaleBindingsPostgreSQL(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"setting off", "changed source", "wrong position", "wrong epoch", "wrong actual attempt", "old claim uuid"} {
-		t.Run(name, func(t *testing.T) {
-			ctx, fixture, repository, originalID, guard := admittedRunningCleanupRetry(t)
-			before := cleanupRetryRetainedEvidence(t, ctx, fixture, originalID)
-			switch name {
-			case "setting off":
-				_, err := fixture.db.NewRaw(`UPDATE app_setting SET setting_value='false' WHERE setting_name='publication_remove_sources'`).Exec(ctx)
-				if err != nil {
-					t.Fatal(err)
-				}
-			case "changed source":
-				_, err := fixture.db.NewRaw(`UPDATE source_location SET size_bytes=size_bytes+1 WHERE id=(SELECT source_location_id FROM source_cleanup_owner WHERE operation_id=? LIMIT 1)`, originalID).Exec(ctx)
-				if err != nil {
-					t.Fatal(err)
-				}
-			case "wrong position":
-				guard.PositionID = uuid.New()
-			case "wrong epoch":
-				guard.Epoch = uuid.New()
-			case "wrong actual attempt":
-				guard.RiverAttempt = 2
-			case "old claim uuid":
-				var oldClaim uuid.UUID
-				if err := fixture.db.NewRaw(`SELECT original_claim_uuid FROM source_cleanup_explicit_retry WHERE recovery_operation_id=?`, guard.OperationID).Scan(ctx, &oldClaim); err != nil {
-					t.Fatal(err)
-				}
-				guard.ClaimUUID = oldClaim
-			}
-			if outcome, err := repository.ClaimPublicationSourceCleanupExplicitRetryDelivery(ctx, guard); err != nil || outcome != PublicationDeliveryBlocked {
-				t.Fatalf("stale retry claim=%s,%v", outcome, err)
-			}
-			var grant SourceCleanupExplicitRetry
-			if err := fixture.db.NewSelect().Model(&grant).Where("recovery_operation_id=?", guard.OperationID).Scan(ctx); err != nil {
+	ctx, fixture, repository, originalID, guard := admittedRunningCleanupRetry(t)
+	before := cleanupRetryRetainedEvidence(t, ctx, fixture, originalID)
+	assertRejected := func(name string, stale PublicationSourceCleanupDeliveryGuard) {
+		t.Helper()
+		if outcome, err := repository.ClaimPublicationSourceCleanupExplicitRetryDelivery(ctx, stale); err != nil || outcome != PublicationDeliveryBlocked {
+			t.Fatalf("%s stale retry claim=%s,%v", name, outcome, err)
+		}
+		var grant SourceCleanupExplicitRetry
+		if err := fixture.db.NewSelect().Model(&grant).Where("recovery_operation_id=?", guard.OperationID).Scan(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var claims int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`, guard.OperationID).Scan(ctx, &claims); err != nil {
+			t.Fatal(err)
+		}
+		if grant.ConsumedApplicationAttempt != nil || grant.ConsumedRiverJobID != nil || grant.ConsumedClaimUUID != nil || claims != 0 {
+			t.Fatalf("%s stale claim mutated grant=%+v claim count=%d", name, grant, claims)
+		}
+		if got := cleanupRetryRetainedEvidence(t, ctx, fixture, originalID); got != before {
+			t.Fatalf("%s rejected claim changed original evidence:\nbefore %s\nafter  %s", name, before, got)
+		}
+	}
+	for _, alter := range []struct {
+		name   string
+		change func(*PublicationSourceCleanupDeliveryGuard)
+	}{
+		{"wrong position", func(g *PublicationSourceCleanupDeliveryGuard) { g.PositionID = uuid.New() }},
+		{"wrong epoch", func(g *PublicationSourceCleanupDeliveryGuard) { g.Epoch = uuid.New() }},
+		{"wrong actual attempt", func(g *PublicationSourceCleanupDeliveryGuard) { g.RiverAttempt++ }},
+		{"old claim uuid", func(g *PublicationSourceCleanupDeliveryGuard) {
+			var oldClaim uuid.UUID
+			if err := fixture.db.NewRaw(`SELECT original_claim_uuid FROM source_cleanup_explicit_retry WHERE recovery_operation_id=?`, guard.OperationID).Scan(ctx, &oldClaim); err != nil {
 				t.Fatal(err)
 			}
-			var claims int
-			if err := fixture.db.NewRaw(`SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`, guard.OperationID).Scan(ctx, &claims); err != nil {
-				t.Fatal(err)
-			}
-			if grant.ConsumedApplicationAttempt != nil || grant.ConsumedRiverJobID != nil || grant.ConsumedClaimUUID != nil || claims != 0 {
-				t.Fatalf("stale claim mutated grant=%+v claim count=%d", grant, claims)
-			}
-			if got := cleanupRetryRetainedEvidence(t, ctx, fixture, originalID); got != before {
-				t.Fatalf("rejected claim changed original evidence:\nbefore %s\nafter  %s", before, got)
-			}
-		})
+			g.ClaimUUID = oldClaim
+		}},
+	} {
+		stale := guard
+		alter.change(&stale)
+		assertRejected(alter.name, stale)
+	}
+	var setting string
+	if err := fixture.db.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='publication_remove_sources'`).Scan(ctx, &setting); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := fixture.db.NewRaw(`UPDATE app_setting SET setting_value='false' WHERE setting_name='publication_remove_sources'`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("disable source-removal permission affected %d rows: %v", rows, err)
+	}
+	assertRejected("permission disabled", guard)
+	if result, err := fixture.db.NewRaw(`UPDATE app_setting SET setting_value=? WHERE setting_name='publication_remove_sources'`, setting).Exec(ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("restore source-removal permission affected %d rows: %v", rows, err)
+	}
+	var locationID uuid.UUID
+	var size int64
+	if err := fixture.db.NewRaw(`SELECT l.id,l.size_bytes FROM source_location l JOIN source_cleanup_owner o ON o.source_location_id=l.id WHERE o.operation_id=? ORDER BY l.id LIMIT 1`, originalID).Scan(ctx, &locationID, &size); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := fixture.db.NewRaw(`UPDATE source_location SET size_bytes=size_bytes+1 WHERE id=?`, locationID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("mutate source fact affected %d rows: %v", rows, err)
+	}
+	assertRejected("changed source facts", guard)
+	if result, err := fixture.db.NewRaw(`UPDATE source_location SET size_bytes=? WHERE id=?`, size, locationID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("restore source fact affected %d rows: %v", rows, err)
+	}
+	if outcome, err := repository.ClaimPublicationSourceCleanupExplicitRetryDelivery(ctx, guard); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("claim restored valid baseline=%s,%v", outcome, err)
 	}
 }
 

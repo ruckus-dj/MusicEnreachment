@@ -18,6 +18,7 @@ import (
 )
 
 func TestNormalizedSourceAnalysisLifecycleScenariosWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	runNormalizedSourceAnalysisAdmissionClaimAndTerminalRelease(t, database)
 	runSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEvent(t, database)

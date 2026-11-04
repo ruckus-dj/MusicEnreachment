@@ -20,6 +20,7 @@ import (
 const unavailableSafeReason = "The configured source directory is unavailable or no longer readable. The previous inventory is unchanged."
 
 func TestSourceRootUnavailableLifecycleWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	for _, test := range []struct {
 		name string

@@ -90,64 +90,91 @@ func newRetryResolutionFixture(t *testing.T) retryResolutionFixture {
 		itemIDs: []uuid.UUID{items[0].ID, items[1].ID, items[2].ID}}
 }
 
-func TestResolvePublicationSourceCleanupRetryItemPersistsThreeResolutionKindsPostgreSQL(t *testing.T) {
+func TestPublicationSourceCleanupRetryResolutionLifecyclePostgreSQL(t *testing.T) {
 	t.Parallel()
 	f := newRetryResolutionFixture(t)
 	before := cleanupRetryRetainedEvidence(t, f.ctx, f.fixture, f.originalID)
-	for _, tc := range []struct {
-		itemID  uuid.UUID
-		outcome PublicationSourceCleanupNativeOutcome
-		err     error
-		want    string
-	}{
-		{itemID: f.itemIDs[0], want: "original_native_completed"},
-		{itemID: f.itemIDs[1], outcome: PublicationSourceCleanupNativeMissingLeaf, err: fs.ErrNotExist, want: "absent_after_explicit_retry"},
-		{itemID: f.itemIDs[2], outcome: PublicationSourceCleanupNativeRemoved, want: "native_removed"},
-	} {
-		calls := 0
-		var remove func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error)
-		if tc.itemID != f.itemIDs[0] {
-			remove = func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
-				calls++
-				return tc.outcome, tc.err
-			}
-		}
-		outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, tc.itemID, remove)
-		if err != nil || outcome != PublicationSourceCleanupRetryResolutionCompleted {
-			t.Fatalf("resolve %s=%s,%v", tc.want, outcome, err)
-		}
-		if (tc.itemID == f.itemIDs[0] && calls != 0) || (tc.itemID != f.itemIDs[0] && calls != 1) {
-			t.Fatalf("callback count for %s=%d", tc.want, calls)
-		}
-		var got string
-		if err := f.fixture.db.NewRaw(`SELECT resolution_kind FROM source_cleanup_explicit_retry_resolution WHERE item_id=?`, tc.itemID).Scan(f.ctx, &got); err != nil || got != tc.want {
-			t.Fatalf("resolution kind=%q err=%v; want %q", got, err, tc.want)
-		}
-		if tc.want == "absent_after_explicit_retry" {
-			var snapshotRaw []byte
-			if err := f.fixture.db.NewRaw(`SELECT source_snapshot FROM source_cleanup_item WHERE id=?`, tc.itemID).Scan(f.ctx, &snapshotRaw); err != nil {
-				t.Fatal(err)
-			}
-			var frozen publicationSourceCleanupSnapshot
-			if err := decodeStrictJSON(snapshotRaw, &frozen); err != nil {
-				t.Fatalf("decode frozen cleanup item: %v", err)
-			}
-			var markerKind string
-			var markerWorkID, markerLocationID uuid.UUID
-			if err := f.fixture.db.NewRaw(`SELECT kind,work_id,source_location_id FROM source_cleanup_completion WHERE work_id=?`, frozen.WorkID).Scan(f.ctx, &markerKind, &markerWorkID, &markerLocationID); err != nil || markerKind != tc.want || markerWorkID != frozen.WorkID || markerLocationID != frozen.SourceLocationID {
-				t.Fatalf("completion marker=(%q,%s,%s), err=%v; want absence for frozen work/location (%s,%s)", markerKind, markerWorkID, markerLocationID, err, frozen.WorkID, frozen.SourceLocationID)
-			}
-			var originalCompleted any
-			if err := f.fixture.db.NewRaw(`SELECT mutation_completed_at FROM source_cleanup_item WHERE id=?`, tc.itemID).Scan(f.ctx, &originalCompleted); err != nil || originalCompleted != nil {
-				t.Fatalf("original mutation completion=%v err=%v; explicit-retry absence must not complete the original mutation", originalCompleted, err)
-			}
-		}
-		if replay, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, tc.itemID, nil); err != nil || replay != PublicationSourceCleanupRetryResolutionAlreadyCompleted {
-			t.Fatalf("ack resolution replay=%s,%v", replay, err)
-		}
+	var removePermission string
+	if err := f.fixture.db.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='publication_remove_sources'`).Scan(f.ctx, &removePermission); err != nil {
+		t.Fatal(err)
 	}
+	// Permission-off still permits acknowledging completed original work, but it
+	// must not admit a native callback for unresolved work.
+	if _, err := f.fixture.db.NewRaw(`UPDATE app_setting SET setting_value='false' WHERE setting_name='publication_remove_sources'`).Exec(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	var callbacks int
+	remove := func(_ context.Context, _ PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
+		callbacks++
+		return PublicationSourceCleanupNativeRemoved, nil
+	}
+	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[0], nil); err != nil || outcome != PublicationSourceCleanupRetryResolutionCompleted {
+		t.Fatalf("acknowledge original completion=%s,%v", outcome, err)
+	}
+	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[0], remove); err != nil || outcome != PublicationSourceCleanupRetryResolutionAlreadyCompleted {
+		t.Fatalf("replay original completion acknowledgement=%s,%v", outcome, err)
+	}
+	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[1], remove); err != nil || outcome != PublicationSourceCleanupRetryResolutionBlocked {
+		t.Fatalf("permission-off resolution=%s,%v", outcome, err)
+	}
+	if callbacks != 0 {
+		t.Fatalf("permission-off callback count=%d", callbacks)
+	}
+	if _, err := f.fixture.db.NewRaw(`UPDATE app_setting SET setting_value=? WHERE setting_name='publication_remove_sources'`, removePermission).Exec(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[1], func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
+		callbacks++
+		return PublicationSourceCleanupNativeMissingLeaf, fs.ErrNotExist
+	}); err != nil || outcome != PublicationSourceCleanupRetryResolutionCompleted {
+		t.Fatalf("resolve disappeared uncertain source=%s,%v", outcome, err)
+	}
+	if callbacks != 1 {
+		t.Fatalf("absence callback count=%d", callbacks)
+	}
+	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[1], nil); err != nil || outcome != PublicationSourceCleanupRetryResolutionAlreadyCompleted {
+		t.Fatalf("replay absence acknowledgement=%s,%v", outcome, err)
+	}
+	var snapshotRaw []byte
+	if err := f.fixture.db.NewRaw(`SELECT source_snapshot FROM source_cleanup_item WHERE id=?`, f.itemIDs[1]).Scan(f.ctx, &snapshotRaw); err != nil {
+		t.Fatal(err)
+	}
+	var frozen publicationSourceCleanupSnapshot
+	if err := decodeStrictJSON(snapshotRaw, &frozen); err != nil {
+		t.Fatalf("decode frozen cleanup item: %v", err)
+	}
+	var markerKind string
+	var markerWorkID, markerLocationID uuid.UUID
+	if err := f.fixture.db.NewRaw(`SELECT kind,work_id,source_location_id FROM source_cleanup_completion WHERE work_id=?`, frozen.WorkID).Scan(f.ctx, &markerKind, &markerWorkID, &markerLocationID); err != nil || markerKind != "absent_after_explicit_retry" || markerWorkID != frozen.WorkID || markerLocationID != frozen.SourceLocationID {
+		t.Fatalf("absence marker=(%q,%s,%s), err=%v", markerKind, markerWorkID, markerLocationID, err)
+	}
+	if settled, err := f.repository.SettlePublicationSourceCleanupExplicitRetry(f.ctx, f.newGuard); err != nil || settled {
+		t.Fatalf("settle with an unresolved item=%t,%v", settled, err)
+	}
+	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[2], nil); err != nil || outcome != PublicationSourceCleanupRetryResolutionBlocked {
+		t.Fatalf("nil callback before native start=%s,%v", outcome, err)
+	}
+	var starts int
+	if err := f.fixture.db.NewRaw(`SELECT count(*) FROM source_cleanup_explicit_retry_resolution WHERE item_id=?`, f.itemIDs[2]).Scan(f.ctx, &starts); err != nil || starts != 0 {
+		t.Fatalf("nil callback created a resolution start: count=%d err=%v", starts, err)
+	}
+	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[2], remove); err != nil || outcome != PublicationSourceCleanupRetryResolutionCompleted {
+		t.Fatalf("remove never-started source=%s,%v", outcome, err)
+	}
+	if callbacks != 2 {
+		t.Fatalf("native callback count=%d; want absence and removal", callbacks)
+	}
+	// Resolutions must leave the retained original evidence intact; only the
+	// successful settlement below consumes it in place.
 	if got := cleanupRetryRetainedEvidence(t, f.ctx, f.fixture, f.originalID); got != before {
-		t.Fatalf("resolution mutated original cleanup evidence:\nbefore %s\nafter  %s", before, got)
+		t.Fatalf("recovery lifecycle mutated original cleanup evidence:\nbefore %s\nafter  %s", before, got)
+	}
+	if settled, err := f.repository.SettlePublicationSourceCleanupExplicitRetry(f.ctx, f.newGuard); err != nil || !settled {
+		t.Fatalf("settle fully resolved retry=%t,%v", settled, err)
+	}
+	assertRetrySettlementAuxiliaryGone(t, f)
+	if settled, err := f.repository.SettlePublicationSourceCleanupExplicitRetry(f.ctx, f.newGuard); err != nil || settled {
+		t.Fatalf("repeated settlement=%t,%v; want false,nil", settled, err)
 	}
 }
 
@@ -216,18 +243,6 @@ func TestResolvePublicationSourceCleanupRetryItemBlocksUnstartedAbsenceAndIncomp
 	}
 }
 
-func TestResolvePublicationSourceCleanupRetryItemRejectsNilCallbackBeforeStartPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newRetryResolutionFixture(t)
-	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[2], nil); outcome != PublicationSourceCleanupRetryResolutionBlocked || err != nil {
-		t.Fatalf("nil callback for unstarted item=%s,%v", outcome, err)
-	}
-	var starts int
-	if err := f.fixture.db.NewRaw(`SELECT count(*) FROM source_cleanup_explicit_retry_resolution WHERE item_id=?`, f.itemIDs[2]).Scan(f.ctx, &starts); err != nil || starts != 0 {
-		t.Fatalf("nil callback created a resolution start: count=%d err=%v", starts, err)
-	}
-}
-
 func TestResolvePublicationSourceCleanupRetryItemRequiresConsistentNativeOutcomePostgreSQL(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -258,34 +273,6 @@ func TestResolvePublicationSourceCleanupRetryItemRequiresConsistentNativeOutcome
 				t.Fatalf("inconsistent outcome frontier starts=%d completed=%d err=%v", starts, completed, err)
 			}
 		})
-	}
-}
-
-func TestResolvePublicationSourceCleanupRetryItemPermissionOffAllowsOnlyAcknowledgementsPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newRetryResolutionFixture(t)
-	if _, err := f.fixture.db.NewRaw(`UPDATE app_setting SET setting_value='false' WHERE setting_name='publication_remove_sources'`).Exec(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	callback := func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
-		calls++
-		return PublicationSourceCleanupNativeRemoved, nil
-	}
-	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[1], callback); outcome != PublicationSourceCleanupRetryResolutionBlocked || err != nil {
-		t.Fatalf("permission-off filesystem resolution=%s,%v", outcome, err)
-	}
-	if calls != 0 {
-		t.Fatalf("permission-off callback count=%d", calls)
-	}
-	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[0], nil); outcome != PublicationSourceCleanupRetryResolutionCompleted || err != nil {
-		t.Fatalf("original native completion acknowledgement=%s,%v", outcome, err)
-	}
-	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[0], callback); outcome != PublicationSourceCleanupRetryResolutionAlreadyCompleted || err != nil {
-		t.Fatalf("permission-off completed resolution acknowledgement=%s,%v", outcome, err)
-	}
-	if calls != 0 {
-		t.Fatalf("acknowledgement invoked callback: %d", calls)
 	}
 }
 

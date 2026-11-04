@@ -14,6 +14,7 @@ import (
 )
 
 func TestApplySourceEnumerationRegularLifecycleWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	for _, test := range []struct {
 		name string
@@ -30,6 +31,7 @@ func TestApplySourceEnumerationRegularLifecycleWithPostgreSQL(t *testing.T) {
 }
 
 func TestApplySourceEnumerationCleanupMarkerLifecycleWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	for _, test := range []struct {
 		name string

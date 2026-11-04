@@ -24,21 +24,107 @@ func failedPublicationSourceCleanupForRetry(t *testing.T) (context.Context, publ
 	return ctx, fixture, repository, guard, operationID
 }
 
-func TestAdmitPublicationSourceCleanupExplicitRetryBindsOwnerReturnedEvidencePostgreSQL(t *testing.T) {
+func TestAdmitPublicationSourceCleanupExplicitRetryRejectsThenBindsOwnerReturnedEvidencePostgreSQL(t *testing.T) {
 	t.Parallel()
-	ctx, fixture, repository, _, originalOperationID := failedPublicationSourceCleanupForRetry(t)
-	inserter := new(publicationSourceCleanupTestInserter)
-	before := cleanupRetryRetainedEvidence(t, ctx, fixture, originalOperationID)
-	var riverState string
-	if err := fixture.db.NewRaw(`SELECT j.state FROM river_job j JOIN operation o ON o.river_job_id=j.id WHERE o.id=?`, originalOperationID).Scan(ctx, &riverState); err != nil || riverState != "running" {
-		t.Fatalf("original job state before retry=%q err=%v; expected owner-returned but still-running job", riverState, err)
+	ctx, fixture, repository, guard, originalOperationID, _, _ := setupStartedCleanupRemoval(t)
+	assertBlocked := func(name string) {
+		t.Helper()
+		before := cleanupRetryRetainedEvidence(t, ctx, fixture, originalOperationID)
+		result, err := repository.AdmitPublicationSourceCleanupExplicitRetry(ctx, originalOperationID, new(publicationSourceCleanupTestInserter))
+		if err != nil || result.OperationID != uuid.Nil || len(result.Blockers) == 0 {
+			t.Fatalf("%s blocked retry = %+v, %v", name, result, err)
+		}
+		if after := cleanupRetryRetainedEvidence(t, ctx, fixture, originalOperationID); after != before {
+			t.Fatalf("%s rejection changed retained evidence:\nbefore %s\nafter  %s", name, before, after)
+		}
+		var grants int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM source_cleanup_explicit_retry WHERE original_operation_id=?`, originalOperationID).Scan(ctx, &grants); err != nil || grants != 0 {
+			t.Fatalf("%s rejection left %d retry grants: %v", name, grants, err)
+		}
 	}
-	result, err := repository.AdmitPublicationSourceCleanupExplicitRetry(ctx, originalOperationID, inserter)
-	if err != nil || result.OperationID == uuid.Nil || len(result.Blockers) != 0 {
-		t.Fatalf("explicit retry admission = %+v, %v", result, err)
+	// The executing claim independently blocks admission before native completion
+	// or owner return is recorded.
+	assertBlocked("claim still executing")
+	itemID := mustCleanupItemID(t, ctx, fixture, originalOperationID)
+	uncertain := errors.New("uncertain native result")
+	if outcome, err := repository.RemovePublicationSourceCleanupItem(ctx, guard, itemID, func(context.Context, PublicationSourceCleanupRemovalRequest) error { return uncertain }); outcome != PublicationSourceCleanupRemovalBlocked || !errors.Is(err, uncertain) {
+		t.Fatalf("persist uncertain removal=%s,%v", outcome, err)
+	}
+	if failed, err := repository.FailPublicationSourceCleanupDelivery(ctx, guard, "source removal outcome is unknown"); err != nil || !failed {
+		t.Fatalf("record owner return=%t,%v", failed, err)
+	}
+	before := cleanupRetryRetainedEvidence(t, ctx, fixture, originalOperationID)
+	var locationID uuid.UUID
+	var originalSize int64
+	if err := fixture.db.NewRaw(`SELECT l.id,l.size_bytes FROM source_location l JOIN source_cleanup_owner o ON o.source_location_id=l.id WHERE o.operation_id=? ORDER BY l.id LIMIT 1`, originalOperationID).Scan(ctx, &locationID, &originalSize); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := fixture.db.NewRaw(`UPDATE source_location SET size_bytes=size_bytes+1 WHERE id=?`, locationID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("mutate source facts affected %d rows: %v", rows, err)
+	}
+	assertBlocked("changed source facts")
+	if result, err := fixture.db.NewRaw(`UPDATE source_location SET size_bytes=? WHERE id=?`, originalSize, locationID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("restore source facts affected %d rows: %v", rows, err)
+	}
+	var mediaVariantID uuid.UUID
+	if err := fixture.db.NewRaw(`SELECT (source_snapshot->>'media_variant_id')::uuid FROM source_cleanup_item WHERE id=?`, itemID).Scan(ctx, &mediaVariantID); err != nil {
+		t.Fatal(err)
+	}
+	var links []struct {
+		ID       uuid.UUID `bun:"id"`
+		Selected bool      `bun:"selected"`
+	}
+	if err := fixture.db.NewRaw(`SELECT id,selected FROM track_source WHERE media_variant_id=? ORDER BY id`, mediaVariantID).Scan(ctx, &links); err != nil || len(links) == 0 {
+		t.Fatalf("read borrower links=%d: %v", len(links), err)
+	}
+	if result, err := fixture.db.NewRaw(`UPDATE track_source SET selected=NOT selected WHERE media_variant_id=?`, mediaVariantID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != int64(len(links)) {
+		t.Fatalf("mutate borrower links affected %d rows, want %d: %v", rows, len(links), err)
+	}
+	assertBlocked("changed borrower links")
+	for _, link := range links {
+		result, err := fixture.db.NewRaw(`UPDATE track_source SET selected=? WHERE id=?`, link.Selected, link.ID).Exec(ctx)
+		if err != nil {
+			t.Fatalf("restore borrower link %s: %v", link.ID, err)
+		}
+		if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+			t.Fatalf("restore borrower link %s affected %d rows: %v", link.ID, rows, err)
+		}
+	}
+	var permission string
+	if err := fixture.db.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='publication_remove_sources'`).Scan(ctx, &permission); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := fixture.db.NewRaw(`UPDATE app_setting SET setting_value='false' WHERE setting_name='publication_remove_sources'`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("disable cleanup permission affected %d rows: %v", rows, err)
+	}
+	assertBlocked("disabled permission")
+	if result, err := fixture.db.NewRaw(`UPDATE app_setting SET setting_value=? WHERE setting_name='publication_remove_sources'`, permission).Exec(ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("restore cleanup permission affected %d rows: %v", rows, err)
 	}
 	if got := cleanupRetryRetainedEvidence(t, ctx, fixture, originalOperationID); got != before {
-		t.Fatalf("admission rewrote original retained evidence:\nbefore %s\nafter  %s", before, got)
+		t.Fatalf("restored rejection baseline differs:\nbefore %s\nafter  %s", before, got)
+	}
+	var riverState string
+	if err := fixture.db.NewRaw(`SELECT j.state FROM river_job j JOIN operation o ON o.river_job_id=j.id WHERE o.id=?`, originalOperationID).Scan(ctx, &riverState); err != nil || riverState != "running" {
+		t.Fatalf("original River job state=%q err=%v; want retained running row", riverState, err)
+	}
+	inserter := new(publicationSourceCleanupTestInserter)
+	result, err := repository.AdmitPublicationSourceCleanupExplicitRetry(ctx, originalOperationID, inserter)
+	if err != nil || result.OperationID == uuid.Nil || len(result.Blockers) != 0 {
+		t.Fatalf("valid explicit retry admission=%+v,%v", result, err)
+	}
+	if got := cleanupRetryRetainedEvidence(t, ctx, fixture, originalOperationID); got != before {
+		t.Fatalf("admission rewrote retained original evidence:\nbefore %s\nafter  %s", before, got)
 	}
 	var kind string
 	var argsOnlyOperationID bool
@@ -46,7 +132,7 @@ func TestAdmitPublicationSourceCleanupExplicitRetryBindsOwnerReturnedEvidencePos
 		t.Fatal(err)
 	}
 	if kind != "retry_publication_sources_v1" || !argsOnlyOperationID {
-		t.Fatalf("retry job kind/args shape = %q/only operation id:%t", kind, argsOnlyOperationID)
+		t.Fatalf("retry job kind/args shape=%q/only operation id:%t", kind, argsOnlyOperationID)
 	}
 	var grants, boundItems int
 	if err := fixture.db.NewRaw(`SELECT count(*) FROM source_cleanup_explicit_retry WHERE recovery_operation_id=?`, result.OperationID).Scan(ctx, &grants); err != nil || grants != 1 {
@@ -61,51 +147,7 @@ func TestAdmitPublicationSourceCleanupExplicitRetryBindsOwnerReturnedEvidencePos
 	}
 	duplicate, err := repository.AdmitPublicationSourceCleanupExplicitRetry(ctx, originalOperationID, new(publicationSourceCleanupTestInserter))
 	if err != nil || duplicate.OperationID != uuid.Nil || len(duplicate.Blockers) == 0 {
-		t.Fatalf("duplicate retry = %+v, %v", duplicate, err)
-	}
-}
-
-func TestAdmitPublicationSourceCleanupExplicitRetryBlocksUnreturnedOrChangedEvidencePostgreSQL(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		mutate func(context.Context, publicationExecutionFixture, PublicationSourceCleanupDeliveryGuard, uuid.UUID) error
-	}{
-		{name: "claim still executing", mutate: func(context.Context, publicationExecutionFixture, PublicationSourceCleanupDeliveryGuard, uuid.UUID) error {
-			return nil
-		}},
-		{name: "changed source facts", mutate: func(ctx context.Context, fixture publicationExecutionFixture, _ PublicationSourceCleanupDeliveryGuard, operationID uuid.UUID) error {
-			_, err := fixture.db.NewRaw(`UPDATE source_location SET size_bytes=size_bytes+1 WHERE id=(SELECT source_location_id FROM source_cleanup_owner WHERE operation_id=? LIMIT 1)`, operationID).Exec(ctx)
-			return err
-		}},
-		{name: "changed borrower links", mutate: func(ctx context.Context, fixture publicationExecutionFixture, _ PublicationSourceCleanupDeliveryGuard, operationID uuid.UUID) error {
-			_, err := fixture.db.NewRaw(`UPDATE track_source SET selected=NOT selected WHERE media_variant_id=(SELECT (source_snapshot->>'media_variant_id')::uuid FROM source_cleanup_item WHERE operation_id=? LIMIT 1)`, operationID).Exec(ctx)
-			return err
-		}},
-		{name: "disabled permission", mutate: func(ctx context.Context, fixture publicationExecutionFixture, _ PublicationSourceCleanupDeliveryGuard, _ uuid.UUID) error {
-			_, err := fixture.db.NewRaw(`UPDATE app_setting SET setting_value='false' WHERE setting_name='publication_remove_sources'`).Exec(ctx)
-			return err
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx, fixture, repository, guard, originalOperationID, _, _ := setupStartedCleanupRemoval(t)
-			if tc.name != "claim still executing" {
-				if outcome, err := repository.RemovePublicationSourceCleanupItem(ctx, guard, mustCleanupItemID(t, ctx, fixture, originalOperationID), func(context.Context, PublicationSourceCleanupRemovalRequest) error { return errors.New("uncertain") }); outcome != PublicationSourceCleanupRemovalBlocked || err == nil {
-					t.Fatalf("create uncertain frontier = %v, %v", outcome, err)
-				}
-				failed, err := repository.FailPublicationSourceCleanupDelivery(ctx, guard, "source removal outcome is unknown")
-				if err != nil || !failed {
-					t.Fatalf("record owner return = %v, %v", failed, err)
-				}
-			}
-			if err := tc.mutate(ctx, fixture, guard, originalOperationID); err != nil {
-				t.Fatal(err)
-			}
-			result, err := repository.AdmitPublicationSourceCleanupExplicitRetry(ctx, originalOperationID, new(publicationSourceCleanupTestInserter))
-			if err != nil || result.OperationID != uuid.Nil || len(result.Blockers) == 0 {
-				t.Fatalf("blocked retry = %+v, %v", result, err)
-			}
-		})
+		t.Fatalf("duplicate retry=%+v,%v", duplicate, err)
 	}
 }
 

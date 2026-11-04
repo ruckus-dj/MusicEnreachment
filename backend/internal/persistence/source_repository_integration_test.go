@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 var deleteAttachedOperationID uuid.UUID
 
 func TestSourceRepositoryScanLifecycleWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	for _, test := range []struct {
 		name string
@@ -45,6 +47,7 @@ func TestSourceRepositoryScanLifecycleWithPostgreSQL(t *testing.T) {
 }
 
 func TestSourceRootDeletionLifecycleWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	for _, test := range []struct {
 		name string
@@ -58,6 +61,7 @@ func TestSourceRootDeletionLifecycleWithPostgreSQL(t *testing.T) {
 }
 
 func TestSourceScanEnqueueLifecycleWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	for _, test := range []struct {
 		name string
@@ -627,6 +631,96 @@ func runSourceRootDeletionRacesScanWithPostgreSQL(t *testing.T, database *bun.DB
 	}
 	if target == nil || *target != root.ID {
 		t.Fatalf("operation target after the refused deletion = %v, want %s", target, root.ID)
+	}
+
+	runSourceRootDeletionWinsScanAdmissionWithPostgreSQL(t, ctx, database, inventory)
+}
+
+func runSourceRootDeletionWinsScanAdmissionWithPostgreSQL(t *testing.T, ctx context.Context, database *bun.DB, inventory *persistence.SourceInventoryRepository) {
+	root := createInventoryRoot(t, ctx, inventory, "/srv/deletion-wins-scan-admission")
+	operationID := uuid.New()
+	client := openScanEnqueueRiver(t, database)
+	operation := scanEnqueueOperation(root, operationID)
+	operationsBefore := countScanEnqueueRows(t, ctx, database,
+		"SELECT count(*) FROM operation WHERE target_source_root_id = ?", root.ID)
+	jobsBefore := countScanEnqueueRows(t, ctx, database,
+		"SELECT count(*) FROM river_job WHERE kind = ? AND args->>'operation_id' = ?", service.SourceScanJobKind, operationID.String())
+
+	// Hold the same database root-row lock as deletion, then prove the real
+	// persistence enqueue is waiting on that lock before deleting and committing.
+	deleteTx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin deletion transaction: %v", err)
+	}
+	defer func() { _ = deleteTx.Rollback() }()
+	if _, err := deleteTx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(?, ?)", int32(0x4d545256), int32(4)); err != nil {
+		t.Fatalf("lock source fingerprint mutations: %v", err)
+	}
+	var deleteBackendPID int
+	if err := deleteTx.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&deleteBackendPID); err != nil {
+		t.Fatalf("read deletion transaction backend pid: %v", err)
+	}
+	var lockedRoot uuid.UUID
+	if err := deleteTx.QueryRowContext(ctx, "SELECT id FROM source_root WHERE id = ? FOR UPDATE", root.ID).Scan(&lockedRoot); err != nil {
+		t.Fatalf("lock source root for deletion: %v", err)
+	}
+
+	enqueueCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	enqueueResult := make(chan error, 1)
+	enqueueStarted := make(chan struct{})
+	go func() {
+		close(enqueueStarted)
+		enqueueResult <- inventory.CreateSourceScanOperationAndEnqueue(enqueueCtx, operation, client,
+			service.ScanSourceJobArgs{OperationID: operation.ID}, nil)
+	}()
+	<-enqueueStarted
+	if err := waitForSourceRootLockWaiter(enqueueCtx, database, deleteBackendPID); err != nil {
+		t.Fatalf("wait for scan admission to block behind deletion: %v", err)
+	}
+	if _, err := deleteTx.ExecContext(ctx, "DELETE FROM source_root WHERE id = ?", root.ID); err != nil {
+		t.Fatalf("delete locked source root: %v", err)
+	}
+	if err := deleteTx.Commit(); err != nil {
+		t.Fatalf("commit source root deletion: %v", err)
+	}
+	if err := <-enqueueResult; err == nil {
+		t.Fatal("scan admission succeeded after the blocking deletion committed")
+	}
+
+	if count := countScanEnqueueRows(t, ctx, database,
+		"SELECT count(*) FROM source_root WHERE id = ?", root.ID); count != 0 {
+		t.Fatalf("deleted source root %s count = %d, want 0", root.ID, count)
+	}
+	if count := countScanEnqueueRows(t, ctx, database,
+		"SELECT count(*) FROM operation WHERE target_source_root_id = ?", root.ID); count != operationsBefore {
+		t.Fatalf("scan operations for deleted root %s = %d, want baseline %d", root.ID, count, operationsBefore)
+	}
+	if count := countScanEnqueueRows(t, ctx, database,
+		"SELECT count(*) FROM river_job WHERE kind = ? AND args->>'operation_id' = ?", service.SourceScanJobKind, operationID.String()); count != jobsBefore {
+		t.Fatalf("River jobs for refused scan operation %s = %d, want baseline %d", operationID, count, jobsBefore)
+	}
+}
+
+func waitForSourceRootLockWaiter(ctx context.Context, database *bun.DB, blockerPID int) error {
+	for {
+		var waiting bool
+		err := database.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE ? = ANY(pg_blocking_pids(pid))
+			  AND datname = current_database()
+			  AND wait_event_type = 'Lock'
+		)`, blockerPID).Scan(ctx, &waiting)
+		if err != nil {
+			return fmt.Errorf("inspect PostgreSQL lock wait: %w", err)
+		}
+		if waiting {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("timed out waiting for PostgreSQL lock wait: %w", err)
+		}
+		runtime.Gosched()
 	}
 }
 

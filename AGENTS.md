@@ -249,6 +249,10 @@ prose was moved into docs/app-design-react/.
 - The minimal MSYS2 toolchain does not include every Unix utility (`cmp` is
   absent). Compare SDK package manifests with Bash builtins instead of adding
   an undeclared command dependency after an expensive native build.
+- When removing integration-test files, retain helpers referenced by other
+  tagged tests, including both internal and external test packages. Check
+  references for every helper declared in the deleted file; moving a test to
+  mocks must not remove shared River inserters or transaction-lock helpers.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 

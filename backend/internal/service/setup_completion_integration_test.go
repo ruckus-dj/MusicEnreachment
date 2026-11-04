@@ -4,17 +4,17 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/api"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -103,133 +103,42 @@ func TestInitialOutputResetDirectoriesDoNotBlockSetupCompletion(t *testing.T) {
 
 func setupCompletionStringPointer(value string) *string { return &value }
 
-func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
-	// The unfiltered process-global probe hook must not overlap other tests.
+func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if _, err := w.Write([]byte(`{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da"}`)); err != nil {
-			t.Error(err)
+	type responseGate struct {
+		started chan struct{}
+		release chan struct{}
+	}
+	gates := make(chan responseGate, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gate := <-gates
+		close(gate.started)
+		select {
+		case <-gate.release:
+			_, err := w.Write([]byte(`{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da"}`))
+			if err != nil {
+				t.Error(err)
+			}
+		case <-r.Context().Done():
 		}
 	}))
 	defer server.Close()
-	setup, registry, _ := completionFixture(t, database, server.URL+"/ws/2", time.Now)
-	output, _, err := registry.GetOutputDirectory(ctx)
+	setup, registry, store := completionFixture(t, database, server.URL+"/ws/2", time.Now)
+	output, _, err := registry.GetOutputDirectory(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	entered, release := make(chan struct{}), make(chan struct{})
-	var releaseOnce sync.Once
-	releaseProbe := func() { releaseOnce.Do(func() { close(release) }) }
-	defer releaseProbe()
-	var pause sync.Once
-	registered := make(chan string, 4)
-	restoreRegistration := settings.SetProbeDirectoryRegistrationHook(func(path string) {
-		if path == output {
-			registered <- path
-		}
-	})
-	defer restoreRegistration()
-	restore := settings.SetProbeFilesystemSemanticsHook(func() {
-		pause.Do(func() { close(entered); <-release })
-	})
-	defer restore()
-	stateDone := make(chan error, 1)
-	go func() { _, err := setup.State(ctx); stateDone <- err }()
-	select {
-	case <-registered: // State has registered before entering the paused probe.
-	case <-ctx.Done():
-		t.Fatal("state did not register for the output guard")
-	}
-	select {
-	case <-entered:
-	case <-ctx.Done():
-		t.Fatal("state did not reach the filesystem probe seam")
-	}
-	entries, err := os.ReadDir(output)
-	if err != nil || len(entries) != 5 {
-		t.Fatalf("semantics probe entries are not present while paused: %v, %v", entries, err)
-	}
-
-	completeDone := make(chan error, 1)
-	go func() { completeDone <- setup.Complete(ctx) }()
-	select {
-	case <-registered: // Complete has registered and is now waiting on State's guard.
-	case <-ctx.Done():
-		t.Fatal("completion did not register for the output guard")
-	}
-	saveDone := make(chan error, 1)
-	go func() {
-		saveDone <- setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{OutputDirectory: &output})
-	}()
-	select {
-	case <-registered:
-	case <-ctx.Done():
-		t.Fatal("runtime save did not register for the output guard")
-	}
-	validateDone := make(chan error, 1)
-	go func() {
-		_, err := setup.ValidatePaths(ctx, "", "")
-		validateDone <- err
-	}()
-	select {
-	case <-registered:
-	case <-ctx.Done():
-		t.Fatal("path validation did not register for the output guard")
-	}
-	restoreRegistration()
-	releaseProbe()
-
-	for name, result := range map[string]<-chan error{
-		"state": stateDone, "complete": completeDone, "save runtime": saveDone, "validate paths": validateDone,
-	} {
-		select {
-		case err := <-result:
-			if err != nil {
-				t.Errorf("%s: %v", name, err)
-			}
-		case <-ctx.Done():
-			t.Errorf("%s remained blocked: %v", name, ctx.Err())
-		}
-	}
-	if _, err := settings.ProbeOutputDirectory(output, false); err != nil {
-		t.Fatalf("probe retry after concurrent setup operations: %v", err)
-	}
-	entries, err = os.ReadDir(output)
-	if err != nil || len(entries) != 4 {
-		t.Fatalf("concurrent probes left artifacts: %v, %v", entries, err)
-	}
-}
-
-func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
-	t.Parallel()
 	for _, change := range []string{"musicbrainz identity", "runtime setting", "active installation verification", "output directory changed"} {
 		t.Run(change, func(t *testing.T) {
 			// Given: all requirements are healthy, but the final HTTP response is held.
-			database := testpostgres.OpenMigratedWithRiver(t)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			started, release := make(chan struct{}), make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				close(started)
-				select {
-				case <-release:
-					_, err := w.Write([]byte(`{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da"}`))
-					if err != nil {
-						t.Error(err)
-					}
-				case <-r.Context().Done():
-				}
-			}))
-			defer server.Close()
-			defer close(release)
-			setup, registry, store := completionFixture(t, database, server.URL+"/ws/2", time.Now)
+			gate := responseGate{started: make(chan struct{}), release: make(chan struct{})}
+			gates <- gate
 			result := make(chan error, 1)
 			go func() { result <- setup.Complete(ctx) }()
 			select {
-			case <-started:
+			case <-gate.started:
 			case err := <-result:
 				t.Fatalf("completion returned without the final connectivity check: %v", err)
 			case <-ctx.Done():
@@ -245,7 +154,15 @@ func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 				format := "source"
 				err = setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{PublicationFormat: &format})
 			case "active installation verification":
-				_, err = database.ExecContext(ctx, "UPDATE tool_installation SET executable_verification_output = '{}' WHERE package_kind = 'ffmpeg'")
+				var mutationResult sql.Result
+				mutationResult, err = database.ExecContext(ctx, "UPDATE tool_installation SET executable_verification_output = '{}' WHERE package_kind = 'ffmpeg'")
+				if err == nil {
+					var changed int64
+					changed, err = mutationResult.RowsAffected()
+					if err == nil && changed != 1 {
+						err = fmt.Errorf("verification mutation changed %d rows, want 1", changed)
+					}
+				}
 			case "output directory changed":
 				newOutput := filepath.Join(t.TempDir(), "new-output")
 				err = setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{OutputDirectory: &newOutput})
@@ -253,11 +170,7 @@ func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 			if err != nil {
 				t.Fatalf("configuration write was blocked by the connectivity check: %v", err)
 			}
-			select {
-			case release <- struct{}{}:
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			}
+			close(gate.release)
 
 			// Then: the checked generation cannot complete the changed requirements.
 			select {
@@ -277,84 +190,28 @@ func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 					t.Fatalf("stale check verified current configuration: %+v, %v", current, err)
 				}
 			}
-		})
-	}
-}
-
-func TestCompleteHTTPRequiresCurrentMusicBrainzResponse(t *testing.T) {
-	t.Parallel()
-	for _, response := range []struct {
-		name, body string
-		wantStatus int
-	}{
-		{"missing response", "", http.StatusConflict},
-		{"missing artist", `{}`, http.StatusConflict},
-		{"success", `{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da"}`, http.StatusNoContent},
-	} {
-		t.Run(response.name, func(t *testing.T) {
-			// Given: a previously verified configuration and a controlled endpoint.
-			database := testpostgres.OpenMigratedWithRiver(t)
-			requests := make(chan string, 1)
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests <- r.URL.RequestURI()
-				if _, err := w.Write([]byte(response.body)); err != nil {
-					t.Error(err)
+			switch change {
+			case "musicbrainz identity":
+				if err := setup.SaveMusicBrainz(ctx, "self-hosted", server.URL+"/ws/2"); err != nil {
+					t.Fatal(err)
 				}
-			}))
-			defer upstream.Close()
-			setup, _, store := completionFixture(t, database, upstream.URL+"/ws/2", time.Now)
-			handler := api.HandlerWithSetup(setup)
-
-			// When: the actual completion endpoint receives its final command.
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/setup/complete", nil))
-
-			// Then: the new response, not the stored success, gates completion.
-			if recorder.Code != response.wantStatus {
-				t.Fatalf("completion status = %d, want %d: %s", recorder.Code, response.wantStatus, recorder.Body)
-			}
-			select {
-			case route := <-requests:
-				if route != "/ws/2/artist/5b11f4ce-a62d-471e-81fc-a69a8278c7da?fmt=json" {
-					t.Fatalf("unexpected connectivity route: %s", route)
+				if err := registry.MarkMusicBrainzVerified(ctx); err != nil {
+					t.Fatal(err)
 				}
-			default:
-				t.Fatal("completion did not check the current MusicBrainz endpoint")
-			}
-			_, completed, err := store.Get(t.Context(), settings.SetupCompletedAtKey)
-			if err != nil || completed != (response.wantStatus == http.StatusNoContent) {
-				t.Fatalf("completion persisted=%v, err=%v", completed, err)
+			case "runtime setting":
+				format := "mka"
+				if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{PublicationFormat: &format}); err != nil {
+					t.Fatal(err)
+				}
+			case "active installation verification":
+				if _, err := database.ExecContext(ctx, "UPDATE tool_installation SET executable_verification_output = '{\"ffmpeg\":\"ffmpeg version 8.0 build\",\"ffprobe\":\"ffprobe version 8.0 build\"}' WHERE package_kind = 'ffmpeg'"); err != nil {
+					t.Fatal(err)
+				}
+			case "output directory changed":
+				if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{OutputDirectory: &output}); err != nil {
+					t.Fatal(err)
+				}
 			}
 		})
-	}
-}
-
-func TestCompletePreservesOriginalTimestamp(t *testing.T) {
-	t.Parallel()
-	// Given: a reachable endpoint and a clock advanced after initial completion.
-	database := testpostgres.OpenMigratedWithRiver(t)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if _, err := w.Write([]byte(`{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da"}`)); err != nil {
-			t.Error(err)
-		}
-	}))
-	defer upstream.Close()
-	first := time.Date(2026, 9, 28, 12, 0, 0, 123, time.UTC)
-	now := first
-	setup, _, store := completionFixture(t, database, upstream.URL, func() time.Time { return now })
-	if err := setup.Complete(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	now = now.Add(time.Hour)
-
-	// When: completion is requested again.
-	if err := setup.Complete(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Then: the original fact remains immutable.
-	value, exists, err := store.Get(t.Context(), settings.SetupCompletedAtKey)
-	if err != nil || !exists || value != first.Format(time.RFC3339Nano) {
-		t.Fatalf("original timestamp replaced: value=%q, exists=%v, err=%v", value, exists, err)
 	}
 }

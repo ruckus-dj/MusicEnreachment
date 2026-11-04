@@ -20,6 +20,7 @@ import (
 )
 
 func TestSourceAnalysisApplyCacheAndRetryLifecycleWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	runSourceAnalysisStepAppliesAndPromotion(t, database)
 	runSourceProbeCacheRegistersWhenSHACompletesFirst(t, database)
@@ -29,6 +30,7 @@ func TestSourceAnalysisApplyCacheAndRetryLifecycleWithPostgreSQL(t *testing.T) {
 }
 
 func TestSourceAnalysisConcurrentPromotionAndCanonicalApplyWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	runFingerprintPromotionAndDigestlessRerunSerializeAcrossRoots(t, database)
 	runConcurrentSourceSHA256ApplyUsesOneCanonicalVariant(t, database)

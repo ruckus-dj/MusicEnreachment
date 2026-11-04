@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ func (successfulMusicBrainzCheck) CheckConnectivity(context.Context, string, str
 }
 
 type mockSettingsStore struct {
+	mu   sync.Mutex
 	data map[string]string
 }
 
@@ -30,16 +32,22 @@ func newMockStore() *mockSettingsStore {
 }
 
 func (m *mockSettingsStore) Get(_ context.Context, key string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	val, ok := m.data[key]
 	return val, ok, nil
 }
 
 func (m *mockSettingsStore) Set(_ context.Context, key, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.data[key] = value
 	return nil
 }
 
 func (m *mockSettingsStore) SetMany(_ context.Context, values map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for key, value := range values {
 		m.data[key] = value
 	}
@@ -47,6 +55,8 @@ func (m *mockSettingsStore) SetMany(_ context.Context, values map[string]string)
 }
 
 func (m *mockSettingsStore) SetIfAbsent(_ context.Context, key, value string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, exists := m.data[key]; !exists {
 		m.data[key] = value
 		return value, nil
@@ -55,17 +65,23 @@ func (m *mockSettingsStore) SetIfAbsent(_ context.Context, key, value string) (s
 }
 
 func (m *mockSettingsStore) CompleteSetupIfCurrent(ctx context.Context, expected map[string]string, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for key, checked := range expected {
 		if m.data[key] != checked {
 			return errors.New("setup configuration changed during final check")
 		}
 	}
 	m.data[settings.MusicBrainzVerifiedAtKey] = value
-	_, err := m.SetIfAbsent(ctx, settings.SetupCompletedAtKey, value)
-	return err
+	if _, exists := m.data[settings.SetupCompletedAtKey]; !exists {
+		m.data[settings.SetupCompletedAtKey] = value
+	}
+	return nil
 }
 
 func (m *mockSettingsStore) InitializePlatform(_ context.Context, goos, goarch string) (string, string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	persistedOS, hasOS := m.data[settings.PlatformGOOSKey]
 	persistedArch, hasArch := m.data[settings.PlatformGOARCHKey]
 	if hasOS != hasArch {
@@ -77,6 +93,15 @@ func (m *mockSettingsStore) InitializePlatform(_ context.Context, goos, goarch s
 		return goos, goarch, true, nil
 	}
 	return persistedOS, persistedArch, true, nil
+}
+
+func (m *mockSettingsStore) UpdateRuntime(_ context.Context, _, _ string, values map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, value := range values {
+		m.data[key] = value
+	}
+	return nil
 }
 
 func TestCheckMusicBrainz_PublicMode_Success(t *testing.T) {

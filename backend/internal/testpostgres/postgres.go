@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,6 +47,9 @@ var process struct {
 	resources     []string
 	cleanups      []func() error
 
+	familiesMu sync.Mutex
+	families   map[string]int
+
 	createdTest     atomic.Int64
 	createdTemplate atomic.Int64
 	dropAttempts    atomic.Int64
@@ -63,6 +67,7 @@ func Open(t *testing.T) *bun.DB {
 	name := resourcePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, "")
 	process.createdTest.Add(1)
+	recordFamily(t.Name())
 	registerResource(name)
 	databaseURL := databaseURL(t, name)
 	database, err := openPool(databaseURL)
@@ -104,6 +109,7 @@ func openTemplate(t *testing.T, withRiver bool) *bun.DB {
 	name := resourcePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, template)
 	process.createdTest.Add(1)
+	recordFamily(t.Name())
 	registerResource(name)
 	database, err := openPool(databaseURL(t, name))
 	if err != nil {
@@ -155,7 +161,47 @@ func Run(m *testing.M) int {
 		time.Duration(process.createNanos.Load()).Round(time.Millisecond),
 		time.Duration(process.dropNanos.Load()).Round(time.Millisecond),
 		process.createdTemplate.Load(), process.dropAttempts.Load())
+	if families := largestFixtureFamilies(); families != "" {
+		fmt.Fprintf(os.Stderr, "testpostgres: largest_fixture_families=%s\n", families)
+	}
 	return code
+}
+
+func recordFamily(name string) {
+	name, _, _ = strings.Cut(name, "/")
+	process.familiesMu.Lock()
+	defer process.familiesMu.Unlock()
+	if process.families == nil {
+		process.families = make(map[string]int)
+	}
+	process.families[name]++
+}
+
+func largestFixtureFamilies() string {
+	process.familiesMu.Lock()
+	counts := make(map[string]int, len(process.families))
+	for name, count := range process.families {
+		counts[name] = count
+	}
+	process.familiesMu.Unlock()
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if counts[names[i]] != counts[names[j]] {
+			return counts[names[i]] > counts[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	if len(names) > 10 {
+		names = names[:10]
+	}
+	parts := make([]string, len(names))
+	for index, name := range names {
+		parts[index] = fmt.Sprintf("%s:%d", name, counts[name])
+	}
+	return strings.Join(parts, ",")
 }
 
 // Reset replaces the public schema without applying migrations.

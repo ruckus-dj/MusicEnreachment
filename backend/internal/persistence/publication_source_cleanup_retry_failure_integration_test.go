@@ -170,6 +170,7 @@ func TestFailPublicationSourceCleanupExplicitRetryDeliveryRejectsFrozenItemMisma
 
 func TestFailPublicationSourceCleanupExplicitRetryDeliveryRejectsStaleIdentityPostgreSQL(t *testing.T) {
 	t.Parallel()
+	f := newRetryResolutionFixture(t)
 	for _, alter := range []struct {
 		name   string
 		change func(*PublicationSourceCleanupDeliveryGuard)
@@ -180,18 +181,18 @@ func TestFailPublicationSourceCleanupExplicitRetryDeliveryRejectsStaleIdentityPo
 		{"epoch", func(g *PublicationSourceCleanupDeliveryGuard) { g.Epoch = uuid.New() }},
 		{"river attempt", func(g *PublicationSourceCleanupDeliveryGuard) { g.RiverAttempt++ }},
 	} {
-		t.Run(alter.name, func(t *testing.T) {
-			f := newRetryResolutionFixture(t)
-			guard := f.newGuard
-			alter.change(&guard)
-			if failed, err := f.repository.FailPublicationSourceCleanupExplicitRetryDelivery(f.ctx, guard, "safe failure"); err != nil || failed {
-				t.Fatalf("stale guard=%t,%v", failed, err)
-			}
-			var state string
-			if err := f.fixture.db.NewRaw(`SELECT state FROM operation WHERE id=?`, f.newGuard.OperationID).Scan(f.ctx, &state); err != nil || state != "running" {
-				t.Fatalf("operation state=%q err=%v", state, err)
-			}
-		})
+		guard := f.newGuard
+		alter.change(&guard)
+		if failed, err := f.repository.FailPublicationSourceCleanupExplicitRetryDelivery(f.ctx, guard, "safe failure"); err != nil || failed {
+			t.Fatalf("%s stale guard=%t,%v", alter.name, failed, err)
+		}
+		var state, claimState string
+		if err := f.fixture.db.NewRaw(`SELECT state FROM operation WHERE id=?`, f.newGuard.OperationID).Scan(f.ctx, &state); err != nil || state != "running" {
+			t.Fatalf("%s operation state=%q err=%v", alter.name, state, err)
+		}
+		if err := f.fixture.db.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=?`, f.newGuard.OperationID).Scan(f.ctx, &claimState); err != nil || claimState != "executing" {
+			t.Fatalf("%s claim state=%q err=%v", alter.name, claimState, err)
+		}
 	}
 }
 

@@ -53,8 +53,13 @@ func (fixture *releaseCoverRepositoryFixture) SetPendingReleaseCover(_ context.C
 
 func releaseCoverPNG(t *testing.T) []byte {
 	t.Helper()
+	return releaseCoverPNGFilled(t, color.White)
+}
+
+func releaseCoverPNGFilled(t *testing.T, fill color.Color) []byte {
+	t.Helper()
 	imageData := image.NewRGBA(image.Rect(0, 0, 1, 1))
-	imageData.Set(0, 0, color.White)
+	imageData.Set(0, 0, fill)
 	var data bytes.Buffer
 	if err := png.Encode(&data, imageData); err != nil {
 		t.Fatal(err)
@@ -64,10 +69,12 @@ func releaseCoverPNG(t *testing.T) []byte {
 
 func TestReleaseCoverSaveCreatesPendingWithoutChangingSelected(t *testing.T) {
 	releaseID := uuid.New()
+	selectedGeneration := uuid.New()
 	selected := []byte("selected")
-	fixture := &releaseCoverRepositoryFixture{cover: persistence.ReleaseCover{ReleaseID: releaseID, Revision: 4, Mode: "automatic", SelectedBytes: selected}}
+	fixture := &releaseCoverRepositoryFixture{cover: persistence.ReleaseCover{ReleaseID: releaseID, Revision: 4, Mode: "automatic", SelectedGeneration: &selectedGeneration, SelectedBytes: selected}}
 	service := NewReleaseCovers(fixture)
-	result, err := service.Save(context.Background(), releaseID, 4, releaseCoverPNG(t), "image/png")
+	saved := releaseCoverPNG(t)
+	result, err := service.Save(context.Background(), releaseID, 4, saved, "image/png")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +84,27 @@ func TestReleaseCoverSaveCreatesPendingWithoutChangingSelected(t *testing.T) {
 	if !bytes.Equal(fixture.selectedBefore, selected) {
 		t.Fatal("save modified selected cover")
 	}
-	if result.SelectedGeneration != nil {
-		t.Fatal("save assigned a selected generation")
+	if result.SelectedGeneration == nil || *result.SelectedGeneration != selectedGeneration {
+		t.Fatal("save changed the selected generation")
+	}
+	revisionBefore := fixture.cover.Revision
+	selectedGenerationBefore := *fixture.cover.SelectedGeneration
+	selectedBytesBefore := append([]byte(nil), fixture.cover.SelectedBytes...)
+	pendingGenerationBefore := *fixture.cover.PendingGeneration
+	pendingBytesBefore := append([]byte(nil), fixture.cover.PendingBytes...)
+	stale := releaseCoverPNGFilled(t, color.Black)
+	if bytes.Equal(stale, saved) {
+		t.Fatal("stale save must use different image bytes")
+	}
+	if _, err := service.Save(context.Background(), releaseID, 4, stale, "image/png"); !IsLibraryReleaseCoverConflict(err) {
+		t.Fatalf("stale save error = %v, want conflict", err)
+	}
+	if fixture.setCalls != 2 || fixture.cover.Revision != revisionBefore ||
+		fixture.cover.SelectedGeneration == nil || *fixture.cover.SelectedGeneration != selectedGenerationBefore ||
+		!bytes.Equal(fixture.cover.SelectedBytes, selectedBytesBefore) ||
+		fixture.cover.PendingGeneration == nil || *fixture.cover.PendingGeneration != pendingGenerationBefore ||
+		!bytes.Equal(fixture.cover.PendingBytes, pendingBytesBefore) {
+		t.Fatalf("stale save changed cover authority: calls=%d cover=%+v", fixture.setCalls, fixture.cover)
 	}
 }
 

@@ -389,4 +389,21 @@ func TestSourceScanStartDoesNotBlameTheRootForAnUnrelatedValidationFailure(t *te
 			t.Fatalf("the active-scan conflict recorded %+v, want the root untouched", fixture.repository.unavailable)
 		}
 	})
+	t.Run("enqueue failure propagates", func(t *testing.T) {
+		fixture := newSourceScanStartFixture(t, &sourceScanSetupFixture{completed: true}, supportedScanStartPlatform())
+		want := errors.New("River insert failed")
+		fixture.repository.enqueueErr = want
+
+		operation, err := fixture.scans.Start(ctx, fixture.root.ID)
+
+		if !errors.Is(err, want) {
+			t.Fatalf("start with a failed enqueue = %+v, %v; want original error %v", operation, err, want)
+		}
+		if operation != nil || len(fixture.repository.operations) != 0 {
+			t.Fatalf("failed enqueue returned %+v and stored %+v, want no operation", operation, fixture.repository.operations)
+		}
+		if len(fixture.repository.unavailable) != 0 {
+			t.Fatalf("failed enqueue reported root unavailable: %+v", fixture.repository.unavailable)
+		}
+	})
 }

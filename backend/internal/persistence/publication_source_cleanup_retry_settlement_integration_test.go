@@ -111,95 +111,107 @@ func TestSettlePublicationSourceCleanupExplicitRetryPostgreSQL(t *testing.T) {
 
 func TestSettlePublicationSourceCleanupExplicitRetryRejectsIncompleteOrStaleEvidencePostgreSQL(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name    string
-		prepare func(*testing.T, retryResolutionFixture)
-		guard   func(retryResolutionFixture) PublicationSourceCleanupDeliveryGuard
-	}{
-		{name: "incomplete", prepare: func(*testing.T, retryResolutionFixture) {}, guard: func(f retryResolutionFixture) PublicationSourceCleanupDeliveryGuard { return f.newGuard }},
-		{name: "missing resolution", prepare: func(t *testing.T, f retryResolutionFixture) {
-			for _, itemID := range f.itemIDs[:2] {
-				var remove func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error)
-				if itemID == f.itemIDs[1] {
-					remove = func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
-						return PublicationSourceCleanupNativeMissingLeaf, fs.ErrNotExist
-					}
-				}
-				if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, itemID, remove); err != nil || outcome != PublicationSourceCleanupRetryResolutionCompleted {
-					t.Fatalf("resolve partial frontier=%s,%v", outcome, err)
-				}
-			}
-		}, guard: func(f retryResolutionFixture) PublicationSourceCleanupDeliveryGuard { return f.newGuard }},
-		{name: "started but incomplete resolution", prepare: func(t *testing.T, f retryResolutionFixture) {
-			// The first two resolutions are complete; leave the third at its durable
-			// started frontier by returning an ambiguous callback failure.
-			for _, itemID := range f.itemIDs[:2] {
-				remove := func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
-					return PublicationSourceCleanupNativeRemoved, nil
-				}
-				if itemID == f.itemIDs[1] {
-					if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, itemID, func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
-						return PublicationSourceCleanupNativeMissingLeaf, fs.ErrNotExist
-					}); err != nil || outcome != PublicationSourceCleanupRetryResolutionCompleted {
-						t.Fatalf("resolve second frontier=%s,%v", outcome, err)
-					}
-					continue
-				}
-				if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, itemID, remove); err != nil || outcome != PublicationSourceCleanupRetryResolutionCompleted {
-					t.Fatalf("resolve first frontier=%s,%v", outcome, err)
-				}
-			}
-			uncertain := errors.New("native callback outcome is uncertain")
-			if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[2], func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
-				return PublicationSourceCleanupNativeUnresolved, uncertain
-			}); outcome != PublicationSourceCleanupRetryResolutionBlocked || !errors.Is(err, uncertain) {
-				t.Fatalf("leave third frontier started=%s,%v", outcome, err)
-			}
-		}, guard: func(f retryResolutionFixture) PublicationSourceCleanupDeliveryGuard { return f.newGuard }},
-		{name: "stale River attempt", prepare: func(t *testing.T, f retryResolutionFixture) {
-			resolveAllRetryItems(t, f)
-			if _, err := f.fixture.db.NewRaw(`UPDATE river_job SET attempt=attempt+1 WHERE id=?`, f.newGuard.RiverJobID).Exec(f.ctx); err != nil {
-				t.Fatal(err)
-			}
-		}, guard: func(f retryResolutionFixture) PublicationSourceCleanupDeliveryGuard { return f.newGuard }},
-		{name: "stale River state", prepare: func(t *testing.T, f retryResolutionFixture) {
-			resolveAllRetryItems(t, f)
-			if _, err := f.fixture.db.NewRaw(`UPDATE river_job SET state='available' WHERE id=?`, f.newGuard.RiverJobID).Exec(f.ctx); err != nil {
-				t.Fatal(err)
-			}
-		}, guard: func(f retryResolutionFixture) PublicationSourceCleanupDeliveryGuard { return f.newGuard }},
-		{name: "stale River arguments", prepare: func(t *testing.T, f retryResolutionFixture) {
-			resolveAllRetryItems(t, f)
-			if _, err := f.fixture.db.NewRaw(`UPDATE river_job SET args=jsonb_build_object('operation_id',?) WHERE id=?`, uuid.New().String(), f.newGuard.RiverJobID).Exec(f.ctx); err != nil {
-				t.Fatal(err)
-			}
-		}, guard: func(f retryResolutionFixture) PublicationSourceCleanupDeliveryGuard { return f.newGuard }},
-		{name: "stale guard", prepare: func(t *testing.T, f retryResolutionFixture) { resolveAllRetryItems(t, f) }, guard: func(f retryResolutionFixture) PublicationSourceCleanupDeliveryGuard {
-			g := f.newGuard
-			g.ClaimUUID = uuid.New()
-			return g
-		}},
-		{name: "changed source facts", prepare: func(t *testing.T, f retryResolutionFixture) {
-			resolveAllRetryItems(t, f)
-			if _, err := f.fixture.db.NewRaw(`UPDATE source_location SET size_bytes=size_bytes+1 WHERE id=(SELECT source_location_id FROM source_cleanup_owner WHERE operation_id=? LIMIT 1)`, f.originalID).Exec(f.ctx); err != nil {
-				t.Fatal(err)
-			}
-		}, guard: func(f retryResolutionFixture) PublicationSourceCleanupDeliveryGuard { return f.newGuard }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			f := newRetryResolutionFixture(t)
-			tc.prepare(t, f)
-			before := retrySettlementAuxiliaryEvidence(t, f)
-			settled, err := f.repository.SettlePublicationSourceCleanupExplicitRetry(f.ctx, tc.guard(f))
-			if settled || err != nil {
-				t.Fatalf("settlement=%t,%v; want false,nil", settled, err)
-			}
-			if after := retrySettlementAuxiliaryEvidence(t, f); after != before {
-				t.Fatalf("rejection mutated evidence\nbefore %s\nafter %s", before, after)
-			}
-		})
+	f := newRetryResolutionFixture(t)
+	resolveAllRetryItems(t, f)
+	before := retrySettlementAuxiliaryEvidence(t, f)
+	assertRejected := func(name string, guard PublicationSourceCleanupDeliveryGuard) {
+		t.Helper()
+		settled, err := f.repository.SettlePublicationSourceCleanupExplicitRetry(f.ctx, guard)
+		if settled || err != nil {
+			t.Fatalf("%s settlement=%t,%v; want false,nil", name, settled, err)
+		}
+		if after := retrySettlementAuxiliaryEvidence(t, f); after != before {
+			t.Fatalf("%s rejection mutated evidence\nbefore %s\nafter %s", name, before, after)
+		}
 	}
+	for _, alter := range []struct {
+		name   string
+		change func(*PublicationSourceCleanupDeliveryGuard)
+	}{
+		{"stale claim", func(g *PublicationSourceCleanupDeliveryGuard) { g.ClaimUUID = uuid.New() }},
+		{"stale boot", func(g *PublicationSourceCleanupDeliveryGuard) { g.BootUUID = uuid.New() }},
+		{"stale token", func(g *PublicationSourceCleanupDeliveryGuard) { g.DeliveryToken += "-stale" }},
+		{"stale epoch", func(g *PublicationSourceCleanupDeliveryGuard) { g.Epoch = uuid.New() }},
+		{"stale River attempt guard", func(g *PublicationSourceCleanupDeliveryGuard) { g.RiverAttempt++ }},
+	} {
+		guard := f.newGuard
+		alter.change(&guard)
+		assertRejected(alter.name, guard)
+	}
+	var originalState string
+	var originalAttempt int
+	var originalArgs string
+	if err := f.fixture.db.NewRaw(`SELECT state,attempt,args FROM river_job WHERE id=?`, f.newGuard.RiverJobID).Scan(f.ctx, &originalState, &originalAttempt, &originalArgs); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate string
+		args   []any
+	}{
+		{"stale River attempt", `UPDATE river_job SET attempt=attempt+1 WHERE id=?`, []any{f.newGuard.RiverJobID}},
+		{"stale River state", `UPDATE river_job SET state='available' WHERE id=?`, []any{f.newGuard.RiverJobID}},
+		{"stale River arguments", `UPDATE river_job SET args=jsonb_build_object('operation_id',?) WHERE id=?`, []any{uuid.NewString(), f.newGuard.RiverJobID}},
+	} {
+		if _, err := f.fixture.db.NewRaw(tc.mutate, tc.args...).Exec(f.ctx); err != nil {
+			t.Fatalf("mutate %s: %v", tc.name, err)
+		}
+		assertRejected(tc.name, f.newGuard)
+		result, err := f.fixture.db.NewRaw(`UPDATE river_job SET state=?,attempt=?,args=?::jsonb WHERE id=?`, originalState, originalAttempt, originalArgs, f.newGuard.RiverJobID).Exec(f.ctx)
+		if err != nil {
+			t.Fatalf("restore River job after %s: %v", tc.name, err)
+		}
+		if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+			t.Fatalf("restore River job after %s affected %d rows: %v", tc.name, rows, err)
+		}
+	}
+	var locationID uuid.UUID
+	var originalSize int64
+	if err := f.fixture.db.NewRaw(`SELECT l.id,l.size_bytes FROM source_location l JOIN source_cleanup_owner o ON o.source_location_id=l.id WHERE o.operation_id=? ORDER BY l.id LIMIT 1`, f.originalID).Scan(f.ctx, &locationID, &originalSize); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.fixture.db.NewRaw(`UPDATE source_location SET size_bytes=size_bytes+1 WHERE id=?`, locationID).Exec(f.ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("mutate source fact affected %d rows: %v", rows, err)
+	}
+	assertRejected("changed source facts", f.newGuard)
+	if result, err := f.fixture.db.NewRaw(`UPDATE source_location SET size_bytes=? WHERE id=?`, originalSize, locationID).Exec(f.ctx); err != nil {
+		t.Fatal(err)
+	} else if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("restore source fact affected %d rows: %v", rows, err)
+	}
+	if settled, err := f.repository.SettlePublicationSourceCleanupExplicitRetry(f.ctx, f.newGuard); err != nil || !settled {
+		t.Fatalf("settle restored valid baseline=%t,%v", settled, err)
+	}
+
+	incomplete := newRetryResolutionFixture(t)
+	assertIncomplete := func(name string) {
+		t.Helper()
+		settled, err := incomplete.repository.SettlePublicationSourceCleanupExplicitRetry(incomplete.ctx, incomplete.newGuard)
+		if err != nil || settled {
+			t.Fatalf("%s settlement=%t,%v; want false,nil", name, settled, err)
+		}
+	}
+	assertIncomplete("initial missing resolutions")
+	for _, itemID := range incomplete.itemIDs[:2] {
+		var remove func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error)
+		if itemID == incomplete.itemIDs[1] {
+			remove = func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
+				return PublicationSourceCleanupNativeMissingLeaf, fs.ErrNotExist
+			}
+		}
+		if outcome, err := incomplete.repository.ResolvePublicationSourceCleanupRetryItem(incomplete.ctx, incomplete.newGuard, itemID, remove); err != nil || outcome != PublicationSourceCleanupRetryResolutionCompleted {
+			t.Fatalf("resolve incomplete fixture item=%s: %s,%v", itemID, outcome, err)
+		}
+	}
+	uncertain := errors.New("native callback outcome is uncertain")
+	if outcome, err := incomplete.repository.ResolvePublicationSourceCleanupRetryItem(incomplete.ctx, incomplete.newGuard, incomplete.itemIDs[2], func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
+		return PublicationSourceCleanupNativeUnresolved, uncertain
+	}); outcome != PublicationSourceCleanupRetryResolutionBlocked || !errors.Is(err, uncertain) {
+		t.Fatalf("leave third resolution started=%s,%v", outcome, err)
+	}
+	assertIncomplete("started but incomplete resolution")
 }
 
 func TestSettlePublicationSourceCleanupExplicitRetryConcurrentPostgreSQL(t *testing.T) {

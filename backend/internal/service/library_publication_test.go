@@ -54,7 +54,7 @@ func (libraryPublicationsTestRiver) InsertTx(context.Context, *sql.Tx, river.Job
 }
 
 func TestLibraryPublicationsApplyManualLyrics(t *testing.T) {
-	const lyrics = "[00:01.00]first\r\n[00:02.00]second\r\n"
+	const lyrics = "[00:01.00]Привет — 世界\r\n[00:02.50]♫ café\r\n"
 	for _, test := range []struct {
 		name, state, value string
 		wantManualState    string
@@ -108,7 +108,7 @@ func TestLibraryPublicationsApplyManualLyrics(t *testing.T) {
 			if inputs.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC || inputs.Rewrite.AudioFacts.Codec != "flac" || inputs.Rewrite.AudioFacts.Lossless == nil || !*inputs.Rewrite.AudioFacts.Lossless || !inputs.Rewrite.AudioFacts.SupportedSourceContainer {
 				t.Fatalf("rewrite audio facts = %+v", inputs.Rewrite.AudioFacts)
 			}
-			if len(inputs.Tools) != 2 {
+			if len(inputs.Tools) != 2 || inputs.Tools[0].Executable != "ffmpeg" || inputs.Tools[1].Executable != "ffprobe" {
 				t.Fatalf("frozen tools = %+v", inputs.Tools)
 			}
 		})
