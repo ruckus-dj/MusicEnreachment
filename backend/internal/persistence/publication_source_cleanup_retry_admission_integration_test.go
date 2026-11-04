@@ -4,15 +4,46 @@ package persistence
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
+
+func TestPublicationSourceCleanupRetryScenariosPostgreSQL(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigratedWithRiver(t)
+	for _, scenario := range []struct {
+		name string
+		run  func(*testing.T, *bun.DB)
+	}{
+		{"admission binds evidence", testAdmitPublicationSourceCleanupExplicitRetryRejectsThenBindsOwnerReturnedEvidencePostgreSQL},
+		{"admission rolls back actual River insert", testAdmitPublicationSourceCleanupExplicitRetryRollsBackActualRiverInsertErrorPostgreSQL},
+		{"retry delivery acquires and replays", testClaimPublicationSourceCleanupExplicitRetryDeliveryAcquiresAndReplaysPostgreSQL},
+		{"retry delivery concurrent claim", testClaimPublicationSourceCleanupExplicitRetryDeliveryConcurrentPostgreSQL},
+		{"retry delivery rejects stale bindings", testClaimPublicationSourceCleanupExplicitRetryDeliveryRejectsStaleBindingsPostgreSQL},
+		{"retry delivery commit rollback", testClaimPublicationSourceCleanupExplicitRetryDeliveryCommitFailureRollsBackPostgreSQL},
+		{"retry advisory state", testReadPublicationSourceCleanupExplicitRetryStatePostgreSQL},
+		{"removal concurrent callback", testRemovePublicationSourceCleanupItemConcurrentSingleCallbackPostgreSQL},
+		{"removal uncertain commit", testRemovePublicationSourceCleanupItemDeferredCommitFailureDoesNotRetryPostgreSQL},
+		{"removal permission frontier", testRemovePublicationSourceCleanupItemRechecksPermissionAfterFrontierPostgreSQL},
+	} {
+		t.Run(scenario.name, func(t *testing.T) { scenario.run(t, db) })
+	}
+}
 
 func failedPublicationSourceCleanupForRetry(t *testing.T) (context.Context, publicationExecutionFixture, *SetupManagerRepository, PublicationSourceCleanupDeliveryGuard, uuid.UUID) {
 	t.Helper()
-	ctx, fixture, repository, guard, operationID, itemID, _ := setupStartedCleanupRemoval(t)
+	return failedPublicationSourceCleanupForRetryWithDatabase(t, nil, "")
+}
+
+func failedPublicationSourceCleanupForRetryWithDatabase(t *testing.T, db *bun.DB, scope string) (context.Context, publicationExecutionFixture, *SetupManagerRepository, PublicationSourceCleanupDeliveryGuard, uuid.UUID) {
+	t.Helper()
+	ctx, fixture, repository, guard, operationID, itemID, _ := setupStartedCleanupRemovalWithDatabase(t, db, scope)
 	removeErr := errors.New("unlink result is uncertain")
 	if outcome, err := repository.RemovePublicationSourceCleanupItem(ctx, guard, itemID, func(context.Context, PublicationSourceCleanupRemovalRequest) error { return removeErr }); outcome != PublicationSourceCleanupRemovalBlocked || !errors.Is(err, removeErr) {
 		t.Fatalf("persist started failure frontier = %v, %v", outcome, err)
@@ -24,9 +55,30 @@ func failedPublicationSourceCleanupForRetry(t *testing.T) (context.Context, publ
 	return ctx, fixture, repository, guard, operationID
 }
 
-func TestAdmitPublicationSourceCleanupExplicitRetryRejectsThenBindsOwnerReturnedEvidencePostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, fixture, repository, guard, originalOperationID, _, _ := setupStartedCleanupRemoval(t)
+func preservePublicationRemoveSourcesSetting(t *testing.T, db *bun.DB) {
+	t.Helper()
+	ctx := context.Background()
+	var value string
+	err := db.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='publication_remove_sources'`).Scan(ctx, &value)
+	present := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if present {
+			if _, err := db.NewRaw(`UPDATE app_setting SET setting_value=? WHERE setting_name='publication_remove_sources'`, value).Exec(ctx); err != nil {
+				t.Errorf("restore publication_remove_sources: %v", err)
+			}
+		} else if _, err := db.NewRaw(`DELETE FROM app_setting WHERE setting_name='publication_remove_sources'`).Exec(ctx); err != nil {
+			t.Errorf("remove publication_remove_sources setting: %v", err)
+		}
+	})
+}
+
+func testAdmitPublicationSourceCleanupExplicitRetryRejectsThenBindsOwnerReturnedEvidencePostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, fixture, repository, guard, originalOperationID, _, _ := setupStartedCleanupRemovalWithDatabase(t, db, scope)
 	assertBlocked := func(name string) {
 		t.Helper()
 		before := cleanupRetryRetainedEvidence(t, ctx, fixture, originalOperationID)
@@ -151,30 +203,39 @@ func TestAdmitPublicationSourceCleanupExplicitRetryRejectsThenBindsOwnerReturned
 	}
 }
 
-func TestAdmitPublicationSourceCleanupExplicitRetryRollsBackActualRiverInsertErrorPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, fixture, repository, _, originalOperationID := failedPublicationSourceCleanupForRetry(t)
-	var before int
-	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='retry_publication_sources_v1'`).Scan(ctx, &before); err != nil {
-		t.Fatal(err)
-	}
+func testAdmitPublicationSourceCleanupExplicitRetryRollsBackActualRiverInsertErrorPostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, fixture, repository, _, originalOperationID := failedPublicationSourceCleanupForRetryWithDatabase(t, db, scope)
 	inserter := &publicationSourceCleanupTestInserter{err: errors.New("injected after actual River insert")}
 	result, err := repository.AdmitPublicationSourceCleanupExplicitRetry(ctx, originalOperationID, inserter)
 	if err == nil || result.OperationID != uuid.Nil || inserter.args == nil {
 		t.Fatalf("injected actual River insert failure = %+v,%v args=%#v", result, err, inserter.args)
 	}
+	raw, err := json.Marshal(inserter.args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attempted struct {
+		OperationID uuid.UUID `json:"operation_id"`
+	}
+	if err := json.Unmarshal(raw, &attempted); err != nil || attempted.OperationID == uuid.Nil {
+		t.Fatalf("decode attempted recovery operation: args=%s err=%v", raw, err)
+	}
 	var after, grants, operations int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='retry_publication_sources_v1' AND args->>'operation_id'=?`, attempted.OperationID.String()).Scan(ctx, &after); err != nil {
+		t.Fatal(err)
+	}
 	for query, destination := range map[string]*int{
-		`SELECT count(*) FROM river_job WHERE kind='retry_publication_sources_v1'`: &after,
-		`SELECT count(*) FROM source_cleanup_explicit_retry`:                       &grants,
-		`SELECT count(*) FROM operation WHERE kind='retry_publication_sources_v1'`: &operations,
+		`SELECT count(*) FROM source_cleanup_explicit_retry WHERE original_operation_id=?`:                                        &grants,
+		`SELECT count(*) FROM operation WHERE kind='retry_publication_sources_v1' AND input_snapshot->>'original_operation_id'=?`: &operations,
 	} {
-		if err := fixture.db.NewRaw(query).Scan(ctx, destination); err != nil {
+		if err := fixture.db.NewRaw(query, originalOperationID).Scan(ctx, destination); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if after != before || grants != 0 || operations != 0 {
-		t.Fatalf("failed admission left river jobs=%d grants=%d recovery operations=%d (prior jobs=%d)", after, grants, operations, before)
+	if after != 0 || grants != 0 || operations != 0 {
+		t.Fatalf("failed admission left river jobs=%d grants=%d recovery operations=%d", after, grants, operations)
 	}
 }
 

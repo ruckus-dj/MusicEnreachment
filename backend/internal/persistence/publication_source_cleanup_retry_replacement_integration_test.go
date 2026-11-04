@@ -19,9 +19,8 @@ import (
 // This covers the replacement frontier's complete owner-return boundary. The
 // retry callback is allowed to start but not complete; only after its failure
 // has been persisted by the owner may its successor consume that uncertainty.
-func TestReplacePublicationSourceCleanupExplicitRetryAdvancesOwnerReturnedFrontierPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newRetryResolutionFixture(t)
+func retryReplacementOwnerReturnedScenario(t *testing.T, db *bun.DB, scope string) {
+	f := newRetryResolutionFixtureWithDatabase(t, db, scope)
 	baseline := cleanupRetryRetainedEvidence(t, f.ctx, f.fixture, f.originalID)
 	oldRecoveryID := f.newGuard.OperationID
 	oldGuard := f.newGuard
@@ -157,9 +156,8 @@ func TestReplacePublicationSourceCleanupExplicitRetryAdvancesOwnerReturnedFronti
 // A second owner can itself return with an incomplete native removal. The
 // next owner must preserve both prior acknowledgements and the new uncertainty
 // until every current frontier item has been explicitly resolved.
-func TestReplacePublicationSourceCleanupExplicitRetryPreservesTwoReplacementFrontierPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newRetryResolutionFixture(t)
+func retryReplacementTwoFrontiersScenario(t *testing.T, db *bun.DB, scope string) {
+	f := newRetryResolutionFixtureWithDatabase(t, db, scope)
 	baseline := cleanupRetryRetainedEvidence(t, f.ctx, f.fixture, f.originalID)
 	firstID, firstGuard := f.newGuard.OperationID, f.newGuard
 
@@ -197,6 +195,11 @@ func TestReplacePublicationSourceCleanupExplicitRetryPreservesTwoReplacementFron
 
 	// Interrupt metadata acknowledgement of an already completed frontier. Its
 	// durable start remains, but no filesystem callback may run or be re-enabled.
+	t.Cleanup(func() {
+		if _, err := f.fixture.db.ExecContext(f.ctx, `DROP FUNCTION IF EXISTS reject_retry_completion_for_replacement() CASCADE`); err != nil {
+			t.Errorf("drop replacement completion trigger: %v", err)
+		}
+	})
 	if _, err := f.fixture.db.ExecContext(f.ctx, `
 		CREATE FUNCTION reject_retry_completion_for_replacement() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
@@ -217,7 +220,10 @@ func TestReplacePublicationSourceCleanupExplicitRetryPreservesTwoReplacementFron
 	if ackCallbackCalls != 0 {
 		t.Fatalf("interrupted acknowledgement invoked filesystem callback %d times", ackCallbackCalls)
 	}
-	if _, err := f.fixture.db.ExecContext(f.ctx, `DROP TRIGGER reject_retry_completion_for_replacement ON source_cleanup_explicit_retry_resolution; DROP FUNCTION reject_retry_completion_for_replacement()`); err != nil {
+	if _, err := f.fixture.db.ExecContext(f.ctx, `DROP TRIGGER reject_retry_completion_for_replacement ON source_cleanup_explicit_retry_resolution`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.fixture.db.ExecContext(f.ctx, `DROP FUNCTION reject_retry_completion_for_replacement()`); err != nil {
 		t.Fatal(err)
 	}
 	if failed, err := f.repository.FailPublicationSourceCleanupExplicitRetryDelivery(f.ctx, firstSuccessor, "completion acknowledgement was interrupted"); err != nil || !failed {
@@ -274,9 +280,8 @@ func TestReplacePublicationSourceCleanupExplicitRetryPreservesTwoReplacementFron
 	assertRetryReplacementStagingEmpty(t, f)
 }
 
-func TestSourceCleanupFrontierRejectsCanonicalSameRevisionRewritePostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := returnFailedRetryForReplacement(t)
+func retryReplacementSameRevisionScenario(t *testing.T, db *bun.DB, scope string) {
+	f := returnFailedRetryForReplacementWithDatabase(t, db, scope)
 	firstResult, err := f.repository.ReplacePublicationSourceCleanupExplicitRetry(f.ctx, f.originalID, f.newGuard.OperationID, new(publicationSourceCleanupTestInserter))
 	if err != nil || firstResult.OperationID == uuid.Nil || len(firstResult.Blockers) != 0 {
 		t.Fatalf("first replacement=%+v,%v", firstResult, err)
@@ -405,7 +410,17 @@ func jsonUnmarshalRetryArgs(value any, target *publicationSourceCleanupRetryJobA
 
 func returnFailedRetryForReplacement(t *testing.T) retryResolutionFixture {
 	t.Helper()
-	f := newRetryResolutionFixture(t)
+	return returnFailedRetryForReplacementWithDatabase(t, nil, "")
+}
+
+func returnFailedRetryForReplacementWithDatabase(t *testing.T, db *bun.DB, scope string) retryResolutionFixture {
+	t.Helper()
+	var f retryResolutionFixture
+	if db == nil {
+		f = newRetryResolutionFixture(t)
+	} else {
+		f = newRetryResolutionFixtureWithDatabase(t, db, scope)
+	}
 	errCallback := errors.New("native result cannot be determined")
 	if outcome, err := f.repository.ResolvePublicationSourceCleanupRetryItem(f.ctx, f.newGuard, f.itemIDs[2], func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
 		return PublicationSourceCleanupNativeUnresolved, errCallback
@@ -449,9 +464,8 @@ func replacementRollbackSnapshot(t *testing.T, f retryResolutionFixture) map[str
 	return snapshot
 }
 
-func TestReplacePublicationSourceCleanupExplicitRetryEnqueueFailureRollsBackEverythingPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := returnFailedRetryForReplacement(t)
+func retryReplacementEnqueueFailureScenario(t *testing.T, db *bun.DB, scope string) {
+	f := returnFailedRetryForReplacementWithDatabase(t, db, scope)
 	before := replacementRollbackSnapshot(t, f)
 	sentinel := errors.New("insert job then fail replacement")
 	inserter := &publicationSourceCleanupTestInserter{err: sentinel}
@@ -470,9 +484,8 @@ func TestReplacePublicationSourceCleanupExplicitRetryEnqueueFailureRollsBackEver
 	}
 }
 
-func TestReplacePublicationSourceCleanupExplicitRetryConcurrentSingleWinnerPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := returnFailedRetryForReplacement(t)
+func retryReplacementConcurrentScenario(t *testing.T, db *bun.DB, scope string) {
+	f := returnFailedRetryForReplacementWithDatabase(t, db, scope)
 	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
 	defer cancel()
 	type outcome struct {

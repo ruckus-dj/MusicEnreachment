@@ -7,11 +7,13 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
@@ -105,7 +107,28 @@ func newRetryResolutionFixtureWithDatabase(t *testing.T, db *bun.DB, scope strin
 
 func TestPublicationSourceCleanupRetryResolutionLifecyclePostgreSQL(t *testing.T) {
 	t.Parallel()
-	f := newRetryResolutionFixture(t)
+	runRetryResolutionScenarios(t, []retryResolutionScenario{{"lifecycle", retryResolutionLifecycleScenario}, {"absence marker rollback", retryResolutionAbsenceMarkerScenario}, {"incomplete replay", retryResolutionIncompleteReplayScenario}, {"native outcomes", retryResolutionNativeOutcomesScenario}, {"completion commit failure", retryResolutionCommitFailureScenario}, {"concurrent callback", retryResolutionConcurrentCallbackScenario}, {"owner-returned frontier", retryReplacementOwnerReturnedScenario}, {"two replacement frontier", retryReplacementTwoFrontiersScenario}, {"same revision rewrite", retryReplacementSameRevisionScenario}, {"enqueue rollback", retryReplacementEnqueueFailureScenario}, {"concurrent replacement", retryReplacementConcurrentScenario}})
+}
+
+type retryResolutionScenario struct {
+	name string
+	run  func(*testing.T, *bun.DB, string)
+}
+
+func runRetryResolutionScenarios(t *testing.T, scenarios []retryResolutionScenario) {
+	t.Helper()
+	db := testpostgres.OpenMigratedWithRiver(t)
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			scope := uuid.NewString()
+			preservePublicationRemoveSourcesSetting(t, db)
+			scenario.run(t, db, scope)
+		})
+	}
+}
+
+func retryResolutionLifecycleScenario(t *testing.T, db *bun.DB, scope string) {
+	f := newRetryResolutionFixtureWithDatabase(t, db, scope)
 	before := cleanupRetryRetainedEvidence(t, f.ctx, f.fixture, f.originalID)
 	var removePermission string
 	if err := f.fixture.db.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='publication_remove_sources'`).Scan(f.ctx, &removePermission); err != nil {
@@ -191,14 +214,17 @@ func TestPublicationSourceCleanupRetryResolutionLifecyclePostgreSQL(t *testing.T
 	}
 }
 
-func TestResolvePublicationSourceCleanupRetryAbsenceCompletionInsertFailureRollsBackMarkerPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newRetryResolutionFixture(t)
+func retryResolutionAbsenceMarkerScenario(t *testing.T, db *bun.DB, scope string) {
+	f := newRetryResolutionFixtureWithDatabase(t, db, scope)
+	t.Cleanup(func() {
+		if _, err := f.fixture.db.ExecContext(f.ctx, `DROP FUNCTION IF EXISTS reject_absence_completion_marker() CASCADE`); err != nil {
+			t.Errorf("drop absence marker trigger: %v", err)
+		}
+	})
 	if _, err := f.fixture.db.ExecContext(f.ctx, `CREATE FUNCTION reject_absence_completion_marker() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN IF NEW.kind='absent_after_explicit_retry' THEN RAISE EXCEPTION 'injected absence marker failure'; END IF; RETURN NEW; END $$`); err != nil {
 		t.Fatal(err)
 	}
-	defer f.fixture.db.ExecContext(f.ctx, `DROP FUNCTION reject_absence_completion_marker() CASCADE`)
 	if _, err := f.fixture.db.ExecContext(f.ctx, `CREATE TRIGGER reject_absence_completion_marker BEFORE INSERT ON source_cleanup_completion FOR EACH ROW EXECUTE FUNCTION reject_absence_completion_marker()`); err != nil {
 		t.Fatal(err)
 	}
@@ -226,9 +252,8 @@ func TestResolvePublicationSourceCleanupRetryAbsenceCompletionInsertFailureRolls
 	}
 }
 
-func TestResolvePublicationSourceCleanupRetryItemBlocksUnstartedAbsenceAndIncompleteReplayPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newRetryResolutionFixture(t)
+func retryResolutionIncompleteReplayScenario(t *testing.T, db *bun.DB, scope string) {
+	f := newRetryResolutionFixtureWithDatabase(t, db, scope)
 	var calls int
 	missing := func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
 		calls++
@@ -256,8 +281,7 @@ func TestResolvePublicationSourceCleanupRetryItemBlocksUnstartedAbsenceAndIncomp
 	}
 }
 
-func TestResolvePublicationSourceCleanupRetryItemRequiresConsistentNativeOutcomePostgreSQL(t *testing.T) {
-	t.Parallel()
+func retryResolutionNativeOutcomesScenario(t *testing.T, db *bun.DB, scope string) {
 	for _, tc := range []struct {
 		name    string
 		outcome PublicationSourceCleanupNativeOutcome
@@ -269,7 +293,7 @@ func TestResolvePublicationSourceCleanupRetryItemRequiresConsistentNativeOutcome
 		{name: "unknown outcome", outcome: "unexpected"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newRetryResolutionFixture(t)
+			f := newRetryResolutionFixtureWithDatabase(t, db, scope+"-"+strings.ReplaceAll(tc.name, " ", "-"))
 			calls := 0
 			callback := func(context.Context, PublicationSourceCleanupRemovalRequest) (PublicationSourceCleanupNativeOutcome, error) {
 				calls++
@@ -289,9 +313,13 @@ func TestResolvePublicationSourceCleanupRetryItemRequiresConsistentNativeOutcome
 	}
 }
 
-func TestResolvePublicationSourceCleanupRetryItemCommitFailureKeepsOnlyStartPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newRetryResolutionFixture(t)
+func retryResolutionCommitFailureScenario(t *testing.T, db *bun.DB, scope string) {
+	f := newRetryResolutionFixtureWithDatabase(t, db, scope)
+	t.Cleanup(func() {
+		if _, err := f.fixture.db.ExecContext(f.ctx, `DROP FUNCTION IF EXISTS reject_retry_resolution_completion() CASCADE`); err != nil {
+			t.Errorf("drop resolution trigger: %v", err)
+		}
+	})
 	if _, err := f.fixture.db.ExecContext(f.ctx, `
 		CREATE FUNCTION reject_retry_resolution_completion() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
@@ -325,9 +353,8 @@ func TestResolvePublicationSourceCleanupRetryItemCommitFailureKeepsOnlyStartPost
 	}
 }
 
-func TestResolvePublicationSourceCleanupRetryItemConcurrentCallbackRunsOncePostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newRetryResolutionFixture(t)
+func retryResolutionConcurrentCallbackScenario(t *testing.T, db *bun.DB, scope string) {
+	f := newRetryResolutionFixtureWithDatabase(t, db, scope)
 	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
 	start := make(chan struct{})
 	entered := make(chan struct{}, 1)

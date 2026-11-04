@@ -11,13 +11,37 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 )
 
 func setupStartedCleanupRemoval(t *testing.T) (context.Context, publicationExecutionFixture, *SetupManagerRepository, PublicationSourceCleanupDeliveryGuard, uuid.UUID, uuid.UUID, PublicationSourceCleanupRemovalRequest) {
 	t.Helper()
+	return setupStartedCleanupRemovalWithDatabase(t, nil, "")
+}
+
+func setupStartedCleanupRemovalWithDatabase(t *testing.T, db *bun.DB, scope string) (context.Context, publicationExecutionFixture, *SetupManagerRepository, PublicationSourceCleanupDeliveryGuard, uuid.UUID, uuid.UUID, PublicationSourceCleanupRemovalRequest) {
+	t.Helper()
 	ctx := context.Background()
-	f, repo, variantID := publicationSourceCleanupReadyFixture(t)
+	var f publicationExecutionFixture
+	var repo *SetupManagerRepository
+	var variantID uuid.UUID
+	if db == nil {
+		f, repo, variantID = publicationSourceCleanupReadyFixture(t)
+	} else {
+		f, repo, variantID = publicationSourceCleanupReadyFixtureWithDatabase(t, db, scope)
+	}
 	if _, err := f.db.NewRaw(`UPDATE track_source SET decision_method='automatic',policy_version='cleanup-remove-v1' WHERE media_variant_id=?`, variantID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	workRoot := t.TempDir()
+	var sourceRootID uuid.UUID
+	if err := f.db.NewRaw(`SELECT source_root_id FROM source_analysis_work WHERE id IN (SELECT work_id FROM source_work_variant_identity WHERE media_variant_id=?)`, variantID).Scan(ctx, &sourceRootID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.NewRaw(`UPDATE source_root SET configured_path=?,inventory_path=? WHERE id=?`, workRoot, workRoot, sourceRootID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.NewRaw(`UPDATE source_analysis_work SET configured_path=?,inventory_path=? WHERE source_root_id=?`, workRoot, workRoot, sourceRootID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	guard, operationID := admitAndClaimSourceCleanup(t, ctx, f, repo)
@@ -45,9 +69,10 @@ func setupStartedCleanupRemoval(t *testing.T) (context.Context, publicationExecu
 	return ctx, f, repo, guard, operationID, itemID, request
 }
 
-func TestRemovePublicationSourceCleanupItemConcurrentSingleCallbackPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, _, repo, guard, _, itemID, _ := setupStartedCleanupRemoval(t)
+func testRemovePublicationSourceCleanupItemConcurrentSingleCallbackPostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, _, repo, guard, _, itemID, _ := setupStartedCleanupRemovalWithDatabase(t, db, scope)
 	var calls atomic.Int32
 	entered, release := make(chan struct{}), make(chan struct{})
 	remove := func(context.Context, PublicationSourceCleanupRemovalRequest) error {
@@ -95,9 +120,13 @@ func TestRemovePublicationSourceCleanupItemConcurrentSingleCallbackPostgreSQL(t 
 	}
 }
 
-func TestRemovePublicationSourceCleanupItemDeferredCommitFailureDoesNotRetryPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, f, repo, guard, _, itemID, _ := setupStartedCleanupRemoval(t)
+func testRemovePublicationSourceCleanupItemDeferredCommitFailureDoesNotRetryPostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, f, repo, guard, _, itemID, _ := setupStartedCleanupRemovalWithDatabase(t, db, scope)
+	t.Cleanup(func() {
+		_, _ = f.db.ExecContext(ctx, `DROP TRIGGER IF EXISTS fail_cleanup_completion_commit ON source_cleanup_item; DROP FUNCTION IF EXISTS fail_cleanup_completion_commit()`)
+	})
 	if _, err := f.db.ExecContext(ctx, `CREATE FUNCTION fail_cleanup_completion_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.mutation_completed_at IS NOT NULL THEN RAISE EXCEPTION 'injected completion commit failure'; END IF; RETURN NEW; END $$; CREATE CONSTRAINT TRIGGER fail_cleanup_completion_commit AFTER UPDATE ON source_cleanup_item DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_cleanup_completion_commit()`); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +144,7 @@ func TestRemovePublicationSourceCleanupItemDeferredCommitFailureDoesNotRetryPost
 		t.Fatalf("commit rollback frontier started=%v completed=%v", started, completed)
 	}
 	var markers int
-	if err := f.db.NewRaw(`SELECT count(*) FROM source_cleanup_completion`).Scan(ctx, &markers); err != nil || markers != 0 {
+	if err := f.db.NewRaw(`SELECT count(*) FROM source_cleanup_completion WHERE work_id=(SELECT work_id FROM source_cleanup_owner WHERE item_id=?)`, itemID).Scan(ctx, &markers); err != nil || markers != 0 {
 		t.Fatalf("rolled-back completion markers=%d, %v", markers, err)
 	}
 	if _, err := f.db.ExecContext(ctx, `DROP TRIGGER fail_cleanup_completion_commit ON source_cleanup_item; DROP FUNCTION fail_cleanup_completion_commit()`); err != nil {
@@ -127,9 +156,13 @@ func TestRemovePublicationSourceCleanupItemDeferredCommitFailureDoesNotRetryPost
 	}
 }
 
-func TestRemovePublicationSourceCleanupItemRechecksPermissionAfterFrontierPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, f, repo, guard, _, itemID, _ := setupStartedCleanupRemoval(t)
+func testRemovePublicationSourceCleanupItemRechecksPermissionAfterFrontierPostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, f, repo, guard, _, itemID, _ := setupStartedCleanupRemovalWithDatabase(t, db, scope)
+	t.Cleanup(func() {
+		_, _ = f.db.ExecContext(ctx, `DROP TRIGGER IF EXISTS disable_cleanup_after_frontier ON source_cleanup_item; DROP FUNCTION IF EXISTS disable_cleanup_after_frontier()`)
+	})
 	if _, err := f.db.ExecContext(ctx, `CREATE FUNCTION disable_cleanup_after_frontier() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.mutation_started_at IS NULL AND NEW.mutation_started_at IS NOT NULL AND NEW.mutation_completed_at IS NULL THEN UPDATE app_setting SET setting_value='false' WHERE setting_name='publication_remove_sources'; END IF; RETURN NEW; END $$; CREATE CONSTRAINT TRIGGER disable_cleanup_after_frontier AFTER UPDATE ON source_cleanup_item DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION disable_cleanup_after_frontier()`); err != nil {
 		t.Fatal(err)
 	}

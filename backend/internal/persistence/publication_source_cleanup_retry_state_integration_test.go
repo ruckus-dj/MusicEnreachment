@@ -6,11 +6,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 )
 
-func TestReadPublicationSourceCleanupExplicitRetryStatePostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, fixture, repository, _, originalID := failedPublicationSourceCleanupForRetry(t)
+func testReadPublicationSourceCleanupExplicitRetryStatePostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, fixture, repository, _, originalID := failedPublicationSourceCleanupForRetryWithDatabase(t, db, scope)
 	state, err := repository.ReadPublicationSourceCleanupExplicitRetryState(ctx, originalID)
 	if err != nil {
 		t.Fatal(err)

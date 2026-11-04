@@ -9,11 +9,17 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 )
 
 func admittedRunningCleanupRetry(t *testing.T) (context.Context, publicationExecutionFixture, *SetupManagerRepository, uuid.UUID, PublicationSourceCleanupDeliveryGuard) {
 	t.Helper()
-	ctx, fixture, repository, _, originalID := failedPublicationSourceCleanupForRetry(t)
+	return admittedRunningCleanupRetryWithDatabase(t, nil, "")
+}
+
+func admittedRunningCleanupRetryWithDatabase(t *testing.T, db *bun.DB, scope string) (context.Context, publicationExecutionFixture, *SetupManagerRepository, uuid.UUID, PublicationSourceCleanupDeliveryGuard) {
+	t.Helper()
+	ctx, fixture, repository, _, originalID := failedPublicationSourceCleanupForRetryWithDatabase(t, db, scope)
 	result, err := repository.AdmitPublicationSourceCleanupExplicitRetry(ctx, originalID, new(publicationSourceCleanupTestInserter))
 	if err != nil || result.OperationID == uuid.Nil || len(result.Blockers) != 0 {
 		t.Fatalf("admit explicit retry: %+v, %v", result, err)
@@ -35,9 +41,10 @@ func admittedRunningCleanupRetry(t *testing.T) (context.Context, publicationExec
 	}
 }
 
-func TestClaimPublicationSourceCleanupExplicitRetryDeliveryAcquiresAndReplaysPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, fixture, repository, originalID, guard := admittedRunningCleanupRetry(t)
+func testClaimPublicationSourceCleanupExplicitRetryDeliveryAcquiresAndReplaysPostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, fixture, repository, originalID, guard := admittedRunningCleanupRetryWithDatabase(t, db, scope)
 	before := cleanupRetryRetainedEvidence(t, ctx, fixture, originalID)
 	if outcome, err := repository.ClaimPublicationSourceCleanupExplicitRetryDelivery(ctx, guard); err != nil || outcome != PublicationDeliveryAcquired {
 		t.Fatalf("claim retry delivery=%s,%v", outcome, err)
@@ -75,9 +82,10 @@ func TestClaimPublicationSourceCleanupExplicitRetryDeliveryAcquiresAndReplaysPos
 	}
 }
 
-func TestClaimPublicationSourceCleanupExplicitRetryDeliveryConcurrentPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, _, repository, _, guard := admittedRunningCleanupRetry(t)
+func testClaimPublicationSourceCleanupExplicitRetryDeliveryConcurrentPostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, _, repository, _, guard := admittedRunningCleanupRetryWithDatabase(t, db, scope)
 	type result struct {
 		outcome PublicationDeliveryClaimOutcome
 		err     error
@@ -116,9 +124,10 @@ func TestClaimPublicationSourceCleanupExplicitRetryDeliveryConcurrentPostgreSQL(
 	}
 }
 
-func TestClaimPublicationSourceCleanupExplicitRetryDeliveryRejectsStaleBindingsPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, fixture, repository, originalID, guard := admittedRunningCleanupRetry(t)
+func testClaimPublicationSourceCleanupExplicitRetryDeliveryRejectsStaleBindingsPostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, fixture, repository, originalID, guard := admittedRunningCleanupRetryWithDatabase(t, db, scope)
 	before := cleanupRetryRetainedEvidence(t, ctx, fixture, originalID)
 	assertRejected := func(name string, stale PublicationSourceCleanupDeliveryGuard) {
 		t.Helper()
@@ -195,10 +204,14 @@ func TestClaimPublicationSourceCleanupExplicitRetryDeliveryRejectsStaleBindingsP
 	}
 }
 
-func TestClaimPublicationSourceCleanupExplicitRetryDeliveryCommitFailureRollsBackPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, fixture, repository, originalID, guard := admittedRunningCleanupRetry(t)
+func testClaimPublicationSourceCleanupExplicitRetryDeliveryCommitFailureRollsBackPostgreSQL(t *testing.T, db *bun.DB) {
+	scope := uuid.NewString()
+	preservePublicationRemoveSourcesSetting(t, db)
+	ctx, fixture, repository, originalID, guard := admittedRunningCleanupRetryWithDatabase(t, db, scope)
 	before := cleanupRetryRetainedEvidence(t, ctx, fixture, originalID)
+	t.Cleanup(func() {
+		_, _ = fixture.db.ExecContext(ctx, `DROP TRIGGER IF EXISTS reject_retry_start_commit ON operation; DROP FUNCTION IF EXISTS reject_retry_start_commit()`)
+	})
 	if _, err := fixture.db.ExecContext(ctx, `
 		CREATE FUNCTION reject_retry_start_commit() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
