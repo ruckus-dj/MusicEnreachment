@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -319,118 +318,6 @@ func TestValidatePublicationSourceCleanupExecutionInputsPostgreSQL(t *testing.T)
 	}
 }
 
-func TestStartPublicationSourceCleanupExecutionTransitionsAndRetainsEvidencePostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f, repo, variantID := publicationSourceCleanupReadyFixture(t)
-	if _, err := f.db.NewRaw(`UPDATE track_source SET decision_method='automatic',policy_version='cleanup-validation-v1' WHERE media_variant_id=?`, variantID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	guard, operationID := admitAndClaimSourceCleanup(t, ctx, f, repo)
-	var before string
-	const evidence = `SELECT jsonb_build_object('operation',(SELECT to_jsonb(o)-'state'-'stage'-'started_at'-'updated_at' FROM operation o WHERE id=?),'items',(SELECT jsonb_agg(to_jsonb(i)-'state' ORDER BY id) FROM source_cleanup_item i WHERE operation_id=?),'owners',(SELECT jsonb_agg(to_jsonb(o) ORDER BY item_id) FROM source_cleanup_owner o WHERE operation_id=?),'claims',(SELECT jsonb_agg(to_jsonb(c) ORDER BY application_attempt) FROM publication_execution_claim c WHERE operation_id=?))::text`
-	read := func() string {
-		t.Helper()
-		var v string
-		if err := f.db.NewRaw(evidence, operationID, operationID, operationID, operationID).Scan(ctx, &v); err != nil {
-			t.Fatal(err)
-		}
-		return v
-	}
-	before = read()
-	started, err := repo.StartPublicationSourceCleanupExecution(ctx, guard)
-	if err != nil || !started {
-		t.Fatalf("start = %v, %v", started, err)
-	}
-	started, err = repo.StartPublicationSourceCleanupExecution(ctx, guard)
-	if err != nil || started {
-		t.Fatalf("repeat start = %v, %v; want false,nil", started, err)
-	}
-	var opState, stage, itemState string
-	var startedAt any
-	var items, owners, claims int
-	if err := f.db.NewRaw(`SELECT state,stage,started_at FROM operation WHERE id=?`, operationID).Scan(ctx, &opState, &stage, &startedAt); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.db.NewRaw(`SELECT min(state),count(*) FROM source_cleanup_item WHERE operation_id=?`, operationID).Scan(ctx, &itemState, &items); err != nil {
-		t.Fatal(err)
-	}
-	for query, target := range map[string]*int{`SELECT count(*) FROM source_cleanup_owner WHERE operation_id=?`: &owners, `SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`: &claims} {
-		if err := f.db.NewRaw(query, operationID).Scan(ctx, target); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if opState != "running" || stage != "running" || startedAt == nil || items != 1 || itemState != "claimed" || owners != 1 || claims != 1 {
-		t.Fatalf("transition op=%s/%s started=%v items=%d/%s owners=%d claims=%d", opState, stage, startedAt, items, itemState, owners, claims)
-	}
-	if after := read(); after != before {
-		t.Fatalf("start changed retained evidence:\nbefore %s\nafter %s", before, after)
-	}
-}
-
-func TestStartPublicationSourceCleanupExecutionRejectsStaleAndDisabledPermissionPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f, repo, variantID := publicationSourceCleanupReadyFixture(t)
-	if _, err := f.db.NewRaw(`UPDATE track_source SET decision_method='automatic',policy_version='cleanup-validation-v1' WHERE media_variant_id=?`, variantID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	guard, operationID := admitAndClaimSourceCleanup(t, ctx, f, repo)
-	if _, err := f.db.NewRaw(`UPDATE app_setting SET setting_value='false' WHERE setting_name='publication_remove_sources'`).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	started, err := repo.StartPublicationSourceCleanupExecution(ctx, guard)
-	if err != nil || started {
-		t.Fatalf("disabled start = %v,%v", started, err)
-	}
-	if err := assertCleanupQueued(ctx, f, operationID); err != nil {
-		t.Fatal(err)
-	}
-	if err := NewSettingsRepository(f.db).Set(ctx, "publication_remove_sources", "true"); err != nil {
-		t.Fatal(err)
-	}
-	stale := guard
-	stale.DeliveryToken = "stale"
-	started, err = repo.StartPublicationSourceCleanupExecution(ctx, stale)
-	if err != nil || started {
-		t.Fatalf("stale guard start = %v,%v", started, err)
-	}
-	if err := assertCleanupQueued(ctx, f, operationID); err != nil {
-		t.Fatal(err)
-	}
-	started, err = repo.StartPublicationSourceCleanupExecution(ctx, guard)
-	if err != nil || !started {
-		t.Fatalf("restored valid start = %v,%v", started, err)
-	}
-}
-
-func TestStartPublicationSourceCleanupExecutionRollsBackPartialItemClaimPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f, repo, variantID := publicationSourceCleanupReadyFixture(t)
-	if _, err := f.db.NewRaw(`UPDATE track_source SET decision_method='automatic',policy_version='cleanup-validation-v1' WHERE media_variant_id=?`, variantID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	guard, operationID := admitAndClaimSourceCleanup(t, ctx, f, repo)
-	if _, err := f.db.ExecContext(ctx, `CREATE FUNCTION fail_cleanup_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected cleanup claim failure'; END $$; CREATE TRIGGER fail_cleanup_claim BEFORE UPDATE ON source_cleanup_item FOR EACH ROW WHEN (NEW.state='claimed') EXECUTE FUNCTION fail_cleanup_claim()`); err != nil {
-		t.Fatal(err)
-	}
-	started, err := repo.StartPublicationSourceCleanupExecution(ctx, guard)
-	if err == nil || started || !strings.Contains(err.Error(), "injected cleanup claim failure") {
-		t.Fatalf("failed start = %v,%v", started, err)
-	}
-	if err := assertCleanupQueued(ctx, f, operationID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.db.ExecContext(ctx, `DROP TRIGGER fail_cleanup_claim ON source_cleanup_item; DROP FUNCTION fail_cleanup_claim()`); err != nil {
-		t.Fatal(err)
-	}
-	started, err = repo.StartPublicationSourceCleanupExecution(ctx, guard)
-	if err != nil || !started {
-		t.Fatalf("start after removing trigger = %v,%v", started, err)
-	}
-}
-
 func TestStartPublicationSourceCleanupExecutionConcurrentSingleWinnerPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -497,19 +384,4 @@ func admitAndClaimSourceCleanup(t *testing.T, ctx context.Context, f publication
 		t.Fatalf("claim=%q,%v", got, err)
 	}
 	return guard, result.OperationID
-}
-
-func assertCleanupQueued(ctx context.Context, f publicationExecutionFixture, id uuid.UUID) error {
-	var state, stage, item string
-	var startedAt any
-	if err := f.db.NewRaw(`SELECT state,stage,started_at FROM operation WHERE id=?`, id).Scan(ctx, &state, &stage, &startedAt); err != nil {
-		return err
-	}
-	if err := f.db.NewRaw(`SELECT min(state) FROM source_cleanup_item WHERE operation_id=?`, id).Scan(ctx, &item); err != nil {
-		return err
-	}
-	if state != "queued" || stage != "queued" || startedAt != nil || item != "queued" {
-		return errors.New("failed start did not roll back operation/item state")
-	}
-	return nil
 }

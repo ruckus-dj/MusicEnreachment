@@ -136,7 +136,7 @@ tasks:
     internal: true
     dir: backend
     cmds:
-      - go test -tags=integration -count=1 -p 8 -parallel 8 ./...
+      - node ../tools/run-go-tests.mjs
 
   ci:windows-tests:
     desc: Run Windows CI backend tests with the persistence package split into two deterministic shards

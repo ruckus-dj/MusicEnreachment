@@ -52,14 +52,107 @@ func preparingManualLyricsFLACFixture(t *testing.T) (publicationExecutionFixture
 func TestPublicationManualLyricsPreparationInputsExplicitV3GatePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f, repo, _ := preparingManualLyricsFLACFixture(t)
-	if _, ok, err := repo.PublicationPreparationInputs(ctx, f.guard); err == nil || ok {
-		t.Fatalf("generic preparation accepted V3: ok=%v err=%v", ok, err)
+	f, repo, input := preparingManualLyricsFLACFixture(t)
+	readManual := func() (PublicationInputs, bool) {
+		t.Helper()
+		got, ok, err := repo.PublicationManualLyricsPreparationInputs(ctx, f.guard)
+		if err != nil {
+			t.Fatalf("manual preparation: %v", err)
+		}
+		return got, ok
 	}
-	// The shared fixture is a positive control: the private read capability
-	// accepts the complete preparing state before testing its refusal cases.
-	if _, ok, err := repo.PublicationManualLyricsPreparationInputs(ctx, f.guard); err != nil || !ok {
-		t.Fatalf("manual preparation positive control = ok:%v err:%v", ok, err)
+	assertManualAccepted := func(label string) PublicationInputs {
+		t.Helper()
+		got, ok := readManual()
+		if !ok {
+			t.Fatalf("%s: valid manual preparation was rejected", label)
+		}
+		return got
+	}
+	assertManualRejected := func(label string) {
+		t.Helper()
+		if _, ok := readManual(); ok {
+			t.Fatalf("%s: manual preparation accepted invalid current state", label)
+		}
+	}
+	assertCurrentState := func(label string) {
+		t.Helper()
+		if _, ok, err := repo.PublicationPreparationInputs(ctx, f.guard); err == nil || ok {
+			t.Fatalf("%s: generic preparation accepted V3: ok=%v err=%v", label, ok, err)
+		}
+		got := assertManualAccepted(label)
+		if got.Version != PublicationInputsVersion || got.Rewrite == nil || got.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC {
+			t.Fatalf("%s: manual preparation returned unexpected inputs: %+v", label, got)
+		}
+	}
+
+	// A single fixture carries all positive and negative controls so each drift
+	// is tested against an accepted baseline and then restored before the next.
+	assertCurrentState("initial baseline")
+
+	currentOwnership := mustJSON(PublicationCurrentOwnership{Version: 1, Identity: input.Rewrite.Ownership})
+	currentAudio := mustJSON(PublicationCurrentAudio{Version: 1, Facts: input.Rewrite.AudioFacts})
+	restore := func(query string, args ...any) {
+		t.Helper()
+		if _, err := f.db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, drift := range []struct {
+		name    string
+		mutate  func() error
+		restore func()
+	}{
+		{
+			name: "stale current generation",
+			mutate: func() error {
+				_, err := f.db.ExecContext(ctx, `UPDATE track_publication SET generation=? WHERE position_id=?`, uuid.New(), f.guard.ExpectedPositionID)
+				return err
+			},
+			restore: func() {
+				restore(`UPDATE track_publication SET generation=? WHERE position_id=?`, input.Rewrite.CurrentGeneration, f.guard.ExpectedPositionID)
+			},
+		},
+		{
+			name: "same-generation ownership drift",
+			mutate: func() error {
+				_, err := f.db.ExecContext(ctx, `UPDATE track_publication SET ownership=jsonb_set(ownership,'{identity,size_bytes}',to_jsonb((ownership #>> '{identity,size_bytes}')::bigint+1)) WHERE position_id=?`, f.guard.ExpectedPositionID)
+				return err
+			},
+			restore: func() {
+				restore(`UPDATE track_publication SET ownership=?::jsonb WHERE position_id=?`, string(currentOwnership), f.guard.ExpectedPositionID)
+			},
+		},
+		{
+			name: "same-generation audio facts drift",
+			mutate: func() error {
+				_, err := f.db.ExecContext(ctx, `UPDATE track_publication SET actual_audio=jsonb_set(actual_audio,'{facts,stream_index}',to_jsonb((actual_audio #>> '{facts,stream_index}')::int+1)) WHERE position_id=?`, f.guard.ExpectedPositionID)
+				return err
+			},
+			restore: func() {
+				restore(`UPDATE track_publication SET actual_audio=?::jsonb WHERE position_id=?`, string(currentAudio), f.guard.ExpectedPositionID)
+			},
+		},
+	} {
+		assertCurrentState(drift.name + " baseline")
+		if err := drift.mutate(); err != nil {
+			t.Fatalf("%s: mutate current state: %v", drift.name, err)
+		}
+		assertManualRejected(drift.name)
+		drift.restore()
+		assertCurrentState(drift.name + " restored baseline")
+	}
+
+	// This is intentionally last: unlike the current-state drifts above, the
+	// missing reservation is not restored within this fixture.
+	assertCurrentState("reservation baseline")
+	if _, err := f.db.ExecContext(ctx, `DELETE FROM publication_namespace_reservation WHERE generation=?`, f.guard.CandidateGeneration); err != nil {
+		t.Fatal(err)
+	}
+	assertManualRejected("missing candidate namespace reservation")
+
+	if _, ok, err := repo.PublicationPreparationInputs(ctx, f.guard); err == nil || ok {
+		t.Fatalf("generic preparation accepted V3 after rejection checks: ok=%v err=%v", ok, err)
 	}
 	var phase, operationStage string
 	if err := f.db.NewRaw(`SELECT phase FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &phase); err != nil {
@@ -70,80 +163,5 @@ func TestPublicationManualLyricsPreparationInputsExplicitV3GatePostgreSQL(t *tes
 	}
 	if phase != "preparing" || operationStage != "preparing" {
 		t.Fatalf("reader mutated state: phase=%s stage=%s", phase, operationStage)
-	}
-}
-
-func TestPublicationManualLyricsPreparationInputsAcceptsCurrentFLACRewritePostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f, repo, _ := preparingManualLyricsFLACFixture(t)
-
-	got, ok, err := repo.PublicationManualLyricsPreparationInputs(ctx, f.guard)
-	if err != nil || !ok {
-		t.Fatalf("manual preparation = ok:%v err:%v", ok, err)
-	}
-	if got.Version != PublicationInputsVersion || got.Rewrite == nil || got.Rewrite.AudioFacts.Container != publication.AudioContainerFLAC {
-		t.Fatalf("manual preparation returned unexpected inputs: %+v", got)
-	}
-	// Returned snapshots must not alias the decoded/frozen input's mutable maps.
-	got.DesiredTags["TITLE"][0] = "mutated"
-	again, ok, err := repo.PublicationManualLyricsPreparationInputs(ctx, f.guard)
-	if err != nil || !ok || again.DesiredTags["TITLE"][0] == "mutated" {
-		t.Fatalf("manual preparation result was not detached: ok:%v err:%v tags:%v", ok, err, again.DesiredTags)
-	}
-	if _, ok, err := repo.PublicationPreparationInputs(ctx, f.guard); err == nil || ok {
-		t.Fatalf("generic reader accepted V3 manual lyrics: ok:%v err:%v", ok, err)
-	}
-}
-
-func TestPublicationManualLyricsPreparationInputsRejectsStaleCurrentAndMissingReservationPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	for _, tc := range []struct {
-		name   string
-		mutate func(*publicationExecutionFixture) error
-	}{
-		{
-			name: "stale current generation",
-			mutate: func(f *publicationExecutionFixture) error {
-				_, err := f.db.ExecContext(ctx, `UPDATE track_publication SET generation=? WHERE position_id=?`, uuid.New(), f.guard.ExpectedPositionID)
-				return err
-			},
-		},
-		{
-			name: "same-generation ownership drift",
-			mutate: func(f *publicationExecutionFixture) error {
-				_, err := f.db.ExecContext(ctx, `UPDATE track_publication SET ownership=jsonb_set(ownership,'{identity,size_bytes}',to_jsonb((ownership #>> '{identity,size_bytes}')::bigint+1)) WHERE position_id=?`, f.guard.ExpectedPositionID)
-				return err
-			},
-		},
-		{
-			name: "same-generation audio facts drift",
-			mutate: func(f *publicationExecutionFixture) error {
-				_, err := f.db.ExecContext(ctx, `UPDATE track_publication SET actual_audio=jsonb_set(actual_audio,'{facts,stream_index}',to_jsonb((actual_audio #>> '{facts,stream_index}')::int+1)) WHERE position_id=?`, f.guard.ExpectedPositionID)
-				return err
-			},
-		},
-		{
-			name: "missing candidate namespace reservation",
-			mutate: func(f *publicationExecutionFixture) error {
-				_, err := f.db.ExecContext(ctx, `DELETE FROM publication_namespace_reservation WHERE generation=?`, f.guard.CandidateGeneration)
-				return err
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			f, repo, _ := preparingManualLyricsFLACFixture(t)
-			if _, ok, err := repo.PublicationManualLyricsPreparationInputs(ctx, f.guard); err != nil || !ok {
-				t.Fatalf("valid manual preparation baseline: ok:%v err:%v", ok, err)
-			}
-			if err := tc.mutate(&f); err != nil {
-				t.Fatal(err)
-			}
-			if _, ok, err := repo.PublicationManualLyricsPreparationInputs(ctx, f.guard); err != nil || ok {
-				t.Fatalf("manual preparation accepted invalid current state: ok:%v err:%v", ok, err)
-			}
-		})
 	}
 }

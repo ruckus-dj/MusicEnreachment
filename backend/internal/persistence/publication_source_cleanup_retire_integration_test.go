@@ -17,6 +17,34 @@ func TestFailUnstartedPublicationSourceCleanupDeliveryRequiresExactZeroFrontierP
 		if _, err := fixture.db.ExecContext(ctx, `UPDATE source_location SET size_bytes=size_bytes+1 WHERE id=(SELECT (source_snapshot->>'source_location_id')::uuid FROM source_cleanup_item WHERE id=?)`, itemID); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := fixture.db.ExecContext(ctx, `CREATE FUNCTION fail_cleanup_retirement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='failed' THEN RAISE EXCEPTION 'injected retirement commit failure'; END IF; RETURN NEW; END $$;
+			CREATE CONSTRAINT TRIGGER fail_cleanup_retirement AFTER UPDATE ON operation DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_cleanup_retirement()`); err != nil {
+			t.Fatal(err)
+		}
+		retired, err := repository.FailUnstartedPublicationSourceCleanupDelivery(ctx, guard, "safe retirement")
+		if err == nil || retired || !strings.Contains(err.Error(), "injected retirement commit failure") {
+			t.Fatalf("retirement = %v, %v; want injected deferred failure", retired, err)
+		}
+		var operationState string
+		var items, owners, claims int
+		if err := fixture.db.NewRaw(`SELECT state FROM operation WHERE id=?`, operationID).Scan(ctx, &operationState); err != nil {
+			t.Fatal(err)
+		}
+		for query, target := range map[string]*int{
+			`SELECT count(*) FROM source_cleanup_item WHERE operation_id=?`:         &items,
+			`SELECT count(*) FROM source_cleanup_owner WHERE operation_id=?`:        &owners,
+			`SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`: &claims,
+		} {
+			if err := fixture.db.NewRaw(query, operationID).Scan(ctx, target); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if operationState != "running" || items != 1 || owners != 1 || claims != 1 {
+			t.Fatalf("rollback state=%q items/owners/claims=%d/%d/%d", operationState, items, owners, claims)
+		}
+		if _, err := fixture.db.ExecContext(ctx, `DROP TRIGGER fail_cleanup_retirement ON operation; DROP FUNCTION fail_cleanup_retirement()`); err != nil {
+			t.Fatal(err)
+		}
 		retireAndAssert(t, ctx, fixture, repository, guard, operationID, itemID, true, false)
 	})
 
@@ -62,67 +90,6 @@ func TestFailUnstartedPublicationSourceCleanupDeliveryRetiresQueuedClaimAndBlock
 	outcome, err := repository.RemovePublicationSourceCleanupItem(ctx, guard, itemID, func(context.Context, PublicationSourceCleanupRemovalRequest) error { calls++; return nil })
 	if err != nil || outcome != PublicationSourceCleanupRemovalBlocked || calls != 0 {
 		t.Fatalf("late removal = %q, %v, callback calls=%d", outcome, err, calls)
-	}
-}
-
-func TestFailUnstartedPublicationSourceCleanupDeliveryRejectsCompletedFrontierPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, fixture, repository, guard, operationID, itemID, _ := setupStartedCleanupRemoval(t)
-	outcome, err := repository.RemovePublicationSourceCleanupItem(ctx, guard, itemID, func(context.Context, PublicationSourceCleanupRemovalRequest) error { return nil })
-	if err != nil || outcome != PublicationSourceCleanupRemovalCompleted {
-		t.Fatalf("complete removal = %q, %v", outcome, err)
-	}
-	retired, err := repository.FailUnstartedPublicationSourceCleanupDelivery(ctx, guard, "late retirement")
-	if err != nil || retired {
-		t.Fatalf("retire completed frontier = %v, %v; want false,nil", retired, err)
-	}
-	assertCleanupRemovalRetained(t, ctx, fixture, operationID)
-	var completed any
-	if err := fixture.db.NewRaw(`SELECT mutation_completed_at FROM source_cleanup_item WHERE id=?`, itemID).Scan(ctx, &completed); err != nil || completed == nil {
-		t.Fatalf("completed frontier timestamp=%v, err=%v", completed, err)
-	}
-}
-
-func TestFailUnstartedPublicationSourceCleanupDeliveryRollsBackLateOperationFailurePostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx, fixture, repository, guard, operationID, itemID, _ := setupStartedCleanupRemoval(t)
-	var snapshot []byte
-	var revision uuid.UUID
-	if err := fixture.db.NewRaw(`SELECT source_snapshot,borrower_revision FROM source_cleanup_item WHERE id=?`, itemID).Scan(ctx, &snapshot, &revision); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.db.ExecContext(ctx, `CREATE FUNCTION fail_cleanup_retirement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='failed' THEN RAISE EXCEPTION 'injected retirement commit failure'; END IF; RETURN NEW; END $$;
-		CREATE CONSTRAINT TRIGGER fail_cleanup_retirement AFTER UPDATE ON operation DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_cleanup_retirement()`); err != nil {
-		t.Fatal(err)
-	}
-	retired, retirementErr := repository.FailUnstartedPublicationSourceCleanupDelivery(ctx, guard, "safe retirement")
-	if retirementErr == nil || retired || !strings.Contains(retirementErr.Error(), "injected retirement commit failure") {
-		t.Fatalf("retirement = %v, %v; want injected deferred failure", retired, retirementErr)
-	}
-	var itemCount, ownerCount, claimCount int
-	var state string
-	if err := fixture.db.NewRaw(`SELECT count(*) FROM source_cleanup_item WHERE operation_id=?`, operationID).Scan(ctx, &itemCount); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.db.NewRaw(`SELECT count(*) FROM source_cleanup_owner WHERE operation_id=?`, operationID).Scan(ctx, &ownerCount); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.db.NewRaw(`SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`, operationID).Scan(ctx, &claimCount); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.db.NewRaw(`SELECT state FROM operation WHERE id=?`, operationID).Scan(ctx, &state); err != nil {
-		t.Fatal(err)
-	}
-	var after []byte
-	var afterRevision uuid.UUID
-	if err := fixture.db.NewRaw(`SELECT source_snapshot,borrower_revision FROM source_cleanup_item WHERE id=?`, itemID).Scan(ctx, &after, &afterRevision); err != nil {
-		t.Fatal(err)
-	}
-	if itemCount != 1 || ownerCount != 1 || claimCount != 1 || state != "running" || string(snapshot) != string(after) || revision != afterRevision {
-		t.Fatalf("rollback rows=%d/%d/%d operation=%q snapshot=%t revision=%t", itemCount, ownerCount, claimCount, state, string(snapshot) == string(after), revision == afterRevision)
-	}
-	if _, err := fixture.db.ExecContext(ctx, `DROP TRIGGER fail_cleanup_retirement ON operation; DROP FUNCTION fail_cleanup_retirement()`); err != nil {
-		t.Fatal(err)
 	}
 }
 

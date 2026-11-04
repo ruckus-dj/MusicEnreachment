@@ -62,7 +62,10 @@ function createValidPrefix(root = mkdtempSync(path.join(os.tmpdir(), "native-vip
 	put("include/tiffio.h");
 	put("include/ImageMagick-7/MagickCore/MagickCore.h");
 	put("lib/pkgconfig/vips.pc", "Name: vips\nVersion: 8.18.7\nLibs: -L${libdir} -lvips-42\n");
-	put("lib/pkgconfig/MagickCore.pc", "Name: MagickCore\nLibs: -L${libdir} -lMagickCore-fixture\n");
+	put(
+		"lib/pkgconfig/MagickCore.pc",
+		"libname=MagickCore-fixture\nName: MagickCore\nLibs: -L${libdir} -l${libname}\n",
+	);
 	put("lib/pkgconfig/libtiff-4.pc", "Name: libtiff\nLibs: -L${libdir} -ltiff-fixture\n");
 	put("lib/libvips-42.dll.a");
 	put("lib/libMagickCore-fixture.dll.a");

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,6 +45,13 @@ var process struct {
 	riverTemplate string
 	resources     []string
 	cleanups      []func() error
+
+	createdTest     atomic.Int64
+	createdTemplate atomic.Int64
+	dropAttempts    atomic.Int64
+	dropped         atomic.Int64
+	createNanos     atomic.Int64
+	dropNanos       atomic.Int64
 }
 
 // Open creates an empty, uniquely named database owned by this test. The
@@ -54,6 +62,7 @@ func Open(t *testing.T) *bun.DB {
 	admin := adminDatabase(t)
 	name := resourcePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, "")
+	process.createdTest.Add(1)
 	registerResource(name)
 	databaseURL := databaseURL(t, name)
 	database, err := openPool(databaseURL)
@@ -94,6 +103,7 @@ func openTemplate(t *testing.T, withRiver bool) *bun.DB {
 	template := migratedTemplate(t, admin, withRiver)
 	name := resourcePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, template)
+	process.createdTest.Add(1)
 	registerResource(name)
 	database, err := openPool(databaseURL(t, name))
 	if err != nil {
@@ -140,6 +150,11 @@ func Run(m *testing.M) int {
 			code = 1
 		}
 	}
+	fmt.Fprintf(os.Stderr, "testpostgres: created=%d dropped=%d create_time=%s drop_time=%s templates=%d drop_attempts=%d\n",
+		process.createdTest.Load(), process.dropped.Load(),
+		time.Duration(process.createNanos.Load()).Round(time.Millisecond),
+		time.Duration(process.dropNanos.Load()).Round(time.Millisecond),
+		process.createdTemplate.Load(), process.dropAttempts.Load())
 	return code
 }
 
@@ -222,6 +237,7 @@ func migratedTemplate(t *testing.T, admin *bun.DB, withRiver bool) string {
 	}
 	name := resourcePrefix + "template_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, "")
+	process.createdTemplate.Add(1)
 	registerResource(name)
 	templateDB, err := openPool(databaseURL(t, name))
 	if err != nil {
@@ -282,7 +298,12 @@ func createDatabase(t *testing.T, admin *bun.DB, name, template string) {
 	if template != "" {
 		query += " TEMPLATE " + quoteIdentifier(template)
 	}
-	if _, err := admin.ExecContext(context.Background(), query); err != nil {
+	start := time.Now()
+	_, err := admin.ExecContext(context.Background(), query)
+	if err == nil {
+		process.createNanos.Add(int64(time.Since(start)))
+	}
+	if err != nil {
 		t.Fatalf("create isolated PostgreSQL database: %v", err)
 	}
 }
@@ -332,7 +353,13 @@ func unregisterResource(name string) {
 func dropDatabase(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
+	process.dropAttempts.Add(1)
+	start := time.Now()
 	_, err := process.adminDB.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdentifier(name)+" WITH (FORCE)")
+	if err == nil {
+		process.dropped.Add(1)
+		process.dropNanos.Add(int64(time.Since(start)))
+	}
 	return err
 }
 

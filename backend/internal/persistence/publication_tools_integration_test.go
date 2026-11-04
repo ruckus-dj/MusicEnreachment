@@ -13,55 +13,47 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestPublicationToolsForDeliveryRejectsInvalidAndUnheldAttemptsPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newPublicationExecutionFixture(t)
-	repo := NewSetupManagerRepository(f.db)
-
-	// Invalid guards are rejected before a transaction can return any pinned data.
-	invalid := f.guard
-	invalid.BootUUID = [16]byte{}
-	selections, installation, root, valid, err := repo.PublicationToolsForDelivery(context.Background(), invalid)
-	if err == nil || valid || selections != nil || installation != nil || root != "" {
-		t.Fatalf("invalid guard returned selections=%v installation=%v root=%q valid=%v err=%v", selections, installation, root, valid, err)
-	}
-
-	// The execution fixture intentionally has no tool hold (nor frozen tool
-	// selections); it must never authorize a worker to use a current installation.
-	selections, installation, root, valid, err = repo.PublicationToolsForDelivery(context.Background(), f.guard)
-	if err != nil || valid || selections != nil || installation != nil || root != "" {
-		t.Fatalf("unheld attempt returned selections=%v installation=%v root=%q valid=%v err=%v", selections, installation, root, valid, err)
-	}
-}
-
-func TestPublicationToolsForDeliveryReturnsFrozenVerifiedPairPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newPublicationExecutionFixture(t)
-	repo := NewSetupManagerRepository(f.db)
+func TestPublicationToolsForDeliveryFrozenPairAndHoldLifecyclePostgreSQL(t *testing.T) {
 	ctx := context.Background()
 
-	root := filepath.Join(t.TempDir(), "managed-tools")
-	if _, err := f.db.ExecContext(ctx, `INSERT INTO app_setting(setting_name,setting_value,updated_at) VALUES ('tools_directory',?,now())`, root); err != nil {
+	// Invalid identity and an unclaimed attempt must not reveal tool data.
+	var repo *SetupManagerRepository
+	invalid := PublicationDeliveryGuard{BootUUID: uuid.Nil}
+	selections, installation, root, valid, err := repo.PublicationToolsForDelivery(ctx, invalid)
+	if err == nil || valid || selections != nil || installation != nil || root != "" {
+		t.Fatalf("invalid guard returned selections=%v installation=%v root=%q valid=%t err=%v", selections, installation, root, valid, err)
+	}
+
+	f := newPublicationExecutionFixture(t)
+	repo = NewSetupManagerRepository(f.db)
+	selections, installation, root, valid, err = repo.PublicationToolsForDelivery(ctx, f.guard)
+	if err != nil || valid || selections != nil || installation != nil || root != "" {
+		t.Fatalf("unclaimed attempt returned selections=%v installation=%v root=%q valid=%t err=%v", selections, installation, root, valid, err)
+	}
+
+	toolRoot := filepath.Join(t.TempDir(), "managed-tools")
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO app_setting(setting_name,setting_value,updated_at) VALUES ('tools_directory',?,now())`, toolRoot); err != nil {
 		t.Fatal(err)
 	}
 	installationID := uuid.New()
 	verified := time.Now().UTC()
 	versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
-	installation := &ToolInstallation{
+	installed := &ToolInstallation{
 		ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH,
 		SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: filepath.Join("ffmpeg", "release-1"),
-		State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0", ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified,
+		State: "ready", ExecutableVerificationOutput: versions, Version: "ffmpeg 7.0 + ffprobe 7.0",
+		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified,
 	}
-	frozenRelativePath := filepath.ToSlash(installation.RelativePath)
-	if err := repo.CreateInstallation(ctx, installation); err != nil {
+	frozenPath := filepath.ToSlash(installed.RelativePath)
+	if err := repo.CreateInstallation(ctx, installed); err != nil {
 		t.Fatal(err)
 	}
-	selections := []SourceAnalysisToolSelection{
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffmpeg", Version: installation.Version, VersionBanner: ffmpegBanner},
-		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenRelativePath, Executable: "ffprobe", Version: installation.Version, VersionBanner: ffprobeBanner},
+	want := []SourceAnalysisToolSelection{
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffmpeg", Version: installed.Version, VersionBanner: ffmpegBanner},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: frozenPath, Executable: "ffprobe", Version: installed.Version, VersionBanner: ffprobeBanner},
 	}
 	input := publicationInputsFixture(t, "rewrite")
-	input.Tools = selections
+	input.Tools = want
 	frozen, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
@@ -88,36 +80,27 @@ func TestPublicationToolsForDeliveryReturnsFrozenVerifiedPairPostgreSQL(t *testi
 	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
 		t.Fatalf("claim = %q, %v", outcome, err)
 	}
-	got, installed, gotRoot, valid, err := repo.PublicationToolsForDelivery(ctx, f.guard)
+	got, gotInstallation, gotRoot, valid, err := repo.PublicationToolsForDelivery(ctx, f.guard)
 	if err != nil || !valid {
 		t.Fatalf("resolve frozen pair valid=%t err=%v", valid, err)
 	}
-	if len(got) != 2 || got[0] != selections[0] || got[1] != selections[1] {
-		t.Fatalf("resolved selections = %#v, want frozen %#v", got, selections)
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("resolved selections = %#v, want frozen %#v", got, want)
 	}
-	if installed == nil || installed.ID != installationID || installed.State != "ready" || installed.VerifiedAt == nil {
-		t.Fatalf("resolved installation = %#v", installed)
+	if gotInstallation == nil || gotInstallation.ID != installationID || gotInstallation.State != "ready" || gotInstallation.VerifiedAt == nil {
+		t.Fatalf("resolved installation = %#v", gotInstallation)
 	}
-	if gotRoot != root {
-		t.Fatalf("resolved root = %q, want %q", gotRoot, root)
+	if gotRoot != toolRoot {
+		t.Fatalf("resolved root = %q, want %q", gotRoot, toolRoot)
 	}
-}
 
-func TestPublicationToolsForDeliveryRejectsMissingHoldPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newPublicationExecutionFixture(t)
-	repo := NewSetupManagerRepository(f.db)
-	ctx := context.Background()
-	input := publicationInputsFixture(t, "rewrite")
-	frozen, err := json.Marshal(input)
+	// Retiring the hold and its obligation is atomic; even a claimed delivery
+	// cannot resolve frozen tools after the ownership fence is removed.
+	tx, err = f.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := f.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE track_publication_attempt SET frozen_inputs=?::jsonb WHERE operation_id=?`, string(frozen), f.guard.OperationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM operation_tool_read_hold WHERE operation_id=?`, f.guard.OperationID); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
@@ -125,18 +108,11 @@ func TestPublicationToolsForDeliveryRejectsMissingHoldPostgreSQL(t *testing.T) {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM operation_tool_read_hold WHERE operation_id=?`, f.guard.OperationID); err != nil {
-		_ = tx.Rollback()
-		t.Fatal(err)
-	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryAcquired {
-		t.Fatalf("claim = %q, %v", outcome, err)
-	}
-	selections, installation, root, valid, err := repo.PublicationToolsForDelivery(ctx, f.guard)
+	selections, installation, root, valid, err = repo.PublicationToolsForDelivery(ctx, f.guard)
 	if err != nil || valid || selections != nil || installation != nil || root != "" {
-		t.Fatalf("missing hold returned selections=%v installation=%v root=%q valid=%v err=%v", selections, installation, root, valid, err)
+		t.Fatalf("claimed missing-hold attempt returned selections=%v installation=%v root=%q valid=%t err=%v", selections, installation, root, valid, err)
 	}
 }

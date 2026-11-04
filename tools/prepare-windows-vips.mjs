@@ -164,8 +164,18 @@ function findFile(directory, expectedName) {
 function findPackageImportLibrary(prefix, packageFile) {
 	const metadata = path.join(prefix, "lib", "pkgconfig", packageFile);
 	if (!isFile(metadata)) return null;
-	const libs = /^Libs:\s*(.*)$/m.exec(readFileSync(metadata, "utf8"))?.[1] ?? "";
-	const libraryName = /(?:^|\s)-l([^\s]+)/.exec(libs)?.[1];
+	const contents = readFileSync(metadata, "utf8");
+	const variables = new Map(
+		[...contents.matchAll(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/gm)].map(
+			(match) => [match[1], match[2]],
+		),
+	);
+	const libs = /^Libs:\s*(.*)$/m.exec(contents)?.[1] ?? "";
+	const expandedLibs = libs.replace(
+		/\$\{([^}]+)\}/g,
+		(reference, name) => variables.get(name) ?? reference,
+	);
+	const libraryName = /(?:^|\s)-l([^\s]+)/.exec(expandedLibs)?.[1];
 	if (!libraryName) return null;
 	for (const filename of [`lib${libraryName}.dll.a`, `${libraryName}.dll.a`]) {
 		if (isFile(path.join(prefix, "lib", filename))) return filename;
