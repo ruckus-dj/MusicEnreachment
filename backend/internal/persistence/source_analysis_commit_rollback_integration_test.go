@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 // TestSourceAnalysisEnqueueRollsBackAtCommitWithPostgreSQL fails the commit
@@ -87,14 +88,13 @@ func requirePostgresError(t *testing.T, err error, code, messageFragment string)
 // TestSourceAnalysisEnqueueHoldsPreviousVariantWithPostgreSQL proves that an
 // admitted analysis holds its selected work and that the successful probe result
 // referenced by that work cannot be deleted while the work is retained.
-func TestSourceAnalysisEnqueueHoldsPreviousVariantWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceAnalysisEnqueueHoldsPreviousVariant(t *testing.T, database *bun.DB) {
+	t.Helper()
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
 
-	root := createInventoryRoot(t, ctx, inventory, "/srv/analysis-variant-hold")
+	root := createInventoryRoot(t, ctx, inventory, mustFixturePath(t, t.TempDir()))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
 	variantID := insertMediaVariantRow(t, ctx, database, location.SizeBytes, uuid.New())
@@ -109,7 +109,7 @@ func TestSourceAnalysisEnqueueHoldsPreviousVariantWithPostgreSQL(t *testing.T) {
 	// The failed probe is an explicit single-step retry target; its successful
 	// result remains selected while the retry holds the work.
 	step := string(persistence.SourceStepProbe)
-	installationID := insertAnalysisInstallation(t, ctx, database, "probe-retry")
+	installationID := insertAnalysisInstallation(t, ctx, database, "probe-retry-"+uuid.NewString())
 	probeTool := normalizedToolSelection(t, ctx, database, installationID, "ffprobe")
 	operation := normalizedOperation(t, root, location, work, persistence.SourceAnalysisModeSingleStep, &work.ID, &step, true, false, []persistence.SourceAnalysisToolSelection{probeTool})
 	if err := enqueueNormalizedAnalysis(t, ctx, inventory, client, operation); err != nil {

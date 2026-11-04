@@ -11,15 +11,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
-func TestSourceScanDeliveryFencesMutationsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func testSourceScanDeliveryFencesMutations(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/scan-delivery-fence")
+	root := createInventoryRoot(t, ctx, inventory, t.TempDir())
 
 	// The fixture enqueues the operation through the real repository method, so
 	// the stored row carries the River job id the delivery fences compare

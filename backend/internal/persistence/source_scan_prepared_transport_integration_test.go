@@ -11,16 +11,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
-func TestSourceScanPreparedAnalysisCandidateTransportWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func testSourceScanPreparedAnalysisCandidateTransport(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	manager := persistence.NewSetupManagerRepository(database)
-	root := createSourceRoot(t, ctx, manager, database, "/srv/prepared", "Prepared")
+	root := createSourceRoot(t, ctx, manager, database, t.TempDir(), "Prepared")
 	operation := createScanOperation(t, ctx, manager, root.ID)
 
 	policy, audioCount := 2, 0

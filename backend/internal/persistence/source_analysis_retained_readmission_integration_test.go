@@ -11,16 +11,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
-func TestRetainedSourceAnalysisReadmissionAfterDismissalWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runRetainedSourceAnalysisReadmissionAfterDismissal(t *testing.T, database *bun.DB) {
+	t.Helper()
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/retained-readmission")
+	root := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true,
@@ -30,10 +29,11 @@ func TestRetainedSourceAnalysisReadmissionAfterDismissalWithPostgreSQL(t *testin
 	)
 	installationID := uuid.New()
 	now := time.Now().UTC()
-	relativePath := testManagedRelativePath(t, tools.PackageFFmpeg, "darwin", "retained-release")
+	release := "retained-release-" + uuid.NewString()
+	relativePath := testManagedRelativePath(t, tools.PackageFFmpeg, "darwin", release)
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
-		SourceName: "analysis-test", ReleaseIdentity: "retained-release", RelativePath: relativePath,
+		SourceName: "analysis-test", ReleaseIdentity: release, RelativePath: relativePath,
 		State: "ready", ExecutableVerificationOutput: json.RawMessage(`{"ffmpeg":"ffmpeg version 7.1.2","ffprobe":"ffprobe version 7.1.2"}`),
 		Version:            "ffmpeg 7.1.2 + ffprobe 7.1.2",
 		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &now,
@@ -42,19 +42,20 @@ func TestRetainedSourceAnalysisReadmissionAfterDismissalWithPostgreSQL(t *testin
 		t.Fatalf("insert pinned installation: %v", err)
 	}
 	tool := persistence.SourceAnalysisToolSelection{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: installation.RelativePath, Executable: "ffprobe", Version: installation.Version, VersionBanner: "ffprobe version 7.1.2"}
-	fpcalcInstallation := insertAnalysisFPCalcFixture(t, ctx, database, "retained-fpcalc-release", "1.5.1")
+	fpcalcInstallation := insertAnalysisFPCalcFixture(t, ctx, database, "retained-fpcalc-release-"+uuid.NewString(), "1.5.1")
 	fpcalcTool := normalizedToolSelection(t, ctx, database, fpcalcInstallation.ID, "fpcalc")
 
 	// A plain pending row has no durable admitted intent. Single-step admission
 	// must reject it, while initial batch admission remains valid.
 	sha := string(persistence.SourceStepSHA256)
 	ordinary := normalizedOperation(t, root, location, work, persistence.SourceAnalysisModeSingleStep, &work.ID, &sha, true, false, nil)
+	jobsBefore := analysisJobs(t, ctx, database)
 	if err := enqueueNormalizedAnalysis(t, ctx, repository, client, ordinary); err == nil {
 		t.Fatal("single-step admission accepted a NULL-input ordinary pending step")
 	}
 	assertOperationHoldCounts(t, ctx, database, ordinary.ID, 0, 0)
-	if jobs := analysisJobs(t, ctx, database); jobs != 0 {
-		t.Fatalf("rejected ordinary admission created %d River jobs", jobs)
+	if jobs := analysisJobs(t, ctx, database); jobs != jobsBefore {
+		t.Fatalf("rejected ordinary admission changed analysis jobs %d -> %d", jobsBefore, jobs)
 	}
 	batch := normalizedOperation(t, root, location, work, persistence.SourceAnalysisModeBatch, nil, nil, true, false, []persistence.SourceAnalysisToolSelection{tool, fpcalcTool})
 	if err := enqueueNormalizedAnalysis(t, ctx, repository, client, batch); err != nil {
@@ -96,13 +97,13 @@ func TestRetainedSourceAnalysisReadmissionAfterDismissalWithPostgreSQL(t *testin
 	changedTool := tool
 	changedTool.Version = "7.1.1"
 	changed := normalizedOperation(t, root, location, work, persistence.SourceAnalysisModeSingleStep, &work.ID, &probe, true, false, []persistence.SourceAnalysisToolSelection{changedTool})
-	jobsBefore := analysisJobs(t, ctx, database)
+	jobsBeforeMismatch := analysisJobs(t, ctx, database)
 	if err := enqueueNormalizedAnalysis(t, ctx, repository, client, changed); err == nil {
 		t.Fatal("readmission replaced retained pinned tool selection")
 	}
 	assertOperationHoldCounts(t, ctx, database, changed.ID, 0, 0)
-	if jobs := analysisJobs(t, ctx, database); jobs != jobsBefore {
-		t.Fatalf("mismatched readmission changed jobs %d -> %d", jobsBefore, jobs)
+	if jobs := analysisJobs(t, ctx, database); jobs != jobsBeforeMismatch {
+		t.Fatalf("mismatched readmission changed jobs %d -> %d", jobsBeforeMismatch, jobs)
 	}
 
 	// Removing the retained input makes it ordinary again and must still reject.

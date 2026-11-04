@@ -20,12 +20,29 @@ import (
 func TestNormalizedSourceAnalysisLifecycleScenariosWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
-	runNormalizedSourceAnalysisAdmissionClaimAndTerminalRelease(t, database)
-	runSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEvent(t, database)
-	runEnumeratedWorkAdmitsPendingMetadataWithoutTools(t, database)
-	runNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOperationInsert(t, database)
-	runNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmission(t, database)
-	runNormalizedSourceAnalysisTerminalReleasesToolAndWorkHolds(t, database)
+	for _, scenario := range []struct {
+		name string
+		run  func(*testing.T, *bun.DB)
+	}{
+		{"admission and terminal release", runNormalizedSourceAnalysisAdmissionClaimAndTerminalRelease},
+		{"durable matching event", runSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEvent},
+		{"metadata without tools", runEnumeratedWorkAdmitsPendingMetadataWithoutTools},
+		{"admission rejection and rollback", runNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOperationInsert},
+		{"operation selectors", runNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmission},
+		{"terminal hold release", runNormalizedSourceAnalysisTerminalReleasesToolAndWorkHolds},
+		{"concurrent admission", runNormalizedSourceAnalysisConcurrentAdmissionQueuesWorkOnce},
+		{"stage row serialization", runSourceAnalysisStageTransitionSerializesOnItsOperationRow},
+		{"failure row serialization", runSourceAnalysisFailureSerializesOnItsOperationRow},
+		{"delivery tool holds", runStartNormalizedSourceAnalysisDeliveryReplacesAdmissionToolHolds},
+		{"installation lock", runSourceAnalysisEnqueueLocksPinnedInstallation},
+		{"root exclusivity", runSourceAnalysisEnqueueRootExclusivity},
+		{"root mutation races", runSourceAnalysisStartRacesRootMutations},
+		{"retained readmission", runRetainedSourceAnalysisReadmissionAfterDismissal},
+		{"retry admission", runSourceAnalysisRetryServiceNormalizedAdmission},
+		{"previous variant hold", runSourceAnalysisEnqueueHoldsPreviousVariant},
+	} {
+		t.Run(scenario.name, func(t *testing.T) { scenario.run(t, database) })
+	}
 }
 
 func runNormalizedSourceAnalysisAdmissionClaimAndTerminalRelease(t *testing.T, database *bun.DB) {
@@ -35,7 +52,7 @@ func runNormalizedSourceAnalysisAdmissionClaimAndTerminalRelease(t *testing.T, d
 
 	// SHA-only admission pins work but must not manufacture a tool selection or
 	// acquire a tool read hold.
-	root := createInventoryRoot(t, ctx, repository, "/srv/normalized-sha-only")
+	root := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "a/sha.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true,
@@ -106,7 +123,7 @@ func runNormalizedSourceAnalysisAdmissionClaimAndTerminalRelease(t *testing.T, d
 }
 
 func runSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEvent(t *testing.T, database *bun.DB) {
-	fixture := normalizedWorkOperationWithDatabase(t, database, "/srv/matching-reconcile-success", true,
+	fixture := normalizedWorkOperationWithDatabase(t, database, mustFixturePath(t, t.TempDir()), true,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
 	ctx := context.Background()
 	operation := fixture.batchOperation(t)
@@ -147,7 +164,7 @@ func runSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEvent(t *testing.T, d
 	}
 
 	// An incomplete requested success is a failure and must not emit an event.
-	incomplete := normalizedWorkOperationWithDatabase(t, database, "/srv/matching-reconcile-incomplete", true,
+	incomplete := normalizedWorkOperationWithDatabase(t, database, mustFixturePath(t, t.TempDir()), true,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
 	incompleteOperation := incomplete.batchOperation(t)
 	if err := incomplete.admit(t, ctx, incompleteOperation); err != nil {
@@ -179,7 +196,7 @@ func runEnumeratedWorkAdmitsPendingMetadataWithoutTools(t *testing.T, database *
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/enumeration-metadata-admission")
+	root := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
 	scan := newSourceScanOperation(t, ctx, database, root, "running")
 	mtime := probeMtime()
 	if err := repository.ReplaceSourceScanCandidates(ctx, scan.ID, []persistence.SourceScanCandidateInput{
@@ -235,7 +252,7 @@ func runNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOpera
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
 
-	root := createInventoryRoot(t, ctx, repository, "/srv/normalized-exact-step")
+	root := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "a/exact.flac", 512, probeMtime())
 	establishInventory(t, ctx, database, root)
 	priorFailure := "previous SHA attempt failed"
@@ -264,7 +281,7 @@ func runNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOpera
 
 	// Force the operation INSERT to fail after River's transactional insert; the
 	// River row must roll back with the operation.
-	otherRoot := createInventoryRoot(t, ctx, repository, "/srv/normalized-insert-rollback")
+	otherRoot := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
 	otherLocation := insertAnalysisLocation(t, ctx, database, otherRoot.ID, "a/rollback.flac", 256, probeMtime())
 	establishInventory(t, ctx, database, otherRoot)
 	otherWork := normalizedWork(t, ctx, repository, otherRoot, otherLocation, true, persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"})
@@ -291,8 +308,8 @@ func runNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmission(t *
 
 	for _, mode := range []string{string(persistence.SourceAnalysisModeBatch), string(persistence.SourceAnalysisModeSingleStep)} {
 		t.Run(string(mode), func(t *testing.T) {
-			root := createInventoryRoot(t, ctx, repository, "/srv/source-selector-"+string(mode))
-			otherRoot := createInventoryRoot(t, ctx, repository, "/srv/source-selector-other-"+string(mode))
+			root := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
+			otherRoot := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
 			location := insertAnalysisLocation(t, ctx, database, root.ID, "selected.flac", 1024, probeMtime())
 			otherLocation := insertAnalysisLocation(t, ctx, database, root.ID, "other.flac", 1024, probeMtime())
 			foreignLocation := insertAnalysisLocation(t, ctx, database, otherRoot.ID, "foreign.flac", 1024, probeMtime())
@@ -364,7 +381,7 @@ func runNormalizedSourceAnalysisTerminalReleasesToolAndWorkHolds(t *testing.T, d
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/normalized-tool-release")
+	root := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "a/fingerprint.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
 	priorFailure := "previous fingerprint attempt failed"
@@ -413,16 +430,19 @@ func insertAnalysisFPCalcFixture(t *testing.T, ctx context.Context, database *bu
 	return installation
 }
 
-func TestNormalizedSourceAnalysisConcurrentAdmissionQueuesWorkOnceWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runNormalizedSourceAnalysisConcurrentAdmissionQueuesWorkOnce(t *testing.T, database *bun.DB) {
+	t.Helper()
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/normalized-duplicate-admission")
+	root := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "a/one.flac", 768, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true, persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"})
+	var jobsBefore int
+	if err := database.NewRaw(`SELECT count(*) FROM river_job WHERE kind=?`, service.SourceAnalysisJobKind).Scan(ctx, &jobsBefore); err != nil {
+		t.Fatal(err)
+	}
 	operations := []*persistence.Operation{
 		normalizedOperation(t, root, location, work, persistence.SourceAnalysisModeBatch, nil, nil, true, false, nil),
 		normalizedOperation(t, root, location, work, persistence.SourceAnalysisModeBatch, nil, nil, true, false, nil),
@@ -457,8 +477,8 @@ func TestNormalizedSourceAnalysisConcurrentAdmissionQueuesWorkOnceWithPostgreSQL
 	if err := database.NewRaw(`SELECT count(*) FROM river_job WHERE kind=?`, service.SourceAnalysisJobKind).Scan(ctx, &jobCount); err != nil {
 		t.Fatal(err)
 	}
-	if operationCount != 1 || jobCount != 1 {
-		t.Fatalf("concurrent admission persisted operations=%d jobs=%d, want 1 each", operationCount, jobCount)
+	if operationCount != 1 || jobCount != jobsBefore+1 {
+		t.Fatalf("concurrent admission persisted operations=%d jobs=%d, want one operation and %d jobs", operationCount, jobCount, jobsBefore+1)
 	}
 	var holds int
 	if err := database.NewRaw(`SELECT count(*) FROM operation_source_work_hold WHERE work_id=?`, work.ID).Scan(ctx, &holds); err != nil {

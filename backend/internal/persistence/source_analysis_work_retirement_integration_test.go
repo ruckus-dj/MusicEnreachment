@@ -9,21 +9,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
-func TestEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T) {
-	t.Parallel()
-	dbFixtureStarted := time.Now()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	t.Logf("phase=db_fixture duration=%s", time.Since(dbFixtureStarted))
+func runEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T, database *bun.DB) {
 	bodyStarted := time.Now()
 	defer func() { t.Logf("phase=scenario_body duration=%s", time.Since(bodyStarted)) }()
 	baselineSetupStarted := time.Now()
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/retained-work-change")
+	root := createInventoryRoot(t, ctx, inventory, t.TempDir())
 	mtime := probeMtime()
 	first := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, first.ID, []persistence.SourceScanCandidateInput{
@@ -95,12 +90,10 @@ func TestEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T) {
 	t.Logf("phase=assertions duration=%s", time.Since(assertionsStarted))
 }
 
-func TestDeletingRootRetainsArtifactWorkAndMissingArtifactFreeWorkIsDeleted(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeWorkIsDeleted(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/retained-work-delete")
+	root := createInventoryRoot(t, ctx, inventory, t.TempDir())
 	mtime := probeMtime()
 	first := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, first.ID, []persistence.SourceScanCandidateInput{

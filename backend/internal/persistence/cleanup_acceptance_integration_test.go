@@ -14,7 +14,6 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivertype"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
@@ -46,12 +45,10 @@ var cleanupAcceptanceJobID atomic.Int64
 
 func (cleanupAcceptanceArgs) Kind() string { return SourceAnalysisArtifactCleanupJobKind }
 
-func TestCleanupAcceptanceAdmissionAndAtomicRollback(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
+func runCleanupAcceptanceAdmissionAndAtomicRollback(t *testing.T, db *bun.DB) {
 	ctx := context.Background()
 	repo := NewSetupManagerRepository(db)
-	artifactID := insertCleanupAcceptanceArtifact(t, ctx, db, SourceAnalysisArtifactCleanupEligible)
+	artifactID := insertCleanupAcceptanceArtifactAtRoot(t, ctx, db, SourceAnalysisArtifactCleanupEligible, t.TempDir())
 	client := &cleanupAcceptanceInserter{jobID: 981234}
 	var factoryID uuid.UUID
 	op, err := repo.AdmitSourceAnalysisArtifactCleanupWithArgsFactory(ctx, []uuid.UUID{artifactID}, client, func(id uuid.UUID) river.JobArgs {
@@ -80,7 +77,7 @@ func TestCleanupAcceptanceAdmissionAndAtomicRollback(t *testing.T) {
 		t.Fatalf("snapshot = %s, %v", persistedSnapshot, err)
 	}
 
-	rollbackID := insertCleanupAcceptanceArtifact(t, ctx, db, SourceAnalysisArtifactCleanupEligible)
+	rollbackID := insertCleanupAcceptanceArtifactAtRoot(t, ctx, db, SourceAnalysisArtifactCleanupEligible, t.TempDir())
 	failedClient := &cleanupAcceptanceInserter{jobID: 981235, err: errors.New("insert deliberately failed")}
 	if _, err := repo.AdmitSourceAnalysisArtifactCleanupWithArgsFactory(ctx, []uuid.UUID{rollbackID}, failedClient, func(id uuid.UUID) river.JobArgs { return cleanupAcceptanceArgs{OperationID: id} }, nil); err == nil {
 		t.Fatal("admission succeeded despite River insert failure")
@@ -107,9 +104,13 @@ func initializeRiver(t *testing.T, _ context.Context, db *bun.DB) {
 
 func insertCleanupAcceptanceArtifact(t *testing.T, ctx context.Context, db *bun.DB, state string) uuid.UUID {
 	t.Helper()
+	return insertCleanupAcceptanceArtifactAtRoot(t, ctx, db, state, "/cleanup-acceptance/"+uuid.NewString())
+}
+
+func insertCleanupAcceptanceArtifactAtRoot(t *testing.T, ctx context.Context, db *bun.DB, state, rootPath string) uuid.UUID {
+	t.Helper()
 	rootID, locationID, workID, creatorID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	jobID := cleanupAcceptanceJobID.Add(1) + 700000
-	rootPath := "/cleanup-acceptance/" + uuid.NewString()
 	artifactID := uuid.New()
 	relativeOutputPath := "analysis/staging/" + rootID.String() + "/" + workID.String() + "/" + artifactID.String()
 	for _, queryArgs := range []struct {

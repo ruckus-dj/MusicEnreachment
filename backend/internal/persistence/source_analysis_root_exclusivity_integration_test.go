@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 // TestSourceAnalysisEnqueueRootExclusivityWithPostgreSQL pins the root
@@ -19,16 +19,16 @@ import (
 // the path or the enabled state and a root deletion all refuse while it runs,
 // while a display-name edit is accepted and a root deletion succeeds once the
 // analysis is terminal.
-func TestSourceAnalysisEnqueueRootExclusivityWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceAnalysisEnqueueRootExclusivity(t *testing.T, database *bun.DB) {
+	t.Helper()
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
 
-	root := createInventoryRoot(t, ctx, inventory, "/srv/analysis-exclusive")
+	root := createInventoryRoot(t, ctx, inventory, mustFixturePath(t, t.TempDir()))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
+	jobsBefore := analysisJobs(t, ctx, database)
 	active := normalizedQueuedAnalysis(t, ctx, inventory, root, location, nil)
 	if err := enqueueNormalizedAnalysis(t, ctx, inventory, client, active); err != nil {
 		t.Fatalf("enqueue the first analysis: %v", err)
@@ -68,11 +68,11 @@ func TestSourceAnalysisEnqueueRootExclusivityWithPostgreSQL(t *testing.T) {
 	if err := deleteInventoryRoot(ctx, inventory, root.ID); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("delete with an active analysis = %v, want ErrSourceRootActiveScan", err)
 	}
-	if operations := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'analyze_source'"); operations != 1 {
+	if operations := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'analyze_source' AND target_source_root_id = '"+root.ID.String()+"'"); operations != 1 {
 		t.Fatalf("analysis operations after the refusals = %d, want 1", operations)
 	}
-	if jobs := analysisJobs(t, ctx, database); jobs != 1 {
-		t.Fatalf("analysis River jobs after the refusals = %d, want 1", jobs)
+	if jobs := analysisJobs(t, ctx, database); jobs != jobsBefore+1 {
+		t.Fatalf("analysis River jobs after the refusals = %d, want %d", jobs, jobsBefore+1)
 	}
 
 	if err := inventory.SettleNormalizedSourceAnalysisOperation(ctx, active.ID, "failed", "recovered", "The source analysis was interrupted."); err != nil {

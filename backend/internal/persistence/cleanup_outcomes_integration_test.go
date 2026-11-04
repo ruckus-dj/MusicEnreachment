@@ -11,15 +11,27 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
+
+func TestCleanupAcceptanceAndOutcomesDatabaseGroup(t *testing.T) {
+	db := testpostgres.OpenMigratedWithRiver(t)
+	t.Run("deleted_missing_redelivery", func(t *testing.T) { runCleanupOutcomeDeletedAndMissingFinalizeArtifactAndRedelivery(t, db) })
+	t.Run("callback_error", func(t *testing.T) { runCleanupOutcomeCallbackErrorIsSafeAndCandidateCanBeSelectedAgain(t, db) })
+	t.Run("admission_atomic_rollback", func(t *testing.T) { runCleanupAcceptanceAdmissionAndAtomicRollback(t, db) })
+}
 
 func admitCleanupOutcomeFixture(t *testing.T) (context.Context, *SetupManagerRepository, uuid.UUID, SourceAnalysisArtifactCleanupFence) {
 	t.Helper()
+	return admitCleanupOutcomeFixtureWithDatabase(t, testpostgres.OpenMigratedWithRiver(t))
+}
+
+func admitCleanupOutcomeFixtureWithDatabase(t *testing.T, db *bun.DB) (context.Context, *SetupManagerRepository, uuid.UUID, SourceAnalysisArtifactCleanupFence) {
+	t.Helper()
 	ctx := context.Background()
-	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
-	id := insertCleanupAcceptanceArtifact(t, ctx, db, SourceAnalysisArtifactCleanupEligible)
-	client := &cleanupAcceptanceInserter{jobID: 981236}
+	id := insertCleanupAcceptanceArtifactAtRoot(t, ctx, db, SourceAnalysisArtifactCleanupEligible, t.TempDir())
+	client := &cleanupAcceptanceInserter{jobID: cleanupAcceptanceJobID.Add(1) + 981236}
 	op, err := repo.AdmitSourceAnalysisArtifactCleanupWithArgsFactory(ctx, []uuid.UUID{id}, client, func(id uuid.UUID) river.JobArgs {
 		return cleanupAcceptanceArgs{OperationID: id}
 	}, nil)
@@ -32,11 +44,10 @@ func admitCleanupOutcomeFixture(t *testing.T) (context.Context, *SetupManagerRep
 	return ctx, repo, id, SourceAnalysisArtifactCleanupFence{OperationID: op.ID, OperationAttempt: op.Attempt, JobID: client.jobID}
 }
 
-func TestCleanupOutcomeDeletedAndMissingFinalizeArtifactAndRedelivery(t *testing.T) {
+func runCleanupOutcomeDeletedAndMissingFinalizeArtifactAndRedelivery(t *testing.T, db *bun.DB) {
 	for _, outcomeName := range []string{"deleted", "missing"} {
 		t.Run(outcomeName, func(t *testing.T) {
-			t.Parallel()
-			ctx, repo, artifactID, fence := admitCleanupOutcomeFixture(t)
+			ctx, repo, artifactID, fence := admitCleanupOutcomeFixtureWithDatabase(t, db)
 			calls := 0
 			err := repo.RunSourceAnalysisArtifactCleanupDelivery(ctx, fence, func(context.Context, SourceAnalysisArtifact) (SourceAnalysisArtifactCleanupOutcome, error) {
 				calls++
@@ -68,9 +79,8 @@ func TestCleanupOutcomeDeletedAndMissingFinalizeArtifactAndRedelivery(t *testing
 	}
 }
 
-func TestCleanupOutcomeCallbackErrorIsSafeAndCandidateCanBeSelectedAgain(t *testing.T) {
-	t.Parallel()
-	ctx, repo, artifactID, fence := admitCleanupOutcomeFixture(t)
+func runCleanupOutcomeCallbackErrorIsSafeAndCandidateCanBeSelectedAgain(t *testing.T, db *bun.DB) {
+	ctx, repo, artifactID, fence := admitCleanupOutcomeFixtureWithDatabase(t, db)
 	if err := repo.RunSourceAnalysisArtifactCleanupDelivery(ctx, fence, func(context.Context, SourceAnalysisArtifact) (SourceAnalysisArtifactCleanupOutcome, error) {
 		return SourceAnalysisArtifactCleanupOutcome{}, errors.New("sensitive filesystem path")
 	}); err != nil {

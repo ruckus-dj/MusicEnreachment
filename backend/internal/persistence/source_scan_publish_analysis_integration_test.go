@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -16,9 +17,20 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
+func TestSourceScanPreparedPublicationScenarios(t *testing.T) {
 	t.Parallel()
 	db := testpostgres.OpenMigratedWithRiver(t)
+	t.Run("transactional publication", func(t *testing.T) { testPublishPreparedSourceScanAnalysisTransactionally(t, db) })
+	t.Run("deferred steps", func(t *testing.T) { testPublishPreparedSourceScanAnalysisDefersMoveBlockedSteps(t, db) })
+	t.Run("unchanged work", func(t *testing.T) { testPublishPreparedSourceScanAnalysisDoesNotBackfillUnchangedWork(t, db) })
+	t.Run("shared digest lock order", func(t *testing.T) { testPublishPreparedSourceScanAnalysisLocksSharedDigestsInOrder(t, db) })
+	t.Run("retained and new digest order", func(t *testing.T) { testPublishPreparedSourceScanAnalysisOrdersRetainedAndNewDigests(t, db) })
+	t.Run("retained analysis", func(t *testing.T) { testApplySourceScanRetainsSelectedFingerprintAndClearsSupersededProbeIntent(t, db) })
+	t.Run("forged retained fingerprint", func(t *testing.T) { testApplySourceScanRejectsForgedRetainedFingerprintAtomically(t, db) })
+	t.Run("fingerprint cache", func(t *testing.T) { testApplySourceScanUsesSHA256FingerprintCacheWithoutMutation(t, db) })
+}
+
+func testPublishPreparedSourceScanAnalysisTransactionally(t *testing.T, db *bun.DB) {
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/publish-analysis")
 	op := publishTestScan(t, ctx, db, root.ID)
@@ -34,6 +46,7 @@ func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 		{RelativePath: "a.flac", SizeBytes: 21, Mtime: stamp, ProbeStatus: SourceProbeStatusAudio, PreparedAnalysis: &probeErr},
 		{RelativePath: "b.flac", SizeBytes: 21, Mtime: stamp, ProbeStatus: SourceProbeStatusAudio, PreparedAnalysis: &duplicate},
 	}
+	beforeRollback := sourceScanPublicationSnapshot(t, ctx, db)
 	if err := db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
 		if err := insertSourceLocations(ctx, tx, *root, 1, candidates); err != nil {
 			return err
@@ -45,7 +58,10 @@ func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 	}); err == nil || err.Error() != "rollback publication fixture" {
 		t.Fatalf("publication transaction error = %v, want fixture rollback", err)
 	}
-	assertPublishCounts(t, ctx, db, 0, 0, 0, 0)
+	if afterRollback := sourceScanPublicationSnapshot(t, ctx, db); afterRollback != beforeRollback {
+		t.Fatalf("publication rollback changed source tables:\nbefore %s\nafter  %s", beforeRollback, afterRollback)
+	}
+	assertScopedPublishCounts(t, ctx, db, root.ID, 0, 0, 0, 0)
 
 	if err := db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
 		if err := insertSourceLocations(ctx, tx, *root, 1, candidates); err != nil {
@@ -58,25 +74,25 @@ func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 	if _, err := db.NewRaw(`UPDATE operation SET state='succeeded',finished_at=now() WHERE id=?`, op.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	assertPublishCounts(t, ctx, db, 2, 1, 1, 2)
+	assertScopedPublishCounts(t, ctx, db, root.ID, 2, 1, 1, 2)
 	var pendingMetadata int
-	if err := db.NewRaw(`SELECT count(*) FROM source_analysis_step WHERE step='metadata' AND state='pending'`).Scan(ctx, &pendingMetadata); err != nil || pendingMetadata != 2 {
+	if err := db.NewRaw(`SELECT count(*) FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=? AND s.step='metadata' AND s.state='pending'`, root.ID).Scan(ctx, &pendingMetadata); err != nil || pendingMetadata != 2 {
 		t.Fatalf("prepared scan pending metadata step count = %d, %v; want 2", pendingMetadata, err)
 	}
 
 	var shaRefs int
-	if err := db.NewRaw(`SELECT count(DISTINCT success_sha_variant_id) FROM source_analysis_step WHERE step='sha256' AND state='succeeded'`).Scan(ctx, &shaRefs); err != nil || shaRefs != 1 {
+	if err := db.NewRaw(`SELECT count(DISTINCT s.success_sha_variant_id) FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=? AND s.step='sha256' AND s.state='succeeded'`, root.ID).Scan(ctx, &shaRefs); err != nil || shaRefs != 1 {
 		t.Fatalf("canonical SHA references = %d, %v; want one", shaRefs, err)
 	}
 	var failedSHA, failedProbe, succeededFingerprint bool
-	if err := db.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_analysis_step WHERE step='sha256' AND state='failed'), EXISTS(SELECT 1 FROM source_analysis_step WHERE step='probe' AND state='failed' AND safe_error='probe unavailable'), EXISTS(SELECT 1 FROM source_analysis_step WHERE step='fingerprint' AND state='succeeded')`).Scan(ctx, &failedSHA, &failedProbe, &succeededFingerprint); err != nil {
+	if err := db.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=? AND s.step='sha256' AND s.state='failed'), EXISTS(SELECT 1 FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=? AND s.step='probe' AND s.state='failed' AND s.safe_error='probe unavailable'), EXISTS(SELECT 1 FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=? AND s.step='fingerprint' AND s.state='succeeded')`, root.ID, root.ID, root.ID).Scan(ctx, &failedSHA, &failedProbe, &succeededFingerprint); err != nil {
 		t.Fatal(err)
 	}
 	if failedSHA || !failedProbe || !succeededFingerprint {
 		t.Fatalf("independent step states: SHA failed=%v probe failed=%v fingerprint succeeded=%v", failedSHA, failedProbe, succeededFingerprint)
 	}
 	var currentCount int
-	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result WHERE source_sha256 IS NOT NULL`).Scan(ctx, &currentCount); err != nil || currentCount != 1 {
+	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result WHERE source_sha256 IS NOT NULL AND id IN (SELECT s.success_fingerprint_result_id FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=?)`, root.ID).Scan(ctx, &currentCount); err != nil || currentCount != 1 {
 		t.Fatalf("current fingerprint result count = %d, %v; want only SHA-associated result", currentCount, err)
 	}
 
@@ -96,23 +112,21 @@ func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 	if _, err := db.NewRaw(`UPDATE operation SET state='succeeded',finished_at=now() WHERE id=?`, disabledOp.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	assertPublishCounts(t, ctx, db, 3, 1, 2, 2)
-	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result WHERE source_sha256 IS NOT NULL`).Scan(ctx, &currentCount); err != nil || currentCount != 1 {
+	assertScopedPublishCounts(t, ctx, db, root.ID, 3, 1, 2, 2)
+	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result WHERE source_sha256 IS NOT NULL AND id IN (SELECT s.success_fingerprint_result_id FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=?)`, root.ID).Scan(ctx, &currentCount); err != nil || currentCount != 1 {
 		t.Fatalf("disabled-hash current result count = %d, %v; want existing digest result only", currentCount, err)
 	}
 	var disabledSHAState, disabledSHASkip string
-	if err := db.NewRaw(`SELECT state,skip_reason FROM source_analysis_step WHERE step='sha256' AND work_id IN (SELECT id FROM source_analysis_work WHERE relative_path='c.flac')`).Scan(ctx, &disabledSHAState, &disabledSHASkip); err != nil || disabledSHAState != "skipped" || disabledSHASkip != "disabled" {
+	if err := db.NewRaw(`SELECT s.state,s.skip_reason FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE s.step='sha256' AND w.source_root_id=? AND w.relative_path='c.flac'`, root.ID).Scan(ctx, &disabledSHAState, &disabledSHASkip); err != nil || disabledSHAState != "skipped" || disabledSHASkip != "disabled" {
 		t.Fatalf("disabled SHA step = %q/%q, %v; want skipped/disabled", disabledSHAState, disabledSHASkip, err)
 	}
 	var disabledMetadataState string
-	if err := db.NewRaw(`SELECT state FROM source_analysis_step WHERE step='metadata' AND work_id IN (SELECT id FROM source_analysis_work WHERE relative_path='c.flac')`).Scan(ctx, &disabledMetadataState); err != nil || disabledMetadataState != "pending" {
+	if err := db.NewRaw(`SELECT s.state FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE s.step='metadata' AND w.source_root_id=? AND w.relative_path='c.flac'`, root.ID).Scan(ctx, &disabledMetadataState); err != nil || disabledMetadataState != "pending" {
 		t.Fatalf("disabled-hash metadata state = %q, %v; want pending", disabledMetadataState, err)
 	}
 }
 
-func TestPublishPreparedSourceScanAnalysisDefersMoveBlockedSteps(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
+func testPublishPreparedSourceScanAnalysisDefersMoveBlockedSteps(t *testing.T, db *bun.DB) {
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/publish-deferred")
 	op := publishTestScan(t, ctx, db, root.ID)
@@ -136,7 +150,7 @@ func TestPublishPreparedSourceScanAnalysisDefersMoveBlockedSteps(t *testing.T) {
 		t.Fatalf("publish deferred analysis: %v", err)
 	}
 	var shaState, probeState, fingerprintState string
-	if err := db.NewRaw(`SELECT (SELECT s.state FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.relative_path='both-deferred.flac' AND s.step='sha256'), (SELECT s.state FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.relative_path='both-deferred.flac' AND s.step='probe'), (SELECT s.state FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.relative_path='both-deferred.flac' AND s.step='fingerprint')`).Scan(ctx, &shaState, &probeState, &fingerprintState); err != nil {
+	if err := db.NewRaw(`SELECT (SELECT s.state FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=? AND w.relative_path='both-deferred.flac' AND s.step='sha256'), (SELECT s.state FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=? AND w.relative_path='both-deferred.flac' AND s.step='probe'), (SELECT s.state FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id=? AND w.relative_path='both-deferred.flac' AND s.step='fingerprint')`, root.ID, root.ID, root.ID).Scan(ctx, &shaState, &probeState, &fingerprintState); err != nil {
 		t.Fatal(err)
 	}
 	if shaState != "succeeded" || probeState != "pending" || fingerprintState != "pending" {
@@ -176,9 +190,7 @@ func TestPublishPreparedSourceScanAnalysisDefersMoveBlockedSteps(t *testing.T) {
 	}
 }
 
-func TestPublishPreparedSourceScanAnalysisDoesNotBackfillUnchangedWork(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
+func testPublishPreparedSourceScanAnalysisDoesNotBackfillUnchangedWork(t *testing.T, db *bun.DB) {
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/publish-unchanged")
 	op := publishTestScan(t, ctx, db, root.ID)
@@ -232,7 +244,7 @@ func TestPublishPreparedSourceScanAnalysisDoesNotBackfillUnchangedWork(t *testin
 	}); err != nil {
 		t.Fatal(err)
 	}
-	assertPublishCounts(t, ctx, db, 1, 1, 1, 1)
+	assertScopedPublishCounts(t, ctx, db, root.ID, 1, 1, 1, 1)
 	var retained string
 	if err := db.NewRaw(`SELECT state FROM source_analysis_step WHERE work_id=? AND step='sha256'`, work.ID).Scan(ctx, &retained); err != nil || retained != "succeeded" {
 		t.Fatalf("unchanged SHA step = %q, %v; want retained success", retained, err)
@@ -344,9 +356,7 @@ func TestPreparedRescanPreservesMappedDigestlessWorkIdentity(t *testing.T) {
 	}
 }
 
-func TestPublishPreparedSourceScanAnalysisLocksSharedDigestsInOrder(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
+func testPublishPreparedSourceScanAnalysisLocksSharedDigestsInOrder(t *testing.T, db *bun.DB) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	rootA := publishTestRoot(t, ctx, db, "/srv/publish-order-a")
@@ -415,14 +425,12 @@ func TestPublishPreparedSourceScanAnalysisLocksSharedDigestsInOrder(t *testing.T
 		}
 	}
 	var digestCount int
-	if err := db.NewRaw(`SELECT count(*) FROM media_variant WHERE source_sha256 IN (?,?)`, digestA, digestB).Scan(ctx, &digestCount); err != nil || digestCount != 2 {
+	if err := db.NewRaw(`SELECT count(DISTINCT v.id) FROM media_variant v JOIN source_analysis_step s ON s.success_sha_variant_id=v.id JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id IN (?,?) AND v.source_sha256 IN (?,?)`, rootA.ID, rootB.ID, digestA, digestB).Scan(ctx, &digestCount); err != nil || digestCount != 2 {
 		t.Fatalf("shared canonical SHA identities = %d, %v; want two", digestCount, err)
 	}
 }
 
-func TestPublishPreparedSourceScanAnalysisOrdersRetainedAndNewDigests(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
+func testPublishPreparedSourceScanAnalysisOrdersRetainedAndNewDigests(t *testing.T, db *bun.DB) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	rootA := publishTestRoot(t, ctx, db, "/srv/publish-retained-a")
@@ -534,10 +542,10 @@ func TestPublishPreparedSourceScanAnalysisOrdersRetainedAndNewDigests(t *testing
 		}
 	}
 	var workCount, shaSuccess int
-	if err := db.NewRaw(`SELECT count(*) FROM source_analysis_work`).Scan(ctx, &workCount); err != nil {
+	if err := db.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE source_root_id IN (?,?)`, rootA.ID, rootB.ID).Scan(ctx, &workCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.NewRaw(`SELECT count(*) FROM source_analysis_step WHERE step='sha256' AND state='succeeded'`).Scan(ctx, &shaSuccess); err != nil {
+	if err := db.NewRaw(`SELECT count(*) FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.source_root_id IN (?,?) AND s.step='sha256' AND s.state='succeeded'`, rootA.ID, rootB.ID).Scan(ctx, &shaSuccess); err != nil {
 		t.Fatal(err)
 	}
 	if workCount != 4 || shaSuccess != 4 {
@@ -547,6 +555,7 @@ func TestPublishPreparedSourceScanAnalysisOrdersRetainedAndNewDigests(t *testing
 
 func publishTestRoot(t *testing.T, ctx context.Context, db *bun.DB, path string) *SourceRoot {
 	t.Helper()
+	path = t.TempDir()
 	repository := NewSourceInventoryRepository(db)
 	root := &SourceRoot{ID: uuid.New(), ConfiguredPath: path, DisplayName: "publish test", Enabled: true, Status: SourceRootStatusAvailable}
 	if err := repository.CreateSourceRoot(ctx, root); err != nil {
@@ -611,4 +620,51 @@ func assertPublishCounts(t *testing.T, ctx context.Context, db *bun.DB, works, v
 	if workCount != works || variantCount != variants || fingerprintCount != fingerprints || linked != wantLinked {
 		t.Fatalf("published counts work=%d variants=%d fingerprints=%d linked=%d; want %d/%d/%d/%d", workCount, variantCount, fingerprintCount, linked, works, variants, fingerprints, wantLinked)
 	}
+}
+
+func assertScopedPublishCounts(t *testing.T, ctx context.Context, db *bun.DB, rootID uuid.UUID, works, variants, fingerprints, wantLinked int) {
+	t.Helper()
+	var workCount, variantCount, fingerprintCount, linked int
+	queries := []struct {
+		query string
+		dest  *int
+	}{
+		{`SELECT count(*) FROM source_analysis_work WHERE source_root_id=?`, &workCount},
+		{`SELECT count(*) FROM media_variant v WHERE
+			v.sha256_applied_operation_id IN (SELECT DISTINCT origin_scan_operation_id FROM source_analysis_work WHERE source_root_id=?)
+			OR v.applied_operation_id IN (SELECT DISTINCT origin_scan_operation_id FROM source_analysis_work WHERE source_root_id=?)`, &variantCount},
+		{`SELECT count(*) FROM media_fingerprint_result f WHERE
+			f.applied_operation_id IN (SELECT DISTINCT origin_scan_operation_id FROM source_analysis_work WHERE source_root_id=?)`, &fingerprintCount},
+		{`SELECT count(*) FROM source_location WHERE source_root_id=? AND media_variant_id IS NOT NULL`, &linked},
+	}
+	for _, item := range queries {
+		args := []any{rootID}
+		if item.dest == &variantCount {
+			args = append(args, rootID)
+		}
+		if err := db.NewRaw(item.query, args...).Scan(ctx, item.dest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if workCount != works || variantCount != variants || fingerprintCount != fingerprints || linked != wantLinked {
+		t.Fatalf("scoped published counts root=%s work=%d variants=%d fingerprints=%d linked=%d; want %d/%d/%d/%d", rootID, workCount, variantCount, fingerprintCount, linked, works, variants, fingerprints, wantLinked)
+	}
+}
+
+func sourceScanPublicationSnapshot(t *testing.T, ctx context.Context, db *bun.DB) string {
+	t.Helper()
+	var snapshot string
+	for _, table := range []string{
+		"source_root", "source_location", "source_analysis_work", "source_analysis_step",
+		"source_work_variant_identity", "media_variant", "media_fingerprint_result",
+		"source_scan_candidate", "operation", "operation_tool_read_hold",
+	} {
+		var rows string
+		query := fmt.Sprintf(`SELECT COALESCE(jsonb_agg(to_jsonb(row_data) ORDER BY to_jsonb(row_data)::text), '[]'::jsonb)::text FROM %s AS row_data`, table)
+		if err := db.NewRaw(query).Scan(ctx, &rows); err != nil {
+			t.Fatalf("snapshot %s rows: %v", table, err)
+		}
+		snapshot += table + "=" + rows + ";"
+	}
+	return snapshot
 }

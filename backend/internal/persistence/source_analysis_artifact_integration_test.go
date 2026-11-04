@@ -10,12 +10,49 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
-func TestSourceAnalysisArtifactAcquireAndReadyFencingWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func TestSourceAnalysisDatabaseGroupWithPostgreSQL(t *testing.T) {
+	database := testpostgres.OpenMigratedWithRiver(t)
+	t.Run("scenario_01", func(t *testing.T) { runSourceAnalysisArtifactAcquireAndReadyFencingWithPostgreSQL(t, database) })
+	t.Run("scenario_02", func(t *testing.T) {
+		runSourceAnalysisArtifactRejectsStaleWorkAndForgetsOnlyOwnedAcquiringRowWithPostgreSQL(t, database)
+	})
+	t.Run("scenario_03", func(t *testing.T) {
+		runSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL(t, database)
+	})
+	t.Run("scenario_04", func(t *testing.T) {
+		runSourceAnalysisExecutionModeIsImmutableAcrossRootModeChangesAndRetryWithPostgreSQL(t, database)
+	})
+	t.Run("scenario_05", func(t *testing.T) {
+		runSourceAnalysisArtifactSettlementKeepsCumulativeCopyForSingleStepRetryWithPostgreSQL(t, database)
+	})
+	t.Run("scenario_06", func(t *testing.T) {
+		runSourceAnalysisArtifactRetainedBindingsAccumulateCanonicalRequestedStepsWithPostgreSQL(t, database)
+	})
+	t.Run("scenario_07", func(t *testing.T) {
+		runRecoverInterruptedNormalizedSourceAnalysisReturnsOnlyOwnedUnfinishedStepsToPendingWithPostgreSQL(t, database)
+	})
+	t.Run("scenario_08", func(t *testing.T) {
+		runRecoverInterruptedNormalizedSourceAnalysisDoesNotClearLiveNewDeliveryWithPostgreSQL(t, database)
+	})
+	t.Run("scenario_09", func(t *testing.T) {
+		runRecoverInterruptedNormalizedSourceAnalysisCleansCompletedArtifactAfterCrashWithPostgreSQL(t, database)
+	})
+	t.Run("scenario_10", func(t *testing.T) {
+		runRecoverInterruptedNormalizedSourceAnalysisOldFenceCannotRetireNewBorrowerWithPostgreSQL(t, database)
+	})
+	t.Run("scenario_11", func(t *testing.T) { runEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t, database) })
+	t.Run("scenario_12", func(t *testing.T) { runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeWorkIsDeleted(t, database) })
+	t.Run("scenario_13", func(t *testing.T) { runRecoveredFingerprintRerunAdmissionUsesOriginalIntentWithPostgreSQL(t, database) })
+}
+
+func runSourceAnalysisArtifactAcquireAndReadyFencingWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
-	fixture := newNormalizedWorkOperation(t, "/srv/artifact-fence", true,
+	fixture := normalizedWorkOperationWithDatabase(t, database, t.TempDir(), true,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
 	artifacts := persistence.NewSourceAnalysisArtifactRepository(fixture.database)
 	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_root SET processing_mode='staged' WHERE id=?`, fixture.root.ID); err != nil {
@@ -119,10 +156,9 @@ func TestSourceAnalysisArtifactAcquireAndReadyFencingWithPostgreSQL(t *testing.T
 	}
 }
 
-func TestSourceAnalysisArtifactRejectsStaleWorkAndForgetsOnlyOwnedAcquiringRowWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runSourceAnalysisArtifactRejectsStaleWorkAndForgetsOnlyOwnedAcquiringRowWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
-	fixture := newNormalizedWorkOperation(t, "/srv/artifact-stale", true,
+	fixture := normalizedWorkOperationWithDatabase(t, database, t.TempDir(), true,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
 	artifacts := persistence.NewSourceAnalysisArtifactRepository(fixture.database)
 	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_root SET processing_mode='staged' WHERE id=?`, fixture.root.ID); err != nil {
@@ -174,10 +210,9 @@ func TestSourceAnalysisArtifactRejectsStaleWorkAndForgetsOnlyOwnedAcquiringRowWi
 	}
 }
 
-func TestSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
-	fixture := newNormalizedWorkOperation(t, "/srv/artifact-replacement", true,
+	fixture := normalizedWorkOperationWithDatabase(t, database, t.TempDir(), true,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
 	artifacts := persistence.NewSourceAnalysisArtifactRepository(fixture.database)
 	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_root SET processing_mode='staged' WHERE id=?`, fixture.root.ID); err != nil {
@@ -206,7 +241,6 @@ func TestSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQ
 
 	second := first
 	second.OperationAttempt++
-	second.JobID++
 	setupTx, err := fixture.database.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin replacement delivery fixture: %v", err)
@@ -215,6 +249,11 @@ func TestSourceAnalysisArtifactAcquireReplacesOnlyOrphanedSelectionWithPostgreSQ
 	if _, err := setupTx.ExecContext(ctx, `UPDATE source_analysis_step SET state='pending',execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL WHERE work_id=? AND step='sha256'`, first.WorkID); err != nil {
 		t.Fatalf("clear old step delivery fence: %v", err)
 	}
+	jobResult, err := fixture.client.InsertTx(ctx, setupTx.Tx, service.SourceAnalysisJobArgs{OperationID: second.OperationID}, nil)
+	if err != nil {
+		t.Fatalf("insert replacement River delivery: %v", err)
+	}
+	second.JobID = jobResult.Job.ID
 	if _, err := setupTx.ExecContext(ctx, `UPDATE operation SET attempt=?,river_job_id=? WHERE id=?`,
 		second.OperationAttempt, second.JobID, operation.ID); err != nil {
 		t.Fatal(err)
@@ -273,10 +312,9 @@ func assertArtifactBinding(t *testing.T, ctx context.Context, fixture normalized
 	}
 }
 
-func TestSourceAnalysisExecutionModeIsImmutableAcrossRootModeChangesAndRetryWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runSourceAnalysisExecutionModeIsImmutableAcrossRootModeChangesAndRetryWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
-	fixture := newNormalizedWorkOperation(t, "/srv/artifact-execution-mode", true,
+	fixture := normalizedWorkOperationWithDatabase(t, database, t.TempDir(), true,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
 	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_root SET processing_mode='staged' WHERE id=?`, fixture.root.ID); err != nil {
 		t.Fatal(err)
@@ -333,7 +371,16 @@ func TestSourceAnalysisExecutionModeIsImmutableAcrossRootModeChangesAndRetryWith
 	// the retained artifact remains owned by its original immutable execution.
 	retryFence := fence
 	retryFence.OperationAttempt++
-	retryFence.JobID++
+	if err := fixture.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		result, err := fixture.client.InsertTx(ctx, tx.Tx, service.SourceAnalysisJobArgs{OperationID: retryFence.OperationID}, nil)
+		if err != nil {
+			return err
+		}
+		retryFence.JobID = result.Job.ID
+		return nil
+	}); err != nil {
+		t.Fatalf("insert retry River delivery: %v", err)
+	}
 	insertWorkExecution(t, ctx, fixture, retryFence, "in_place")
 	retryExecution, err := fixture.repository.GetSourceAnalysisWorkExecution(ctx, retryFence)
 	if err != nil || retryExecution.ProcessingMode != "in_place" {
@@ -348,10 +395,9 @@ func TestSourceAnalysisExecutionModeIsImmutableAcrossRootModeChangesAndRetryWith
 	}
 }
 
-func TestSourceAnalysisArtifactSettlementKeepsCumulativeCopyForSingleStepRetryWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runSourceAnalysisArtifactSettlementKeepsCumulativeCopyForSingleStepRetryWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
-	fixture := newNormalizedWorkOperation(t, "/srv/artifact-single-step-settlement", true,
+	fixture := normalizedWorkOperationWithDatabase(t, database, t.TempDir(), true,
 		[]persistence.SourceAnalysisStepInput{
 			{Step: persistence.SourceStepSHA256, State: "failed", SafeError: sourceAnalysisArtifactString("prior SHA failure")},
 			{Step: persistence.SourceStepProbe, State: "failed", SafeError: sourceAnalysisArtifactString("prior probe failure")},
@@ -457,10 +503,9 @@ func TestSourceAnalysisArtifactSettlementKeepsCumulativeCopyForSingleStepRetryWi
 	}
 }
 
-func TestSourceAnalysisArtifactRetainedBindingsAccumulateCanonicalRequestedStepsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runSourceAnalysisArtifactRetainedBindingsAccumulateCanonicalRequestedStepsWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
-	fixture := newNormalizedWorkOperation(t, "/srv/artifact-requested-step-union", true,
+	fixture := normalizedWorkOperationWithDatabase(t, database, t.TempDir(), true,
 		[]persistence.SourceAnalysisStepInput{
 			{Step: persistence.SourceStepSHA256, State: "failed", SafeError: sourceAnalysisArtifactString("retry SHA")},
 			{Step: persistence.SourceStepProbe, State: "failed", SafeError: sourceAnalysisArtifactString("retry probe")},

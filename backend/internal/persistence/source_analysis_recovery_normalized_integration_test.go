@@ -11,17 +11,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
-func TestRecoverInterruptedNormalizedSourceAnalysisReturnsOnlyOwnedUnfinishedStepsToPendingWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runRecoverInterruptedNormalizedSourceAnalysisReturnsOnlyOwnedUnfinishedStepsToPendingWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/normalized-recovery")
+	root := createInventoryRoot(t, ctx, repository, t.TempDir())
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "a/recovery.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, root)
 
@@ -130,13 +127,11 @@ func TestRecoverInterruptedNormalizedSourceAnalysisReturnsOnlyOwnedUnfinishedSte
 	}
 }
 
-func TestRecoverInterruptedNormalizedSourceAnalysisDoesNotClearLiveNewDeliveryWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runRecoverInterruptedNormalizedSourceAnalysisDoesNotClearLiveNewDeliveryWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/normalized-recovery-fence")
+	root := createInventoryRoot(t, ctx, repository, t.TempDir())
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "a/fence.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true, persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"})
@@ -195,13 +190,11 @@ func TestRecoverInterruptedNormalizedSourceAnalysisDoesNotClearLiveNewDeliveryWi
 	}
 }
 
-func TestRecoverInterruptedNormalizedSourceAnalysisCleansCompletedArtifactAfterCrashWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runRecoverInterruptedNormalizedSourceAnalysisCleansCompletedArtifactAfterCrashWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/normalized-recovery-complete")
+	root := createInventoryRoot(t, ctx, repository, t.TempDir())
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "a/complete.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true,
@@ -215,7 +208,7 @@ func TestRecoverInterruptedNormalizedSourceAnalysisCleansCompletedArtifactAfterC
 		t.Fatal("admitted operation has no River job")
 	}
 	digest := make([]byte, 32)
-	digest[0] = 1
+	digest[0] = 2
 	resultID := uuid.New()
 	if _, err := database.ExecContext(ctx, `INSERT INTO media_variant
 		(id,size_bytes,source_sha256,sha256_calculated_at,sha256_algorithm,sha256_applied_operation_id)
@@ -263,13 +256,11 @@ func TestRecoverInterruptedNormalizedSourceAnalysisCleansCompletedArtifactAfterC
 	}
 }
 
-func TestRecoverInterruptedNormalizedSourceAnalysisOldFenceCannotRetireNewBorrowerWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runRecoverInterruptedNormalizedSourceAnalysisOldFenceCannotRetireNewBorrowerWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/normalized-recovery-new-borrower")
+	root := createInventoryRoot(t, ctx, repository, t.TempDir())
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "a/new-borrower.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true,

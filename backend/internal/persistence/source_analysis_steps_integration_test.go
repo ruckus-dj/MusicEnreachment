@@ -22,25 +22,20 @@ import (
 func TestSourceAnalysisApplyCacheAndRetryLifecycleWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
-	runSourceAnalysisStepAppliesAndPromotion(t, database)
-	runSourceProbeCacheRegistersWhenSHACompletesFirst(t, database)
-	runSourceFingerprintSelectionCleanupAfterReruns(t, database)
-	runFailedAnalysisStepRetryRetainsPriorSelection(t, database)
-	runSuccessfulProbeRetryClearsPriorProbeFailure(t, database)
-}
-
-func TestSourceAnalysisConcurrentPromotionAndCanonicalApplyWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	runFingerprintPromotionAndDigestlessRerunSerializeAcrossRoots(t, database)
-	runConcurrentSourceSHA256ApplyUsesOneCanonicalVariant(t, database)
+	t.Run("apply_and_promotion", func(t *testing.T) { runSourceAnalysisStepAppliesAndPromotion(t, database) })
+	t.Run("probe_cache_sha_first", func(t *testing.T) { runSourceProbeCacheRegistersWhenSHACompletesFirst(t, database) })
+	t.Run("fingerprint_selection_cleanup", func(t *testing.T) { runSourceFingerprintSelectionCleanupAfterReruns(t, database) })
+	t.Run("failed_retry_retains_selection", func(t *testing.T) { runFailedAnalysisStepRetryRetainsPriorSelection(t, database) })
+	t.Run("successful_probe_retry_clears_error", func(t *testing.T) { runSuccessfulProbeRetryClearsPriorProbeFailure(t, database) })
+	t.Run("fingerprint_promotion_and_digestless_rerun", func(t *testing.T) { runFingerprintPromotionAndDigestlessRerunSerializeAcrossRoots(t, database) })
+	t.Run("concurrent_sha_apply_canonical_variant", func(t *testing.T) { runConcurrentSourceSHA256ApplyUsesOneCanonicalVariant(t, database) })
 }
 
 func runSourceAnalysisStepAppliesAndPromotion(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/step-apply")
+	root := createInventoryRoot(t, ctx, repository, canonicalAnalysisRootPath(t, "step-apply"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 4096, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true,
@@ -232,7 +227,7 @@ func runFingerprintPromotionAndDigestlessRerunSerializeAcrossRoots(t *testing.T,
 	client := openScanEnqueueRiver(t, database)
 	fingerprintTool := insertVerifiedAnalysisTool(t, ctx, database, "fpcalc", "fpcalc", "1.5.1", "fpcalc version 1.5.1")
 
-	rootA := createInventoryRoot(t, ctx, repository, "/srv/fingerprint-promotion-race-a")
+	rootA := createInventoryRoot(t, ctx, repository, canonicalAnalysisRootPath(t, "fingerprint-promotion-race-a"))
 	locationA := insertAnalysisLocation(t, ctx, database, rootA.ID, "track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, rootA)
 	workA := normalizedWork(t, ctx, repository, rootA, locationA, true,
@@ -242,7 +237,7 @@ func runFingerprintPromotionAndDigestlessRerunSerializeAcrossRoots(t *testing.T,
 	fixtureA := newAnalysisStepFixture(t, ctx, database, repository, client, rootA, locationA, workA,
 		persistence.SourceAnalysisModeBatch, nil, nil, false, []persistence.SourceAnalysisToolSelection{fingerprintTool})
 
-	rootB := createInventoryRoot(t, ctx, repository, "/srv/fingerprint-promotion-race-b")
+	rootB := createInventoryRoot(t, ctx, repository, canonicalAnalysisRootPath(t, "fingerprint-promotion-race-b"))
 	locationB := insertAnalysisLocation(t, ctx, database, rootB.ID, "track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, rootB)
 	workB := normalizedWork(t, ctx, repository, rootB, locationB, true,
@@ -335,7 +330,7 @@ func runSourceProbeCacheRegistersWhenSHACompletesFirst(t *testing.T, database *b
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/probe-cache-sha-first")
+	root := createInventoryRoot(t, ctx, repository, canonicalAnalysisRootPath(t, "probe-cache-sha-first"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 4096, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true,
@@ -379,7 +374,7 @@ func runSourceFingerprintSelectionCleanupAfterReruns(t *testing.T, database *bun
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/fingerprint-cleanup")
+	root := createInventoryRoot(t, ctx, repository, canonicalAnalysisRootPath(t, "fingerprint-cleanup"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, false,
@@ -484,7 +479,7 @@ func runConcurrentSourceSHA256ApplyUsesOneCanonicalVariant(t *testing.T, databas
 	digest[0] = 0x31
 	inputs := make([]persistence.SourceSHA256Apply, 2)
 	for index := range inputs {
-		path := "/srv/concurrent-hash-" + string(rune('a'+index))
+		path := canonicalAnalysisRootPath(t, "concurrent-hash-"+string(rune('a'+index)))
 		root := createInventoryRoot(t, ctx, repository, path)
 		location := insertAnalysisLocation(t, ctx, database, root.ID, "track.flac", 512, probeMtime())
 		establishInventory(t, ctx, database, root)
@@ -542,7 +537,7 @@ func runFailedAnalysisStepRetryRetainsPriorSelection(t *testing.T, database *bun
 		t.Run(string(step), func(t *testing.T) {
 			ctx := context.Background()
 			repository := persistence.NewSourceInventoryRepository(database)
-			root := createInventoryRoot(t, ctx, repository, "/srv/failed-step-"+string(step))
+			root := createInventoryRoot(t, ctx, repository, canonicalAnalysisRootPath(t, "failed-step-"+string(step)))
 			location := insertAnalysisLocation(t, ctx, database, root.ID, "track.flac", 1024, probeMtime())
 			establishInventory(t, ctx, database, root)
 			priorFailure := "prior step attempt failed"
@@ -613,7 +608,7 @@ func runSuccessfulProbeRetryClearsPriorProbeFailure(t *testing.T, database *bun.
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/probe-retry-status")
+	root := createInventoryRoot(t, ctx, repository, canonicalAnalysisRootPath(t, "probe-retry-status"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "track.flac", 1024, probeMtime())
 	if _, err := database.NewRaw(`UPDATE source_location SET probe_status='not_analyzed',safe_error=NULL WHERE id=?`, location.ID).Exec(ctx); err != nil {
 		t.Fatalf("set initial unanalysed probe state: %v", err)

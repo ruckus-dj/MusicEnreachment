@@ -10,16 +10,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
 // TestSourceAnalysisStageTransitionSerializesOnItsOperationRowWithPostgreSQL
 // proves a stage transition waits for the operation row it updates, without
 // requiring a table-wide lock that would serialize unrelated operations.
-func TestSourceAnalysisStageTransitionSerializesOnItsOperationRowWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runSourceAnalysisStageTransitionSerializesOnItsOperationRow(t *testing.T, database *bun.DB) {
+	t.Helper()
 	ctx := context.Background()
-	fixture, operation, previousVariantID := newWriteLockAnalysisFixture(t, ctx)
+	fixture, operation, previousVariantID := newWriteLockAnalysisFixtureWithDB(t, ctx, database, mustFixturePath(t, t.TempDir()))
 	operations := service.NewOperations(persistence.NewSetupManagerRepository(fixture.database))
 
 	err := runQueryRace(t, ctx, fixture.database, operationRowLockQuery(operation.ID), "FROM operation",
@@ -46,10 +47,10 @@ func TestSourceAnalysisStageTransitionSerializesOnItsOperationRowWithPostgreSQL(
 // TestSourceAnalysisFailureSerializesOnItsOperationRowWithPostgreSQL proves a
 // normalized terminal failure waits for its own operation row before releasing
 // its holds. Other operations remain free to progress independently.
-func TestSourceAnalysisFailureSerializesOnItsOperationRowWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runSourceAnalysisFailureSerializesOnItsOperationRow(t *testing.T, database *bun.DB) {
+	t.Helper()
 	ctx := context.Background()
-	fixture, operation, previousVariantID := newWriteLockAnalysisFixture(t, ctx)
+	fixture, operation, previousVariantID := newWriteLockAnalysisFixtureWithDB(t, ctx, database, mustFixturePath(t, t.TempDir()))
 	if err := service.NewOperations(persistence.NewSetupManagerRepository(fixture.database)).Running(ctx, operation.ID, service.SourceAnalysisStageProbing); err != nil {
 		t.Fatalf("start normalized source analysis: %v", err)
 	}
@@ -84,7 +85,13 @@ func TestSourceAnalysisFailureSerializesOnItsOperationRowWithPostgreSQL(t *testi
 
 func newWriteLockAnalysisFixture(t *testing.T, ctx context.Context) (normalizedAnalysisFixture, *persistence.Operation, uuid.UUID) {
 	t.Helper()
-	fixture := newNormalizedWorkOperation(t, "/srv/normalized-analysis-write-lock", false,
+	database := testpostgres.OpenMigratedWithRiver(t)
+	return newWriteLockAnalysisFixtureWithDB(t, ctx, database, mustFixturePath(t, t.TempDir()))
+}
+
+func newWriteLockAnalysisFixtureWithDB(t *testing.T, ctx context.Context, database *bun.DB, path string) (normalizedAnalysisFixture, *persistence.Operation, uuid.UUID) {
+	t.Helper()
+	fixture := normalizedWorkOperationWithDatabase(t, database, path, false,
 		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepProbe, State: "pending"}})
 	previousVariantID := insertMediaVariantRow(t, ctx, fixture.database, fixture.location.SizeBytes, uuid.New())
 	linkLocationVariant(t, ctx, fixture.database, fixture.location.ID, previousVariantID)

@@ -11,16 +11,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
-func TestRecoveredFingerprintRerunAdmissionUsesOriginalIntentWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runRecoveredFingerprintRerunAdmissionUsesOriginalIntentWithPostgreSQL(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/recovered-fingerprint-rerun")
+	root := createInventoryRoot(t, ctx, repository, t.TempDir())
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "a/recovered.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, root)
 	priorResultID := uuid.New()

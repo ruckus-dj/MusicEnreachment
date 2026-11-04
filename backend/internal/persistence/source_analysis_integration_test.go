@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,6 +28,11 @@ import (
 func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
+	t.Run("scan_reconciliation", func(t *testing.T) { runSourceScanReconcilesVariantLinks(t, database) })
+	t.Run("deletion_cleanup", func(t *testing.T) { runSourceAnalysisDeletionCleanup(t, database) })
+}
+
+func runSourceScanReconcilesVariantLinks(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -34,7 +40,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 
 	seedLinked := func(t *testing.T, path string, size int64, mtime time.Time) (*persistence.SourceRoot, persistence.SourceLocation, uuid.UUID) {
 		t.Helper()
-		root := createInventoryRoot(t, ctx, inventory, path)
+		root := createInventoryRoot(t, ctx, inventory, canonicalAnalysisRootPath(t, path))
 		// The seeded location belongs to an already applied generation, so the
 		// next apply advances the root past it and a missing file is pruned.
 		if _, err := database.NewUpdate().Model((*persistence.SourceRoot)(nil)).
@@ -66,7 +72,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 
 	t.Run("unchanged_keeps_link", func(t *testing.T) {
 		mtime := probeMtime()
-		root, location, variantID := seedLinked(t, "/srv/reconcile-unchanged", 1024, mtime)
+		root, location, variantID := seedLinked(t, "reconcile-unchanged", 1024, mtime)
 		applyScan(t, root, sourceCandidate("album/track.flac", 1024, mtime))
 		if link := readLocationByID(t, ctx, database, location.ID).MediaVariantID; link == nil || *link != variantID {
 			t.Fatalf("unchanged file link = %v, want %s", link, variantID)
@@ -78,7 +84,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 
 	t.Run("changed_size_detaches", func(t *testing.T) {
 		mtime := probeMtime()
-		root, location, variantID := seedLinked(t, "/srv/reconcile-size", 1024, mtime)
+		root, location, variantID := seedLinked(t, "reconcile-size", 1024, mtime)
 		applyScan(t, root, sourceCandidate("album/track.flac", 2048, mtime))
 		if link := readLocationByID(t, ctx, database, location.ID).MediaVariantID; link != nil {
 			t.Fatalf("changed size kept variant link %s", *link)
@@ -90,7 +96,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 
 	t.Run("changed_mtime_detaches", func(t *testing.T) {
 		mtime := probeMtime()
-		root, location, variantID := seedLinked(t, "/srv/reconcile-mtime", 1024, mtime)
+		root, location, variantID := seedLinked(t, "reconcile-mtime", 1024, mtime)
 		applyScan(t, root, sourceCandidate("album/track.flac", 1024, mtime.Add(time.Second)))
 		if link := readLocationByID(t, ctx, database, location.ID).MediaVariantID; link != nil {
 			t.Fatalf("changed mtime kept variant link %s", *link)
@@ -102,7 +108,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 
 	t.Run("no_audio_detaches", func(t *testing.T) {
 		mtime := probeMtime()
-		root, location, variantID := seedLinked(t, "/srv/reconcile-no-audio", 1024, mtime)
+		root, location, variantID := seedLinked(t, "reconcile-no-audio", 1024, mtime)
 		candidate := sourceCandidate("album/track.flac", 1024, mtime)
 		candidate.ProbeStatus = persistence.SourceProbeStatusNoAudio
 		applyScan(t, root, candidate)
@@ -116,7 +122,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 
 	t.Run("pruned_location_deletes_variant", func(t *testing.T) {
 		mtime := probeMtime()
-		root, location, variantID := seedLinked(t, "/srv/reconcile-prune", 1024, mtime)
+		root, location, variantID := seedLinked(t, "reconcile-prune", 1024, mtime)
 		applyScan(t, root, sourceCandidate("album/other.flac", 512, probeMtime()))
 		if _, err := inventory.GetSourceLocation(ctx, root.ID, location.ID); !errors.Is(err, persistence.ErrSourceLocationNotFound) {
 			t.Fatalf("pruned location read = %v, want ErrSourceLocationNotFound", err)
@@ -127,7 +133,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 	})
 
 	t.Run("configured_path_change_invalidates_links", func(t *testing.T) {
-		root := createInventoryRoot(t, ctx, inventory, "/srv/reconcile-path-a")
+		root := createInventoryRoot(t, ctx, inventory, canonicalAnalysisRootPath(t, "reconcile-path-a"))
 		seedMtime := probeMtime()
 		first := newSourceScanOperation(t, ctx, database, root, "running")
 		if err := inventory.ReplaceSourceScanCandidates(ctx, first.ID, []persistence.SourceScanCandidateInput{
@@ -153,7 +159,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read the root before the path change: %v", err)
 		}
-		stored.ConfiguredPath = "/srv/reconcile-path-b"
+		stored.ConfiguredPath = canonicalAnalysisRootPath(t, "reconcile-path-b")
 		if err := inventory.UpdateSourceRoot(ctx, stored); err != nil {
 			t.Fatalf("change the configured path: %v", err)
 		}
@@ -184,7 +190,7 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 
 	t.Run("failed_apply_keeps_link", func(t *testing.T) {
 		mtime := probeMtime()
-		root, location, variantID := seedLinked(t, "/srv/reconcile-failed", 1024, mtime)
+		root, location, variantID := seedLinked(t, "reconcile-failed", 1024, mtime)
 		operation := createRunningAnalysisScan(t, ctx, inventory, client, operations, root)
 		if err := inventory.ReplaceSourceScanCandidates(ctx, operation.ID, []persistence.SourceScanCandidateInput{
 			sourceCandidate("album/track.flac", 4096, probeMtime()),
@@ -213,13 +219,11 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 // deleting a root removes its locations and their now orphaned variants, an
 // active analysis blocks the deletion and keeps its variant, and typed reads are
 // scoped to the owning root.
-func TestSourceAnalysisDeletionCleanupWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceAnalysisDeletionCleanup(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
-	root := createInventoryRoot(t, ctx, inventory, "/srv/analysis-delete")
+	root := createInventoryRoot(t, ctx, inventory, canonicalAnalysisRootPath(t, "analysis-delete"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 1024, probeMtime())
 	variantID := insertMediaVariantRow(t, ctx, database, 1024, uuid.New())
 	linkLocationVariant(t, ctx, database, location.ID, variantID)
@@ -233,7 +237,7 @@ func TestSourceAnalysisDeletionCleanupWithPostgreSQL(t *testing.T) {
 		t.Fatalf("location read after root deletion = %v, want ErrSourceLocationNotFound", err)
 	}
 
-	activeRoot := createInventoryRoot(t, ctx, inventory, "/srv/analysis-active-delete")
+	activeRoot := createInventoryRoot(t, ctx, inventory, canonicalAnalysisRootPath(t, "analysis-active-delete"))
 	activeLocation := insertAnalysisLocation(t, ctx, database, activeRoot.ID, "album/track.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, activeRoot)
 	activeVariant := insertMediaVariantRow(t, ctx, database, 1024, uuid.New())
@@ -251,7 +255,7 @@ func TestSourceAnalysisDeletionCleanupWithPostgreSQL(t *testing.T) {
 		t.Fatalf("a refused root deletion removed the root: %v", err)
 	}
 
-	otherRoot := createInventoryRoot(t, ctx, inventory, "/srv/analysis-other-root")
+	otherRoot := createInventoryRoot(t, ctx, inventory, canonicalAnalysisRootPath(t, "analysis-other-root"))
 	if _, err := inventory.GetSourceLocation(ctx, otherRoot.ID, activeLocation.ID); !errors.Is(err, persistence.ErrSourceLocationNotFound) {
 		t.Fatalf("reading a location through another root = %v, want ErrSourceLocationNotFound", err)
 	}
@@ -261,6 +265,19 @@ func TestSourceAnalysisDeletionCleanupWithPostgreSQL(t *testing.T) {
 	if _, err := inventory.GetMediaVariant(ctx, uuid.New()); !errors.Is(err, persistence.ErrMediaVariantNotFound) {
 		t.Fatalf("reading a missing variant = %v, want ErrMediaVariantNotFound", err)
 	}
+}
+
+func canonicalAnalysisRootPath(t *testing.T, name string) string {
+	t.Helper()
+	path, err := os.MkdirTemp(t.TempDir(), name+"-")
+	if err != nil {
+		t.Fatalf("create source analysis root path: %v", err)
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("canonicalize source analysis root path: %v", err)
+	}
+	return canonical
 }
 
 // establishInventory makes a freshly created root the non-stale root of an

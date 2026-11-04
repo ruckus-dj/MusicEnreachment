@@ -10,18 +10,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
-func TestSourceScanRetryLocksRootBeforeOperationWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func testSourceScanRetryLocksRootBeforeOperation(t *testing.T, database *bun.DB) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/scan-lock-order")
+	root := createInventoryRoot(t, ctx, inventory, t.TempDir())
 	failed := failedSourceScanRetryOperation(t, ctx, repository, inventory, root, "traversing", "The traversal failed.")
 
 	// This transaction takes the first lock in source-scan apply/admission order,

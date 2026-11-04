@@ -15,9 +15,15 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func TestOutputAdmissionSessionPinsGateAndConnectionAcrossTransactions(t *testing.T) {
-	t.Parallel()
+func TestCleanupDeliveryDatabaseGroupWithPostgreSQL(t *testing.T) {
 	database := testpostgres.OpenMigratedWithRiver(t)
+	t.Run("TestOutputAdmissionSessionPinsGateAndConnectionAcrossTransactions", func(t *testing.T) { runOutputAdmissionSessionPinsGateAndConnectionAcrossTransactions(t, database) })
+	t.Run("DeliverySessionSerializesSameOperation", func(t *testing.T) { runCleanupDeliverySessionSerializesSameOperation(t, database) })
+	t.Run("StartupRecoveryFailsPersistedRunningAndQueuedOrphans", func(t *testing.T) { runCleanupStartupRecoveryFailsPersistedRunningAndQueuedOrphans(t, database) })
+	t.Run("RecoveryWaitsForActiveDeliveryClaim", func(t *testing.T) { runCleanupRecoveryWaitsForActiveDeliveryClaim(t, database) })
+}
+
+func runOutputAdmissionSessionPinsGateAndConnectionAcrossTransactions(t *testing.T, database *bun.DB) {
 	repository := NewSetupManagerRepository(database)
 	ctx := context.Background()
 	entered := make(chan int)
@@ -56,9 +62,7 @@ func TestOutputAdmissionSessionPinsGateAndConnectionAcrossTransactions(t *testin
 	assertTransactionSucceeded(t, exclusive.done)
 }
 
-func TestCleanupDeliverySessionSerializesSameOperation(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runCleanupDeliverySessionSerializesSameOperation(t *testing.T, database *bun.DB) {
 	repository := NewSetupManagerRepository(database)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -124,11 +128,10 @@ func TestCleanupJobArgumentsMustBeExactOperationIdentity(t *testing.T) {
 	}
 }
 
-func TestCleanupStartupRecoveryFailsPersistedRunningAndQueuedOrphans(t *testing.T) {
+func runCleanupStartupRecoveryFailsPersistedRunningAndQueuedOrphans(t *testing.T, database *bun.DB) {
 	for _, initialState := range []string{"running", "queued"} {
 		t.Run(initialState, func(t *testing.T) {
-			t.Parallel()
-			ctx, repository, artifactID, fence := admitCleanupOutcomeFixture(t)
+			ctx, repository, artifactID, fence := admitCleanupOutcomeFixtureWithDatabase(t, database)
 			if initialState == "queued" {
 				if _, err := repository.db.ExecContext(ctx, `UPDATE operation SET state='queued' WHERE id=?`, fence.OperationID); err != nil {
 					t.Fatalf("make cleanup delivery queued: %v", err)
@@ -155,9 +158,8 @@ func TestCleanupStartupRecoveryFailsPersistedRunningAndQueuedOrphans(t *testing.
 	}
 }
 
-func TestCleanupRecoveryWaitsForActiveDeliveryClaim(t *testing.T) {
-	t.Parallel()
-	ctx, repository, artifactID, fence := admitCleanupOutcomeFixture(t)
+func runCleanupRecoveryWaitsForActiveDeliveryClaim(t *testing.T, database *bun.DB) {
+	ctx, repository, artifactID, fence := admitCleanupOutcomeFixtureWithDatabase(t, database)
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	executorEntered := make(chan struct{})

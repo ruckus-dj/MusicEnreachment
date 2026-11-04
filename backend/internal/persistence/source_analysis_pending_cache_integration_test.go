@@ -7,21 +7,21 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
-func TestReusePendingSourceAnalysisCacheWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
+func runReusePendingSourceAnalysisCache(t *testing.T, database *bun.DB, ctx context.Context) {
+	t.Helper()
 	repository := persistence.NewSourceInventoryRepository(database)
 	openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/pending-cache")
+	fixtureRoot := mustFixturePath(t, t.TempDir())
+	root := createInventoryRoot(t, ctx, repository, filepath.Join(fixtureRoot, "pending-cache"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 4096, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true,
@@ -66,12 +66,20 @@ func TestReusePendingSourceAnalysisCacheWithPostgreSQL(t *testing.T) {
 	}
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-		InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-old","new_root":"/srv/tools-new"}`),
+		InputSnapshot: mustFixtureJSON(t, struct {
+			SchemaVersion int    `json:"schema_version"`
+			OldRoot       string `json:"old_root"`
+			NewRoot       string `json:"new_root"`
+		}{1, filepath.Join(fixtureRoot, "tools-old"), filepath.Join(fixtureRoot, "tools-new")}),
 	}
 	if err := persistence.NewSetupManagerRepository(database).CreateOperation(ctx, move); err != nil {
 		t.Fatalf("create active tools-root move: %v", err)
 	}
 
+	var jobsBefore int
+	if err := database.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &jobsBefore); err != nil {
+		t.Fatalf("count baseline River jobs before cache reuse: %v", err)
+	}
 	for i := 0; i < 2; i++ {
 		reused, err := repository.ReusePendingSourceAnalysisCache(ctx, root.ID, work.ID, persistence.SourceStepProbe, probeVariantID, "ffprobe 8.0")
 		if err != nil {
@@ -142,7 +150,7 @@ func TestReusePendingSourceAnalysisCacheWithPostgreSQL(t *testing.T) {
 		Scan(ctx, &jobs, &workHolds, &toolHolds, &executions); err != nil {
 		t.Fatalf("check cache reuse side effects: %v", err)
 	}
-	if jobs != 0 || workHolds != 0 || toolHolds != 0 || executions != 0 {
+	if jobs != jobsBefore || workHolds != 0 || toolHolds != 0 || executions != 0 {
 		t.Fatalf("cache reuse created jobs, holds or execution attribution: %d, %d, %d, %d", jobs, workHolds, toolHolds, executions)
 	}
 
@@ -153,5 +161,8 @@ func TestReusePendingSourceAnalysisCacheWithPostgreSQL(t *testing.T) {
 	}
 	if reused, err := repository.ReusePendingSourceAnalysisCache(ctx, root.ID, work.ID, persistence.SourceStepProbe, probeVariantID, "ffprobe 8.0"); err != nil || reused {
 		t.Fatalf("reuse failed probe = %t, %v; want false without error", reused, err)
+	}
+	if _, err := database.NewRaw(`DELETE FROM operation WHERE id=?`, move.ID).Exec(ctx); err != nil {
+		t.Fatalf("retire fixture tools move %s: %v", move.ID, err)
 	}
 }

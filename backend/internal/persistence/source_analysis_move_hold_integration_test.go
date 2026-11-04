@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 // TestToolsMoveEnqueueRefusesAnyActiveAnalysisHoldWithPostgreSQL proves the move
@@ -18,18 +18,13 @@ import (
 // tools move whose own snapshot lists no files still refuses under the operation
 // table lock before it inserts anything, because the move rewrites the global
 // tools root those analyses pinned.
-func TestToolsMoveEnqueueRefusesAnyActiveAnalysisHoldWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
+func runToolsMoveEnqueueRefusesAnyActiveAnalysisHold(t *testing.T, database *bun.DB, ctx context.Context, toolsRoot string) {
+	t.Helper()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)
 	fixtureRoot := mustFixturePath(t, t.TempDir())
-	toolsBefore := filepath.Join(fixtureRoot, "tools-before")
+	toolsBefore := toolsRoot
 	toolsAfter := filepath.Join(fixtureRoot, "tools-after")
-	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", toolsBefore); err != nil {
-		t.Fatal(err)
-	}
 	client := openScanEnqueueRiver(t, database)
 
 	root := createInventoryRoot(t, ctx, inventory, filepath.Join(fixtureRoot, "move-hold"))
@@ -65,5 +60,8 @@ func TestToolsMoveEnqueueRefusesAnyActiveAnalysisHoldWithPostgreSQL(t *testing.T
 	}
 	if jobs := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", serviceOperationArgs{}.Kind()); jobs != 0 {
 		t.Fatalf("move River jobs after the refusal = %d, want 0", jobs)
+	}
+	if err := inventory.SettleNormalizedSourceAnalysisOperation(ctx, analysis.ID, "failed", "failed", "retired move-hold fixture"); err != nil {
+		t.Fatalf("retire fixture analysis %s: %v", analysis.ID, err)
 	}
 }

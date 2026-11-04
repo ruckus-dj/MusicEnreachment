@@ -21,6 +21,22 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// Source-scan persistence integration scenarios share one migrated database.
+// Subtests deliberately run serially because their global assertions observe
+// some shared tables; each assertion is scoped to its own operation/root.
+func TestSourceScanPersistenceExternalScenarios(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigratedWithRiver(t)
+	t.Run("retry reenqueues traversal", func(t *testing.T) { testSourceScanRetryReenqueuesNewTraversal(t, database) })
+	t.Run("retry atomicity", func(t *testing.T) { testSourceScanRetryAtomic(t, database) })
+	t.Run("retry refusals", func(t *testing.T) { testSourceScanRetryRefusals(t, database) })
+	t.Run("retry root deletion", func(t *testing.T) { testSourceScanRetrySerializesRootDeletion(t, database) })
+	t.Run("delivery fences", func(t *testing.T) { testSourceScanDeliveryFencesMutations(t, database) })
+	t.Run("retry lock order", func(t *testing.T) { testSourceScanRetryLocksRootBeforeOperation(t, database) })
+	t.Run("prepared transport", func(t *testing.T) { testSourceScanPreparedAnalysisCandidateTransport(t, database) })
+	t.Run("verified tool holds", func(t *testing.T) { testSourceScanToolHoldsUseVerifiedSelections(t, database) })
+}
+
 // sourceScanRetryInserter stands in for the River client of a retry. It counts
 // the candidate rows the retry transaction holds at the moment the job is
 // inserted, which is the only point where the order of the cleanup and the
@@ -128,14 +144,12 @@ func holdSourceScanRetryRootDeletion(ctx context.Context, database *bun.DB, root
 // keeps the operation and its snapshot, drops the candidates of the failed
 // attempt before it enqueues the next traversal under the scan kind, and leaves
 // the previous successful inventory exactly as it was.
-func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func testSourceScanRetryReenqueuesNewTraversal(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry")
+	root := createInventoryRoot(t, ctx, inventory, t.TempDir())
 
 	applied := newSourceScanOperation(t, ctx, database, root, "running")
 	applySourceScan(t, ctx, inventory, applied, root.ConfiguredPath,
@@ -217,18 +231,17 @@ func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
 // TestSourceScanRetryIsAtomicWithPostgreSQL fails the River insert of a retry:
 // the cleanup and the enqueue are one transaction, so the failed operation keeps
 // its state and its candidates and no job is left behind.
-func TestSourceScanRetryIsAtomicWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func testSourceScanRetryAtomic(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-rollback")
+	root := createInventoryRoot(t, ctx, inventory, t.TempDir())
 
 	failed := failedSourceScanRetryOperation(t, ctx, repository, inventory, root, "applying", "The verified scan could not be applied.")
 	storeSourceScanRetryCandidates(t, ctx, inventory, failed.ID,
 		sourceCandidate("album/partial.flac", 512, probeMtime()))
+	jobsBefore := countSourceScanRetryJobs(t, ctx, database, service.SourceScanJobKind)
 
 	unreachable := errors.New("River is unreachable")
 	_, err := retrySourceScan(t, ctx, repository, failed.ID,
@@ -245,8 +258,8 @@ func TestSourceScanRetryIsAtomicWithPostgreSQL(t *testing.T) {
 		t.Fatalf("operation after the rolled-back retry = %+v, want it unchanged and failed", stored)
 	}
 	assertCandidateCount(t, ctx, database, failed.ID, 1)
-	if jobs := countSourceScanRetryJobs(t, ctx, database, service.SourceScanJobKind); jobs != 0 {
-		t.Fatalf("scan River jobs after the rolled-back retry = %d, want 0", jobs)
+	if jobs := countSourceScanRetryJobs(t, ctx, database, service.SourceScanJobKind); jobs != jobsBefore {
+		t.Fatalf("scan River jobs after the rolled-back retry = %d, want unchanged count %d", jobs, jobsBefore)
 	}
 }
 
@@ -255,15 +268,13 @@ func TestSourceScanRetryIsAtomicWithPostgreSQL(t *testing.T) {
 // same root, a disabled root, a deleted root, an operation that is not failed
 // and an operation that is not a scan. None of them may insert a job, change the
 // operation or drop the candidates of the failed attempt.
-func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func testSourceScanRetryRefusals(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
 	client := openScanEnqueueRiver(t, database)
 
-	busy := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-busy")
+	busy := createInventoryRoot(t, ctx, inventory, t.TempDir())
 	busyFailed := failedSourceScanRetryOperation(t, ctx, repository, inventory, busy, "traversing", "The traversal failed.")
 	storeSourceScanRetryCandidates(t, ctx, inventory, busyFailed.ID, sourceCandidate("album/busy.flac", 1, probeMtime()))
 	active := newSourceScanOperation(t, ctx, database, busy, "queued")
@@ -273,7 +284,7 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 	assertCandidateCount(t, ctx, database, busyFailed.ID, 1)
 	setOperationState(t, ctx, database, active.ID, "succeeded")
 
-	disabled := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-disabled")
+	disabled := createInventoryRoot(t, ctx, inventory, t.TempDir())
 	disabledFailed := failedSourceScanRetryOperation(t, ctx, repository, inventory, disabled, "queued", "The root was disabled.")
 	if _, err := database.NewUpdate().Model((*persistence.SourceRoot)(nil)).
 		Set("enabled = false").Where("id = ?", disabled.ID).Exec(ctx); err != nil {
@@ -283,7 +294,7 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 		t.Fatalf("retry on a disabled root = %v, want ErrSourceRootDisabled", err)
 	}
 
-	doomed := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-doomed")
+	doomed := createInventoryRoot(t, ctx, inventory, t.TempDir())
 	doomedFailed := failedSourceScanRetryOperation(t, ctx, repository, inventory, doomed, "traversing", "The traversal failed.")
 	if err := deleteInventoryRoot(ctx, inventory, doomed.ID); err != nil {
 		t.Fatalf("delete the root of the failed scan: %v", err)
@@ -292,7 +303,7 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 		t.Fatal("retry of a scan whose root was deleted was accepted")
 	}
 
-	finished := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-finished")
+	finished := createInventoryRoot(t, ctx, inventory, t.TempDir())
 	succeeded := newSourceScanOperation(t, ctx, database, finished, "queued")
 	setOperationState(t, ctx, database, succeeded.ID, "succeeded")
 	// The fixture stores its own River job, so the refusal must leave that stored
@@ -336,17 +347,16 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 // operation table lock while a root is deleted, which is the lock a retry takes
 // before it reads anything: the retry cannot pass the deletion and must refuse
 // the scan instead of resurrecting a job for a root that is gone.
-func TestSourceScanRetrySerializesWithRootDeletionWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func testSourceScanRetrySerializesRootDeletion(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-deletion")
+	root := createInventoryRoot(t, ctx, inventory, t.TempDir())
 
 	failed := failedSourceScanRetryOperation(t, ctx, repository, inventory, root, "traversing", "The traversal failed.")
 	storeSourceScanRetryCandidates(t, ctx, inventory, failed.ID, sourceCandidate("album/stale.flac", 2048, probeMtime()))
+	jobsBefore := countSourceScanRetryJobs(t, ctx, database, service.SourceScanJobKind)
 
 	locked, release := make(chan struct{}), make(chan struct{})
 	deletion := make(chan error, 1)
@@ -368,8 +378,8 @@ func TestSourceScanRetrySerializesWithRootDeletionWithPostgreSQL(t *testing.T) {
 	if err := <-retryResult; err == nil {
 		t.Fatal("a scan retry against a deleted root was accepted")
 	}
-	if jobs := countSourceScanRetryJobs(t, ctx, database, service.SourceScanJobKind); jobs != 0 {
-		t.Fatalf("scan River jobs after the refused retry = %d, want 0", jobs)
+	if jobs := countSourceScanRetryJobs(t, ctx, database, service.SourceScanJobKind); jobs != jobsBefore {
+		t.Fatalf("scan River jobs after the refused retry = %d, want unchanged count %d", jobs, jobsBefore)
 	}
 	assertCandidateCount(t, ctx, database, failed.ID, 1)
 	var target *uuid.UUID

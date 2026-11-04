@@ -30,9 +30,21 @@ const analysisRaceTimeout = 20 * time.Second
 // its refusal is a property of the shared lock order and not of a scheduling
 // race.
 func TestSourceAnalysisEnqueueRefusesMoveCommittedUnderLockWithPostgreSQL(t *testing.T) {
-	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
+	fixtureRoot := mustFixturePath(t, t.TempDir())
+	toolsRoot := filepath.Join(fixtureRoot, "shared-tools-root")
+	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", toolsRoot); err != nil {
+		t.Fatalf("set shared tools root before creating installations: %v", err)
+	}
+	runSourceAnalysisEnqueueRefusesMoveCommittedUnderLock(t, database, ctx)
+	runToolsMoveEnqueueRefusesAnalysisCommittedUnderLock(t, database, ctx, toolsRoot)
+	runToolsMoveEnqueueRefusesAnyActiveAnalysisHold(t, database, ctx, toolsRoot)
+	runReusePendingSourceAnalysisCache(t, database, ctx)
+}
+
+func runSourceAnalysisEnqueueRefusesMoveCommittedUnderLock(t *testing.T, database *bun.DB, ctx context.Context) {
+	t.Helper()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
 	fixtureRoot := mustFixturePath(t, t.TempDir())
@@ -44,11 +56,12 @@ func TestSourceAnalysisEnqueueRefusesMoveCommittedUnderLockWithPostgreSQL(t *tes
 
 	tool := normalizedToolSelection(t, ctx, database, installationID, "ffprobe")
 	operation := normalizedQueuedAnalysis(t, ctx, inventory, root, location, []persistence.SourceAnalysisToolSelection{tool})
+	moveID := uuid.New()
 	err := runQueryRace(t, ctx, database,
 		"SELECT pg_advisory_xact_lock(1297371734, 1)", "pg_advisory_xact_lock_shared",
 		func(ctx context.Context, tx bun.Tx) error {
 			return insertQueuedOperation(ctx, tx, &persistence.Operation{
-				ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
+				ID: moveID, Kind: "move_tools_root", State: "queued", Stage: "queued",
 				InputSnapshot: mustFixtureJSON(t, struct {
 					SchemaVersion int    `json:"schema_version"`
 					OldRoot       string `json:"old_root"`
@@ -63,23 +76,21 @@ func TestSourceAnalysisEnqueueRefusesMoveCommittedUnderLockWithPostgreSQL(t *tes
 		t.Fatalf("analysis start with a committed move = %v, want ErrToolsRootMoveActive", err)
 	}
 	assertNoAnalysisStart(t, ctx, database)
+	if _, err := database.NewRaw(`DELETE FROM operation WHERE id=?`, moveID).Exec(ctx); err != nil {
+		t.Fatalf("retire fixture tools move %s: %v", moveID, err)
+	}
 }
 
 // TestToolsMoveEnqueueRefusesAnalysisCommittedUnderLockWithPostgreSQL arms the
 // same barrier with a queued analysis that holds a managed installation, so the
 // reverse check of the tools move is decided under the shared lock as well.
-func TestToolsMoveEnqueueRefusesAnalysisCommittedUnderLockWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
+func runToolsMoveEnqueueRefusesAnalysisCommittedUnderLock(t *testing.T, database *bun.DB, ctx context.Context, toolsRoot string) {
+	t.Helper()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)
 	fixtureRoot := mustFixturePath(t, t.TempDir())
-	toolsBefore := filepath.Join(fixtureRoot, "tools-before")
+	toolsBefore := toolsRoot
 	toolsAfter := filepath.Join(fixtureRoot, "tools-after")
-	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", toolsBefore); err != nil {
-		t.Fatal(err)
-	}
 	client := openScanEnqueueRiver(t, database)
 	root := createInventoryRoot(t, ctx, inventory, filepath.Join(fixtureRoot, "move-analysis-barrier"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
@@ -109,6 +120,9 @@ func TestToolsMoveEnqueueRefusesAnalysisCommittedUnderLockWithPostgreSQL(t *test
 	}
 	if jobs := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", serviceOperationArgs{}.Kind()); jobs != 0 {
 		t.Fatalf("move River jobs after the refusal = %d, want 0", jobs)
+	}
+	if err := inventory.SettleNormalizedSourceAnalysisOperation(ctx, analysis.ID, "failed", "failed", "retired concurrency fixture"); err != nil {
+		t.Fatalf("retire fixture analysis %s: %v", analysis.ID, err)
 	}
 }
 

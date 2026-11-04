@@ -27,15 +27,20 @@ type analysisRaceFixture struct {
 
 func newAnalysisRaceFixture(t *testing.T, path string) analysisRaceFixture {
 	t.Helper()
-	ctx := context.Background()
 	database := testpostgres.OpenMigratedWithRiver(t)
+	return newAnalysisRaceFixtureWithDB(t, database, path)
+}
+
+func newAnalysisRaceFixtureWithDB(t *testing.T, database *bun.DB, path string) analysisRaceFixture {
+	t.Helper()
+	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, path)
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, inventory, root, location, true,
 		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"})
-	installationID := insertAnalysisInstallation(t, ctx, database, "root-race")
+	installationID := insertAnalysisInstallation(t, ctx, database, "root-race-"+uuid.NewString())
 	return analysisRaceFixture{
 		database: database, inventory: inventory, client: openScanEnqueueRiver(t, database),
 		root: root, location: location, work: work, installationID: installationID,
@@ -49,13 +54,14 @@ func newAnalysisRaceFixture(t *testing.T, path string) analysisRaceFixture {
 // path and a deletion removes the root. Each action reaches its lock (proven by
 // the query barrier) before the competing transaction commits, so the refusal
 // is decided at the transaction boundary, not by scheduling.
-func TestSourceAnalysisStartRacesRootMutationsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runSourceAnalysisStartRacesRootMutations(t *testing.T, database *bun.DB) {
+	t.Helper()
 	ctx := context.Background()
-	run := func(t *testing.T, path string, compete func(context.Context, bun.Tx, analysisRaceFixture) error, want error) {
+	run := func(t *testing.T, compete func(context.Context, bun.Tx, analysisRaceFixture) error, want error) {
 		t.Helper()
-		fixture := newAnalysisRaceFixture(t, path)
+		fixture := newAnalysisRaceFixtureWithDB(t, database, mustFixturePath(t, t.TempDir()))
 		operation := normalizedOperation(t, fixture.root, fixture.location, fixture.work, persistence.SourceAnalysisModeBatch, nil, nil, true, false, nil)
+		jobsBefore := analysisJobs(t, ctx, fixture.database)
 		holdRoot := fmt.Sprintf("SELECT id FROM source_root WHERE id = '%s' FOR UPDATE", fixture.root.ID)
 		err := runQueryRace(t, ctx, fixture.database, holdRoot, "FOR UPDATE",
 			func(ctx context.Context, tx bun.Tx) error { return compete(ctx, tx, fixture) },
@@ -65,13 +71,13 @@ func TestSourceAnalysisStartRacesRootMutationsWithPostgreSQL(t *testing.T) {
 		if !errors.Is(err, want) {
 			t.Fatalf("analysis start racing the competing mutation = %v, want %v", err, want)
 		}
-		if jobs := analysisJobs(t, ctx, fixture.database); jobs != 0 {
-			t.Fatalf("analysis River jobs after the refusal = %d, want 0", jobs)
+		if jobs := analysisJobs(t, ctx, fixture.database); jobs != jobsBefore {
+			t.Fatalf("analysis River jobs after the refusal = %d, want unchanged count %d", jobs, jobsBefore)
 		}
 	}
 
 	t.Run("active_analysis", func(t *testing.T) {
-		run(t, "/srv/race-analysis", func(ctx context.Context, tx bun.Tx, f analysisRaceFixture) error {
+		run(t, func(ctx context.Context, tx bun.Tx, f analysisRaceFixture) error {
 			competing := normalizedOperation(t, f.root, f.location, f.work, persistence.SourceAnalysisModeBatch, nil, nil, true, false, nil)
 			if err := insertQueuedOperation(ctx, tx, competing); err != nil {
 				return err
@@ -82,7 +88,7 @@ func TestSourceAnalysisStartRacesRootMutationsWithPostgreSQL(t *testing.T) {
 	})
 
 	t.Run("active_scan", func(t *testing.T) {
-		run(t, "/srv/race-scan", func(ctx context.Context, tx bun.Tx, f analysisRaceFixture) error {
+		run(t, func(ctx context.Context, tx bun.Tx, f analysisRaceFixture) error {
 			return insertQueuedOperation(ctx, tx, &persistence.Operation{
 				ID: uuid.New(), Kind: "scan_source", State: "queued", Stage: "queued",
 				InputSnapshot: json.RawMessage(`{}`), TargetSourceRootID: &f.root.ID,
@@ -91,7 +97,7 @@ func TestSourceAnalysisStartRacesRootMutationsWithPostgreSQL(t *testing.T) {
 	})
 
 	t.Run("path_edit", func(t *testing.T) {
-		run(t, "/srv/race-edit", func(ctx context.Context, tx bun.Tx, f analysisRaceFixture) error {
+		run(t, func(ctx context.Context, tx bun.Tx, f analysisRaceFixture) error {
 			_, err := tx.NewUpdate().Model((*persistence.SourceRoot)(nil)).
 				Set("configured_path = ?", f.root.ConfiguredPath+"-moved").Set("updated_at = now()").
 				Where("id = ?", f.root.ID).Exec(ctx)
@@ -100,7 +106,7 @@ func TestSourceAnalysisStartRacesRootMutationsWithPostgreSQL(t *testing.T) {
 	})
 
 	t.Run("root_delete", func(t *testing.T) {
-		run(t, "/srv/race-delete", func(ctx context.Context, tx bun.Tx, f analysisRaceFixture) error {
+		run(t, func(ctx context.Context, tx bun.Tx, f analysisRaceFixture) error {
 			_, err := tx.NewDelete().Model((*persistence.SourceRoot)(nil)).Where("id = ?", f.root.ID).Exec(ctx)
 			return err
 		}, persistence.ErrSourceAnalysisStale)

@@ -10,13 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
-func TestApplySourceScanRetainsSelectedFingerprintAndClearsSupersededProbeIntent(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
+func testApplySourceScanRetainsSelectedFingerprintAndClearsSupersededProbeIntent(t *testing.T, db *bun.DB) {
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/retained-analysis")
 	previousScan := publishTestScan(t, ctx, db, root.ID)
@@ -79,9 +76,7 @@ func TestApplySourceScanRetainsSelectedFingerprintAndClearsSupersededProbeIntent
 	}
 }
 
-func TestApplySourceScanRejectsForgedRetainedFingerprintAtomically(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
+func testApplySourceScanRejectsForgedRetainedFingerprintAtomically(t *testing.T, db *bun.DB) {
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/forged-retained-analysis")
 	previousScan := publishTestScan(t, ctx, db, root.ID)
@@ -117,6 +112,7 @@ func TestApplySourceScanRejectsForgedRetainedFingerprintAtomically(t *testing.T)
 	if err := db.NewRaw(`SELECT (SELECT count(*) FROM source_scan_candidate WHERE operation_id=?),(SELECT count(*) FROM media_fingerprint_result)`, scan.ID).Scan(ctx, &candidateCountBefore, &fingerprintCountBefore); err != nil {
 		t.Fatal(err)
 	}
+	beforeApply := sourceScanPublicationSnapshot(t, ctx, db)
 	apply := SourceScanApply{OperationID: scan.ID, ExpectedConfiguredPath: root.ConfiguredPath, ExpectedAttempt: scan.Attempt, ExpectedJobID: *scan.RiverJobID, SHA256Enabled: sourceAnalysisBoolPointer(false)}
 	if err := NewSourceInventoryRepository(db).ApplySourceScan(ctx, apply); err == nil {
 		t.Fatal("forged retained fingerprint unexpectedly applied")
@@ -136,11 +132,12 @@ func TestApplySourceScanRejectsForgedRetainedFingerprintAtomically(t *testing.T)
 	if generation != generationBefore || locationGeneration != locationGenerationBefore || candidateCount != candidateCountBefore || fingerprintCount != fingerprintCountBefore {
 		t.Fatalf("failed apply mutated inventory: before=%d/%d/%d/%d after=%d/%d/%d/%d", generationBefore, locationGenerationBefore, candidateCountBefore, fingerprintCountBefore, generation, locationGeneration, candidateCount, fingerprintCount)
 	}
+	if afterApply := sourceScanPublicationSnapshot(t, ctx, db); afterApply != beforeApply {
+		t.Fatalf("rejected forged retained fingerprint changed source tables:\nbefore %s\nafter  %s", beforeApply, afterApply)
+	}
 }
 
-func TestApplySourceScanUsesSHA256FingerprintCacheWithoutMutation(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
+func testApplySourceScanUsesSHA256FingerprintCacheWithoutMutation(t *testing.T, db *bun.DB) {
 	ctx := context.Background()
 	root := publishTestRoot(t, ctx, db, "/srv/cached-retained-analysis")
 	previousScan := publishTestScan(t, ctx, db, root.ID)
@@ -159,17 +156,25 @@ func TestApplySourceScanUsesSHA256FingerprintCacheWithoutMutation(t *testing.T) 
 		ReusedImmutableIDs: []uuid.UUID{fingerprint.ID}, OriginalLocationID: &location.ID, OriginalMediaVariantID: location.MediaVariantID,
 	}
 	candidates := []SourceScanCandidateInput{{RelativePath: location.RelativePath, SizeBytes: location.SizeBytes, Mtime: stamp, ProbeStatus: SourceProbeStatusAudio, PreparedAnalysis: prepared}}
+	var fingerprintCountBefore int
+	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result`).Scan(ctx, &fingerprintCountBefore); err != nil {
+		t.Fatal(err)
+	}
 	publishAndApplyRetainedCandidate(t, ctx, db, root, scan, candidates, false)
 	var fingerprintCount int
 	var origin string
 	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result`).Scan(ctx, &fingerprintCount); err != nil {
 		t.Fatal(err)
 	}
+	var retainedFingerprintCount int
+	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result WHERE id=?`, fingerprint.ID).Scan(ctx, &retainedFingerprintCount); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.NewRaw(`SELECT success_reuse_origin FROM source_analysis_step WHERE work_id=? AND step='fingerprint'`, work.ID).Scan(ctx, &origin); err != nil {
 		t.Fatal(err)
 	}
-	if fingerprintCount != 1 || origin != "sha256" {
-		t.Fatalf("cache publication inserted %d fingerprint rows and recorded origin %q; want no mutation and sha256 origin", fingerprintCount, origin)
+	if fingerprintCount != fingerprintCountBefore || retainedFingerprintCount != 1 || origin != "sha256" {
+		t.Fatalf("cache publication fingerprint rows before=%d after=%d retained original=%d origin=%q; want unchanged count, retained original, sha256 reuse", fingerprintCountBefore, fingerprintCount, retainedFingerprintCount, origin)
 	}
 }
 

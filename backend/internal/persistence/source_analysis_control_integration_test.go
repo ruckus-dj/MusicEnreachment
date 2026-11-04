@@ -9,7 +9,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 type sourceAnalysisControlSetup bool
@@ -26,12 +26,11 @@ func (sourceAnalysisControlRuntime) ReadRuntimeSettings(context.Context) (settin
 
 // Exercise the service-produced normalized contract against the real admission
 // transaction, rather than accepting it only through the service/API fakes.
-func TestSourceAnalysisRetryServiceNormalizedAdmissionWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
+func runSourceAnalysisRetryServiceNormalizedAdmission(t *testing.T, database *bun.DB) {
+	t.Helper()
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/source-analysis-control")
+	root := createInventoryRoot(t, ctx, repository, mustFixturePath(t, t.TempDir()))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, root)
 	work := normalizedWork(t, ctx, repository, root, location, true, persistence.SourceAnalysisStepInput{

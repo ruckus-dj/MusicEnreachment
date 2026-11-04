@@ -9,19 +9,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
-func TestStartNormalizedSourceAnalysisDeliveryReplacesAdmissionToolHoldsWithPostgreSQL(t *testing.T) {
-	t.Parallel()
+func runStartNormalizedSourceAnalysisDeliveryReplacesAdmissionToolHolds(t *testing.T, database *bun.DB) {
+	t.Helper()
 	t.Run("current selection replaces admission selection", func(t *testing.T) {
-		database := testpostgres.OpenMigratedWithRiver(t)
 		ctx := context.Background()
 		repository := persistence.NewSourceInventoryRepository(database)
-		_, operation, admissionTool := queuedToolAnalysis(t, ctx, database, repository, "/srv/analysis-delivery-reselect")
+		_, operation, admissionTool := queuedToolAnalysis(t, ctx, database, repository, mustFixturePath(t, t.TempDir()))
 
-		currentToolID := insertAnalysisInstallation(t, ctx, database, "delivery-current")
+		currentToolID := insertAnalysisInstallation(t, ctx, database, "delivery-current-"+uuid.NewString())
 		if err := persistence.NewSettingsRepository(database).Set(ctx, "active_ffmpeg_installation_id", currentToolID.String()); err != nil {
 			t.Fatalf("select current ffmpeg installation: %v", err)
 		}
@@ -41,10 +39,9 @@ func TestStartNormalizedSourceAnalysisDeliveryReplacesAdmissionToolHoldsWithPost
 	})
 
 	t.Run("staged root resolves current tools and records staged execution", func(t *testing.T) {
-		database := testpostgres.OpenMigratedWithRiver(t)
 		ctx := context.Background()
 		repository := persistence.NewSourceInventoryRepository(database)
-		root, operation, admissionTool := queuedToolAnalysis(t, ctx, database, repository, "/srv/analysis-delivery-staged")
+		root, operation, admissionTool := queuedToolAnalysis(t, ctx, database, repository, mustFixturePath(t, t.TempDir()))
 		if _, err := database.NewRaw(`UPDATE source_root SET processing_mode='staged' WHERE id=?`, root.ID).Exec(ctx); err != nil {
 			t.Fatalf("switch source root to staged mode: %v", err)
 		}
