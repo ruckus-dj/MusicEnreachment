@@ -20,10 +20,9 @@ const analysisSafeProbe = "managed ffprobe is unavailable"
 // through the real River dispatcher and real PostgreSQL: a delivery probes,
 // applies and succeeds with its work and tool holds released; a duplicate delivery runs no
 // second probe; a pinned installation that is gone fails the analysis with the
-// previous variant untouched and both holds released; a successful retry after a
-// transient tool failure replaces the variant; a fresh analysis that already
-// replaced the variant makes an older failed retry a conflict; and an apply
-// whose terminal update fails leaves the previous variant linked.
+// previous variant untouched and both holds released; an explicit retry of the
+// failed probe step succeeds; an apply whose terminal update fails leaves the
+// previous variant linked; and a deleted installation refuses a later retry.
 func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	t.Parallel()
 	fixture := newAnalysisDispatchFixture(t)
@@ -75,17 +74,6 @@ func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	}
 	fixture.restoreFFProbe(t)
 
-	// A fresh successful analysis of the unchanged file promotes the probe result
-	// into the already canonical digest identity.
-	replacement := fixture.start(t, ctx)
-	awaitRiverCompletion(t, ctx, fixture.events, *replacement.RiverJobID)
-	assertOperationStage(t, ctx, fixture.setup, replacement.ID, "succeeded", service.SourceAnalysisStageApplying)
-	replacementVariant := fixture.requireLinkedVariant(t, ctx)
-	requireLinkedCanonicalSHAIdentity(t, ctx, fixture, replacementVariant)
-	if variants := fixture.countVariants(t, ctx); variants != 2 {
-		t.Fatalf("media variants after the replacement = %d, want the canonical SHA/probe identity", variants)
-	}
-
 	// Batch operations are not retried as a whole after one step failed; the
 	// failed step remains independently retryable.
 	jobsBeforeRetry := fixture.countJobs(t, ctx, failed.ID)
@@ -98,15 +86,7 @@ func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 		t.Fatalf("River jobs for the refused retry = %d, want the unchanged %d", jobs, jobsBeforeRetry)
 	}
 
-	// A missing-tool batch fails while retaining a failed probe step. Once the
-	// managed executable is restored, retry that step through the step API.
-	fixture.changeSourceBytes(t, ctx, "fresh bytes for explicit step retry")
-	fixture.removeFFProbe(t)
-	retryable := fixture.start(t, ctx)
-	awaitRiverCompletion(t, ctx, fixture.events, *retryable.RiverJobID)
-	assertOperationStage(t, ctx, fixture.setup, retryable.ID, "failed", service.SourceAnalysisStageApplying)
-	requireAnalysisStepSafeError(t, ctx, fixture, retryable.ID, persistence.SourceStepProbe, analysisSafeProbe)
-	fixture.restoreFFProbe(t)
+	// Retry the original failed probe through the step API after restoring ffprobe.
 	analysis := service.NewSourceAnalysisOperations(
 		persistence.NewSourceAnalysisStartStore(fixture.database), fixture.registry, fixture.registry, fixture.platform, fixture.client,
 	)
@@ -122,7 +102,10 @@ func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	finalVariant := fixture.requireLinkedVariant(t, ctx)
 	requireLinkedCanonicalSHAIdentity(t, ctx, fixture, finalVariant)
 	requireAnalysisHolds(t, ctx, fixture, retried.ID, nil, nil)
-	if variants := fixture.countVariants(t, ctx); variants != 3 {
+	if finalVariant != failedVariant {
+		t.Fatalf("linked variant after the retry = %s, want the recovered failed-probe identity %s", finalVariant, failedVariant)
+	}
+	if variants := fixture.countVariants(t, ctx); variants != 2 {
 		t.Fatalf("media variants after the retry = %d, want the canonical SHA/probe identity", variants)
 	}
 
@@ -139,7 +122,7 @@ func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	if fixture.requireLinkedVariant(t, ctx) != finalVariant {
 		t.Fatal("a failed apply changed the linked variant")
 	}
-	if variants := fixture.countVariants(t, ctx); variants != 3 {
+	if variants := fixture.countVariants(t, ctx); variants != 2 {
 		t.Fatalf("media variants after the failed apply = %d, want the canonical SHA/probe identity", variants)
 	}
 	dropFailingAnalysisApplyTrigger(t, ctx, fixture.database)

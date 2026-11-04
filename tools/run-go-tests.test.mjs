@@ -97,7 +97,7 @@ test("runner finalizes artifacts on success and includes the final JSON line", a
 		"-tags=integration",
 		"-count=1",
 		"-p",
-		"2",
+		"8",
 		"-parallel",
 		"8",
 		"./...",

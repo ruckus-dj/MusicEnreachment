@@ -1092,9 +1092,12 @@ func (worker *postWorkBarrier) Work(ctx context.Context, job *river.Job[service.
 
 func stopRiverClient(t *testing.T, client *river.Client[*sql.Tx]) {
 	t.Helper()
+	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := client.Stop(ctx); err != nil {
+	err := client.Stop(ctx)
+	t.Logf("testhelper.phase river=stop duration=%s error=%v", time.Since(started), err)
+	if err != nil {
 		t.Errorf("stop River worker client: %v", err)
 	}
 }
@@ -1156,13 +1159,16 @@ func enqueueDuplicateDelivery(t *testing.T, ctx context.Context, database *bun.D
 
 func awaitRiverCompletion(t *testing.T, ctx context.Context, events <-chan *river.Event, id int64) {
 	t.Helper()
+	started := time.Now()
 	for {
 		select {
 		case event := <-events:
 			if event != nil && event.Job != nil && event.Job.ID == id {
+				t.Logf("testhelper.phase river=await job_id=%d duration=%s", id, time.Since(started))
 				return
 			}
 		case <-ctx.Done():
+			t.Logf("testhelper.phase river=await job_id=%d duration=%s error=%v", id, time.Since(started), ctx.Err())
 			t.Fatalf("River job %d did not complete before deadline: %v", id, ctx.Err())
 			return
 		}

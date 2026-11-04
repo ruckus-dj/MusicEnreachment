@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -83,11 +82,20 @@ func failedSourceScanRetryOperation(t *testing.T, ctx context.Context, repositor
 	}
 	root.ScanGeneration = currentRoot.ScanGeneration
 	finished := time.Now().UTC()
+	snapshot, err := json.Marshal(map[string]any{
+		"schema_version":  3,
+		"source_root_id":  root.ID,
+		"configured_path": root.ConfiguredPath,
+		"scan_generation": root.ScanGeneration,
+		"sha256_enabled":  false,
+		"tools":           []any{},
+	})
+	if err != nil {
+		t.Fatalf("encode failed scan snapshot: %v", err)
+	}
 	operation := &persistence.Operation{
 		ID: uuid.New(), Kind: "scan_source", State: "failed", Stage: stage,
-		InputSnapshot: []byte(`{"schema_version":3,"source_root_id":"` + root.ID.String() +
-			`","configured_path":"` + root.ConfiguredPath + `","scan_generation":` + fmt.Sprint(root.ScanGeneration) +
-			`,"sha256_enabled":false,"tools":[]}`),
+		InputSnapshot:      snapshot,
 		TargetSourceRootID: &root.ID, Attempt: 1, SafeError: stringPointer(safe), FinishedAt: &finished,
 	}
 	if err := repository.CreateOperation(ctx, operation); err != nil {
