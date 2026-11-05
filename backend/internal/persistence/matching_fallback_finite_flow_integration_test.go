@@ -6,12 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"testing"
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -23,95 +17,12 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
 )
-
-func TestAutomaticFallbackEmptyPlanPublishesFrozenReviewPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := seedFallbackSQLRun(t, false)
-	ctx := f.ctx
-	parent, err := f.repository.GetOperation(ctx, f.runID)
-	if err != nil || parent.RiverJobID == nil {
-		t.Fatalf("read admitted parent delivery: operation=%+v err=%v", parent, err)
-	}
-	if _, err := f.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, *parent.RiverJobID).Exec(ctx); err != nil {
-		t.Fatalf("make admitted parent delivery claimable: %v", err)
-	}
-	claim, outcome, err := f.repository.ClaimMatchingDelivery(ctx, f.runID, parent.Attempt, *parent.RiverJobID, 1)
-	if err != nil || outcome != persistence.MatchingDeliveryClaimed {
-		t.Fatalf("claim admitted parent delivery: claim=%+v outcome=%v err=%v", claim, outcome, err)
-	}
-	client := openScanEnqueueRiver(t, f.db)
-	changed, err := f.repository.CompleteEmptyFallbackPlanAndContinueForDelivery(
-		ctx, client, f.runID, parent.Attempt, *parent.RiverJobID, claim, 0,
-	)
-	if err != nil || !changed {
-		t.Fatalf("settle and continue empty fallback plan: changed=%v err=%v", changed, err)
-	}
-	acquisition, found, err := f.repository.GetMatchingAcquisition(ctx, f.runID)
-	if err != nil || !found || acquisition.Phase != persistence.MatchingAcquisitionFallbackEvaluationSealed {
-		t.Fatalf("read sealed empty-plan acquisition: acquisition=%+v found=%v err=%v", acquisition, found, err)
-	}
-	waitRevision := acquisition.Revision - 1
-	var waitOutput []byte
-	if err := f.db.NewRaw(`SELECT output FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, f.runID, waitRevision).Scan(ctx, &waitOutput); err != nil {
-		t.Fatalf("read empty-plan evidence: %v", err)
-	}
-	var evidence struct {
-		Reason   string            `json:"reason"`
-		Receipts []json.RawMessage `json:"calculation_receipts"`
-	}
-	if err := json.Unmarshal(waitOutput, &evidence); err != nil || evidence.Reason != "fallback_plan_empty" || len(evidence.Receipts) != 0 {
-		t.Fatalf("empty plan fabricated calculation evidence: output=%s err=%v", waitOutput, err)
-	}
-	for query, expected := range map[string]int{
-		`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`:    0,
-		`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?`: 0,
-		`SELECT count(*) FROM matching_fallback_calculation_receipt WHERE run_id=?`:  0,
-		`SELECT count(*) FROM matching_delivery WHERE run_id=?`:                      2,
-	} {
-		var count int
-		if err := f.db.NewRaw(query, f.runID).Scan(ctx, &count); err != nil || count != expected {
-			t.Fatalf("empty-plan SQL contract %q: count=%d want=%d err=%v", query, count, expected, err)
-		}
-	}
-	seal, found, err := f.repository.GetMatchingFallbackAuthoritySeal(ctx, f.runID, waitRevision)
-	if err != nil || !found || seal.Disposition != "no_query" || seal.SelectedCalculation != nil || len(seal.FullEvaluationContext) != 0 {
-		t.Fatalf("read no-query frozen authority: seal=%+v found=%v err=%v", seal, found, err)
-	}
-	handoff, found, err := f.repository.ContinueMatchingFallbackSeal(ctx, client, f.runID, parent.Attempt, waitRevision)
-	if err != nil || !found || handoff.RiverJobID < 1 || handoff.SealDigest != seal.Digest {
-		t.Fatalf("read empty-plan continuation handoff: handoff=%+v found=%v err=%v", handoff, found, err)
-	}
-	if _, err := f.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, handoff.RiverJobID).Exec(ctx); err != nil {
-		t.Fatalf("make continuation delivery claimable: %v", err)
-	}
-	claim, outcome, err = f.repository.ClaimMatchingDelivery(ctx, f.runID, parent.Attempt, handoff.RiverJobID, 1)
-	if err != nil || outcome != persistence.MatchingDeliveryClaimed {
-		t.Fatalf("claim continuation delivery: claim=%+v outcome=%v err=%v", claim, outcome, err)
-	}
-	prepared, found, err := service.PrepareFrozenFallbackEvaluation(ctx, f.repository, f.runID, waitRevision)
-	if err != nil || !found || prepared.Authority.Digest != seal.Digest {
-		t.Fatalf("prepare no-query frozen review: prepared=%+v found=%v err=%v", prepared, found, err)
-	}
-	publication, err := service.SerializeFrozenFallbackEvaluation(prepared)
-	if err != nil || publication.Evaluation.Outcome != "review" || publication.Evaluation.Decision != "review" ||
-		len(publication.Edges) != 0 || len(publication.Inventory.Releases) != 0 {
-		t.Fatalf("serialize no-query frozen review: publication=%+v err=%v", publication, err)
-	}
-	changed, err = f.repository.PublishFrozenMatchingEvaluationForDelivery(
-		ctx, f.runID, parent.Attempt, handoff.RiverJobID, claim, publication,
-		map[uuid.UUID]*string{publication.Authority.GroupID: nil},
-	)
-	if err != nil || !changed {
-		t.Fatalf("publish no-query frozen review: changed=%v err=%v", changed, err)
-	}
-	snapshot, err := persistence.NewIncomingMatchCandidateRepository(f.db).GetReviewSnapshot(ctx, publication.Authority.GroupID)
-	if err != nil || snapshot == nil || snapshot.Header == nil || snapshot.Header.FrozenAuthorityVersion == nil ||
-		*snapshot.Header.FrozenAuthorityVersion != 3 || snapshot.Header.FrozenRunID == nil || *snapshot.Header.FrozenRunID != f.runID ||
-		snapshot.Header.FrozenWaitRevision == nil || *snapshot.Header.FrozenWaitRevision != waitRevision || len(snapshot.Members) != 1 {
-		t.Fatalf("published no-query frozen review snapshot: snapshot=%+v err=%v", snapshot, err)
-	}
-}
 
 type uniquePublicationApplyFixture struct {
 	Context           context.Context

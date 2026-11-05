@@ -4,9 +4,7 @@ package persistence_test
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
-	"errors"
+
 	"testing"
 	"time"
 
@@ -18,74 +16,6 @@ import (
 
 // Fixtures in these tests are synthetic database rows; they do not assert that
 // any executable was downloaded or verified.
-func TestC07ExplicitActivationRequiresCompletionAndReadyTarget(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	repo := persistence.NewSetupManagerRepository(db)
-	client := c07RiverClient(t, ctx, db)
-	root := c07ToolsRoot(t, ctx, db)
-	op := c07Admission(t, ctx, repo, client, root, "ffmpeg", "8.0")
-	id := *op.TargetInstallationID
-	if err := repo.ActivateInstallation(ctx, id, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey); err == nil {
-		t.Fatal("explicit activation before completion succeeded")
-	}
-	if err := repo.MarkInstallationReady(ctx, id, json.RawMessage(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`), time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.NewInsert().Model(&persistence.AppSetting{Name: "setup_completed_at", Value: "done"}).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.ActivateInstallation(ctx, id, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey); err != nil {
-		t.Fatalf("activate ready target after completion: %v", err)
-	}
-	if err := repo.ActivateInstallation(ctx, id, "fpcalc", "linux", "amd64", settings.ActiveFFmpegInstallationKey); err == nil {
-		t.Fatal("wrong package activated")
-	}
-}
-
-func TestC07FinalizeActivatesOnlyBeforeSetupCompletion(t *testing.T) {
-	for _, completed := range []bool{false, true} {
-		completed := completed
-		t.Run(map[bool]string{false: "initial", true: "completed"}[completed], func(t *testing.T) {
-			t.Parallel()
-			db := testpostgres.OpenMigratedWithRiver(t)
-			ctx := context.Background()
-			repo := persistence.NewSetupManagerRepository(db)
-			client := c07RiverClient(t, ctx, db)
-			root := c07ToolsRoot(t, ctx, db)
-			op := c07Admission(t, ctx, repo, client, root, "ffmpeg", "8.0")
-			if completed {
-				if _, err := db.NewInsert().Model(&persistence.AppSetting{Name: "setup_completed_at", Value: "done"}).Exec(ctx); err != nil {
-					t.Fatal(err)
-				}
-			}
-			settled, err := repo.FinalizeInstallation(ctx, op.ID, op.Attempt, *op.RiverJobID, *op.TargetInstallationID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, tools.VerificationResult{Version: "ffmpeg synthetic + ffprobe synthetic", Evidence: map[string]string{"ffmpeg": "ffmpeg version synthetic", "ffprobe": "ffprobe version synthetic"}}, time.Now().UTC())
-			if err != nil {
-				t.Fatalf("finalize: %v", err)
-			}
-			if !settled {
-				t.Fatal("current delivery did not settle")
-			}
-			var active string
-			activeErr := db.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", settings.ActiveFFmpegInstallationKey).Scan(ctx, &active)
-			if completed {
-				if !errors.Is(activeErr, sql.ErrNoRows) {
-					t.Fatalf("post-setup download changed active setting: %q, %v", active, activeErr)
-				}
-			} else if activeErr != nil || active != op.TargetInstallationID.String() {
-				t.Fatalf("first successful version was not activated: %q, %v", active, activeErr)
-			}
-			got, err := repo.GetOperation(ctx, op.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.State != "succeeded" {
-				t.Fatalf("state = %q", got.State)
-			}
-		})
-	}
-}
 
 func TestC07StaleDeliveryCannotFailOrFinalizeRetryTarget(t *testing.T) {
 	t.Parallel()

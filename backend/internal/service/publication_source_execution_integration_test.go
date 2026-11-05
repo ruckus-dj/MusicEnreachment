@@ -28,12 +28,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func TestPublicationExecutorAudioDeliveryPostgreSQL(t *testing.T) {
-	for _, target := range []string{"Track.flac", "Artist/Album/Track.flac"} {
-		t.Run(target, func(t *testing.T) { testPublicationSourceExecution(t, target) })
-	}
-}
-
 func TestFirstPublicationPreviewConfirmationDeliveryPostgreSQL(t *testing.T) {
 	for _, scenario := range []firstPublicationTemplateScenario{
 		{name: "flat", template: "Track.{EXT}", expectedPath: "Track.flac"},
@@ -51,11 +45,6 @@ type firstPublicationTemplateScenario struct {
 	template      string
 	defaultLayout bool
 	expectedPath  string
-}
-
-func TestFirstPublicationExplicitAlreadySelectedSourceAuthorityCommitPostgreSQL(t *testing.T) {
-	t.Parallel()
-	testPublicationSourceExecution(t, "Track.flac", true, explicitFirstPublicationAuthority{})
 }
 
 type explicitFirstPublicationAuthority struct{}

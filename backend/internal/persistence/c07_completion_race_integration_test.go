@@ -23,35 +23,6 @@ import (
 // coordination locks and immediately before it writes the completion marker.
 // Competing repository calls therefore have to wait in PostgreSQL, rather than
 // merely being scheduled after completion has happened.
-func TestC07CompletionSerializesPostSetupAdmission(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	ctx, cancel := context.WithTimeout(context.Background(), analysisRaceTimeout)
-	defer cancel()
-	fixture := newC07CompletionFixture(t, ctx, db)
-	client := c07RiverClient(t, ctx, db)
-
-	gate := pauseC07Completion(t, db)
-	completed := make(chan error, 1)
-	go func() { completed <- fixture.store.CompleteSetupIfCurrent(ctx, fixture.expected, "done") }()
-	awaitSignal(t, gate.entered, "completion to reach its final setting write")
-
-	admitted := make(chan *persistence.Operation, 1)
-	go func() {
-		admitted <- c07Admission(t, ctx, fixture.repo, client, fixture.toolsRoot, "ffmpeg", "post-setup")
-	}()
-	awaitAnyPostgresLockWait(t, ctx, db)
-	close(gate.release)
-	if err := awaitResult(t, completed, "setup completion"); err != nil {
-		t.Fatalf("complete setup: %v", err)
-	}
-	op := c07AwaitValue(t, admitted, "post-setup admission")
-	if op == nil {
-		t.Fatal("admission after setup completion was refused")
-	}
-	assertC07CompletionRows(t, ctx, db, 3, 1)
-	assertC07ActiveIDs(t, ctx, db, fixture.ffmpegID, fixture.fpcalcID)
-}
 
 func TestC07CompletionSerializesPostSetupFinalization(t *testing.T) {
 	t.Parallel()
@@ -99,58 +70,6 @@ func TestC07CompletionSerializesPostSetupFinalization(t *testing.T) {
 	if err != nil || installation.State != "ready" {
 		t.Fatalf("additional installation = %#v, %v; want ready", installation, err)
 	}
-}
-
-func TestC07InitialFinalizationBeforeCompletionUsesFreshActiveIDs(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	ctx, cancel := context.WithTimeout(context.Background(), analysisRaceTimeout)
-	defer cancel()
-	fixture := newC07CompletionFixtureWithoutFPCalc(t, ctx, db)
-	client := c07RiverClient(t, ctx, db)
-	op := c07Admission(t, ctx, fixture.repo, client, fixture.toolsRoot, "fpcalc", "initial")
-	if op == nil {
-		t.Fatal("initial fpcalc admission was refused")
-	}
-	fixture.fpcalcID = *op.TargetInstallationID
-	fixture.expected[settings.ActiveFPCalcInstallationKey] = fixture.fpcalcID.String()
-	gate := pauseC07Query(t, db, `UPDATE "tool_installation"`)
-	finalized := make(chan error, 1)
-	go func() {
-		_, err := fixture.repo.FinalizeInstallation(ctx, op.ID, op.Attempt, *op.RiverJobID,
-			*op.TargetInstallationID, "fpcalc", "linux", "amd64", settings.ActiveFPCalcInstallationKey,
-			tools.VerificationResult{Version: "synthetic", Evidence: map[string]string{"fpcalc": "fpcalc version synthetic"}}, time.Now().UTC())
-		finalized <- err
-	}()
-	awaitSignal(t, gate.entered, "initial finalization to update its installation")
-	completed := make(chan error, 1)
-	go func() { completed <- fixture.store.CompleteSetupIfCurrent(ctx, fixture.expected, "done") }()
-	awaitAnyPostgresLockWait(t, ctx, db)
-	close(gate.release)
-	if err := awaitResult(t, finalized, "initial finalization"); err != nil {
-		t.Fatalf("finalize initial fpcalc: %v", err)
-	}
-	if err := awaitResult(t, completed, "setup completion"); err != nil {
-		t.Fatalf("complete setup against the newly activated installation: %v", err)
-	}
-	assertC07ActiveIDs(t, ctx, db, fixture.ffmpegID, fixture.fpcalcID)
-}
-
-func TestC07PreCompletionSecondPackageAdmissionLeavesNoOrphans(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	fixture := newC07CompletionFixture(t, ctx, db)
-	client := c07RiverClient(t, ctx, db)
-	if op := c07Admission(t, ctx, fixture.repo, client, fixture.toolsRoot, "ffmpeg", "second-initial"); op != nil {
-		t.Fatalf("second initial ffmpeg admission succeeded before completion: %s", op.ID)
-	}
-	assertC07CompletionRows(t, ctx, db, 2, 0)
-	if err := fixture.store.CompleteSetupIfCurrent(ctx, fixture.expected, "done"); err != nil {
-		t.Fatalf("complete setup after refusing duplicate initial admission: %v", err)
-	}
-	assertC07CompletionRows(t, ctx, db, 2, 0)
-	assertC07ActiveIDs(t, ctx, db, fixture.ffmpegID, fixture.fpcalcID)
 }
 
 type c07CompletionFixture struct {

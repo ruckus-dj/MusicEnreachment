@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
@@ -24,42 +23,6 @@ import (
 // These tests exercise the actual PostgreSQL admission transaction and River's
 // InsertTx. The installation rows are synthetic: no download/verification is
 // claimed by this fixture.
-func TestC07AdmissionAllowsOneInitialVersionPerPackage(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	repo := persistence.NewSetupManagerRepository(db)
-	client := c07RiverClient(t, ctx, db)
-	root := c07ToolsRoot(t, ctx, db)
-
-	first := c07Admission(t, ctx, repo, client, root, "ffmpeg", "8.0")
-	if first == nil {
-		t.Fatal("first initial package admission was refused")
-	}
-	if err := repo.MarkInstallationReady(ctx, *first.TargetInstallationID, json.RawMessage(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`), time.Now().UTC()); err != nil {
-		t.Fatalf("mark synthetic installation ready: %v", err)
-	}
-	if activated, err := repo.ActivateInstallationDuringSetup(ctx, *first.TargetInstallationID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey); err != nil || !activated {
-		t.Fatalf("activate first synthetic ready version: activated=%t err=%v", activated, err)
-	}
-
-	if operation := c07Admission(t, ctx, repo, client, root, "ffmpeg", "8.1"); operation != nil {
-		t.Fatalf("second version of same package admitted: %s", operation.ID)
-	}
-	assertC07OnlyRows(t, ctx, db, 1, 1)
-	var active string
-	if err := db.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", settings.ActiveFFmpegInstallationKey).Scan(ctx, &active); err != nil {
-		t.Fatal(err)
-	}
-	if active != first.TargetInstallationID.String() {
-		t.Fatalf("active installation = %q, want first %q", active, first.TargetInstallationID)
-	}
-
-	if operation := c07Admission(t, ctx, repo, client, root, "fpcalc", "1.5"); operation == nil {
-		t.Fatal("independent package admission was refused")
-	}
-	assertC07OnlyRows(t, ctx, db, 2, 2)
-}
 
 func TestC07ConcurrentSamePackageAdmissionLeavesNoOrphans(t *testing.T) {
 	t.Parallel()

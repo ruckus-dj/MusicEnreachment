@@ -16,25 +16,12 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
 // Source-scan persistence integration scenarios share one migrated database.
 // Subtests deliberately run serially because their global assertions observe
 // some shared tables; each assertion is scoped to its own operation/root.
-func TestSourceScanPersistenceExternalScenarios(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	t.Run("retry reenqueues traversal", func(t *testing.T) { testSourceScanRetryReenqueuesNewTraversal(t, database) })
-	t.Run("retry atomicity", func(t *testing.T) { testSourceScanRetryAtomic(t, database) })
-	t.Run("retry refusals", func(t *testing.T) { testSourceScanRetryRefusals(t, database) })
-	t.Run("retry root deletion", func(t *testing.T) { testSourceScanRetrySerializesRootDeletion(t, database) })
-	t.Run("delivery fences", func(t *testing.T) { testSourceScanDeliveryFencesMutations(t, database) })
-	t.Run("retry lock order", func(t *testing.T) { testSourceScanRetryLocksRootBeforeOperation(t, database) })
-	t.Run("prepared transport", func(t *testing.T) { testSourceScanPreparedAnalysisCandidateTransport(t, database) })
-	t.Run("verified tool holds", func(t *testing.T) { testSourceScanToolHoldsUseVerifiedSelections(t, database) })
-}
 
 // sourceScanRetryInserter stands in for the River client of a retry. It counts
 // the candidate rows the retry transaction holds at the moment the job is

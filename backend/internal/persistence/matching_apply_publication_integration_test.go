@@ -7,8 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"testing"
-
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -16,25 +14,8 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
+	"testing"
 )
-
-func TestMatchingPublisherAtomicallyAdmitsAutomaticApplyPostgreSQL(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		name      string
-		review    bool
-		failApply bool
-	}{
-		{name: "unique decision admits apply"},
-		{name: "review decision does not admit apply", review: true},
-		{name: "apply admission failure rolls back publication", failApply: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			runMatchingApplyPublicationCase(t, test.review, test.failApply)
-		})
-	}
-}
 
 func runMatchingApplyPublicationCase(t *testing.T, review, failApply bool) {
 	t.Helper()

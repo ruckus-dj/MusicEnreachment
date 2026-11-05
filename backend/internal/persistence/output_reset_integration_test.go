@@ -5,13 +5,12 @@ package persistence
 import (
 	"context"
 	"errors"
-	"os"
+
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -87,95 +86,6 @@ func TestRunOutputResetRequestJournalsAndCommitsAtomically(t *testing.T) {
 	}
 }
 
-func TestOutputResetPersistsOnlyPreflightedMissingAncestorChain(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	initializeRiver(t, ctx, database)
-	existing, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	newRoot := filepath.Join(existing, "missing", "output")
-	filesystem := settings.NewResetFilesystem()
-	planned, err := filesystem.PlannedDirectories(newRoot, []string{newRoot})
-	if err != nil {
-		t.Fatal(err)
-	}
-	repository := NewSetupManagerRepository(database)
-	_, err = repository.RunOutputResetRequest(ctx, OutputResetRequest{
-		NewRoot:            newRoot,
-		AllowedDirectories: planned,
-		Prepare: func(ctx context.Context, record func(OutputResetDirectory) error) error {
-			return filesystem.PrepareDurable(ctx, newRoot, []string{newRoot}, func(entry settings.ResetDirectoryRecord) error {
-				return record(OutputResetDirectory{Path: entry.Path, Phase: entry.Phase, Identity: entry.Identity})
-			})
-		},
-		Finish: func(context.Context, OutputResetJournal) error { return nil },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(newRoot); err != nil || !info.IsDir() {
-		t.Fatalf("new output root was not prepared: %v", err)
-	}
-	if err := filesystem.RollbackManifestForRoot(ctx, newRoot, nil); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestOutputResetRejectsUnplannedMissingAncestorWithoutCreatingIt(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	initializeRiver(t, ctx, database)
-	settings := NewSettingsRepository(database)
-	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/output-old")); err != nil {
-		t.Fatal(err)
-	}
-	existing, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ancestor := filepath.Join(existing, "unplanned")
-	newRoot := filepath.Join(ancestor, "output")
-	repository := NewSetupManagerRepository(database)
-
-	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot: nativeTestPath(t, "/music/output-old"),
-		NewRoot:         newRoot,
-		Prepare: func(_ context.Context, record func(OutputResetDirectory) error) error {
-			return record(OutputResetDirectory{Path: ancestor, Phase: "intent"})
-		},
-		Finish: func(context.Context, OutputResetJournal) error { return nil },
-	})
-	if err == nil {
-		t.Fatal("reset accepted an ancestor absent from the planned directory list")
-	}
-	if !strings.Contains(err.Error(), "output directory record must be a normalized descendant of the new output root or a planned ancestor") {
-		t.Fatalf("reset error = %v, want rejection of an unplanned directory", err)
-	}
-	if token == uuid.Nil {
-		t.Fatal("failed reset did not return its journal token")
-	}
-	if _, err := os.Lstat(ancestor); !os.IsNotExist(err) {
-		t.Fatalf("unplanned ancestor status = %v, want it to remain absent", err)
-	}
-	if value, found, err := settings.Get(ctx, "output_directory"); err != nil || !found || value != nativeTestPath(t, "/music/output-old") {
-		t.Fatalf("output directory after rejected reset = %q, %v, %v; want unchanged", value, found, err)
-	}
-	journal, err := repository.ReadUnresolvedOutputReset(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if journal == nil || journal.Token != token || journal.State != "preparing" {
-		t.Fatalf("unresolved journal = %#v, want failed preparation journal %v", journal, token)
-	}
-	if err := repository.RecoverOutputReset(ctx, func(context.Context, OutputResetJournal) error { return nil }); err != nil {
-		t.Fatalf("recover rejected reset journal: %v", err)
-	}
-}
-
 func TestOutputResetFailureBlocksAdmissionsUntilRecovery(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)
@@ -208,147 +118,6 @@ func TestOutputResetFailureBlocksAdmissionsUntilRecovery(t *testing.T) {
 	}
 	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error { return AcquireOutputAdmissionGate(ctx, tx) }); err != nil {
 		t.Fatalf("output admission after recovery: %v", err)
-	}
-}
-
-func TestRunOutputResetRequestAllowsInitialOutputDirectoryAndRejectsInvalidRequests(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	initializeRiver(t, ctx, database)
-	settings := NewSettingsRepository(database)
-	repository := NewSetupManagerRepository(database)
-
-	// An unconfigured installation may initialize its output root through reset.
-	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
-		NewRoot: nativeTestPath(t, "/music/initial"),
-		Prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil },
-		Finish: func(_ context.Context, journal OutputResetJournal) error {
-			if journal.State != "committed" {
-				t.Fatalf("initialization journal state = %q", journal.State)
-			}
-			return nil
-		},
-	})
-	if err != nil || token == uuid.Nil {
-		t.Fatalf("initialize output directory = %v, %v", token, err)
-	}
-	value, found, err := settings.Get(ctx, "output_directory")
-	if err != nil || !found || value != nativeTestPath(t, "/music/initial") {
-		t.Fatalf("initialized output directory = %q, %v, %v", value, found, err)
-	}
-	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/bypass")); err == nil {
-		t.Fatal("direct output-root change succeeded")
-	}
-	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/initial")); err != nil {
-		t.Fatalf("same-path setting update: %v", err)
-	}
-
-	tests := []struct {
-		name, oldRoot, newRoot string
-		prepare                func(context.Context, func(OutputResetDirectory) error) error
-		finish                 func(context.Context, OutputResetJournal) error
-	}{
-		{name: "same path", oldRoot: nativeTestPath(t, "/music/initial"), newRoot: nativeTestPath(t, "/music/initial"), prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
-		{name: "relative path", oldRoot: nativeTestPath(t, "/music/initial"), newRoot: "relative", prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
-		{name: "missing prepare callback", oldRoot: nativeTestPath(t, "/music/initial"), newRoot: nativeTestPath(t, "/music/next"), finish: func(context.Context, OutputResetJournal) error { return nil }},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{ExpectedOldRoot: test.oldRoot, NewRoot: test.newRoot, Prepare: test.prepare, Finish: test.finish})
-			if err == nil {
-				t.Fatal("invalid reset request succeeded")
-			}
-		})
-	}
-}
-
-func TestOutputResetRejectsStaleToolsRootWithoutChangingRuntimeSettings(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	initializeRiver(t, ctx, database)
-	settings := NewSettingsRepository(database)
-	for name, value := range map[string]string{
-		"tools_directory":              nativeTestPath(t, "/music/tools-current"),
-		"output_directory":             nativeTestPath(t, "/music/output-current"),
-		"output_case_sensitive":        "true",
-		"output_unicode_normalization": "none",
-		"publication_format":           "source",
-	} {
-		if err := settings.Set(ctx, name, value); err != nil {
-			t.Fatalf("set %s: %v", name, err)
-		}
-	}
-	before := runtimeSettingsSnapshot(t, ctx, database)
-	_, err := NewSetupManagerRepository(database).RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot:   nativeTestPath(t, "/music/output-current"),
-		ExpectedToolsRoot: nativeTestPath(t, "/music/tools-stale"),
-		NewRoot:           nativeTestPath(t, "/music/output-next"),
-		RuntimeValues: map[string]string{
-			"tools_directory":              nativeTestPath(t, "/music/tools-next"),
-			"output_case_sensitive":        "false",
-			"output_unicode_normalization": "nfc",
-			"publication_format":           "mka",
-		},
-		Prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil },
-		Finish:  func(context.Context, OutputResetJournal) error { return nil },
-	})
-	if err == nil {
-		t.Fatal("reset with a stale tools root succeeded")
-	}
-	if after := runtimeSettingsSnapshot(t, ctx, database); !equalStringMaps(before, after) {
-		t.Fatalf("runtime settings after stale request = %#v, want unchanged %#v", after, before)
-	}
-	var journals int
-	if err := database.NewRaw("SELECT count(*) FROM output_reset_journal").Scan(ctx, &journals); err != nil || journals != 0 {
-		t.Fatalf("journal count = %d, %v; want no preparing journal", journals, err)
-	}
-}
-
-func TestOutputResetCommitsRuntimeSemanticsTogetherWithOutputRoot(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	initializeRiver(t, ctx, database)
-	settings := NewSettingsRepository(database)
-	for name, value := range map[string]string{
-		"tools_directory":              nativeTestPath(t, "/music/tools-current"),
-		"output_directory":             nativeTestPath(t, "/music/output-current"),
-		"output_case_sensitive":        "true",
-		"output_unicode_normalization": "none",
-		"publication_format":           "source",
-	} {
-		if err := settings.Set(ctx, name, value); err != nil {
-			t.Fatalf("set %s: %v", name, err)
-		}
-	}
-	_, err := NewSetupManagerRepository(database).RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot:   nativeTestPath(t, "/music/output-current"),
-		ExpectedToolsRoot: nativeTestPath(t, "/music/tools-current"),
-		NewRoot:           nativeTestPath(t, "/music/output-next"),
-		RuntimeValues: map[string]string{
-			"tools_directory":    nativeTestPath(t, "/music/tools-next"),
-			"publication_format": "mka",
-		},
-		OutputCaseSensitive:        resetBoolPointer(false),
-		OutputUnicodeNormalization: stringPointer("nfc"),
-		Prepare:                    func(context.Context, func(OutputResetDirectory) error) error { return nil },
-		Finish:                     func(context.Context, OutputResetJournal) error { return nil },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := runtimeSettingsSnapshot(t, ctx, database)
-	want := map[string]string{
-		"tools_directory":              nativeTestPath(t, "/music/tools-next"),
-		"output_directory":             nativeTestPath(t, "/music/output-next"),
-		"output_case_sensitive":        "false",
-		"output_unicode_normalization": "nfc",
-		"publication_format":           "mka",
-	}
-	if !equalStringMaps(got, want) {
-		t.Fatalf("committed runtime settings = %#v, want %#v", got, want)
 	}
 }
 

@@ -9,42 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
-
-func TestApplySourceEnumerationRegularLifecycleWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	for _, test := range []struct {
-		name string
-		run  func(*testing.T, *bun.DB)
-	}{
-		{"TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope", runApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope},
-		{"TestApplySourceEnumerationReplacesCompletedInPlaceWork", runApplySourceEnumerationReplacesCompletedInPlaceWork},
-		{"TestDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMutation", runDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMutation},
-		{"TestApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone", runApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone},
-		{"TestApplySourceEnumerationRejectsStaleDeliveryWithoutMutation", runApplySourceEnumerationRejectsStaleDeliveryWithoutMutation},
-	} {
-		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
-	}
-}
-
-func TestApplySourceEnumerationCleanupMarkerLifecycleWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	for _, test := range []struct {
-		name string
-		run  func(*testing.T, *bun.DB)
-	}{
-		{"TestApplySourceEnumerationInvalidatesExactCleanupMarkerPostgreSQL", runApplySourceEnumerationInvalidatesExactCleanupMarkerPostgreSQL},
-		{"TestApplySourceEnumerationStaleDeliveryPreservesCleanupMarkerPostgreSQL", runApplySourceEnumerationStaleDeliveryPreservesCleanupMarkerPostgreSQL},
-		{"TestApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgreSQL", runApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgreSQL},
-		{"TestApplySourceEnumerationDeferredCommitFailurePreservesCleanupMarkerPostgreSQL", runApplySourceEnumerationDeferredCommitFailurePreservesCleanupMarkerPostgreSQL},
-	} {
-		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
-	}
-}
 
 func runApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(t *testing.T, database *bun.DB) {
 	ctx := context.Background()

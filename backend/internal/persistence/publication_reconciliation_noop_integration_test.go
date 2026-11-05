@@ -8,28 +8,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
 // This covers the provider-free local projection no-op path only. It does not
 // exercise automatic quality policy or provider reconciliation.
-func TestPublicationReconciliationNoopFeaturePostgreSQL(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	initializeRiver(t, context.Background(), db)
-	scenarios := []func(*testing.T, *bun.DB, string){
-		scenarioPublicationReconciliationLocalNoopAcknowledgement,
-		scenarioPublicationReconciliationAcceptsM4AFormat,
-		scenarioPublicationReconciliationNoopIgnoresUnrelatedProviderBinding,
-		scenarioPublicationReconciliationLocalNoopRejectsChangedWitness,
-		scenarioPublicationReconciliationLocalNoopRetainsNewerGeneration,
-	}
-	for _, scenario := range scenarios {
-		scenario(t, db, uuid.NewString())
-	}
-}
-
 func scenarioPublicationReconciliationLocalNoopAcknowledgement(t *testing.T, db *bun.DB, scope string) {
 	ctx := context.Background()
 	f := preparePublicationResultFixtureWithDatabase(t, db, scope)

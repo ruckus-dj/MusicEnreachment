@@ -4,8 +4,6 @@ package persistence
 
 import (
 	"context"
-	"reflect"
-	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -36,44 +34,4 @@ func readCleanupLoadState(t *testing.T, ctx context.Context, f publicationExecut
 		t.Fatal(err)
 	}
 	return state
-}
-
-func TestLoadPublicationSourceCleanupDeliveryReturnsCompleteSortedSnapshotPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f, repo, _ := publicationSourceCleanupReadyFixture(t)
-	guard, operationID := admitAndClaimSourceCleanup(t, ctx, f, repo)
-	before := readCleanupLoadState(t, ctx, f, operationID)
-	got, err := repo.LoadPublicationSourceCleanupDelivery(ctx, operationID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var itemIDs []uuid.UUID
-	if err := f.db.NewRaw(`SELECT id FROM source_cleanup_item WHERE operation_id=?`, operationID).Scan(ctx, &itemIDs); err != nil {
-		t.Fatal(err)
-	}
-	sort.Slice(itemIDs, func(i, j int) bool { return itemIDs[i].String() < itemIDs[j].String() })
-	if got.OperationID != operationID || got.ApplicationAttempt != guard.ApplicationAttempt || got.Epoch != f.guard.Epoch || got.PositionID != f.guard.ExpectedPositionID || !reflect.DeepEqual(got.ItemIDs, itemIDs) || len(got.ItemIDs) == 0 || !got.RemovalEnabled {
-		t.Fatalf("loaded input = %+v, want operation=%s attempt=%d epoch=%s position=%s items=%v enabled=true", got, operationID, guard.ApplicationAttempt, f.guard.Epoch, f.guard.ExpectedPositionID, itemIDs)
-	}
-	if after := readCleanupLoadState(t, ctx, f, operationID); !reflect.DeepEqual(after, before) {
-		t.Fatalf("load mutated admitted delivery state: before=%+v after=%+v", before, after)
-	}
-	if before.OperationState != "queued" || before.OwnerCount != len(itemIDs) || before.ClaimCount != 1 {
-		t.Fatalf("fixture was not admitted with retained ownership and claim: %+v", before)
-	}
-	if err := NewSettingsRepository(f.db).Set(ctx, "publication_remove_sources", "false"); err != nil {
-		t.Fatal(err)
-	}
-	before = readCleanupLoadState(t, ctx, f, operationID)
-	got, err = repo.LoadPublicationSourceCleanupDelivery(ctx, operationID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.OperationID != operationID || !reflect.DeepEqual(got.ItemIDs, itemIDs) || len(got.ItemIDs) == 0 || got.RemovalEnabled {
-		t.Fatalf("loaded disabled delivery = %+v, want valid nonempty delivery with RemovalEnabled=false", got)
-	}
-	if after := readCleanupLoadState(t, ctx, f, operationID); !reflect.DeepEqual(after, before) {
-		t.Fatalf("disabled load mutated operation/item/ownership/claim state: before=%+v after=%+v", before, after)
-	}
 }

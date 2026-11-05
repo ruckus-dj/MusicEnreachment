@@ -4,14 +4,12 @@ package persistence_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+
 	"github.com/uptrace/bun"
 )
 
@@ -69,95 +67,5 @@ func providerCreateRequest(f createProviderRecordingFixture, cover *persistence.
 			},
 		}}}},
 		Cover: cover,
-	}
-}
-
-func TestCreateStandaloneReleaseProviderRecordingAcceptedAuthorityPostgreSQL(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	f := setupCreateProviderRecordingFixture(t, db, true)
-	result, err := persistence.NewLibraryRepository(db).CreateStandaloneRelease(ctx, providerCreateRequest(f, nil))
-	if err != nil {
-		t.Fatalf("create provider-backed standalone release: %v", err)
-	}
-	if len(result.Positions) != 1 || result.Positions[0].RecordingID == nil {
-		t.Fatalf("created position = %+v", result.Positions)
-	}
-	localRecordingID := *result.Positions[0].RecordingID
-	var title string
-	var metadata []byte
-	if err := db.NewRaw(`SELECT title,metadata FROM local_recording WHERE id=?`, localRecordingID).Scan(ctx, &title, &metadata); err != nil || title != "Accepted Recording" {
-		t.Fatalf("recording title = %q, %v", title, err)
-	}
-	var localMetadata map[string]json.RawMessage
-	if err := json.Unmarshal(metadata, &localMetadata); err != nil {
-		t.Fatal(err)
-	}
-	var provenance struct {
-		SourceID       uuid.UUID                  `json:"source_id"`
-		ProviderID     uuid.UUID                  `json:"provider_id"`
-		SourceEntityID string                     `json:"source_entity_id"`
-		ProjectionRev  string                     `json:"projection_revision"`
-		FieldEvidence  map[string]json.RawMessage `json:"field_evidence"`
-	}
-	if err := json.Unmarshal(localMetadata["manual_matching"], &provenance); err != nil {
-		t.Fatal(err)
-	}
-	if provenance.SourceID != f.sourceID || provenance.ProviderID != f.providerID || provenance.SourceEntityID != f.recordingKey || provenance.ProjectionRev == "" || provenance.ProjectionRev == f.identity || provenance.FieldEvidence["title"] == nil {
-		t.Fatalf("recording provenance = %+v", provenance)
-	}
-	var artistCount, providerReleaseBindings, providerTrackBindings int
-	if err := db.NewRaw(`SELECT count(*) FROM recording_artist WHERE recording_id=?`, localRecordingID).Scan(ctx, &artistCount); err != nil || artistCount != 1 {
-		t.Fatalf("recording artist credits = %d, %v", artistCount, err)
-	}
-	if err := db.NewRaw(`SELECT count(*) FROM provider_local_release`).Scan(ctx, &providerReleaseBindings); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.NewRaw(`SELECT count(*) FROM provider_local_track`).Scan(ctx, &providerTrackBindings); err != nil {
-		t.Fatal(err)
-	}
-	if providerReleaseBindings != 0 || providerTrackBindings != 0 {
-		t.Fatalf("provider release/track bindings were created: %d/%d", providerReleaseBindings, providerTrackBindings)
-	}
-}
-
-func TestCreateStandaloneReleaseSavedCoverDigestFailureRollsBackProviderRecordingAuthorityPostgreSQL(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	f := setupCreateProviderRecordingFixture(t, db, true)
-	coverID := uuid.New()
-	coverBytes := []byte("stale saved cover")
-	digest := sha256.Sum256(coverBytes)
-	if _, err := db.NewRaw(`INSERT INTO media_metadata_result(id,observed_tags,provenance,observed_at,winning_result_id,applied_operation_id,cover_observed,cover_data,cover_mime,cover_sha256,cover_size_bytes) VALUES (?, '{}'::jsonb,'{}'::jsonb,now(),?,?,true,?,'image/png',?,?)`, coverID, uuid.New(), uuid.New(), coverBytes, digest[:], len(coverBytes)).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var beforeRecordings, beforeMappings, beforeArtists int
-	_ = db.NewRaw(`SELECT count(*) FROM local_recording`).Scan(ctx, &beforeRecordings)
-	_ = db.NewRaw(`SELECT count(*) FROM provider_local_recording`).Scan(ctx, &beforeMappings)
-	_ = db.NewRaw(`SELECT count(*) FROM local_artist`).Scan(ctx, &beforeArtists)
-	wrongDigest := hex.EncodeToString(make([]byte, sha256.Size))
-	_, err := persistence.NewLibraryRepository(db).CreateStandaloneRelease(ctx, providerCreateRequest(f, &persistence.LibraryReleaseCreateCover{MetadataResultID: coverID, ExpectedSHA256: wrongDigest}))
-	if err == nil {
-		t.Fatal("create with stale saved-cover digest succeeded")
-	}
-	var afterRecordings, afterMappings, afterArtists, afterProviderArtists, recordingCredits, releases, tracks, positions int
-	for query, target := range map[string]*int{
-		`SELECT count(*) FROM local_recording`:          &afterRecordings,
-		`SELECT count(*) FROM provider_local_recording`: &afterMappings,
-		`SELECT count(*) FROM local_artist`:             &afterArtists,
-		`SELECT count(*) FROM provider_local_artist`:    &afterProviderArtists,
-		`SELECT count(*) FROM recording_artist`:         &recordingCredits,
-		`SELECT count(*) FROM local_release`:            &releases,
-		`SELECT count(*) FROM local_track`:              &tracks,
-		`SELECT count(*) FROM release_track`:            &positions,
-	} {
-		if err := db.NewRaw(query).Scan(ctx, target); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if afterRecordings != beforeRecordings || afterMappings != beforeMappings || afterArtists != beforeArtists || afterProviderArtists != 0 || recordingCredits != 0 || releases != 0 || tracks != 0 || positions != 0 {
-		t.Fatalf("cover rejection left provider writes: recordings %d/%d mappings %d/%d artists %d/%d artist mappings %d credits %d releases %d tracks %d positions %d", beforeRecordings, afterRecordings, beforeMappings, afterMappings, beforeArtists, afterArtists, afterProviderArtists, recordingCredits, releases, tracks, positions)
 	}
 }

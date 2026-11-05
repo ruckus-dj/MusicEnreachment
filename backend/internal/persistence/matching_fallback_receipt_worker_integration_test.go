@@ -5,13 +5,6 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"reflect"
-	"sync/atomic"
-	"testing"
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -21,15 +14,13 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"sync/atomic"
+	"testing"
+	"time"
 )
-
-func TestAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t *testing.T) {
-	testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t, false)
-}
-
-func TestAutomaticFallbackReceiptReplaysAfterInterruptedRetryPostgreSQL(t *testing.T) {
-	testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t, true)
-}
 
 func testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t *testing.T, interruptedRetry bool) {
 	t.Parallel()

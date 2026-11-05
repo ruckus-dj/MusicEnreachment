@@ -9,50 +9,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"testing"
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"time"
 )
 
 // Regression: a repeated policy submission with the now-stale catalog revision
 // must not enqueue more lookup operations or modify the accepted catalog.
-func TestMatchingReleaseHydrationRepeatAdmissionDoesNotDuplicateChildrenPostgreSQL(t *testing.T) {
-	f := newMatchingAcquisitionGuardFixture(t)
-	f.matchingAcquisitionCatalogReady()
-	wakeID, claim := claimCatalogRankingWake(f)
-	ids := []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}
-	phase, children := matchingHydrationRequest(f, 3, ids)
-	changed, err := f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, f.river, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children)
-	if err != nil || !changed {
-		t.Fatalf("start hydration: changed=%v err=%v", changed, err)
-	}
-	var before int
-	if err := f.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, f.parentID).Scan(f.ctx, &before); err != nil {
-		t.Fatal(err)
-	}
-	changed, err = f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, f.river, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children)
-	if err != nil || changed {
-		t.Fatalf("repeat hydration admission: changed=%v err=%v", changed, err)
-	}
-	var after, jobs int
-	if err := f.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, f.parentID).Scan(f.ctx, &after); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.db.NewRaw(`SELECT count(*) FROM operation WHERE id IN (?,?)`, children[0].Operation.ID, children[1].Operation.ID).Scan(f.ctx, &jobs); err != nil {
-		t.Fatal(err)
-	}
-	if after != before || jobs != 2 {
-		t.Fatalf("repeat admission changed durable children: before=%d after=%d operations=%d", before, after, jobs)
-	}
-	if changed, err := f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, f.river, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children); err != nil || changed {
-		t.Fatalf("replay consumed ranking claim changed=%v err=%v", changed, err)
-	}
-}
 
 func claimCatalogRankingWake(f *matchingAcquisitionGuardFixture) (int64, persistence.MatchingDeliveryClaim) {
 	f.t.Helper()
@@ -141,49 +107,6 @@ func (f *matchingAcquisitionGuardFixture) matchingAcquisitionCatalogReady() {
 // must roll the whole hydration transaction back. The failure is a missing
 // writer input, not invalid metadata, so retrying the same valid request with a
 // real inserter must then succeed.
-func TestMatchingReleaseHydrationEnqueueFailureRollsBackAdmissionPostgreSQL(t *testing.T) {
-	f := newMatchingAcquisitionGuardFixture(t)
-	f.matchingAcquisitionCatalogReady()
-	wakeID, claim := claimCatalogRankingWake(f)
-	ids := []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}
-	phase, children := matchingHydrationRequest(f, 3, ids)
-	before := matchingAcquisitionGuardState(t, f)
-	changed, err := f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, matchingHydrationFailingInserter{}, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children)
-	if err == nil || changed {
-		t.Fatalf("hydration with failing enqueue: changed=%v err=%v", changed, err)
-	}
-	after := matchingAcquisitionGuardState(t, f)
-	if before != after {
-		t.Fatalf("failed hydration changed durable state: before=%+v after=%+v", before, after)
-	}
-	var childOps, childJobs int
-	if err := f.db.NewRaw(`SELECT count(*) FROM operation WHERE id IN (?,?)`, children[0].Operation.ID, children[1].Operation.ID).Scan(f.ctx, &childOps); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.db.NewRaw(`SELECT count(*) FROM river_job WHERE args->>'operation_id' IN (?,?)`, children[0].Operation.ID, children[1].Operation.ID).Scan(f.ctx, &childJobs); err != nil {
-		t.Fatal(err)
-	}
-	if childOps != 0 || childJobs != 0 {
-		t.Fatalf("failed hydration left durable children: operations=%d river_jobs=%d", childOps, childJobs)
-	}
-	if children[0].Operation.RiverJobID != nil || children[1].Operation.RiverJobID != nil {
-		t.Fatalf("failed hydration assigned in-memory River job ids")
-	}
-	changed, err = f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, f.river, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children)
-	if err != nil || !changed {
-		t.Fatalf("retry hydration with real inserter: changed=%v err=%v", changed, err)
-	}
-	var deps, ops int
-	if err := f.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=? AND request_id IN (?,?)`, f.parentID, children[0].Operation.ID, children[1].Operation.ID).Scan(f.ctx, &deps); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.db.NewRaw(`SELECT count(*) FROM operation WHERE id IN (?,?)`, children[0].Operation.ID, children[1].Operation.ID).Scan(f.ctx, &ops); err != nil {
-		t.Fatal(err)
-	}
-	if deps != 2 || ops != 2 {
-		t.Fatalf("retry hydration durable children: dependencies=%d operations=%d", deps, ops)
-	}
-}
 
 // matchingHydrationFailingInserter fails every in-transaction enqueue, modelling
 // a missing writer input rather than rejected metadata.

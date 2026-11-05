@@ -32,10 +32,11 @@ import (
 )
 
 const (
-	poolMaxOpen    = 8
-	adminPoolLimit = 4
-	resourcePrefix = "melotrove_test_"
-	cleanupTimeout = time.Minute
+	poolMaxOpen          = 8
+	adminPoolLimit       = 4
+	resourcePrefix       = "melotrove_test_"
+	cleanupTimeout       = time.Minute
+	clusterDeleteWorkers = 4
 )
 
 var process struct {
@@ -48,6 +49,7 @@ var process struct {
 	server          *postgres.EmbeddedPostgres
 	ownedDisposable bool
 	clusterWorkDir  string
+	clusterPIDReady bool
 	adminURL        string
 	adminDB         *bun.DB
 	template        string
@@ -280,11 +282,14 @@ func adminDatabase(t *testing.T) *bun.DB {
 				"wal_level": "minimal", "max_wal_senders": "0",
 			})
 			config = config.Hooks(postgres.Hooks{Ready: []postgres.Hook{
-				func(context.Context, postgres.InstanceInfo) (func(context.Context) error, error) {
+				func(_ context.Context, info postgres.InstanceInfo) (func(context.Context) error, error) {
+					process.clusterWorkDir = info.WorkDir
+					pidInfo, err := os.Lstat(filepath.Join(info.DataDir, "postmaster.pid"))
+					process.clusterPIDReady = err == nil && pidInfo.Mode().IsRegular()
 					return func(context.Context) error {
 						completed := time.Now()
 						process.shutdownCompleted.Store(&completed)
-						return nil
+						return pruneStoppedClusterData(info.WorkDir, info.DataDir, process.clusterPIDReady)
 					}, nil
 				},
 			}})
@@ -830,6 +835,86 @@ func cleanupResources(plan cleanupPlan) error {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func pruneStoppedClusterData(workDir, dataDir string, pidPresentAtReady bool) error {
+	if !pidPresentAtReady || !filepath.IsAbs(workDir) || !filepath.IsAbs(dataDir) ||
+		filepath.Clean(workDir) == string(filepath.Separator) || filepath.Clean(dataDir) == string(filepath.Separator) ||
+		filepath.VolumeName(workDir) != filepath.VolumeName(dataDir) ||
+		filepath.Clean(filepath.Dir(dataDir)) != filepath.Clean(workDir) || filepath.Base(dataDir) != "data" {
+		return nil
+	}
+	for _, path := range []string{workDir, dataDir, filepath.Join(dataDir, "base")} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+	}
+	_, err := os.Lstat(filepath.Join(dataDir, "postmaster.pid"))
+	if err == nil || !errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	baseDir := filepath.Join(dataDir, "base")
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return nil
+	}
+	type target struct {
+		path string
+		name string
+	}
+	targets := make([]target, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || !numericDirectoryName(entry.Name()) {
+			continue
+		}
+		path := filepath.Join(baseDir, entry.Name())
+		info, err := os.Lstat(path)
+		if err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			targets = append(targets, target{path: path, name: entry.Name()})
+		}
+	}
+
+	started := time.Now()
+	work := make(chan int)
+	errorsByTarget := make([]error, len(targets))
+	var workers sync.WaitGroup
+	workerCount := min(clusterDeleteWorkers, len(targets))
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range work {
+				errorsByTarget[index] = os.RemoveAll(targets[index].path)
+			}
+		}()
+	}
+	for index := range targets {
+		work <- index
+	}
+	close(work)
+	workers.Wait()
+	var failures []error
+	for index, err := range errorsByTarget {
+		if err != nil {
+			failures = append(failures, fmt.Errorf("remove PostgreSQL database directory %s: %w", targets[index].name, err))
+		}
+	}
+	fmt.Fprintf(os.Stderr, "testpostgres.parallel_delete directories=%d duration=%s\n", len(targets), time.Since(started).Round(time.Millisecond))
+	return errors.Join(failures...)
+}
+
+func numericDirectoryName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, char := range name {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func quoteIdentifier(identifier string) string {

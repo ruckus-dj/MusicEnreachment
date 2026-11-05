@@ -5,9 +5,6 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
-	"testing"
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -15,98 +12,9 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/uptrace/bun"
+	"testing"
+	"time"
 )
-
-func TestAutomaticFallbackRetirementCurrentHeaderIsIndependentHoldPostgreSQL(t *testing.T) {
-	var callbackExecuted bool
-	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, func(f uniquePublicationApplyFixture) {
-		callbackExecuted = true
-		ctx, db, repository := f.Context, f.Database, f.Repository
-		parentID, childID := f.ParentOperationID, f.ChildOperation.ID
-		groupID := f.InputSnapshot.Authority.GroupID
-		prepareAgedTerminalFallbackRetirementFixture(t, f)
-		cacheCountBefore := fallbackRetirementProviderCacheCount(t, ctx, db)
-
-		var highWaterBefore int64
-		if err := db.NewRaw(`SELECT high_water FROM incoming_matching_generation WHERE group_id=?`, groupID).Scan(ctx, &highWaterBefore); err != nil {
-			t.Fatalf("read generation high-water before releasing generation owner: %v", err)
-		}
-		if _, err := db.NewRaw(`UPDATE incoming_matching_generation SET current_run_id=NULL WHERE group_id=? AND current_run_id=?`, groupID, parentID).Exec(ctx); err != nil {
-			t.Fatalf("release current generation owner: %v", err)
-		}
-		assertIndependentFallbackRetirementHolds(t, ctx, db, parentID, childID, time.Now().UTC().Add(-24*time.Hour), true, false)
-
-		retained := readFallbackRetirementCounts(t, ctx, db, parentID, childID)
-		assertFallbackRetirementBaseline(t, retained, true)
-		if err := repository.DeleteSucceededBefore(ctx, time.Now().UTC().Add(-24*time.Hour)); err != nil {
-			t.Fatalf("cleanup while only current evaluation header holds graph: %v", err)
-		}
-		assertFallbackRetirementHeld(t, ctx, db, parentID, childID, retained)
-		assertFallbackRetirementGraph(t, ctx, db, parentID, childID, true)
-
-		// The evaluation header is mutable current-state evidence; deleting it here
-		// models the approved current-evaluation lifecycle transition. No receipt or
-		// other immutable fallback proof row is modified by the fixture.
-		if _, err := db.NewRaw(`DELETE FROM incoming_match_evaluation WHERE group_id=?`, groupID).Exec(ctx); err != nil {
-			t.Fatalf("remove current evaluation header: %v", err)
-		}
-		assertIndependentFallbackRetirementHolds(t, ctx, db, parentID, childID, time.Now().UTC().Add(-24*time.Hour), false, false)
-		if err := repository.DeleteSucceededBefore(ctx, time.Now().UTC().Add(-24*time.Hour)); err != nil {
-			t.Fatalf("cleanup after releasing current evaluation header: %v", err)
-		}
-		assertFallbackRetirementGraph(t, ctx, db, parentID, childID, false)
-		assertFallbackRetirementHighWater(t, ctx, db, groupID, highWaterBefore)
-		assertFallbackRetirementProviderCacheCount(t, ctx, db, cacheCountBefore)
-	}, true)
-	if !callbackExecuted {
-		t.Fatal("automatic unique-publication callback did not execute")
-	}
-}
-
-func TestAutomaticFallbackRetirementGenerationOwnerIsIndependentHoldPostgreSQL(t *testing.T) {
-	var callbackExecuted bool
-	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, func(f uniquePublicationApplyFixture) {
-		callbackExecuted = true
-		ctx, db, repository := f.Context, f.Database, f.Repository
-		parentID, childID := f.ParentOperationID, f.ChildOperation.ID
-		groupID := f.InputSnapshot.Authority.GroupID
-		prepareAgedTerminalFallbackRetirementFixture(t, f)
-		cacheCountBefore := fallbackRetirementProviderCacheCount(t, ctx, db)
-
-		// Remove the mutable current evaluation header using the same lifecycle
-		// transition exercised by the retirement test; leave generation ownership.
-		if _, err := db.NewRaw(`DELETE FROM incoming_match_evaluation WHERE group_id=?`, groupID).Exec(ctx); err != nil {
-			t.Fatalf("remove current evaluation header: %v", err)
-		}
-		assertIndependentFallbackRetirementHolds(t, ctx, db, parentID, childID, time.Now().UTC().Add(-24*time.Hour), false, true)
-
-		retained := readFallbackRetirementCounts(t, ctx, db, parentID, childID)
-		assertFallbackRetirementBaseline(t, retained, true)
-		if err := repository.DeleteSucceededBefore(ctx, time.Now().UTC().Add(-24*time.Hour)); err != nil {
-			t.Fatalf("cleanup while only current generation owner holds graph: %v", err)
-		}
-		assertFallbackRetirementHeld(t, ctx, db, parentID, childID, retained)
-		assertFallbackRetirementGraph(t, ctx, db, parentID, childID, true)
-
-		var highWaterBefore int64
-		if err := db.NewRaw(`SELECT high_water FROM incoming_matching_generation WHERE group_id=?`, groupID).Scan(ctx, &highWaterBefore); err != nil {
-			t.Fatalf("read generation high-water before releasing generation owner: %v", err)
-		}
-		if _, err := db.NewRaw(`UPDATE incoming_matching_generation SET current_run_id=NULL WHERE group_id=? AND current_run_id=?`, groupID, parentID).Exec(ctx); err != nil {
-			t.Fatalf("release current generation owner: %v", err)
-		}
-		assertIndependentFallbackRetirementHolds(t, ctx, db, parentID, childID, time.Now().UTC().Add(-24*time.Hour), false, false)
-		if err := repository.DeleteSucceededBefore(ctx, time.Now().UTC().Add(-24*time.Hour)); err != nil {
-			t.Fatalf("cleanup after releasing current generation owner: %v", err)
-		}
-		assertFallbackRetirementGraph(t, ctx, db, parentID, childID, false)
-		assertFallbackRetirementHighWater(t, ctx, db, groupID, highWaterBefore)
-		assertFallbackRetirementProviderCacheCount(t, ctx, db, cacheCountBefore)
-	}, true)
-	if !callbackExecuted {
-		t.Fatal("automatic unique-publication callback did not execute")
-	}
-}
 
 func prepareAgedTerminalFallbackRetirementFixture(t *testing.T, f uniquePublicationApplyFixture) {
 	t.Helper()

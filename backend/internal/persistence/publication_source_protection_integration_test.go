@@ -4,7 +4,6 @@ package persistence
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -50,96 +49,4 @@ func pubSourceProtectionHoldWithFixture(t *testing.T, f publicationExecutionFixt
 		t.Fatal(err)
 	}
 	return repo, rootID, variantID, f.guard.OperationID
-}
-
-func TestOutputResetAllowsQueuedPublicationSourceHoldPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f := newPublicationExecutionFixture(t)
-	pubSourceProtectionHoldWithFixture(t, f)
-	oldRoot, newRoot := nativeTestPath(t, "/music/old"), nativeTestPath(t, "/music/new")
-	if err := NewSettingsRepository(f.db).Set(ctx, "output_directory", oldRoot); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='available' WHERE id=?`, f.guard.RiverJobID); err != nil {
-		t.Fatal(err)
-	}
-	_, err := NewSetupManagerRepository(f.db).RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot: oldRoot, NewRoot: newRoot,
-		Prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil },
-		Finish:  func(context.Context, OutputResetJournal) error { return nil },
-	})
-	if err != nil {
-		t.Fatalf("reset with queued source hold: %v", err)
-	}
-}
-
-func TestOutputResetBlocksNonqueuedPublicationSourceHoldPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f := newPublicationExecutionFixture(t)
-	pubSourceProtectionHoldWithFixture(t, f)
-	oldRoot, newRoot := nativeTestPath(t, "/music/old"), nativeTestPath(t, "/music/new")
-	if err := NewSettingsRepository(f.db).Set(ctx, "output_directory", oldRoot); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.db.ExecContext(ctx, `UPDATE operation SET state='succeeded',finished_at=now() WHERE id=?`, f.guard.OperationID); err != nil {
-		t.Fatal(err)
-	}
-	_, err := NewSetupManagerRepository(f.db).RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot: oldRoot, NewRoot: newRoot,
-		Prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil },
-		Finish:  func(context.Context, OutputResetJournal) error { return nil },
-	})
-	if err == nil {
-		t.Fatal("reset with nonqueued source hold succeeded")
-	}
-}
-
-func TestPublicationSourceHoldProtectsRootButAllowsDisplayNameEditPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	repo, rootID, _, _ := pubSourceProtectionHold(t)
-	root, err := repo.GetSourceRoot(ctx, rootID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root.DisplayName = "Renamed"
-	if err := repo.UpdateSourceRoot(ctx, root); err != nil {
-		t.Fatalf("display-name-only edit: %v", err)
-	}
-	root.ConfiguredPath = "/elsewhere"
-	if err := repo.UpdateSourceRoot(ctx, root); !errors.Is(err, ErrSourceRootActiveScan) {
-		t.Fatalf("held path change error = %v, want ErrSourceRootActiveScan", err)
-	}
-	if err := repo.DeleteSourceRoot(ctx, rootID, "/source", 1); !errors.Is(err, ErrSourceRootActiveScan) {
-		t.Fatalf("held root delete error = %v, want ErrSourceRootActiveScan", err)
-	}
-}
-
-func TestPublicationSourceHoldRetainsDigestlessVariantOnCleanupPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	repo, _, variantID, _ := pubSourceProtectionHold(t)
-	// Remove the ordinary inventory reference so the durable publication hold
-	// is the only reason this digestless variant survives orphan cleanup.
-	if _, err := repo.db.NewRaw(`UPDATE source_location SET media_variant_id=NULL WHERE media_variant_id=?`, variantID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.CleanupSourceMediaVariants(ctx, []uuid.UUID{variantID}); err != nil {
-		t.Fatal(err)
-	}
-	var exists bool
-	if err := repo.db.NewRaw(`SELECT EXISTS(SELECT 1 FROM media_variant WHERE id=?)`, variantID).Scan(ctx, &exists); err != nil || !exists {
-		t.Fatalf("held digestless variant exists=%t, err=%v", exists, err)
-	}
-	if _, err := repo.db.NewRaw(`DELETE FROM publication_source_hold WHERE media_variant_id=?`, variantID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.CleanupSourceMediaVariants(ctx, []uuid.UUID{variantID}); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.db.NewRaw(`SELECT EXISTS(SELECT 1 FROM media_variant WHERE id=?)`, variantID).Scan(ctx, &exists); err != nil || exists {
-		t.Fatalf("released digestless variant exists=%t, err=%v", exists, err)
-	}
 }

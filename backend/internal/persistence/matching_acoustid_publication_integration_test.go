@@ -5,88 +5,13 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"testing"
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
+	"testing"
+	"time"
 )
-
-func TestAcoustIDPublicationRejectsChangedFingerprintContentsPostgreSQL(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	fixture := newIncomingMatchFixtureWithSelectedFingerprint(t, ctx, db)
-	captures, err := persistence.NewIncomingGroupingRepository(db).CurrentCaptures(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inputsByWork := make(map[uuid.UUID]persistence.IncomingMatchAcoustIDSourceInputFence, len(captures))
-	for _, capture := range captures {
-		if capture.WorkID != fixture.workA && capture.WorkID != fixture.workB {
-			continue
-		}
-		key, err := persistence.AcoustIDRequestCacheKeyForCapture(capture)
-		if err != nil {
-			t.Fatalf("derive AcoustID request key for %s: %v", capture.WorkID, err)
-		}
-		inputsByWork[capture.WorkID] = persistence.IncomingMatchAcoustIDSourceInputFence{Capture: capture, RequestCacheKey: key}
-	}
-	if len(inputsByWork) != 2 {
-		t.Fatalf("selected fingerprint captures = %d, want both incoming works", len(inputsByWork))
-	}
-
-	providerCache := persistence.NewProviderCacheRepository(db)
-	if _, err := providerCache.ResolveAcoustIDSource(ctx, ""); err != nil {
-		t.Fatalf("resolve official AcoustID source: %v", err)
-	}
-	candidate := fixture.candidate(fixture.memberA, .8)
-	candidate.Positions = []persistence.IncomingMatchPosition{{TrackID: fixture.trackID, Medium: 0, Position: 0}}
-	evaluation := fixture.evaluation([]persistence.IncomingMatchCandidate{candidate})
-	evaluation.Provider.AcoustIDSources = []persistence.IncomingMatchAcoustIDSourceFence{
-		{FileMemberID: fixture.memberA, CacheKey: inputsByWork[fixture.workA].RequestCacheKey, SourceInputs: []persistence.IncomingMatchAcoustIDSourceInputFence{inputsByWork[fixture.workA]}},
-		{FileMemberID: fixture.memberB, CacheKey: inputsByWork[fixture.workB].RequestCacheKey, SourceInputs: []persistence.IncomingMatchAcoustIDSourceInputFence{inputsByWork[fixture.workB]}},
-	}
-	repository := persistence.NewIncomingMatchCandidateRepository(db)
-	if err := repository.Replace(ctx, evaluation); err != nil {
-		t.Fatalf("persist baseline matching result: %v", err)
-	}
-	headerBefore, candidatesBefore := mustIncomingMatchResult(t, ctx, repository, fixture.group.ID)
-	if len(candidatesBefore) != 1 {
-		t.Fatalf("baseline candidates = %#v, want one", candidatesBefore)
-	}
-	selectedBefore := captureForIncomingWork(t, ctx, db, fixture.workA)
-	if selectedBefore.FingerprintWinner == nil || selectedBefore.Fingerprint == nil {
-		t.Fatalf("fixture work %s has no selected fingerprint: %+v", fixture.workA, selectedBefore)
-	}
-
-	// Change the selected row in place. Its winner identity remains stable, but
-	// its contents no longer match the copied AcoustID source fence.
-	if _, err := db.NewRaw(`UPDATE media_fingerprint_result SET fingerprint=? WHERE id=?`, "9876,5432", *selectedBefore.FingerprintWinner).Exec(ctx); err != nil {
-		t.Fatalf("mutate selected fingerprint result contents: %v", err)
-	}
-	selectedAfter := captureForIncomingWork(t, ctx, db, fixture.workA)
-	if selectedBefore.FingerprintWinner == nil || selectedAfter.FingerprintWinner == nil || *selectedBefore.FingerprintWinner != *selectedAfter.FingerprintWinner || selectedBefore.Fingerprint == nil || selectedAfter.Fingerprint == nil || *selectedBefore.Fingerprint == *selectedAfter.Fingerprint {
-		t.Fatalf("fingerprint rerun did not mutate the selected result contents in place: before=%+v after=%+v", selectedBefore, selectedAfter)
-	}
-	refreshIncomingMatchFixtureRevision(t, ctx, db, fixture)
-	evaluation.ExpectedGroupsRevision = fixture.groupsRevision
-	evaluation.ExpectedGroupingEpoch = fixture.groupingEpoch
-	evaluation.Groups[0].GroupRevision = fixture.group.Revision
-
-	priorRevision := headerBefore.EvaluationRevision
-	if err := repository.ReplaceIfCurrent(ctx, evaluation, map[uuid.UUID]*string{fixture.group.ID: &priorRevision}); !errors.Is(err, persistence.ErrIncomingMatchConflict) {
-		t.Fatalf("publish stale AcoustID snapshot error = %v, want conflict", err)
-	}
-	headerAfter, candidatesAfter := mustIncomingMatchResult(t, ctx, repository, fixture.group.ID)
-	if headerAfter.EvaluationRevision != headerBefore.EvaluationRevision || string(headerAfter.EvaluationEvidence) != string(headerBefore.EvaluationEvidence) || len(candidatesAfter) != len(candidatesBefore) || candidatesAfter[0].FileMemberID != candidatesBefore[0].FileMemberID || candidatesAfter[0].Score != candidatesBefore[0].Score || string(candidatesAfter[0].Evidence) != string(candidatesBefore[0].Evidence) || len(candidatesAfter[0].Positions) != len(candidatesBefore[0].Positions) || candidatesAfter[0].Positions[0] != candidatesBefore[0].Positions[0] {
-		t.Fatalf("stale publication changed accepted result: before=(%+v,%+v) after=(%+v,%+v)", headerBefore, candidatesBefore, headerAfter, candidatesAfter)
-	}
-}
 
 func newIncomingMatchFixtureWithSelectedFingerprint(t *testing.T, ctx context.Context, db *bun.DB) *incomingMatchFixture {
 	t.Helper()

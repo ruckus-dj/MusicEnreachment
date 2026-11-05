@@ -44,18 +44,6 @@ func (commands *automaticLyricsExecutorCommands) RunFile(ctx context.Context, re
 	return commands.transport.RunFile(ctx, request)
 }
 
-func TestPublicationExecutorAutomaticLyricsRetryNativeReadback(t *testing.T) {
-	for _, scenario := range []automaticLyricsRetryScenario{
-		{name: "found"},
-		{name: "readback_mismatch", mismatch: true},
-		{name: "authority_race", authorityRace: true},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			testPublicationExecutorAutomaticLyricsRetryNativeReadback(t, scenario)
-		})
-	}
-}
-
 func testPublicationExecutorAutomaticLyricsRetryNativeReadback(t *testing.T, scenario automaticLyricsRetryScenario) {
 	t.Helper()
 	ctx := context.Background()

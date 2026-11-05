@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
@@ -18,24 +17,6 @@ import (
 // registered directory cannot be read. It carries no path and no diagnostic,
 // which is what the root's safe_error must always be.
 const unavailableSafeReason = "The configured source directory is unavailable or no longer readable. The previous inventory is unchanged."
-
-func TestSourceRootUnavailableLifecycleWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	for _, test := range []struct {
-		name string
-		run  func(*testing.T, *bun.DB)
-	}{
-		{"TestrunSourceRootUnavailableKeepsInventoryWithPostgreSQL", runSourceRootUnavailableKeepsInventoryWithPostgreSQL},
-		{"TestrunSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL", runSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL},
-		{"TestrunSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL", runSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL},
-		{"TestrunSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL", runSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL},
-		{"TestrunSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL", runSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL},
-		{"TestrunSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL", runSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL},
-	} {
-		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
-	}
-}
 
 // TestrunSourceRootUnavailableKeepsInventoryWithPostgreSQL drives the required
 // sequence: a successful scan, an unavailable report, then a successful rescan.

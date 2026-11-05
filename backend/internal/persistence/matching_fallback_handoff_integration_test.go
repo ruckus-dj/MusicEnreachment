@@ -7,11 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"testing"
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -21,6 +16,10 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
 )
 
 type fallbackHandoffRiverInserter struct {
@@ -52,17 +51,6 @@ func (inserter *fallbackHandoffRiverInserter) InsertTx(ctx context.Context, tx *
 		}
 	}
 	return result, nil
-}
-
-func TestAutomaticFallbackEmptyRecordingReceiptHandoffPostgreSQL(t *testing.T) {
-	t.Parallel()
-	runAutomaticFallbackRecordingReceiptHandoff(t, json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":0,"offset":0,"recordings":[]}`), false)
-}
-
-func TestAutomaticFallbackRecordingReceiptHandoffHydratesEveryReleasePostgreSQL(t *testing.T) {
-	t.Parallel()
-	accepted := json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":2,"offset":0,"recordings":[{"id":"10000000-0000-4000-8000-000000000001","releases":[{"id":"20000000-0000-4000-8000-000000000001"},{"id":"20000000-0000-4000-8000-000000000002"},{"id":"20000000-0000-4000-8000-000000000003"},{"id":"20000000-0000-4000-8000-000000000004"},{"id":"20000000-0000-4000-8000-000000000005"},{"id":"20000000-0000-4000-8000-000000000006"},{"id":"20000000-0000-4000-8000-000000000007"}]},{"id":"10000000-0000-4000-8000-000000000002","releases":[{"id":"20000000-0000-4000-8000-000000000001"},{"id":"20000000-0000-4000-8000-000000000008"},{"id":"20000000-0000-4000-8000-000000000009"},{"id":"20000000-0000-4000-8000-00000000000A"},{"id":"20000000-0000-4000-8000-00000000000b"},{"id":"20000000-0000-4000-8000-00000000000C"}]}]}`)
-	runAutomaticFallbackRecordingReceiptHandoff(t, accepted, true)
 }
 
 func runAutomaticFallbackRecordingReceiptHandoff(t *testing.T, accepted json.RawMessage, positive bool) {

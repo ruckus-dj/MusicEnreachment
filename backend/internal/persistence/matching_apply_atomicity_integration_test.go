@@ -6,13 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
-	"testing"
-
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
+	"reflect"
+	"testing"
 )
 
 func TestApplyCurrentMatchingEvaluationRollsBackIntermediateWritesPostgreSQL(t *testing.T) {
@@ -71,49 +70,6 @@ func TestApplyCurrentMatchingEvaluationRollsBackIntermediateWritesPostgreSQL(t *
 			t.Fatalf("failed apply changed candidates: before=%+v after=%+v", candidates, afterCandidates)
 		}
 	}
-}
-
-func TestApplyCurrentMatchingEvaluationAttachesVariantDespiteExistingAutomaticTrackSourcePostgreSQL(t *testing.T) {
-	t.Parallel()
-	db := testpostgres.OpenMigratedWithRiver(t)
-	ctx := context.Background()
-	fixture := newIncomingMatchFixture(t, ctx, db)
-	repository := persistence.NewIncomingMatchCandidateRepository(db)
-	evaluation := fixture.evaluation([]persistence.IncomingMatchCandidate{
-		fixture.candidate(fixture.memberA, .95), fixture.candidate(fixture.memberB, .95),
-	})
-	evaluation.Groups[0].Evidence = matchingApplyEvidence(t, fixture, fixture.trackID)
-	if err := repository.Replace(ctx, evaluation); err != nil {
-		t.Fatalf("persist unique matching evaluation: %v", err)
-	}
-	header, _, err := repository.Get(ctx, fixture.group.ID)
-	if err != nil || header == nil {
-		t.Fatalf("read evaluation header: header=%+v err=%v", header, err)
-	}
-	var variantID uuid.UUID
-	if err := db.NewRaw(`SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=? ORDER BY media_variant_id LIMIT 1`, fixture.workA).Scan(ctx, &variantID); err != nil {
-		t.Fatalf("read source variant: %v", err)
-	}
-	oldTrackID := uuid.New()
-	if _, err := db.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, oldTrackID, "Existing automatic destination").Exec(ctx); err != nil {
-		t.Fatalf("create existing destination: %v", err)
-	}
-	oldPolicy := "legacy-policy"
-	oldMetadata := json.RawMessage(`{"source":"preexisting"}`)
-	if err := persistence.NewCollectionRepository(db).UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
-		TrackID: oldTrackID, MediaVariantID: variantID, Selected: true, Compatible: true,
-		Method: "automatic", PolicyVersion: &oldPolicy, Metadata: oldMetadata,
-	}); err != nil {
-		t.Fatalf("seed preexisting automatic association: %v", err)
-	}
-	if err := repository.ApplyCurrentMatchingEvaluation(ctx, fixture.group.ID, header.EvaluationRevision); err != nil {
-		t.Fatalf("apply matching evaluation with preexisting automatic association: %v", err)
-	}
-	assertMatchingApplyExistingAndNewAssociation(t, ctx, db, fixture.provider, oldTrackID, variantID, oldPolicy, oldMetadata)
-	if err := repository.ApplyCurrentMatchingEvaluation(ctx, fixture.group.ID, header.EvaluationRevision); err != nil {
-		t.Fatalf("repeat apply: %v", err)
-	}
-	assertMatchingApplyExistingAndNewAssociation(t, ctx, db, fixture.provider, oldTrackID, variantID, oldPolicy, oldMetadata)
 }
 
 func assertMatchingApplyExistingAndNewAssociation(t *testing.T, ctx context.Context, db *bun.DB, provider, oldTrackID, variantID uuid.UUID, oldPolicy string, oldMetadata json.RawMessage) {

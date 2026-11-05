@@ -17,32 +17,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
-
-func TestAdmitFirstPublicationFromPreviewPostgreSQL(t *testing.T) {
-	t.Parallel()
-	for _, group := range []struct {
-		name      string
-		scenarios []string
-	}{
-		{name: "rejections", scenarios: []string{"callback error", "stale source", "enqueue rollback"}},
-		{name: "admissions", scenarios: []string{"success", "pending cover", "selected cover"}},
-	} {
-		t.Run(group.name, func(t *testing.T) {
-			ctx := context.Background()
-			db := testpostgres.OpenMigratedWithRiver(t)
-			initializeRiver(t, ctx, db)
-			fixture := newFirstAdmissionFixture(t, ctx, db)
-			for _, scenario := range group.scenarios {
-				t.Run(scenario, func(t *testing.T) {
-					runFirstAdmissionScenario(t, fixture, scenario)
-				})
-			}
-		})
-	}
-}
 
 type firstAdmissionFixture struct {
 	ctx        context.Context

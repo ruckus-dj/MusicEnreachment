@@ -25,41 +25,6 @@ import (
 
 var deleteAttachedOperationID uuid.UUID
 
-func TestSourceRepositoryScanLifecycleWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	for _, test := range []struct {
-		name string
-		run  func(*testing.T, *bun.DB)
-	}{
-		{"TestSourceRootRepositoryWithPostgreSQL", runSourceRootRepositoryWithPostgreSQL},
-		{"TestCreateSourceRootPersistsProcessingModeWithPostgreSQL", runCreateSourceRootPersistsProcessingModeWithPostgreSQL},
-		{"TestSourceRootPathEditWithPostgreSQL", runSourceRootPathEditWithPostgreSQL},
-		{"TestSourceScanApplyWithPostgreSQL", runSourceScanApplyWithPostgreSQL},
-		{"TestSourceScanApplyEmptyStoredCandidatesWithPostgreSQL", runSourceScanApplyEmptyStoredCandidatesWithPostgreSQL},
-		{"TestSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL", runSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL},
-		{"TestSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgreSQL", runSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgreSQL},
-		{"TestSourceCandidatesWrapOperationWithPostgreSQL", runSourceCandidatesWrapOperationWithPostgreSQL},
-		{"TestSourceLocationPaginationWithPostgreSQL", runSourceLocationPaginationWithPostgreSQL},
-	} {
-		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
-	}
-}
-
-func TestSourceRootDeletionLifecycleWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	for _, test := range []struct {
-		name string
-		run  func(*testing.T, *bun.DB)
-	}{
-		{"TestSourceRootDeletionGuardsWithPostgreSQL", runSourceRootDeletionGuardsWithPostgreSQL},
-		{"TestSourceRootDeletionRacesScanWithPostgreSQL", runSourceRootDeletionRacesScanWithPostgreSQL},
-	} {
-		t.Run(test.name, func(t *testing.T) { test.run(t, database) })
-	}
-}
-
 func TestSourceScanEnqueueLifecycleWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)

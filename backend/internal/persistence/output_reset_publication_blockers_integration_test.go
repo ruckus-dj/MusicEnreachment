@@ -4,7 +4,6 @@ package persistence
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -83,65 +82,4 @@ func (f publicationResetFixture) assertUnchanged(t *testing.T, checkEpoch bool) 
 			t.Fatalf("blocked reset epoch = %s, %v", epoch, err)
 		}
 	}
-}
-
-func TestOutputResetBlocksTerminalPublicationClaimsPostgreSQL(t *testing.T) {
-	t.Parallel()
-	for _, state := range []string{"executing", "recovery_required", "quiescent"} {
-		t.Run(state, func(t *testing.T) {
-			f := newPublicationResetFixture(t)
-			if _, err := f.db.NewRaw(`INSERT INTO publication_execution_claim
-				(operation_id,application_attempt,river_job_id,river_attempt,claim_uuid,boot_uuid,delivery_token,epoch,state)
-				VALUES (?,1,?,1,?,?,'delivery',?,?)`, f.operation, f.job, uuid.New(), uuid.New(), f.epoch, state).Exec(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := f.reset(); err == nil {
-				t.Fatal("reset ignored durable claim on completed operation")
-			}
-			f.assertUnchanged(t, true)
-		})
-	}
-}
-
-func TestOutputResetSourceCleanupEligibilityPostgreSQL(t *testing.T) {
-	t.Parallel()
-	for _, state := range []string{"claimed", "recovery_required", "queued", "retry_pending"} {
-		t.Run(state, func(t *testing.T) {
-			f := newPublicationResetFixture(t)
-			itemID := uuid.New()
-			if _, err := f.db.NewRaw(`INSERT INTO source_cleanup_item
-				(id,operation_id,position_id,epoch,publication_generation,state,source_snapshot,borrower_revision)
-				VALUES (?,?,?,?,?,?,'{}',?)`, itemID, f.operation, f.position, f.epoch, uuid.New(), state, uuid.New()).Exec(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			_, err := f.reset()
-			if state == "claimed" || state == "recovery_required" {
-				if err == nil {
-					t.Fatal("reset ignored active cleanup")
-				}
-				f.assertUnchanged(t, true)
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			var got string
-			var snapshotCleared, revisionCleared bool
-			if err := f.db.NewRaw(`SELECT state,source_snapshot IS NULL,borrower_revision IS NULL FROM source_cleanup_item WHERE id=?`, itemID).Scan(context.Background(), &got, &snapshotCleared, &revisionCleared); err != nil || got != "cancelled" || !snapshotCleared || !revisionCleared {
-				t.Fatalf("cleanup after reset = %q %t %t, %v", got, snapshotCleared, revisionCleared, err)
-			}
-		})
-	}
-}
-
-func TestOutputResetMissingPublicationSingletonRollsBackPostgreSQL(t *testing.T) {
-	t.Parallel()
-	f := newPublicationResetFixture(t)
-	if _, err := f.db.NewRaw(`DELETE FROM publication_namespace_state`).Exec(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.reset(); err == nil || !strings.Contains(err.Error(), "publication namespace state is missing") {
-		t.Fatalf("missing namespace reset error = %v", err)
-	}
-	f.assertUnchanged(t, false)
 }

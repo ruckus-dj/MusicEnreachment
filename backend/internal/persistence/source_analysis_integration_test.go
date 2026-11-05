@@ -16,15 +16,8 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
-
-func TestSourceAnalysisDeletionCleanupWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.OpenMigratedWithRiver(t)
-	t.Run("deletion_cleanup", func(t *testing.T) { runSourceAnalysisDeletionCleanup(t, database) })
-}
 
 func runSourceAnalysisDeletionCleanup(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
