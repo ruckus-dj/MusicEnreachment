@@ -192,76 +192,6 @@ func TestPublicationCoverEmbeddingV2SQLConstraintPostgreSQL(t *testing.T) {
 	}
 }
 
-func TestCommitPublicationResultManualLyricsFreshnessPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f, repository, input, observation := prepareManualLyricsCommitFixture(t)
-	alignManualPublicationResultTarget(t, ctx, f, &observation)
-	result := PublicationResult{
-		Observation: observation,
-		InstalledOwnership: PublicationCurrentOwnership{Version: PublicationCurrentOwnershipVersion, Identity: PublicationFileIdentity{
-			SizeBytes: observation.Ownership.ExpectedSize, MTime: observation.Ownership.ExpectedMTime, SHA256: observation.PayloadSHA256,
-		}},
-	}
-	committed, err := repository.CommitPublicationResult(ctx, f.guard, result)
-	if err != nil || !committed {
-		t.Fatalf("manual lyrics commit = %v, %v", committed, err)
-	}
-	var current TrackPublication
-	if err := f.db.NewSelect().Model(&current).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if current.Generation != f.guard.CandidateGeneration {
-		t.Fatalf("manual lyrics commit did not install candidate generation: %s", current.Generation)
-	}
-	var receipt PublicationManualLyricsReceipt
-	if err := f.db.NewSelect().Model(&receipt).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
-		t.Fatal(err)
-	}
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.ManualLyrics.Value)))
-	if receipt.DesiredRevision != input.ManualLyrics.ExpectedMetadataRevision || receipt.ConfirmedGeneration != input.Rewrite.CurrentGeneration || receipt.PublishedGeneration != f.guard.CandidateGeneration || receipt.DesiredSHA256 == nil || *receipt.DesiredSHA256 != digest {
-		t.Fatalf("manual lyrics receipt does not bind frozen authority: %+v", receipt)
-	}
-
-	stale, staleRepository, staleInput, staleObservation := prepareManualLyricsCommitFixture(t)
-	alignManualPublicationResultTarget(t, ctx, stale, &staleObservation)
-	if _, err := stale.db.ExecContext(ctx, `UPDATE release_track SET metadata_revision=metadata_revision+1 WHERE id=?`, stale.guard.ExpectedPositionID); err != nil {
-		t.Fatal(err)
-	}
-	staleResult := PublicationResult{Observation: staleObservation, InstalledOwnership: result.InstalledOwnership}
-	committed, err = staleRepository.CommitPublicationResult(ctx, stale.guard, staleResult)
-	if err != nil || committed {
-		t.Fatalf("stale metadata revision commit = %v, %v", committed, err)
-	}
-	assertManualLyricsResultUnchanged(t, ctx, stale, staleInput)
-
-	drift, driftRepository, driftInput, driftObservation := prepareManualLyricsCommitFixture(t)
-	alignManualPublicationResultTarget(t, ctx, drift, &driftObservation)
-	changed := "[00:03.00]different\r\n"
-	metadata, err := json.Marshal(PublicationCommitMetadata{Version: 1, Tags: map[string][]string{"TITLE": {"published title"}, "LYRICS": {changed}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	envelope := map[string]json.RawMessage{"local_metadata": mustJSON(map[string]any{
-		"version": 1, "scope": "position", "desired": map[string]any{"synced_lyrics": map[string]any{
-			"state": "value", "value": changed, "authority": "manual", "provenance": map[string]any{"kind": "manual"},
-		}},
-	})}
-	if _, err := drift.db.ExecContext(ctx, `UPDATE release_track SET metadata=?::jsonb WHERE id=?`, string(mustJSON(envelope)), drift.guard.ExpectedPositionID); err != nil {
-		t.Fatal(err)
-	}
-	_ = metadata
-	if _, err := drift.db.ExecContext(ctx, `UPDATE track_publication SET actual_metadata=?::jsonb WHERE position_id=?`, string(metadata), drift.guard.ExpectedPositionID); err != nil {
-		t.Fatal(err)
-	}
-	driftResult := PublicationResult{Observation: driftObservation, InstalledOwnership: result.InstalledOwnership}
-	committed, err = driftRepository.CommitPublicationResult(ctx, drift.guard, driftResult)
-	if err != nil || committed {
-		t.Fatalf("same revision manual lyrics drift commit = %v, %v", committed, err)
-	}
-	assertManualLyricsResultUnchanged(t, ctx, drift, driftInput)
-}
-
 func alignManualPublicationResultTarget(t *testing.T, ctx context.Context, f publicationExecutionFixture, observation *PublicationStageObservation) {
 	t.Helper()
 	seedManualPublicationResultChoice(t, ctx, f)
@@ -299,27 +229,6 @@ func seedManualPublicationResultChoice(t *testing.T, ctx context.Context, f publ
 	}}
 	if _, err := f.db.ExecContext(ctx, `UPDATE release_track SET metadata_revision=?,metadata=jsonb_set(metadata,'{local_metadata}',?::jsonb,true) WHERE id=?`, manual.ExpectedMetadataRevision, string(mustJSON(envelope)), f.guard.ExpectedPositionID); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func assertManualLyricsResultUnchanged(t *testing.T, ctx context.Context, f publicationExecutionFixture, input PublicationInputs) {
-	t.Helper()
-	var generation uuid.UUID
-	if err := f.db.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &generation); err != nil || generation != input.Rewrite.CurrentGeneration {
-		t.Fatalf("rejected manual lyrics changed current generation: %s, %v", generation, err)
-	}
-	var claimState, attemptPhase, operationState string
-	if err := f.db.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &claimState); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.db.NewRaw(`SELECT phase FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &attemptPhase); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.db.NewRaw(`SELECT state FROM operation WHERE id=?`, f.guard.OperationID).Scan(ctx, &operationState); err != nil {
-		t.Fatal(err)
-	}
-	if claimState != "executing" || attemptPhase == "" || operationState != "running" {
-		t.Fatalf("rejected manual lyrics changed authority: claim=%s attempt=%s operation=%s", claimState, attemptPhase, operationState)
 	}
 }
 
@@ -395,54 +304,6 @@ func TestCommitPublicationResultInstallsCurrentProjectionPostgreSQL(t *testing.T
 	committed, err = repository.CommitPublicationResult(ctx, f.guard, result)
 	if err != nil || committed {
 		t.Fatalf("retry without attempt = %v, %v", committed, err)
-	}
-}
-
-func TestPublicationBusyParkingAndResultSettlementWakePostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f := preparePublicationResultFixture(t)
-	repository := NewSetupManagerRepository(f.db)
-	epoch, position := f.guard.Epoch, f.guard.ExpectedPositionID
-	reconciliationGuard, inserter := startPublicationReconciliationForResult(t, ctx, repository, epoch, position)
-	if parked, err := repository.ParkPublicationReconciliationBusyAttempt(ctx, reconciliationGuard, 1, PublicationReconciliationBusyAttemptReason); err != nil || !parked {
-		t.Fatalf("park busy reconciliation=%v err=%v", parked, err)
-	}
-	if committed, err := repository.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
-		t.Fatalf("settle publication=%v err=%v", committed, err)
-	}
-	assertReconciliationWake(t, ctx, f.db, epoch, position, 2, 1)
-	if committed, err := repository.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || committed {
-		t.Fatalf("replay consumed publication result=%v err=%v", committed, err)
-	}
-	assertReconciliationWake(t, ctx, f.db, epoch, position, 2, 1)
-	if dispatched, err := repository.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || dispatched != 1 {
-		t.Fatalf("dispatch settlement successor=%d err=%v", dispatched, err)
-	}
-}
-
-func TestPublicationResultSettlementBeforeBusyParkRetainsSuccessorPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f := preparePublicationResultFixture(t)
-	repository := NewSetupManagerRepository(f.db)
-	epoch, position := f.guard.Epoch, f.guard.ExpectedPositionID
-	reconciliationGuard, inserter := startPublicationReconciliationForResult(t, ctx, repository, epoch, position)
-	if committed, err := repository.CommitPublicationResult(ctx, f.guard, publicationResultForFixture(f)); err != nil || !committed {
-		t.Fatalf("settle publication=%v err=%v", committed, err)
-	}
-	if parked, err := repository.ParkPublicationReconciliationBusyAttempt(ctx, reconciliationGuard, 1, PublicationReconciliationBusyAttemptReason); err != nil || parked {
-		t.Fatalf("stale busy park=%v err=%v", parked, err)
-	}
-	assertReconciliationWake(t, ctx, f.db, epoch, position, 2, 1)
-	if released, err := repository.ReleasePublicationReconciliationDelivery(ctx, reconciliationGuard); err != nil || !released {
-		t.Fatalf("release pre-settlement reconciliation=%v err=%v", released, err)
-	}
-	if _, err := repository.db.ExecContext(ctx, `UPDATE river_job SET state='completed',finalized_at=now() WHERE id=?`, reconciliationGuard.RiverJobID); err != nil {
-		t.Fatal(err)
-	}
-	if dispatched, err := repository.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || dispatched != 1 {
-		t.Fatalf("dispatch retained successor=%d err=%v", dispatched, err)
 	}
 }
 

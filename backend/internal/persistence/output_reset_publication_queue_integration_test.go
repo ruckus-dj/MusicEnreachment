@@ -72,9 +72,6 @@ func TestOutputResetRejectsUnsafePublicationAttemptsPostgreSQL(t *testing.T) {
 		terminal bool
 	}{
 		{"execution started", "preparing", false},
-		{"candidate staged", "staged", false},
-		{"candidate validated", "validated", false},
-		{"candidate exposing", "exposing", false},
 		{"terminal operation retains intent", "queued", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {

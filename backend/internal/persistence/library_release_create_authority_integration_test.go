@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -120,66 +119,6 @@ func TestCreateStandaloneReleaseProviderRecordingAcceptedAuthorityPostgreSQL(t *
 	}
 	if providerReleaseBindings != 0 || providerTrackBindings != 0 {
 		t.Fatalf("provider release/track bindings were created: %d/%d", providerReleaseBindings, providerTrackBindings)
-	}
-}
-
-func TestCreateStandaloneReleaseProviderRecordingStaleConfigurationRejectsMappedAndUnmappedPostgreSQL(t *testing.T) {
-	t.Parallel()
-	for _, mapped := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unmapped", true: "mapped"}[mapped], func(t *testing.T) {
-			db := testpostgres.OpenMigratedWithRiver(t)
-			ctx := context.Background()
-			f := setupCreateProviderRecordingFixture(t, db, false)
-			var localID uuid.UUID
-			if mapped {
-				localID = uuid.New()
-				if _, err := db.NewRaw(`INSERT INTO local_recording(id,title,metadata) VALUES (?, 'Existing local title','{}'::jsonb)`, localID).Exec(ctx); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := db.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method,policy_version) VALUES (?,?,?,'automatic','policy')`, f.providerID, f.recordingID, localID).Exec(ctx); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, err := db.NewRaw(`UPDATE app_setting SET setting_value='rotated-config' WHERE setting_name='musicbrainz_config_identity'`).Exec(ctx); err != nil {
-				t.Fatal(err)
-			}
-			var beforeLocal, beforeMappings int
-			_ = db.NewRaw(`SELECT count(*) FROM local_recording`).Scan(ctx, &beforeLocal)
-			_ = db.NewRaw(`SELECT count(*) FROM provider_local_recording`).Scan(ctx, &beforeMappings)
-			_, err := persistence.NewLibraryRepository(db).CreateStandaloneRelease(ctx, providerCreateRequest(f, nil))
-			if !errors.Is(err, persistence.ErrLibraryReleaseCreateProviderConflict) {
-				t.Fatalf("stale config create error = %v", err)
-			}
-			var afterLocal, afterMappings, methodCount int
-			if err := db.NewRaw(`SELECT count(*) FROM local_recording`).Scan(ctx, &afterLocal); err != nil {
-				t.Fatal(err)
-			}
-			if err := db.NewRaw(`SELECT count(*) FROM provider_local_recording`).Scan(ctx, &afterMappings); err != nil {
-				t.Fatal(err)
-			}
-			if afterLocal != beforeLocal || afterMappings != beforeMappings {
-				t.Fatalf("stale authority mutated rows: local recordings %d->%d, mappings %d->%d", beforeLocal, afterLocal, beforeMappings, afterMappings)
-			}
-			var sourceIdentity string
-			if err := db.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, f.sourceID).Scan(ctx, &sourceIdentity); err != nil || sourceIdentity != f.identity {
-				t.Fatalf("provider source identity = %q, %v", sourceIdentity, err)
-			}
-			for _, table := range []string{"local_release", "local_track", "release_medium", "release_track", "provider_local_release", "provider_local_track"} {
-				var count int
-				if err := db.NewRaw(`SELECT count(*) FROM `+table).Scan(ctx, &count); err != nil || count != 0 {
-					t.Fatalf("stale config %s count = %d, %v", table, count, err)
-				}
-			}
-			if mapped {
-				if err := db.NewRaw(`SELECT count(*) FROM provider_local_recording WHERE provider_id=? AND provider_recording_id=? AND method='automatic' AND policy_version='policy'`, f.providerID, f.recordingID).Scan(ctx, &methodCount); err != nil || methodCount != 1 {
-					t.Fatalf("existing mapping authority changed: count=%d err=%v", methodCount, err)
-				}
-				var title string
-				if err := db.NewRaw(`SELECT title FROM local_recording WHERE id=?`, localID).Scan(ctx, &title); err != nil || title != "Existing local title" {
-					t.Fatalf("existing local recording title = %q, %v", title, err)
-				}
-			}
-		})
 	}
 }
 

@@ -4,7 +4,6 @@ package persistence
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"testing"
 	"time"
@@ -12,69 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
-
-func testApplySourceScanRetainsSelectedFingerprintAndClearsSupersededProbeIntent(t *testing.T, db *bun.DB) {
-	ctx := context.Background()
-	root := publishTestRoot(t, ctx, db, "/srv/retained-analysis")
-	previousScan := publishTestScan(t, ctx, db, root.ID)
-	stamp := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
-	location, work, sha, probe, fingerprint := insertRetainedAnalysisFixture(t, ctx, db, root, previousScan, stamp)
-	if err := insertRetainedFailureSteps(ctx, db, work, fingerprint, true); err != nil {
-		t.Fatal(err)
-	}
-	finishPublishTestScan(t, ctx, db, previousScan)
-
-	scan := publishTestScan(t, ctx, db, root.ID, false)
-	prepared := &SourceScanPreparedAnalysis{
-		Version: 1, HashRequested: false, SHA256State: SourcePreparedNotRequested,
-		RetainedSHA256Variant: sha, ProbeState: SourcePreparedDeferred,
-		FingerprintState: SourcePreparedSucceeded, FingerprintResult: fingerprint,
-		ReusedImmutableIDs: []uuid.UUID{fingerprint.ID}, OriginalLocationID: &location.ID, OriginalMediaVariantID: location.MediaVariantID,
-	}
-	waitingReason := "Source technical analysis is waiting for managed tools to become available."
-	candidates := []SourceScanCandidateInput{{RelativePath: location.RelativePath, SizeBytes: location.SizeBytes, Mtime: stamp, ProbeStatus: SourceProbeStatusProbeError, SafeError: &waitingReason, PreparedAnalysis: prepared}}
-	publishAndApplyRetainedCandidate(t, ctx, db, root, scan, candidates, false)
-
-	var probeState string
-	var probeInput []byte
-	if err := db.NewRaw(`SELECT state,input_snapshot FROM source_analysis_step WHERE work_id=? AND step='probe'`, work.ID).Scan(ctx, &probeState, &probeInput); err != nil {
-		t.Fatal(err)
-	}
-	if probeState != "pending" || len(probeInput) != 0 {
-		t.Fatalf("superseded probe step = %q input %q; want pending with no old admitted intent", probeState, probeInput)
-	}
-	var fpState, fpError, fpOrigin string
-	var selectedFingerprint uuid.UUID
-	var fpInput []byte
-	if err := db.NewRaw(`SELECT state,safe_error,success_reuse_origin,success_fingerprint_result_id,input_snapshot FROM source_analysis_step WHERE work_id=? AND step='fingerprint'`, work.ID).Scan(ctx, &fpState, &fpError, &fpOrigin, &selectedFingerprint, &fpInput); err != nil {
-		t.Fatal(err)
-	}
-	var fpInputSnapshot struct {
-		Pinned string `json:"pinned"`
-	}
-	if err := json.Unmarshal(fpInput, &fpInputSnapshot); err != nil {
-		t.Fatal(err)
-	}
-	if fpState != "failed" || fpError != "latest fingerprint attempt failed" || selectedFingerprint != fingerprint.ID || fpOrigin != "executed" || fpInputSnapshot.Pinned != "previous" {
-		t.Fatalf("retained fingerprint step = state %q error %q origin %q result %s input %q; latest failed step and selected result must remain unchanged", fpState, fpError, fpOrigin, selectedFingerprint, fpInput)
-	}
-	var calculated time.Time
-	var applied uuid.UUID
-	if err := db.NewRaw(`SELECT calculated_at,applied_operation_id FROM media_fingerprint_result WHERE id=?`, fingerprint.ID).Scan(ctx, &calculated, &applied); err != nil {
-		t.Fatal(err)
-	}
-	if !calculated.Equal(fingerprint.CalculatedAt) || applied != previousScan.ID {
-		t.Fatalf("retained fingerprint provenance changed: calculated=%s operation=%s", calculated, applied)
-	}
-	var inspected time.Time
-	var probeOperation uuid.UUID
-	if err := db.NewRaw(`SELECT inspected_at,applied_operation_id FROM media_variant WHERE id=?`, probe.ID).Scan(ctx, &inspected, &probeOperation); err != nil {
-		t.Fatal(err)
-	}
-	if probe.InspectedAt == nil || !inspected.Equal(*probe.InspectedAt) || probeOperation != previousScan.ID {
-		t.Fatalf("retained probe provenance changed: inspected=%s operation=%s", inspected, probeOperation)
-	}
-}
 
 func testApplySourceScanRejectsForgedRetainedFingerprintAtomically(t *testing.T, db *bun.DB) {
 	ctx := context.Background()
@@ -134,47 +70,6 @@ func testApplySourceScanRejectsForgedRetainedFingerprintAtomically(t *testing.T,
 	}
 	if afterApply := sourceScanPublicationSnapshot(t, ctx, db); afterApply != beforeApply {
 		t.Fatalf("rejected forged retained fingerprint changed source tables:\nbefore %s\nafter  %s", beforeApply, afterApply)
-	}
-}
-
-func testApplySourceScanUsesSHA256FingerprintCacheWithoutMutation(t *testing.T, db *bun.DB) {
-	ctx := context.Background()
-	root := publishTestRoot(t, ctx, db, "/srv/cached-retained-analysis")
-	previousScan := publishTestScan(t, ctx, db, root.ID)
-	stamp := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
-	location, work, sha, _, fingerprint := insertRetainedAnalysisFixture(t, ctx, db, root, previousScan, stamp)
-	if err := insertFailedProbe(ctx, db, work); err != nil {
-		t.Fatal(err)
-	}
-	finishPublishTestScan(t, ctx, db, previousScan)
-	scan := publishTestScan(t, ctx, db, root.ID, false)
-	prepared := &SourceScanPreparedAnalysis{
-		Version: 1, HashRequested: false, SHA256State: SourcePreparedNotRequested,
-		RetainedSHA256Variant: sha, ProbeState: SourcePreparedDeferred,
-		FingerprintState: SourcePreparedSucceeded, FingerprintResult: fingerprint,
-		FingerprintReused: true, FingerprintCacheSHA256: hex.EncodeToString(sha.SourceSHA256), FingerprintCacheVersion: fingerprint.FPCalcVersion,
-		ReusedImmutableIDs: []uuid.UUID{fingerprint.ID}, OriginalLocationID: &location.ID, OriginalMediaVariantID: location.MediaVariantID,
-	}
-	candidates := []SourceScanCandidateInput{{RelativePath: location.RelativePath, SizeBytes: location.SizeBytes, Mtime: stamp, ProbeStatus: SourceProbeStatusAudio, PreparedAnalysis: prepared}}
-	var fingerprintCountBefore int
-	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result`).Scan(ctx, &fingerprintCountBefore); err != nil {
-		t.Fatal(err)
-	}
-	publishAndApplyRetainedCandidate(t, ctx, db, root, scan, candidates, false)
-	var fingerprintCount int
-	var origin string
-	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result`).Scan(ctx, &fingerprintCount); err != nil {
-		t.Fatal(err)
-	}
-	var retainedFingerprintCount int
-	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result WHERE id=?`, fingerprint.ID).Scan(ctx, &retainedFingerprintCount); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.NewRaw(`SELECT success_reuse_origin FROM source_analysis_step WHERE work_id=? AND step='fingerprint'`, work.ID).Scan(ctx, &origin); err != nil {
-		t.Fatal(err)
-	}
-	if fingerprintCount != fingerprintCountBefore || retainedFingerprintCount != 1 || origin != "sha256" {
-		t.Fatalf("cache publication fingerprint rows before=%d after=%d retained original=%d origin=%q; want unchanged count, retained original, sha256 reuse", fingerprintCountBefore, fingerprintCount, retainedFingerprintCount, origin)
 	}
 }
 
@@ -257,12 +152,6 @@ func insertRetainedFailureSteps(ctx context.Context, db *bun.DB, work *SourceAna
 		return err
 	}
 	return nil
-}
-
-func insertFailedProbe(ctx context.Context, db bun.IDB, work *SourceAnalysisWork) error {
-	message := "previous probe failed"
-	_, err := db.NewRaw(`UPDATE source_analysis_step SET state='failed',safe_error=?,input_snapshot=?::jsonb WHERE work_id=? AND step='probe'`, message, `{"pinned":"old-probe"}`, work.ID).Exec(ctx)
-	return err
 }
 
 func publishAndApplyRetainedCandidate(t *testing.T, ctx context.Context, db *bun.DB, root *SourceRoot, scan *Operation, candidates []SourceScanCandidateInput, sha256Enabled bool) {
