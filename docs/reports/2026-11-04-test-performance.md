@@ -251,3 +251,26 @@ fallback-комбайн, лишние scan/analysis lifecycle, library readback/
 сохранившихся позиционных параметров fallback helper. Детальные удалённые
 матрицы не заменялись; production-код не менялся. Полный gate и измерение
 этого среза на момент записи ещё не выполнены.
+
+## Уточнение измерений и срез после `557f9f2a`
+
+`557f9f2a` прошёл полный локальный hook за 147,03 с: persistence 92,434 с,
+service 49,567 с, jobs 36,614 с, migrations 33,080 с. Это ещё не цель ≤60 с.
+
+Рейтинг по родительскому `Elapsed` оказался недостаточным:
+`TestCancelUnstartedPublicationSourceCleanupDeliveryPostgreSQL` показал
+24,72 с, но его конечный subtest работал 0,63 с; остальное — ожидание
+parallel subtest. Удаление этого сценария не означает выигрыш 24 секунд.
+Аналогично, у первого settings-теста из 8,04 с на `open_total` пришлось
+7,84 с, у library readback из 5,27 с — 4,99 с. Удалять их ради этих чисел
+означало бы лишь переносить startup-расход на следующий тест.
+
+Следующий срез удаляет 386 строк без нового тестового кода: повторные
+grouped SHA/probe/fingerprint и probe-failure native worker-прогоны,
+single-stream Matroska admission, disable-only cleanup cancellation и пять
+вариантов malformed ready evidence, каждый из которых повторял миграцию.
+Для migration rollback оставлены missing-executable и malformed-banner;
+основной source worker dispatch, FFmpeg audio pipeline и короткие
+worker/preparer/parser unit-тесты сохранены. Отдельные удалённые
+end-to-end гарантии не объявляются полностью заменёнными unit-тестами.
+Полная проверка этого среза на момент записи ещё не выполнена.

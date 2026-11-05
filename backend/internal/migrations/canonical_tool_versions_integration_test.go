@@ -188,12 +188,7 @@ func TestCanonicalToolVersionsRejectsMalformedReadyEvidenceAtomicallyPostgreSQL(
 		output string
 	}{
 		{name: "missing executable", output: `{}`},
-		{name: "missing probe", output: `{"ffmpeg":"ffmpeg version 7.1"}`},
-		{name: "null executable", output: `{"ffmpeg":null,"ffprobe":"ffprobe version 6.9"}`},
-		{name: "null probe", output: `{"ffmpeg":"ffmpeg version 7.1","ffprobe":null}`},
 		{name: "malformed banner", output: `{"ffmpeg":"no version token","ffprobe":"ffprobe version 6.9"}`},
-		{name: "arbitrary version occurrence", output: `{"ffmpeg":"garbage version 7.1","ffprobe":"ffprobe version 6.9"}`},
-		{name: "later line version", output: `{"ffmpeg":"garbage banner\nffmpeg version 7.1","ffprobe":"ffprobe version 6.9"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
