@@ -66,6 +66,10 @@ var process struct {
 	createNanos      atomic.Int64
 	dropNanos        atomic.Int64
 	clusterReclaimed atomic.Int64
+	// shutdownCompleted is recorded by a Ready cleanup hook. The upstream
+	// embedded-postgres runs it immediately after the server has shut down and
+	// before session lock release and work-directory removal.
+	shutdownCompleted atomic.Pointer[time.Time]
 }
 
 type cloneProbeCleanupError struct{ err error }
@@ -275,6 +279,15 @@ func adminDatabase(t *testing.T) *bun.DB {
 				"fsync": "off", "full_page_writes": "off", "synchronous_commit": "off",
 				"wal_level": "minimal", "max_wal_senders": "0",
 			})
+			config = config.Hooks(postgres.Hooks{Ready: []postgres.Hook{
+				func(context.Context, postgres.InstanceInfo) (func(context.Context) error, error) {
+					return func(context.Context) error {
+						completed := time.Now()
+						process.shutdownCompleted.Store(&completed)
+						return nil
+					}, nil
+				},
+			}})
 			if runtime.GOOS == "windows" {
 				// Embedded PostgreSQL creates restricted child-process tokens. Keep
 				// the test process's default DACL usable by the current user so those
@@ -710,20 +723,61 @@ func cleanupProcess() error {
 	}
 	process.Unlock()
 	ownedDisposable := process.ownedDisposable
-	return cleanupResources(cleanupPlan{
-		resources: resources, cleanups: cleanups, ownedDisposable: ownedDisposable,
-		drop: dropRegisteredDatabase,
+
+	var callbacksTotal, externalDropsTotal, closeAdminTotal, stopTotal, cleanupTotal time.Duration
+	var shutdownDuration, removeAndReleaseDuration time.Duration
+	var shutdownObserved bool
+	timedCleanups := make([]func() error, len(cleanups))
+	for index, callback := range cleanups {
+		timedCleanups[index] = func() error {
+			callbackStart := time.Now()
+			defer func() { callbacksTotal += time.Since(callbackStart) }()
+			return callback()
+		}
+	}
+	defer func() {
+		split := ""
+		if shutdownObserved {
+			split = fmt.Sprintf(" shutdown=%s remove_and_release=%s",
+				shutdownDuration.Round(time.Millisecond), removeAndReleaseDuration.Round(time.Millisecond))
+		}
+		fmt.Fprintf(os.Stderr, "testpostgres.cleanup callbacks=%s external_drops=%s close_admin=%s stop=%s total=%s owned_disposable=%t resources=%d%s\n",
+			callbacksTotal.Round(time.Millisecond), externalDropsTotal.Round(time.Millisecond),
+			closeAdminTotal.Round(time.Millisecond), stopTotal.Round(time.Millisecond),
+			cleanupTotal.Round(time.Millisecond), ownedDisposable, len(resources), split)
+	}()
+	cleanupStart := time.Now()
+	err := cleanupResources(cleanupPlan{
+		resources: resources, cleanups: timedCleanups, ownedDisposable: ownedDisposable,
+		drop: func(name string) error {
+			dropStart := time.Now()
+			defer func() { externalDropsTotal += time.Since(dropStart) }()
+			return dropRegisteredDatabase(name)
+		},
 		closeAdmin: func() error {
+			closeStart := time.Now()
+			defer func() { closeAdminTotal = time.Since(closeStart) }()
 			if admin == nil {
 				return nil
 			}
 			return admin.Close()
 		},
 		stop: func() error {
+			stopStart := time.Now()
+			defer func() { stopTotal = time.Since(stopStart) }()
 			if server == nil {
 				return nil
 			}
-			return server.Stop()
+			process.shutdownCompleted.Store(nil)
+			err := server.Stop()
+			if completed := process.shutdownCompleted.Load(); completed != nil {
+				shutdownObserved = true
+				shutdownDuration = completed.Sub(stopStart)
+				// Not a pure filesystem measure: this covers the remaining Ready
+				// cleanups, session lock release and work-directory removal.
+				removeAndReleaseDuration = time.Since(*completed)
+			}
+			return err
 		},
 		clear: func() {
 			process.resourcesMu.Lock()
@@ -734,6 +788,8 @@ func cleanupProcess() error {
 			}
 		},
 	})
+	cleanupTotal = time.Since(cleanupStart)
+	return err
 }
 
 type cleanupPlan struct {
