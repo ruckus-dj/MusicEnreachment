@@ -28,7 +28,10 @@ import {
 	choosePublicationOutput,
 	fixturePublicationDestination,
 } from "./publicationOutput";
-import { originalArtistName } from "./catalogData";
+import {
+	originalArtistName,
+	publicationSortTagCollisions,
+} from "./catalogData";
 import { dialogFooter, objectActions } from "./matchingStyles";
 
 const actionMessage = {
@@ -98,53 +101,76 @@ export function ContextPublicationPreview({
 	const existing = releases.find(
 		(release) => release.id === plan.localReleaseId,
 	);
-	const classified = rows.map((row) => {
-		if (!row.assignment?.included)
+	const classified = rows
+		.map((row) => {
+			if (!row.assignment?.included)
+				return {
+					row,
+					action: "Пропустить",
+					reason: "Позиция исключена из плана",
+				};
+			const sourceId = selectedSourceId(row.assignment);
+			const metadataRelease =
+				plan.mode === "local" ? (existing ?? plan.target) : plan.target;
+			const metadataTrack = row.track ?? row.targetTrack;
+			const metadataIssues = publicationMetadataIssueMessages(
+				metadataRelease,
+				metadataTrack,
+				locale,
+				sourceId,
+			);
+			if (metadataIssues.length)
+				return {
+					row,
+					action: "Невозможно обработать",
+					reason: formatPublicationMessage(locale, "invalidMetadata", {
+						fields: metadataIssues.join("; "),
+					}),
+				};
+			if (!row.file) {
+				const reason = !sourceId
+					? "Файл не выбран"
+					: publicationMessage(locale, "selectedFileUnavailable");
+				return { row, action: "Пропустить", reason };
+			}
 			return {
 				row,
-				action: "Пропустить",
-				reason: "Позиция исключена из плана",
+				action:
+					row.action === "Без изменений"
+						? "Без изменений"
+						: row.previous
+							? "Обновить"
+							: "Создать",
+				reason:
+					row.action === "Без изменений"
+						? "Источник и эффективные теги совпадают с публикацией"
+						: row.previous
+							? "Будут обновлены выбранные метаданные и аудио"
+							: "Новая публикация из выбранного источника",
 			};
-		const sourceId = selectedSourceId(row.assignment);
-		const metadataRelease =
-			plan.mode === "local" ? (existing ?? plan.target) : plan.target;
-		const metadataTrack = row.track ?? row.targetTrack;
-		const metadataIssues = publicationMetadataIssueMessages(
-			metadataRelease,
-			metadataTrack,
-			locale,
-			sourceId,
-		);
-		if (metadataIssues.length)
-			return {
-				row,
-				action: "Невозможно обработать",
-				reason: formatPublicationMessage(locale, "invalidMetadata", {
-					fields: metadataIssues.join("; "),
-				}),
-			};
-		if (!row.file) {
-			const reason = !sourceId
-				? "Файл не выбран"
-				: publicationMessage(locale, "selectedFileUnavailable");
-			return { row, action: "Пропустить", reason };
-		}
-		return {
-			row,
-			action:
-				row.action === "Без изменений"
-					? "Без изменений"
-					: row.previous
-						? "Обновить"
-						: "Создать",
-			reason:
-				row.action === "Без изменений"
-					? "Источник и эффективные теги совпадают с публикацией"
-					: row.previous
-						? "Будут обновлены выбранные метаданные и аудио"
-						: "Новая публикация из выбранного источника",
-		};
-	});
+		})
+		.map((item) => {
+			const metadataRelease =
+				plan.mode === "local" ? (existing ?? plan.target) : plan.target;
+			const collisions = publicationSortTagCollisions(
+				metadataRelease,
+				plan.mode === "local"
+					? (item.row.track ?? item.row.targetTrack)
+					: item.row.targetTrack,
+				artists,
+			);
+			const notices = [
+				...(collisions.recording
+					? [publicationMessage(locale, "recordingSortCollision")]
+					: []),
+				...(collisions.release
+					? [publicationMessage(locale, "releaseSortCollision")]
+					: []),
+			];
+			return notices.length
+				? { ...item, reason: `${item.reason} · ${notices.join(" · ")}` }
+				: item;
+		});
 	const changed = classified.filter(
 		(item) => item.action === "Создать" || item.action === "Обновить",
 	);

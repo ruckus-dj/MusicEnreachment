@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
 	Button,
@@ -17,6 +17,7 @@ import {
 } from "./ui";
 import {
 	publicationMetadataIssueMessages,
+	publicationSortTagCollisions,
 	type CatalogArtist,
 	type OriginalTrack,
 } from "./catalogData";
@@ -26,7 +27,10 @@ import {
 	MatchingDropZone,
 	MatchingFileChip,
 } from "./MatchingDnD";
-import { MetadataDiff, metadataSnapshotDiff } from "./publicationMetadataDiff";
+import { metadataSnapshotDiff } from "./publicationMetadataDiff";
+import { PublicationInspector } from "./PublicationInspector";
+import type { PublicationInspection } from "./PublicationInspector";
+import { publicationMessage } from "./publicationMessages";
 import { useI18n } from "./i18n";
 import { matchingAction, matchingMessage } from "./matchingMessages";
 import { formatUiNotice, type UiNotice } from "./uiNotice";
@@ -61,8 +65,9 @@ import {
 	matchingAssignmentRegion,
 	matchingLinkedSources,
 	matchingSourceRow,
-	previewTable,
-	previewTableWrap,
+	matchingTable,
+	matchingTableHeading,
+	matchingTableWrap,
 	surfacePanel,
 	table,
 } from "./matchingStyles";
@@ -98,11 +103,26 @@ export function MatchingScreen({
 }: MatchingScreenProps) {
 	const [localState, setLocalState] = useState(createIncomingState);
 	const [confirming, setConfirming] = useState(false);
+	const [previewOpenSequence, setPreviewOpenSequence] = useState(0);
+	const previewHeadingRef = useRef<HTMLHeadingElement>(null);
 	const [localReleases, setLocalReleases] = useState<IncomingReleases>(() =>
 		structuredClone(incomingFixtures.releases),
 	);
 	const [recordingQuery, setRecordingQuery] = useState("");
 	const { locale } = useI18n();
+	useLayoutEffect(() => {
+		if (!previewOpenSequence) return;
+		const heading = previewHeadingRef.current;
+		if (!heading) return;
+		heading.focus();
+		const reduceMotion = window.matchMedia?.(
+			"(prefers-reduced-motion: reduce)",
+		).matches;
+		heading.scrollIntoView?.({
+			behavior: reduceMotion ? "auto" : "smooth",
+			block: "start",
+		});
+	}, [previewOpenSequence]);
 	const state = givenState ?? localState;
 	const files = givenFiles ?? incomingFixtures.files;
 	const releases = givenReleases ?? localReleases;
@@ -261,6 +281,7 @@ export function MatchingScreen({
 			inventoryVersion: state.inventoryVersion,
 		} satisfies IncomingPlan;
 		state.confirmDowngrade = false;
+		setPreviewOpenSequence((sequence) => sequence + 1);
 		commitState();
 	};
 	const preview = state.plan?.groupId === group.id ? state.plan : null;
@@ -279,22 +300,81 @@ export function MatchingScreen({
 			selectedSourceId(row.assignment),
 		);
 	};
-	const effectiveMetadata = (row: (typeof previewRows)[number]) => (
-		<MetadataDiff
-			groups={metadataSnapshotDiff(
-				row.previous?.tags ?? {},
-				row.nextTags,
-				{
-					coverHash: row.previous?.coverHash ?? null,
-					lyrics: row.previous?.lyrics ?? null,
-				},
-				{
-					coverHash: (row.track ?? row.targetTrack).coverHash ?? null,
-					lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
-				},
-			)}
-		/>
-	);
+	const effectiveMetadata = (row: (typeof previewRows)[number]) =>
+		metadataSnapshotDiff(
+			row.previous?.tags ?? {},
+			row.nextTags,
+			{
+				coverHash: row.previous?.coverHash ?? null,
+				lyrics: row.previous?.lyrics ?? null,
+			},
+			{
+				coverHash: (row.track ?? row.targetTrack).coverHash ?? null,
+				lyrics: (row.track ?? row.targetTrack).lyrics ?? null,
+			},
+		);
+	const inspectionItems: PublicationInspection[] = previewRows.map((row) => {
+		const issues = metadataIssues(row);
+		const metadataRelease =
+			preview?.mode === "local"
+				? (releases.find((release) => release.id === preview.localReleaseId) ??
+					preview.target)
+				: (preview?.target ?? target);
+		const sortCollisions = publicationSortTagCollisions(
+			metadataRelease,
+			preview?.mode === "local"
+				? (row.track ?? row.targetTrack)
+				: row.targetTrack,
+			artists,
+		);
+		const sortCollisionNotices = [
+			...(sortCollisions.recording
+				? [publicationMessage(locale, "recordingSortCollision")]
+				: []),
+			...(sortCollisions.release
+				? [publicationMessage(locale, "releaseSortCollision")]
+				: []),
+		];
+		const invalidMetadata = Boolean(
+			row.assignment?.included && row.file && issues.length,
+		);
+		const included = Boolean(row.assignment?.included && row.file);
+		const baseReason = invalidMetadata
+			? matchingMessage(locale, "invalidMetadata", {
+					issues: issues.join("; "),
+				})
+			: !row.assignment?.included
+				? matchingMessage(locale, "notIncluded")
+				: !row.file
+					? matchingMessage(locale, "noFile")
+					: "";
+		const reason = [baseReason, ...sortCollisionNotices]
+			.filter(Boolean)
+			.join(" · ");
+		return {
+			id: String(row.targetTrack.id),
+			position: String(row.targetTrack.position),
+			title: String(row.targetTrack.title),
+			context: row.provider?.release.title,
+			action:
+				(invalidMetadata
+					? matchingMessage(locale, "unprocessed")
+					: matchingAction(locale, row.action)) +
+				(row.downgrade ? ` · ${matchingMessage(locale, "downgrade")}` : ""),
+			reason,
+			source: row.file?.name ?? matchingMessage(locale, "noFile"),
+			groups: effectiveMetadata(row),
+			included,
+			includeDisabled: !row.file,
+			includeLabel: matchingMessage(locale, "ariaIncludeTrack", {
+				track: String(row.targetTrack.title),
+			}),
+			onInclude: (checked) => {
+				if (row.assignment) row.assignment.included = checked;
+				commitState();
+			},
+		};
+	});
 	const activeRows = previewRows.filter(
 		(row) => row.assignment?.included && row.file,
 	);
@@ -507,16 +587,28 @@ export function MatchingScreen({
 							count: tracks.length,
 						})}
 					</h2>
-					<div className={comparisonTableWrap}>
-						<table className={table}>
+					<div className={matchingTableWrap}>
+						<table className={matchingTable}>
 							<thead>
 								<tr>
-									<th>{matchingMessage(locale, "publishColumn")}</th>
-									<th>{matchingMessage(locale, "positionColumn")}</th>
-									<th>{matchingMessage(locale, "trackColumn")}</th>
-									<th>{matchingMessage(locale, "durationColumn")}</th>
-									<th>{matchingMessage(locale, "sourceColumn")}</th>
-									<th>{matchingMessage(locale, "evidenceColumn")}</th>
+									<th className={matchingTableHeading}>
+										{matchingMessage(locale, "publishColumn")}
+									</th>
+									<th className={matchingTableHeading}>
+										{matchingMessage(locale, "positionColumn")}
+									</th>
+									<th className={matchingTableHeading}>
+										{matchingMessage(locale, "trackColumn")}
+									</th>
+									<th className={matchingTableHeading}>
+										{matchingMessage(locale, "durationColumn")}
+									</th>
+									<th className={matchingTableHeading}>
+										{matchingMessage(locale, "sourceColumn")}
+									</th>
+									<th className={matchingTableHeading}>
+										{matchingMessage(locale, "evidenceColumn")}
+									</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -910,13 +1002,6 @@ export function MatchingScreen({
 			</section>
 			<div className="matching-commit fixed bottom-3.5 left-[calc(174px_+_18px)] right-[18px] z-[5] m-0 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-md border border-[var(--line)] bg-[color-mix(in_srgb,var(--surface)_95%,transparent)] px-3.5 py-2.5 shadow-[0_6px_24px_#0002] backdrop-blur-[12px] max-[800px]:right-2 max-[800px]:bottom-2 max-[800px]:left-2 max-[800px]:p-2 max-[520px]:items-stretch">
 				<strong>
-					{
-						Object.values(assignments).filter(
-							(item) =>
-								item.included &&
-								usableFile(files[selectedSourceId(item) ?? ""]),
-						).length
-					}{" "}
 					{matchingMessage(locale, "selectedForPublicationCount", {
 						count: Object.values(assignments).filter(
 							(item) =>
@@ -950,7 +1035,7 @@ export function MatchingScreen({
 					className={`matching-preview ${surfacePanel} mt-3.5 max-w-[min(1100px,95vw)]`}
 					aria-label={matchingMessage(locale, "ariaPublicationPreview")}
 				>
-					<h2>
+					<h2 ref={previewHeadingRef} tabIndex={-1}>
 						{matchingMessage(locale, "previewTitle", {
 							title: String(preview.target.title),
 						})}
@@ -980,77 +1065,7 @@ export function MatchingScreen({
 						})}{" "}
 						· {matchingMessage(locale, "previewFormat")}
 					</p>
-					<div className={comparisonTableWrap}>
-						<table className={previewTable}>
-							<thead>
-								<tr>
-									<th>{matchingMessage(locale, "includeColumn")}</th>
-									<th>{matchingMessage(locale, "positionTrackColumn")}</th>
-									<th>{matchingMessage(locale, "sourceColumn")}</th>
-									<th>{matchingMessage(locale, "effectiveMetadataColumn")}</th>
-									<th>{matchingMessage(locale, "actionColumn")}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{previewRows.map((row) => (
-									<tr key={String(row.targetTrack.id)}>
-										<td>
-											<Checkbox
-												aria-label={matchingMessage(
-													locale,
-													"ariaIncludeTrack",
-													{
-														track: String(row.targetTrack.title),
-													},
-												)}
-												isSelected={Boolean(
-													row.assignment?.included && row.file,
-												)}
-												isDisabled={!row.file}
-												onChange={(checked) => {
-													if (row.assignment) row.assignment.included = checked;
-													commitState();
-												}}
-											>
-												<span className="checkbox">
-													{row.assignment?.included ? "✓" : ""}
-												</span>
-											</Checkbox>
-										</td>
-										<td>
-											{String(row.targetTrack.position)} ·{" "}
-											{String(row.targetTrack.title)}
-										</td>
-										<td>
-											{row.file
-												? `${row.file.name} · ${row.file.codec}`
-												: matchingMessage(locale, "noFile")}
-										</td>
-										<td>{effectiveMetadata(row)}</td>
-										<td>
-											{row.assignment?.included &&
-											row.file &&
-											metadataIssues(row).length
-												? matchingMessage(locale, "unprocessed")
-												: matchingAction(locale, row.action)}
-											{row.downgrade
-												? ` · ${matchingMessage(locale, "downgrade")}`
-												: ""}
-											{row.assignment?.included &&
-												row.file &&
-												metadataIssues(row).length > 0 && (
-													<p>
-														{matchingMessage(locale, "invalidMetadata", {
-															issues: metadataIssues(row).join("; "),
-														})}
-													</p>
-												)}
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
+					<PublicationInspector items={inspectionItems} locale={locale} />
 					{hasDowngrade && (
 						<Checkbox
 							isSelected={state.confirmDowngrade}

@@ -163,6 +163,9 @@ export interface SourceFile {
 	sha256?: string | null;
 	path: string;
 	codec: string;
+	bits?: number | null;
+	sampleRate?: number | null;
+	bitrate?: number | null;
 }
 export type SourceFiles = Record<string, SourceFile>;
 export const originalFiles: SourceFiles = original.files;
@@ -245,9 +248,6 @@ export function desiredTags(
 	const result: Record<string, string[]> = {
 		TITLE: track.title ? [track.title] : [],
 		ARTIST: artist?.name ? [artist.name] : [],
-		// Single-artist demo: use only the explicit artist sort name, without
-		// contextual resolution or a display-name fallback.
-		ARTISTSORT: artist?.sortName ? [artist.sortName] : [],
 		ALBUM: release.title ? [release.title] : [],
 		ALBUMARTIST: release.credits?.length
 			? release.credits
@@ -311,13 +311,27 @@ export function desiredTags(
 					},
 				]
 			: [];
-	const recordingSorts = recordingCredits.map(
-		(credit) =>
-			artists.find((item) => item.id === credit.artistId)?.sortName ?? "",
+	const sortNameForCredit = (artistId: string) => {
+		const linkedArtist = artists.find((item) => item.id === artistId);
+		return linkedArtist?.sortName || linkedArtist?.name || "";
+	};
+	const recordingSorts = recordingCredits.map((credit) =>
+		sortNameForCredit(credit.artistId),
 	);
-	const releaseSorts = releaseCredits.map(
-		(credit) =>
-			artists.find((item) => item.id === credit.artistId)?.sortName ?? "",
+	const releaseSorts = releaseCredits.map((credit) =>
+		sortNameForCredit(credit.artistId),
+	);
+	const recordingSortCollision = hasDistinctArtistSortCollision(
+		recordingCredits.map((credit, index) => ({
+			artistId: credit.artistId,
+			sortName: recordingSorts[index],
+		})),
+	);
+	const releaseSortCollision = hasDistinctArtistSortCollision(
+		releaseCredits.map((credit, index) => ({
+			artistId: credit.artistId,
+			sortName: releaseSorts[index],
+		})),
 	);
 	result.ARTIST = recordingCredits.length
 		? [
@@ -327,7 +341,9 @@ export function desiredTags(
 			]
 		: [];
 	result.ARTISTSORT =
-		recordingSorts.length && recordingSorts.every(Boolean)
+		recordingSorts.length &&
+		recordingSorts.every(Boolean) &&
+		!recordingSortCollision
 			? [
 					recordingCredits
 						.map(
@@ -337,7 +353,7 @@ export function desiredTags(
 						.join(""),
 				]
 			: [];
-	result.ARTISTSSORT = recordingSorts;
+	result.ARTISTSSORT = recordingSortCollision ? [] : recordingSorts;
 	result.ARTISTS = recordingCredits.map((credit) => credit.creditName);
 	result.ALBUMARTIST = releaseCredits.length
 		? [
@@ -348,14 +364,14 @@ export function desiredTags(
 		: [];
 	result.ALBUMARTISTS = releaseCredits.map((credit) => credit.creditName);
 	result.ALBUMARTISTSORT =
-		releaseSorts.length && releaseSorts.every(Boolean)
+		releaseSorts.length && releaseSorts.every(Boolean) && !releaseSortCollision
 			? [
 					releaseCredits
 						.map((credit, index) => releaseSorts[index] + credit.joinPhrase)
 						.join(""),
 				]
 			: [];
-	result.ALBUMARTISTSSORT = releaseSorts;
+	result.ALBUMARTISTSSORT = releaseSortCollision ? [] : releaseSorts;
 	const valuesForScope = (values: MetadataValues, scope: string) =>
 		Object.fromEntries(
 			Object.entries(values).filter(
@@ -383,6 +399,56 @@ export function desiredTags(
 	// The recording title cannot overwrite a release position's explicit title.
 	result.TITLE = track.title ? [track.title] : [];
 	return result;
+}
+
+function hasDistinctArtistSortCollision(
+	credits: { artistId: string; sortName: string }[],
+): boolean {
+	const artistBySortName = new Map<string, string>();
+	for (const { artistId, sortName } of credits) {
+		if (!artistId || !sortName) continue;
+		const previousArtistId = artistBySortName.get(sortName);
+		if (previousArtistId && previousArtistId !== artistId) return true;
+		artistBySortName.set(sortName, artistId);
+	}
+	return false;
+}
+
+export function publicationSortTagCollisions(
+	release: OriginalRelease,
+	track: OriginalTrack,
+	artists: CatalogArtist[] = originalArtists,
+): { recording: boolean; release: boolean } {
+	const linkedSortName = (artistId: string) => {
+		const artist = artists.find((item) => item.id === artistId);
+		return artist?.sortName || artist?.name || "";
+	};
+	const recordingCredits =
+		track.recordingCredits ??
+		(track.artistId
+			? [{ artistId: track.artistId, creditName: "", joinPhrase: "" }]
+			: []);
+	const releaseCredits = release.credits?.length
+		? release.credits
+				.map((credit) => ({
+					artistId: credit.artistId ?? "",
+					creditName: credit.credit || credit.name || "",
+				}))
+				.filter((credit) => credit.creditName)
+		: release.artistId
+			? [{ artistId: release.artistId }]
+			: [];
+	const collides = (credits: { artistId: string }[]) =>
+		hasDistinctArtistSortCollision(
+			credits.map(({ artistId }) => ({
+				artistId,
+				sortName: linkedSortName(artistId),
+			})),
+		);
+	return {
+		recording: collides(recordingCredits),
+		release: collides(releaseCredits),
+	};
 }
 
 /** Metadata-only updates keep audio-scoped tags attached to the published audio. */

@@ -137,7 +137,7 @@ export function TagsComparison({
 			const key = field.tag;
 			const values = [
 				sourceTags[key] ?? [],
-				providerTags?.[key] ?? null,
+				provider ? (providerTags?.[key] ?? []) : null,
 				localTags[key] ?? [],
 				track.published ? (publicationTags[key] ?? []) : null,
 			];

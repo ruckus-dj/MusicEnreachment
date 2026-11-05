@@ -88,19 +88,18 @@ export function createLocalProviderState(): LocalProviderState {
 export function localProviderReleases(
 	state: LocalProviderState,
 ): OriginalRelease[] {
-	const localArtists = state.items.artists.filter(
-		(item) => item.provider === "Local",
-	);
-	const localRecordings = state.items.recordings.filter(
-		(item) => item.provider === "Local",
-	);
+	// Local releases may intentionally reference records owned by another provider.
+	// Resolve those identities from the complete state catalogs; only the release
+	// itself must be Local to enter this adapter.
+	const artists = state.items.artists;
+	const recordings = state.items.recordings;
 	return state.items.releases
 		.filter((release) => release.provider === "Local")
 		.map((release) => {
 			const artistIds = release.artistIds ?? [];
 			const artistId = artistIds[0] ?? null;
 			const credits = artistIds.flatMap((id) => {
-				const artist = localArtists.find((item) => item.id === id);
+				const artist = artists.find((item) => item.id === id);
 				return artist ? [{ name: artist.name, artistId: artist.id }] : [];
 			});
 			const metadataCredits = release.credits?.length
@@ -132,10 +131,13 @@ export function localProviderReleases(
 					name: release.genreNamesById?.[id] ?? id,
 				})),
 				tracks: (release.tracks ?? []).map((item, index) => {
-					const recording = localRecordings.find(
+					const recording = recordings.find(
 						(candidate) => candidate.id === item.recordingId,
 					);
-					const duration = item.durationOverrideMs || recording?.duration_ms;
+					const duration =
+						item.durationOverrideMs === "" || item.durationOverrideMs == null
+							? recording?.duration_ms
+							: item.durationOverrideMs;
 					const recordingTitle =
 						recording?.metadataValues?.title?.[0] ?? recording?.title ?? "";
 					return {
@@ -155,8 +157,8 @@ export function localProviderReleases(
 								recording?.artistIds?.map((artistId) => ({
 									artistId,
 									creditName:
-										state.items.artists.find((artist) => artist.id === artistId)
-											?.name ?? "",
+										artists.find((artist) => artist.id === artistId)?.name ??
+										"",
 									joinPhrase: "",
 								})) ??
 								[],

@@ -82,6 +82,8 @@ Table provider_release_artist {
   provider_release_id uuid [not null]
   position smallint [not null]
   provider_artist_id uuid [not null]
+  credit_name text [note: 'Отображаемое имя в конкретном credit, отдельно от имени artist; NULL означает неизвестное значение, не восстановленное из текущего имени artist.']
+  join_phrase text [note: 'Точный текст соединения после credit; пустая строка отличается от неизвестного NULL. Не подставлять пробелы или разделители как восстановленные данные.']
 
   indexes {
     (provider_release_id, position) [pk]
@@ -125,6 +127,8 @@ Table provider_recording_artist {
   provider_recording_id uuid [not null]
   position smallint [not null]
   provider_artist_id uuid [not null]
+  credit_name text [note: 'Отображаемое имя в конкретном credit; не заменяет identity связанного artist. NULL означает неизвестное значение.']
+  join_phrase text [note: 'Точный текст соединения после credit; пустая строка отличается от неизвестного NULL.']
 
   indexes {
     (provider_recording_id, position) [pk]
@@ -340,13 +344,15 @@ Table collection_release {
     release_date
   }
 
-  Note: 'Локальный release существует без provider links. script — необязательная система письма и доступна для Local. Выбранный artwork candidate обязан принадлежать этому collection release. Удаление release сначала обрабатывает managed publications его positions, затем удаляет positions и release; recordings, на которые ссылались positions, остаются самостоятельными.'
+  Note: 'Локальный release создаётся только через входящее сопоставление provider-записи, включая Local; самостоятельного workflow создания collection release нет. Внешний provider не обязателен: Local является provider, а CRUD его каталога сам по себе не создаёт library entry. script — необязательная система письма и доступна для Local. Выбранный artwork candidate обязан принадлежать этому collection release. Удаление release сначала обрабатывает managed publications его positions, затем удаляет positions и release; recordings, на которые ссылались positions, остаются самостоятельными.'
 }
 
 Table collection_release_artist {
   collection_release_id uuid [not null]
   collection_artist_id uuid [not null]
   position smallint [not null]
+  credit_name text [note: 'Собственное отображаемое имя credit, сохраняемое при переносе provider → library; NULL означает неизвестное значение, не восстановленное из текущего имени artist.']
+  join_phrase text [note: 'Точный текст соединения после credit, сохраняемый вместе с порядком; пустая строка отличается от неизвестного NULL.']
 
   indexes {
     (collection_release_id, position) [pk]
@@ -376,6 +382,8 @@ Table collection_recording_artist {
   collection_recording_id uuid [not null]
   collection_artist_id uuid [not null]
   position smallint [not null]
+  credit_name text [note: 'Собственное отображаемое имя credit, сохраняемое при переносе provider → library; не заменяет identity связанного artist. NULL означает неизвестное значение.']
+  join_phrase text [note: 'Точный текст соединения после credit, сохраняемый вместе с порядком; пустая строка отличается от неизвестного NULL.']
 
   indexes {
     (collection_recording_id, position) [pk]

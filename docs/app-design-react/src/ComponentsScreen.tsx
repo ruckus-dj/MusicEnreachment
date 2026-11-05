@@ -40,6 +40,7 @@ import {
 	type SourceFile,
 	type SourceFiles,
 } from "./catalogData";
+import { audioProperties } from "./audioProperties";
 
 const duration = (seconds: number) => {
 	if (!Number.isFinite(seconds) || seconds < 0) return "—";
@@ -340,8 +341,7 @@ function FileChip({
 						{file.name}
 					</strong>
 					<span className="block text-[10px] text-[var(--muted)]">
-						{file.codec} · {duration(file.duration)} ·{" "}
-						{file.codec === "FLAC" ? "24 бит / 48 кГц" : "320 кбит/с"} ·{" "}
+						{file.codec} · {duration(file.duration)} · {audioProperties(file)} ·{" "}
 						{file.size}
 					</span>
 				</span>

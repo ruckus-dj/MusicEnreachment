@@ -20,6 +20,7 @@ import {
 	type SourceFiles,
 	trackNumberLabel,
 } from "./catalogData";
+import { audioProperties } from "./audioProperties";
 import type { DeletionOperation } from "./DeletionRequest";
 import { DeletionRequest } from "./DeletionRequest";
 import { catalogueStyles } from "./catalogueStyles";
@@ -658,11 +659,7 @@ export function ArtistScreen({
 																	</span>
 																)}
 															</td>
-															<td>
-																{source
-																	? `${source.codec === "FLAC" ? m("quality24Bit48Khz") : m("quality320Kbps")} · ${source.codec}`
-																	: "—"}
-															</td>
+															<td>{audioProperties(source)}</td>
 															<td>{hasAudio(track) ? m("yes") : m("no")}</td>
 															<td>{sourceIds.length}</td>
 															<td>

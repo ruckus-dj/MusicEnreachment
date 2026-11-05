@@ -10,6 +10,15 @@ export const comparisonTableWrap =
 
 export const table = "w-full border-collapse text-left text-[11px]";
 
+export const matchingTableWrap =
+	"min-w-0 overflow-x-auto overscroll-x-contain rounded-[4px] border border-[var(--line)]";
+
+export const matchingTable =
+	"w-full min-w-[860px] border-collapse text-left text-[11px]";
+
+export const matchingTableHeading =
+	"sticky top-0 z-[1] whitespace-nowrap border-b border-[var(--line)] bg-[var(--raised)] px-2.5 py-2 text-left align-top text-[10px] font-semibold text-[var(--muted)]";
+
 export const previewTable = "w-full border-collapse text-left text-[11px]";
 
 export const tableCell =

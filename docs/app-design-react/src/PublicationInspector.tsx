@@ -212,6 +212,9 @@ function InspectorBody({
 				</p>
 			</div>
 		);
+	const willBeWritten = [item.outputPath, item.container]
+		.filter((value): value is string => Boolean(value))
+		.join(" · ");
 	return (
 		<>
 			<div className="mb-3 border-b border-[var(--line)] pb-2">
@@ -242,12 +245,14 @@ function InspectorBody({
 						{publicationMessage(locale, "source")}
 					</dt>
 					<dd className="m-0 min-w-0 break-words">{item.source ?? ""}</dd>
-					<dt className="text-[var(--muted)]">
-						{publicationMessage(locale, "willBeWritten")}
-					</dt>
-					<dd className="m-0 min-w-0 break-words">
-						{item.outputPath ?? ""} · {item.container ?? ""}
-					</dd>
+					{willBeWritten && (
+						<>
+							<dt className="text-[var(--muted)]">
+								{publicationMessage(locale, "willBeWritten")}
+							</dt>
+							<dd className="m-0 min-w-0 break-words">{willBeWritten}</dd>
+						</>
+					)}
 				</dl>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto pr-1">

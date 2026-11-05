@@ -10,6 +10,7 @@ import {
 	originalArtistName,
 	metadataChanged,
 	publicationMetadataIssueMessages,
+	publicationSortTagCollisions,
 	type OriginalRelease,
 	type SourceFiles,
 	type CatalogArtist,
@@ -119,6 +120,19 @@ export function PublicationPreview({
 					track,
 					locale,
 				);
+				const sortCollisions = publicationSortTagCollisions(
+					release,
+					track,
+					availableArtists,
+				);
+				const sortCollisionNotice = [
+					...(sortCollisions.recording
+						? [publicationMessage(locale, "recordingSortCollision")]
+						: []),
+					...(sortCollisions.release
+						? [publicationMessage(locale, "releaseSortCollision")]
+						: []),
+				].join(" · ");
 				const action: PreviewAction = metadataIssues.length
 					? "Невозможно обработать"
 					: track.published
@@ -142,7 +156,14 @@ export function PublicationPreview({
 									: !track.sourceId
 										? "Файл не выбран; другой источник не выбирается"
 										: "Выбранный файл недоступен для этой операции; другой источник не выбирается";
-				return { release, track, file: usable, action, reason };
+				return {
+					release,
+					track,
+					file: usable,
+					action,
+					reason,
+					sortCollisionNotice,
+				};
 			}),
 	);
 	const actions = [
@@ -156,7 +177,7 @@ export function PublicationPreview({
 	const returnText =
 		returnLabel ?? publicationMessage(locale, "returnToLibrary");
 	const inspections: PublicationInspection[] = rows.map(
-		({ release, track, file, action, reason }) => {
+		({ release, track, file, action, reason, sortCollisionNotice }) => {
 			const output = track.published
 				? { path: track.published.path, container: track.published.container }
 				: file
@@ -175,7 +196,9 @@ export function PublicationPreview({
 				position: String(track.position),
 				title: track.title,
 				action: publicationMessage(locale, actionMessageKey[action]),
-				reason: displayReason(locale, reason),
+				reason: [displayReason(locale, reason), sortCollisionNotice]
+					.filter(Boolean)
+					.join(" · "),
 				source: file
 					? `${file.path} · ${file.codec}`
 					: track.sourceId

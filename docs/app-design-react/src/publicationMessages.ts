@@ -96,6 +96,10 @@ export const publicationMessages = createNamespace({
 		fileUnavailable:
 			"The selected file is unavailable for this operation; another source will not be chosen",
 		invalidMetadata: "Invalid metadata: {fields}",
+		recordingSortCollision:
+			"Recording artist sort tags are omitted because different artists resolve to the same sort name.",
+		releaseSortCollision:
+			"Release artist sort tags are omitted because different artists resolve to the same sort name.",
 		applyCount: "Create {create} · update metadata {update}",
 		applyTitle: "Apply changes for {count} positions?",
 		newSourceConfirmation: "New publications use the selected source.",
@@ -268,6 +272,10 @@ export const publicationMessages = createNamespace({
 		fileUnavailable:
 			"Выбранный файл недоступен для этой операции; другой источник не выбирается",
 		invalidMetadata: "Некорректные метаданные: {fields}",
+		recordingSortCollision:
+			"Сортировочные теги исполнителей композиции пропущены: у разных артистов совпало имя сортировки.",
+		releaseSortCollision:
+			"Сортировочные теги исполнителей издания пропущены: у разных артистов совпало имя сортировки.",
 		applyCount: "Создать {create} · обновить метаданные {update}",
 		applyTitle: "Применить изменения для {count} позиций?",
 		newSourceConfirmation: "Новые публикации используют выбранный источник.",

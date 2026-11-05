@@ -70,7 +70,12 @@ expansion may move later content down, not sideways. Multi-column field grids
 are allowed inside an already expanded group, without changing its outer width.
 
 Sort names are edited only on the artist card, with no album/track overrides;
-ordered credit sort tags derive from those values without display-name fallback.
+ordered credit sort tags derive from those values. By owner decision on
+2026-11-05, a missing sort name falls back to the linked artist's display name
+only during tag projection; never populate the stored artist field. If different
+artists in a credit group have identical projected sorts, omit both sort tags of
+that group and show a nonblocking localized preview notice, including removal of
+existing publication sort tags in the diff. Keep the other group unchanged.
 Explicit fixture sort names are demo data. Keep default and catalog-backed metadata
 projection consistent with that fixture. Editing unrelated artist fields must
 preserve genres when the picker is untouched or its catalog is unavailable.
@@ -116,3 +121,8 @@ preserve genres when the picker is untouched or its catalog is unavailable.
 - Modal keyboard tests dispatch to the focused dialog and await focus restoration;
   document-level synthetic key events do not model an event bubbling from the
   modal. Always restore media-query mocks even when an assertion fails.
+- JSDOM does not apply responsive Tailwind visibility: mobile rows and the
+  desktop React Aria grid coexist in unit tests. Scope mobile label queries to
+  their container and use the desktop's actual `grid` role, not `table`. Keep
+  browser checks for visibility, reflow and focus across breakpoints; a duplicate
+  label in JSDOM is not evidence that both surfaces are visible in the browser.

@@ -203,3 +203,57 @@ it("keeps a newly created Local record out of candidates until explicitly select
 		tracks: [],
 	});
 });
+
+it("resolves non-Local references from the provider catalogs and preserves zero duration overrides", () => {
+	const state = createLocalProviderState();
+	const artist = state.items.artists.find((item) => item.provider !== "Local")!;
+	const recording = state.items.recordings.find(
+		(item) => item.provider !== "Local",
+	)!;
+	artist.name = "Provider artist metadata";
+	recording.key = "native-recording-key";
+	recording.artistIds = [artist.id];
+	recording.duration_ms = 187_000;
+	recording.metadataValues = { title: ["Provider recording metadata"] };
+	recording.credits = [
+		{
+			artistId: artist.id,
+			creditName: "Provider credit",
+			joinPhrase: " feat. ",
+		},
+	];
+	const release = state.items.releases.find(
+		(item) => item.provider === "Local",
+	)!;
+	release.artistIds = [artist.id];
+	release.tracks = [
+		{
+			id: "zero-override",
+			recordingId: recording.id,
+			titleOverride: "",
+			durationOverrideMs: 0,
+		},
+		{
+			id: "inherit-duration",
+			recordingId: recording.id,
+			titleOverride: "",
+			durationOverrideMs: "",
+		},
+	];
+
+	const candidate = localProviderReleases(state).find(
+		(item) => item.id === release.id,
+	)!;
+	expect(candidate.artistId).toBe(artist.id);
+	expect(candidate.credits).toContainEqual(
+		expect.objectContaining({ artistId: artist.id }),
+	);
+	expect(candidate.tracks[0]).toMatchObject({
+		duration: 0,
+		artistId: artist.id,
+		localRecordingId: recording.id,
+		recordingTitle: "Provider recording metadata",
+	});
+	expect(candidate.tracks[0].recordingCredits).toEqual(recording.credits);
+	expect(candidate.tracks[1].duration).toBe(187);
+});
