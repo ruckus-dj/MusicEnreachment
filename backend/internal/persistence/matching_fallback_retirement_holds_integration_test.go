@@ -19,7 +19,7 @@ import (
 
 func TestAutomaticFallbackRetirementCurrentHeaderIsIndependentHoldPostgreSQL(t *testing.T) {
 	var callbackExecuted bool
-	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, false, func(f uniquePublicationApplyFixture) {
+	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, func(f uniquePublicationApplyFixture) {
 		callbackExecuted = true
 		ctx, db, repository := f.Context, f.Database, f.Repository
 		parentID, childID := f.ParentOperationID, f.ChildOperation.ID
@@ -65,7 +65,7 @@ func TestAutomaticFallbackRetirementCurrentHeaderIsIndependentHoldPostgreSQL(t *
 
 func TestAutomaticFallbackRetirementGenerationOwnerIsIndependentHoldPostgreSQL(t *testing.T) {
 	var callbackExecuted bool
-	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, false, func(f uniquePublicationApplyFixture) {
+	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, func(f uniquePublicationApplyFixture) {
 		callbackExecuted = true
 		ctx, db, repository := f.Context, f.Database, f.Repository
 		parentID, childID := f.ParentOperationID, f.ChildOperation.ID

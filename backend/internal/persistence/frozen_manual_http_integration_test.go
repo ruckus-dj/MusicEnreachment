@@ -24,7 +24,7 @@ import (
 )
 
 func TestFrozenManualPartialConfirmationOverHTTPPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, false, func(fixture uniquePublicationApplyFixture) {
+	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, func(fixture uniquePublicationApplyFixture) {
 		ctx, database, groupID := fixture.Context, fixture.Database, fixture.InputSnapshot.Authority.GroupID
 		candidateRepository := persistence.NewIncomingMatchCandidateRepository(database)
 		groupingRepository := persistence.NewIncomingGroupingRepository(database)

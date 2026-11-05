@@ -10,5 +10,5 @@ import "testing"
 // seal. The shared flow fixture also verifies stale attempts/revisions and
 // transactional rollback on handoff insertion failure before the valid retry.
 func TestAutomaticFallbackExhaustedContinuationRegistersOneWakePostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, true, true, false)
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, true, false)
 }

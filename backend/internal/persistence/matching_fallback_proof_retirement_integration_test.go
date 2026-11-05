@@ -22,7 +22,7 @@ import (
 
 func TestAutomaticFallbackProofRetirementPostgreSQL(t *testing.T) {
 	callbackExecuted := false
-	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, false, func(f uniquePublicationApplyFixture) {
+	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, func(f uniquePublicationApplyFixture) {
 		callbackExecuted = true
 		ctx, db, repository := f.Context, f.Database, f.Repository
 		parentID, childID := f.ParentOperationID, f.ChildOperation.ID

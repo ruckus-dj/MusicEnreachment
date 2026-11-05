@@ -16,7 +16,7 @@ import (
 )
 
 func TestQuiescedMatchingRunCannotResurrectThroughFallbackOrRetryPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowWithRecoveryCallback(t, false, false, false, false, false, nil,
+	testAutomaticFallbackFiniteFlowWithRecoveryCallback(t, false, false, false, false, nil,
 		func(t *testing.T, ctx context.Context, database *bun.DB, repository *persistence.SetupManagerRepository, inserter *fallbackHandoffRiverInserter, runID uuid.UUID, waitRevision int64, _ *jobs.MatchingEvaluationWorker) {
 			t.Helper()
 			if _, err := database.NewRaw(`UPDATE matching_run SET quiesced_at=now() WHERE id=?`, runID).Exec(ctx); err != nil {
@@ -67,7 +67,7 @@ func TestQuiescedMatchingRunCannotResurrectThroughFallbackOrRetryPostgreSQL(t *t
 // candidate through the production transaction. This isolates the marker check from
 // recovery classification, which is covered by the natural obsolete-run fixtures.
 func TestQuiescedMatchingRunRejectsPreviouslyCapturedSealedRecoveryCandidatePostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowWithRecoveryCallback(t, false, false, false, false, false, nil,
+	testAutomaticFallbackFiniteFlowWithRecoveryCallback(t, false, false, false, false, nil,
 		func(t *testing.T, ctx context.Context, database *bun.DB, repository *persistence.SetupManagerRepository, inserter *fallbackHandoffRiverInserter, runID uuid.UUID, _ int64, _ *jobs.MatchingEvaluationWorker) {
 			t.Helper()
 			if stopper, ok := inserter.client.(interface{ Stop(context.Context) error }); ok {

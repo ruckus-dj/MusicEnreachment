@@ -21,7 +21,7 @@ func TestObsoleteAutomaticFallbackRunRetirementPreservesCurrentGenerationPostgre
 	db := testpostgres.OpenMigratedWithRiver(t)
 
 	callbackExecuted := false
-	testAutomaticFallbackFiniteFlowWithDatabase(t, true, false, true, true, false, nil, nil, db,
+	testAutomaticFallbackFiniteFlowWithDatabase(t, true, false, true, false, nil, nil, db,
 		func(t *testing.T, ctx context.Context, db *bun.DB, oldRunID uuid.UUID, waitRevision, oldWakeID int64) bool {
 			callbackExecuted = true
 			setup := persistence.NewSetupManagerRepository(db)

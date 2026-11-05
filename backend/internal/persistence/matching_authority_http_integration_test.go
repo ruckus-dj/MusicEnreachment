@@ -21,7 +21,7 @@ import (
 )
 
 func TestMatchingAuthorityRetainsSourcesAndReturnsAutomaticOverHTTPPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, false, func(fixture uniquePublicationApplyFixture) {
+	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, func(fixture uniquePublicationApplyFixture) {
 		ctx, db, groupID := fixture.Context, fixture.Database, fixture.InputSnapshot.Authority.GroupID
 		repository := persistence.NewIncomingMatchCandidateRepository(db)
 		groups := service.NewIncomingGroups(persistence.NewIncomingGroupingRepository(db))

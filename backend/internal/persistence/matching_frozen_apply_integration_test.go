@@ -22,7 +22,7 @@ import (
 
 func TestFrozenMatchingApplyUsesPublishedSnapshotAfterProviderRefreshPostgreSQL(t *testing.T) {
 	callbackExecuted := false
-	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, true, false, func(fixture uniquePublicationApplyFixture) {
+	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, func(fixture uniquePublicationApplyFixture) {
 		callbackExecuted = true
 		ctx := context.Background()
 		database := fixture.Database
