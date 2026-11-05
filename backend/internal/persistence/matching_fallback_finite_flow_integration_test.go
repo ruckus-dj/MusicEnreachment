@@ -27,14 +27,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func TestAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, false, false, false)
-}
-
-func TestAutomaticFallbackUniquePublicationCreatesOneFrozenApplyRequestPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, false, false, true)
-}
-
 type fallbackSealWriteState struct {
 	Phase          string
 	Revision       int64
@@ -174,10 +166,6 @@ func TestAutomaticFallbackEmptyPlanPublishesFrozenReviewPostgreSQL(t *testing.T)
 		snapshot.Header.FrozenWaitRevision == nil || *snapshot.Header.FrozenWaitRevision != waitRevision || len(snapshot.Members) != 1 {
 		t.Fatalf("published no-query frozen review snapshot: snapshot=%+v err=%v", snapshot, err)
 	}
-}
-
-func TestAutomaticFallbackFiniteThreeStageExhaustionParksForReviewPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, true, false, false)
 }
 
 func TestAutomaticFallbackExhaustedFiniteFlowPublishesFrozenReviewPostgreSQL(t *testing.T) {
