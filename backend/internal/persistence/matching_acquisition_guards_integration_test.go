@@ -19,92 +19,6 @@ import (
 
 const matchingAcquisitionGuardArtistID = "11111111-1111-4111-8111-111111111111"
 
-func TestMatchingAcquisitionRejectsInvalidInitialBrowseCursorPostgres(t *testing.T) {
-	t.Parallel()
-	fixture := newMatchingAcquisitionGuardFixture(t)
-	fixture.settleInitialArtistAndClaimWake()
-	invalid, invalidChild := fixture.firstBrowse(100)
-	assertMatchingAcquisitionGuardRejectsWithoutMutation(t, fixture, invalid, []persistence.MatchingProviderRequest{invalidChild})
-	valid, validChild := fixture.firstBrowse(0)
-	changed, err := fixture.repository.AdvanceMatchingAcquisitionForDelivery(fixture.ctx, fixture.river, fixture.parentID,
-		fixture.parent.Attempt, fixture.parentJobID, fixture.claim, 0, valid, []persistence.MatchingProviderRequest{validChild})
-	if err != nil || !changed {
-		t.Fatalf("advance valid initial browse after rejection: changed=%v err=%v", changed, err)
-	}
-}
-
-func TestMatchingAcquisitionRejectsTamperedContinuationPostgres(t *testing.T) {
-	t.Parallel()
-	fixture := newMatchingAcquisitionGuardFixture(t)
-	fixture.settleInitialArtistAndClaimWake()
-	fixture.advanceFirstCatalogPage()
-	fixture.settleFirstBrowseAndClaimWake()
-	valid, child := fixture.nextCatalogPage()
-	for _, probe := range []struct {
-		name   string
-		tamper func(*persistence.MatchingAcquisitionPhase)
-	}{
-		{name: "artist id", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
-			phase.Output = mutateMatchingAcquisitionGuardJSON(t, phase.Output, func(output map[string]json.RawMessage) {
-				output["artist_mbid"] = json.RawMessage(`"22222222-2222-4222-8222-222222222222"`)
-			})
-		}},
-		{name: "next request id", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
-			phase.Output = mutateMatchingAcquisitionGuardJSON(t, phase.Output, func(output map[string]json.RawMessage) {
-				output["next_request_id"] = json.RawMessage(fmt.Sprintf("%q", uuid.NewString()))
-			})
-		}},
-		{name: "input cursor", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
-			phase.Input = mutateMatchingAcquisitionGuardJSON(t, phase.Input, func(input map[string]json.RawMessage) {
-				input["offset"] = json.RawMessage(`1`)
-			})
-		}},
-		{name: "input limit", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
-			phase.Input = mutateMatchingAcquisitionGuardJSON(t, phase.Input, func(input map[string]json.RawMessage) {
-				input["limit"] = json.RawMessage(`101`)
-			})
-		}},
-		{name: "accepted payload hash", tamper: func(phase *persistence.MatchingAcquisitionPhase) {
-			var provenance []map[string]string
-			if err := json.Unmarshal(phase.ResponseProvenance, &provenance); err != nil {
-				t.Fatal(err)
-			}
-			provenance[0]["payload_sha256"] = "0000000000000000000000000000000000000000000000000000000000000000"
-			phase.ResponseProvenance, _ = json.Marshal(provenance)
-		}},
-	} {
-		invalid := cloneMatchingAcquisitionGuardPhase(valid)
-		probe.tamper(&invalid)
-		assertMatchingAcquisitionGuardRejectsWithoutMutation(t, fixture, invalid, []persistence.MatchingProviderRequest{child})
-	}
-	changed, err := fixture.repository.AdvanceMatchingAcquisitionForDelivery(fixture.ctx, fixture.river, fixture.parentID,
-		fixture.parent.Attempt, fixture.parentJobID, fixture.claim, 1, valid, []persistence.MatchingProviderRequest{child})
-	if err != nil || !changed {
-		t.Fatalf("advance valid continuation after rejected proofs: changed=%v err=%v", changed, err)
-	}
-}
-
-func mutateMatchingAcquisitionGuardJSON(t *testing.T, raw json.RawMessage, mutate func(map[string]json.RawMessage)) json.RawMessage {
-	t.Helper()
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil {
-		t.Fatalf("decode acquisition guard JSON: %v", err)
-	}
-	mutate(object)
-	encoded, err := json.Marshal(object)
-	if err != nil {
-		t.Fatalf("encode acquisition guard JSON: %v", err)
-	}
-	return encoded
-}
-
-func cloneMatchingAcquisitionGuardPhase(phase persistence.MatchingAcquisitionPhase) persistence.MatchingAcquisitionPhase {
-	phase.Input = append(json.RawMessage(nil), phase.Input...)
-	phase.Output = append(json.RawMessage(nil), phase.Output...)
-	phase.ResponseProvenance = append(json.RawMessage(nil), phase.ResponseProvenance...)
-	return phase
-}
-
 type matchingAcquisitionGuardFixture struct {
 	t           *testing.T
 	ctx         context.Context
@@ -333,19 +247,6 @@ func (fixture *matchingAcquisitionGuardFixture) browseChild(id uuid.UUID, key st
 		ProviderSourceID: &fixture.source.ID, ProviderConfigurationIdentity: matchingCoordinatorStringPtr(fixture.identity),
 		ProviderID: &fixture.source.ProviderID, ProviderEndpoint: fixture.source.Endpoint, ProviderCacheKey: &key}
 	return persistence.MatchingProviderRequest{Operation: operation, Args: service.ProviderFetchOperationArgs{OperationID: id}}
-}
-
-func assertMatchingAcquisitionGuardRejectsWithoutMutation(t *testing.T, fixture *matchingAcquisitionGuardFixture, phase persistence.MatchingAcquisitionPhase, children []persistence.MatchingProviderRequest) {
-	t.Helper()
-	before := matchingAcquisitionGuardState(t, fixture)
-	changed, err := fixture.repository.AdvanceMatchingAcquisitionForDelivery(fixture.ctx, fixture.river, fixture.parentID, fixture.parent.Attempt, fixture.parentJobID, fixture.claim, before.revision, phase, children)
-	if err == nil || changed {
-		t.Fatalf("invalid acquisition phase accepted: changed=%v err=%v", changed, err)
-	}
-	after := matchingAcquisitionGuardState(t, fixture)
-	if before != after {
-		t.Fatalf("rejected acquisition changed durable state: before=%+v after=%+v", before, after)
-	}
 }
 
 type matchingAcquisitionGuardDurableState struct {

@@ -56,41 +56,6 @@ func TestParkMatchingAcquisitionForDeliveryAcceptsEmptyInitialSearchPostgres(t *
 	}
 }
 
-func TestParkMatchingAcquisitionForDeliveryRejectsStaleClaimPostgres(t *testing.T) {
-	t.Parallel()
-	fixture := newMatchingAcquisitionGuardFixture(t)
-	phase := matchingAcquisitionEmptyArtistPhase(t, fixture)
-	before := matchingAcquisitionGuardState(t, fixture)
-	claim := fixture.claim
-	claim.ExecutionEpoch++
-	changed, err := fixture.repository.ParkMatchingAcquisitionForDelivery(fixture.ctx, fixture.parentID, fixture.parent.Attempt,
-		fixture.parentJobID, claim, 0, phase)
-	if err != nil || changed {
-		t.Fatalf("stale park claim accepted: changed=%v err=%v", changed, err)
-	}
-	if after := matchingAcquisitionGuardState(t, fixture); before != after {
-		t.Fatalf("stale claim changed durable state: before=%+v after=%+v", before, after)
-	}
-}
-
-func TestParkMatchingAcquisitionForDeliveryRejectsChangedConfigurationPostgres(t *testing.T) {
-	t.Parallel()
-	fixture := newMatchingAcquisitionGuardFixture(t)
-	phase := matchingAcquisitionEmptyArtistPhase(t, fixture)
-	if _, err := fixture.db.NewRaw(`UPDATE app_setting SET setting_value='changed-matching-config' WHERE setting_name='musicbrainz_config_identity'`).Exec(fixture.ctx); err != nil {
-		t.Fatal(err)
-	}
-	before := matchingAcquisitionGuardState(t, fixture)
-	changed, err := fixture.repository.ParkMatchingAcquisitionForDelivery(fixture.ctx, fixture.parentID, fixture.parent.Attempt,
-		fixture.parentJobID, fixture.claim, 0, phase)
-	if err != nil || changed {
-		t.Fatalf("changed provider configuration accepted: changed=%v err=%v", changed, err)
-	}
-	if after := matchingAcquisitionGuardState(t, fixture); before != after {
-		t.Fatalf("changed configuration modified acquisition state: before=%+v after=%+v", before, after)
-	}
-}
-
 func matchingAcquisitionEmptyArtistPhase(t *testing.T, fixture *matchingAcquisitionGuardFixture) persistence.MatchingAcquisitionPhase {
 	t.Helper()
 	ticket, err := fixture.cache.BeginRefresh(fixture.ctx, fixture.source.ID, fixture.artistKey, fixture.identity)

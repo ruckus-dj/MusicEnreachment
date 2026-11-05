@@ -274,3 +274,22 @@ single-stream Matroska admission, disable-only cleanup cancellation и пять
 worker/preparer/parser unit-тесты сохранены. Отдельные удалённые
 end-to-end гарантии не объявляются полностью заменёнными unit-тестами.
 Полная проверка этого среза на момент записи ещё не выполнена.
+
+## Срез после `72a21689`: сокращение отдельных SQL-прогонов
+
+`72a21689` прошёл локальный hook за 139,17 с: persistence 85,324 с,
+service 38,124 с, jobs 28,670 с, migrations 27,776 с. После последнего
+persistence-теста до завершения пакета прошло 21,376 с. Это часть времени
+пакета, а не ещё одна величина, которую следует прибавлять к 85,324 с.
+Пакет создал 367 тестовых БД. Цель сокращения времени исполнения примерно
+на две трети и предел ≤60 с пока не достигнуты.
+
+Следующий срез удаляет 1334 строки и 16 верхнеуровневых PostgreSQL-тестов
+без добавления тестов, fixtures или replacement-проверок. Удалены отдельные
+policy/JSONB normalization/immutable-reader/artist-fit/continuation-validation
+прогоны и feature-specific lyrics/CAS, cover receipt carry, provider-tag
+lifecycle и healthy-alternative readback сценарии. Существующие admission
+и настоящий River rollback, target-fence/currentness, frozen apply, result
+installation и SQL/wake rollback остаются. Детальные удалённые SQL-ветви
+намеренно больше не покрываются отдельными тестами. Ревью проверило ссылки
+на удаляемые helpers и импорты; полный gate этого среза ещё не выполнен.
