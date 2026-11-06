@@ -15,6 +15,7 @@ type UpdateSettingsInput struct {
 
 type UpdateSettingsBody struct {
 	OutputDirectory          string  `json:"output_directory,omitempty" maxLength:"4096"`
+	WorkDirectory            *string `json:"work_directory,omitempty" maxLength:"4096"`
 	PublicationFormat        string  `json:"publication_format,omitempty" enum:"source,mka,m4a"`
 	PublicationPathTemplate  *string `json:"publication_path_template,omitempty" maxLength:"4096"`
 	PublicationRemoveSources *bool   `json:"publication_remove_sources,omitempty"`
@@ -143,7 +144,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 			publicationFormat = &input.Body.PublicationFormat
 		}
 		if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
-			OutputDirectory: outputDirectory, PublicationFormat: publicationFormat,
+			OutputDirectory: outputDirectory, WorkDirectory: input.Body.WorkDirectory, PublicationFormat: publicationFormat,
 			PublicationPathTemplate:  input.Body.PublicationPathTemplate,
 			PublicationRemoveSources: input.Body.PublicationRemoveSources,
 			SourceFileConcurrency:    input.Body.SourceFileConcurrency,

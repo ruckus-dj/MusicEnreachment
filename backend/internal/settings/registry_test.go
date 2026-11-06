@@ -15,6 +15,7 @@ func TestRegistryDefinesEveryTypedSetting(t *testing.T) {
 		PlatformGOOSKey:                  {"enum", false, false},
 		PlatformGOARCHKey:                {"enum", false, false},
 		ToolsDirectoryKey:                {"path", false, true},
+		WorkDirectoryKey:                 {"path", false, true},
 		OutputDirectoryKey:               {"path", false, true},
 		OutputCaseSensitiveKey:           {"bool", false, true},
 		OutputUnicodeNormalizationKey:    {"enum", false, true},

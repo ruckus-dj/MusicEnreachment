@@ -323,6 +323,42 @@ func TestOutputDirectoryProbesFilesystemSemantics(t *testing.T) {
 	}
 }
 
+func TestWorkDirectoryIsIndependentFromOutputDirectory(t *testing.T) {
+	ctx := context.Background()
+	registry := settings.New(&recordingStore{memoryStore: newMemoryStore()}, nil)
+	outputPath := filepath.Join(t.TempDir(), "output")
+	workPath := filepath.Join(t.TempDir(), "work")
+	normalizedOutputPath, err := settings.NormalizePath(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalizedWorkPath, err := settings.NormalizePath(workPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := registry.SetOutputDirectory(ctx, outputPath, ""); err != nil {
+		t.Fatalf("set output directory: %v", err)
+	}
+	expectedToolsPath := ""
+	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{
+		WorkDirectory:           &workPath,
+		ExpectedToolsDirectory:  &expectedToolsPath,
+		ExpectedOutputDirectory: &normalizedOutputPath,
+	}); err != nil {
+		t.Fatalf("set work directory: %v", err)
+	}
+
+	gotWork, configured, err := registry.GetWorkDirectory(ctx)
+	if err != nil || !configured || gotWork != normalizedWorkPath {
+		t.Fatalf("GetWorkDirectory() = %q, %v, %v; want %q, true, nil", gotWork, configured, err, normalizedWorkPath)
+	}
+	gotOutput, configured, err := registry.GetOutputDirectory(ctx)
+	if err != nil || !configured || gotOutput != normalizedOutputPath {
+		t.Fatalf("GetOutputDirectory() = %q, %v, %v; want %q, true, nil", gotOutput, configured, err, normalizedOutputPath)
+	}
+}
+
 func TestProbeFilesystemCleansUp(t *testing.T) {
 	tempDir := t.TempDir()
 	if _, err := settings.ProbeFilesystemSemantics(tempDir); err != nil {

@@ -24,9 +24,9 @@ func TestPublicationReconciliationRollbackRefusesPopulatedOperationPostgreSQL(t 
 	}
 	prior, target := migrate.NewMigrations(), migrate.NewMigrations()
 	for _, migration := range collection.Sorted() {
-		if migration.Name < "20261020000001" {
+		if migration.Name < "20261015000005" {
 			prior.Add(migration)
-		} else if migration.Name == "20261020000001" {
+		} else if migration.Name == "20261015000005" {
 			target.Add(migration)
 		}
 	}

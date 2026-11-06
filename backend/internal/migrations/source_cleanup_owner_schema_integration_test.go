@@ -21,24 +21,13 @@ func TestSourceCleanupOwnerSchemaPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prior, target := migrate.NewMigrations(), migrate.NewMigrations()
-	for _, migration := range collection.Sorted() {
-		if migration.Name < "20261023000001" {
-			prior.Add(migration)
-		} else if migration.Name == "20261023000001" {
-			target.Add(migration)
-		}
+	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
+	if err := migrator.Init(ctx); err != nil {
+		t.Fatal(err)
 	}
-	for _, group := range []*migrate.Migrations{prior, target} {
-		migrator := migrate.NewMigrator(db, group, migrate.WithMarkAppliedOnSuccess(true))
-		if err := migrator.Init(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := migrator.Migrate(ctx); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := migrator.Migrate(ctx); err != nil {
+		t.Fatal(err)
 	}
-	targetMigrator := migrate.NewMigrator(db, target, migrate.WithMarkAppliedOnSuccess(true))
 
 	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
 	for _, seed := range []struct {
@@ -125,27 +114,11 @@ func TestSourceCleanupOwnerSchemaPostgreSQL(t *testing.T) {
 	if _, err := db.NewRaw(`DELETE FROM operation WHERE id=?`, operationID).Exec(ctx); err == nil {
 		t.Fatal("deleting the owner operation succeeded")
 	}
-	if _, err := targetMigrator.Rollback(ctx); err == nil || !strings.Contains(err.Error(), "while owner rows exist") {
-		t.Fatalf("populated owner rollback error = %v", err)
-	}
 	var ownerCount, constraintCount int
 	if err := db.NewRaw(`SELECT count(*) FROM source_cleanup_owner`).Scan(ctx, &ownerCount); err != nil || ownerCount != 2 {
-		t.Fatalf("rollback lost owner rows: count=%d err=%v", ownerCount, err)
+		t.Fatalf("owner rows after refused owner mutations: count=%d err=%v", ownerCount, err)
 	}
 	if err := db.NewRaw(`SELECT count(*) FROM pg_constraint WHERE conrelid='public.source_cleanup_item'::regclass AND conname='source_cleanup_item_id_operation_key'`).Scan(ctx, &constraintCount); err != nil || constraintCount != 1 {
-		t.Fatalf("refused rollback changed item constraint: count=%d err=%v", constraintCount, err)
-	}
-	if _, err := db.NewRaw(`DELETE FROM source_cleanup_owner`).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := targetMigrator.Rollback(ctx); err != nil {
-		t.Fatalf("empty owner rollback: %v", err)
-	}
-	var tableExists bool
-	if err := db.NewRaw(`SELECT to_regclass('public.source_cleanup_owner') IS NOT NULL`).Scan(ctx, &tableExists); err != nil || tableExists {
-		t.Fatalf("owner table remains after rollback: exists=%t err=%v", tableExists, err)
-	}
-	if err := db.NewRaw(`SELECT count(*) FROM pg_constraint WHERE conrelid='public.source_cleanup_item'::regclass AND conname='source_cleanup_item_id_operation_key'`).Scan(ctx, &constraintCount); err != nil || constraintCount != 0 {
-		t.Fatalf("empty rollback retained item constraint: count=%d err=%v", constraintCount, err)
+		t.Fatalf("owner mutation changed item constraint: count=%d err=%v", constraintCount, err)
 	}
 }

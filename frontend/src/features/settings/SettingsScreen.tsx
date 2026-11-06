@@ -208,6 +208,7 @@ export function SettingsScreen() {
   const [operations, setOperations] = useState<OperationResponse[]>([]);
   const [acoustIDApplicationKey, setAcoustIDApplicationKey] = useState("");
   const outputDirectory = useSectionDraft<string>();
+  const workDirectory = useSectionDraft<string>();
   const publicationFormat =
     useSectionDraft<UpdateSettingsBodyPublicationFormat>();
   const publicationPathTemplate = useSectionDraft<string>();
@@ -318,6 +319,7 @@ export function SettingsScreen() {
       setState(fresh);
       const settings = fresh.settings;
       outputDirectory.sync(settings.output_directory);
+      workDirectory.sync(settings.work_directory);
       publicationFormat.sync(
         settings.publication_format === "source"
           ? "source"
@@ -359,6 +361,7 @@ export function SettingsScreen() {
     [
       setMoveDirectoryValue,
       outputDirectory.sync,
+      workDirectory.sync,
       publicationFormat.sync,
       publicationPathTemplate.sync,
       publicationRemoveSources.sync,
@@ -1625,6 +1628,48 @@ export function SettingsScreen() {
                 }}
               >
                 Сменить output
+              </AppButton>
+            </section>
+            <section
+              aria-labelledby="work-directory-title"
+              className="setup-panel settings-panel"
+            >
+              <h2 id="work-directory-title">Обработка источников</h2>
+              <DirectoryPathField
+                id="settings-work-directory"
+                label="Work directory для staged-копий"
+                value={workDirectory.value ?? ""}
+                onSelect={workDirectory.update}
+                disabled={effectiveBusy}
+              />
+              <p>
+                Настройка не требуется для Setup или регистрации source root, но
+                обязательна для обработки staged-источников. Каталог нельзя
+                изменить, пока существуют операции или сохранённые копии.
+              </p>
+              {workDirectory.dirty && (
+                <p>Есть несохранённые изменения рабочей папки.</p>
+              )}
+              <AppButton
+                isDisabled={effectiveBusy || !workDirectory.dirty}
+                onPress={() =>
+                  void mutate(
+                    (savedDraft) =>
+                      updateSettings({ work_directory: savedDraft.value }),
+                    204,
+                    "Рабочая папка изменена.",
+                    workDirectory.capture,
+                    (fresh, revision) =>
+                      workDirectory.acknowledge(
+                        fresh.settings.work_directory,
+                        revision,
+                      ),
+                    workDirectory.beginSave,
+                    workDirectory.endSave,
+                  )
+                }
+              >
+                Сохранить рабочую папку
               </AppButton>
             </section>
             <section

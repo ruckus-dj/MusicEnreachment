@@ -36,7 +36,7 @@ type retainedSourceAnalysisArtifactRepository interface {
 }
 
 type sourceAnalysisOutputDirectoryReader interface {
-	GetOutputDirectory(context.Context) (string, bool, error)
+	GetWorkDirectory(context.Context) (string, bool, error)
 }
 
 // SourceAnalysisPreparedInput pins one source identity and, in staged mode, its
@@ -70,7 +70,7 @@ func (input *SourceAnalysisPreparedInput) Close() error {
 }
 
 // SourceAnalysisInputPreparer makes a single sequential, fenced copy of the
-// authoritative inventory input into the current managed output namespace.
+// authoritative inventory input into the configured work directory.
 type SourceAnalysisInputPreparer struct {
 	repository sourceAnalysisInputRepository
 	artifacts  sourceAnalysisArtifactRepository
@@ -158,7 +158,7 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 	if mode != "staged" {
 		return nil, fmt.Errorf("prepare source analysis input: unsupported processing mode")
 	}
-	outputPath, configured, err := preparer.settings.GetOutputDirectory(ctx)
+	outputPath, configured, err := preparer.settings.GetWorkDirectory(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("prepare source analysis input: read output directory: %w", err)
 	}
@@ -301,7 +301,7 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 	if err := outputRoot.Verify(ctx); err != nil {
 		return failCreated(fmt.Errorf("verify managed output namespace after copy: %w", err))
 	}
-	currentOutput, hasOutput, err := preparer.settings.GetOutputDirectory(ctx)
+	currentOutput, hasOutput, err := preparer.settings.GetWorkDirectory(ctx)
 	if err != nil {
 		return failCreated(fmt.Errorf("re-read managed output directory: %w", err))
 	}

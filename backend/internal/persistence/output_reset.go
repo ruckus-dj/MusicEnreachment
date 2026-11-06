@@ -54,7 +54,6 @@ type OutputResetRequest struct {
 type OutputResetSession struct{ conn *sql.Conn }
 
 type outputResetOutcomes struct {
-	InvalidatedArtifactIDs       []uuid.UUID `json:"invalidated_artifact_ids"`
 	RemovedCandidateOperationIDs []uuid.UUID `json:"removed_candidate_operation_ids"`
 }
 
@@ -138,7 +137,7 @@ func (repository *SetupManagerRepository) RunOutputResetRequest(ctx context.Cont
 			return err
 		}
 		defer session.unlockToolsMoveGate()
-		if err := session.begin(ctx, token, oldRoot, newRoot, expectedToolsRoot); err != nil {
+		if err := session.begin(ctx, token, oldRoot, newRoot, expectedToolsRoot, runtimeValues); err != nil {
 			return err
 		}
 		record := func(directory OutputResetDirectory) error {
@@ -231,8 +230,8 @@ func (repository *SetupManagerRepository) RecoverOutputReset(ctx context.Context
 	})
 }
 
-func (session *OutputResetSession) begin(ctx context.Context, token uuid.UUID, oldRoot, newRoot, expectedToolsRoot string) error {
-	if err := checkResetAllowed(ctx, session.conn, oldRoot, newRoot, expectedToolsRoot); err != nil {
+func (session *OutputResetSession) begin(ctx context.Context, token uuid.UUID, oldRoot, newRoot, expectedToolsRoot string, runtimeValues map[string]string) error {
+	if err := checkResetAllowed(ctx, session.conn, oldRoot, newRoot, expectedToolsRoot, runtimeValues); err != nil {
 		return err
 	}
 	_, err := session.conn.ExecContext(ctx, `INSERT INTO output_reset_journal(token,state,old_root,new_root)
@@ -246,7 +245,7 @@ func (session *OutputResetSession) begin(ctx context.Context, token uuid.UUID, o
 func checkResetAllowed(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}, expectedRoot, newRoot, expectedToolsRoot string) error {
+}, expectedRoot, newRoot, expectedToolsRoot string, runtimeValues map[string]string) error {
 	var outputRoot, toolsRoot string
 	err := queryer.QueryRowContext(ctx, `SELECT
 		COALESCE(MAX(setting_value) FILTER (WHERE setting_name='output_directory'), ''),
@@ -269,7 +268,7 @@ func checkResetAllowed(ctx context.Context, queryer interface {
 	if canonicalTools != expectedToolsRoot {
 		return fmt.Errorf("tools directory changed since reset was prepared")
 	}
-	if err := validateOutputResetRoot(ctx, queryer, newRoot); err != nil {
+	if err := validateOutputResetRoot(ctx, queryer, newRoot, runtimeValues); err != nil {
 		return err
 	}
 	var blocked bool
@@ -346,17 +345,33 @@ func checkResetAllowed(ctx context.Context, queryer interface {
 func validateOutputResetRoot(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}, newRoot string) error {
-	var toolsRoot, outputCase string
+}, newRoot string, runtimeValues map[string]string) error {
+	var toolsRoot, workRoot, outputCase string
 	if err := queryer.QueryRowContext(ctx, `SELECT
 		COALESCE(MAX(setting_value) FILTER (WHERE setting_name='tools_directory'), ''),
+		COALESCE(MAX(setting_value) FILTER (WHERE setting_name='work_directory'), ''),
 		COALESCE(MAX(setting_value) FILTER (WHERE setting_name='output_case_sensitive'), 'true')
-		FROM app_setting WHERE setting_name IN ('tools_directory','output_case_sensitive')`).Scan(&toolsRoot, &outputCase); err != nil {
+		FROM app_setting WHERE setting_name IN ('tools_directory','work_directory','output_case_sensitive')`).Scan(&toolsRoot, &workRoot, &outputCase); err != nil {
 		return fmt.Errorf("read runtime roots for output reset: %w", err)
 	}
 	caseSensitive := outputCase != "false"
+	if candidate, ok := runtimeValues["tools_directory"]; ok {
+		toolsRoot = candidate
+	}
+	if candidate, ok := runtimeValues["work_directory"]; ok {
+		workRoot = candidate
+	}
+	if candidate, ok := runtimeValues["output_case_sensitive"]; ok {
+		caseSensitive = candidate != "false"
+	}
 	if err := validateRuntimeRootPair(toolsRoot, newRoot, caseSensitive); err != nil {
 		return err
+	}
+	if workRoot != "" && persistedPathsOverlap(workRoot, toolsRoot, caseSensitive) {
+		return fmt.Errorf("work directory overlaps with tools directory")
+	}
+	if workRoot != "" && persistedPathsOverlap(workRoot, newRoot, caseSensitive) {
+		return fmt.Errorf("output directory overlaps with work directory")
 	}
 
 	rows, err := queryer.QueryContext(ctx, "SELECT configured_path FROM source_root ORDER BY id")
@@ -373,6 +388,10 @@ func validateOutputResetRoot(ctx context.Context, queryer interface {
 			_ = rows.Close()
 			return fmt.Errorf("output directory overlaps with a source directory")
 		}
+		if workRoot != "" && persistedPathsOverlap(workRoot, sourceRoot, caseSensitive) {
+			_ = rows.Close()
+			return fmt.Errorf("work directory overlaps with a source root")
+		}
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -380,6 +399,22 @@ func validateOutputResetRoot(ctx context.Context, queryer interface {
 	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("read source roots for output reset: %w", err)
+	}
+	if candidate, changes := runtimeValues["work_directory"]; changes {
+		var currentWork string
+		if err := queryer.QueryRowContext(ctx, "SELECT COALESCE((SELECT setting_value FROM app_setting WHERE setting_name='work_directory'), '')").Scan(&currentWork); err != nil {
+			return fmt.Errorf("read current work directory for output reset: %w", err)
+		}
+		if candidate != currentWork {
+			var retained bool
+			if err := queryer.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_analysis_artifact) OR EXISTS(
+				SELECT 1 FROM operation WHERE kind='analyze_source' AND state IN ('queued','running'))`).Scan(&retained); err != nil {
+				return fmt.Errorf("check staged work directory ownership: %w", err)
+			}
+			if retained {
+				return fmt.Errorf("work directory cannot change while staged copies or operations exist")
+			}
+		}
 	}
 
 	rows, err = queryer.QueryContext(ctx, `SELECT input_snapshot FROM operation
@@ -455,7 +490,7 @@ func (session *OutputResetSession) recordOutputResetDirectory(ctx context.Contex
 
 func (session *OutputResetSession) commitReset(ctx context.Context, token uuid.UUID, expectedToolsRoot string, runtimeValues map[string]string) (OutputResetJournal, outputResetOutcomes, error) {
 	var journal OutputResetJournal
-	outcomes := outputResetOutcomes{InvalidatedArtifactIDs: []uuid.UUID{}, RemovedCandidateOperationIDs: []uuid.UUID{}}
+	outcomes := outputResetOutcomes{RemovedCandidateOperationIDs: []uuid.UUID{}}
 	tx, err := session.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return journal, outcomes, fmt.Errorf("begin output reset transaction: %w", err)
@@ -491,7 +526,7 @@ func (session *OutputResetSession) commitReset(ctx context.Context, token uuid.U
 
 func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot, newRoot, expectedToolsRoot string, runtimeValues map[string]string, outcomes *outputResetOutcomes) error {
 	// Recheck blockers under the exclusive session gate, before taking domain locks.
-	if err := checkResetAllowed(ctx, tx, oldRoot, newRoot, expectedToolsRoot); err != nil {
+	if err := checkResetAllowed(ctx, tx, oldRoot, newRoot, expectedToolsRoot, runtimeValues); err != nil {
 		return fmt.Errorf("recheck output reset admission: %w", err)
 	}
 	if err := validateRuntimeUpdateSQL(ctx, tx, expectedToolsRoot, oldRoot, newRoot, runtimeValues); err != nil {
@@ -615,24 +650,7 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 	if _, err := tx.ExecContext(ctx, `DELETE FROM track_publication_attempt WHERE phase='queued'`); err != nil {
 		return fmt.Errorf("remove untouched publication attempts: %w", err)
 	}
-	var ids []uuid.UUID
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_analysis_artifact ORDER BY id`)
-	if err != nil {
-		return fmt.Errorf("list invalidated output artifacts: %w", err)
-	}
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	outcomes.InvalidatedArtifactIDs = ids
-	rows, err = tx.QueryContext(ctx, `SELECT DISTINCT candidate.operation_id FROM source_scan_candidate candidate
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT candidate.operation_id FROM source_scan_candidate candidate
 		JOIN operation operation ON operation.id=candidate.operation_id
 		WHERE operation.state='queued' ORDER BY candidate.operation_id`)
 	if err != nil {
@@ -682,12 +700,9 @@ func resetDomainState(ctx context.Context, tx *sql.Tx, token uuid.UUID, oldRoot,
 			WHERE state='queued'`, outputResetSafeError); err != nil {
 		return fmt.Errorf("fail queued operations: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM source_analysis_work_artifact_binding`); err != nil {
-		return fmt.Errorf("remove invalidated artifact bindings: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM source_analysis_artifact`); err != nil {
-		return fmt.Errorf("remove invalidated artifact ownership: %w", err)
-	}
+	// Staged inputs live under work_directory, independently of output reset.
+	// Keep their ownership rows and retained bindings so an explicit new analysis
+	// can reuse them after queued deliveries have been failed.
 	if err := setRuntimeValuesSQL(ctx, tx, runtimeValues); err != nil {
 		return err
 	}

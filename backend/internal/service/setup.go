@@ -392,6 +392,7 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 // transaction path as setup runtime updates.
 type RuntimeUpdateRequest struct {
 	ToolsDirectory           *string
+	WorkDirectory            *string
 	OutputDirectory          *string
 	PublicationFormat        *string
 	PublicationPathTemplate  *string
@@ -407,6 +408,7 @@ func (s *SetupService) SaveRuntimeUpdate(ctx context.Context, request RuntimeUpd
 func (s *SetupService) saveRuntimeRequest(ctx context.Context, request RuntimeUpdateRequest) error {
 	toolsDirectory, outputDirectory, publicationFormat := request.ToolsDirectory, request.OutputDirectory, request.PublicationFormat
 	update := settings.RuntimeUpdate{}
+	update.WorkDirectory = request.WorkDirectory
 	currentTools, hasTools, err := s.registry.GetToolsDirectory(ctx)
 	if err != nil {
 		return fmt.Errorf("get tools directory: %w", err)

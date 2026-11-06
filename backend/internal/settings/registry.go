@@ -195,6 +195,7 @@ var (
 	platformOSSetting              = textDefinition(PlatformGOOSKey, "enum", parsePlatformOS, false)
 	platformArchSetting            = textDefinition(PlatformGOARCHKey, "enum", parsePlatformArch, false)
 	toolsRootSetting               = textDefinition(ToolsDirectoryKey, "path", parseDirectory, true)
+	workRootSetting                = textDefinition(WorkDirectoryKey, "path", parseDirectory, true)
 	outputRootSetting              = textDefinition(OutputDirectoryKey, "path", parseDirectory, true)
 	outputCaseSetting              = boolDefinition(OutputCaseSensitiveKey)
 	outputUnicodeSetting           = textDefinition(OutputUnicodeNormalizationKey, "enum", parseUnicodeNormalization, true)
@@ -271,7 +272,7 @@ var (
 )
 
 var registeredSettings = []registeredSetting{
-	platformOSSetting, platformArchSetting, toolsRootSetting, outputRootSetting,
+	platformOSSetting, platformArchSetting, toolsRootSetting, workRootSetting, outputRootSetting,
 	outputCaseSetting, outputUnicodeSetting, publicationSetting, publicationPathTemplateSetting, publicationRemoveSourcesSetting,
 	musicBrainzModeSetting, musicBrainzURLSetting, musicBrainzIdentitySetting,
 	musicBrainzVerifiedSetting, lrclibSetting, sha256Setting, logSetting,

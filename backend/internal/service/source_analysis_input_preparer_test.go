@@ -127,7 +127,7 @@ func TestSourceAnalysisInputPreparerReplacesStaleAcquiringBindingAfterCrash(t *t
 		OwnerOperationID: uuid.New(), OwnerOperationAttempt: 1, OwnerJobID: 70, State: persistence.SourceAnalysisArtifactAcquiring,
 	}
 	fixture.artifacts.binding = stale
-	stalePath := filepath.Join(fixture.outputPath, "analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), staleID.String())
+	stalePath := filepath.Join(fixture.workPath, "analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), staleID.String())
 	if err := os.MkdirAll(filepath.Dir(stalePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ func TestSourceAnalysisInputPreparerRejectsReplacedSourceNamespace(t *testing.T)
 
 func TestSourceAnalysisInputPreparerRejectsReplacedOutputDescendant(t *testing.T) {
 	fixture := newInputPreparerFixture(t, nil)
-	parentPath := filepath.Join(fixture.outputPath, "analysis", "staging", fixture.work.SourceRootID.String())
+	parentPath := filepath.Join(fixture.workPath, "analysis", "staging", fixture.work.SourceRootID.String())
 	backupPath := parentPath + "-original"
 	mutationCalls := 0
 	var mutationErr error
@@ -520,7 +520,7 @@ func TestSourceAnalysisInputPreparerBoundsCopyWhenSourceGrows(t *testing.T) {
 func TestSourceAnalysisInputPreparerRejectsChangedOutputSymlinkNamespace(t *testing.T) {
 	fixture := newInputPreparerFixture(t, nil)
 	linkPath := filepath.Join(fixture.temp, "output-link")
-	if err := os.Symlink(fixture.outputPath, linkPath); err != nil {
+	if err := os.Symlink(fixture.workPath, linkPath); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	fixture.settings.changeOnSecondRead = linkPath
@@ -561,6 +561,7 @@ type inputPreparerFixture struct {
 	temp       string
 	sourcePath string
 	outputPath string
+	workPath   string
 	contents   string
 	work       *persistence.SourceAnalysisWork
 	location   *persistence.SourceLocation
@@ -578,11 +579,14 @@ func newInputPreparerFixture(t *testing.T, wrap func(sourcefs.OutputFile) source
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourcePath, outputPath := filepath.Join(temp, "source"), filepath.Join(temp, "output")
+	sourcePath, outputPath, workPath := filepath.Join(temp, "source"), filepath.Join(temp, "output"), filepath.Join(temp, "work")
 	if err := os.MkdirAll(sourcePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(outputPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	contents := strings.Repeat("sample-audio-data", 20_000)
@@ -603,7 +607,7 @@ func newInputPreparerFixture(t *testing.T, wrap func(sourcefs.OutputFile) source
 	artifactID := uuid.New()
 	repository := &inputPreparerRepository{work: work, location: location, root: root}
 	artifacts := &inputArtifactRepository{rootID: rootID, workID: workID, artifactID: artifactID, fence: fence, size: info.Size(), mtime: info.ModTime()}
-	settings := &inputOutputSettings{path: outputPath}
+	settings := &inputOutputSettings{path: workPath}
 	counted := &countBorrowOpener{Opener: sourcefs.NewOpener()}
 	outputOpener := sourcefs.NewOutputOpener()
 	if wrap != nil {
@@ -611,12 +615,12 @@ func newInputPreparerFixture(t *testing.T, wrap func(sourcefs.OutputFile) source
 	}
 	preparer := NewSourceAnalysisInputPreparer(repository, artifacts, settings, counted, outputOpener)
 	preparer.newID = func() uuid.UUID { return artifactID }
-	return &inputPreparerFixture{t: t, temp: temp, sourcePath: sourcePath, outputPath: outputPath, contents: contents,
+	return &inputPreparerFixture{t: t, temp: temp, sourcePath: sourcePath, outputPath: outputPath, workPath: workPath, contents: contents,
 		work: work, location: location, fence: fence, artifactID: artifactID, preparer: preparer, artifacts: artifacts, settings: settings, source: counted}
 }
 
 func (fixture *inputPreparerFixture) finalPath() string {
-	return filepath.Join(fixture.outputPath, "analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())
+	return filepath.Join(fixture.workPath, "analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())
 }
 
 type inputPreparerRepository struct {
@@ -719,6 +723,10 @@ func (settings *inputOutputSettings) GetOutputDirectory(context.Context) (string
 		return settings.changeOnSecondRead, true, nil
 	}
 	return settings.path, true, nil
+}
+
+func (settings *inputOutputSettings) GetWorkDirectory(ctx context.Context) (string, bool, error) {
+	return settings.GetOutputDirectory(ctx)
 }
 
 type countBorrowOpener struct {

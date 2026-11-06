@@ -312,6 +312,24 @@ func (s *SourceRoots) checkManagedOverlap(ctx context.Context, path string) erro
 	if err != nil {
 		return fmt.Errorf("read managed output directory: %w", err)
 	}
+	workReader, ok := s.managedPaths.(interface {
+		GetWorkDirectory(context.Context) (string, bool, error)
+	})
+	if ok {
+		workRoot, hasWork, err := workReader.GetWorkDirectory(ctx)
+		if err != nil {
+			return fmt.Errorf("read work directory: %w", err)
+		}
+		if hasWork && workRoot != "" {
+			overlap, err := settings.SourcePathsOverlap(path, workRoot)
+			if err != nil {
+				return fmt.Errorf("check work directory overlap: %w", err)
+			}
+			if overlap {
+				return fmt.Errorf("source directory overlaps the work directory")
+			}
+		}
+	}
 	if hasOutput && outputRoot != "" {
 		overlap, err := settings.SourcePathsOverlap(path, outputRoot)
 		if err != nil {

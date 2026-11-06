@@ -53,9 +53,9 @@ func WithExclusiveOutputAdmissionSession(ctx context.Context, db *bun.DB, callba
 	if err != nil {
 		return fmt.Errorf("acquire output reset connection: %w", err)
 	}
-	locked := false
+	workLocked, outputLocked := false, false
 	defer func() {
-		if locked {
+		if outputLocked {
 			var unlocked bool
 			unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			err := conn.QueryRowContext(unlockCtx, "SELECT pg_advisory_unlock($1, $2)", toolsCoordinationNamespace, outputAdmissionGateKey).Scan(&unlocked)
@@ -67,13 +67,29 @@ func WithExclusiveOutputAdmissionSession(ctx context.Context, db *bun.DB, callba
 				}
 			}
 		}
+		if workLocked {
+			var unlocked bool
+			unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := conn.QueryRowContext(unlockCtx, "SELECT pg_advisory_unlock($1, $2)", toolsCoordinationNamespace, workDirectoryCoordinationLock).Scan(&unlocked)
+			cancel()
+			if err != nil || !unlocked {
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+				if resultErr == nil {
+					resultErr = fmt.Errorf("release work directory gate: %w", errors.Join(err, errors.New("session gate was not held")))
+				}
+			}
+		}
 		if err := conn.Close(); err != nil && resultErr == nil {
 			resultErr = fmt.Errorf("close output reset connection: %w", err)
 		}
 	}()
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1, $2)", toolsCoordinationNamespace, workDirectoryCoordinationLock); err != nil {
+		return fmt.Errorf("acquire work directory configuration gate: %w", err)
+	}
+	workLocked = true
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1, $2)", toolsCoordinationNamespace, outputAdmissionGateKey); err != nil {
 		return fmt.Errorf("acquire exclusive output admission gate: %w", err)
 	}
-	locked = true
+	outputLocked = true
 	return callback(&OutputResetSession{conn: conn})
 }

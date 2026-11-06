@@ -32,6 +32,7 @@ type PlatformResponse struct {
 type RuntimeSettingsResponse struct {
 	SourceFileConcurrency             int        `json:"source_file_concurrency"`
 	ToolsDirectory                    string     `json:"tools_directory"`
+	WorkDirectory                     string     `json:"work_directory"`
 	OutputDirectory                   string     `json:"output_directory"`
 	PublicationFormat                 string     `json:"publication_format"`
 	PublicationPathTemplate           string     `json:"publication_path_template"`
@@ -63,6 +64,7 @@ type SaveRuntimeInput struct {
 
 type SaveRuntimeBody struct {
 	ToolsDirectory           *string `json:"tools_directory,omitempty" maxLength:"4096"`
+	WorkDirectory            *string `json:"work_directory,omitempty" maxLength:"4096"`
 	OutputDirectory          *string `json:"output_directory,omitempty" maxLength:"4096"`
 	PublicationFormat        *string `json:"publication_format,omitempty" enum:"source,mka,m4a"`
 	PublicationPathTemplate  *string `json:"publication_path_template,omitempty" maxLength:"4096"`
@@ -172,7 +174,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
-			ToolsDirectory: input.Body.ToolsDirectory, OutputDirectory: input.Body.OutputDirectory,
+			ToolsDirectory: input.Body.ToolsDirectory, WorkDirectory: input.Body.WorkDirectory, OutputDirectory: input.Body.OutputDirectory,
 			PublicationFormat: input.Body.PublicationFormat, SourceFileConcurrency: input.Body.SourceFileConcurrency,
 			PublicationPathTemplate:  input.Body.PublicationPathTemplate,
 			PublicationRemoveSources: input.Body.PublicationRemoveSources,
@@ -322,6 +324,7 @@ func setupStateOutput(state service.SetupState) *SetupStateOutput {
 			Settings: RuntimeSettingsResponse{
 				SourceFileConcurrency:             state.Runtime.SourceFileConcurrency,
 				ToolsDirectory:                    state.Runtime.ToolsDirectory,
+				WorkDirectory:                     state.Runtime.WorkDirectory,
 				OutputDirectory:                   state.Runtime.OutputDirectory,
 				PublicationFormat:                 state.Runtime.PublicationFormat,
 				PublicationPathTemplate:           state.Runtime.PublicationPathTemplate,

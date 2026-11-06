@@ -394,6 +394,59 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 	})
 }
 
+func TestWorkDirectoryAndToolsMoveAdmissionSerializePostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigratedWithRiver(t)
+	ctx := context.Background()
+	settingsRepository := persistence.NewSettingsRepository(database)
+	setupRepository := persistence.NewSetupManagerRepository(database)
+	client := openScanEnqueueRiver(t, database)
+	base := mustFixturePath(t, t.TempDir())
+	oldRoot := filepath.Join(base, "tools")
+	newRoot := filepath.Join(base, "tools-next")
+	workRoot := filepath.Join(base, "work")
+	if err := settingsRepository.SetMany(ctx, map[string]string{"tools_directory": oldRoot, "work_directory": workRoot}); err != nil {
+		t.Fatal(err)
+	}
+	newMove := func() *persistence.Operation {
+		return &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
+			InputSnapshot: mustFixtureJSON(t, struct {
+				SchemaVersion int    `json:"schema_version"`
+				OldRoot       string `json:"old_root"`
+				NewRoot       string `json:"new_root"`
+			}{1, oldRoot, newRoot})}
+	}
+	t.Run("work update commits first", func(t *testing.T) {
+		if err := settingsRepository.UpdateRuntime(ctx, oldRoot, "", map[string]string{"work_directory": newRoot}); err != nil {
+			t.Fatalf("set work root to future move target: %v", err)
+		}
+		move := newMove()
+		if err := setupRepository.CreateToolsMoveOperationAndEnqueue(ctx, move, client, service.OperationJobArgs{OperationID: move.ID}, nil); err == nil {
+			t.Fatal("move admission accepted a target overlapping the work directory")
+		}
+		assertNoMoveAdmission(t, ctx, database, move.ID)
+	})
+	t.Run("move admission commits first", func(t *testing.T) {
+		if err := settingsRepository.UpdateRuntime(ctx, oldRoot, "", map[string]string{"work_directory": workRoot}); err != nil {
+			t.Fatal(err)
+		}
+		move := newMove()
+		if err := setupRepository.CreateToolsMoveOperationAndEnqueue(ctx, move, client, service.OperationJobArgs{OperationID: move.ID}, nil); err != nil {
+			t.Fatalf("admit tools move: %v", err)
+		}
+		if err := settingsRepository.UpdateRuntime(ctx, oldRoot, "", map[string]string{"work_directory": newRoot}); err == nil {
+			t.Fatal("work update overlapping active move target succeeded")
+		}
+		assertStoredRuntimeValue(t, ctx, database, "work_directory", workRoot)
+		if _, err := database.NewRaw("DELETE FROM river_job WHERE args->>'operation_id' = ?", move.ID.String()).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.NewDelete().Model(move).WherePK().Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestGenericSettingsWritesSerializeActiveSelectionsAndCanonicalizeRootsPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigratedWithRiver(t)

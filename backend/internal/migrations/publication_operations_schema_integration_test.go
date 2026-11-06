@@ -182,9 +182,9 @@ func TestPublicationOperationContractRollbackRequiresSettlementPostgreSQL(t *tes
 	testpostgres.Reset(t, db)
 	prior, target := migrate.NewMigrations(), migrate.NewMigrations()
 	for _, migration := range loadMigrations(t).Sorted() {
-		if migration.Name < "20261017000006" {
+		if migration.Name < "20261015000005" {
 			prior.Add(migration)
-		} else if migration.Name == "20261017000006" {
+		} else if migration.Name == "20261015000005" {
 			target.Add(migration)
 		}
 	}
@@ -197,7 +197,7 @@ func TestPublicationOperationContractRollbackRequiresSettlementPostgreSQL(t *tes
 			t.Fatal(err)
 		}
 	}
-	assertMigrationInventory(t, target, []string{"20261017000006"})
+	assertMigrationInventory(t, target, []string{"20261015000005"})
 	id := uuid.New()
 	summary, err := json.Marshal(map[string]any{"version": 1, "position_id": uuid.NewString(), "output_epoch": uuid.NewString()})
 	if err != nil {
@@ -218,5 +218,5 @@ func TestPublicationOperationContractRollbackRequiresSettlementPostgreSQL(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationGroup(t, group, []string{"20261017000006"}, "rolled back publication operation contract")
+	assertMigrationGroup(t, group, []string{"20261015000005"}, "rolled back publication operation contract")
 }

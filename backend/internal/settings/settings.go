@@ -19,6 +19,7 @@ const (
 	PlatformGOARCHKey                = "instance.goarch"
 	ToolsDirectoryKey                = "tools_directory"
 	OutputDirectoryKey               = "output_directory"
+	WorkDirectoryKey                 = "work_directory"
 	OutputCaseSensitiveKey           = "output_case_sensitive"
 	OutputUnicodeNormalizationKey    = "output_unicode_normalization"
 	PublicationFormatKey             = "publication_format"
@@ -105,6 +106,7 @@ type ConfigurationHealth struct {
 type RuntimeSettings struct {
 	SourceFileConcurrency             int
 	ToolsDirectory                    string
+	WorkDirectory                     string
 	OutputDirectory                   string
 	PublicationFormat                 string
 	PublicationPathTemplate           string
@@ -151,6 +153,7 @@ func (r *Registry) DeleteGitHubToken(ctx context.Context) error {
 // A nil field leaves its setting unchanged.
 type RuntimeUpdate struct {
 	ToolsDirectory             *string
+	WorkDirectory              *string
 	ExpectedToolsDirectory     *string
 	OutputDirectory            *string
 	ExpectedOutputDirectory    *string
@@ -345,6 +348,10 @@ func (r *Registry) GetOutputDirectory(ctx context.Context) (string, bool, error)
 	return readSetting(ctx, r.store, outputRootSetting)
 }
 
+func (r *Registry) GetWorkDirectory(ctx context.Context) (string, bool, error) {
+	return readSetting(ctx, r.store, workRootSetting)
+}
+
 // SetOutputDirectory validates, probes filesystem semantics, and stores the output directory.
 func (r *Registry) SetOutputDirectory(ctx context.Context, path string, toolsDirectory string) error {
 	normalized, err := NormalizePath(path)
@@ -390,7 +397,7 @@ func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) erro
 		return nil
 	}
 	if store, ok := r.store.(runtimeUpdateStore); ok {
-		if (update.ToolsDirectory != nil || update.OutputDirectory != nil || update.OutputCaseSensitive != nil || update.OutputUnicodeNormalization != nil) &&
+		if (update.ToolsDirectory != nil || update.WorkDirectory != nil || update.OutputDirectory != nil || update.OutputCaseSensitive != nil || update.OutputUnicodeNormalization != nil) &&
 			(update.ExpectedToolsDirectory == nil || update.ExpectedOutputDirectory == nil) {
 			return fmt.Errorf("runtime path updates require expected current roots")
 		}
@@ -407,7 +414,7 @@ func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) erro
 		}
 		return err
 	}
-	if update.ToolsDirectory != nil || update.OutputDirectory != nil || update.OutputCaseSensitive != nil || update.OutputUnicodeNormalization != nil {
+	if update.ToolsDirectory != nil || update.WorkDirectory != nil || update.OutputDirectory != nil || update.OutputCaseSensitive != nil || update.OutputUnicodeNormalization != nil {
 		return fmt.Errorf("runtime path updates require transactional settings storage")
 	}
 	err = r.store.SetMany(ctx, values)
@@ -466,6 +473,17 @@ func runtimeUpdateValues(update RuntimeUpdate) (map[string]string, error) {
 			return nil, fmt.Errorf("tools directory: %w", err)
 		}
 		values[ToolsDirectoryKey] = value
+	}
+	if update.WorkDirectory != nil {
+		normalized, err := NormalizePath(*update.WorkDirectory)
+		if err != nil {
+			return nil, fmt.Errorf("work directory: %w", err)
+		}
+		value, err := serializeSetting(workRootSetting, normalized)
+		if err != nil {
+			return nil, fmt.Errorf("work directory: %w", err)
+		}
+		values[WorkDirectoryKey] = value
 	}
 	if update.OutputDirectory != nil {
 		normalized, err := NormalizePath(*update.OutputDirectory)
@@ -703,6 +721,10 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	work, _, err := readSetting(ctx, r.store, workRootSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	output, _, err := readSetting(ctx, r.store, outputRootSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
@@ -781,6 +803,7 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	return RuntimeSettings{
 		SourceFileConcurrency:             fileConcurrency,
 		ToolsDirectory:                    tools,
+		WorkDirectory:                     work,
 		OutputDirectory:                   output,
 		PublicationFormat:                 format,
 		PublicationPathTemplate:           template,

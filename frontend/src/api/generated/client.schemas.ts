@@ -1454,6 +1454,7 @@ export interface RuntimeSettingsResponse {
   sha256_enabled: boolean;
   source_file_concurrency: number;
   tools_directory: string;
+  work_directory: string;
 }
 
 export type SaveRuntimeBodyPublicationFormat = typeof SaveRuntimeBodyPublicationFormat[keyof typeof SaveRuntimeBodyPublicationFormat];
@@ -1478,6 +1479,8 @@ export interface SaveRuntimeBody {
   source_file_concurrency?: number;
   /** @maxLength 4096 */
   tools_directory?: string;
+  /** @maxLength 4096 */
+  work_directory?: string;
 }
 
 export interface SetGitHubTokenBody {
@@ -1871,6 +1874,8 @@ export interface UpdateSettingsBody {
   publication_remove_sources?: boolean;
   /** @minimum 1 */
   source_file_concurrency?: number;
+  /** @maxLength 4096 */
+  work_directory?: string;
 }
 
 export type UpdateSourceBodyProcessingMode = typeof UpdateSourceBodyProcessingMode[keyof typeof UpdateSourceBodyProcessingMode];

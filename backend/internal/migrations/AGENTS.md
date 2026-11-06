@@ -3,8 +3,8 @@
 ## OVERVIEW
 Embedded SQL migrations via bun/migrate. Versioned .tx.up/.tx.down pairs, applied at server startup in app.go before River and HTTP server start.
 
-The unpublished prototype uses five fresh-instance baselines. Existing development
-databases from the former migration chain are not upgraded by this reset; recreate
+The unpublished prototype uses five squashed fresh-instance baselines. Existing
+development databases from the former migration chain are not upgraded; recreate
 only disposable databases explicitly. Never replace migration-history rows to make
 an old database appear current.
 
@@ -17,17 +17,17 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 - 20261015000002_source_inventory_analysis.tx.up.sql - inventory, analyses, work, retained inputs
 - 20261015000003_provider_cache.tx.up.sql - providers, cache, source projections
 - 20261015000004_local_library.tx.up.sql - local entities, credits, provider and source links
-- 20261015000005_incoming_matching.tx.up.sql - grouping, matching, receipts, reconciliation
+- 20261015000005_incoming_matching.tx.up.sql - grouping, matching, publication and cleanup schema
 - backend/cmd/migrate/main.go - rollback CLI (down migrations only; up is startup-only)
 
 ## CONVENTIONS
 - Forward migrations run at server startup (coupled to deploy, cannot run server against unmigrated DB without this path)
 - Rollback is manual CLI-only: `task migrate:rollback` (stop server first)
 - Every .tx.up.sql must have matching .tx.down.sql
-- When adding a migration, update `additiveMigrationNames` in
-  `migration_core_integration_test.go` and the application table count in
-  `baseline_river_integration_test.go` for any new tables, including transient
-  staging tables. Keep these assertions exact; do not remove them to pass a gate.
+- When changing the baseline schema, update `baselineMigrationNames` in
+  `migration_core_integration_test.go` and the exact application table count in
+  `baseline_river_integration_test.go` for new or removed tables, including
+  transient staging tables. Keep these assertions exact.
 - Transactional migrations (.tx prefix) ensure atomicity
 - Canonical tool versions are captured once from fresh executable output; ready
   tool fixtures must supply the canonical version and complete member evidence.
@@ -40,7 +40,8 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 - WithMarkAppliedOnSuccess(true) marks migration complete only after successful application
 - Bun applies pending files as one migration group, but each `.tx` file has its own transaction
 - River owns its separate schema and migration history; application SQL must not recreate or drop them
-- Baseline down files refuse populated application tables. The last baseline preflights all application data before group rollback starts dropping objects
+- Baseline rollback is atomic and refuses populated application/recovery state;
+  keep all refusal guards ahead of destructive rollback statements.
 - Keep the required `incoming_grouping_state` singleton seed; it is not historical user data
 
 ## ANTI-PATTERNS
@@ -51,12 +52,8 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 - `DROP SCHEMA public CASCADE` in application rollback (would destroy unrelated and River objects)
 
 ## NOTES
-Startup migration coupling means you cannot skip migrations or run an old binary against a new schema. Deploy rollback requires explicit `migrate:rollback` before reverting binary.
+Startup migration coupling means you cannot skip migrations or run an old binary against a new schema. There is no deployment upgrade or back-compat path for the discarded development chain. Rollback is an explicit operator action via `migrate:rollback`.
 
-The publication journal retirement migration refuses nonempty attempt journals or
-retired attempt phases; it never deletes or normalizes retained execution evidence.
-Resolve such evidence explicitly before retrying the upgrade. Stop the old server
-before upgrading or rolling back: mixed versions cannot share the removed column.
-Current source-cleanup recovery claims and the output-reset journal are unrelated
-and remain intact. Rollback restores only empty publication-attempt journals, which
-the forward migration proved contained no recovery evidence.
+Publication and source-cleanup recovery authority is part of the fresh-instance
+baseline. Rollback must refuse to discard retained recovery evidence; it must not
+delete or normalize that evidence as a convenience.

@@ -60,6 +60,9 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 		return fmt.Errorf("admit source analysis: read configured root for coordination: %w", err)
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockWorkDirectoryGate(ctx, tx); err != nil {
+			return fmt.Errorf("admit source analysis: lock work directory configuration: %w", err)
+		}
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("admit source analysis: lock output admission gate: %w", err)
 		}

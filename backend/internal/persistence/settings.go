@@ -430,7 +430,7 @@ func cloneSettingValues(values map[string]string) map[string]string {
 }
 
 func canonicalizeRuntimeRootValues(values map[string]string) error {
-	for _, name := range []string{"tools_directory", "output_directory"} {
+	for _, name := range []string{"tools_directory", "output_directory", "work_directory"} {
 		value, ok := values[name]
 		if !ok || value == "" {
 			continue
@@ -529,6 +529,14 @@ func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoo
 		return err
 	}
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, workChanges := values["work_directory"]
+		_, toolsChanges := values["tools_directory"]
+		_, outputChanges := values["output_directory"]
+		if workChanges || toolsChanges || outputChanges {
+			if err := lockWorkDirectoryGate(ctx, tx); err != nil {
+				return err
+			}
+		}
 		if value, changes := values["publication_remove_sources"]; changes && value == "false" {
 			if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 				return fmt.Errorf("lock publication source removal output gate: %w", err)
@@ -588,6 +596,42 @@ func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoo
 		if err := validateRuntimeRootPair(nextTools, nextOutput, caseSensitive); err != nil {
 			return err
 		}
+		var workRoot string
+		if candidate, changes := values["work_directory"]; changes {
+			workRoot = candidate
+		} else if err := tx.NewRaw("SELECT COALESCE((SELECT setting_value FROM app_setting WHERE setting_name='work_directory'), '')").Scan(ctx, &workRoot); err != nil {
+			return err
+		}
+		if workRoot != "" {
+			if err := validateWorkDirectoryAgainstManagedRoots(ctx, tx, workRoot, nextTools, nextOutput, caseSensitive); err != nil {
+				return err
+			}
+			if err := validateWorkDirectoryAgainstActiveMoves(ctx, tx, workRoot, caseSensitive); err != nil {
+				return err
+			}
+		}
+		if workRoot, changes := values["work_directory"]; changes {
+			var currentWork string
+			if err := tx.NewRaw("SELECT COALESCE((SELECT setting_value FROM app_setting WHERE setting_name='work_directory'), '')").Scan(ctx, &currentWork); err != nil {
+				return err
+			}
+			if currentWork != workRoot {
+				var retained bool
+				if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_analysis_artifact) OR EXISTS(
+					SELECT 1 FROM operation WHERE kind='analyze_source' AND state IN ('queued','running'))`).Scan(ctx, &retained); err != nil {
+					return fmt.Errorf("check staged work directory ownership: %w", err)
+				}
+				if retained {
+					return fmt.Errorf("work directory cannot change while staged copies or operations exist")
+				}
+			}
+			if err := validateWorkDirectoryAgainstManagedRoots(ctx, tx, workRoot, nextTools, nextOutput, caseSensitive); err != nil {
+				return err
+			}
+			if err := validateWorkDirectoryAgainstActiveMoves(ctx, tx, workRoot, caseSensitive); err != nil {
+				return err
+			}
+		}
 		if err := validateOutputAgainstActiveMoves(ctx, tx, nextOutput, caseSensitive); err != nil {
 			return err
 		}
@@ -641,6 +685,79 @@ func validateRuntimeRootPair(toolsRoot, outputRoot string, caseSensitive bool) e
 	}
 	if toolsRoot != "" && outputRoot != "" && persistedPathsOverlap(toolsRoot, outputRoot, caseSensitive) {
 		return fmt.Errorf("tools directory overlaps with output directory")
+	}
+	return nil
+}
+
+const workDirectoryCoordinationLock int32 = 94017
+
+func lockWorkDirectoryGate(ctx context.Context, database bun.IDB) error {
+	if _, err := database.NewRaw("SELECT pg_advisory_xact_lock(?, ?)", toolsCoordinationNamespace, workDirectoryCoordinationLock).Exec(ctx); err != nil {
+		return fmt.Errorf("lock work directory configuration: %w", err)
+	}
+	return nil
+}
+
+func validateWorkDirectoryAgainstManagedRoots(ctx context.Context, database bun.IDB, workRoot, toolsRoot, outputRoot string, caseSensitive bool) error {
+	for _, managed := range []struct{ name, path string }{{"tools", toolsRoot}, {"output", outputRoot}} {
+		if managed.path != "" && persistedPathsOverlap(workRoot, managed.path, caseSensitive) {
+			return fmt.Errorf("work directory overlaps with %s directory", managed.name)
+		}
+	}
+	var roots []struct {
+		ConfiguredPath string `bun:"configured_path"`
+	}
+	if err := database.NewRaw("SELECT configured_path FROM source_root ORDER BY id").Scan(ctx, &roots); err != nil {
+		return fmt.Errorf("read source roots for work directory: %w", err)
+	}
+	for _, root := range roots {
+		if persistedPathsOverlap(workRoot, root.ConfiguredPath, caseSensitive) {
+			return fmt.Errorf("work directory overlaps with a source root")
+		}
+	}
+	return nil
+}
+
+func validateWorkDirectoryAgainstActiveMoves(ctx context.Context, database bun.IDB, workRoot string, caseSensitive bool) error {
+	var snapshots []struct {
+		InputSnapshot json.RawMessage `bun:"input_snapshot,type:jsonb"`
+	}
+	if err := database.NewRaw(`SELECT input_snapshot FROM operation
+		WHERE kind = 'move_tools_root' AND state IN ('queued', 'running')`).Scan(ctx, &snapshots); err != nil {
+		return fmt.Errorf("read active tools move roots: %w", err)
+	}
+	for _, row := range snapshots {
+		var roots struct {
+			OldRoot string `json:"old_root"`
+			NewRoot string `json:"new_root"`
+		}
+		if err := json.Unmarshal(row.InputSnapshot, &roots); err != nil {
+			return fmt.Errorf("decode active tools move roots: %w", err)
+		}
+		for _, root := range []string{roots.OldRoot, roots.NewRoot} {
+			if root != "" && persistedPathsOverlap(workRoot, root, caseSensitive) {
+				return fmt.Errorf("work directory overlaps with an active tools move root")
+			}
+		}
+	}
+	return nil
+}
+
+func validateSourceRootAgainstWorkDirectory(ctx context.Context, database bun.IDB, sourceRoot string) error {
+	var workRoot, toolsRoot, outputRoot, caseValue string
+	if err := database.NewRaw(`SELECT
+		COALESCE(MAX(setting_value) FILTER (WHERE setting_name='work_directory'), ''),
+		COALESCE(MAX(setting_value) FILTER (WHERE setting_name='tools_directory'), ''),
+		COALESCE(MAX(setting_value) FILTER (WHERE setting_name='output_directory'), ''),
+		COALESCE(MAX(setting_value) FILTER (WHERE setting_name='output_case_sensitive'), 'true')
+		FROM app_setting WHERE setting_name IN ('work_directory','tools_directory','output_directory','output_case_sensitive')`).Scan(ctx, &workRoot, &toolsRoot, &outputRoot, &caseValue); err != nil {
+		return fmt.Errorf("read managed roots for source root: %w", err)
+	}
+	caseSensitive := caseValue != "false"
+	for _, managed := range []struct{ name, path string }{{"work", workRoot}, {"tools", toolsRoot}, {"output", outputRoot}} {
+		if managed.path != "" && persistedPathsOverlap(sourceRoot, managed.path, caseSensitive) {
+			return fmt.Errorf("source root overlaps with %s directory", managed.name)
+		}
 	}
 	return nil
 }
@@ -725,6 +842,27 @@ func validateToolsMoveRootsAgainstOutput(ctx context.Context, tx bun.Tx, oldRoot
 	}
 	if err := validateRuntimeRootPair(newRoot, outputRoot, caseSensitive); err != nil {
 		return fmt.Errorf("move target %w", err)
+	}
+	return nil
+}
+
+func validateToolsMoveRootsAgainstWork(ctx context.Context, tx bun.Tx, oldRoot, newRoot string) error {
+	var workRoot string
+	if err := tx.NewRaw("SELECT COALESCE((SELECT setting_value FROM app_setting WHERE setting_name='work_directory'), '')").Scan(ctx, &workRoot); err != nil {
+		return fmt.Errorf("read work directory: %w", err)
+	}
+	if workRoot == "" {
+		return nil
+	}
+	_, _, caseSensitive, err := readRuntimeRoots(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := validateWorkDirectoryAgainstManagedRoots(ctx, tx, workRoot, oldRoot, "", caseSensitive); err != nil {
+		return err
+	}
+	if err := validateWorkDirectoryAgainstManagedRoots(ctx, tx, workRoot, newRoot, "", caseSensitive); err != nil {
+		return err
 	}
 	return nil
 }

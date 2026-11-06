@@ -16,7 +16,7 @@ import (
 func validateRuntimeSettingValues(values map[string]string) error {
 	for name, value := range values {
 		switch name {
-		case "tools_directory", "output_directory":
+		case "tools_directory", "output_directory", "work_directory":
 			if value != "" && (!filepath.IsAbs(value) || filepath.Clean(value) != value) {
 				return fmt.Errorf("runtime directory is not a normalized absolute path")
 			}

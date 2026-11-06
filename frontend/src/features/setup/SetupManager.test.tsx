@@ -16,6 +16,7 @@ import { SetupManager } from "./SetupManager";
 const settings: SetupStateBody["settings"] = {
   tools_directory: "",
   output_directory: "",
+  work_directory: "",
   publication_format: "",
   publication_path_template:
     '{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}',

@@ -95,6 +95,10 @@ func newAnalysisDispatchFixtureConfigured(t *testing.T, preparer service.SourceA
 	if err := registry.SetOutputDirectory(ctx, outputRoot, toolsRoot); err != nil {
 		t.Fatalf("set the analysis dispatch output directory: %v", err)
 	}
+	workRoot := t.TempDir()
+	if err := settingsRepository.Set(ctx, settings.WorkDirectoryKey, workRoot); err != nil {
+		t.Fatalf("set the analysis dispatch work directory: %v", err)
+	}
 	if err := registry.CompleteSetup(ctx); err != nil {
 		t.Fatalf("complete setup for analysis dispatch: %v", err)
 	}

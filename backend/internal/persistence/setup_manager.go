@@ -435,6 +435,9 @@ func (repository *SetupManagerRepository) CreateToolsMoveOperationAndEnqueue(ctx
 		return fmt.Errorf("enqueue tools move: operation must be a tools root move")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockWorkDirectoryGate(ctx, tx); err != nil {
+			return fmt.Errorf("enqueue tools move: lock work directory gate: %w", err)
+		}
 		if err := lockOutputAdmissionGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("enqueue tools move: lock output admission gate: %w", err)
 		}
@@ -470,6 +473,9 @@ func (repository *SetupManagerRepository) CreateToolsMoveOperationAndEnqueue(ctx
 			return fmt.Errorf("enqueue tools move: invalid target root")
 		}
 		if err := validateToolsMoveRootsAgainstOutput(ctx, tx, snapshot.OldRoot, moveSnapshot.NewRoot); err != nil {
+			return fmt.Errorf("enqueue tools move: %w", err)
+		}
+		if err := validateToolsMoveRootsAgainstWork(ctx, tx, snapshot.OldRoot, moveSnapshot.NewRoot); err != nil {
 			return fmt.Errorf("enqueue tools move: %w", err)
 		}
 		held, err := activeAnalysisInstallationHold(ctx, tx)
@@ -799,6 +805,9 @@ func (repository *SetupManagerRepository) checkInitialInstallationAdmission(ctx 
 
 func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Context, operationID uuid.UUID, oldRoot, newRoot string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockWorkDirectoryGate(ctx, tx); err != nil {
+			return fmt.Errorf("commit tools root move: lock work directory gate: %w", err)
+		}
 		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("commit tools root move: lock operation exclusivity: %w", err)
 		}
@@ -817,6 +826,9 @@ func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Contex
 			return fmt.Errorf("tools root move snapshot changed before switch")
 		}
 		if err := validateToolsMoveRootsAgainstOutput(ctx, tx, oldRoot, newRoot); err != nil {
+			return fmt.Errorf("switch tools root: %w", err)
+		}
+		if err := validateToolsMoveRootsAgainstWork(ctx, tx, oldRoot, newRoot); err != nil {
 			return fmt.Errorf("switch tools root: %w", err)
 		}
 		var currentRoot string
@@ -842,6 +854,9 @@ func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Contex
 
 func (repository *SetupManagerRepository) RollbackToolsRootMove(ctx context.Context, operationID uuid.UUID, oldRoot, newRoot string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockWorkDirectoryGate(ctx, tx); err != nil {
+			return fmt.Errorf("rollback tools root move: lock work directory gate: %w", err)
+		}
 		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("rollback tools root move: lock operation exclusivity: %w", err)
 		}
@@ -854,6 +869,9 @@ func (repository *SetupManagerRepository) RollbackToolsRootMove(ctx context.Cont
 			return fmt.Errorf("tools root move is not ready for rollback")
 		}
 		if err := validateToolsMoveRootsAgainstOutput(ctx, tx, oldRoot, newRoot); err != nil {
+			return fmt.Errorf("rollback tools root: %w", err)
+		}
+		if err := validateToolsMoveRootsAgainstWork(ctx, tx, oldRoot, newRoot); err != nil {
 			return fmt.Errorf("rollback tools root: %w", err)
 		}
 		var currentRoot string

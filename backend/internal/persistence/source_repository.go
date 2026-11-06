@@ -136,24 +136,32 @@ func (repository *SourceInventoryRepository) CreateSourceRoot(ctx context.Contex
 	if root.Status == "" {
 		root.Status = "unknown"
 	}
-	insert := repository.db.NewInsert().Model(root)
-	if root.ProcessingMode != "" {
-		// The in_place database default is transitional for pre-mode writers and
-		// migration fixtures; the source-root service always supplies a mode.
-		// ProcessingMode is scan-only on the model so empty legacy values leave
-		// the database default intact. Include every model column explicitly here
-		// because Bun's Value appends an expression rather than selecting the
-		// scan-only field from the model.
-		insert = insert.Column(
-			"id", "configured_path", "display_name", "processing_mode", "enabled",
-			"scan_generation", "inventory_path", "last_successful_scan_at",
-			"last_applied_operation_id", "status", "safe_error", "created_at", "updated_at",
-		)
-	}
-	if _, err := insert.Exec(ctx); err != nil {
-		return fmt.Errorf("create source root: %w", err)
-	}
-	return nil
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockWorkDirectoryGate(ctx, tx); err != nil {
+			return err
+		}
+		if err := validateSourceRootAgainstWorkDirectory(ctx, tx, root.ConfiguredPath); err != nil {
+			return err
+		}
+		insert := tx.NewInsert().Model(root)
+		if root.ProcessingMode != "" {
+			// The in_place database default is transitional for pre-mode writers and
+			// migration fixtures; the source-root service always supplies a mode.
+			// ProcessingMode is scan-only on the model so empty legacy values leave
+			// the database default intact. Include every model column explicitly here
+			// because Bun's Value appends an expression rather than selecting the
+			// scan-only field from the model.
+			insert = insert.Column(
+				"id", "configured_path", "display_name", "processing_mode", "enabled",
+				"scan_generation", "inventory_path", "last_successful_scan_at",
+				"last_applied_operation_id", "status", "safe_error", "created_at", "updated_at",
+			)
+		}
+		if _, err := insert.Exec(ctx); err != nil {
+			return fmt.Errorf("create source root: %w", err)
+		}
+		return nil
+	})
 }
 
 func (repository *SourceInventoryRepository) GetSourceRoot(ctx context.Context, id uuid.UUID) (*SourceRoot, error) {
@@ -195,6 +203,9 @@ func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context
 // lock makes the check atomic against a scan or analysis starting.
 func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, cas *SourceRoot) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockWorkDirectoryGate(ctx, tx); err != nil {
+			return err
+		}
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("update source root: lock fingerprint mutations: %w", err)
 		}
@@ -218,6 +229,9 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 			}
 		}
 		if cas.ConfiguredPath != current.ConfiguredPath {
+			if err := validateSourceRootAgainstWorkDirectory(ctx, tx, cas.ConfiguredPath); err != nil {
+				return err
+			}
 			held, err := sourceHoldExists(ctx, tx, current.ID, uuid.Nil, uuid.Nil)
 			if err != nil {
 				return fmt.Errorf("update source root: check publication holds: %w", err)

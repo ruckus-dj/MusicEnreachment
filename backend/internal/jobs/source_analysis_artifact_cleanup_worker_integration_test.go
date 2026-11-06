@@ -32,6 +32,9 @@ func TestSourceAnalysisArtifactCleanupWorkerPostgreSQL(t *testing.T) {
 	if err := runtimeSettings.SetOutputDirectory(ctx, outputRoot, t.TempDir()); err != nil {
 		t.Fatalf("set managed output directory: %v", err)
 	}
+	if err := settingsRepository.Set(ctx, settings.WorkDirectoryKey, outputRoot); err != nil {
+		t.Fatalf("set managed work directory: %v", err)
+	}
 
 	rootID, locationID, workID, creatorID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	creatorJobID := int64(781204)

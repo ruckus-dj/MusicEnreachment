@@ -96,5 +96,5 @@ func (s *SourceAnalysisArtifactCleanup) OutputDirectory(ctx context.Context) (st
 	if err != nil {
 		return "", fmt.Errorf("read output directory: %w", err)
 	}
-	return runtime.OutputDirectory, nil
+	return runtime.WorkDirectory, nil
 }

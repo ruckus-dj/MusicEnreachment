@@ -112,7 +112,7 @@ func TestSourceAnalysisWorkerPreservesSourceBytesAndMetadataWithPostgreSQL(t *te
 			if bound {
 				t.Fatal("staged artifact remains bound after successful settlement")
 			}
-			outputRoot, _, err := fixture.registry.GetOutputDirectory(ctx)
+			outputRoot, _, err := fixture.registry.GetWorkDirectory(ctx)
 			if err != nil {
 				t.Fatalf("read managed output root: %v", err)
 			}

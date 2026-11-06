@@ -14,9 +14,7 @@ import (
 	"github.com/uptrace/bun/migrate"
 )
 
-// The unpublished prototype keeps the five fresh-instance baselines as its
-// historical foundation. Later additive migrations apply on top and must not
-// be folded into the baseline identity.
+// The fresh-instance schema is represented by five ordered baseline migrations.
 var baselineMigrationNames = []string{
 	"20261015000001",
 	"20261015000002",
@@ -25,40 +23,7 @@ var baselineMigrationNames = []string{
 	"20261015000005",
 }
 
-var additiveMigrationNames = []string{
-	"20261017000001",
-	"20261017000002",
-	"20261017000003",
-	"20261017000004",
-	"20261017000005",
-	"20261017000006",
-	"20261017000007",
-	"20261018000001",
-	"20261020000001",
-	"20261021000001",
-	"20261022000001",
-	"20261023000001",
-	"20261024000001",
-	"20261025000001",
-	"20261025000002",
-	"20261026000001",
-	"20261027000001",
-	"20261028000001",
-	"20261029000001",
-	"20261029000002",
-	"20261029000003",
-	"20261030000001",
-	"20261030000002",
-	"20261030000003",
-	"20261030000004",
-	"20261030000005",
-	"20261030000006",
-	"20261030000007",
-	"20261031000001",
-	"20261101000001",
-}
-
-var currentMigrationNames = append(append([]string(nil), baselineMigrationNames...), additiveMigrationNames...)
+var currentMigrationNames = append([]string(nil), baselineMigrationNames...)
 
 func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 	t.Parallel()
@@ -115,11 +80,8 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	db := testpostgres.Open(t)
 	testpostgres.Reset(t, db)
 	ctx := context.Background()
-	// This test targets the baseline rollback guard. Additive down migrations
-	// run as separate transactions before the guarded baseline down file, so a
-	// full current collection would change the schema before the refusal. The
-	// current collection's clean rollback is covered by the test above.
-	collection := loadBaselineMigrations(t)
+	// The complete fresh-instance baseline has one atomic rollback group.
+	collection := loadMigrations(t)
 	assertMigrationInventory(t, collection, baselineMigrationNames)
 	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
 	if err := migrator.Init(ctx); err != nil {
@@ -196,18 +158,6 @@ func assertMigrationInventory(t *testing.T, collection *migrate.Migrations, want
 			t.Fatalf("discovered migration %d = %q, want %q", i, got[i].Name, name)
 		}
 	}
-}
-
-func loadBaselineMigrations(t *testing.T) *migrate.Migrations {
-	t.Helper()
-	baseline := migrate.NewMigrations()
-	for _, migration := range loadMigrations(t).Sorted() {
-		if slices.Contains(baselineMigrationNames, migration.Name) {
-			baseline.Add(migration)
-		}
-	}
-	assertMigrationInventory(t, baseline, baselineMigrationNames)
-	return baseline
 }
 
 func assertMigrationGroup(t *testing.T, group *migrate.MigrationGroup, want []string, direction string) {

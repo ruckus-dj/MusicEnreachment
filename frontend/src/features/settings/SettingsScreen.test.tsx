@@ -164,6 +164,29 @@ afterEach(() => {
 });
 
 describe("SettingsScreen", () => {
+  it("loads the staged work directory independently of the output directory", async () => {
+    const workDirectory = "/srv/staging-work";
+    server.use(
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: { ...settings.settings, work_directory: workDirectory },
+        }),
+      ),
+    );
+
+    render(<SettingsScreen />);
+
+    expect(
+      await screen.findByRole("textbox", {
+        name: "Work directory для staged-копий",
+      }),
+    ).toHaveValue(workDirectory);
+    expect(
+      screen.getByRole("textbox", { name: "Output directory" }),
+    ).toHaveValue("/srv/music");
+  });
+
   it("saves an explicit false SHA-256 value, waits for the save, then refreshes server state", async () => {
     let enabled = true;
     let releaseSave!: () => void;

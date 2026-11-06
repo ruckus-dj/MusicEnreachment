@@ -13,6 +13,7 @@ DECLARE
     work_hold_count bigint;
     tool_hold_count bigint;
     has_execution boolean;
+    retained_failed_publication boolean;
 BEGIN
     IF TG_TABLE_NAME = 'operation' THEN
         affected_operation_id := COALESCE(NEW.id, OLD.id);
@@ -29,8 +30,12 @@ BEGIN
         RAISE EXCEPTION 'operation tools_read_required must match its tool read holds';
     END IF;
     IF operation_row.source_analysis_mode IS NULL THEN
+        retained_failed_publication := operation_row.kind='publish_track_v1' AND operation_row.state='failed'
+            AND EXISTS (SELECT 1 FROM track_publication_attempt a WHERE a.operation_id=operation_row.id
+                AND a.position_id=(operation_row.input_snapshot->>'position_id')::uuid
+                AND a.epoch=(operation_row.input_snapshot->>'output_epoch')::uuid);
         IF work_hold_count <> 0 OR has_execution OR
-           (operation_row.state NOT IN ('queued', 'running') AND tool_hold_count <> 0) THEN
+           (operation_row.state NOT IN ('queued', 'running') AND tool_hold_count <> 0 AND NOT retained_failed_publication) THEN
             RAISE EXCEPTION 'non-analysis operation cannot retain work holds or execution, and terminal operations cannot retain tool holds';
         END IF;
         RETURN NULL;
