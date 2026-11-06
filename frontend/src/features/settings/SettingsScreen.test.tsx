@@ -189,14 +189,13 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     const toggle = await screen.findByLabelText("Вычислять SHA-256");
-    fireEvent.click(toggle);
     const response = nextResponseFor("/api/settings/sha256", "PUT");
-    fireEvent.click(screen.getByRole("button", { name: "Сохранить SHA-256" }));
+    fireEvent.click(toggle);
     await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
     expect(screen.getByText("Выполняется запрос…")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Сохранить SHA-256" }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: "Сохранить SHA-256" }),
+    ).not.toBeInTheDocument();
     releaseSave();
     await response;
     await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
@@ -205,5 +204,483 @@ describe("SettingsScreen", () => {
     expect(
       screen.getByText("Настройка SHA-256 сохранена."),
     ).toBeInTheDocument();
+  });
+
+  it("autosaves publication format and log level without saving an unrelated concurrency draft", async () => {
+    let publicationFormat = "mka";
+    let logLevel = "info";
+    const runtimeWrites = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as { publication_format: string };
+      expect(body).toEqual({ publication_format: "m4a" });
+      publicationFormat = body.publication_format;
+      return new HttpResponse(null, { status: 204 });
+    });
+    const logWrites = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as { level: string };
+      expect(body).toEqual({ level: "debug" });
+      logLevel = body.level;
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.put("/api/settings/runtime", runtimeWrites),
+      http.put("/api/settings/log-level", logWrites),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            publication_format: publicationFormat,
+            log_level: logLevel,
+          },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const concurrency = await screen.findByLabelText("Одновременные файлы");
+    fireEvent.change(concurrency, { target: { value: "8" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByText(/M4A сохраняет AAC и ALAC без перекодирования/),
+    ).toHaveAttribute("role", "note");
+    expect(concurrency).toHaveValue(8);
+    const shaCheckbox = screen.getByLabelText("Вычислять SHA-256");
+    expect(shaCheckbox).toHaveAttribute("aria-describedby", "sha256-help");
+    expect(
+      screen.getByText(/Настройка применяется к последующим анализам/),
+    ).toBeInTheDocument();
+    expect(concurrency).toHaveAttribute(
+      "aria-describedby",
+      "source-file-concurrency-help",
+    );
+    expect(
+      screen.getByText(/Положительное целое число файлов/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Есть несохранённое изменение параллельности."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Log level/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "debug" }));
+    await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
+    expect(runtimeWrites).toHaveBeenCalledTimes(1);
+    expect(logWrites).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries an explicit false SHA-256 value without requiring a different toggle selection", async () => {
+    let fail = true;
+    let enabled = true;
+    const bodies: unknown[] = [];
+    const writes = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as { enabled: boolean };
+      bodies.push(body);
+      if (fail)
+        return HttpResponse.json(
+          { message: "temporarily unavailable" },
+          { status: 500 },
+        );
+      enabled = body.enabled;
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.put("/api/settings/sha256", writes),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: { ...settings.settings, sha256_enabled: enabled },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const toggle = await screen.findByLabelText("Вычислять SHA-256");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    fail = false;
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Повторить сохранение: SHA-256 (выключено)",
+      }),
+    );
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(2));
+    expect(bodies).toEqual([{ enabled: false }, { enabled: false }]);
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("offers a retry for a failed publication-format write using the captured value", async () => {
+    let fail = true;
+    let format = "mka";
+    const bodies: unknown[] = [];
+    const writes = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as { publication_format: string };
+      bodies.push(body);
+      if (fail)
+        return HttpResponse.json({ message: "write failed" }, { status: 500 });
+      format = body.publication_format;
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.put("/api/settings/runtime", writes),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: { ...settings.settings, publication_format: format },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    await screen.findByLabelText("Одновременные файлы");
+    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole("button", {
+        name: "Повторить сохранение: формат публикации (M4A)",
+      }),
+    ).toBeInTheDocument();
+
+    fail = false;
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Повторить сохранение: формат публикации (M4A)",
+      }),
+    );
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(2));
+    expect(bodies).toEqual([
+      { publication_format: "m4a" },
+      { publication_format: "m4a" },
+    ]);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Publication format/ }),
+      ).toHaveTextContent("M4A"),
+    );
+  });
+
+  it("does not expose a retry for an older failed selection after a newer choice succeeds", async () => {
+    const failFirst = true;
+    let releaseFirst!: () => void;
+    const firstReady = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let format = "mka";
+    const bodies: unknown[] = [];
+    const writes = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as { publication_format: string };
+      bodies.push(body);
+      if (bodies.length === 1) {
+        await firstReady;
+        if (failFirst)
+          return HttpResponse.json(
+            { message: "stale write failed" },
+            { status: 500 },
+          );
+      }
+      format = body.publication_format;
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.put("/api/settings/runtime", writes),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: { ...settings.settings, publication_format: format },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    await screen.findByLabelText("Одновременные файлы");
+    const formatButton = screen.getByRole("button", {
+      name: /Publication format/,
+    });
+    fireEvent.click(formatButton);
+    fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(formatButton);
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Исходный формат" }),
+    );
+    releaseFirst();
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(2));
+    expect(bodies).toEqual([
+      { publication_format: "m4a" },
+      { publication_format: "source" },
+    ]);
+    await waitFor(() =>
+      expect(formatButton).toHaveTextContent("Исходный формат"),
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "Повторить сохранение: формат публикации (M4A)",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("retries a failed log-level confirmation read without repeating its accepted PUT", async () => {
+    let reads = 0;
+    const logWrites = vi.fn(async ({ request }: { request: Request }) => {
+      expect(await request.json()).toEqual({ level: "debug" });
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.put("/api/settings/log-level", logWrites),
+      http.get("/api/settings", () => {
+        reads += 1;
+        if (reads === 2)
+          return HttpResponse.json({ message: "read failed" }, { status: 500 });
+        return json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            log_level: reads > 2 ? "debug" : "info",
+          },
+        });
+      }),
+    );
+    render(<SettingsScreen />);
+    await screen.findByLabelText("Одновременные файлы");
+    fireEvent.click(screen.getByRole("button", { name: /Log level/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "debug" }));
+    await waitFor(() => expect(reads).toBe(2));
+    expect(logWrites).toHaveBeenCalledTimes(1);
+    const retry = screen.getByRole("button", {
+      name: "Повторить подтверждение: уровень журнала (debug)",
+    });
+    expect(retry).toBeInTheDocument();
+
+    fireEvent.click(retry);
+    await waitFor(() => expect(reads).toBe(3));
+    expect(logWrites).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("button", {
+        name: "Повторить подтверждение: уровень журнала (debug)",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps numeric saves gated until concurrent general autosaves and their reads finish", async () => {
+    let sourceConcurrency = 4;
+    let shaEnabled = true;
+    let releaseFirstSave!: () => void;
+    const firstSaveReady = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve;
+    });
+    const runtimeBodies: unknown[] = [];
+    const runtimeWrites = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as {
+        source_file_concurrency?: number;
+      };
+      runtimeBodies.push(body);
+      if (runtimeBodies.length === 1) await firstSaveReady;
+      if (body.source_file_concurrency !== undefined)
+        sourceConcurrency = body.source_file_concurrency;
+      return new HttpResponse(null, { status: 204 });
+    });
+    const shaWrites = vi.fn(async ({ request }: { request: Request }) => {
+      expect(await request.json()).toEqual({ enabled: false });
+      shaEnabled = false;
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.put("/api/settings/runtime", runtimeWrites),
+      http.put("/api/settings/sha256", shaWrites),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            source_file_concurrency: sourceConcurrency,
+            sha256_enabled: shaEnabled,
+          },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const concurrency = await screen.findByLabelText("Одновременные файлы");
+    fireEvent.change(concurrency, { target: { value: "5" } });
+    const saveConcurrency = screen.getByRole("button", {
+      name: "Сохранить параллельность",
+    });
+    fireEvent.click(saveConcurrency);
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByLabelText("Вычислять SHA-256"));
+    await waitFor(() => expect(shaWrites).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.getByText("Настройка SHA-256 сохранена."),
+      ).toBeInTheDocument(),
+    );
+    expect(saveConcurrency).toBeDisabled();
+    fireEvent.click(saveConcurrency);
+    expect(runtimeWrites).toHaveBeenCalledTimes(1);
+
+    releaseFirstSave();
+    await waitFor(() => expect(saveConcurrency).toBeEnabled());
+    fireEvent.change(concurrency, { target: { value: "6" } });
+    fireEvent.click(saveConcurrency);
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(2));
+    expect(runtimeBodies).toEqual([
+      { source_file_concurrency: 5 },
+      { source_file_concurrency: 6 },
+    ]);
+  });
+
+  it("serializes accepted autosaves across remount and lets a fresh choice win", async () => {
+    let format = "mka";
+    let level = "info";
+    let releaseFormat!: () => void;
+    const formatReady = new Promise<void>((resolve) => {
+      releaseFormat = resolve;
+    });
+    const runtimeBodies: unknown[] = [];
+    const runtimeWrites = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as { publication_format: string };
+      runtimeBodies.push(body);
+      if (runtimeBodies.length === 1) await formatReady;
+      format = body.publication_format;
+      return new HttpResponse(null, { status: 204 });
+    });
+    const logWrites = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as { level: string };
+      level = body.level;
+      return new HttpResponse(null, { status: 204 });
+    });
+    const settingsReads = vi.fn(() => {
+      return json({
+        ...settings,
+        settings: {
+          ...settings.settings,
+          publication_format: format,
+          log_level: level,
+        },
+      });
+    });
+    const installationReads = vi.fn(({ request }: { request: Request }) => {
+      const kind = new URL(request.url).searchParams.get("package_kind");
+      return json({
+        installations: [activeFF, activeFP].filter(
+          (item) => item.package_kind === kind,
+        ),
+      });
+    });
+    server.use(
+      http.get("/api/settings", settingsReads),
+      http.get("/api/tools/installations", installationReads),
+      http.put("/api/settings/runtime", runtimeWrites),
+      http.put("/api/settings/log-level", logWrites),
+    );
+
+    const oldView = render(<SettingsScreen />);
+    await screen.findByLabelText("Одновременные файлы");
+    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: /Log level/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "debug" }));
+    expect(screen.getByRole("button", { name: /Log level/ })).toHaveTextContent(
+      "debug",
+    );
+    expect(logWrites).not.toHaveBeenCalled();
+
+    oldView.unmount();
+    render(<SettingsScreen />);
+    await waitFor(() => expect(installationReads).toHaveBeenCalledTimes(4));
+    expect(settingsReads).toHaveBeenCalledTimes(1);
+
+    releaseFormat();
+    await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(settingsReads).toHaveBeenCalledTimes(4));
+    await screen.findByLabelText("Одновременные файлы");
+    expect(
+      screen.getByRole("button", { name: /Publication format/ }),
+    ).toHaveTextContent("M4A");
+    expect(screen.getByRole("button", { name: /Log level/ })).toHaveTextContent(
+      "debug",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Исходный формат" }),
+    );
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(settingsReads).toHaveBeenCalledTimes(5));
+    expect(runtimeBodies).toEqual([
+      { publication_format: "m4a" },
+      { publication_format: "source" },
+    ]);
+    expect(
+      screen.getByRole("button", { name: /Publication format/ }),
+    ).toHaveTextContent("Исходный формат");
+  });
+
+  it("continues queued autosaves and initial loading after an earlier write fails", async () => {
+    let level = "info";
+    let releaseFormat!: () => void;
+    const formatReady = new Promise<void>((resolve) => {
+      releaseFormat = resolve;
+    });
+    const runtimeWrites = vi.fn(async () => {
+      await formatReady;
+      return HttpResponse.json(
+        { message: "format write failed" },
+        { status: 500 },
+      );
+    });
+    const logWrites = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as { level: string };
+      level = body.level;
+      return new HttpResponse(null, { status: 204 });
+    });
+    const settingsReads = vi.fn(() => {
+      return json({
+        ...settings,
+        settings: { ...settings.settings, log_level: level },
+      });
+    });
+    const installationReads = vi.fn(({ request }: { request: Request }) => {
+      const kind = new URL(request.url).searchParams.get("package_kind");
+      return json({
+        installations: [activeFF, activeFP].filter(
+          (item) => item.package_kind === kind,
+        ),
+      });
+    });
+    server.use(
+      http.get("/api/settings", settingsReads),
+      http.get("/api/tools/installations", installationReads),
+      http.put("/api/settings/runtime", runtimeWrites),
+      http.put("/api/settings/log-level", logWrites),
+    );
+
+    const oldView = render(<SettingsScreen />);
+    await screen.findByLabelText("Одновременные файлы");
+    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: /Log level/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "debug" }));
+    oldView.unmount();
+    render(<SettingsScreen />);
+    await waitFor(() => expect(installationReads).toHaveBeenCalledTimes(4));
+    expect(settingsReads).toHaveBeenCalledTimes(1);
+
+    releaseFormat();
+    await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(settingsReads).toHaveBeenCalledTimes(3));
+    await screen.findByLabelText("Одновременные файлы");
+    expect(screen.getByRole("button", { name: /Log level/ })).toHaveTextContent(
+      "debug",
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "Повторить сохранение: формат публикации (M4A)",
+      }),
+    ).not.toBeInTheDocument();
   });
 });

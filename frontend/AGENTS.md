@@ -65,6 +65,10 @@ fixture: Node 24 may not expose `window.localStorage` in the test environment.
 
 **Dev proxy**: Vite proxies /api and /health to 127.0.0.1:8080 for same-origin during dev.
 
+**Browser API fixtures**: Anchor Playwright interception to the origin's `/api/`
+prefix. A broad `**/api/**` also matches Vite's `/src/api/generated/client.ts`
+module request and can break application bootstrap instead of mocking the API.
+
 **Build output**: Vite builds to ../build/frontend; tools/stage-frontend.mjs stages it; backend embeds it via internal/static.
 
 **Hash routing**: Uses hash router (#/setup, #/settings) for embedded static serving without backend routing.

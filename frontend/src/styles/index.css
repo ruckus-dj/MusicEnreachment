@@ -10,7 +10,10 @@
   --muted: #59675d;
   --line: #d7ded5;
   --control: #7c8a7e;
+  --radius: 5px;
+  --control-radius: 4px;
   --accent: #226740;
+  --focus: var(--accent);
   --accent-soft: #e5f1e7;
   --button: #226740;
   --button-text: #ffffff;
@@ -32,6 +35,7 @@
   --line: #354138;
   --control: #718376;
   --accent: #83dca0;
+  --focus: var(--accent);
   --accent-soft: #233e2c;
   --button: #83dca0;
   --button-text: #112419;

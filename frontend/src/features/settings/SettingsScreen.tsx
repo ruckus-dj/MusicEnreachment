@@ -51,11 +51,13 @@ import {
   preflightManagedToolInstall,
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
+import { SettingsGeneralSection } from "./SettingsGeneralSection";
 import "../setup/setup.css";
 import "./settings.css";
 
 const catalogCheckedKey = "melotrove.catalog-checked-at";
 const cooldownMs = 24 * 60 * 60 * 1000;
+let generalSettingsQueue: Promise<void> = Promise.resolve();
 type Kind = InstallationActionInputBodyPackageKind;
 type InstallPlan = { kind: Kind; release: string; plan: InstallPreflightBody };
 type MovePlan = {
@@ -66,6 +68,16 @@ type MovePlan = {
   sessionRevision: number;
   requestRevision: number;
   plan: MovePreflightBody;
+};
+type GeneralSettingKey = "publicationFormat" | "sha256" | "logLevel";
+type GeneralFailurePhase = "write" | "confirm";
+type GeneralSettingFailure = {
+  revision: number;
+  phase: GeneralFailurePhase;
+  value:
+    | UpdateSettingsBodyPublicationFormat
+    | boolean
+    | UpdateLogLevelBodyLevel;
 };
 
 type SectionDraft<T> = {
@@ -119,8 +131,9 @@ function useSectionDraft<T>(equal: (left: T, right: T) => boolean = Object.is) {
   const beginSave = useCallback((revision: number) => {
     pendingRevision.current = revision;
   }, []);
-  const endSave = useCallback(() => {
-    pendingRevision.current = undefined;
+  const endSave = useCallback((revision: number) => {
+    if (pendingRevision.current === revision)
+      pendingRevision.current = undefined;
   }, []);
   const acknowledge = useCallback((value: T, revision: number) => {
     const previous = current.current;
@@ -215,6 +228,11 @@ export function SettingsScreen() {
   const [removeOld, setRemoveOld] = useState(false);
   const [movePlan, setMovePlan] = useState<MovePlan>();
   const [busy, setBusy] = useState(false);
+  const [generalPendingCount, setGeneralPendingCount] = useState(0);
+  const generalPending = useRef(0);
+  const [generalFailures, setGeneralFailures] = useState<
+    Partial<Record<GeneralSettingKey, GeneralSettingFailure>>
+  >({});
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [installDialogError, setInstallDialogError] = useState("");
@@ -251,6 +269,8 @@ export function SettingsScreen() {
   const installPendingRequest = useRef(0);
   const installStartRevision = useRef(0);
   const moveStartRevision = useRef(0);
+  const effectiveBusy = busy || generalPendingCount > 0;
+  const isEffectivelyBusy = () => busy || generalPending.current > 0;
 
   const restoreDialogFocus = useCallback(() => {
     const trigger = dialogReturnFocusRef.current;
@@ -412,6 +432,7 @@ export function SettingsScreen() {
 
   const loadScreen = useCallback(async () => {
     if (!mountedRef.current || screenLoadInFlight.current) return;
+    const generalSettingsBarrier = generalSettingsQueue;
     screenLoadInFlight.current = true;
     const generation = ++screenLoadGeneration.current;
     const isCurrent = () =>
@@ -420,7 +441,7 @@ export function SettingsScreen() {
     setInitialLoadComplete(false);
     try {
       const results = await Promise.allSettled([
-        refreshState(undefined, isCurrent),
+        generalSettingsBarrier.then(() => refreshState(undefined, isCurrent)),
         refreshInstallations(isCurrent),
         refreshOperations(isCurrent),
       ]);
@@ -477,12 +498,18 @@ export function SettingsScreen() {
       !installDialog &&
       !moveDialog &&
       !outputDialog &&
-      !busy
+      !effectiveBusy
     ) {
       dialogFocusRestorePending.current = false;
       restoreDialogFocus();
     }
-  }, [busy, installDialog, moveDialog, outputDialog, restoreDialogFocus]);
+  }, [
+    effectiveBusy,
+    installDialog,
+    moveDialog,
+    outputDialog,
+    restoreDialogFocus,
+  ]);
   useLayoutEffect(() => {
     if (installDialog) showSettingsDialog(installDialogRef.current);
   }, [installDialog]);
@@ -542,16 +569,33 @@ export function SettingsScreen() {
     capture: () => C,
     acknowledge: (fresh: SetupStateBody, revision: number) => void,
     beginDraftSave: (revision: number) => void,
-    endDraftSave: () => void,
+    endDraftSave: (revision: number) => void,
+    capturedDraft?: C,
+    saveAlreadyStarted = false,
+    manageBusy = true,
+    onFailure?: (
+      savedDraft: C,
+      phase: GeneralFailurePhase,
+      reason: unknown,
+    ) => boolean,
+    shouldAnnounce?: (savedDraft: C) => boolean,
+    originatingGeneration = mountGeneration.current,
   ) {
-    const savedDraft = capture();
-    beginDraftSave(savedDraft.revision);
-    setBusy(true);
-    setError("");
-    setNotice("");
+    const savedDraft = capturedDraft ?? capture();
+    const generation = originatingGeneration;
+    const isCurrent = () =>
+      mountedRef.current && mountGeneration.current === generation;
+    if (!saveAlreadyStarted) beginDraftSave(savedDraft.revision);
+    if (manageBusy && isCurrent()) setBusy(true);
+    if (isCurrent()) {
+      setError("");
+      setNotice("");
+    }
+    let phase: GeneralFailurePhase = "write";
     try {
       const response = await action(savedDraft);
       successful(response, status);
+      phase = "confirm";
       try {
         await refreshState((fresh) => acknowledge(fresh, savedDraft.revision));
       } catch (reason) {
@@ -559,17 +603,300 @@ export function SettingsScreen() {
           `Настройки приняты сервером, но не удалось подтвердить их чтением: ${message(reason)}`,
         );
       }
-      setNotice(successText);
+      if (isCurrent() && (shouldAnnounce?.(savedDraft) ?? true))
+        setNotice(successText);
     } catch (reason) {
-      setError(message(reason));
+      const report = isCurrent()
+        ? (onFailure?.(savedDraft, phase, reason) ?? true)
+        : false;
+      if (isCurrent() && report) setError(message(reason));
     } finally {
-      endDraftSave();
-      setBusy(false);
+      endDraftSave(savedDraft.revision);
+      if (manageBusy && isCurrent()) setBusy(false);
     }
   }
 
+  function mutateGeneral<
+    T extends { status: number },
+    C extends { revision: number },
+  >(
+    action: (saved: C) => Promise<T>,
+    status: T["status"],
+    successText: string,
+    capture: () => C,
+    acknowledge: (fresh: SetupStateBody, revision: number) => void,
+    beginDraftSave: (revision: number) => void,
+    endDraftSave: (revision: number) => void,
+    onFailure: (
+      savedDraft: C,
+      phase: GeneralFailurePhase,
+      reason: unknown,
+    ) => boolean,
+    shouldAnnounce: (savedDraft: C) => boolean,
+  ) {
+    const generation = mountGeneration.current;
+    const savedDraft = capture();
+    beginDraftSave(savedDraft.revision);
+    generalPending.current += 1;
+    if (mountedRef.current) setGeneralPendingCount(generalPending.current);
+    const request = generalSettingsQueue.then(() =>
+      mutate(
+        action,
+        status,
+        successText,
+        capture,
+        acknowledge,
+        beginDraftSave,
+        endDraftSave,
+        savedDraft,
+        true,
+        false,
+        onFailure,
+        shouldAnnounce,
+        generation,
+      ),
+    );
+    const settled = request.finally(() => {
+      generalPending.current -= 1;
+      if (mountedRef.current && mountGeneration.current === generation)
+        setGeneralPendingCount(generalPending.current);
+    });
+    generalSettingsQueue = settled.then(
+      () => undefined,
+      () => undefined,
+    );
+    return settled;
+  }
+
+  function savePublicationFormat(value: UpdateSettingsBodyPublicationFormat) {
+    publicationFormat.update(value);
+    clearGeneralFailure("publicationFormat");
+    void mutateGeneral(
+      (savedDraft) =>
+        updateSettings({
+          publication_format: savedDraft.value ?? value,
+        }),
+      204,
+      "Формат публикации сохранён.",
+      publicationFormat.capture,
+      (fresh, revision) =>
+        publicationFormat.acknowledge(
+          fresh.settings.publication_format === "source"
+            ? "source"
+            : fresh.settings.publication_format === "m4a"
+              ? "m4a"
+              : "mka",
+          revision,
+        ),
+      publicationFormat.beginSave,
+      publicationFormat.endSave,
+      (savedDraft, phase) =>
+        recordGeneralFailure(
+          "publicationFormat",
+          savedDraft.revision,
+          savedDraft.value ?? value,
+          phase,
+          publicationFormat.capture().revision,
+        ),
+      (savedDraft) =>
+        publicationFormat.capture().revision === savedDraft.revision,
+    );
+  }
+
+  function saveSha256(enabled: boolean) {
+    sha256.update(enabled);
+    clearGeneralFailure("sha256");
+    void mutateGeneral(
+      (savedDraft) =>
+        updateSha256Setting({
+          enabled: savedDraft.value ?? state?.settings.sha256_enabled ?? true,
+        }),
+      204,
+      "Настройка SHA-256 сохранена.",
+      sha256.capture,
+      (fresh, revision) =>
+        sha256.acknowledge(fresh.settings.sha256_enabled, revision),
+      sha256.beginSave,
+      sha256.endSave,
+      (savedDraft, phase) =>
+        recordGeneralFailure(
+          "sha256",
+          savedDraft.revision,
+          savedDraft.value ?? enabled,
+          phase,
+          sha256.capture().revision,
+        ),
+      (savedDraft) => sha256.capture().revision === savedDraft.revision,
+    );
+  }
+
+  function saveLogLevel(value: UpdateLogLevelBodyLevel) {
+    logLevel.update(value);
+    clearGeneralFailure("logLevel");
+    void mutateGeneral(
+      (savedDraft) =>
+        updateLogLevel({
+          level:
+            savedDraft.value ??
+            (state?.settings.log_level as UpdateLogLevelBodyLevel) ??
+            "info",
+        }),
+      204,
+      "Уровень журнала применён.",
+      logLevel.capture,
+      (fresh, revision) =>
+        logLevel.acknowledge(
+          fresh.settings.log_level as UpdateLogLevelBodyLevel,
+          revision,
+        ),
+      logLevel.beginSave,
+      logLevel.endSave,
+      (savedDraft, phase) =>
+        recordGeneralFailure(
+          "logLevel",
+          savedDraft.revision,
+          savedDraft.value ?? value,
+          phase,
+          logLevel.capture().revision,
+        ),
+      (savedDraft) => logLevel.capture().revision === savedDraft.revision,
+    );
+  }
+
+  function recordGeneralFailure(
+    setting: GeneralSettingKey,
+    revision: number,
+    value: GeneralSettingFailure["value"],
+    phase: GeneralFailurePhase,
+    currentRevision: number,
+  ) {
+    if (revision !== currentRevision) return false;
+    setGeneralFailures((previous) => ({
+      ...previous,
+      [setting]: { revision, value, phase },
+    }));
+    return true;
+  }
+
+  function clearGeneralFailure(setting: GeneralSettingKey) {
+    setGeneralFailures((previous) => {
+      if (!previous[setting]) return previous;
+      const next = { ...previous };
+      delete next[setting];
+      return next;
+    });
+  }
+
+  function retryGeneralFailure(setting: GeneralSettingKey) {
+    const failure = generalFailures[setting];
+    if (!failure) return;
+    const currentRevision = () => {
+      switch (setting) {
+        case "publicationFormat":
+          return publicationFormat.capture().revision;
+        case "sha256":
+          return sha256.capture().revision;
+        case "logLevel":
+          return logLevel.capture().revision;
+      }
+    };
+    if (currentRevision() !== failure.revision) {
+      clearGeneralFailure(setting);
+      return;
+    }
+    if (failure.phase === "write") {
+      switch (setting) {
+        case "publicationFormat":
+          savePublicationFormat(
+            failure.value as UpdateSettingsBodyPublicationFormat,
+          );
+          return;
+        case "sha256":
+          saveSha256(failure.value as boolean);
+          return;
+        case "logLevel":
+          saveLogLevel(failure.value as UpdateLogLevelBodyLevel);
+          return;
+      }
+    }
+
+    const generation = mountGeneration.current;
+    generalPending.current += 1;
+    if (mountedRef.current) setGeneralPendingCount(generalPending.current);
+    const request = generalSettingsQueue.then(async () => {
+      if (
+        !mountedRef.current ||
+        mountGeneration.current !== generation ||
+        currentRevision() !== failure.revision
+      )
+        return;
+      setError("");
+      setNotice("");
+      try {
+        await refreshState((fresh) => {
+          switch (setting) {
+            case "publicationFormat":
+              publicationFormat.acknowledge(
+                fresh.settings.publication_format === "source"
+                  ? "source"
+                  : fresh.settings.publication_format === "m4a"
+                    ? "m4a"
+                    : "mka",
+                failure.revision,
+              );
+              break;
+            case "sha256":
+              sha256.acknowledge(
+                fresh.settings.sha256_enabled,
+                failure.revision,
+              );
+              break;
+            case "logLevel":
+              logLevel.acknowledge(
+                fresh.settings.log_level as UpdateLogLevelBodyLevel,
+                failure.revision,
+              );
+              break;
+          }
+        });
+        if (
+          mountedRef.current &&
+          mountGeneration.current === generation &&
+          currentRevision() === failure.revision
+        ) {
+          setGeneralFailures((previous) => {
+            if (previous[setting]?.revision !== failure.revision)
+              return previous;
+            const next = { ...previous };
+            delete next[setting];
+            return next;
+          });
+          setNotice("Настройка подтверждена сервером.");
+        }
+      } catch (reason) {
+        if (
+          mountedRef.current &&
+          mountGeneration.current === generation &&
+          currentRevision() === failure.revision
+        )
+          setError(
+            `Настройка принята сервером, но не удалось подтвердить её чтением: ${message(reason)}`,
+          );
+      }
+    });
+    const settled = request.finally(() => {
+      generalPending.current -= 1;
+      if (mountedRef.current && mountGeneration.current === generation)
+        setGeneralPendingCount(generalPending.current);
+    });
+    generalSettingsQueue = settled.then(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
   function closeOutputDialog(force = false) {
-    if (busy && !force) return;
+    if (isEffectivelyBusy() && !force) return;
     dialogFocusRestorePending.current = true;
     setOutputDialogError("");
     setOutputDialog(false);
@@ -582,7 +909,7 @@ export function SettingsScreen() {
   );
 
   async function confirmOutputDirectory() {
-    if (busy || runningOperation) return;
+    if (isEffectivelyBusy() || runningOperation) return;
     const savedDraft = outputDirectory.capture();
     const output = savedDraft.value;
     if (output === undefined) return;
@@ -609,13 +936,13 @@ export function SettingsScreen() {
     } catch (reason) {
       setOutputDialogError(message(reason));
     } finally {
-      outputDirectory.endSave();
+      outputDirectory.endSave(savedDraft.revision);
       setBusy(false);
     }
   }
 
   async function saveAcoustIDApplicationKey() {
-    if (busy || acoustIDApplicationKey.length === 0) return;
+    if (isEffectivelyBusy() || acoustIDApplicationKey.length === 0) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -635,7 +962,7 @@ export function SettingsScreen() {
   }
 
   async function deleteAcoustIDApplicationKey() {
-    if (busy) return;
+    if (isEffectivelyBusy()) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -710,7 +1037,7 @@ export function SettingsScreen() {
     } catch (reason) {
       setError(message(reason));
     } finally {
-      musicBrainz.endSave();
+      musicBrainz.endSave(savedDraft.revision);
       setBusy(false);
     }
   }
@@ -1050,7 +1377,7 @@ export function SettingsScreen() {
         После завершения Setup проблемы конфигурации отображаются здесь и не
         возвращают приложение в мастер.
       </p>
-      {busy && <p role="status">Выполняется запрос…</p>}
+      {effectiveBusy && <p role="status">Выполняется запрос…</p>}
       {!initialLoadComplete && !loadError && (
         <p role="status">Загрузка настроек и состояния сервера…</p>
       )}
@@ -1059,7 +1386,10 @@ export function SettingsScreen() {
           <p ref={loadErrorAlert} tabIndex={-1} role="alert">
             Не удалось загрузить настройки и состояние сервера: {loadError}
           </p>
-          <AppButton isDisabled={busy} onPress={() => void loadScreen()}>
+          <AppButton
+            isDisabled={effectiveBusy}
+            onPress={() => void loadScreen()}
+          >
             Повторить загрузку
           </AppButton>
         </>
@@ -1090,6 +1420,89 @@ export function SettingsScreen() {
               </p>
             )}
           </section>
+          <SettingsGeneralSection
+            publicationFormat={publicationFormat.value ?? "mka"}
+            onPublicationFormatChange={savePublicationFormat}
+            sourceFileConcurrency={
+              sourceFileConcurrency.value ??
+              String(state.settings.source_file_concurrency)
+            }
+            concurrencyInvalid={
+              sourceFileConcurrency.value !== undefined &&
+              !validConcurrency(sourceFileConcurrency.value)
+            }
+            concurrencySavingDisabled={effectiveBusy}
+            concurrencyDirty={sourceFileConcurrency.dirty}
+            onConcurrencyChange={sourceFileConcurrency.update}
+            onSaveConcurrency={() => {
+              if (isEffectivelyBusy()) return;
+              void mutate(
+                (savedDraft) =>
+                  updateSettings({
+                    source_file_concurrency: Number(savedDraft.value),
+                  }),
+                204,
+                "Параллельность анализа сохранена.",
+                sourceFileConcurrency.capture,
+                (fresh, revision) =>
+                  sourceFileConcurrency.acknowledge(
+                    String(fresh.settings.source_file_concurrency),
+                    revision,
+                  ),
+                sourceFileConcurrency.beginSave,
+                sourceFileConcurrency.endSave,
+              );
+            }}
+            sha256Enabled={sha256.value ?? state.settings.sha256_enabled}
+            onSha256Change={saveSha256}
+            logLevel={logLevel.value ?? "info"}
+            onLogLevelChange={saveLogLevel}
+          />
+          {(["publicationFormat", "sha256", "logLevel"] as const).map(
+            (setting) => {
+              const failure = generalFailures[setting];
+              if (!failure) return null;
+              const label =
+                setting === "publicationFormat"
+                  ? "формат публикации"
+                  : setting === "sha256"
+                    ? "SHA-256"
+                    : "уровень журнала";
+              const value =
+                setting === "publicationFormat"
+                  ? failure.value === "source"
+                    ? "Исходный формат"
+                    : failure.value === "m4a"
+                      ? "M4A"
+                      : "MKA remux"
+                  : setting === "sha256"
+                    ? failure.value
+                      ? "включено"
+                      : "выключено"
+                    : String(failure.value);
+              return (
+                <fieldset
+                  key={setting}
+                  className="grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3"
+                  aria-label={`Повторное сохранение: ${label}`}
+                >
+                  <p className="m-0" role="status">
+                    {failure.phase === "write"
+                      ? `Не удалось сохранить ${label}: ${value}.`
+                      : `Значение ${label} (${value}) принято сервером, но чтение для подтверждения не удалось.`}
+                  </p>
+                  <AppButton
+                    isDisabled={effectiveBusy}
+                    onPress={() => retryGeneralFailure(setting)}
+                  >
+                    {failure.phase === "write"
+                      ? `Повторить сохранение: ${label} (${value})`
+                      : `Повторить подтверждение: ${label} (${value})`}
+                  </AppButton>
+                </fieldset>
+              );
+            },
+          )}
           <div className="settings-grid">
             <section
               aria-labelledby="runtime-title"
@@ -1101,63 +1514,11 @@ export function SettingsScreen() {
                 label="Output directory"
                 value={outputDirectory.value ?? ""}
                 onSelect={outputDirectory.update}
-                disabled={busy}
+                disabled={effectiveBusy}
               />
-              <label>
-                Publication format
-                <select
-                  value={publicationFormat.value ?? "mka"}
-                  onChange={(event) =>
-                    publicationFormat.update(
-                      event.target.value as UpdateSettingsBodyPublicationFormat,
-                    )
-                  }
-                >
-                  <option value="source">Исходный формат</option>
-                  <option value="mka">MKA remux</option>
-                  <option value="m4a">M4A</option>
-                </select>
-              </label>
-              {publicationFormat.value === "m4a" && (
-                <p role="note">
-                  M4A сохраняет AAC и ALAC без перекодирования; другие lossless
-                  кодируются в ALAC, другие lossy — в AAC с потерями.
-                </p>
-              )}
-              {(outputDirectory.dirty || publicationFormat.dirty) && (
+              {outputDirectory.dirty && (
                 <p>Есть несохранённые изменения публикации.</p>
               )}
-              <AppButton
-                isDisabled={busy}
-                onPress={() =>
-                  void mutate(
-                    (savedDraft) =>
-                      updateSettings({
-                        publication_format:
-                          savedDraft.value ??
-                          (state.settings.publication_format === "source"
-                            ? "source"
-                            : "mka"),
-                      }),
-                    204,
-                    "Формат публикации сохранён.",
-                    publicationFormat.capture,
-                    (fresh, revision) =>
-                      publicationFormat.acknowledge(
-                        fresh.settings.publication_format === "source"
-                          ? "source"
-                          : fresh.settings.publication_format === "m4a"
-                            ? "m4a"
-                            : "mka",
-                        revision,
-                      ),
-                    publicationFormat.beginSave,
-                    publicationFormat.endSave,
-                  )
-                }
-              >
-                Сохранить формат
-              </AppButton>
               <label>
                 Шаблон пути публикации
                 <input
@@ -1181,7 +1542,7 @@ export function SettingsScreen() {
                 <p>Есть несохранённый шаблон пути публикации.</p>
               )}
               <AppButton
-                isDisabled={busy || !publicationPathTemplate.value}
+                isDisabled={effectiveBusy || !publicationPathTemplate.value}
                 onPress={() =>
                   void mutate(
                     (savedDraft) =>
@@ -1226,7 +1587,7 @@ export function SettingsScreen() {
                 <p>Есть несохранённая настройка удаления исходников.</p>
               )}
               <AppButton
-                isDisabled={busy}
+                isDisabled={effectiveBusy}
                 onPress={() =>
                   void mutate(
                     (savedDraft) =>
@@ -1252,7 +1613,7 @@ export function SettingsScreen() {
               </AppButton>
               <AppButton
                 isDisabled={
-                  busy ||
+                  effectiveBusy ||
                   runningOperation ||
                   outputDirectory.value === state.settings.output_directory
                 }
@@ -1264,71 +1625,6 @@ export function SettingsScreen() {
                 }}
               >
                 Сменить output
-              </AppButton>
-            </section>
-            <section
-              aria-labelledby="analysis-concurrency-title"
-              className="setup-panel settings-panel"
-            >
-              <h2 id="analysis-concurrency-title">Анализ исходников</h2>
-              <label>
-                Одновременные файлы
-                <input
-                  aria-describedby="source-file-concurrency-help"
-                  aria-invalid={
-                    sourceFileConcurrency.value !== undefined &&
-                    !validConcurrency(sourceFileConcurrency.value)
-                  }
-                  inputMode="numeric"
-                  value={
-                    sourceFileConcurrency.value ??
-                    String(state.settings.source_file_concurrency)
-                  }
-                  onChange={(event) =>
-                    sourceFileConcurrency.update(event.target.value)
-                  }
-                />
-              </label>
-              <p id="source-file-concurrency-help">
-                Положительное целое число файлов, обрабатываемых одновременно.
-                Значение должно точно представляться в браузере.
-              </p>
-              {sourceFileConcurrency.value !== undefined &&
-                !validConcurrency(sourceFileConcurrency.value) && (
-                  <p role="alert">
-                    Введите положительное целое число, точно представимое в
-                    браузере.
-                  </p>
-                )}
-              {sourceFileConcurrency.dirty && (
-                <p>Есть несохранённое изменение параллельности.</p>
-              )}
-              <AppButton
-                isDisabled={
-                  busy ||
-                  !sourceFileConcurrency.value ||
-                  !validConcurrency(sourceFileConcurrency.value)
-                }
-                onPress={() =>
-                  void mutate(
-                    (savedDraft) =>
-                      updateSettings({
-                        source_file_concurrency: Number(savedDraft.value),
-                      }),
-                    204,
-                    "Параллельность анализа сохранена.",
-                    sourceFileConcurrency.capture,
-                    (fresh, revision) =>
-                      sourceFileConcurrency.acknowledge(
-                        String(fresh.settings.source_file_concurrency),
-                        revision,
-                      ),
-                    sourceFileConcurrency.beginSave,
-                    sourceFileConcurrency.endSave,
-                  )
-                }
-              >
-                Сохранить параллельность
               </AppButton>
             </section>
             <section
@@ -1355,14 +1651,16 @@ export function SettingsScreen() {
               </p>
               <div className="settings-actions">
                 <AppButton
-                  isDisabled={busy || acoustIDApplicationKey.length === 0}
+                  isDisabled={
+                    effectiveBusy || acoustIDApplicationKey.length === 0
+                  }
                   onPress={() => void saveAcoustIDApplicationKey()}
                 >
                   Сохранить ключ AcoustID
                 </AppButton>
                 {state.settings.has_acoustid_application_key && (
                   <AppButton
-                    isDisabled={busy}
+                    isDisabled={effectiveBusy}
                     onPress={() => void deleteAcoustIDApplicationKey()}
                   >
                     Удалить ключ AcoustID
@@ -1448,7 +1746,7 @@ export function SettingsScreen() {
                 <p>Есть несохранённые изменения MusicBrainz.</p>
               )}
               <AppButton
-                isDisabled={busy}
+                isDisabled={effectiveBusy}
                 onPress={() => void checkMusicBrainz()}
               >
                 Сохранить и проверить MusicBrainz
@@ -1463,7 +1761,7 @@ export function SettingsScreen() {
               </label>
               {lrclib.dirty && <p>Есть несохранённые изменения LRCLIB.</p>}
               <AppButton
-                isDisabled={busy}
+                isDisabled={effectiveBusy}
                 onPress={() =>
                   void mutate(
                     (savedDraft) =>
@@ -1486,93 +1784,6 @@ export function SettingsScreen() {
               >
                 Сохранить LRCLIB
               </AppButton>
-              <label className="settings-inline">
-                <input
-                  type="checkbox"
-                  checked={sha256.value ?? state.settings.sha256_enabled}
-                  onChange={(event) => sha256.update(event.target.checked)}
-                />{" "}
-                Вычислять SHA-256
-              </label>
-              <p className="sources-note">
-                Настройка применяется к последующим анализам. Её изменение не
-                удаляет сохранённые результаты и не запускает массовый пересчёт.
-              </p>
-              {sha256.dirty && <p>Есть несохранённые изменения SHA-256.</p>}
-              <AppButton
-                isDisabled={busy}
-                onPress={() =>
-                  void mutate(
-                    (savedDraft) =>
-                      updateSha256Setting({
-                        enabled:
-                          savedDraft.value ?? state.settings.sha256_enabled,
-                      }),
-                    204,
-                    "Настройка SHA-256 сохранена.",
-                    sha256.capture,
-                    (fresh, revision) =>
-                      sha256.acknowledge(
-                        fresh.settings.sha256_enabled,
-                        revision,
-                      ),
-                    sha256.beginSave,
-                    sha256.endSave,
-                  )
-                }
-              >
-                Сохранить SHA-256
-              </AppButton>
-            </section>
-            <section
-              aria-labelledby="logging-title"
-              className="setup-panel settings-panel"
-            >
-              <h2 id="logging-title">Журналирование</h2>
-              <label>
-                Log level
-                <select
-                  value={logLevel.value ?? "info"}
-                  onChange={(event) =>
-                    logLevel.update(
-                      event.target.value as UpdateLogLevelBodyLevel,
-                    )
-                  }
-                >
-                  <option value="debug">debug</option>
-                  <option value="info">info</option>
-                  <option value="warn">warn</option>
-                  <option value="error">error</option>
-                </select>
-              </label>
-              {logLevel.dirty && (
-                <p>Есть несохранённые изменения уровня журнала.</p>
-              )}
-              <AppButton
-                isDisabled={busy}
-                onPress={() =>
-                  void mutate(
-                    (savedDraft) =>
-                      updateLogLevel({
-                        level:
-                          savedDraft.value ??
-                          (state.settings.log_level as UpdateLogLevelBodyLevel),
-                      }),
-                    204,
-                    "Уровень журнала применён.",
-                    logLevel.capture,
-                    (fresh, revision) =>
-                      logLevel.acknowledge(
-                        fresh.settings.log_level as UpdateLogLevelBodyLevel,
-                        revision,
-                      ),
-                    logLevel.beginSave,
-                    logLevel.endSave,
-                  )
-                }
-              >
-                Применить уровень
-              </AppButton>
             </section>
             <section
               aria-labelledby="tools-root-title"
@@ -1584,7 +1795,7 @@ export function SettingsScreen() {
                 <code>{state.settings.tools_directory}</code>
               </p>
               <AppButton
-                isDisabled={!platformReady || busy}
+                isDisabled={!platformReady || effectiveBusy}
                 onPress={(event) => {
                   dialogReturnFocusRef.current = event.target as HTMLElement;
                   setError("");
@@ -1660,7 +1871,7 @@ export function SettingsScreen() {
                           <AppButton
                             isDisabled={
                               !platformReady ||
-                              busy ||
+                              effectiveBusy ||
                               item.active ||
                               occupied(item) ||
                               item.state !== "ready"
@@ -1672,7 +1883,7 @@ export function SettingsScreen() {
                           <AppButton
                             isDisabled={
                               !platformReady ||
-                              busy ||
+                              effectiveBusy ||
                               item.active ||
                               occupied(item)
                             }
@@ -1714,7 +1925,9 @@ export function SettingsScreen() {
                         </label>
                         <AppButton
                           isDisabled={
-                            !platformReady || busy || !selectedRelease[kind]
+                            !platformReady ||
+                            effectiveBusy ||
+                            !selectedRelease[kind]
                           }
                           onPress={(event) => {
                             dialogReturnFocusRef.current =
@@ -1776,7 +1989,7 @@ export function SettingsScreen() {
       )}
       {notice && <p role="status">{notice}</p>}
       {state && (
-        <AppButton isDisabled={busy} onPress={() => void loadScreen()}>
+        <AppButton isDisabled={effectiveBusy} onPress={() => void loadScreen()}>
           Обновить состояние
         </AppButton>
       )}
@@ -1809,12 +2022,15 @@ export function SettingsScreen() {
             </p>
           )}
           <AppButton
-            isDisabled={busy || runningOperation}
+            isDisabled={effectiveBusy || runningOperation}
             onPress={() => void confirmOutputDirectory()}
           >
             Подтвердить смену output
           </AppButton>
-          <AppButton isDisabled={busy} onPress={() => closeOutputDialog()}>
+          <AppButton
+            isDisabled={effectiveBusy}
+            onPress={() => closeOutputDialog()}
+          >
             Отмена
           </AppButton>
         </dialog>
@@ -1849,10 +2065,13 @@ export function SettingsScreen() {
               {installDialogError}
             </p>
           )}
-          <AppButton isDisabled={busy} onPress={() => void confirmInstall()}>
+          <AppButton
+            isDisabled={effectiveBusy}
+            onPress={() => void confirmInstall()}
+          >
             Подтвердить перечисленные конфликты
           </AppButton>
-          <AppButton isDisabled={busy} onPress={closeInstallDialog}>
+          <AppButton isDisabled={effectiveBusy} onPress={closeInstallDialog}>
             Отмена
           </AppButton>
         </dialog>
@@ -1895,7 +2114,10 @@ export function SettingsScreen() {
             </p>
           )}
           {!movePlan ? (
-            <AppButton isDisabled={busy} onPress={() => void preflightMove()}>
+            <AppButton
+              isDisabled={effectiveBusy}
+              onPress={() => void preflightMove()}
+            >
               Проверить перенос
             </AppButton>
           ) : (
@@ -1913,13 +2135,16 @@ export function SettingsScreen() {
               <p>Управляемых файлов: {movePlan.plan.managed_file_count}</p>
               <p>Конфликтов: {movePlan.plan.conflicts?.length || 0}</p>
               <ConflictList conflicts={movePlan.plan.conflicts || []} />
-              <AppButton isDisabled={busy} onPress={() => void confirmMove()}>
+              <AppButton
+                isDisabled={effectiveBusy}
+                onPress={() => void confirmMove()}
+              >
                 Подтвердить перенос
               </AppButton>
             </>
           )}
           <AppButton
-            isDisabled={busy}
+            isDisabled={effectiveBusy}
             onPress={() => {
               setMovePlan(undefined);
               closeMoveDialog();
