@@ -5,7 +5,6 @@ import { AppButton } from "../components/AppButton";
 import { ThemeControl } from "../components/ThemeControl";
 import { IncomingGroupReviewScreen } from "../features/incoming/IncomingGroupReviewScreen";
 import { LibraryArtistScreen } from "../features/library/LibraryArtistScreen";
-import { LibraryPublicationsScreen } from "../features/library/LibraryPublicationsScreen";
 import { LibraryReleaseScreen } from "../features/library/LibraryReleaseScreen";
 import { LibraryScreen } from "../features/library/LibraryScreen";
 import {
@@ -31,7 +30,6 @@ type Route =
   | "/sources"
   | "/incoming-groups"
   | "/operations"
-  | "/publications"
   | "/library"
   | "/library/create"
   | `/library/artists/${string}`
@@ -48,7 +46,7 @@ function currentRoute(hash: string, isSourcesRoute: boolean): Route {
   if (isSourcesRoute) return "/sources";
   if (hash === "#/incoming-groups") return "/incoming-groups";
   if (hash === "#/operations") return "/operations";
-  if (pathname === "/publications") return "/publications";
+  if (pathname === "/publications") return "/library";
   if (parseLibraryRoute(hash)) return "/library";
   if (pathname === "/library/create") return "/library/create";
   const libraryArtist = parseLibraryArtistRoute(hash);
@@ -217,8 +215,6 @@ export function AppShell() {
       <IncomingGroupReviewScreen />
     ) : state && route === "/operations" ? (
       <OperationsScreen />
-    ) : state && route === "/publications" ? (
-      <LibraryPublicationsScreen />
     ) : state && route === "/library" ? (
       <LibraryScreen />
     ) : state && route === "/library/create" ? (
@@ -294,7 +290,6 @@ function sectionLabel(route: Route): string {
   if (route === "/incoming-groups") return "Входящие";
   if (route === "/library" || route.startsWith("/library/")) return "Медиатека";
   if (route === "/sources") return "Источники";
-  if (route === "/publications") return "Публикации";
   if (route === "/operations") return "Операции";
   if (route === "/settings") return "Настройки";
   return "Главная";
@@ -313,11 +308,6 @@ function ShellNavigation({ route }: { route: Route }) {
       active: route === "/library" || route.startsWith("/library/"),
     },
     { label: "Источники", href: "#/sources", active: route === "/sources" },
-    {
-      label: "Публикации",
-      href: "#/publications",
-      active: route === "/publications",
-    },
     {
       label: "Операции",
       href: "#/operations",

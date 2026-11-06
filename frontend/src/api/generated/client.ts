@@ -54,7 +54,6 @@ import type {
   LibraryPrimaryArtistBody,
   LibraryPrimaryArtistResponse,
   LibraryPublicationResponse,
-  LibraryPublicationsListResponse,
   LibraryRecordingSearchBody,
   LibraryRecordingSearchResultOutputBody,
   LibraryReleaseCoverApplyInputBody,
@@ -69,7 +68,6 @@ import type {
   ListLibraryArtistsParams,
   ListLibraryCoverCandidatesParams,
   ListLibraryPositionsParams,
-  ListLibraryPublicationsParams,
   ListLibraryRecordingsParams,
   ListLibraryReleasesParams,
   ListLibrarySourceVariantsParams,
@@ -2251,140 +2249,6 @@ export function useListLibraryPositions<TData = Awaited<ReturnType<typeof listLi
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListLibraryPositionsQueryOptions(params,options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  return withQueryKey(query, queryOptions.queryKey);
-}
-
-
-
-
-
-
-
-export type listLibraryPublicationsResponse200 = {
-  data: LibraryPublicationsListResponse
-  status: 200
-}
-
-export type listLibraryPublicationsResponseDefault = {
-  data: ErrorModel
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type listLibraryPublicationsResponseSuccess = (listLibraryPublicationsResponse200) & {
-  headers: Headers;
-};
-export type listLibraryPublicationsResponseError = (listLibraryPublicationsResponseDefault) & {
-  headers: Headers;
-};
-
-export type listLibraryPublicationsResponse = (listLibraryPublicationsResponseSuccess | listLibraryPublicationsResponseError)
-
-export const getListLibraryPublicationsUrl = (params: ListLibraryPublicationsParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/library/publications?${stringifiedParams}` : `/api/library/publications`
-}
-
-/**
- * @summary Read current library publications
- */
-export const listLibraryPublications = async (params: ListLibraryPublicationsParams, options?: RequestInit): Promise<listLibraryPublicationsResponse> => {
-
-  const res = await fetch(getListLibraryPublicationsUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: listLibraryPublicationsResponse['data'] = body ? JSON.parse(body) : {}
-  return { data, status: res.status, headers: res.headers } as listLibraryPublicationsResponse
-}
-
-
-
-
-
-export const getListLibraryPublicationsQueryKey = (params?: ListLibraryPublicationsParams,) => {
-    return [
-    `/api/library/publications`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getListLibraryPublicationsQueryOptions = <TData = Awaited<ReturnType<typeof listLibraryPublications>>, TError = ErrorModel>(params: ListLibraryPublicationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryPublications>>, TError, TData>>, fetch?: RequestInit}
-) => {
-
-const {query: queryOptions, fetch: fetchOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getListLibraryPublicationsQueryKey(params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLibraryPublications>>> = ({ signal }) => listLibraryPublications(params, { signal, ...fetchOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLibraryPublications>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type ListLibraryPublicationsQueryResult = NonNullable<Awaited<ReturnType<typeof listLibraryPublications>>>
-export type ListLibraryPublicationsQueryError = ErrorModel
-
-
-export function useListLibraryPublications<TData = Awaited<ReturnType<typeof listLibraryPublications>>, TError = ErrorModel>(
- params: ListLibraryPublicationsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryPublications>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listLibraryPublications>>,
-          TError,
-          Awaited<ReturnType<typeof listLibraryPublications>>
-        > , 'initialData'
-      >, fetch?: RequestInit}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListLibraryPublications<TData = Awaited<ReturnType<typeof listLibraryPublications>>, TError = ErrorModel>(
- params: ListLibraryPublicationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryPublications>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listLibraryPublications>>,
-          TError,
-          Awaited<ReturnType<typeof listLibraryPublications>>
-        > , 'initialData'
-      >, fetch?: RequestInit}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListLibraryPublications<TData = Awaited<ReturnType<typeof listLibraryPublications>>, TError = ErrorModel>(
- params: ListLibraryPublicationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryPublications>>, TError, TData>>, fetch?: RequestInit}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-/**
- * @summary Read current library publications
- */
-
-export function useListLibraryPublications<TData = Awaited<ReturnType<typeof listLibraryPublications>>, TError = ErrorModel>(
- params: ListLibraryPublicationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryPublications>>, TError, TData>>, fetch?: RequestInit}
- , queryClient?: QueryClient
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getListLibraryPublicationsQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

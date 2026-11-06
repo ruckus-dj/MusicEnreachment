@@ -44,7 +44,13 @@ func TestLibraryReleaseDetailHTTP(t *testing.T) {
 		ID: releaseID, Title: "Album", Metadata: json.RawMessage(`{"year":2024}`), MetadataVersion: 2,
 		PrimaryArtistID: &artistID, PrimaryArtistCandidates: []uuid.UUID{artistID}, PrimaryArtistMBIDs: map[uuid.UUID]*uuid.UUID{artistID: &artistMBID},
 		Artists: []persistence.LibraryArtistCredit{{ArtistID: artistID, ArtistName: &artistName, CreditName: "Credit", JoinPhrase: " feat. "}},
-		Tracks:  []persistence.LibraryReleaseTrackDetail{{ID: positionID, LocalTrackID: trackID, Medium: 1, Position: 2, Title: "Song", Metadata: json.RawMessage(`{}`), MetadataVersion: 3}},
+		Tracks: []persistence.LibraryReleaseTrackDetail{{
+			ID: positionID, LocalTrackID: trackID, Medium: 1, Position: 2, Title: "Song", Metadata: json.RawMessage(`{}`), MetadataVersion: 3,
+			Publication: &persistence.LibraryPositionPublication{
+				RelativePath: "Artist/Album/01-02 - Song.mka", Generation: uuid.New(),
+				ValidatedAt: "2026-11-05T12:30:00Z", ActualAudio: json.RawMessage(`{"facts":{"codec":"FLAC","container":"MKA"}}`),
+			},
+		}},
 	}})
 	handler := HandlerWithDependencies(Dependencies{LibraryReleaseDetails: serviceReader})
 	response := httptest.NewRecorder()
@@ -72,6 +78,10 @@ func TestLibraryReleaseDetailHTTP(t *testing.T) {
 	}
 	if body.ID != releaseID || body.PrimaryArtist.Status != string(service.LibraryArtistExplicit) || body.PrimaryArtist.EffectiveArtistID == nil || *body.PrimaryArtist.EffectiveArtistID != artistID || body.PrimaryArtist.EffectiveArtistMBID == nil || *body.PrimaryArtist.EffectiveArtistMBID != artistMBID || len(body.Artists) != 1 || body.Artists[0].ArtistID != artistID || body.Artists[0].CreditName != "Credit" || len(body.Tracks) != 1 || body.Tracks[0].ID != positionID || body.Tracks[0].Medium != 1 || body.Tracks[0].Position != 2 {
 		t.Fatalf("release detail body = %+v", body)
+	}
+	publication := body.Tracks[0].Publication
+	if publication == nil || publication.RelativePath != "Artist/Album/01-02 - Song.mka" || publication.Codec != "FLAC" || publication.Container != "MKA" || publication.ValidatedAt != "2026-11-05T12:30:00Z" {
+		t.Fatalf("release publication summary = %+v", publication)
 	}
 
 	for _, test := range []struct {

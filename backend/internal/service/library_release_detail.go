@@ -68,6 +68,15 @@ type LibraryReleaseTrackDetail struct {
 	PrimaryArtist             LibraryArtistResolution
 	Artists                   []LibraryArtistCredit
 	Sources                   []LibraryTrackSourceDetail
+	Publication               *LibraryPositionPublication
+}
+
+type LibraryPositionPublication struct {
+	RelativePath string
+	Generation   uuid.UUID
+	ValidatedAt  string
+	Codec        string
+	Container    string
 }
 
 type LibraryTrackSourceDetail struct {
@@ -159,6 +168,21 @@ func (service *LibraryReleaseDetails) Read(ctx context.Context, id uuid.UUID) (L
 		if track.DurationMS.Valid {
 			duration := track.DurationMS.Int64
 			item.DurationMS = &duration
+		}
+		if track.Publication != nil {
+			var audio struct {
+				Facts struct {
+					Codec     string `json:"codec"`
+					Container string `json:"container"`
+				} `json:"facts"`
+			}
+			if err := json.Unmarshal(track.Publication.ActualAudio, &audio); err != nil {
+				return LibraryReleaseDetail{}, fmt.Errorf("decode current release publication audio: %w", err)
+			}
+			item.Publication = &LibraryPositionPublication{
+				RelativePath: track.Publication.RelativePath, Generation: track.Publication.Generation,
+				ValidatedAt: track.Publication.ValidatedAt, Codec: audio.Facts.Codec, Container: audio.Facts.Container,
+			}
 		}
 		for _, source := range track.Sources {
 			locationList := make([]LibrarySourceLocationDetail, 0, len(source.Locations))

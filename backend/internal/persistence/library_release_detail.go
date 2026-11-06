@@ -66,6 +66,14 @@ type LibraryReleaseTrackDetail struct {
 	PrimaryArtistMBIDs        map[uuid.UUID]*uuid.UUID
 	Artists                   []LibraryArtistCredit
 	Sources                   []LibraryTrackSourceDetail
+	Publication               *LibraryPositionPublication
+}
+
+type LibraryPositionPublication struct {
+	RelativePath string
+	Generation   uuid.UUID
+	ValidatedAt  string
+	ActualAudio  json.RawMessage
 }
 
 type LibraryTrackSourceDetail struct {
@@ -195,6 +203,29 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 			result.Tracks[i].Artists = make([]LibraryArtistCredit, 0)
 			result.Tracks[i].Sources = make([]LibraryTrackSourceDetail, 0)
 		}
+		positionIndex := make(map[uuid.UUID]int, len(result.Tracks))
+		for i := range result.Tracks {
+			positionIndex[result.Tracks[i].ID] = i
+		}
+		var publications []struct {
+			PositionID   uuid.UUID       `bun:"position_id"`
+			RelativePath string          `bun:"relative_path"`
+			Generation   uuid.UUID       `bun:"generation"`
+			ValidatedAt  string          `bun:"validated_at"`
+			ActualAudio  json.RawMessage `bun:"actual_audio"`
+		}
+		if err := tx.NewRaw(`SELECT tp.position_id,tp.relative_path,tp.generation,tp.validated_at::text,tp.actual_audio
+			FROM track_publication tp JOIN release_track rt ON rt.id=tp.position_id WHERE rt.release_id=?`, id).Scan(ctx, &publications); err != nil {
+			return fmt.Errorf("read current release position publications: %w", err)
+		}
+		for _, publication := range publications {
+			if index, exists := positionIndex[publication.PositionID]; exists {
+				result.Tracks[index].Publication = &LibraryPositionPublication{
+					RelativePath: publication.RelativePath, Generation: publication.Generation,
+					ValidatedAt: publication.ValidatedAt, ActualAudio: publication.ActualAudio,
+				}
+			}
+		}
 		var positionArtists []struct {
 			ReleaseTrackID uuid.UUID `bun:"release_track_id"`
 			ArtistID       uuid.UUID `bun:"artist_id"`
@@ -202,10 +233,6 @@ func (repository *LibraryRepository) ReadReleaseDetail(ctx context.Context, id u
 		if err := tx.NewRaw(`SELECT DISTINCT rt.id AS release_track_id,credit.artist_id FROM release_track rt
 				JOIN track_artist credit ON credit.track_id=rt.track_id WHERE rt.release_id=? ORDER BY rt.id,credit.artist_id`, id).Scan(ctx, &positionArtists); err != nil {
 			return fmt.Errorf("read library position primary artist candidates: %w", err)
-		}
-		positionIndex := make(map[uuid.UUID]int, len(result.Tracks))
-		for i := range result.Tracks {
-			positionIndex[result.Tracks[i].ID] = i
 		}
 		for _, candidate := range positionArtists {
 			index := positionIndex[candidate.ReleaseTrackID]

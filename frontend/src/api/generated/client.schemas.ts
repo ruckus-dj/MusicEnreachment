@@ -581,24 +581,6 @@ export interface LibraryPrimaryArtistResponse {
   revision: number;
 }
 
-export interface LibraryPublicationListItemResponse {
-  artists: LibraryArtistCreditResponse[];
-  audio: PublicationAudioResponse;
-  displayed_number: string;
-  generation: string;
-  medium: number;
-  output_epoch: string;
-  /** @nullable */
-  output_root: string | null;
-  position: number;
-  position_id: string;
-  relative_path: string;
-  release_id: string;
-  release_title: string;
-  title: string;
-  validated_at: string;
-}
-
 export interface LibraryPublicationManualLyrics {
   pending: boolean;
   state: string;
@@ -687,15 +669,6 @@ export interface LibraryPublicationResponse {
   release_id: string;
   /** @nullable */
   source_cleanup_warnings?: LibraryPublicationSourceCleanupWarning[] | null;
-}
-
-export interface LibraryPublicationsListResponse {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  items: LibraryPublicationListItemResponse[];
-  limit: number;
-  offset: number;
-  total: number;
 }
 
 export interface LibraryReleaseOptionCredit {
@@ -895,6 +868,14 @@ export interface LibraryReleaseMediumResponse {
   title: string;
 }
 
+export interface LibraryReleaseTrackPublicationResponse {
+  codec: string;
+  container: string;
+  generation: string;
+  relative_path: string;
+  validated_at: string;
+}
+
 export interface LibrarySourceLocationResponse {
   location_id: string;
   mtime?: string;
@@ -932,6 +913,7 @@ export interface LibraryReleaseTrackResponse {
   metadata_version: number;
   position: number;
   primary_artist: LibraryArtistResolution;
+  publication?: LibraryReleaseTrackPublicationResponse;
   /** @nullable */
   recording_id: string | null;
   recording_metadata_revision?: number;
@@ -1989,19 +1971,6 @@ export const ListLibraryPositionsAvailability = {
   available: 'available',
   missing: 'missing',
 } as const;
-
-export type ListLibraryPublicationsParams = {
-q?: string;
-/**
- * @minimum 1
- * @maximum 100
- */
-limit: number;
-/**
- * @minimum 0
- */
-offset?: number;
-};
 
 export type ListLibraryRecordingsParams = {
 q?: string;

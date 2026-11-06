@@ -71,24 +71,33 @@ type LibraryArtistCreditResponse struct {
 }
 
 type LibraryReleaseTrackResponse struct {
-	ID                        uuid.UUID                       `json:"id"`
-	LocalTrackID              uuid.UUID                       `json:"local_track_id"`
-	RecordingID               *string                         `json:"recording_id" nullable:"true"`
-	RecordingTitle            *string                         `json:"recording_title,omitempty"`
-	MediumID                  *uuid.UUID                      `json:"medium_id,omitempty"`
-	Medium                    int                             `json:"medium"`
-	Position                  int                             `json:"position"`
-	DurationMS                *int64                          `json:"duration_ms"`
-	DisplayedNumber           string                          `json:"displayed_number"`
-	Title                     string                          `json:"title"`
-	Metadata                  json.RawMessage                 `json:"metadata"`
-	MetadataVersion           int                             `json:"metadata_version"`
-	MetadataRevision          int64                           `json:"metadata_revision"`
-	TrackMetadataRevision     int64                           `json:"track_metadata_revision"`
-	RecordingMetadataRevision *int64                          `json:"recording_metadata_revision,omitempty"`
-	PrimaryArtist             service.LibraryArtistResolution `json:"primary_artist"`
-	Artists                   []LibraryArtistCreditResponse   `json:"artists"`
-	Sources                   []LibraryTrackSourceResponse    `json:"sources"`
+	ID                        uuid.UUID                               `json:"id"`
+	LocalTrackID              uuid.UUID                               `json:"local_track_id"`
+	RecordingID               *string                                 `json:"recording_id" nullable:"true"`
+	RecordingTitle            *string                                 `json:"recording_title,omitempty"`
+	MediumID                  *uuid.UUID                              `json:"medium_id,omitempty"`
+	Medium                    int                                     `json:"medium"`
+	Position                  int                                     `json:"position"`
+	DurationMS                *int64                                  `json:"duration_ms"`
+	DisplayedNumber           string                                  `json:"displayed_number"`
+	Title                     string                                  `json:"title"`
+	Metadata                  json.RawMessage                         `json:"metadata"`
+	MetadataVersion           int                                     `json:"metadata_version"`
+	MetadataRevision          int64                                   `json:"metadata_revision"`
+	TrackMetadataRevision     int64                                   `json:"track_metadata_revision"`
+	RecordingMetadataRevision *int64                                  `json:"recording_metadata_revision,omitempty"`
+	PrimaryArtist             service.LibraryArtistResolution         `json:"primary_artist"`
+	Artists                   []LibraryArtistCreditResponse           `json:"artists"`
+	Sources                   []LibraryTrackSourceResponse            `json:"sources"`
+	Publication               *LibraryReleaseTrackPublicationResponse `json:"publication,omitempty"`
+}
+
+type LibraryReleaseTrackPublicationResponse struct {
+	RelativePath string    `json:"relative_path"`
+	Generation   uuid.UUID `json:"generation"`
+	ValidatedAt  string    `json:"validated_at"`
+	Codec        string    `json:"codec"`
+	Container    string    `json:"container"`
 }
 
 type LibraryTrackSourceResponse struct {
@@ -209,6 +218,12 @@ func libraryReleaseDetailResponse(detail service.LibraryReleaseDetail) LibraryRe
 		}
 		for _, artist := range track.Artists {
 			item.Artists = append(item.Artists, libraryArtistCreditResponse(artist))
+		}
+		if track.Publication != nil {
+			item.Publication = &LibraryReleaseTrackPublicationResponse{
+				RelativePath: track.Publication.RelativePath, Generation: track.Publication.Generation,
+				ValidatedAt: track.Publication.ValidatedAt, Codec: track.Publication.Codec, Container: track.Publication.Container,
+			}
 		}
 		for _, source := range track.Sources {
 			locations := make([]LibrarySourceLocationResponse, 0, len(source.Locations))

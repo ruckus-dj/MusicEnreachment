@@ -33,7 +33,6 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerLibraryReleaseCreation(api, dependencies.LibraryReleaseCreation)
 	RegisterLibraryReleaseOptions(api, dependencies.LibraryReleaseOptions)
 	registerLibraryRecordingSearch(api, dependencies.LibraryRecordingSearch, dependencies.Operations)
-	registerLibraryPublicationsList(api, dependencies.LibraryPublicationsList)
 	registerLibraryMusicBrainzRefresh(api, dependencies.LibraryProviderRefresh, dependencies.Operations)
 	registerLibraryReleaseCover(api, dependencies.LibraryReleaseCovers)
 	registerLibraryReleaseCoverApply(api, dependencies.LibraryReleaseCovers, dependencies.Operations)

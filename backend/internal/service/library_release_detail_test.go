@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -30,6 +31,10 @@ func TestLibraryReleaseDetailsMapsPersistenceReadModel(t *testing.T) {
 		Tracks: []persistence.LibraryReleaseTrackDetail{{
 			ID: positionID, LocalTrackID: trackID, Medium: 1, Position: 2, Title: "Song", MetadataVersion: 7,
 			MetadataRevision: 5, TrackMetadataRevision: 12, RecordingMetadataRevision: int64Pointer(3),
+			Publication: &persistence.LibraryPositionPublication{
+				RelativePath: "Artist/Album/01-02 - Song.mka", Generation: uuid.New(),
+				ValidatedAt: "2026-11-05T12:30:00Z", ActualAudio: json.RawMessage(`{"facts":{"codec":"FLAC","container":"MKA"}}`),
+			},
 			PrimaryArtistCandidates: []uuid.UUID{artistID},
 			Sources: []persistence.LibraryTrackSourceDetail{{
 				MediaVariantID: variantID, Selected: true, Compatible: true, DecisionMethod: "automatic", PolicyVersion: &policy,
@@ -50,6 +55,21 @@ func TestLibraryReleaseDetailsMapsPersistenceReadModel(t *testing.T) {
 	source := detail.Tracks[0].Sources[0]
 	if source.MediaVariantID != variantID || source.DecisionMethod != "automatic" || source.PolicyVersion == nil || len(source.Locations) != 1 || source.Locations[0].RootID != rootID || source.Locations[0].LocationID != locationID {
 		t.Fatalf("source detail mapping = %+v", source)
+	}
+	publication := detail.Tracks[0].Publication
+	if publication == nil || publication.RelativePath != "Artist/Album/01-02 - Song.mka" || publication.Codec != "FLAC" || publication.Container != "MKA" || publication.ValidatedAt != "2026-11-05T12:30:00Z" {
+		t.Fatalf("publication detail mapping = %+v", publication)
+	}
+}
+
+func TestLibraryReleaseDetailsRejectsMalformedPublicationAudio(t *testing.T) {
+	reader := libraryReleaseDetailReaderFixture{detail: &persistence.LibraryReleaseDetail{
+		Tracks: []persistence.LibraryReleaseTrackDetail{{
+			Publication: &persistence.LibraryPositionPublication{ActualAudio: []byte(`{`)}},
+		},
+	}}
+	if _, err := NewLibraryReleaseDetails(reader).Read(context.Background(), uuid.New()); err == nil {
+		t.Fatal("malformed current publication audio was accepted")
 	}
 }
 

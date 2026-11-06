@@ -1437,6 +1437,16 @@ export function LibraryReleaseScreen({
         const renderScope = scope.current;
         const position = positions[track.id];
         const publication = position?.publication;
+        const publicationSummary = publication
+          ? publication.current_generation
+            ? {
+                relative_path: publication.current_path,
+                validated_at: publication.current_validated_at,
+                codec: publication.current_audio?.codec,
+                container: publication.current_audio?.container,
+              }
+            : undefined
+          : track.publication;
         const lyricsField = position?.metadata?.envelope.desired.synced_lyrics;
         const hasManualLyrics =
           lyricsField?.authority === "manual" &&
@@ -1478,6 +1488,39 @@ export function LibraryReleaseScreen({
             <h2 className="font-semibold">
               {track.displayed_number.trim() || track.position}. {track.title}
             </h2>
+            <section
+              className="grid gap-2 rounded border border-stone-300 bg-stone-50 px-3 py-3 text-sm"
+              aria-label="Текущая публикация"
+            >
+              <h3 className="font-semibold">
+                {publicationSummary ? "Опубликовано" : "Не опубликовано"}
+              </h3>
+              {publicationSummary?.relative_path &&
+                publicationSummary.validated_at &&
+                publicationSummary.container &&
+                publicationSummary.codec && (
+                  <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[max-content_1fr]">
+                    <dt className="text-stone-600">Формат</dt>
+                    <dd>
+                      {publicationSummary.container} ·{" "}
+                      {publicationSummary.codec}
+                    </dd>
+                    <dt className="text-stone-600">Путь</dt>
+                    <dd className="break-all font-mono">
+                      {publicationSummary.relative_path}
+                    </dd>
+                    <dt className="text-stone-600">Проверено</dt>
+                    <dd>
+                      <time dateTime={publicationSummary.validated_at}>
+                        {new Intl.DateTimeFormat("ru", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        }).format(new Date(publicationSummary.validated_at))}
+                      </time>
+                    </dd>
+                  </dl>
+                )}
+            </section>
             <PositionIdentity track={track} />
             <ReleaseCreditList credits={credits} />
             {credits.length > 1 && (

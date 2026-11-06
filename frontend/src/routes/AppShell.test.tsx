@@ -85,7 +85,10 @@ describe("AppShell sources routing", () => {
     const navigation = await screen.findByRole("navigation", {
       name: "Разделы приложения",
     });
-    expect(navigation.querySelectorAll("a")).toHaveLength(6);
+    expect(navigation.querySelectorAll("a")).toHaveLength(5);
+    expect(
+      screen.queryByRole("link", { name: "Публикации" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Операции", current: "page" }),
     ).toBeInTheDocument();
@@ -115,5 +118,34 @@ describe("AppShell sources routing", () => {
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
     ).toBeVisible();
     expect(await screen.findByText("/srv/inbox")).toBeVisible();
+  });
+
+  it("keeps the legacy publications URL inside the library without standalone navigation", async () => {
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("*/api/library/artists", () =>
+        HttpResponse.json({
+          items: [],
+          total: 0,
+          limit: 50,
+          offset: 0,
+          summary: {
+            artist_count: 0,
+            release_count: 0,
+            position_count: 0,
+            published_position_count: 0,
+          },
+        }),
+      ),
+    );
+    window.location.hash = "/publications";
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Медиатека" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("navigation", { name: "Разделы приложения" }),
+    ).not.toHaveTextContent("Публикации");
   });
 });
