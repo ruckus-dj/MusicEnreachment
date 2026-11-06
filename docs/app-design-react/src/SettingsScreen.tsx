@@ -37,6 +37,7 @@ import {
 	isValidMusicBrainzConfiguration,
 	musicBrainzConfigurationFingerprint,
 } from "./providerValidation";
+import { overlapsAnyDemoPath } from "./demoPathValidation";
 
 export interface DemoSettings {
 	toolsPath: string;
@@ -103,6 +104,7 @@ export type SettingsScreenProps = {
 	onSettings: (settings: DemoSettings) => void;
 	onOutputReset?: (nextPath: string) => void;
 	workDirectoryBusy?: boolean;
+	sourceRoots?: string[];
 };
 
 type PickerTarget = "tools" | "work" | "output";
@@ -112,13 +114,15 @@ type NoticeKey =
 	| "invalidPath"
 	| "conflicts"
 	| "invalidProvider"
-	| "providerSaved";
+	| "providerSaved"
+	| "pathOverlap";
 
 export function SettingsScreen({
 	settings,
 	onSettings,
 	onOutputReset,
 	workDirectoryBusy = false,
+	sourceRoots = [],
 }: SettingsScreenProps) {
 	const { locale } = useI18n();
 	const copy = settingsMessages[locale];
@@ -185,6 +189,17 @@ export function SettingsScreen({
 			return;
 		}
 		if (!confirming) return;
+		if (
+			overlapsAnyDemoPath(confirming, [
+				settings.workDirectory,
+				settings.toolsPath,
+				...sourceRoots,
+			])
+		) {
+			setConfirming(null);
+			setNotice("pathOverlap");
+			return;
+		}
 		update({ currentOutput: confirming });
 		onOutputReset?.(confirming);
 		setConfirming(null);
@@ -217,6 +232,17 @@ export function SettingsScreen({
 			setNotice("invalidPath");
 			return;
 		}
+		if (
+			overlapsAnyDemoPath(moveCandidate, [
+				settings.workDirectory,
+				currentOutput,
+				...sourceRoots,
+			])
+		) {
+			setMovePlan(null);
+			setNotice("pathOverlap");
+			return;
+		}
 		setMovePlan(movePreflightDemo(moveCandidate, managedCount));
 		setMoveConflictsAcknowledged(false);
 	};
@@ -227,6 +253,18 @@ export function SettingsScreen({
 			return;
 		}
 		const freshPlan = movePreflightDemo(moveCandidate, managedCount);
+		if (
+			overlapsAnyDemoPath(freshPlan.path, [
+				settings.workDirectory,
+				currentOutput,
+				...sourceRoots,
+			])
+		) {
+			setMovePlan(null);
+			setMoveConflictsAcknowledged(false);
+			setNotice("pathOverlap");
+			return;
+		}
 		if (
 			platformMismatch ||
 			freshPlan.token !== movePlan.token ||
@@ -249,9 +287,11 @@ export function SettingsScreen({
 				? copy.providerSaved
 				: notice === "invalidProvider"
 					? copy.invalidProvider
-					: notice
-						? copy[notice]
-						: "";
+					: notice === "pathOverlap"
+						? copy.pathOverlap
+						: notice
+							? copy[notice]
+							: "";
 
 	return (
 		<section className={styles.page} aria-labelledby="settings-title">
@@ -308,81 +348,101 @@ export function SettingsScreen({
 				</TabList>
 				<TabPanel id="general" className={styles.panel}>
 					<h2>{copy.general}</h2>
-					<div className="grid max-w-3xl gap-3">
-						<Select
-							selectedKey={settings.publicationFormat ?? ""}
-							onSelectionChange={(key) =>
-								update({
-									publicationFormat: key
-										? (String(key) as DemoSettings["publicationFormat"])
-										: "",
-								})
-							}
-						>
-							<Label>{copy.publicationFormat}</Label>
-							<Button>
-								<SelectValue />
-							</Button>
-							<Popover>
-								<ListBox>
-									<ListBoxItem id="mka">{copy.mka}</ListBoxItem>
-									<ListBoxItem id="original">{copy.original}</ListBoxItem>
-								</ListBox>
-							</Popover>
-						</Select>
-						<TextField
-							value={settings.concurrency ?? "4"}
-							onChange={(concurrency) => update({ concurrency })}
-						>
-							<Label>{copy.concurrency}</Label>
-							<Input type="number" min="1" />
-						</TextField>
-						<label className="flex items-center gap-2">
-							<input
-								type="checkbox"
-								checked={settings.sha256Enabled ?? true}
-								onChange={(event) =>
-									update({ sha256Enabled: event.target.checked })
+					<div className="grid gap-3 min-[1400px]:grid-cols-2 min-[1400px]:gap-x-6">
+						<div className="grid content-start gap-3 min-[600px]:grid-cols-2">
+							<Select
+								selectedKey={settings.publicationFormat ?? ""}
+								onSelectionChange={(key) =>
+									update({
+										publicationFormat: key
+											? (String(key) as DemoSettings["publicationFormat"])
+											: "",
+									})
 								}
-							/>
-							{copy.sha}
-						</label>
-						<label className="flex items-center gap-2">
-							<input
-								type="checkbox"
-								checked={settings.sourceCleanupEnabled ?? false}
-								onChange={(event) =>
-									update({ sourceCleanupEnabled: event.target.checked })
+							>
+								<Label>{copy.publicationFormat}</Label>
+								<Button>
+									<SelectValue />
+								</Button>
+								<Popover>
+									<ListBox>
+										<ListBoxItem id="mka">{copy.mka}</ListBoxItem>
+										<ListBoxItem id="original">{copy.original}</ListBoxItem>
+									</ListBox>
+								</Popover>
+							</Select>
+							<TextField
+								value={settings.concurrency ?? "4"}
+								onChange={(concurrency) => update({ concurrency })}
+							>
+								<Label>{copy.concurrency}</Label>
+								<Input type="number" min="1" />
+							</TextField>
+							<label className="flex items-center gap-2">
+								<input
+									type="checkbox"
+									checked={settings.sha256Enabled ?? true}
+									onChange={(event) =>
+										update({ sha256Enabled: event.target.checked })
+									}
+								/>
+								{copy.sha}
+							</label>
+							<Select
+								selectedKey={settings.logLevel ?? "info"}
+								onSelectionChange={(key) =>
+									update({
+										logLevel: key
+											? (String(key) as NonNullable<DemoSettings["logLevel"]>)
+											: "",
+									})
 								}
-							/>
-							{copy.cleanup}
-						</label>
-						<small>{copy.cleanupHelp}</small>
-						<Select
-							selectedKey={settings.logLevel ?? "info"}
-							onSelectionChange={(key) =>
-								update({
-									logLevel: key
-										? (String(key) as NonNullable<DemoSettings["logLevel"]>)
-										: "",
-								})
-							}
+							>
+								<Label>{copy.log}</Label>
+								<Button>
+									<SelectValue />
+								</Button>
+								<Popover>
+									<ListBox>
+										{["debug", "info", "warn", "error"].map((level) => (
+											<ListBoxItem id={level} key={level}>
+												{level}
+											</ListBoxItem>
+										))}
+									</ListBox>
+								</Popover>
+							</Select>
+						</div>
+						<section
+							aria-labelledby="source-cleanup-title"
+							className="grid content-start gap-2 border-t border-[var(--line)] pt-3 min-[1400px]:border-t-0 min-[1400px]:pt-0"
 						>
-							<Label>{copy.log}</Label>
-							<Button>
-								<SelectValue />
-							</Button>
-							<Popover>
-								<ListBox>
-									{["debug", "info", "warn", "error"].map((level) => (
-										<ListBoxItem id={level} key={level}>
-											{level}
-										</ListBoxItem>
-									))}
-								</ListBox>
-							</Popover>
-						</Select>
+							<h3
+								id="source-cleanup-title"
+								className="m-0 text-sm font-semibold"
+							>
+								{copy.cleanupTitle}
+							</h3>
+							<label className="flex items-center gap-2">
+								<input
+									type="checkbox"
+									aria-describedby="source-cleanup-help"
+									checked={settings.sourceCleanupEnabled ?? false}
+									onChange={(event) =>
+										update({ sourceCleanupEnabled: event.target.checked })
+									}
+								/>
+								{copy.cleanup}
+							</label>
+							<p
+								id="source-cleanup-help"
+								className="m-0 text-xs text-[var(--warning)]"
+							>
+								{copy.cleanupHelp}
+							</p>
+						</section>
 						<Button
+							className="justify-self-start min-[1400px]:col-span-2"
 							onPress={() => {
 								update({ runtimeSaved: true });
 								setNotice("saved");
@@ -660,8 +720,20 @@ export function SettingsScreen({
 					}
 					onClose={() => setPicker(null)}
 					onChoose={(path) => {
-						if (picker === "work") update({ workDirectory: path });
-						else if (picker === "tools") setMoveCandidate(path);
+						if (picker === "work") {
+							if (
+								overlapsAnyDemoPath(path, [
+									settings.toolsPath,
+									currentOutput,
+									...sourceRoots,
+								])
+							) {
+								setNotice("pathOverlap");
+								setPicker(null);
+								return;
+							}
+							update({ workDirectory: path });
+						} else if (picker === "tools") setMoveCandidate(path);
 						else update({ outputCandidate: path });
 						setPicker(null);
 						setNotice("");

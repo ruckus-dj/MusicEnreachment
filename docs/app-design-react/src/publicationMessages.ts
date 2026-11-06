@@ -67,6 +67,10 @@ export const publicationMessages = createNamespace({
 		movementNumber: "Movement number",
 		movementTotal: "Movement total",
 		previewTitle: "Publication preview",
+		audioUpgradeDescription:
+			"Only the audio is upgraded. Current tags, artwork, lyrics and publication path are preserved; audio measurements come from the selected source.",
+		audioUpgradeUnavailable:
+			"Audio upgrade requires a current MP3 publication and an available selected FLAC source.",
 		previewSummary:
 			"Existing positions from the selected objects are shown; duplicate tracks are combined. New entities and alternate sources are not selected.",
 		previewContext: "Preview context",
@@ -100,7 +104,13 @@ export const publicationMessages = createNamespace({
 			"Recording artist sort tags are omitted because different artists resolve to the same sort name.",
 		releaseSortCollision:
 			"Release artist sort tags are omitted because different artists resolve to the same sort name.",
-		applyCount: "Create {create} · update metadata {update}",
+		recordingArtistMissingMbid: "Recording artist MBID is missing.",
+		releaseArtistMissingMbid: "Release artist MBID is missing.",
+		recordingArtistNameCollision:
+			"Recording artist names collide; verify the credits.",
+		releaseArtistNameCollision:
+			"Release artist names collide; verify the credits.",
+		applyCount: "Create {create} · update {update}",
 		applyTitle: "Apply changes for {count} positions?",
 		newSourceConfirmation: "New publications use the selected source.",
 		existingMetadataConfirmation:
@@ -243,6 +253,10 @@ export const publicationMessages = createNamespace({
 		movementNumber: "Номер части",
 		movementTotal: "Всего частей",
 		previewTitle: "Предпросмотр публикации",
+		audioUpgradeDescription:
+			"Улучшается только аудио. Текущие теги, обложка, текст и путь публикации сохраняются; измерения аудио берутся из выбранного источника.",
+		audioUpgradeUnavailable:
+			"Для улучшения нужны текущая MP3-публикация и выбранный доступный FLAC-источник.",
 		previewSummary:
 			"Показаны существующие позиции выбранных объектов; повторяющиеся треки объединены. Новые сущности и альтернативные источники не выбираются.",
 		previewContext: "Контекст предпросмотра",
@@ -276,7 +290,13 @@ export const publicationMessages = createNamespace({
 			"Сортировочные теги исполнителей композиции пропущены: у разных артистов совпало имя сортировки.",
 		releaseSortCollision:
 			"Сортировочные теги исполнителей издания пропущены: у разных артистов совпало имя сортировки.",
-		applyCount: "Создать {create} · обновить метаданные {update}",
+		recordingArtistMissingMbid: "Не указан MBID исполнителя композиции.",
+		releaseArtistMissingMbid: "Не указан MBID исполнителя издания.",
+		recordingArtistNameCollision:
+			"Имена исполнителей композиции совпадают; проверьте кредиты.",
+		releaseArtistNameCollision:
+			"Имена исполнителей издания совпадают; проверьте кредиты.",
+		applyCount: "Создать {create} · обновить {update}",
 		applyTitle: "Применить изменения для {count} позиций?",
 		newSourceConfirmation: "Новые публикации используют выбранный источник.",
 		existingMetadataConfirmation:

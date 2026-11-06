@@ -1,51 +1,44 @@
 # docs/design
 
-**Score: 9** (distinct domain: 7 files, authoritative conventions)
-
 ## OVERVIEW
-Authoritative design documentation (Russian). Conventions, architecture, decisions, requirements, deployment model. This directory defines what is allowed and forbidden.
+
+Документы проектирования на русском языке. `decisions.md` — единый актуальный
+продуктовый контракт; остальные документы этой директории дают предметные,
+архитектурные и deployment-детали.
 
 ## WHERE TO LOOK
-- decisions.md - approved stack, layering rules, config model, forbidden items (CORS, env vars beyond bootstrap, auto quality downgrades, GitHub snapshots for ffmpeg)
-- repository-architecture.md - layer boundary rules: what each Go package may/may not do; layout patterns
-- requirements.md - project requirements
-- data-model.md - domain model and relationships
-- deployment.md - "Do not move database between platforms expecting automatic tool migration"; server-only paths
-- external-tools.md - tool integration requirements
-- music_ingest_redesign.dbml - database schema design
-- navidrome-metadata.md - полнота редактируемых музыкальных метаданных, поля
-  артиста, upstream-покрытие Navidrome и отдельные нерешённые правила разрешения
+
+- `decisions.md` — текущие продуктовые требования и утверждённые ограничения;
+- `requirements.md` — навигация по контракту и связанным документам;
+- `repository-architecture.md` — границы Go-пакетов и технических слоёв;
+- `data-model.md`, `music_ingest_redesign.dbml` — модель данных;
+- `deployment.md`, `external-tools.md` — развёртывание и внешние инструменты;
+- `local-provider.md`, `genres.md` — Local provider и жанры;
+- `navidrome-metadata.md` — полный перечень музыкальных полей и представлений.
 
 ## CONVENTIONS
-**Documentation-first**: Conventions live here (Russian), not in inline comments. When code contradicts these docs, the docs are authoritative.
 
-**Target contract, not implementation status**: Design описывает действующий
-целевой контракт, а не статус реализации. Готовность и проверявшаяся ревизия
-фиксируются в `plans/`, `reports/` или `audit/`; завершение плана не доказывает
-соответствия кода последующим решениям.
-
-**Синхронизация графического контракта**: утверждённые изменения видимого поведения
-отражаются в техническом описании и самостоятельном React-макете
-`docs/app-design-react/` в рамках одной работы. По решению владельца от
-2026-11-03 это единственный текущий графический эталон; прежний static runtime
-`docs/app-design/` удалён. Неутверждённые решения не реализуются по предположению;
-screenshot-артефакты для синхронизации не нужны.
-
-**Russian language**: Design docs are in Russian; code/comments/tests are English.
-
-**Forbidden items catalog**: decisions.md explicitly lists what must NOT be added (CORS, new env vars, auth in-app, etc.).
-
-**Immutable once shipped**: Changes to foundational decisions (config model, layering, auth-less design) require updating these docs first.
-
-**Source-file freshness**: Follow the owner decision in `decisions.md`: matching
-size and `mtime` is the product criterion. Do not treat stricter implementation
-guards or race/security proofs as product requirements or feature blockers.
-
-## STRUCTURE
-decisions.md covers what is allowed/forbidden; repository-architecture.md covers how packages relate. Completed plans and dated reports retain historical decisions and verification evidence; they are not a description of the current implementation.
+- Поддерживайте один актуальный нормативный раздел на тему в `decisions.md`.
+  Правки требований делайте **на месте**: не добавляйте даты, новые блоки
+  решений, пометки «заменяет» или параллельные иерархии редакций.
+- Сохраняйте согласованный смысл, включая optionality и defaults. Новые решения
+  и изменение утверждённого поведения требуют явного согласия владельца.
+  Неоднозначность или противоречие — повод спросить владельца, а не выбрать
+  предположение.
+- В контракте фиксируются только принятые требования и действительно открытые
+  вопросы. Не дублируйте его содержание в `requirements.md` или профильных
+  спецификациях; там оставляйте детали области и ссылки на контракт.
+- Контракт описывает целевое текущее поведение, а не готовность реализации.
+  Исторические факты и проверенные ревизии остаются в планах/отчётах и не
+  образуют версию текущего контракта.
+- Согласованные видимые изменения отражаются также в самостоятельном прототипе
+  `docs/app-design-react/`, если он входит в задачу. Прототип определяет только
+  визуальную форму и не меняет требований.
+- Документы `docs/design/` пишутся по-русски. Код, комментарии и тесты — по-английски.
 
 ## ANTI-PATTERNS
-- Implementing features explicitly forbidden in decisions.md (CORS, new env vars, in-app auth)
-- Violating layer boundaries documented in repository-architecture.md
-- Adding dependencies not in approved stack
-- Writing English design docs (Russian is the standard for docs/design/)
+
+- Добавлять датированные решения или исторические override-блоки в контракт.
+- Выводить новые требования из кода, плана, отчёта или визуального макета.
+- Дублировать нормативный текст вместо ссылки на единый контракт.
+- Нарушать слоистые границы, описанные в `repository-architecture.md`.

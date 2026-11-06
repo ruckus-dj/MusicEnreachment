@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useI18n } from "./i18n";
-import { Button, Dialog, Heading, Modal } from "./ui";
-import { dialogFooter } from "./matchingStyles";
+import { PublicationFlow } from "./PublicationFlow";
+import { publicationArtistNotices } from "./publicationArtistNotices";
+import { upgradeAudioOnly } from "./trackActionModel";
 import {
 	catalogData,
 	effectivePublicationTags,
@@ -10,7 +11,6 @@ import {
 	originalArtistName,
 	metadataChanged,
 	publicationMetadataIssueMessages,
-	publicationSortTagCollisions,
 	type OriginalRelease,
 	type SourceFiles,
 	type CatalogArtist,
@@ -23,7 +23,6 @@ import {
 	metadataSnapshotDiff,
 	publicationMetadataDiff,
 } from "./publicationMetadataDiff";
-import { PublicationInspector } from "./PublicationInspector";
 import type { PublicationInspection } from "./PublicationInspector";
 import {
 	formatPublicationMessage,
@@ -41,6 +40,8 @@ type PreviewAction =
 	| "Без изменений"
 	| "Невозможно обработать"
 	| "Пропустить";
+
+export type PublicationPreviewMode = "metadata" | "audioUpgrade";
 
 const actionMessageKey: Record<
 	PreviewAction,
@@ -79,6 +80,7 @@ function displayReason(locale: "en" | "ru", reason: string) {
 }
 
 export function PublicationPreview({
+	mode = "metadata",
 	destination = fixturePublicationDestination,
 	token,
 	inventoryVersion,
@@ -88,9 +90,9 @@ export function PublicationPreview({
 	onApply,
 	files = originalFiles,
 	artists,
-	returnRoute = "library",
 	returnLabel,
 }: {
+	mode?: PublicationPreviewMode;
 	destination?: import("./publicationOutput").PublicationDestination;
 	token: MetadataPreviewToken;
 	inventoryVersion: number;
@@ -100,11 +102,9 @@ export function PublicationPreview({
 	onApply?: (token: MetadataPreviewToken) => boolean;
 	files?: SourceFiles;
 	artists?: CatalogArtist[];
-	returnRoute?: string;
 	returnLabel?: string;
 }) {
 	const { locale } = useI18n();
-	const [confirming, setConfirming] = useState(false);
 	const [parentRejected, setParentRejected] = useState(false);
 	const availableArtists = artists ?? catalogData.artists;
 	const fresh = isMetadataPreviewFresh(token, inventoryVersion, scopeKey);
@@ -115,54 +115,53 @@ export function PublicationPreview({
 			.map((track) => {
 				const file = track.sourceId ? files[track.sourceId] : null;
 				const usable = file?.available && file.locations?.length ? file : null;
-				const metadataIssues = publicationMetadataIssueMessages(
-					release,
-					track,
-					locale,
-				);
-				const sortCollisions = publicationSortTagCollisions(
-					release,
-					track,
-					availableArtists,
-				);
-				const sortCollisionNotice = [
-					...(sortCollisions.recording
-						? [publicationMessage(locale, "recordingSortCollision")]
-						: []),
-					...(sortCollisions.release
-						? [publicationMessage(locale, "releaseSortCollision")]
-						: []),
-				].join(" · ");
-				const action: PreviewAction = metadataIssues.length
-					? "Невозможно обработать"
-					: track.published
-						? metadataChanged(release, track, artists)
+				const metadataIssues =
+					mode === "metadata"
+						? publicationMetadataIssueMessages(release, track, locale)
+						: [];
+				const artistNotices =
+					mode === "metadata"
+						? publicationArtistNotices(release, track, availableArtists, locale)
+						: [];
+				const action: PreviewAction =
+					mode === "audioUpgrade"
+						? track.published?.codec === "MP3" && usable?.codec === "FLAC"
 							? "Обновить"
-							: "Без изменений"
-						: usable
-							? "Создать"
-							: "Пропустить";
+							: "Пропустить"
+						: metadataIssues.length
+							? "Невозможно обработать"
+							: track.published
+								? metadataChanged(release, track, artists)
+									? "Обновить"
+									: "Без изменений"
+								: usable
+									? "Создать"
+									: "Пропустить";
 				const reason =
-					action === "Невозможно обработать"
-						? formatPublicationMessage(locale, "invalidMetadata", {
-								fields: metadataIssues.join("; "),
-							})
-						: action === "Создать"
-							? "Создание из выбранного доступного источника"
-							: action === "Обновить"
-								? "Обновятся эффективные метаданные; опубликованный звук сохраняется"
-								: action === "Без изменений"
-									? "Эффективные метаданные совпадают со снимком публикации"
-									: !track.sourceId
-										? "Файл не выбран; другой источник не выбирается"
-										: "Выбранный файл недоступен для этой операции; другой источник не выбирается";
+					mode === "audioUpgrade"
+						? action === "Обновить"
+							? `${publicationMessage(locale, "audioUpgradeDescription")} (${track.published!.codec} → ${usable!.codec})`
+							: publicationMessage(locale, "audioUpgradeUnavailable")
+						: action === "Невозможно обработать"
+							? formatPublicationMessage(locale, "invalidMetadata", {
+									fields: metadataIssues.join("; "),
+								})
+							: action === "Создать"
+								? "Создание из выбранного доступного источника"
+								: action === "Обновить"
+									? "Обновятся эффективные метаданные; опубликованный звук сохраняется"
+									: action === "Без изменений"
+										? "Эффективные метаданные совпадают со снимком публикации"
+										: !track.sourceId
+											? "Файл не выбран; другой источник не выбирается"
+											: "Выбранный файл недоступен для этой операции; другой источник не выбирается";
 				return {
 					release,
 					track,
 					file: usable,
 					action,
 					reason,
-					sortCollisionNotice,
+					artistNotices,
 				};
 			}),
 	);
@@ -173,11 +172,10 @@ export function PublicationPreview({
 		"Невозможно обработать",
 		"Пропустить",
 	] as const;
-	const returnLink = `#${returnRoute}`;
 	const returnText =
 		returnLabel ?? publicationMessage(locale, "returnToLibrary");
 	const inspections: PublicationInspection[] = rows.map(
-		({ release, track, file, action, reason, sortCollisionNotice }) => {
+		({ release, track, file, action, reason, artistNotices }) => {
 			const output = track.published
 				? { path: track.published.path, container: track.published.container }
 				: file
@@ -196,7 +194,7 @@ export function PublicationPreview({
 				position: String(track.position),
 				title: track.title,
 				action: publicationMessage(locale, actionMessageKey[action]),
-				reason: [displayReason(locale, reason), sortCollisionNotice]
+				reason: [displayReason(locale, reason), artistNotices.join(" · ")]
 					.filter(Boolean)
 					.join(" · "),
 				source: file
@@ -208,7 +206,21 @@ export function PublicationPreview({
 					output?.path ?? publicationMessage(locale, "pathUnavailable"),
 				container: output?.container ?? publicationMessage(locale, "noFormat"),
 				groups: track.published
-					? publicationMetadataDiff(release, track, availableArtists)
+					? mode === "audioUpgrade"
+						? metadataSnapshotDiff(
+								track.published.tags,
+								upgradeAudioOnly(track, files).published?.tags ??
+									track.published.tags,
+								{
+									coverHash: track.published.coverHash,
+									lyrics: track.published.lyrics,
+								},
+								{
+									coverHash: track.published.coverHash,
+									lyrics: track.published.lyrics,
+								},
+							)
+						: publicationMetadataDiff(release, track, availableArtists)
 					: metadataSnapshotDiff(
 							{},
 							effectivePublicationTags(release, track, availableArtists),
@@ -221,46 +233,35 @@ export function PublicationPreview({
 			};
 		},
 	);
+
+	const applicableRows = rows.filter(
+		(row) => row.action === "Создать" || row.action === "Обновить",
+	);
+	const apply = () => {
+		if (!isMetadataPreviewFresh(token, inventoryVersion, scopeKey)) return;
+		const applicableToken = {
+			...token,
+			selectedIds: applicableRows.map((row) => row.track.id),
+		};
+		if (onApply && !onApply(applicableToken)) setParentRejected(true);
+	};
 	return (
-		<section
-			className="min-w-0 px-[clamp(14px,2vw,28px)] py-5"
-			aria-labelledby="preview-title"
-		>
-			<header className="mb-3.5 flex flex-wrap items-start justify-between gap-3">
-				<div>
-					<h1 id="preview-title" className="m-0 text-2xl tracking-[-.02em]">
-						{publicationMessage(locale, "previewTitle")}
-					</h1>
-					<p className="mt-[5px] max-w-[760px] text-[var(--muted)]">
-						{publicationMessage(locale, "previewSummary")}
-					</p>
-				</div>
-				<p className="mt-[5px] max-w-[760px] text-[var(--muted)]">
-					{publicationMessage(locale, "previewContext")}: {returnText}.{" "}
-					<a href={returnLink}>{returnText}</a>
-				</p>
-				<Button onPress={onBack}>{returnText}</Button>
-			</header>
-			{stale && (
-				<p role="alert">{publicationMessage(locale, "stalePreview")}</p>
+		<PublicationFlow
+			title={publicationMessage(locale, "previewTitle")}
+			description={publicationMessage(
+				locale,
+				mode === "audioUpgrade" ? "audioUpgradeDescription" : "previewSummary",
 			)}
-			<div
-				className="my-2.5 mb-3.5 flex flex-wrap gap-2"
-				aria-label={publicationMessage(locale, "actionSummary")}
-			>
-				{actions.map((action) => (
-					<span
-						key={action}
-						className="rounded border border-[var(--line)] bg-[var(--surface)] px-[9px] py-[5px] text-[11px]"
-					>
-						{publicationMessage(locale, actionMessageKey[action])}:{" "}
-						{rows.filter((row) => row.action === action).length}
-					</span>
-				))}
-			</div>
-			<PublicationInspector items={inspections} locale={locale} />
-			<div className="mt-3.5 flex flex-wrap items-center justify-between gap-2.5 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] p-3 max-[600px]:items-stretch">
-				<p>
+			returnLabel={returnText}
+			onBack={onBack}
+			stale={stale}
+			counts={actions.map((action) => ({
+				label: publicationMessage(locale, actionMessageKey[action]),
+				count: rows.filter((row) => row.action === action).length,
+			}))}
+			items={inspections}
+			footer={
+				<>
 					<strong>
 						{
 							rows.filter((row) => row.action === "Невозможно обработать")
@@ -268,82 +269,37 @@ export function PublicationPreview({
 						}{" "}
 						{publicationMessage(locale, "unprocessed")}
 					</strong>{" "}
-					{publicationMessage(locale, "previewPolicy")}
-				</p>
-				<div className="flex flex-wrap justify-end gap-2">
-					{onApply && (
-						<Button
-							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
-							onPress={() => setConfirming(true)}
-							isDisabled={
-								stale ||
-								!rows.some(
-									(row) =>
-										row.action === "Создать" || row.action === "Обновить",
-								)
-							}
-						>
-							{formatPublicationMessage(locale, "applyCount", {
-								create: rows.filter((row) => row.action === "Создать").length,
-								update: rows.filter((row) => row.action === "Обновить").length,
-							})}
-						</Button>
+					{publicationMessage(
+						locale,
+						mode === "audioUpgrade" ? "unselectedUnchanged" : "previewPolicy",
 					)}
-				</div>
-			</div>
-			<Modal isOpen={confirming} onOpenChange={setConfirming} isDismissable>
-				<Dialog aria-labelledby="apply-preview-title" className="grid gap-2">
-					{stale && (
-						<p role="alert">{publicationMessage(locale, "stalePreview")}</p>
-					)}
-					<Heading slot="title" id="apply-preview-title">
-						{formatPublicationMessage(locale, "applyTitle", {
-							count: rows.filter(
-								(row) => row.action === "Создать" || row.action === "Обновить",
-							).length,
-						})}
-					</Heading>
-					<p className="my-0 min-w-[240px] flex-1 text-[11px] text-[var(--muted)]">
-						{publicationMessage(locale, "newSourceConfirmation")}{" "}
-						{publicationMessage(locale, "existingMetadataConfirmation")}{" "}
-						{publicationMessage(locale, "prototypeMemoryOnly")}
+				</>
+			}
+			primaryLabel={formatPublicationMessage(locale, "applyCount", {
+				create: rows.filter((row) => row.action === "Создать").length,
+				update: rows.filter((row) => row.action === "Обновить").length,
+			})}
+			primaryDisabled={!onApply || applicableRows.length === 0}
+			confirmationTitle={formatPublicationMessage(locale, "applyTitle", {
+				count: applicableRows.length,
+			})}
+			confirmationDetails={
+				<>
+					<p>
+						{mode === "audioUpgrade" ? (
+							publicationMessage(locale, "audioUpgradeDescription")
+						) : (
+							<>
+								{publicationMessage(locale, "newSourceConfirmation")}{" "}
+								{publicationMessage(locale, "existingMetadataConfirmation")}
+							</>
+						)}
 					</p>
-					<div className={`${dialogFooter} flex-wrap`}>
-						<Button onPress={() => setConfirming(false)}>
-							{publicationMessage(locale, "cancel")}
-						</Button>
-						<Button
-							className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
-							isDisabled={stale}
-							onPress={() => {
-								if (
-									!isMetadataPreviewFresh(token, inventoryVersion, scopeKey)
-								) {
-									setConfirming(false);
-									return;
-								}
-								const applicableToken = {
-									...token,
-									selectedIds: rows
-										.filter(
-											(row) =>
-												row.action === "Создать" || row.action === "Обновить",
-										)
-										.map((row) => row.track.id),
-								};
-								if (onApply && !onApply(applicableToken)) {
-									setParentRejected(true);
-									setConfirming(false);
-									return;
-								}
-								setConfirming(false);
-							}}
-						>
-							{publicationMessage(locale, "confirm")}
-						</Button>
-					</div>
-				</Dialog>
-			</Modal>
-		</section>
+					<p>{publicationMessage(locale, "prototypeMemoryOnly")}</p>
+				</>
+			}
+			confirmLabel={publicationMessage(locale, "confirm")}
+			onConfirm={apply}
+		/>
 	);
 }

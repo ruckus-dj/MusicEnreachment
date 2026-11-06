@@ -2279,7 +2279,8 @@
       "label": "",
       "catalog": "",
       "color": "sand",
-      "providerId": null,
+      "providerId": "cbfbb2dc-e452-40bd-9e4d-95df962290b4",
+      "provider": "Local",
       "tracks": [
         {
           "id": "mix-t1",
@@ -2318,9 +2319,10 @@
           "duration": 284,
           "artistId": "arden",
           "recordingId": null,
+          "localRecordingId": "local-recording-mix-green-room",
           "recordingGenres": [],
           "sourceId": "mix-f3",
-          "providerTrackId": null,
+          "providerTrackId": "local-road-notes-track-3",
           "published": null,
           "sourceIds": [
             "mix-f3"
@@ -2333,9 +2335,10 @@
           "duration": 254,
           "artistId": "mira",
           "recordingId": null,
+          "localRecordingId": "local-recording-mix-night-sketch",
           "recordingGenres": [],
           "sourceId": "mix-f4",
-          "providerTrackId": null,
+          "providerTrackId": "local-road-notes-track-4",
           "published": null,
           "sourceIds": [
             "mix-f4"
@@ -2348,9 +2351,10 @@
           "duration": 239,
           "artistId": "various",
           "recordingId": null,
+          "localRecordingId": "local-recording-mix-unknown-signal",
           "recordingGenres": [],
           "sourceId": "mix-f5",
-          "providerTrackId": null,
+          "providerTrackId": "local-road-notes-track-5",
           "published": null,
           "sourceIds": [
             "mix-f5"
@@ -6128,6 +6132,15 @@
         "tags": ""
       },
       {
+        "id": "local-artist-various",
+        "key": "7c98b483-00ae-4a56-b1f4-9404ec0b51e7",
+        "provider": "Local",
+        "name": "Various Artists",
+        "disambiguation": "",
+        "genres": [],
+        "tags": ""
+      },
+      {
         "id": "mb-artist-forma",
         "key": "mb-artist-forma",
         "provider": "MusicBrainz",
@@ -6182,6 +6195,60 @@
         ]
       },
       {
+        "id": "mix",
+        "key": "cbfbb2dc-e452-40bd-9e4d-95df962290b4",
+        "provider": "Local",
+        "release_group_title": "Road Notes — личный сборник",
+        "title": "Road Notes — личный сборник",
+        "artistIds": [
+          "local-artist-various"
+        ],
+        "genres": [],
+        "country_code": "",
+        "release_date": "2023",
+        "label": "",
+        "catalog_number": "",
+        "status": "",
+        "packaging": "",
+        "barcode": "",
+        "disambiguation": "",
+        "primaryType": "Album",
+        "secondaryTypes": [],
+        "language": "eng",
+        "tracks": [
+          {
+            "id": "local-road-notes-track-1",
+            "recordingId": "demo-rec-north-1",
+            "titleOverride": "",
+            "durationOverrideMs": ""
+          },
+          {
+            "id": "local-road-notes-track-2",
+            "recordingId": "demo-rec-signals-2",
+            "titleOverride": "",
+            "durationOverrideMs": ""
+          },
+          {
+            "id": "local-road-notes-track-3",
+            "recordingId": "local-recording-mix-green-room",
+            "titleOverride": "",
+            "durationOverrideMs": ""
+          },
+          {
+            "id": "local-road-notes-track-4",
+            "recordingId": "local-recording-mix-night-sketch",
+            "titleOverride": "",
+            "durationOverrideMs": ""
+          },
+          {
+            "id": "local-road-notes-track-5",
+            "recordingId": "local-recording-mix-unknown-signal",
+            "titleOverride": "",
+            "durationOverrideMs": ""
+          }
+        ]
+      },
+      {
         "id": "mb-release-hours",
         "key": "mb-release-hours",
         "provider": "MusicBrainz",
@@ -6210,6 +6277,81 @@
           "local-artist-trio"
         ],
         "duration_ms": "284000",
+        "disambiguation": "",
+        "explicit": "",
+        "isrcs": "",
+        "genres": [],
+        "tags": ""
+      },
+      {
+        "id": "demo-rec-north-1",
+        "key": "demo-rec-north-1",
+        "provider": "MusicBrainz",
+        "title": "First Light",
+        "artistIds": [
+          "local-artist-vale"
+        ],
+        "duration_ms": "252000",
+        "disambiguation": "",
+        "explicit": "",
+        "isrcs": "",
+        "genres": [],
+        "tags": ""
+      },
+      {
+        "id": "demo-rec-signals-2",
+        "key": "demo-rec-signals-2",
+        "provider": "MusicBrainz",
+        "title": "Relay",
+        "artistIds": [
+          "mb-artist-forma"
+        ],
+        "duration_ms": "243000",
+        "disambiguation": "",
+        "explicit": "",
+        "isrcs": "",
+        "genres": [],
+        "tags": ""
+      },
+      {
+        "id": "local-recording-mix-green-room",
+        "key": "0c1d1e84-bf9b-4481-88dc-76c821f6a487",
+        "provider": "Local",
+        "title": "Green Room",
+        "artistIds": [
+          "local-artist-trio"
+        ],
+        "duration_ms": "284000",
+        "disambiguation": "",
+        "explicit": "",
+        "isrcs": "",
+        "genres": [],
+        "tags": ""
+      },
+      {
+        "id": "local-recording-mix-night-sketch",
+        "key": "4a175c72-67ef-4426-a31a-68d87f3cb176",
+        "provider": "Local",
+        "title": "Night Sketch",
+        "artistIds": [
+          "local-artist-vale"
+        ],
+        "duration_ms": "254000",
+        "disambiguation": "",
+        "explicit": "",
+        "isrcs": "",
+        "genres": [],
+        "tags": ""
+      },
+      {
+        "id": "local-recording-mix-unknown-signal",
+        "key": "a8985ba0-626d-40c2-a74a-4b2b7a4e8c30",
+        "provider": "Local",
+        "title": "Unknown Signal",
+        "artistIds": [
+          "local-artist-various"
+        ],
+        "duration_ms": "239000",
         "disambiguation": "",
         "explicit": "",
         "isrcs": "",

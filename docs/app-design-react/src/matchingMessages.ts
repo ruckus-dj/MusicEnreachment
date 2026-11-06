@@ -50,7 +50,7 @@ export const matchingMessages = createNamespace({
 		ariaSearchTitleArtist: "Title / artist",
 		ariaUnavailableSource: "Unavailable source",
 		incomingLink: "All incoming",
-		readOnlyRoot: "Read only",
+		sourceDirectory: "Source directory",
 		matchingTitle: "Review: {group}",
 		localTrackListHint:
 			"Local positions; recordings can be selected from different releases.",
@@ -213,7 +213,7 @@ export const matchingMessages = createNamespace({
 		ariaSearchTitleArtist: "Название / артист",
 		ariaUnavailableSource: "Недоступный источник",
 		incomingLink: "Все входящие",
-		readOnlyRoot: "Только чтение",
+		sourceDirectory: "Каталог источников",
 		matchingTitle: "Разбор: {group}",
 		localTrackListHint:
 			"Локальные позиции; композиции можно выбирать из разных изданий.",

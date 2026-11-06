@@ -33,6 +33,7 @@ import { rootLocations } from "./sourceInventory";
 import { formStyles as styles } from "./formStyles";
 import { useI18n } from "./i18n";
 import { sourceMessage, type SourceMessageKey } from "./sourceMessages";
+import { overlapsAnyDemoPath } from "./demoPathValidation";
 
 type Mode = "in_place" | "staged";
 export interface SourceRoot {
@@ -87,6 +88,8 @@ export function SourcesScreen({
 	removed,
 	onRemove,
 	workDirectory = "",
+	toolsPath = "",
+	currentOutput = "",
 	initialProcessingState = initialSourceProcessingState,
 	onProcessingState,
 }: {
@@ -96,6 +99,8 @@ export function SourcesScreen({
 	removed: Set<string>;
 	onRemove: (rootId: string) => void;
 	workDirectory?: string;
+	toolsPath?: string;
+	currentOutput?: string;
 	initialProcessingState?: SourceProcessingState;
 	onProcessingState?: (state: SourceProcessingState) => void;
 }) {
@@ -258,6 +263,16 @@ export function SourcesScreen({
 								}
 								if (!mode) {
 									setNotice(m("modeRequired"));
+									return;
+								}
+								if (
+									overlapsAnyDemoPath(path, [
+										workDirectory,
+										toolsPath,
+										currentOutput,
+									])
+								) {
+									setNotice(m("pathOverlap"));
 									return;
 								}
 								onRoots([

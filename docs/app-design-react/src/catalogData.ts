@@ -13,6 +13,7 @@ import {
 	projectMetadataValues,
 } from "./metadata/projection";
 import { navidromeFields } from "./metadata/registry";
+import { projectArtistCreditGroup } from "./metadata/artistProjection";
 import {
 	resolveCatalogGenreName,
 	resolveCatalogGenreValue,
@@ -124,6 +125,7 @@ export const recoveryFixture = original.recoveryFixture;
 export type CatalogArtist = {
 	id: string;
 	name: string;
+	mbid?: string;
 	sortName?: string;
 	disambiguation?: string;
 	genres?: { id?: string; name?: string }[];
@@ -275,10 +277,7 @@ export function desiredTags(
 				? []
 				: [release.providerId],
 		MUSICBRAINZ_TRACKID:
-			release.manual ||
-			release.provider === "Local" ||
-			!track.recordingId ||
-			!musicBrainzUUID.test(track.recordingId)
+			!track.recordingId || !musicBrainzUUID.test(track.recordingId)
 				? []
 				: [track.recordingId],
 		COMMENT: [],
@@ -311,6 +310,14 @@ export function desiredTags(
 					},
 				]
 			: [];
+	const recordingArtistProjection = projectArtistCreditGroup(
+		recordingCredits,
+		artists,
+	);
+	const releaseArtistProjection = projectArtistCreditGroup(
+		releaseCredits,
+		artists,
+	);
 	const sortNameForCredit = (artistId: string) => {
 		const linkedArtist = artists.find((item) => item.id === artistId);
 		return linkedArtist?.sortName || linkedArtist?.name || "";
@@ -336,7 +343,10 @@ export function desiredTags(
 	result.ARTIST = recordingCredits.length
 		? [
 				recordingCredits
-					.map((credit) => credit.creditName + credit.joinPhrase)
+					.map(
+						(credit, index) =>
+							recordingArtistProjection.names[index] + credit.joinPhrase,
+					)
 					.join(""),
 			]
 		: [];
@@ -354,15 +364,27 @@ export function desiredTags(
 				]
 			: [];
 	result.ARTISTSSORT = recordingSortCollision ? [] : recordingSorts;
-	result.ARTISTS = recordingCredits.map((credit) => credit.creditName);
+	result.ARTISTS = recordingArtistProjection.names;
+	result.MUSICBRAINZ_ARTISTID =
+		recordingArtistProjection.missingMbid ||
+		recordingArtistProjection.nameCollision
+			? []
+			: recordingArtistProjection.mbids;
 	result.ALBUMARTIST = releaseCredits.length
 		? [
 				releaseCredits
-					.map((credit) => credit.creditName + credit.joinPhrase)
+					.map(
+						(credit, index) =>
+							releaseArtistProjection.names[index] + credit.joinPhrase,
+					)
 					.join(""),
 			]
 		: [];
-	result.ALBUMARTISTS = releaseCredits.map((credit) => credit.creditName);
+	result.ALBUMARTISTS = releaseArtistProjection.names;
+	result.MUSICBRAINZ_ALBUMARTISTID =
+		releaseArtistProjection.missingMbid || releaseArtistProjection.nameCollision
+			? []
+			: releaseArtistProjection.mbids;
 	result.ALBUMARTISTSORT =
 		releaseSorts.length && releaseSorts.every(Boolean) && !releaseSortCollision
 			? [
@@ -388,6 +410,46 @@ export function desiredTags(
 	};
 	const projected = projectMetadataValues(explicitValues).tags;
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
+	const projectedArtistNames = (
+		credits: { creditName: string; joinPhrase?: string }[],
+		names: string[],
+	) => names.some((name, index) => name !== credits[index]?.creditName);
+	if (projectedArtistNames(recordingCredits, recordingArtistProjection.names)) {
+		if (projected.ARTIST?.length)
+			result.ARTIST = [
+				recordingCredits
+					.map(
+						(credit, index) =>
+							recordingArtistProjection.names[index] + credit.joinPhrase,
+					)
+					.join(""),
+			];
+		if (projected.ARTISTS?.length)
+			result.ARTISTS = recordingArtistProjection.names;
+	}
+	if (
+		recordingArtistProjection.missingMbid ||
+		recordingArtistProjection.nameCollision
+	)
+		result.MUSICBRAINZ_ARTISTID = [];
+	if (projectedArtistNames(releaseCredits, releaseArtistProjection.names)) {
+		if (projected.ALBUMARTIST?.length)
+			result.ALBUMARTIST = [
+				releaseCredits
+					.map(
+						(credit, index) =>
+							releaseArtistProjection.names[index] + credit.joinPhrase,
+					)
+					.join(""),
+			];
+		if (projected.ALBUMARTISTS?.length)
+			result.ALBUMARTISTS = releaseArtistProjection.names;
+	}
+	if (
+		releaseArtistProjection.missingMbid ||
+		releaseArtistProjection.nameCollision
+	)
+		result.MUSICBRAINZ_ALBUMARTISTID = [];
 	// Resolve catalog identities without recasing unrelated legacy/user values.
 	const genreReferences = track.recordingGenreRefs ?? [];
 	result.GENRE = (result.GENRE ?? []).map((value, index) => {

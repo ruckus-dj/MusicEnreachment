@@ -136,6 +136,51 @@ it("adapts Local records into provider candidates and publishes with Local ident
 	]);
 });
 
+it("adapts the Road Notes Local compilation with identities for unresolved tracks", () => {
+	const local = createLocalProviderState();
+	const compilation = localProviderReleases(local).find(
+		(item) => item.id === "mix",
+	);
+	expect(compilation).toMatchObject({
+		provider: "Local",
+		providerId: "cbfbb2dc-e452-40bd-9e4d-95df962290b4",
+		artistId: "local-artist-various",
+	});
+	expect(compilation?.tracks.slice(2)).toMatchObject([
+		{
+			id: "mix-local-road-notes-track-3",
+			localRecordingId: "local-recording-mix-green-room",
+			title: "Green Room",
+		},
+		{
+			id: "mix-local-road-notes-track-4",
+			localRecordingId: "local-recording-mix-night-sketch",
+			title: "Night Sketch",
+		},
+		{
+			id: "mix-local-road-notes-track-5",
+			localRecordingId: "local-recording-mix-unknown-signal",
+			title: "Unknown Signal",
+		},
+	]);
+	expect(
+		compilation?.tracks.slice(2).every((track) => track.recordingId === null),
+	).toBe(true);
+	expect(
+		compilation?.tracks.slice(2).map((track) => track.localRecordingId),
+	).toEqual([
+		"local-recording-mix-green-room",
+		"local-recording-mix-night-sketch",
+		"local-recording-mix-unknown-signal",
+	]);
+	expect(
+		compilation?.tracks.slice(0, 2).map((track) => track.recordingId),
+	).toEqual(["demo-rec-north-1", "demo-rec-signals-2"]);
+	expect(
+		compilation?.tracks.slice(0, 2).every((track) => !track.localRecordingId),
+	).toBe(true);
+});
+
 it("keeps Local track identities stable when tracks are reordered or deleted", () => {
 	const local = createLocalProviderState();
 	const release = local.items.releases.find(
@@ -251,7 +296,8 @@ it("resolves non-Local references from the provider catalogs and preserves zero 
 	expect(candidate.tracks[0]).toMatchObject({
 		duration: 0,
 		artistId: artist.id,
-		localRecordingId: recording.id,
+		localRecordingId: null,
+		recordingId: recording.key,
 		recordingTitle: "Provider recording metadata",
 	});
 	expect(candidate.tracks[0].recordingCredits).toEqual(recording.credits);

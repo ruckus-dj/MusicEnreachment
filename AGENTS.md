@@ -1,20 +1,20 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-09-28T00:00:00.000Z
-**Commit:** HEAD
-**Branch:** main
-
 ## OVERVIEW
-### Product decisions — explicit owner approval required
+### Product contract
 
-- Current state only: the owner explicitly rejects application history. Update or
-  delete obsolete attempts/results; do not preserve failed originals after a
-  successful recovery merely for audit/history. Retain unresolved execution
-  evidence only while it is needed for the current action or safe recovery.
-- Do not make new product decisions or change existing ones without the owner's explicit approval. This rule applies to the primary agent and all subagents, across code, documentation, and plans.
-- Preserve the meaning of approved requirements: do not make optional features mandatory, remove settings, choose defaults, or change user-facing behavior without separate approval.
-- A request to update documentation, write a plan, or implement a stage does not authorize revising product decisions. The owner's silence is not approval either.
-- If requirements are ambiguous or contradictory, ask the owner first. Until they answer, do not record an assumption as an approved decision or implement it. Clearly separate proposals from approved decisions.
+- `docs/design/decisions.md` is the single current product contract. Edit the
+  relevant topic section in place; do not append dated decision blocks, duplicate
+  requirements, or create a hierarchy of historical overrides.
+- Preserve approved meaning, including optionality and defaults. Do not make new
+  product decisions or change existing behavior without explicit owner approval.
+  A documentation request or implementation plan does not itself authorize such
+  a change.
+- If a requirement is ambiguous, contradictory, or genuinely open, ask the owner
+  before deciding or implementing. Keep only truly open questions in the contract;
+  do not turn assumptions into requirements.
+- Historical plans and reports remain evidence of their work and time. They are
+  not the current contract and should not be rewritten as if they were current.
 
 MeloTrove (legacy name: MusicEnreachment) - music library manager with source inventory, audio analysis (Chromaprint), transcoding (ffmpeg), and publication. Go 1.27 backend (Huma/chi API, Bun ORM, River jobs, PostgreSQL) + React 19 frontend (Vite, TanStack Query, Orval-generated client). No auth by design; deployment-boundary security only.
 
@@ -47,7 +47,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | Settings | backend/internal/settings | PostgreSQL-backed runtime registry and filesystem validation |
 | Frontend screens | frontend/src/features/ | Setup, settings, sources, incoming grouping, and matching workflows |
 | API client | frontend/src/api/generated/ | Orval-generated from OpenAPI, never hand-edit |
-| Conventions | docs/design/AGENTS.md | Russian docs: decisions.md (stack, forbidden items), repository-architecture.md (layering) |
+| Conventions | docs/design/AGENTS.md | Russian docs: decisions.md (single current product contract), repository-architecture.md (layering) |
 | Design prototype | docs/app-design-react/AGENTS.md | Standalone React design artifact; sole graphical reference |
 | Build commands | Taskfile.yml at root | `task build/test/verify/generate/run` |
 
@@ -127,10 +127,9 @@ raising that buffer is not a substitute for streaming the dependency inspection.
 
 **Frontend build embedding**: Vite builds to ../build/frontend; tools/stage-frontend.mjs prepares it; Go binary embeds it via internal/static (//go:embed).
 
-**Prototype boundary**: docs/app-design-react/ is a standalone design artifact,
-not part of the production React app in frontend/. The former docs/app-design/
-static runtime was retired by owner decision on 2026-11-03; its essential design
-prose was moved into docs/app-design-react/.
+**Prototype boundary**: docs/app-design-react/ is the sole current graphical
+reference and a standalone design artifact, not part of the production React app
+in frontend/.
 
 ## COMMANDS
 
@@ -256,7 +255,7 @@ prose was moved into docs/app-design-react/.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 
-**Owner-approved prototype exception (2026-11-03)**: when changes are confined
+**Owner-approved prototype exception**: when changes are confined
 to the standalone design prototype and documentation, use `task design:check`
 and live prototype checks instead. Do not run or wait for application gates or
 application CI for that work. The `quality-gates` commit hook runs application

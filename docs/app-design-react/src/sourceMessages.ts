@@ -5,7 +5,7 @@ export const sourcesMessages = createNamespace({
 	en: {
 		title: "Sources",
 		description:
-			"Server paths and read-only source policy. Choose processing mode separately; files are never uploaded by drag and drop.",
+			"Choose server directories and their processing mode. Analysis does not modify originals; source deletion is a separate setting and requires filesystem permission. Files are not uploaded by drag and drop.",
 		addSource: "Add source",
 		newSource: "New source",
 		name: "Source name",
@@ -15,15 +15,16 @@ export const sourcesMessages = createNamespace({
 		onlyDirectory: "Choose a directory; files are not uploaded.",
 		processingMode: "Processing mode · choose explicitly",
 		inPlace: "In place",
-		inPlaceHelp:
-			"Analysis reads the original file; the source itself remains read-only.",
+		inPlaceHelp: "Analysis reads the original file without modifying it.",
 		staged: "Using a work copy",
 		stagedHelp:
 			"Processing uses an application-owned audio copy in the shared server work directory. The directory is required for processing, not for adding or scanning a source.",
-		sourcePolicy: "Source policy: read-only in either mode.",
+		sourcePolicy: "Analysis does not modify originals.",
 		nameRequired: "Enter a source name.",
 		modeRequired:
 			"Choose a processing mode explicitly: In place or Using a work copy.",
+		pathOverlap:
+			"This source directory overlaps the shared work, tools, or publication directory.",
 		sourceAdded:
 			"Source added to the prototype. No server directory was opened or scanned; a work directory is required only before staged processing.",
 		cancel: "Cancel",
@@ -105,7 +106,7 @@ export const sourcesMessages = createNamespace({
 	ru: {
 		title: "Источники",
 		description:
-			"Серверные пути и политика источника только для чтения. Режим обработки выбирается отдельно; файлы не загружаются перетаскиванием.",
+			"Выберите серверные каталоги и режим их обработки. Анализ не изменяет исходники; удаление — отдельная настройка, требующая разрешения файловой системы. Файлы не загружаются перетаскиванием.",
 		addSource: "Добавить источник",
 		newSource: "Новый источник",
 		name: "Имя источника",
@@ -115,15 +116,16 @@ export const sourcesMessages = createNamespace({
 		onlyDirectory: "Выберите каталог; файлы не загружаются.",
 		processingMode: "Режим обработки · выберите явно",
 		inPlace: "На месте",
-		inPlaceHelp:
-			"Анализ выполняется по исходному файлу; сам источник остаётся только для чтения.",
+		inPlaceHelp: "Анализ читает исходный файл, не изменяя его.",
 		staged: "Через рабочую копию",
 		stagedHelp:
 			"Для обработки используется принадлежащая приложению рабочая копия аудио в общей рабочей папке сервера. Папка требуется для обработки, но не для добавления или сканирования источника.",
-		sourcePolicy: "Политика источника: только чтение в обоих режимах.",
+		sourcePolicy: "Анализ не изменяет исходники.",
 		nameRequired: "Укажите имя источника.",
 		modeRequired:
 			"Явно выберите режим обработки: «На месте» или «Через рабочую копию».",
+		pathOverlap:
+			"Каталог источника пересекается с общей рабочей папкой, каталогом инструментов или каталогом публикации.",
 		sourceAdded:
 			"Источник добавлен в макет. Серверный каталог не открывался и не сканировался; рабочая папка требуется только перед обработкой через копию.",
 		cancel: "Отмена",

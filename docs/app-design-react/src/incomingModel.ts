@@ -323,6 +323,8 @@ export type IncomingPlan = {
 	localReleaseId: string | null;
 	assignments: Record<string, Assignment>;
 	inventoryVersion: number;
+	/** Rebuild the selected source even when the current snapshot is unchanged. */
+	force?: boolean;
 };
 
 export function makePlan(
@@ -450,7 +452,7 @@ export function planRows(
 			action:
 				!assignment?.included || !file
 					? "Пропустить"
-					: unchanged
+					: unchanged && !plan.force
 						? "Без изменений"
 						: previous
 							? "Заменить"
@@ -480,12 +482,13 @@ export function applyPlan(
 	destination: PublicationDestination = fixturePublicationDestination,
 ) {
 	let release = releases.find((item) => item.id === plan.localReleaseId);
+	if (plan.mode === "local" && !release) return 0;
 	const rows = planRows(plan, files, releases, providers, artists);
 	const hasApplicableRow = rows.some((row) => {
 		if (
 			!row.assignment?.included ||
 			!row.file ||
-			row.action === "Без изменений"
+			(row.action === "Без изменений" && !plan.force)
 		)
 			return false;
 		const metadataRelease =
@@ -547,7 +550,7 @@ export function applyPlan(
 		if (
 			!row.assignment?.included ||
 			!row.file ||
-			row.action === "Без изменений"
+			(row.action === "Без изменений" && !plan.force)
 		)
 			continue;
 		if (
@@ -586,16 +589,21 @@ export function applyPlan(
 			position: row.targetTrack.position,
 			title: row.targetTrack.title,
 		});
-		const path = published?.path ?? output.path;
+		const rebuildSource =
+			!published ||
+			plan.force ||
+			published.sourceId !== row.file.id ||
+			published.codec !== row.file.codec;
 		track.published = {
 			tags: structuredClone(row.nextTags),
 			coverHash: track.coverHash ?? null,
 			lyrics: track.lyrics ?? null,
 			codec: row.file.codec,
-			container: published?.container ?? output.container,
+			container:
+				rebuildSource || !published ? output.container : published.container,
 			sourceId: row.file.id,
 			readAt: "Только что · демо",
-			path,
+			path: rebuildSource || !published ? output.path : published.path,
 		};
 		track.metadataBaseline = structuredClone(row.nextTags);
 		track.metadataBaselineExtras = {

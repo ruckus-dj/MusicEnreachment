@@ -10,6 +10,8 @@ import {
 	Toolbar,
 } from "./ui";
 import { formStyles as styles } from "./formStyles";
+import { useI18n } from "./i18n";
+import { directoryMessages } from "./i18n/namespaces/directories";
 
 const directories: Record<string, string[]> = {
 	"/": ["mnt", "srv", "var"],
@@ -50,6 +52,8 @@ export function DirectoryPicker({
 	onChoose: (path: string) => void;
 	onClose: () => void;
 }) {
+	const { locale } = useI18n();
+	const copy = directoryMessages[locale];
 	const pathInputRef = useRef<HTMLInputElement>(null);
 	const editTriggerRef = useRef<HTMLButtonElement>(null);
 	const returnFocusAfterCancel = useRef(false);
@@ -58,7 +62,7 @@ export function DirectoryPicker({
 	);
 	const [editing, setEditing] = useState(false);
 	const [requested, setRequested] = useState(path);
-	const [error, setError] = useState("");
+	const [invalidPath, setInvalidPath] = useState(false);
 	useEffect(() => {
 		if (editing) pathInputRef.current?.focus();
 		else if (returnFocusAfterCancel.current) {
@@ -73,7 +77,7 @@ export function DirectoryPicker({
 		setPath(next);
 		setRequested(next);
 		setEditing(false);
-		setError("");
+		setInvalidPath(false);
 	};
 	return (
 		<Modal
@@ -89,17 +93,15 @@ export function DirectoryPicker({
 				aria-describedby="directory-picker-help"
 			>
 				<Heading slot="title" id="directory-picker-title">
-					Папка на сервере
+					{copy.title}
 				</Heading>
-				<p id="directory-picker-help">
-					Каталоги на сервере MeloTrove — не файлы устройства.
-				</p>
+				<p id="directory-picker-help">{copy.help}</p>
 				<nav
 					className={styles.directoryBreadcrumbs}
-					aria-label="Навигация по каталогам"
+					aria-label={copy.breadcrumbs}
 				>
 					<Button
-						aria-label="На уровень выше"
+						aria-label={copy.up}
 						isDisabled={path === "/"}
 						onPress={() => go(`/${parts.slice(0, -1).join("/")}`)}
 					>
@@ -108,9 +110,9 @@ export function DirectoryPicker({
 					<Button
 						ref={editTriggerRef}
 						onPress={() => (path === "/" ? setEditing(true) : go("/"))}
-						aria-label={path === "/" ? "Редактировать путь" : undefined}
+						aria-label={path === "/" ? copy.editPath : undefined}
 					>
-						Сервер
+						{copy.server}
 					</Button>
 					{parts.map((part, index) => {
 						const current = index === parts.length - 1;
@@ -118,7 +120,7 @@ export function DirectoryPicker({
 							<Button
 								key={parts.slice(0, index + 1).join("/")}
 								ref={current ? editTriggerRef : undefined}
-								aria-label={current ? "Редактировать путь" : undefined}
+								aria-label={current ? copy.editPath : undefined}
 								aria-current={current ? "location" : undefined}
 								onPress={() =>
 									current
@@ -138,50 +140,48 @@ export function DirectoryPicker({
 							event.preventDefault();
 							const next = requested.trim().replace(/\/+$/, "") || "/";
 							if (!next.startsWith("/") || !Object.hasOwn(directories, next))
-								setError(
-									"В демонстрационном дереве такого каталога нет. Проверьте путь или выберите папку из списка.",
-								);
+								setInvalidPath(true);
 							else go(next);
 						}}
 					>
 						<TextField
 							className={styles.searchField}
-							aria-label="Абсолютный серверный путь"
 							value={requested}
 							onChange={setRequested}
 						>
-							<Label>Абсолютный серверный путь</Label>
+							<Label>{copy.absolutePath}</Label>
 							<Input
 								ref={pathInputRef}
 								autoComplete="off"
 								spellCheck={false}
-								aria-invalid={Boolean(error)}
+								aria-invalid={invalidPath}
+								aria-describedby={
+									invalidPath ? "directory-path-error" : undefined
+								}
 								onKeyDown={(event) => {
 									if (event.key === "Escape") {
 										event.stopPropagation();
 										event.preventDefault();
 										returnFocusAfterCancel.current = true;
 										setEditing(false);
-										setError("");
+										setInvalidPath(false);
 									}
 								}}
 							/>
 						</TextField>
-						<Button type="submit">Перейти</Button>
+						<Button type="submit">{copy.go}</Button>
 					</form>
 				)}
 				<div aria-live="polite">
-					{error ? (
-						<p role="alert">Путь не найден. {error}</p>
-					) : unreadable ? (
-						<p>
-							Каталог недоступен. Демо-ответ: сервер не может прочитать этот
-							каталог. Выберите другой путь или вернитесь назад.
+					{invalidPath ? (
+						<p id="directory-path-error" role="alert">
+							{copy.notFound} {copy.invalidPath}
 						</p>
+					) : unreadable ? (
+						<p>{copy.unreadable}</p>
 					) : !folders ? (
 						<p>
-							Путь не найден. В демонстрационном дереве такого каталога нет.
-							Проверьте путь или выберите папку из списка.
+							{copy.notFound} {copy.invalidPath}
 						</p>
 					) : folders.length ? (
 						<div className={styles.directoryList}>
@@ -201,19 +201,16 @@ export function DirectoryPicker({
 							</ul>
 						</div>
 					) : (
-						<p>
-							В этой папке нет вложенных каталогов. Вы можете выбрать текущую
-							папку.
-						</p>
+						<p>{copy.empty}</p>
 					)}
 				</div>
 				<Toolbar className={styles.directoryFooter}>
-					<Button onPress={onClose}>Отмена</Button>
+					<Button onPress={onClose}>{copy.cancel}</Button>
 					<Button
-						isDisabled={!folders || unreadable || Boolean(error)}
+						isDisabled={!folders || unreadable || invalidPath}
 						onPress={() => onChoose(path)}
 					>
-						Выбрать папку
+						{copy.choose}
 					</Button>
 				</Toolbar>
 			</Dialog>

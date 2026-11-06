@@ -143,7 +143,7 @@ Table provider_recording {
   provider_key text [not null]
   key_origin varchar(16) [not null, note: 'native или synthetic']
   title text [not null]
-  duration_ms integer
+  duration_ms bigint
   disambiguation text
   explicit boolean
   isrcs jsonb [not null, default: '[]']
@@ -171,7 +171,7 @@ Table provider_release_track {
   track_position integer [not null, note: 'Для Local порядок позиции; UI пересчитывает 1..n после add/remove/reorder']
   track_number text [not null, note: 'Отображаемый номер; может быть A1, DVD1-3 и т.п. Для Local равен автоматически вычисленному порядку 1..n']
   title_override text [note: 'Nullable override названия provider_recording только для этой позиции; применяется для всех providers']
-  duration_override_ms integer [note: 'Nullable override duration_ms provider_recording только для этой позиции; применяется для всех providers. Local UI принимает секунды или М:СС']
+  duration_override_ms bigint [note: 'Nullable override duration_ms provider_recording только для этой позиции; применяется для всех providers. Local UI принимает секунды или М:СС']
   data_track boolean [not null, default: false]
   extra_data jsonb [not null, default: '{}']
 
@@ -245,7 +245,7 @@ Table media_variant {
   codec_name varchar(64) [not null]
   codec_profile varchar(128)
   lossless boolean [not null]
-  duration_ms integer [not null]
+  duration_ms bigint [not null]
   bit_rate bigint
   sample_rate integer
   sample_format varchar(32)
@@ -263,7 +263,7 @@ Table media_variant {
   inspected_at timestamptz [not null]
   chromaprint text [note: 'Fingerprint конкретного media variant; похожесть вычисляется при matching']
   chromaprint_hash bigint [note: 'Индексируемый SimHash/поисковый ключ для кандидатов']
-  fingerprint_duration_ms integer
+  fingerprint_duration_ms bigint
   fingerprint_algorithm integer
   fpcalc_version varchar(64)
   fingerprint_calculated_at timestamptz
@@ -301,7 +301,7 @@ Table source_location {
 Table collection_artist {
   id uuid [pk]
   name text [not null]
-  sort_name text [note: 'Необязательное собственное имя артиста для сортировки; не подменяет name. Редактируется только в карточке артиста; sort-значения ordered credits производны от него без fallback на display name, без контекстных полей и исключений для album/track.']
+  sort_name text [note: 'Необязательное собственное имя артиста для сортировки; не подменяет name. Редактируется только в карточке артиста; сортировочные значения ordered credits производны от него. Для тегов при отсутствии sort_name используется name связанного артиста; при совпадении итоговых имён для разных артистов группы оба sort-тега группы опускаются с предупреждением в preview. Контекстных полей нет.']
   disambiguation text
   genres jsonb [not null, default: '[]']
   tags jsonb [not null, default: '[]']
@@ -312,7 +312,7 @@ Table collection_artist {
     name
   }
 
-  Note: 'Решение владельца 2026-10-29: идентичность MusicBrainz задаётся уникальным MBID через provider_artist.provider_key и collection_artist_provider_link, а не отдельным credit. Позднейшее уточнение того же дня: уникальность имени отложена и обеспечивается оператором вручную; автоматическое объединение по имени и DB-ограничение уникальности имени сейчас не требуются. Разные MBID могут иметь одинаковое имя. sort_name необязателен и принадлежит артисту; он не заменяет отображаемое name и редактируется только в карточке артиста. Сортировочные значения ordered credits производны от sort_name связанных артистов без fallback на display name; отдельных context-sort полей и исключений для album/track нет. Genres у артиста — отдельный множественный набор из общей библиотеки жанров MusicBrainz по MBID; genres не наследуются между уровнями. Tags остаются отдельными от genres. Disambiguation, genres и tags не являются ключами идентичности. ALBUMARTIST задаёт связи артистов релиза, ARTIST — связи исполнителей recording/позиции. Composer/lyricist/vocalist/instrumentalist и другие ролевые значения остаются метаданными и не создают artist entity или дополнительную artist-связь. Уникальность provider identity и не более одной связи с каждым provider сохраняются.'
+  Note: 'MusicBrainz identity задаётся MBID, а Local и другие providers используют собственные keys; имя не является identity, одинаковые имена допустимы и различающиеся identities не объединяются по имени. sort_name необязателен и принадлежит артисту. Проекция имён в теги, disambiguation, sort fallback и пропуск неполных/неоднозначных artist-MBID групп определены в разделе метаданных продуктового контракта; сохранённые имена не меняются. Genres выбираются из общей библиотеки MusicBrainz по MBID и не наследуются между уровнями; tags отдельны. Disambiguation, genres и tags не являются ключами идентичности. ALBUMARTIST задаёт связи артистов релиза, ARTIST — связи исполнителей recording/позиции. Ролевые значения не создают artist entity или дополнительную artist-связь. Уникальность provider identity и не более одной связи с каждым provider сохраняются.'
 }
 
 Table collection_release {
@@ -364,7 +364,7 @@ Table collection_release_artist {
 Table collection_recording {
   id uuid [pk]
   title text [not null]
-  duration_ms integer
+  duration_ms bigint
   disambiguation text
   explicit boolean
   isrcs jsonb [not null, default: '[]']
@@ -402,7 +402,7 @@ Table collection_track {
   track_position integer [not null]
   track_number text [not null]
   title_override text
-  duration_override_ms integer
+  duration_override_ms bigint
   extra_tags jsonb [not null, default: '{}']
   metadata_version integer [not null, default: 1]
   publication_version integer [not null, default: 1, note: 'Увеличивается только когда текущий managed artifact действительно надо заменить']
@@ -481,8 +481,8 @@ Table track_source {
   decision_method match_decision_method [not null]
   decision_policy_version integer [note: 'Обязательно для automatic; NULL для manual']
   segment_kind source_segment_kind [not null, default: 'full_file']
-  segment_start_ms integer
-  segment_end_ms integer
+  segment_start_ms bigint
+  segment_end_ms bigint
   compatible boolean [not null, default: true]
   selected boolean [not null, default: false]
   attached_at timestamptz [not null]
@@ -519,7 +519,7 @@ Table lyrics_document {
   provider_id uuid [not null]
   provider_key text [not null]
   content text [not null, note: 'Канонический plain text или LRC хранится непосредственно в PostgreSQL']
-  duration_ms integer [note: 'Ожидаемая длительность особенно важна для synced lyrics']
+  duration_ms bigint [note: 'Ожидаемая длительность особенно важна для synced lyrics']
   content_digest varchar(128)
   fetched_at timestamptz [not null]
 
@@ -550,7 +550,7 @@ Table release_publication {
   published_version integer [not null]
   published_at timestamptz [not null]
 
-  Note: 'Один текущий каталог публикации релиза. Уникальность публикации задаёт collection_release_id, а не directory_path: разные релизы могут использовать общий каталог, если полные пути их файлов не конфликтуют (решение владельца 2026-10-29). Удаление publication допускается только через async service operation: безопасное удаление принадлежащего приложению output file(s) предшествует удалению row; прямой SQL/cascade delete запрещён. Artwork не является отдельным файлом публикации: оно встраивается в аудиофайл позиции. Конфликт полного имени файла разрешает существующий flow стабильного position suffix с закреплением имени и удлинением при повторном конфликте; публикация чужой позиции не перезаписывается.'
+  Note: 'Один текущий каталог публикации релиза. Уникальность публикации задаёт collection_release_id, а не directory_path: разные релизы могут использовать общий каталог, если полные пути их файлов не конфликтуют. Удаление publication допускается только через async service operation: безопасное удаление принадлежащего приложению output file(s) предшествует удалению row; прямой SQL/cascade delete запрещён. Artwork не является отдельным файлом публикации: оно встраивается в аудиофайл позиции. Конфликт полного имени файла разрешает существующий flow стабильного position suffix с закреплением имени и удлинением при повторном конфликте; публикация чужой позиции не перезаписывается.'
 }
 
 Table track_publication {

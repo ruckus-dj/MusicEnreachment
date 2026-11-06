@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Button } from "./ui";
 import { demoGenres } from "./GenreLibrary";
 import { GenrePicker } from "./metadata/GenrePicker";
@@ -37,29 +37,34 @@ export function ObjectMetadataForm({
 	const [draft, setDraft] = useState<Record<string, string>>({});
 	const [draftGenres, setDraftGenres] = useState<string[]>([]);
 	const [genresChanged, setGenresChanged] = useState(false);
-	const [error, setError] = useState("");
+	const [invalidFields, setInvalidFields] = useState<string[]>([]);
+	const errorId = useId();
+	const fieldRefs = useRef(new Map<string, HTMLInputElement>());
 	const actionRef = useRef<HTMLButtonElement>(null);
 	const beginEdit = () => {
 		setDraft(Object.fromEntries(fields.map(({ key, value }) => [key, value])));
 		setDraftGenres(genreField?.value ?? []);
 		setGenresChanged(false);
-		setError("");
+		setInvalidFields([]);
 		setEditing(true);
 	};
 	const cancel = () => {
 		setEditing(false);
-		setError("");
+		setInvalidFields([]);
 		setDraft({});
 		setDraftGenres([]);
 		setGenresChanged(false);
 		requestAnimationFrame(() => actionRef.current?.focus());
 	};
 	const save = () => {
-		const missing = fields.find(
+		const missing = fields.filter(
 			({ key }) => required.includes(key) && !draft[key]?.trim(),
 		);
-		if (missing) {
-			setError(missing.label);
+		if (missing.length) {
+			setInvalidFields(missing.map(({ key }) => key));
+			requestAnimationFrame(() =>
+				fieldRefs.current.get(missing[0].key)?.focus(),
+			);
 			return;
 		}
 		const values = Object.fromEntries(
@@ -68,7 +73,7 @@ export function ObjectMetadataForm({
 		if (genreField && genresChanged) onSave(values, draftGenres);
 		else onSave(values);
 		setEditing(false);
-		setError("");
+		setInvalidFields([]);
 		setDraft({});
 		setDraftGenres([]);
 		setGenresChanged(false);
@@ -88,6 +93,7 @@ export function ObjectMetadataForm({
 				<h2 className="m-0 text-sm font-semibold">{label}</h2>
 				<div className="flex min-h-[30px] items-center gap-2">
 					<Button
+						type="button"
 						ref={actionRef}
 						className="w-[132px] shrink-0"
 						onPress={editing ? save : beginEdit}
@@ -95,6 +101,7 @@ export function ObjectMetadataForm({
 						{editing ? m("save") : m("edit")}
 					</Button>
 					<Button
+						type="button"
 						className={`w-[132px] shrink-0 ${editing ? "visible" : "invisible"}`}
 						isDisabled={!editing}
 						aria-hidden={!editing}
@@ -112,7 +119,16 @@ export function ObjectMetadataForm({
 					>
 						<span>{fieldLabel}</span>
 						<input
+							ref={(element) => {
+								if (element) fieldRefs.current.set(key, element);
+								else fieldRefs.current.delete(key);
+							}}
 							aria-label={fieldLabel}
+							required={editing && required.includes(key)}
+							aria-invalid={invalidFields.includes(key) || undefined}
+							aria-describedby={
+								invalidFields.includes(key) ? `${errorId}-${key}` : undefined
+							}
 							value={editing ? (draft[key] ?? "") : value}
 							readOnly={!editing}
 							className={`h-8 min-w-0 w-full truncate rounded-[var(--control-radius)] border border-transparent bg-transparent px-2 text-sm text-[var(--ink)] outline-none ${editing ? "border-b-[var(--control)] focus-visible:border-b-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--focus)]" : ""}`}
@@ -121,9 +137,16 @@ export function ObjectMetadataForm({
 									...current,
 									[key]: event.target.value,
 								}));
-								setError("");
+								setInvalidFields((current) =>
+									current.filter((field) => field !== key),
+								);
 							}}
 						/>
+						{invalidFields.includes(key) && (
+							<span id={`${errorId}-${key}`} className="text-[var(--error)]">
+								{m("requiredField", { field: fieldLabel })}
+							</span>
+						)}
 					</label>
 				))}
 				{genreField && (
@@ -157,9 +180,6 @@ export function ObjectMetadataForm({
 					</label>
 				))}
 			</div>
-			<p aria-live="polite" className="m-0 min-h-4 text-xs text-[var(--error)]">
-				{error ? m("requiredField", { field: error }) : ""}
-			</p>
 		</section>
 	);
 }

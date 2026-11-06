@@ -32,6 +32,12 @@ test("reject a dangling Local release recording reference", () => {
 	assert.throws(() => validateFixtures(data));
 });
 
+test("reject library releases without a linked provider identity", () => {
+	const data = structuredClone(canonical);
+	data.releases.find((item) => item.id === "mix").providerId = "p-missing";
+	assert.throws(() => validateFixtures(data), /provider identity/);
+});
+
 test("reject a dangling recovery track reference", () => {
 	const data = structuredClone(canonical);
 	data.recoveryFixture.trackId = "missing-track";

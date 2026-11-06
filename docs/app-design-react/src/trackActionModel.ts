@@ -1,11 +1,8 @@
 import {
-	desiredTags,
-	originalArtistName,
 	originalFiles,
 	type OriginalRelease,
 	type OriginalTrack,
 	type SourceFiles,
-	type CatalogArtist,
 } from "./catalogData";
 import { replaceAudioMeasurements } from "./metadata/audioMeasurements";
 import { projectMetadataValues } from "./metadata/projection";
@@ -56,41 +53,16 @@ export function upgradeAudioOnly(
 	};
 }
 
-export function explicitlyRepublish(
-	release: OriginalRelease,
-	track: OriginalTrack,
-	downgradeConfirmed: boolean,
+export function applyAudioUpgradePreview(
+	releases: OriginalRelease[],
+	selectedIds: Iterable<string>,
 	files: SourceFiles = originalFiles,
-	artists?: CatalogArtist[],
-): OriginalTrack {
-	const file = track.sourceId ? files[track.sourceId] : undefined;
-	if (
-		!file ||
-		(track.published?.codec === "FLAC" &&
-			file.codec === "MP3" &&
-			!downgradeConfirmed)
-	)
-		return track;
-	const tags = desiredTags(release, track, artists);
-	const coverHash = track.coverHash || null;
-	const lyrics = track.lyrics || null;
-	return {
-		...track,
-		published: {
-			...track.published,
-			tags,
-			coverHash,
-			lyrics,
-			readAt: new Date().toISOString(),
-			codec: file.codec,
-			container: "MKA",
-			sourceId: file.id,
-			path:
-				track.published?.path ||
-				`/srv/music/${originalArtistName(release.artistId, artists)}/${release.year} - ${release.title}/${String(track.position).padStart(2, "0")} - ${track.title}.mka`,
-		},
-		metadataBaseline: structuredClone(tags),
-		metadataBaselineExtras: { coverHash, lyrics },
-		observedFile: null,
-	};
+): OriginalRelease[] {
+	const selected = new Set(selectedIds);
+	return structuredClone(releases).map((release) => ({
+		...release,
+		tracks: release.tracks.map((track) =>
+			selected.has(track.id) ? upgradeAudioOnly(track, files) : track,
+		),
+	}));
 }

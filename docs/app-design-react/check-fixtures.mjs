@@ -52,6 +52,19 @@ export function validateFixtures(data) {
 			),
 		]),
 	);
+	const localReleaseKeys = new Set(
+		localProvider.releases
+			.filter((release) => release.provider === "Local")
+			.map((release) => release.key),
+	);
+	for (const release of requireArray(data, "releases"))
+		checkReference(
+			typeof release.providerId === "string" &&
+				(providerReleases.has(release.providerId) ||
+					localReleaseKeys.has(release.providerId)),
+			`releases ${release.id}`,
+			"a provider identity",
+		);
 
 	const manualReleaseDemoData = requireObject(
 		"manualReleaseDemoData",
@@ -122,6 +135,12 @@ export function validateFixtures(data) {
 						recordingIds.has(track.recordingId),
 						`${name} ${release.id} track ${track.id}`,
 						"recording",
+					);
+				if (track.localRecordingId != null)
+					checkReference(
+						localIds.recordings.has(track.localRecordingId),
+						`${name} ${release.id} track ${track.id}`,
+						"Local recording",
 					);
 				if (track.sourceId != null)
 					checkReference(

@@ -35,8 +35,9 @@ export const settingsMessages = createNamespace({
 		concurrency: "File processing concurrency",
 		sha: "Calculate source SHA-256",
 		cleanup: "Allow source deletion after successful publication",
+		cleanupTitle: "Source deletion",
 		cleanupHelp:
-			"Off by default. Does not delete working copies or override manual safeguards.",
+			"Off by default. Source files may be deleted after successful publication. Filesystem permission to delete is required. Does not delete working copies or override manual safeguards.",
 		log: "Log level",
 		save: "Save settings",
 		saved: "Settings saved",
@@ -71,6 +72,8 @@ export const settingsMessages = createNamespace({
 		staleOutput: "Settings changed. Check the directory again.",
 		staleMove: "Move settings changed. Check again.",
 		invalidPath: "Choose an absolute server path.",
+		pathOverlap:
+			"This directory overlaps the shared work directory, a source directory, the tools directory, or the publication directory.",
 		setup: "Initial setup",
 		pathReady: "Directory selected",
 		selectVersion: "Choose a version for each tool.",
@@ -153,8 +156,9 @@ export const settingsMessages = createNamespace({
 		concurrency: "Параллельность обработки файлов",
 		sha: "Вычислять SHA-256 источников",
 		cleanup: "Разрешить удаление исходного файла после успешной публикации",
+		cleanupTitle: "Удаление исходников",
 		cleanupHelp:
-			"Выключено по умолчанию. Не удаляет рабочие копии и не отменяет ручную защиту.",
+			"Выключено по умолчанию. После успешной публикации исходные файлы могут быть удалены. Требуется разрешение файловой системы на удаление. Не удаляет рабочие копии и не отменяет ручную защиту.",
 		log: "Уровень журнала",
 		save: "Сохранить настройки",
 		saved: "Настройки сохранены",
@@ -189,6 +193,8 @@ export const settingsMessages = createNamespace({
 		staleOutput: "Параметры изменились. Проверьте каталог ещё раз.",
 		staleMove: "Параметры переноса изменились. Повторите проверку.",
 		invalidPath: "Выберите абсолютный путь на сервере.",
+		pathOverlap:
+			"Этот каталог пересекается с общей рабочей папкой, каталогом источника, каталогом инструментов или каталогом публикации.",
 		setup: "Первый запуск",
 		pathReady: "Каталог выбран",
 		selectVersion: "Выберите версию для каждого инструмента.",

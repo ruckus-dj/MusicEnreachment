@@ -37,6 +37,8 @@ export function TrackScreen({
 	track,
 	onSource,
 	onPreview,
+	onRepublish,
+	onAudioUpgrade,
 	onMetadataPreview = onPreview,
 	onMutate,
 	onRecordingChange,
@@ -51,6 +53,8 @@ export function TrackScreen({
 	track: OriginalTrack;
 	onSource: (id: string) => void;
 	onPreview: () => void;
+	onRepublish?: () => void;
+	onAudioUpgrade?: () => void;
 	onMetadataPreview?: (ids: string[]) => void;
 	onMutate?: (update: (current: OriginalTrack) => OriginalTrack) => void;
 	onRecordingChange?: (
@@ -240,8 +244,9 @@ export function TrackScreen({
 							track={track}
 							onMutate={onMutate}
 							files={files}
-							artists={artists}
 							onQueueDeletion={onQueueDeletion}
+							onRepublish={onRepublish ?? onPreview}
+							onAudioUpgrade={onAudioUpgrade}
 						/>
 					)}
 					<details className={catalogueStyles.trackDetails}>

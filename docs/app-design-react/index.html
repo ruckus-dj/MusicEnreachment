@@ -21,7 +21,7 @@
     <title>Медиатека · стенд MeloTrove</title>
   </head>
   <body class="m-0 min-h-dvh bg-[var(--canvas)] font-[system-ui,sans-serif] text-[13px]/[1.4] text-[var(--ink)]
-    [&_*:focus-visible]:outline-2 [&_*:focus-visible]:outline-[var(--focus)]
+    [&_*:focus-visible]:outline-2 [&_*:focus-visible]:outline-[var(--focus)] [&_h1[tabindex='-1']:focus]:outline-none
     [&_*:focus-visible]:outline-offset-2 selection:bg-[var(--accent-soft)] selection:text-[var(--ink)] caret-[var(--accent)] [padding-bottom:env(safe-area-inset-bottom)] motion-reduce:[&_*]:transition-none motion-reduce:[&_*::before]:transition-none motion-reduce:[&_*::after]:transition-none">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

@@ -23,7 +23,10 @@ import {
 	type OriginalRelease,
 	type OriginalTrack,
 } from "./catalogData";
-import { PublicationPreview } from "./PublicationPreview";
+import {
+	PublicationPreview,
+	type PublicationPreviewMode,
+} from "./PublicationPreview";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
 import {
 	captureMetadataPreview,
@@ -79,6 +82,7 @@ import {
 } from "./sourceProcessingModel";
 import { useI18n } from "./i18n";
 import { catalogMessage } from "./catalogMessages";
+import { applyAudioUpgradePreview } from "./trackActionModel";
 
 const subscribeRoute = (listener: () => void) => {
 	window.addEventListener("hashchange", listener);
@@ -326,6 +330,8 @@ export function CatalogDemo({
 	const allTracks = fixture.releases.flatMap((release) => release.tracks);
 	const [view, setView] = useState<View>("artists");
 	const [preview, setPreview] = useState(false);
+	const [previewMode, setPreviewMode] =
+		useState<PublicationPreviewMode>("metadata");
 	useEffect(() => {
 		if (route !== "publication-preview") setPreview(false);
 	}, [route]);
@@ -415,8 +421,12 @@ export function CatalogDemo({
 			return next;
 		});
 	};
-	const openPreview = (ids: Iterable<string>) => {
+	const openPreview = (
+		ids: Iterable<string>,
+		mode: PublicationPreviewMode = "metadata",
+	) => {
 		const frozenIds = [...ids];
+		setPreviewMode(mode);
 		setPreviewOriginRoute(route);
 		setContextIds(route === "library" ? null : frozenIds);
 		setPreviewToken(
@@ -435,23 +445,26 @@ export function CatalogDemo({
 		if (!isMetadataPreviewFresh(token, incoming.inventoryVersion, activeScope))
 			return false;
 		setReleases((previous) =>
-			applyMetadataPreview(
-				previous,
-				new Set(token.selectedIds),
-				files,
-				artists,
-				publicationDestination,
-			),
+			previewMode === "audioUpgrade"
+				? applyAudioUpgradePreview(previous, token.selectedIds, files)
+				: applyMetadataPreview(
+						previous,
+						new Set(token.selectedIds),
+						files,
+						artists,
+						publicationDestination,
+					),
 		);
 		return true;
 	};
 	const openContextPublication = (
 		release: (typeof releases)[number],
 		trackId: string | null = null,
+		force = false,
 	) => {
 		setIncoming((current) => ({
 			...current,
-			plan: makeReleasePlan(current, release, files, trackId),
+			plan: { ...makeReleasePlan(current, release, files, trackId), force },
 			confirmDowngrade: false,
 		}));
 		window.location.hash = "publications";
@@ -466,6 +479,7 @@ export function CatalogDemo({
 			<main className={screenLayout}>
 				{previewToken ? (
 					<PublicationPreview
+						mode={previewMode}
 						destination={publicationDestination}
 						token={previewToken}
 						inventoryVersion={incoming.inventoryVersion}
@@ -481,11 +495,6 @@ export function CatalogDemo({
 							setPreview(false);
 							window.location.hash = previewOriginRoute;
 						}}
-						returnRoute={
-							previewOriginRoute.startsWith("track/")
-								? previewOriginRoute
-								: "library"
-						}
 						returnLabel={
 							previewOriginRoute.startsWith("track/")
 								? msg("backToTrack")
@@ -714,9 +723,14 @@ export function CatalogDemo({
 					onPreview={() => {
 						openContextPublication(release, track.id);
 					}}
+					onRepublish={() => {
+						openContextPublication(release, track.id, true);
+					}}
+					onAudioUpgrade={() => {
+						openPreview([track.id], "audioUpgrade");
+					}}
 					onMetadataPreview={(ids) => {
 						openPreview(ids);
-						window.location.hash = "publication-preview";
 					}}
 					onSource={(id) =>
 						setReleases((previous) =>
@@ -800,6 +814,7 @@ export function CatalogDemo({
 			<main className={screenLayout}>
 				<SettingsScreen
 					settings={settings}
+					sourceRoots={sourceRoots.map((root) => root.path)}
 					onSettings={setSettings}
 					workDirectoryBusy={
 						sourceProcessingLocks(sourceProcessing).blocksWorkDirectoryChange
@@ -853,6 +868,8 @@ export function CatalogDemo({
 					files={files}
 					removed={removedRoots}
 					workDirectory={settings.workDirectory}
+					toolsPath={settings.toolsPath}
+					currentOutput={settings.currentOutput ?? "/srv/music"}
 					initialProcessingState={sourceProcessing}
 					onProcessingState={setSourceProcessing}
 					onRemove={(id) => {

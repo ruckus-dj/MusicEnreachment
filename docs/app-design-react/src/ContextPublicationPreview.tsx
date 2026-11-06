@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useI18n } from "./i18n";
 import type { UiNotice } from "./uiNotice";
-import { Button, Checkbox, Dialog, Heading, Modal } from "./ui";
+import { Button } from "./ui";
 import {
 	publicationMetadataIssueMessages,
 	type CatalogArtist,
@@ -18,7 +18,6 @@ import {
 	usableFile,
 } from "./incomingModel";
 import { metadataSnapshotDiff } from "./publicationMetadataDiff";
-import { PublicationInspector } from "./PublicationInspector";
 import type { PublicationInspection } from "./PublicationInspector";
 import {
 	formatPublicationMessage,
@@ -28,11 +27,9 @@ import {
 	choosePublicationOutput,
 	fixturePublicationDestination,
 } from "./publicationOutput";
-import {
-	originalArtistName,
-	publicationSortTagCollisions,
-} from "./catalogData";
-import { dialogFooter, objectActions } from "./matchingStyles";
+import { originalArtistName } from "./catalogData";
+import { publicationArtistNotices } from "./publicationArtistNotices";
+import { PublicationFlow } from "./PublicationFlow";
 
 const actionMessage = {
 	Создать: "create",
@@ -87,7 +84,6 @@ export function ContextPublicationPreview({
 }) {
 	const { locale } = useI18n();
 	const [error, setError] = useState("");
-	const [confirming, setConfirming] = useState(false);
 	if (!plan)
 		return (
 			<section>
@@ -152,24 +148,17 @@ export function ContextPublicationPreview({
 		.map((item) => {
 			const metadataRelease =
 				plan.mode === "local" ? (existing ?? plan.target) : plan.target;
-			const collisions = publicationSortTagCollisions(
-				metadataRelease,
+			const metadataTrack =
 				plan.mode === "local"
 					? (item.row.track ?? item.row.targetTrack)
-					: item.row.targetTrack,
+					: item.row.targetTrack;
+			const notices = publicationArtistNotices(
+				metadataRelease,
+				metadataTrack,
 				artists,
+				locale,
 			);
-			const notices = [
-				...(collisions.recording
-					? [publicationMessage(locale, "recordingSortCollision")]
-					: []),
-				...(collisions.release
-					? [publicationMessage(locale, "releaseSortCollision")]
-					: []),
-			];
-			return notices.length
-				? { ...item, reason: `${item.reason} · ${notices.join(" · ")}` }
-				: item;
+			return { ...item, notices };
 		});
 	const changed = classified.filter(
 		(item) => item.action === "Создать" || item.action === "Обновить",
@@ -222,7 +211,7 @@ export function ContextPublicationPreview({
 		});
 	};
 	const inspections: PublicationInspection[] = classified.map(
-		({ row, action, reason }) => {
+		({ row, action, reason, notices }) => {
 			const output = row.file
 				? choosePublicationOutput(row.file, {
 						...destination,
@@ -233,6 +222,13 @@ export function ContextPublicationPreview({
 						title: row.targetTrack.title,
 					})
 				: null;
+			const rebuildSource = Boolean(
+				row.file &&
+					(!row.previous ||
+						plan.force ||
+						row.previous.sourceId !== row.file.id ||
+						row.previous.codec !== row.file.codec),
+			);
 			return {
 				id: String(row.targetTrack.id),
 				position: String(row.targetTrack.position),
@@ -241,20 +237,34 @@ export function ContextPublicationPreview({
 					locale,
 					actionMessage[action as keyof typeof actionMessage],
 				),
-				reason: `${displayReason(locale, reason)}${row.downgrade && row.assignment?.included ? ` · ${publicationMessage(locale, "qualityDowngrade")}` : ""}`,
+				reason: [
+					displayReason(locale, reason),
+					...notices,
+					...(row.downgrade && row.assignment?.included
+						? [publicationMessage(locale, "qualityDowngrade")]
+						: []),
+				].join(" · "),
 				source: row.file
 					? `${row.file.name} · ${row.file.codec}`
 					: selectedSourceId(row.assignment)
 						? publicationMessage(locale, "unavailableSource")
 						: publicationMessage(locale, "noSource"),
-				outputPath:
-					row.previous?.path ??
-					output?.path ??
-					publicationMessage(locale, "pathUnavailable"),
-				container:
-					row.previous?.codec ??
-					output?.container ??
-					publicationMessage(locale, "noFormat"),
+				outputPath: output
+					? row.previous && rebuildSource && row.previous.path !== output.path
+						? `${row.previous.path} → ${output.path}`
+						: rebuildSource
+							? output.path
+							: (row.previous?.path ?? output.path)
+					: publicationMessage(locale, "pathUnavailable"),
+				container: output
+					? row.previous &&
+						rebuildSource &&
+						row.previous.container !== output.container
+						? `${row.previous.container} → ${output.container}`
+						: rebuildSource
+							? output.container
+							: (row.previous?.container ?? output.container)
+					: publicationMessage(locale, "noFormat"),
 				included: Boolean(row.assignment?.included && row.file),
 				includeDisabled: !row.file,
 				includeLabel: formatPublicationMessage(locale, "includeTrack", {
@@ -317,137 +327,72 @@ export function ContextPublicationPreview({
 			id: "applySuccess",
 			params: { count: applied, linkCount: links.length },
 		});
-		setConfirming(false);
 	};
 
 	return (
-		<section
-			className="min-w-0 px-[clamp(14px,2vw,28px)] py-5"
-			aria-labelledby="context-publication-title"
-		>
-			<header className="demo-object-header mb-3 flex flex-wrap items-center justify-between gap-3">
-				<div className="min-w-0 [overflow-wrap:anywhere]">
-					<h1 id="context-publication-title">
-						{formatPublicationMessage(locale, "contextTitle", {
+		<PublicationFlow
+			title={formatPublicationMessage(locale, "contextTitle", {
+				title: plan.target.title,
+			})}
+			description={publicationMessage(locale, "contextDescription")}
+			returnLabel={publicationMessage(locale, "returnToObject")}
+			onBack={onBack}
+			stale={stale}
+			error={error}
+			counts={counts.map(({ action, count }) => ({
+				label: publicationMessage(
+					locale,
+					actionMessage[action as keyof typeof actionMessage],
+				),
+				count,
+			}))}
+			items={inspections}
+			footer={
+				<>
+					<strong>{publicationMessage(locale, "sourcesPreserved")}</strong>{" "}
+					{publicationMessage(locale, "noDelete")}
+				</>
+			}
+			primaryLabel={publicationMessage(locale, "confirmPublication")}
+			primaryDisabled={!canConfirm}
+			confirmationTitle={
+				changed.length
+					? formatPublicationMessage(locale, "writeSelectedCount", {
+							count: changed.length,
+						})
+					: formatPublicationMessage(locale, "saveLinksCount", {
+							count: links.length,
+						})
+			}
+			confirmationDetails={
+				<>
+					<p>
+						{formatPublicationMessage(locale, "confirmSelectedRows", {
 							title: plan.target.title,
 						})}
-					</h1>
-					<p className="mt-[5px] max-w-[760px] text-[var(--muted)]">
-						{publicationMessage(locale, "contextDescription")}
 					</p>
-				</div>
-				<Button onPress={onBack}>
-					{publicationMessage(locale, "returnToObject")}
-				</Button>
-			</header>
-			{(stale || error) && (
-				<p role="alert">
-					{error || publicationMessage(locale, "inventoryChanged")}
-				</p>
-			)}
-			<p
-				className="demo-preview-counts flex flex-wrap gap-2 py-3"
-				aria-label={publicationMessage(locale, "actionSummary")}
-			>
-				{counts.map(({ action, count }) => (
-					<span
-						key={action}
-						className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]"
-					>
-						{publicationMessage(
-							locale,
-							actionMessage[action as keyof typeof actionMessage],
-						)}
-						: {count}
-					</span>
-				))}
-				<span className="rounded border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]">
-					{publicationMessage(locale, "formatLossless")}
-				</span>
-			</p>
-			<PublicationInspector items={inspections} locale={locale} />
-			<p>
-				<strong>{publicationMessage(locale, "sourcesPreserved")}</strong>{" "}
-				{publicationMessage(locale, "noDelete")}
-			</p>
-			{downgrades.length > 0 && (
-				<Checkbox
-					isSelected={confirmDowngrade}
-					onChange={(checked) => onPlan(plan, checked)}
-				>
-					<span className="checkbox" />
-					{formatPublicationMessage(locale, "confirmDowngrade", {
-						count: downgrades.length,
-					})}
-				</Checkbox>
-			)}
-			<div className={objectActions}>
-				<Button
-					className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
-					isDisabled={!canConfirm}
-					onPress={() => setConfirming(true)}
-				>
-					{publicationMessage(locale, "confirmPublication")}
-				</Button>
-				<Button onPress={onBack}>{publicationMessage(locale, "cancel")}</Button>
-			</div>
-			<Modal isOpen={confirming} onOpenChange={setConfirming}>
-				<Dialog
-					aria-labelledby="context-publication-confirm-title"
-					className="grid gap-2"
-				>
-					{({ close }) => (
-						<div className="grid gap-2">
-							<Heading slot="title" id="context-publication-confirm-title">
-								{changed.length
-									? formatPublicationMessage(locale, "writeSelectedCount", {
-											count: changed.length,
-										})
-									: formatPublicationMessage(locale, "saveLinksCount", {
-											count: links.length,
-										})}
-							</Heading>
-							<p>
-								{formatPublicationMessage(locale, "confirmSelectedRows", {
-									title: plan.target.title,
-								})}
-							</p>
-							{links.length > 0 && (
-								<p>
-									{formatPublicationMessage(locale, "sourceLinksCount", {
-										count: links.length,
-									})}
-								</p>
-							)}
-							{downgrades.length > 0 && (
-								<p>
-									{formatPublicationMessage(locale, "confirmQualityDown", {
-										count: downgrades.length,
-									})}
-								</p>
-							)}
-							<p>{publicationMessage(locale, "unmatchedFiles")}</p>
-							{(stale || error) && (
-								<p role="alert">
-									{error || publicationMessage(locale, "inventoryChanged")}
-								</p>
-							)}
-							<div className={dialogFooter}>
-								<Button
-									className="border-[var(--button)]! bg-[var(--button)]! font-semibold text-[var(--button-text)]! hover:brightness-90"
-									isDisabled={!canConfirm}
-									onPress={confirm}
-								>
-									{publicationMessage(locale, "confirm")}
-								</Button>
-								<Button onPress={close}>
-									{publicationMessage(locale, "cancel")}
-								</Button>
-							</div>
-						</div>
+					{links.length > 0 && (
+						<p>
+							{formatPublicationMessage(locale, "sourceLinksCount", {
+								count: links.length,
+							})}
+						</p>
 					)}
-				</Dialog>
-			</Modal>
-		</section>
+					{downgrades.length > 0 && (
+						<p>
+							{formatPublicationMessage(locale, "confirmQualityDown", {
+								count: downgrades.length,
+							})}
+						</p>
+					)}
+					<p>{publicationMessage(locale, "unmatchedFiles")}</p>
+				</>
+			}
+			confirmLabel={publicationMessage(locale, "confirm")}
+			onConfirm={confirm}
+			downgradeCount={downgrades.length}
+			downgradeConfirmed={confirmDowngrade}
+			onDowngradeConfirmed={(checked) => onPlan(plan, checked)}
+		/>
 	);
 }

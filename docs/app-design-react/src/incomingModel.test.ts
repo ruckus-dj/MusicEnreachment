@@ -201,6 +201,47 @@ it("preserves an identical current publication and its complete metadata", () =>
 	);
 });
 
+it("forces an identical current publication through the replacement path", () => {
+	const { state, files, releases } = fresh();
+	const plan = makePlan(state, files, releases)!;
+	const target = plan.target.tracks[0];
+	const track = releases.find((release) => release.id === "north")!.tracks[0];
+	if (!track.published) throw new Error("Missing publication baseline");
+	track.published = {
+		...track.published,
+		tags: providerTags(plan.target, target),
+		sourceId: "north-f1",
+		codec: "FLAC",
+	};
+	plan.assignments = { [target.id]: plan.assignments[target.id] };
+	plan.force = true;
+
+	expect(planRows(plan, files, releases)[0].action).toBe("Заменить");
+	expect(
+		applyPlan(plan, files, releases, undefined, false, undefined, {
+			outputDirectory: "/publish/current",
+			format: "mka",
+		}),
+	).toBe(1);
+	expect(track.published?.sourceId).toBe("north-f1");
+	expect(track.published?.readAt).toBe("Только что · демо");
+	expect(track.published?.path).toContain("/publish/current/");
+	expect(track.published?.container).toBe("MKA");
+});
+
+it("does not create a providerless release from a stale local plan", () => {
+	const { state, files, releases } = fresh();
+	state.groupId = "north";
+	state.groups.find((group) => group.id === "north")!.mode = "local";
+	const plan = makePlan(state, files, releases)!;
+	plan.localReleaseId = "missing-local-release";
+
+	expect(applyPlan(plan, files, releases)).toBe(0);
+	expect(releases.some((release) => release.id.startsWith("import-"))).toBe(
+		false,
+	);
+});
+
 it("retains a legacy selected source when saving another association only", () => {
 	const { state, files, releases } = fresh();
 	const group = state.groups.find((group) => group.id === "north")!;

@@ -507,7 +507,7 @@ export function MatchingScreen({
 			<header className="mb-4">
 				<p className="demo-eyebrow mb-[5px] text-[11px] text-[var(--muted)]">
 					<a href="#review">{matchingMessage(locale, "incomingLink")}</a> ·{" "}
-					{matchingMessage(locale, "readOnlyRoot")}: /mnt/inbox/
+					{matchingMessage(locale, "sourceDirectory")}: /mnt/inbox/
 					{group.id}
 				</p>
 				<h1 className="m-0 text-[clamp(22px,2vw,30px)] tracking-[-.025em]">

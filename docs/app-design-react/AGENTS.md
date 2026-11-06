@@ -2,11 +2,10 @@
 
 This is a standalone design artifact, never part of the production frontend at
 runtime.
-By owner decision on 2026-11-03, this React prototype is the sole current
-graphical reference. Retired static-prototype runtime files are not retained or
-copied here. The moved Markdown files are preserved design prose, not a separate
-live prototype or independent authority; current product decisions remain in
-`../design/decisions.md`.
+This React prototype is the current graphical reference. Retired static-prototype
+runtime files are not retained or copied here. Markdown here describes presentation
+and prototype boundaries only; the sole current product contract is
+`../design/decisions.md`. Do not duplicate its rules in prototype prose.
 
 For prototype-only tasks, keep production `frontend/` unchanged. The owner has
 explicitly approved porting prototype presentation modules into production with
@@ -69,16 +68,13 @@ open. Never put their headers in multiple columns or change grid span on open:
 expansion may move later content down, not sideways. Multi-column field grids
 are allowed inside an already expanded group, without changing its outer width.
 
-Sort names are edited only on the artist card, with no album/track overrides;
-ordered credit sort tags derive from those values. By owner decision on
-2026-11-05, a missing sort name falls back to the linked artist's display name
-only during tag projection; never populate the stored artist field. If different
-artists in a credit group have identical projected sorts, omit both sort tags of
-that group and show a nonblocking localized preview notice, including removal of
-existing publication sort tags in the diff. Keep the other group unchanged.
-Explicit fixture sort names are demo data. Keep default and catalog-backed metadata
-projection consistent with that fixture. Editing unrelated artist fields must
-preserve genres when the picker is untouched or its catalog is unavailable.
+Sort names are edited only on the artist card, with no album/track overrides.
+Projection follows the current product contract: on collision, use `Name
+(disambiguation)` where available; if conflict remains, omit the conflicting
+group's sort identifiers and show a localized notice. Keep the other group
+unchanged. Explicit fixture sort names are demo data. Editing unrelated artist
+fields must preserve genres when the picker is untouched or its catalog is
+unavailable.
 
 ## Metadata regression prevention
 

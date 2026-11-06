@@ -134,6 +134,7 @@ export function localProviderReleases(
 					const recording = recordings.find(
 						(candidate) => candidate.id === item.recordingId,
 					);
+					const localRecording = recording?.provider === "Local";
 					const duration =
 						item.durationOverrideMs === "" || item.durationOverrideMs == null
 							? recording?.duration_ms
@@ -171,8 +172,9 @@ export function localProviderReleases(
 							name: recording?.genreNamesById?.[id] ?? id,
 						})),
 						positionMetadata: structuredClone(item.metadataValues ?? {}),
-						recordingId: null,
-						localRecordingId: recording?.id ?? item.recordingId,
+						recordingId:
+							recording?.provider === "MusicBrainz" ? recording.key : null,
+						localRecordingId: localRecording ? recording.id : null,
 						providerTrackId: null,
 						sourceId: null,
 						published: null,
