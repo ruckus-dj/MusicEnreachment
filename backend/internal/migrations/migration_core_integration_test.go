@@ -138,6 +138,59 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	}
 }
 
+func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.T) {
+	for name, update := range map[string]string{
+		"successful refresh": `UPDATE genre_catalog SET items='["retained"]'::jsonb, updated_at=now(), last_attempt_at=now(), configuration_identity='config-A', refresh_request='{"status":"finished"}'::jsonb WHERE singleton=true`,
+		"failed refresh":     `UPDATE genre_catalog SET last_attempt_at=now(), last_error='provider unavailable', configuration_identity='config-A', refresh_request='{"status":"finished"}'::jsonb WHERE singleton=true`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			db := testpostgres.Open(t)
+			testpostgres.Reset(t, db)
+			ctx := context.Background()
+			collection := loadMigrations(t)
+			migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
+			if err := migrator.Init(ctx); err != nil {
+				t.Fatalf("initialize baseline migrations: %v", err)
+			}
+			if _, err := migrator.Migrate(ctx); err != nil {
+				t.Fatalf("apply baseline migrations: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, update); err != nil {
+				t.Fatalf("seed finished catalog evidence: %v", err)
+			}
+			statusBefore, err := migrator.MigrationsWithStatus(ctx)
+			if err != nil {
+				t.Fatalf("read migration status before rollback: %v", err)
+			}
+			if _, err := migrator.Rollback(ctx); err == nil {
+				t.Fatal("rollback discarded finished genre catalog evidence")
+			}
+			for _, table := range []string{"release_medium", "track_publication"} {
+				var present bool
+				if err := db.NewRaw(`SELECT to_regclass(?) IS NOT NULL`, "public."+table).Scan(ctx, &present); err != nil || !present {
+					t.Fatalf("baseline table %s survived refused rollback = %v, %v", table, present, err)
+				}
+			}
+			var applied int
+			if err := db.NewRaw(`SELECT count(*) FROM bun_migrations`).Scan(ctx, &applied); err != nil || applied != len(baselineMigrationNames) {
+				t.Fatalf("applied migrations after refused rollback = %d, %v", applied, err)
+			}
+			var retained bool
+			if err := db.NewRaw(`SELECT EXISTS (SELECT 1 FROM genre_catalog WHERE refresh_request->>'status'='finished')`).Scan(ctx, &retained); err != nil || !retained {
+				t.Fatalf("finished catalog evidence retained = %v, %v", retained, err)
+			}
+			statusAfter, err := migrator.MigrationsWithStatus(ctx)
+			if err != nil {
+				t.Fatalf("read migration status after rollback refusal: %v", err)
+			}
+			if fmt.Sprint(statusAfter) != fmt.Sprint(statusBefore) {
+				t.Fatalf("migration status changed after refused rollback: before=%#v after=%#v", statusBefore, statusAfter)
+			}
+		})
+	}
+}
+
 func loadMigrations(t *testing.T) *migrate.Migrations {
 	t.Helper()
 	collection, err := migrations.Collection()

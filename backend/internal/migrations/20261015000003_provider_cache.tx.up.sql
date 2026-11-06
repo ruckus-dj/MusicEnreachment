@@ -2,6 +2,19 @@
 -- Later baselines attach cross-domain foreign keys and guards where necessary.
 SET LOCAL check_function_bodies = false;
 
+-- The current genre catalog is a single atomically replaced JSONB snapshot.
+CREATE TABLE public.genre_catalog (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    items jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(items) = 'array'),
+    updated_at timestamp with time zone,
+    last_attempt_at timestamp with time zone,
+    last_error text,
+    configuration_identity text NOT NULL DEFAULT '',
+    refresh_request jsonb NOT NULL DEFAULT '{"status":"idle"}'::jsonb CHECK (jsonb_typeof(refresh_request) = 'object'),
+    refresh_due_at timestamp with time zone
+);
+INSERT INTO public.genre_catalog(singleton) VALUES (true);
+
 -- sequence: provider_fetch_order_seq
 CREATE SEQUENCE public.provider_fetch_order_seq
     START WITH 1

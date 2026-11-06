@@ -121,6 +121,17 @@ function common({
       });
     }),
     http.get("/api/operations", () => json({ operations })),
+    http.get("/api/genres/catalog", () =>
+      json({
+        count: 0,
+        items: [],
+        last_attempt_at: null,
+        last_error: null,
+        refresh_status: "idle",
+        active_operation_id: null,
+        updated_at: null,
+      }),
+    ),
     http.get("/api/tools/catalog", ({ request }) => {
       const kind = new URL(request.url).searchParams.get("package_kind");
       return json({

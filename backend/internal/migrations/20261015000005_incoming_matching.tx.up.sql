@@ -3010,11 +3010,11 @@ ALTER TABLE public.operation ADD CONSTRAINT operation_kind_check CHECK (kind = A
     'provider_release_lookup','provider_recording_lookup','provider_release_search','provider_recording_search',
     'provider_artist_search','provider_artist_release_browse','provider_acoustid_lookup','matching_evaluation_v1',
     'matching_apply_v1','publish_track_v1','cleanup_publication_sources_v1','publication_reconcile_v1','retry_publication_sources_v1',
-    'obsolete_publication_output_cleanup_v1'
+    'obsolete_publication_output_cleanup_v1','refresh_genre_catalog_v1'
 ]));
 ALTER TABLE public.operation DROP CONSTRAINT operation_mutation_has_target_installation;
 ALTER TABLE public.operation ADD CONSTRAINT operation_mutation_has_target_installation CHECK (
-    kind IN ('publish_track_v1','cleanup_publication_sources_v1','publication_reconcile_v1','retry_publication_sources_v1','obsolete_publication_output_cleanup_v1') OR
+    kind IN ('publish_track_v1','cleanup_publication_sources_v1','publication_reconcile_v1','retry_publication_sources_v1','obsolete_publication_output_cleanup_v1','refresh_genre_catalog_v1') OR
     kind IN ('move_tools_root','scan_source','analyze_source','cleanup_source_analysis_artifacts',
         'provider_release_lookup','provider_recording_lookup','provider_release_search','provider_recording_search',
         'provider_artist_search','provider_artist_release_browse','provider_acoustid_lookup','matching_evaluation_v1','matching_apply_v1') OR
@@ -3026,7 +3026,7 @@ ALTER TABLE public.publication_namespace_claim ADD CONSTRAINT publication_namesp
 
 ALTER TABLE public.operation DROP CONSTRAINT operation_target_identity;
 ALTER TABLE public.operation ADD CONSTRAINT operation_target_identity CHECK (
-    kind IN ('publish_track_v1','cleanup_publication_sources_v1','publication_reconcile_v1','retry_publication_sources_v1','obsolete_publication_output_cleanup_v1') OR
+    kind IN ('publish_track_v1','cleanup_publication_sources_v1','publication_reconcile_v1','retry_publication_sources_v1','obsolete_publication_output_cleanup_v1','refresh_genre_catalog_v1') OR
     kind IN ('move_tools_root','scan_source','analyze_source','cleanup_source_analysis_artifacts',
         'provider_release_lookup','provider_recording_lookup','provider_release_search','provider_recording_search',
         'provider_artist_search','provider_artist_release_browse','provider_acoustid_lookup','matching_evaluation_v1','matching_apply_v1') OR

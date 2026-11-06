@@ -63,6 +63,53 @@
   margin: 8px 0;
 }
 
+.genre-catalog-panel {
+  margin-top: 8px;
+}
+
+.genre-catalog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.genre-catalog-heading p,
+.genre-catalog-panel p {
+  color: var(--settings-muted);
+}
+
+.genre-catalog-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 8px 16px;
+  margin: 10px 0;
+}
+
+.genre-catalog-status div {
+  min-width: 0;
+}
+
+.genre-catalog-status dt {
+  color: var(--settings-muted);
+}
+
+.genre-catalog-status dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.settings-screen .genre-catalog-panel .genre-catalog-last-error {
+  color: var(--settings-error);
+}
+
+@media (max-width: 599px) {
+  .genre-catalog-heading {
+    flex-direction: column;
+  }
+}
+
 .settings-panel label:not(.settings-inline) {
   display: grid;
   gap: 4px;

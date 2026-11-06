@@ -35,6 +35,8 @@ import type {
   CreateSourceBody,
   DeleteSourceBody,
   ErrorModel,
+  GenreCatalogSearchBody,
+  GenreCatalogStatus,
   GetLibraryCoverCandidateImageParams,
   GetLibraryFirstPublicationPreviewParams,
   IncomingGroupReturnAutomaticResult,
@@ -97,6 +99,7 @@ import type {
   RerunSourceFingerprintBody,
   RetrySourceAnalysisStepBody,
   SaveRuntimeBody,
+  SearchGenreCatalogParams,
   SetGitHubTokenBody,
   SetupStateBody,
   SourceArtifactCleanupBody,
@@ -168,6 +171,367 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export type getGenreCatalogResponse200 = {
+  data: GenreCatalogStatus
+  status: 200
+}
+
+export type getGenreCatalogResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getGenreCatalogResponseSuccess = (getGenreCatalogResponse200) & {
+  headers: Headers;
+};
+export type getGenreCatalogResponseError = (getGenreCatalogResponseDefault) & {
+  headers: Headers;
+};
+
+export type getGenreCatalogResponse = (getGenreCatalogResponseSuccess | getGenreCatalogResponseError)
+
+export const getGetGenreCatalogUrl = () => {
+
+
+
+
+  return `/api/genres/catalog`
+}
+
+/**
+ * @summary Get the current MusicBrainz genre catalog
+ */
+export const getGenreCatalog = async ( options?: RequestInit): Promise<getGenreCatalogResponse> => {
+
+  const res = await fetch(getGetGenreCatalogUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getGenreCatalogResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getGenreCatalogResponse
+}
+
+
+
+
+
+export const getGetGenreCatalogQueryKey = () => {
+    return [
+    `/api/genres/catalog`
+    ] as const;
+    }
+
+
+export const getGetGenreCatalogQueryOptions = <TData = Awaited<ReturnType<typeof getGenreCatalog>>, TError = ErrorModel>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenreCatalog>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGenreCatalogQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGenreCatalog>>> = ({ signal }) => getGenreCatalog({ signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGenreCatalog>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetGenreCatalogQueryResult = NonNullable<Awaited<ReturnType<typeof getGenreCatalog>>>
+export type GetGenreCatalogQueryError = ErrorModel
+
+
+export function useGetGenreCatalog<TData = Awaited<ReturnType<typeof getGenreCatalog>>, TError = ErrorModel>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenreCatalog>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGenreCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof getGenreCatalog>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGenreCatalog<TData = Awaited<ReturnType<typeof getGenreCatalog>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenreCatalog>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGenreCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof getGenreCatalog>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGenreCatalog<TData = Awaited<ReturnType<typeof getGenreCatalog>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenreCatalog>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get the current MusicBrainz genre catalog
+ */
+
+export function useGetGenreCatalog<TData = Awaited<ReturnType<typeof getGenreCatalog>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGenreCatalog>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetGenreCatalogQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type refreshGenreCatalogResponse200 = {
+  data: OperationResponse
+  status: 200
+}
+
+export type refreshGenreCatalogResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type refreshGenreCatalogResponseSuccess = (refreshGenreCatalogResponse200) & {
+  headers: Headers;
+};
+export type refreshGenreCatalogResponseError = (refreshGenreCatalogResponseDefault) & {
+  headers: Headers;
+};
+
+export type refreshGenreCatalogResponse = (refreshGenreCatalogResponseSuccess | refreshGenreCatalogResponseError)
+
+export const getRefreshGenreCatalogUrl = () => {
+
+
+
+
+  return `/api/genres/catalog/refresh`
+}
+
+/**
+ * @summary Queue a MusicBrainz genre catalog refresh
+ */
+export const refreshGenreCatalog = async ( options?: RequestInit): Promise<refreshGenreCatalogResponse> => {
+
+  const res = await fetch(getRefreshGenreCatalogUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: refreshGenreCatalogResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as refreshGenreCatalogResponse
+}
+
+
+
+
+
+export const getRefreshGenreCatalogMutationKey = () => ['refreshGenreCatalog'] as const;
+
+export const getRefreshGenreCatalogMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshGenreCatalog>>, TError,void, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshGenreCatalog>>, TError,void, TContext> => {
+
+const mutationKey = getRefreshGenreCatalogMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshGenreCatalog>>, void> = () => {
+
+
+          return  refreshGenreCatalog(fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshGenreCatalogMutationResult = NonNullable<Awaited<ReturnType<typeof refreshGenreCatalog>>>
+
+    export type RefreshGenreCatalogMutationError = ErrorModel
+
+
+    /**
+ * @summary Queue a MusicBrainz genre catalog refresh
+ */
+export const useRefreshGenreCatalog = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshGenreCatalog>>, TError,void, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof refreshGenreCatalog>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRefreshGenreCatalogMutationOptions(options), queryClient);
+    }
+
+export type searchGenreCatalogResponse200 = {
+  data: GenreCatalogSearchBody
+  status: 200
+}
+
+export type searchGenreCatalogResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type searchGenreCatalogResponseSuccess = (searchGenreCatalogResponse200) & {
+  headers: Headers;
+};
+export type searchGenreCatalogResponseError = (searchGenreCatalogResponseDefault) & {
+  headers: Headers;
+};
+
+export type searchGenreCatalogResponse = (searchGenreCatalogResponseSuccess | searchGenreCatalogResponseError)
+
+export const getSearchGenreCatalogUrl = (params: SearchGenreCatalogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/genres/catalog/search?${stringifiedParams}` : `/api/genres/catalog/search`
+}
+
+/**
+ * @summary Search the current MusicBrainz genre catalog
+ */
+export const searchGenreCatalog = async (params: SearchGenreCatalogParams, options?: RequestInit): Promise<searchGenreCatalogResponse> => {
+
+  const res = await fetch(getSearchGenreCatalogUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: searchGenreCatalogResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as searchGenreCatalogResponse
+}
+
+
+
+
+
+export const getSearchGenreCatalogQueryKey = (params?: SearchGenreCatalogParams,) => {
+    return [
+    `/api/genres/catalog/search`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getSearchGenreCatalogQueryOptions = <TData = Awaited<ReturnType<typeof searchGenreCatalog>>, TError = ErrorModel>(params: SearchGenreCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchGenreCatalog>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSearchGenreCatalogQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof searchGenreCatalog>>> = ({ signal }) => searchGenreCatalog(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof searchGenreCatalog>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SearchGenreCatalogQueryResult = NonNullable<Awaited<ReturnType<typeof searchGenreCatalog>>>
+export type SearchGenreCatalogQueryError = ErrorModel
+
+
+export function useSearchGenreCatalog<TData = Awaited<ReturnType<typeof searchGenreCatalog>>, TError = ErrorModel>(
+ params: SearchGenreCatalogParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchGenreCatalog>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof searchGenreCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof searchGenreCatalog>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSearchGenreCatalog<TData = Awaited<ReturnType<typeof searchGenreCatalog>>, TError = ErrorModel>(
+ params: SearchGenreCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchGenreCatalog>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof searchGenreCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof searchGenreCatalog>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSearchGenreCatalog<TData = Awaited<ReturnType<typeof searchGenreCatalog>>, TError = ErrorModel>(
+ params: SearchGenreCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchGenreCatalog>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Search the current MusicBrainz genre catalog
+ */
+
+export function useSearchGenreCatalog<TData = Awaited<ReturnType<typeof searchGenreCatalog>>, TError = ErrorModel>(
+ params: SearchGenreCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchGenreCatalog>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSearchGenreCatalogQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type getIncomingGroupsResponse200 = {
   data: IncomingGroupsBody

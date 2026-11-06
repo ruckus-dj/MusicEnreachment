@@ -222,6 +222,36 @@ export interface FirstPublicationPreviewTransform {
   output_container: string;
 }
 
+export interface GenreCatalogItem {
+  id: string;
+  name: string;
+  source_name: string;
+}
+
+export interface GenreCatalogSearchBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  items: GenreCatalogItem[] | null;
+}
+
+export interface GenreCatalogStatus {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  active_operation_id: string | null;
+  count: number;
+  /** @nullable */
+  items: GenreCatalogItem[] | null;
+  /** @nullable */
+  last_attempt_at: string | null;
+  /** @nullable */
+  last_error: string | null;
+  refresh_status: string;
+  /** @nullable */
+  updated_at: string | null;
+}
+
 export type IncomingFileResponseTags = {[key: string]: string[] | null};
 
 export interface IncomingLocationResponse {
@@ -1883,6 +1913,19 @@ export interface UpdateSourceBody {
   display_name?: string;
   processing_mode?: UpdateSourceBodyProcessingMode;
 }
+
+export type SearchGenreCatalogParams = {
+/**
+ * @minLength 1
+ * @pattern \S
+ */
+query: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+};
 
 export type ListLibraryArtistsParams = {
 /**

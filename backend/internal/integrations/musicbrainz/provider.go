@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,9 +32,10 @@ type ProviderOptions struct {
 }
 
 type Provider struct {
-	client *mb.Client
-	base   string
-	gate   *PublicRateGate
+	client     *mb.Client
+	httpClient *http.Client
+	base       string
+	gate       *PublicRateGate
 }
 
 // Entity is an application-owned projection. Raw preserves unknown fields and
@@ -131,7 +134,7 @@ func NewProvider(options ProviderOptions) (*Provider, error) {
 	client := mb.NewWithHTTPClient(mb.AppInfo{Name: "MeloTrove", Version: "0.1.0", URL: "https://github.com/ruckus/MusicEnreachment"}, httpClient)
 	client.SetUserAgent(providerUserAgent)
 	client.SetBaseURL(base)
-	return &Provider{client: client, base: base, gate: gate}, nil
+	return &Provider{client: client, httpClient: httpClient, base: base, gate: gate}, nil
 }
 
 func (p *Provider) callContext(ctx context.Context) (context.Context, context.CancelFunc, *responseCollector) {
@@ -284,6 +287,65 @@ func (p *Provider) BrowseReleasesByArtist(ctx context.Context, artistID string, 
 	}
 	projected.Raw = cloneRaw(collector.last())
 	return projected, nil
+}
+
+// GenrePage retrieves a page from MusicBrainz' complete genre catalog.
+// The response is decoded from the upstream JSON without dropping source names.
+func (p *Provider) GenrePage(ctx context.Context, offset, limit int) (GenrePage, error) {
+	if offset < 0 || limit < 1 || limit > 100 {
+		return GenrePage{}, errors.New("invalid musicbrainz genre page parameters")
+	}
+	ctx, cancel, collector := p.callContext(ctx)
+	defer cancel()
+	endpoint, err := url.Parse(p.base + "/genre/all")
+	if err != nil {
+		return GenrePage{}, errors.New("invalid musicbrainz genre endpoint")
+	}
+	query := endpoint.Query()
+	query.Set("fmt", "json")
+	query.Set("limit", strconv.Itoa(limit))
+	query.Set("offset", strconv.Itoa(offset))
+	endpoint.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return GenrePage{}, errors.New("create musicbrainz genre request")
+	}
+	request.Header.Set("User-Agent", providerUserAgent)
+	request.Header.Set("Accept", "application/json")
+	response, err := p.httpClient.Do(request)
+	if err != nil {
+		return GenrePage{}, safeProviderError(ctx, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return GenrePage{}, fmt.Errorf("musicbrainz returned HTTP %d", response.StatusCode)
+	}
+	if err := validateCapturedResponse(collector); err != nil {
+		return GenrePage{}, err
+	}
+	var decoded struct {
+		Count  *int    `json:"genre-count"`
+		Offset *int    `json:"genre-offset"`
+		Genres []Genre `json:"genres"`
+	}
+	if err := json.Unmarshal(collector.last(), &decoded); err != nil {
+		return GenrePage{}, errors.New("invalid musicbrainz genre response")
+	}
+	if decoded.Count == nil || decoded.Offset == nil || decoded.Genres == nil || *decoded.Count < 0 || *decoded.Offset != offset {
+		return GenrePage{}, errors.New("invalid musicbrainz genre response")
+	}
+	return GenrePage{Count: *decoded.Count, Offset: *decoded.Offset, Genres: decoded.Genres}, nil
+}
+
+type GenrePage struct {
+	Count  int     `json:"genre-count"`
+	Offset int     `json:"genre-offset"`
+	Genres []Genre `json:"genres"`
+}
+
+type Genre struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func validateSearch(query string, offset, limit int) error {

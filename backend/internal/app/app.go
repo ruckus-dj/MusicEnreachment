@@ -196,11 +196,13 @@ func Run(ctx context.Context, config Config) error {
 	acoustIDHTTPClient := &http.Client{Transport: http.DefaultTransport, Timeout: acoustid.RequestTimeout}
 	acoustIDClient := acoustid.NewClient(acoustIDHTTPClient, acoustIDRateWaiter{limiter: rate.NewLimiter(rate.Limit(3), 3)})
 	providerFactory := service.NewProviderFactory(registry, musicBrainzGate, new(musicbrainz.SelfHostedRateGate), governedHTTPClient, acoustIDClient)
-	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, connectivityChecker).WithOutputReset(outputReset)
+	riverSlot := &riverClientSlot{}
+	genreCatalogRepository := persistence.NewGenreCatalogRepository(db, setupManagerRepository)
+	genreCatalog := service.NewGenreCatalogService(genreCatalogRepository, registry, providerFactory).WithRefreshQueue(genreCatalogRepository, jobs.NewGenreCatalogQueueEnqueuer(riverSlot)).WithSetupCompletion(registry)
+	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, connectivityChecker).WithOutputReset(outputReset).WithGenreCatalogRefresh(genreCatalog)
 	if err := outputReset.RecoverOutputReset(ctx); err != nil {
 		return fmt.Errorf("recover output reset: %w", err)
 	}
-	riverSlot := &riverClientSlot{}
 	setupManagerRepository.SetRiverInserter(riverSlot)
 	sourceInventory := persistence.NewSourceInventoryRepository(db)
 	incomingGroups := service.NewIncomingGroups(persistence.NewIncomingGroupingRepository(db))
@@ -213,6 +215,7 @@ func Run(ctx context.Context, config Config) error {
 	)
 	operationService, apiOperations, riverSlot := newOperationServices(setupManagerRepository, riverSlot, sourceAnalysis)
 	operationService.SetPendingDispatcher(sourceAnalysis)
+	genreCatalog.WithOperations(operationService)
 	providerFetch := service.NewProviderFetchService(registry, providerFactory, persistence.NewProviderCacheRepository(db)).WithDurableOperations(setupManagerRepository, riverSlot)
 	matchingReconcileDispatcher := incomingMatchingReconcileDispatcher{repository: sourceInventory, matchingRuntime: setupManagerRepository, river: riverSlot, logger: logger}
 	incomingMatchingReconciliation := service.NewIncomingMatchingReconciliation(
@@ -227,6 +230,8 @@ func Run(ctx context.Context, config Config) error {
 	incomingMatchingReconcileDispatchWorker := jobs.NewIncomingMatchingReconcileDispatchWorker(matchingReconcileDispatcher)
 	sourceAnalysisPendingDispatchWorker := jobs.NewSourceAnalysisPendingDispatchWorker(sourceAnalysis)
 	providerFetchWorker := jobs.NewProviderFetchWorker(providerFetch, operationService)
+	genreCatalogWorker := jobs.NewGenreCatalogWorker(genreCatalog)
+	genreCatalogRefreshDispatchWorker := jobs.NewGenreCatalogRefreshDispatchWorker(genreCatalog)
 	matchingEvaluation := service.NewMatchingEvaluationService(incomingGroups, persistence.NewIncomingGroupingRepository(db), persistence.NewProviderCacheRepository(db), persistence.NewIncomingMatchCandidateRepository(db), registry)
 	matchingReview := service.NewMatchingReviewService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingManual := service.NewMatchingManualService(persistence.NewIncomingMatchCandidateRepository(db))
@@ -325,6 +330,8 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, artifactCleanupWorker)
 		registerPublicationSourceCleanupWorkers(workers, publicationSourceCleanupWorkers)
 		river.AddWorker(workers, providerFetchWorker)
+		river.AddWorker(workers, genreCatalogWorker)
+		river.AddWorker(workers, genreCatalogRefreshDispatchWorker)
 		river.AddWorker(workers, matchingEvaluationWorker)
 		river.AddWorker(workers, matchingApplyWorker)
 		river.AddWorker(workers, publicationWorker)
@@ -340,12 +347,15 @@ func Run(ctx context.Context, config Config) error {
 	// Keep exactly one base analysis slot on the main client. Additional River
 	// clients are provisioned only for actual queued/running demand.
 	primaryAnalysisCapacity := 1
-	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob(), jobs.NewPublicationReconciliationDispatchPeriodicJob(), jobs.NewPublicationSourceCleanupDispatchPeriodicJob())
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob(), jobs.NewPublicationReconciliationDispatchPeriodicJob(), jobs.NewPublicationSourceCleanupDispatchPeriodicJob(), jobs.NewGenreCatalogRefreshPeriodicJob())
 	if err != nil {
 		return err
 	}
 	defer riverListenerPool.Close()
 	riverSlot.RiverInserter = riverClient
+	if err := genreCatalog.DispatchDueRefresh(ctx); err != nil {
+		return fmt.Errorf("recover genre catalog refresh: %w", err)
+	}
 	if err := setupManagerRepository.RecoverMatchingRuntime(ctx, riverSlot); err != nil {
 		return fmt.Errorf("recover matching runtime: %w", err)
 	}
@@ -484,6 +494,7 @@ func Run(ctx context.Context, config Config) error {
 		LibraryReleaseOptions:  libraryReleaseOptions,
 		LibraryRecordingSearch: libraryRecordingSearch,
 		LibraryProviderRefresh: libraryProviderRefresh,
+		GenreCatalog:           genreCatalog,
 		LibraryPrimaryArtists:  libraryPrimaryArtists,
 		LibraryMetadata:        libraryMetadata,
 		LibraryReleaseCovers:   libraryReleaseCovers,

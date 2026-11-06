@@ -14,6 +14,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	tokens := newPreflightTokens()
 	RegisterSetup(api, dependencies.Setup)
 	registerSettings(api, dependencies.Setup)
+	registerGenreCatalog(api, dependencies.GenreCatalog)
 	registerTools(api, dependencies, tokens)
 	registerOperations(api, dependencies.Operations, dependencies.Setup, dependencies.SourceArtifactCleanup)
 	registerSourceCleanupRetry(api, dependencies.SourceCleanupRetries, dependencies.Operations)

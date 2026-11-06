@@ -11,6 +11,7 @@ import (
 
 type Dependencies struct {
 	Setup             *service.SetupService
+	GenreCatalog      *service.GenreCatalogService
 	ProviderFactory   *service.ProviderFactory
 	Catalog           *service.CatalogService
 	InstallOperations *service.InstallOperations

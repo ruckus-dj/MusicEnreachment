@@ -1,5 +1,25 @@
 -- Squashed additive rollback, preserving original reverse dependency order.
 
+-- A baseline rollback is destructive: reject retained provider state before DDL.
+-- The provider baseline rollback guard runs only after this migration's schema is
+-- dropped, so refuse the same non-pristine catalog here to keep the group atomic.
+DO $guard$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM public.genre_catalog
+        WHERE items IS DISTINCT FROM '[]'::jsonb
+           OR updated_at IS NOT NULL
+           OR last_attempt_at IS NOT NULL
+           OR last_error IS NOT NULL
+           OR configuration_identity <> ''
+           OR refresh_request IS DISTINCT FROM '{"status":"idle"}'::jsonb
+           OR refresh_due_at IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'cannot roll back incoming matching baseline: genre catalog contains retained state';
+    END IF;
+END;
+$guard$;
+
 -- Former migration: 20261101000001_release_media_and_manual_credits.tx.down.sql
 DO $guard$
 BEGIN

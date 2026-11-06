@@ -444,6 +444,9 @@ func (s *Operations) retryEnqueued(ctx context.Context, id uuid.UUID) (*persiste
 // its root; normalized analysis retries are delegated to the source-analysis
 // service; cleanup retries require the dedicated explicit recovery flow.
 func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Operation) (*persistence.Operation, error) {
+	if existing.Kind == "refresh_genre_catalog_v1" {
+		return nil, fmt.Errorf("genre catalog refreshes must be started as new operations")
+	}
 	if err := publicationSourceCleanupRetryError(existing.Kind); err != nil {
 		return nil, err
 	}

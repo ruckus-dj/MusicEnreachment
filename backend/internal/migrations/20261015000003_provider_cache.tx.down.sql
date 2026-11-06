@@ -4,6 +4,18 @@ DECLARE
     relation_name text;
     populated boolean;
 BEGIN
+    IF EXISTS (
+        SELECT 1 FROM public.genre_catalog
+        WHERE items IS DISTINCT FROM '[]'::jsonb
+           OR updated_at IS NOT NULL
+           OR last_attempt_at IS NOT NULL
+           OR last_error IS NOT NULL
+           OR configuration_identity <> ''
+           OR refresh_request IS DISTINCT FROM '{"status":"idle"}'::jsonb
+           OR refresh_due_at IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'cannot roll back provider baseline: genre catalog contains retained state';
+    END IF;
     FOREACH relation_name IN ARRAY ARRAY['provider', 'provider_artist', 'provider_recording', 'provider_release', 'provider_release_artist_credit', 'provider_release_track', 'provider_response_cache', 'provider_source', 'provider_source_entity', 'provider_source_release_artist_credit', 'provider_source_release_track']
     LOOP
         EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I)', relation_name) INTO populated;
@@ -45,3 +57,4 @@ DROP TABLE public.provider_recording;
 DROP TABLE public.provider_artist;
 DROP TABLE public.provider;
 DROP SEQUENCE public.provider_fetch_order_seq;
+DROP TABLE public.genre_catalog;

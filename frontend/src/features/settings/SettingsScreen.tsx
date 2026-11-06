@@ -51,6 +51,7 @@ import {
   preflightManagedToolInstall,
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
+import { GenreCatalogPanel } from "./GenreCatalogPanel";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
 import "../setup/setup.css";
 import "./settings.css";
@@ -1855,6 +1856,7 @@ export function SettingsScreen() {
               </AppButton>
             </section>
           </div>
+          <GenreCatalogPanel />
           <section
             aria-labelledby="managed-title"
             className="setup-panel settings-panel"

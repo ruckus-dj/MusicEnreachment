@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -90,13 +91,19 @@ type DirectoryListing struct {
 }
 
 type SetupService struct {
-	store              settings.Store
-	registry           *settings.Registry
-	platform           settings.PlatformState
-	musicbrainzClient  musicbrainz.Checker
-	installations      InstallationLookup
-	outputReset        *OutputReset
-	githubTokenChecker GitHubTokenChecker
+	store               settings.Store
+	registry            *settings.Registry
+	platform            settings.PlatformState
+	musicbrainzClient   musicbrainz.Checker
+	installations       InstallationLookup
+	outputReset         *OutputReset
+	githubTokenChecker  GitHubTokenChecker
+	genreCatalogRefresh interface{ DispatchDueRefresh(context.Context) error }
+}
+
+func (s *SetupService) WithGenreCatalogRefresh(refresh interface{ DispatchDueRefresh(context.Context) error }) *SetupService {
+	s.genreCatalogRefresh = refresh
+	return s
 }
 
 type GitHubTokenChecker interface {
@@ -647,5 +654,20 @@ func (s *SetupService) Complete(ctx context.Context) error {
 		semantics.UnicodeNormalization != state.Runtime.OutputUnicodeNormalization {
 		return fmt.Errorf("output filesystem semantics changed")
 	}
-	return s.registry.CompleteSetupIfCurrent(ctx, s.platform.Platform, state.Runtime, config)
+	if err := s.registry.CompleteSetupIfCurrent(ctx, s.platform.Platform, state.Runtime, config); err != nil {
+		return err
+	}
+	if s.genreCatalogRefresh != nil {
+		s.dispatchGenreCatalogRefresh()
+	}
+	return nil
+}
+
+func (s *SetupService) dispatchGenreCatalogRefresh() {
+	refresh := s.genreCatalogRefresh
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = refresh.DispatchDueRefresh(ctx)
+	}()
 }
