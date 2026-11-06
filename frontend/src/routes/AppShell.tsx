@@ -71,6 +71,7 @@ export function AppShell() {
     state?.completed && !state.platform.diagnostic && state.platform.supported;
   const errorRef = useRef<HTMLDivElement>(null);
   const diagnosticRef = useRef<HTMLHeadingElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -122,6 +123,15 @@ export function AppShell() {
               : "settings-screen settings-shell"
       }`}
     >
+      <button
+        type="button"
+        className="app-skip-link"
+        onClick={() => {
+          contentRef.current?.focus();
+        }}
+      >
+        Перейти к содержимому
+      </button>
       {productAvailable ? (
         <>
           <aside className="app-sidebar" aria-label="Основная навигация">
@@ -137,12 +147,17 @@ export function AppShell() {
                 <strong>MeloTrove</strong>
                 <span>Медиатека</span>
               </a>
+              <span className="app-section-label">{sectionLabel(route)}</span>
               <ThemeSelect />
             </header>
-            <div className="app-mobile-nav">
-              <ShellNavigation route={route} />
-            </div>
-            <section className="app-content">{renderRouteContent()}</section>
+            <section
+              ref={contentRef}
+              id="app-content"
+              className="app-content"
+              tabIndex={-1}
+            >
+              {renderRouteContent()}
+            </section>
           </div>
         </>
       ) : (
@@ -154,7 +169,12 @@ export function AppShell() {
             </div>
             <ThemeSelect />
           </header>
-          <section className="app-content app-content--setup">
+          <section
+            ref={contentRef}
+            id="app-content"
+            className="app-content app-content--setup"
+            tabIndex={-1}
+          >
             {renderRouteContent()}
           </section>
         </>
@@ -268,6 +288,16 @@ function RootLanding() {
       </a>
     </section>
   );
+}
+
+function sectionLabel(route: Route): string {
+  if (route === "/incoming-groups") return "Входящие";
+  if (route === "/library" || route.startsWith("/library/")) return "Медиатека";
+  if (route === "/sources") return "Источники";
+  if (route === "/publications") return "Публикации";
+  if (route === "/operations") return "Операции";
+  if (route === "/settings") return "Настройки";
+  return "Главная";
 }
 
 function ShellNavigation({ route }: { route: Route }) {
