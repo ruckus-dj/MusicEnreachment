@@ -38,6 +38,13 @@ export interface SourceProcessingState {
 	copies: RetainedSourceCopy[];
 }
 
+export interface OriginalCleanupEvidence {
+	optedIn: boolean;
+	assignedSegments: { published: boolean }[];
+	activeConsumers: number;
+	activeHolds: number;
+}
+
 export const initialSourceProcessingState: SourceProcessingState = {
 	files: [],
 	copies: [],
@@ -248,10 +255,35 @@ export function removeRootProcessingState(
 	state: SourceProcessingState,
 	rootId: string,
 ): SourceProcessingState {
+	if (!canRemoveSourceRoot(state, rootId)) return state;
 	return {
 		files: state.files.filter((file) => file.rootId !== rootId),
 		copies: state.copies.filter((copy) => copy.rootId !== rootId),
 	};
+}
+
+/** Root removal drops app-owned tasks/copies only; host originals are outside this state. */
+export function canRemoveSourceRoot(
+	state: SourceProcessingState,
+	rootId: string,
+): boolean {
+	return !state.files.some(
+		(file) =>
+			file.rootId === rootId && ["queued", "running"].includes(file.status),
+	);
+}
+
+/** Original-file cleanup is opt-in and waits for every assigned segment and consumer. */
+export function canRemoveOriginalFile(
+	evidence: OriginalCleanupEvidence,
+): boolean {
+	return (
+		evidence.optedIn &&
+		evidence.assignedSegments.length > 0 &&
+		evidence.assignedSegments.every((segment) => segment.published) &&
+		evidence.activeConsumers === 0 &&
+		evidence.activeHolds === 0
+	);
 }
 
 export function sourceProcessingLocks(state: SourceProcessingState) {

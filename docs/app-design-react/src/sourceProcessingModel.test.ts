@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import { originalFiles } from "./catalogData";
 import {
 	blockStagedSourceQueue,
+	canRemoveOriginalFile,
+	canRemoveSourceRoot,
 	createSourceScan,
 	eligibleSourceCopies,
 	initialSourceProcessingState,
@@ -187,4 +189,50 @@ it("removes only eligible app-owned copies and clears only a removed root's proc
 	expect(remaining.copies.every((copy) => copy.rootId === "root-library")).toBe(
 		true,
 	);
+});
+
+it("blocks root removal for queued work, but drops failed tasks and staged copies", () => {
+	const queued = createSourceScan(
+		initialSourceProcessingState,
+		"root-inbox",
+		"staged",
+		originalFiles,
+	);
+	expect(canRemoveSourceRoot(queued, "root-inbox")).toBe(false);
+	expect(removeRootProcessingState(queued, "root-inbox")).toBe(queued);
+
+	const failed = processSourceQueue(queued, "root-inbox");
+	expect(failed.files.every((file) => file.status === "failed")).toBe(true);
+	expect(canRemoveSourceRoot(failed, "root-inbox")).toBe(true);
+	const removed = removeRootProcessingState(failed, "root-inbox");
+	expect(removed).toEqual({ files: [], copies: [] });
+	// Removing app state cannot mutate the host-original inventory fixture.
+	expect(Object.keys(originalFiles)).toContain("north-f1");
+});
+
+it("allows original cleanup only after opt-in, all assigned publications, and consumers/holds", () => {
+	const evidence = {
+		optedIn: true,
+		assignedSegments: [
+			{ id: "segment-a", published: true },
+			{ id: "segment-not-queued-yet", published: false },
+		],
+		activeConsumers: 0,
+		activeHolds: 0,
+	};
+	expect(canRemoveOriginalFile(evidence)).toBe(false);
+	expect(
+		canRemoveOriginalFile({
+			...evidence,
+			assignedSegments: evidence.assignedSegments.map((segment) => ({
+				...segment,
+				published: true,
+			})),
+		}),
+	).toBe(true);
+	expect(canRemoveOriginalFile({ ...evidence, activeConsumers: 1 })).toBe(
+		false,
+	);
+	expect(canRemoveOriginalFile({ ...evidence, activeHolds: 1 })).toBe(false);
+	expect(canRemoveOriginalFile({ ...evidence, optedIn: false })).toBe(false);
 });

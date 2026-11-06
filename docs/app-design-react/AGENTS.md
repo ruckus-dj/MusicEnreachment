@@ -69,9 +69,10 @@ expansion may move later content down, not sideways. Multi-column field grids
 are allowed inside an already expanded group, without changing its outer width.
 
 Sort names are edited only on the artist card, with no album/track overrides.
-Projection follows the current product contract: on collision, use `Name
-(disambiguation)` where available; if conflict remains, omit the conflicting
-group's sort identifiers and show a localized notice. Keep the other group
+Projection follows the current product contract: colliding projected artist names
+use `Name (disambiguation)` where available; unresolved name collisions omit the
+affected artist MBID group. Separately, colliding projected sort names omit both
+sort tags of the affected group. Show localized notices and keep other groups
 unchanged. Explicit fixture sort names are demo data. Editing unrelated artist
 fields must preserve genres when the picker is untouched or its catalog is
 unavailable.
@@ -96,6 +97,19 @@ unavailable.
   booleans. Work MBIDs require UUID validation despite their grouped editor kind.
 
 ## Localization and interaction regression prevention
+
+- Settings regression tests must distinguish effective settings from browser-only
+  text drafts. Assert that typing, blur and selector autosave do not apply an
+  unrelated text draft. Cover restoration, invalid-input retention, navigation
+  warnings and conflicts against changed settings props; sessionStorage is not
+  cross-device synchronization. The saving policy lives in `../design/decisions.md`.
+  Isolate sessionStorage and the route-independent draft fallback between tests,
+  not just localStorage; restoration fixtures must be seeded explicitly within
+  their own test. Otherwise earlier drafts produce false rebase conflicts.
+- Desktop matching geometry must reserve a real inspector row, not overlay the
+  last target rows or preview actions with a fixed panel. Class-name assertions
+  are not enough: check the last row and confirmation buttons by browser
+  visibility and hit-testing at the supported desktop sizes.
 
 - RU/EN copy uses semantic catalogs; store persistent notices as descriptors and
   format at render time. Do not translate metadata values, paths, filenames or

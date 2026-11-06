@@ -93,12 +93,16 @@ it("uses the compact publication inspector and scrolls its heading into focus on
 		vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn() }),
 	);
 
-	render(<MatchingHarness />);
+	const { container } = render(<MatchingHarness />);
 	const openPreview = () =>
 		fireEvent.click(
 			screen.getByRole("button", { name: "Предпросмотр публикации" }),
 		);
+	expect(
+		screen.getByText(/Выбрано позиций для публикации:/),
+	).toBeInTheDocument();
 	openPreview();
+	expect(container.querySelector(".matching-commit")).not.toBeInTheDocument();
 
 	const heading = screen.getByRole("heading", { name: /Предпросмотр:/ });
 	expect(heading).toHaveFocus();
@@ -112,17 +116,36 @@ it("uses the compact publication inspector and scrolls its heading into focus on
 	expect(
 		screen.getAllByRole("checkbox", { name: /Включить/ }).length,
 	).toBeGreaterThan(0);
-	expect(
-		screen.getByText(/Выбрано позиций для публикации:/),
-	).toBeInTheDocument();
+	expect(screen.getByText(/^Выбрано: \d+ \/ \d+/)).toBeInTheDocument();
 	expect(
 		screen.queryByText(/^\d+ Выбрано позиций для публикации:/),
 	).not.toBeInTheDocument();
 
 	fireEvent.click(screen.getByRole("button", { name: "Вернуться к объекту" }));
+	expect(container.querySelector(".matching-commit")).toBeInTheDocument();
 	openPreview();
 	expect(screen.getByRole("heading", { name: /Предпросмотр:/ })).toHaveFocus();
 	expect(scrollIntoView).toHaveBeenCalledTimes(2);
+});
+
+it("reserves a bounded inspector grid row and keeps the target list independently scrollable on wide desktop", () => {
+	const { container } = render(<MatchingHarness />);
+	const main = container.querySelector<HTMLElement>("main");
+	const layout = container.querySelector<HTMLElement>(".matching-layout");
+	const inspector = container.querySelector<HTMLElement>(".matching-inspector");
+	const target = container.querySelector<HTMLElement>(".matching-target");
+	expect(main?.className).toContain("min-[1400px]:h-full");
+	expect(main?.className).toContain("min-[1400px]:flex-col");
+	expect(layout?.className).toContain("min-[1400px]:flex-1");
+	expect(layout?.className).toContain(
+		"min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))]",
+	);
+	expect(inspector).not.toBeNull();
+	expect(inspector?.parentElement).toBe(layout);
+	expect(inspector?.className).toContain("min-[1400px]:col-span-3");
+	expect(inspector?.className).not.toContain("min-[1400px]:fixed");
+	expect(target?.className).toContain("min-[1400px]:overflow-y-auto");
+	expect(target?.className).toContain("min-[1400px]:min-h-0");
 });
 
 it("does not move focus back to the preview after a locale change", () => {

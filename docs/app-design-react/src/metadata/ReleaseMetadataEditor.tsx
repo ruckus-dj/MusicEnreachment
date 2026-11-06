@@ -99,7 +99,6 @@ export function ReleaseMetadataEditor({
 				label={m("releaseDetails")}
 				scope="release"
 				values={values}
-				requiredKeys={["album"]}
 				artists={artists.map(({ id, name, sortName }) => ({
 					id,
 					name,

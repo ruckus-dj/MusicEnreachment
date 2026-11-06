@@ -57,6 +57,12 @@ export const operationMessages = createNamespace({
 		removalSucceeded: "The confirmed removal scope was completed.",
 		removalStale:
 			"Removal stopped because the confirmed scope is out of date. Review and confirm the current scope again.",
+		removalRetry:
+			"Removal is incomplete. Retry to verify the managed path and finish removal; an unavailable path is not treated as an absent file.",
+		removalConflict:
+			"The file changed or the managed path is occupied by another file or publication. It was not touched; review the publication before retrying.",
+		removalStateRetry: "Removal is still pending",
+		removalStateConflict: "Path conflict · review required",
 		currentRequestsEmpty: "No current requests.",
 		checkSnapshot: "Known frozen path: ",
 		tagsMatch: "Tags match",
@@ -158,6 +164,12 @@ export const operationMessages = createNamespace({
 		removalSucceeded: "Удаление в подтверждённой области выполнено.",
 		removalStale:
 			"Удаление остановлено: подтверждённая область устарела. Проверьте и подтвердите актуальную область заново.",
+		removalRetry:
+			"Удаление не завершено. Повторите попытку для проверки управляемого пути и завершения удаления; недоступный путь не считается отсутствующим файлом.",
+		removalConflict:
+			"Файл изменился или управляемый путь занят другим файлом или публикацией. Он не затронут; проверьте публикацию перед повтором.",
+		removalStateRetry: "Удаление не завершено",
+		removalStateConflict: "Конфликт пути · требуется проверка",
 		currentRequestsEmpty: "Нет текущих запросов.",
 		checkSnapshot: "Известный зафиксированный путь: ",
 		tagsMatch: "Теги совпадают",

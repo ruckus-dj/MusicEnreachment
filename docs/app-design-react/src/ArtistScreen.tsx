@@ -26,6 +26,7 @@ import { DeletionRequest } from "./DeletionRequest";
 import { catalogueStyles } from "./catalogueStyles";
 import { useI18n } from "./i18n/I18nProvider";
 import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
+import { trackMessage } from "./trackMessages";
 import {
 	Button,
 	Checkbox,
@@ -655,7 +656,34 @@ export function ArtistScreen({
 																)}
 																{track.observedFile && (
 																	<span className={catalogueStyles.secondary}>
-																		{m("fileChangedOutsideApp")}
+																		{track.observedFile.state === "changed" ||
+																		track.observedFile.state === "drift"
+																			? trackMessage(locale, "fileChanged")
+																			: track.observedFile.state ===
+																						"missing" &&
+																					track.observedFile.rootAvailable ===
+																						true
+																				? trackMessage(locale, "fileMissing")
+																				: track.observedFile.state ===
+																							"missing" ||
+																						track.observedFile.state ===
+																							"output-unavailable"
+																					? trackMessage(
+																							locale,
+																							"publicationRootUnavailable",
+																						)
+																					: track.observedFile.state ===
+																								"available" ||
+																							track.observedFile.state ===
+																								"unchanged"
+																						? trackMessage(
+																								locale,
+																								"noDeviations",
+																							)
+																						: trackMessage(
+																								locale,
+																								"fileStateNotChecked",
+																							)}
 																	</span>
 																)}
 															</td>

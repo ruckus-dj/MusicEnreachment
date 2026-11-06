@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type Key } from "react";
 import {
 	Button,
 	Dialog,
@@ -38,6 +38,17 @@ import {
 	musicBrainzConfigurationFingerprint,
 } from "./providerValidation";
 import { overlapsAnyDemoPath } from "./demoPathValidation";
+import {
+	getSettingsDraftStorage,
+	mergeSettingsDraft,
+	readSettingsDraft,
+	rebaseSettingsDraft,
+	settingsDraftConflicts,
+	settingsDraftIsDirty,
+	validConcurrency,
+	writeSettingsDraft,
+	type SettingsTextDraft,
+} from "./settingsDraft";
 
 export interface DemoSettings {
 	toolsPath: string;
@@ -129,7 +140,6 @@ export function SettingsScreen({
 	const [picker, setPicker] = useState<PickerTarget | null>(null);
 	const [notice, setNotice] = useState<NoticeKey | "" | "saved">("");
 	const [confirming, setConfirming] = useState<string | null>(null);
-	const [moveCandidate, setMoveCandidate] = useState("");
 	const [movePlan, setMovePlan] = useState<ReturnType<
 		typeof movePreflightDemo
 	> | null>(null);
@@ -141,6 +151,407 @@ export function SettingsScreen({
 		root: string;
 		token: string;
 	} | null>(null);
+	const baselineFromSettings = (): SettingsTextDraft => ({
+		concurrency: settings.concurrency ?? "4",
+		toolsPath: settings.toolsPath,
+		toolsPathCandidate: "",
+		musicBrainzMode: settings.musicBrainzMode ?? "",
+		musicBrainzURL: settings.musicBrainzURL ?? "",
+		musicBrainzDelay: settings.musicBrainzDelay ?? "",
+	});
+	const [draftState, setDraftState] = useState(() => {
+		const baseline = baselineFromSettings();
+		const restored = readSettingsDraft(getSettingsDraftStorage());
+		return restored ?? { value: baseline, baseline };
+	});
+	const moveCandidate = draftState.value.toolsPathCandidate;
+	const [replacementConfirmed, setReplacementConfirmed] = useState(false);
+	const [conflictAcknowledged, setConflictAcknowledged] = useState(false);
+	const [replacementPrompt, setReplacementPrompt] = useState(false);
+	const [leavePrompt, setLeavePrompt] = useState(false);
+	const pendingHash = useRef<string | null>(null);
+	const pendingReplacement = useRef<"all" | "concurrency" | "providers">("all");
+	const allowNavigation = useRef(false);
+	const previousHash = useRef(
+		typeof window === "undefined" ? "" : window.location.hash,
+	);
+	const [fieldErrors, setFieldErrors] = useState<
+		Partial<Record<keyof SettingsTextDraft, string>>
+	>({});
+	const [draftStorageWarning, setDraftStorageWarning] = useState(false);
+	const previousDraftDirty = useRef(false);
+	const currentDraftValues = baselineFromSettings();
+	const draftConflicts = settingsDraftConflicts(
+		draftState.baseline,
+		currentDraftValues,
+		draftState.value,
+	);
+	const draftDirty = settingsDraftIsDirty(
+		draftState.value,
+		draftState.baseline,
+	);
+	const updateDraft = (values: Partial<SettingsTextDraft>) =>
+		setDraftState((current) => ({
+			...current,
+			value: { ...current.value, ...values },
+		}));
+	useEffect(() => {
+		const persisted = writeSettingsDraft(
+			getSettingsDraftStorage(),
+			draftDirty ? draftState : null,
+		);
+		if (!persisted && (draftDirty || previousDraftDirty.current))
+			setDraftStorageWarning(true);
+		else if (persisted) setDraftStorageWarning(false);
+		previousDraftDirty.current = draftDirty;
+	}, [draftDirty, draftState]);
+	useEffect(() => {
+		const current = baselineFromSettings();
+		setDraftState((draft) => rebaseSettingsDraft(draft, current));
+	}, [
+		settings.concurrency,
+		settings.toolsPath,
+		settings.musicBrainzMode,
+		settings.musicBrainzURL,
+		settings.musicBrainzDelay,
+	]);
+	useEffect(() => {
+		const beforeUnload = (event: BeforeUnloadEvent) => {
+			if (!draftDirty) return;
+			event.preventDefault();
+			event.returnValue = "";
+		};
+		const hashChanged = () => {
+			const nextHash = window.location.hash;
+			if (allowNavigation.current) {
+				allowNavigation.current = false;
+				previousHash.current = nextHash;
+				return;
+			}
+			if (!draftDirty || nextHash === previousHash.current) {
+				previousHash.current = nextHash;
+				return;
+			}
+			pendingHash.current = nextHash;
+			window.history.replaceState(
+				window.history.state,
+				"",
+				`${window.location.pathname}${window.location.search}${previousHash.current}`,
+			);
+			setLeavePrompt(true);
+		};
+		const anchorClicked = (event: MouseEvent) => {
+			if (
+				!draftDirty ||
+				event.defaultPrevented ||
+				event.button !== 0 ||
+				event.metaKey ||
+				event.ctrlKey ||
+				event.shiftKey ||
+				event.altKey
+			)
+				return;
+			const target = event.target;
+			if (!(target instanceof Element)) return;
+			const anchor = target.closest<HTMLAnchorElement>("a[href]");
+			if (!anchor || anchor.target || anchor.hasAttribute("download")) return;
+			const destination = new URL(anchor.href, window.location.href);
+			if (
+				destination.origin !== window.location.origin ||
+				destination.pathname !== window.location.pathname ||
+				destination.search !== window.location.search ||
+				!destination.hash ||
+				destination.hash === window.location.hash ||
+				destination.hash === "#content"
+			)
+				return;
+			event.preventDefault();
+			pendingHash.current = destination.hash;
+			setLeavePrompt(true);
+		};
+		window.addEventListener("beforeunload", beforeUnload);
+		window.addEventListener("hashchange", hashChanged, true);
+		window.addEventListener("popstate", hashChanged, true);
+		document.addEventListener("click", anchorClicked, true);
+		return () => {
+			window.removeEventListener("beforeunload", beforeUnload);
+			window.removeEventListener("hashchange", hashChanged, true);
+			window.removeEventListener("popstate", hashChanged, true);
+			document.removeEventListener("click", anchorClicked, true);
+		};
+	}, [draftDirty]);
+	const takeSavedSettings = () => {
+		const baseline = baselineFromSettings();
+		setDraftState({ value: baseline, baseline });
+		setFieldErrors({});
+		setReplacementConfirmed(false);
+		setConflictAcknowledged(false);
+	};
+	const validateDraft = (value = draftState.value) => {
+		const errors: Partial<Record<keyof SettingsTextDraft, string>> = {};
+		if (!value.musicBrainzMode) errors.musicBrainzMode = copy.invalidProvider;
+		if (!validConcurrency(value.concurrency))
+			errors.concurrency = copy.invalidConcurrency;
+		if (
+			value.musicBrainzMode === "self-hosted" &&
+			!isValidMusicBrainzConfiguration({
+				mode: value.musicBrainzMode,
+				url: value.musicBrainzURL,
+				throttle: settings.musicBrainzThrottle,
+				delay: value.musicBrainzDelay,
+			})
+		)
+			errors.musicBrainzURL = copy.invalidProvider;
+		if (
+			value.musicBrainzDelay.trim() !== "" &&
+			!/^\d+(?:\.\d+)?$/.test(value.musicBrainzDelay.trim())
+		)
+			errors.musicBrainzDelay = copy.invalidDelay;
+		setFieldErrors(errors);
+		if (Object.keys(errors).length) {
+			const first = errors.concurrency
+				? "concurrency"
+				: errors.musicBrainzMode
+					? "musicBrainzMode"
+					: errors.musicBrainzURL
+						? "musicBrainzURL"
+						: "musicBrainzDelay";
+			document.getElementById(`settings-${first}`)?.focus();
+		}
+		return Object.keys(errors).length === 0;
+	};
+	const commitDraft = (forceReplace = false) => {
+		const merged = mergeSettingsDraft(draftState, currentDraftValues);
+		if (!validateDraft(merged)) return;
+		if (
+			draftConflicts.length &&
+			conflictAcknowledged &&
+			!replacementConfirmed &&
+			!forceReplace
+		) {
+			pendingReplacement.current = "all";
+			setReplacementPrompt(true);
+			return;
+		}
+		if (draftConflicts.length && !conflictAcknowledged) return;
+		const { concurrency, musicBrainzMode, musicBrainzURL, musicBrainzDelay } =
+			merged;
+		const configuration = {
+			mode: musicBrainzMode,
+			url: musicBrainzURL,
+			throttle: settings.musicBrainzThrottle,
+			delay: musicBrainzDelay,
+		};
+		if (!isValidMusicBrainzConfiguration(configuration)) {
+			const field = musicBrainzMode ? "musicBrainzURL" : "musicBrainzMode";
+			setFieldErrors((current) => ({
+				...current,
+				[field]: copy.invalidProvider,
+			}));
+			document.getElementById(`settings-${field}`)?.focus();
+			return;
+		}
+		const baseline = {
+			...draftState.baseline,
+			concurrency,
+			musicBrainzMode,
+			musicBrainzURL,
+			musicBrainzDelay,
+		};
+		const value = {
+			...draftState.value,
+			concurrency,
+			musicBrainzMode,
+			musicBrainzURL,
+			musicBrainzDelay,
+		};
+		onSettings({
+			...settings,
+			concurrency,
+			musicBrainzMode,
+			musicBrainzURL,
+			musicBrainzDelay,
+			musicBrainzVerified: true,
+			musicBrainzVerifiedFingerprint:
+				musicBrainzConfigurationFingerprint(configuration),
+			runtimeSaved: true,
+		});
+		setDraftState({ value, baseline });
+		setFieldErrors({});
+		setReplacementConfirmed(false);
+		setConflictAcknowledged(false);
+		setReplacementPrompt(false);
+		setNotice("saved");
+	};
+	const commitConcurrency = () => {
+		if (!validConcurrency(draftState.value.concurrency)) {
+			setFieldErrors((current) => ({
+				...current,
+				concurrency: copy.invalidConcurrency,
+			}));
+			document.getElementById("settings-concurrency")?.focus();
+			return;
+		}
+		if (draftConflicts.includes("concurrency")) {
+			if (!conflictAcknowledged) return;
+			pendingReplacement.current = "concurrency";
+			setReplacementPrompt(true);
+			return;
+		}
+		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
+			"concurrency",
+		]);
+		const baseline = {
+			...draftState.baseline,
+			concurrency: merged.concurrency,
+		};
+		const value = { ...draftState.value, concurrency: merged.concurrency };
+		onSettings({
+			...settings,
+			concurrency: merged.concurrency,
+			runtimeSaved: true,
+		});
+		setDraftState({ baseline, value });
+		setFieldErrors((current) => ({ ...current, concurrency: undefined }));
+		setReplacementConfirmed(false);
+		setConflictAcknowledged(false);
+		setNotice("saved");
+	};
+	const commitProviders = (forceReplace = false) => {
+		const merged = mergeSettingsDraft(draftState, currentDraftValues, [
+			"musicBrainzMode",
+			"musicBrainzURL",
+			"musicBrainzDelay",
+		]);
+		const { musicBrainzMode, musicBrainzURL, musicBrainzDelay } = merged;
+		const errors: Partial<Record<keyof SettingsTextDraft, string>> = {};
+		if (!musicBrainzMode) errors.musicBrainzMode = copy.invalidProvider;
+		if (
+			musicBrainzMode === "self-hosted" &&
+			!isValidMusicBrainzConfiguration({
+				mode: musicBrainzMode,
+				url: musicBrainzURL,
+				throttle: settings.musicBrainzThrottle,
+				delay: musicBrainzDelay,
+			})
+		)
+			errors.musicBrainzURL = copy.invalidProvider;
+		if (
+			musicBrainzDelay.trim() !== "" &&
+			!/^\d+(?:\.\d+)?$/.test(musicBrainzDelay.trim())
+		)
+			errors.musicBrainzDelay = copy.invalidDelay;
+		setFieldErrors((current) => ({
+			...current,
+			musicBrainzMode: errors.musicBrainzMode,
+			musicBrainzURL: errors.musicBrainzURL,
+			musicBrainzDelay: errors.musicBrainzDelay,
+		}));
+		if (Object.keys(errors).length) {
+			document
+				.getElementById(
+					errors.musicBrainzMode
+						? "settings-musicBrainzMode"
+						: errors.musicBrainzURL
+							? "settings-musicBrainzURL"
+							: "settings-musicBrainzDelay",
+				)
+				?.focus();
+			return;
+		}
+		const fields = [
+			"musicBrainzMode",
+			"musicBrainzURL",
+			"musicBrainzDelay",
+		] as const;
+		const conflicts = draftConflicts.filter((key) =>
+			fields.includes(key as (typeof fields)[number]),
+		);
+		if (conflicts.length && !conflictAcknowledged) return;
+		if (conflicts.length && !replacementConfirmed && !forceReplace) {
+			pendingReplacement.current = "providers";
+			setReplacementPrompt(true);
+			return;
+		}
+		const configuration = {
+			mode: musicBrainzMode,
+			url: musicBrainzURL,
+			throttle: settings.musicBrainzThrottle,
+			delay: musicBrainzDelay,
+		};
+		if (!isValidMusicBrainzConfiguration(configuration)) {
+			const field = musicBrainzMode ? "musicBrainzURL" : "musicBrainzMode";
+			setFieldErrors((current) => ({
+				...current,
+				[field]: copy.invalidProvider,
+			}));
+			document.getElementById(`settings-${field}`)?.focus();
+			return;
+		}
+		const baseline = {
+			...draftState.baseline,
+			musicBrainzMode,
+			musicBrainzURL,
+			musicBrainzDelay,
+		};
+		const value = {
+			...draftState.value,
+			musicBrainzMode,
+			musicBrainzURL,
+			musicBrainzDelay,
+		};
+		onSettings({
+			...settings,
+			musicBrainzMode,
+			musicBrainzURL,
+			musicBrainzDelay,
+			musicBrainzVerified: true,
+			musicBrainzVerifiedFingerprint:
+				musicBrainzConfigurationFingerprint(configuration),
+		});
+		setDraftState({ baseline, value });
+		setReplacementConfirmed(false);
+		setConflictAcknowledged(false);
+		setNotice("providerSaved");
+	};
+	const selectMusicBrainzMode = (key: Key | null) => {
+		const musicBrainzMode = key
+			? (String(key) as SettingsTextDraft["musicBrainzMode"])
+			: "";
+		const musicBrainzURL = settings.musicBrainzURL ?? "";
+		const musicBrainzDelay = settings.musicBrainzDelay ?? "";
+		const configuration = {
+			mode: musicBrainzMode,
+			url: musicBrainzURL,
+			throttle: settings.musicBrainzThrottle,
+			delay: musicBrainzDelay,
+		};
+		const providerConflicts = draftConflicts.includes("musicBrainzMode");
+		const delayValid =
+			musicBrainzDelay.trim() === "" ||
+			/^\d+(?:\.\d+)?$/.test(musicBrainzDelay.trim());
+		if (
+			isValidMusicBrainzConfiguration(configuration) &&
+			delayValid &&
+			!providerConflicts
+		) {
+			if (musicBrainzMode !== (settings.musicBrainzMode ?? "")) {
+				onSettings({
+					...settings,
+					musicBrainzMode,
+					musicBrainzVerified: true,
+					musicBrainzVerifiedFingerprint:
+						musicBrainzConfigurationFingerprint(configuration),
+				});
+			}
+			setDraftState((current) => ({
+				baseline: { ...current.baseline, musicBrainzMode },
+				value: { ...current.value, musicBrainzMode },
+			}));
+			return;
+		}
+		updateDraft({ musicBrainzMode });
+	};
 	const update = (values: Partial<DemoSettings>) =>
 		onSettings({ ...settings, ...values });
 	const currentOutput = settings.currentOutput ?? "/srv/music";
@@ -156,30 +567,31 @@ export function SettingsScreen({
 		0,
 	);
 	const musicBrainzFingerprint = musicBrainzConfigurationFingerprint({
-		mode: settings.musicBrainzMode ?? "",
-		url: settings.musicBrainzURL,
+		mode: draftState.value.musicBrainzMode,
+		url: draftState.value.musicBrainzURL,
 		throttle: settings.musicBrainzThrottle,
-		delay: settings.musicBrainzDelay,
+		delay: draftState.value.musicBrainzDelay,
 	});
 	const musicBrainzIsVerified =
 		settings.musicBrainzVerified &&
 		settings.musicBrainzVerifiedFingerprint === musicBrainzFingerprint;
 	const saveProviders = () => {
-		const configuration = {
-			mode: settings.musicBrainzMode ?? "",
-			url: settings.musicBrainzURL,
-			throttle: settings.musicBrainzThrottle,
-			delay: settings.musicBrainzDelay,
-		};
-		if (!isValidMusicBrainzConfiguration(configuration)) {
-			setNotice("invalidProvider");
-			return;
+		commitProviders();
+	};
+	const leaveWithDraft = (discard: boolean) => {
+		if (discard) {
+			setDraftStorageWarning(
+				!writeSettingsDraft(getSettingsDraftStorage(), null),
+			);
+			const baseline = baselineFromSettings();
+			setDraftState({ value: baseline, baseline });
 		}
-		update({
-			musicBrainzVerified: true,
-			musicBrainzVerifiedFingerprint: musicBrainzFingerprint,
-		});
-		setNotice("providerSaved");
+		const target = pendingHash.current;
+		setLeavePrompt(false);
+		if (target) {
+			allowNavigation.current = true;
+			window.location.hash = target;
+		}
 	};
 
 	const confirmOutputReset = () => {
@@ -277,7 +689,21 @@ export function SettingsScreen({
 		}
 		update({ toolsPath: movePlan.path, pathChecked: false, setupVerified: {} });
 		setMovePlan(null);
-		setMoveCandidate("");
+		{
+			const baseline = {
+				...draftState.baseline,
+				toolsPath: movePlan.path,
+				toolsPathCandidate: "",
+			};
+			setDraftState({
+				baseline,
+				value: {
+					...draftState.value,
+					toolsPath: movePlan.path,
+					toolsPathCandidate: "",
+				},
+			});
+		}
 		setNotice("");
 	};
 	const noticeText =
@@ -309,6 +735,25 @@ export function SettingsScreen({
 				<p className={styles.formNotice} role="status" aria-live="polite">
 					{noticeText}
 				</p>
+			)}
+			{draftStorageWarning && (
+				<p className={styles.formNotice} role="status" aria-live="polite">
+					{copy.draftStorageWarning}
+				</p>
+			)}
+			{draftConflicts.length > 0 && draftDirty && (
+				<div
+					className="grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3"
+					role="alert"
+				>
+					<p className="m-0">{copy.settingsConflict}</p>
+					<div className="flex flex-wrap gap-2">
+						<Button onPress={takeSavedSettings}>{copy.takeSaved}</Button>
+						<Button onPress={() => setConflictAcknowledged(true)}>
+							{copy.continueEditing}
+						</Button>
+					</div>
+				</div>
 			)}
 			<Tabs className="grid min-w-0 gap-3" aria-label={copy.title}>
 				<TabList
@@ -371,13 +816,44 @@ export function SettingsScreen({
 									</ListBox>
 								</Popover>
 							</Select>
-							<TextField
-								value={settings.concurrency ?? "4"}
-								onChange={(concurrency) => update({ concurrency })}
-							>
-								<Label>{copy.concurrency}</Label>
-								<Input type="number" min="1" />
-							</TextField>
+							<div className="grid content-start gap-2">
+								<TextField
+									value={draftState.value.concurrency}
+									onChange={(concurrency) => updateDraft({ concurrency })}
+								>
+									<Label>{copy.concurrency}</Label>
+									<Input
+										id="settings-concurrency"
+										type="number"
+										min="1"
+										aria-invalid={Boolean(fieldErrors.concurrency)}
+										aria-describedby={
+											fieldErrors.concurrency
+												? "settings-concurrency-error"
+												: undefined
+										}
+									/>
+								</TextField>
+								{fieldErrors.concurrency && (
+									<p
+										id="settings-concurrency-error"
+										className="m-0 text-[var(--error)]"
+										role="alert"
+									>
+										{fieldErrors.concurrency}
+									</p>
+								)}
+								<Button
+									className="justify-self-start"
+									isDisabled={
+										draftConflicts.includes("concurrency") &&
+										!conflictAcknowledged
+									}
+									onPress={commitConcurrency}
+								>
+									{copy.save}
+								</Button>
+							</div>
 							<label className="flex items-center gap-2">
 								<input
 									type="checkbox"
@@ -441,16 +917,6 @@ export function SettingsScreen({
 								{copy.cleanupHelp}
 							</p>
 						</section>
-						<Button
-							className="justify-self-start min-[1400px]:col-span-2"
-							onPress={() => {
-								update({ runtimeSaved: true });
-								setNotice("saved");
-							}}
-						>
-							{copy.save}
-						</Button>
-						{settings.runtimeSaved && <p role="status">{copy.saved}</p>}
 					</div>
 				</TabPanel>
 				<TabPanel
@@ -608,7 +1074,7 @@ export function SettingsScreen({
 							<TextField
 								value={moveCandidate}
 								onChange={(value) => {
-									setMoveCandidate(value);
+									updateDraft({ toolsPathCandidate: value });
 									setMovePlan(null);
 								}}
 							>
@@ -630,19 +1096,19 @@ export function SettingsScreen({
 				>
 					<h2>{copy.providers}</h2>
 					<Select
-						selectedKey={settings.musicBrainzMode ?? ""}
-						onSelectionChange={(key) =>
-							update({
-								musicBrainzMode: key
-									? (String(key) as "public" | "self-hosted")
-									: "",
-								musicBrainzVerified: false,
-								musicBrainzVerifiedFingerprint: undefined,
-							})
-						}
+						selectedKey={draftState.value.musicBrainzMode}
+						onSelectionChange={selectMusicBrainzMode}
 					>
 						<Label>{copy.musicbrainz}</Label>
-						<Button>
+						<Button
+							id="settings-musicBrainzMode"
+							aria-invalid={Boolean(fieldErrors.musicBrainzMode)}
+							aria-describedby={
+								fieldErrors.musicBrainzMode
+									? "settings-musicBrainzMode-error"
+									: undefined
+							}
+						>
 							<SelectValue />
 						</Button>
 						<Popover>
@@ -652,20 +1118,41 @@ export function SettingsScreen({
 							</ListBox>
 						</Popover>
 					</Select>
-					{settings.musicBrainzMode === "self-hosted" && (
+					{fieldErrors.musicBrainzMode && (
+						<p
+							id="settings-musicBrainzMode-error"
+							className="m-0 text-[var(--error)]"
+							role="alert"
+						>
+							{fieldErrors.musicBrainzMode}
+						</p>
+					)}
+					{draftState.value.musicBrainzMode === "self-hosted" && (
 						<TextField
-							value={settings.musicBrainzURL ?? ""}
-							onChange={(musicBrainzURL) =>
-								update({
-									musicBrainzURL,
-									musicBrainzVerified: false,
-									musicBrainzVerifiedFingerprint: undefined,
-								})
-							}
+							value={draftState.value.musicBrainzURL}
+							onChange={(musicBrainzURL) => updateDraft({ musicBrainzURL })}
 						>
 							<Label>{copy.baseUrl}</Label>
-							<Input type="url" />
+							<Input
+								id="settings-musicBrainzURL"
+								type="url"
+								aria-invalid={Boolean(fieldErrors.musicBrainzURL)}
+								aria-describedby={
+									fieldErrors.musicBrainzURL
+										? "settings-musicBrainzURL-error"
+										: undefined
+								}
+							/>
 						</TextField>
+					)}
+					{fieldErrors.musicBrainzURL && (
+						<p
+							id="settings-musicBrainzURL-error"
+							className="m-0 text-[var(--error)]"
+							role="alert"
+						>
+							{fieldErrors.musicBrainzURL}
+						</p>
 					)}
 					<label className="flex items-center gap-2">
 						<input
@@ -679,14 +1166,46 @@ export function SettingsScreen({
 						{copy.throttle}
 					</label>
 					<TextField
-						value={settings.musicBrainzDelay ?? ""}
-						onChange={(musicBrainzDelay) => update({ musicBrainzDelay })}
+						value={draftState.value.musicBrainzDelay}
+						onChange={(musicBrainzDelay) => updateDraft({ musicBrainzDelay })}
 					>
 						<Label>{copy.delay}</Label>
-						<Input type="number" min="0" />
+						<Input
+							id="settings-musicBrainzDelay"
+							type="number"
+							min="0"
+							aria-invalid={Boolean(fieldErrors.musicBrainzDelay)}
+							aria-describedby={
+								fieldErrors.musicBrainzDelay
+									? "settings-musicBrainzDelay-error"
+									: undefined
+							}
+						/>
 					</TextField>
+					{fieldErrors.musicBrainzDelay && (
+						<p
+							id="settings-musicBrainzDelay-error"
+							className="m-0 text-[var(--error)]"
+							role="alert"
+						>
+							{fieldErrors.musicBrainzDelay}
+						</p>
+					)}
 					<p>{musicBrainzIsVerified ? copy.verified : copy.notVerified}</p>
-					<Button onPress={saveProviders}>{copy.saveProviders}</Button>
+					<Button
+						isDisabled={
+							draftConflicts.some((field) =>
+								[
+									"musicBrainzMode",
+									"musicBrainzURL",
+									"musicBrainzDelay",
+								].includes(field),
+							) && !conflictAcknowledged
+						}
+						onPress={saveProviders}
+					>
+						{copy.saveProviders}
+					</Button>
 					<label className="flex items-center gap-2">
 						<input
 							type="checkbox"
@@ -708,6 +1227,79 @@ export function SettingsScreen({
 					/>
 				</TabPanel>
 			</Tabs>
+			{leavePrompt && (
+				<Modal
+					isOpen
+					onOpenChange={(open) => !open && setLeavePrompt(false)}
+					isDismissable
+				>
+					<Dialog>
+						<Heading slot="title">{copy.leaveSettingsTitle}</Heading>
+						<p>{copy.leaveSettingsText}</p>
+						{draftStorageWarning && (
+							<p role="status">{copy.draftStorageWarning}</p>
+						)}
+						<Button onPress={() => setLeavePrompt(false)}>{copy.stay}</Button>
+						<Button onPress={() => leaveWithDraft(false)}>
+							{copy.leaveKeepDraft}
+						</Button>
+						<Button onPress={() => leaveWithDraft(true)}>
+							{copy.leaveDiscard}
+						</Button>
+						{!draftConflicts.length && (
+							<Button
+								onPress={() => {
+									if (!validateDraft()) return;
+									commitDraft();
+									if (!replacementPrompt) leaveWithDraft(false);
+								}}
+							>
+								{copy.leaveSave}
+							</Button>
+						)}
+					</Dialog>
+				</Modal>
+			)}
+			{replacementPrompt && (
+				<Modal
+					isOpen
+					onOpenChange={(open) => !open && setReplacementPrompt(false)}
+					isDismissable
+				>
+					<Dialog>
+						<Heading slot="title">{copy.replaceSettingsTitle}</Heading>
+						<p>{copy.replaceSettingsText}</p>
+						<Button
+							onPress={() => {
+								setReplacementConfirmed(true);
+								setReplacementPrompt(false);
+								if (pendingReplacement.current === "concurrency") {
+									const baseline = {
+										...draftState.baseline,
+										concurrency: draftState.value.concurrency,
+									};
+									setDraftState({ baseline, value: { ...draftState.value } });
+									onSettings({
+										...settings,
+										concurrency: draftState.value.concurrency,
+										runtimeSaved: true,
+									});
+									setReplacementConfirmed(false);
+									setConflictAcknowledged(false);
+									setNotice("saved");
+								} else if (pendingReplacement.current === "providers")
+									commitProviders(true);
+								else commitDraft(true);
+							}}
+						>
+							{copy.confirmReplace}
+						</Button>
+						<Button onPress={() => setReplacementPrompt(false)}>
+							{copy.cancel}
+						</Button>
+					</Dialog>
+				</Modal>
+			)}
 			{picker && (
 				<DirectoryPicker
 					key={picker}
@@ -733,7 +1325,8 @@ export function SettingsScreen({
 								return;
 							}
 							update({ workDirectory: path });
-						} else if (picker === "tools") setMoveCandidate(path);
+						} else if (picker === "tools")
+							updateDraft({ toolsPathCandidate: path });
 						else update({ outputCandidate: path });
 						setPicker(null);
 						setNotice("");

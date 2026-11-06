@@ -29,6 +29,8 @@ export const sourcesMessages = createNamespace({
 			"Source added to the prototype. No server directory was opened or scanned; a work directory is required only before staged processing.",
 		cancel: "Cancel",
 		connectedFolders: "Connected directories",
+		sourceTableHelp:
+			"Analysis leaves original files unchanged. Mode changes apply to future processing.",
 		nameColumn: "Name",
 		pathColumn: "Path",
 		modeColumn: "Processing mode",
@@ -94,7 +96,7 @@ export const sourcesMessages = createNamespace({
 		rootConfirmTitle: "Remove source {path}?",
 		rootConfirmCount: "File records in inventory: {count}.",
 		rootConfirmScope:
-			"Only this source's inventory records and application-owned retained work copies are removed. Original files on the host, library objects, and current publications remain untouched.",
+			"This removes this source's inventory, failed work and retained application-owned copies. Queued or running work must finish first. Host originals, library objects and current publications remain untouched.",
 		rootConfirmRecheck:
 			"Before confirmation, the source inventory and any active processing are checked again. The prototype does not access the real filesystem.",
 		confirm: "Confirm removal",
@@ -130,6 +132,8 @@ export const sourcesMessages = createNamespace({
 			"Источник добавлен в макет. Серверный каталог не открывался и не сканировался; рабочая папка требуется только перед обработкой через копию.",
 		cancel: "Отмена",
 		connectedFolders: "Подключённые каталоги",
+		sourceTableHelp:
+			"Анализ не изменяет исходные файлы. Изменение режима применяется к будущей обработке.",
 		nameColumn: "Имя",
 		pathColumn: "Путь",
 		modeColumn: "Режим обработки",
@@ -196,7 +200,7 @@ export const sourcesMessages = createNamespace({
 		rootConfirmTitle: "Удалить источник {path}?",
 		rootConfirmCount: "Записей о файлах в инвентаре: {count}.",
 		rootConfirmScope:
-			"Удаляются только записи инвентаря этого источника и принадлежащие приложению сохранённые рабочие копии. Исходные файлы на сервере, объекты медиатеки и текущие публикации не затрагиваются.",
+			"Удаляются инвентарь источника, неудачные задания и сохранённые копии приложения. Задания в очереди или выполняющиеся должны завершиться. Исходные файлы на сервере, объекты медиатеки и текущие публикации не затрагиваются.",
 		rootConfirmRecheck:
 			"Перед подтверждением инвентарь и активная обработка будут проверены повторно. Макет не обращается к реальной файловой системе.",
 		confirm: "Подтвердить удаление",

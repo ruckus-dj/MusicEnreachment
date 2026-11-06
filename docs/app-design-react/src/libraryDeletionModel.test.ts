@@ -6,7 +6,12 @@ import {
 	originalReleases,
 } from "./catalogData";
 import type { DeletionOperation } from "./DeletionRequest";
-import { completeLibraryDeletion } from "./libraryDeletionModel";
+import {
+	completeLibraryDeletion,
+	completeManagedLibraryDeletion,
+	managedDeletionObservation,
+	type ManagedDeletionEvidence,
+} from "./libraryDeletionModel";
 
 const clone = <T>(value: T): T => structuredClone(value);
 
@@ -191,4 +196,189 @@ it("rejects empty and unknown deletion identities", () => {
 			clone(originalArtists),
 		),
 	).toBeNull();
+});
+
+const managedEvidence = (
+	operation: DeletionOperation,
+	state: "present" | "absent" | "replaced" | "unknown" = "present",
+	metadataCommitSucceeded = true,
+): ManagedDeletionEvidence => ({
+	paths: Object.fromEntries(
+		operation.paths.map((path) => [
+			path,
+			{ state, deleteSucceeded: state === "present" },
+		]),
+	),
+	metadataCommitSucceeded,
+});
+
+it.each([
+	[{ state: "missing", rootAvailable: true }, "absent"],
+	[{ state: "missing", rootAvailable: false }, "unknown"],
+	[{ state: "missing" }, "unknown"],
+	[{ state: "changed", rootAvailable: true }, "replaced"],
+	[{ state: "unchanged", rootAvailable: true }, "present"],
+	[{ state: "unchanged", rootAvailable: false }, "unknown"],
+	[{ state: "unchecked" }, "unknown"],
+] as const)("maps managed observations safely: %j", (observation, expected) => {
+	expect(managedDeletionObservation(observation)).toBe(expected);
+});
+
+it("completes a validated managed deletion without mutating authoritative inputs", () => {
+	const releases = clone(originalReleases);
+	const artists = clone(originalArtists);
+	const before = clone({ releases, artists });
+	const operation = publicationOperation();
+	const result = completeManagedLibraryDeletion(
+		operation,
+		releases,
+		artists,
+		managedEvidence(operation),
+	);
+	expect(result.status).toBe("completed");
+	if (result.status !== "completed")
+		throw new Error("Expected successful baseline");
+	expect(
+		result.releases
+			.flatMap((release) => release.tracks)
+			.find((track) => track.id === operation.libraryTrackIds?.[0])?.published,
+	).toBeNull();
+	expect({ releases, artists }).toEqual(before);
+});
+
+it("retries metadata cleanup after unlink without deleting a replacement", () => {
+	const releases = clone(originalReleases);
+	const artists = clone(originalArtists);
+	const before = clone({ releases, artists });
+	const operation = publicationOperation();
+	expect(
+		completeManagedLibraryDeletion(
+			operation,
+			releases,
+			artists,
+			managedEvidence(operation, "present", false),
+		),
+	).toEqual({ status: "retry" });
+	expect(
+		completeManagedLibraryDeletion(
+			operation,
+			releases,
+			artists,
+			managedEvidence(operation, "absent"),
+		).status,
+	).toBe("completed");
+	expect(
+		completeManagedLibraryDeletion(
+			operation,
+			releases,
+			artists,
+			managedEvidence(operation, "replaced"),
+		),
+	).toEqual({ status: "conflict" });
+	expect({ releases, artists }).toEqual(before);
+});
+
+it("does not interpret unavailable or unobserved paths as absence", () => {
+	const operation = publicationOperation();
+	for (const evidence of [
+		managedEvidence(operation, "unknown"),
+		{ paths: {}, metadataCommitSucceeded: true },
+	]) {
+		expect(
+			completeManagedLibraryDeletion(
+				operation,
+				clone(originalReleases),
+				clone(originalArtists),
+				evidence,
+			),
+		).toEqual({ status: "retry" });
+	}
+	const evidence = managedEvidence(operation);
+	const path = operation.paths[0];
+	evidence.paths[path] = { state: "present", deleteSucceeded: false };
+	expect(
+		completeManagedLibraryDeletion(
+			operation,
+			clone(originalReleases),
+			clone(originalArtists),
+			evidence,
+		),
+	).toEqual({ status: "retry" });
+});
+
+it("rejects stale scope before applying managed deletion outcomes", () => {
+	const operation = publicationOperation();
+	const releases = clone(originalReleases);
+	const artists = clone(originalArtists);
+	const before = clone({ releases, artists });
+	expect(
+		completeManagedLibraryDeletion(
+			{ ...operation, paths: ["/stale"] },
+			releases,
+			artists,
+			managedEvidence(operation),
+		),
+	).toEqual({ status: "stale" });
+	expect({ releases, artists }).toEqual(before);
+});
+
+it("protects all rows when one path in a multi-publication deletion is replaced", () => {
+	const releases = clone(originalReleases);
+	const artists = clone(originalArtists);
+	const release = releases.find((item) => item.id === "north");
+	if (!release) throw new Error("Missing release fixture");
+	const operation: DeletionOperation = {
+		kind: "library",
+		target: release.title,
+		scope: "confirmed release",
+		publications: release.tracks.filter((track) => track.published).length,
+		paths: release.tracks.flatMap((track) =>
+			track.published ? [track.published.path] : [],
+		),
+		libraryReleaseIds: [release.id],
+		libraryTrackIds: release.tracks.map((track) => track.id),
+	};
+	expect(operation.paths.length).toBeGreaterThan(1);
+	expect(
+		completeManagedLibraryDeletion(
+			operation,
+			releases,
+			artists,
+			managedEvidence(operation),
+		).status,
+	).toBe("completed");
+	const before = clone({ releases, artists });
+	const evidence = managedEvidence(operation);
+	evidence.paths[operation.paths.at(-1) ?? ""] = {
+		state: "replaced",
+		deleteSucceeded: false,
+	};
+	expect(
+		completeManagedLibraryDeletion(operation, releases, artists, evidence),
+	).toEqual({ status: "conflict" });
+	expect({ releases, artists }).toEqual(before);
+});
+
+it("requires the metadata commit even when no managed paths exist", () => {
+	const releases = clone(originalReleases);
+	const artists = clone(originalArtists);
+	const operation = publicationOperation();
+	const selected = releases
+		.flatMap((release) => release.tracks)
+		.find((track) => track.id === operation.libraryTrackIds?.[0]);
+	if (!selected) throw new Error("Missing track fixture");
+	selected.published = null;
+	const noPaths = { ...operation, publications: 0, paths: [] };
+	expect(
+		completeManagedLibraryDeletion(noPaths, releases, artists, {
+			paths: {},
+			metadataCommitSucceeded: true,
+		}).status,
+	).toBe("completed");
+	expect(
+		completeManagedLibraryDeletion(noPaths, releases, artists, {
+			paths: {},
+			metadataCommitSucceeded: false,
+		}),
+	).toEqual({ status: "retry" });
 });

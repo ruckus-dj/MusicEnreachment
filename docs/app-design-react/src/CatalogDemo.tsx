@@ -70,7 +70,11 @@ import { CatalogFilter as CatalogFilterControl } from "./CatalogFilter";
 import { SelectionDock } from "./SelectionDock";
 import type { CatalogFilter } from "./availabilityRows";
 import { catalogueStyles } from "./catalogueStyles";
-import { completeLibraryDeletion } from "./libraryDeletionModel";
+import {
+	completeManagedLibraryDeletion,
+	managedDeletionObservation,
+} from "./libraryDeletionModel";
+import type { ManagedPathObservation } from "./managedPublicationDeletionModel";
 import {
 	fixturePublicationDestination,
 	type PublicationDestination,
@@ -85,8 +89,18 @@ import { catalogMessage } from "./catalogMessages";
 import { applyAudioUpgradePreview } from "./trackActionModel";
 
 const subscribeRoute = (listener: () => void) => {
-	window.addEventListener("hashchange", listener);
-	return () => window.removeEventListener("hashchange", listener);
+	let observedHash = window.location.hash;
+	const notifyForCurrentHash = () => {
+		if (observedHash === window.location.hash) return;
+		observedHash = window.location.hash;
+		listener();
+	};
+	window.addEventListener("hashchange", notifyForCurrentHash);
+	window.addEventListener("popstate", notifyForCurrentHash);
+	return () => {
+		window.removeEventListener("hashchange", notifyForCurrentHash);
+		window.removeEventListener("popstate", notifyForCurrentHash);
+	};
 };
 
 type View = "artists" | "albums" | "tracks";
@@ -346,8 +360,25 @@ export function CatalogDemo({
 		window.location.hash = "operations";
 	};
 	const completeDeletion = (operation: DeletionOperation) => {
-		const next = completeLibraryDeletion(operation, releases, artists);
-		if (!next) return false;
+		const tracks = releases.flatMap((release) => release.tracks);
+		const selectedTracks = new Set(operation.libraryTrackIds);
+		// Fixtures supply observations, not real unlink or database commit results.
+		const paths = Object.fromEntries(
+			operation.paths.map((path) => {
+				const owners = tracks.filter((track) => track.published?.path === path);
+				const observation = owners[0]?.observedFile;
+				let state: ManagedPathObservation = "unknown";
+				if (owners.some((track) => !selectedTracks.has(track.id)))
+					state = "replaced";
+				else if (owners.length) state = managedDeletionObservation(observation);
+				return [path, { state, deleteSucceeded: state === "present" }];
+			}),
+		);
+		const next = completeManagedLibraryDeletion(operation, releases, artists, {
+			paths,
+			metadataCommitSucceeded: true,
+		});
+		if (next.status !== "completed") return next.status;
 		setReleases(next.releases);
 		setArtists(next.artists);
 		setDeletions((previous) => previous.filter((item) => item !== operation));
@@ -366,7 +397,7 @@ export function CatalogDemo({
 					),
 				),
 		);
-		return true;
+		return next.status;
 	};
 	useEffect(() => {
 		const heading =
@@ -899,6 +930,9 @@ export function CatalogDemo({
 						});
 						setFiles(next.files);
 						setReleases(next.releases);
+						setSourceRoots((previous) =>
+							previous.filter((root) => root.id !== id),
+						);
 						setRemovedRoots((previous) => new Set([...previous, id]));
 					}}
 				/>

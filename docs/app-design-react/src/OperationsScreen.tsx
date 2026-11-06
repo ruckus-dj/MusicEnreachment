@@ -10,9 +10,13 @@ import {
 	type SourceFiles,
 } from "./catalogData";
 import type { DeletionOperation } from "./DeletionRequest";
-import { operationMessage as message } from "./operationMessages";
+import {
+	operationMessage as message,
+	type OperationMessage,
+} from "./operationMessages";
+import type { ManagedPublicationDeletionResult } from "./managedPublicationDeletionModel";
 
-type DeletionState = "queued" | "stale" | "succeeded";
+type DeletionState = "queued" | "stale" | "retry" | "conflict" | "succeeded";
 type RecoveredSnapshot = NonNullable<OriginalTrack["published"]>;
 export interface OperationsDemoState {
 	retryState: "failed" | "queued" | "succeeded";
@@ -36,7 +40,9 @@ export function OperationsScreen({
 	releases: OriginalRelease[];
 	deletions: DeletionOperation[];
 	onRecover: (snapshot: RecoveredSnapshot) => boolean | void;
-	onCompleteDeletion?: (operation: DeletionOperation) => boolean;
+	onCompleteDeletion?: (
+		operation: DeletionOperation,
+	) => boolean | ManagedPublicationDeletionResult;
 	onDismissDeletion?: (operation: DeletionOperation) => void;
 	initialState?: OperationsDemoState;
 	onState?: (state: OperationsDemoState) => void;
@@ -44,7 +50,7 @@ export function OperationsScreen({
 }) {
 	const { locale } = useI18n();
 	const [open, setOpen] = useState(false);
-	const [notice, setNotice] = useState("");
+	const [notice, setNotice] = useState<OperationMessage | "">("");
 	const [retryState, setRetryState] = useState(initialState.retryState);
 	const [dismissedOperations, setDismissedOperations] = useState(
 		initialState.dismissedOperations,
@@ -92,7 +98,7 @@ export function OperationsScreen({
 			</header>
 			{notice && (
 				<p className={styles.formNotice} role="status" aria-live="polite">
-					{notice}
+					{message(locale, notice)}
 				</p>
 			)}
 			<section className={styles.panel}>
@@ -143,7 +149,7 @@ export function OperationsScreen({
 										<Button
 											onPress={() => {
 												setRetryState("succeeded");
-												setNotice(message(locale, "retrySucceeded"));
+												setNotice("retrySucceeded");
 											}}
 										>
 											{message(locale, "retry")}
@@ -151,7 +157,7 @@ export function OperationsScreen({
 										<Button
 											onPress={() => {
 												dismissOperation("signals");
-												setNotice(message(locale, "dismissed"));
+												setNotice("dismissed");
 											}}
 										>
 											{message(locale, "dismiss")}
@@ -177,7 +183,7 @@ export function OperationsScreen({
 										<Button
 											onPress={() => {
 												dismissOperation("recovery");
-												setNotice(message(locale, "dismissed"));
+												setNotice("dismissed");
 											}}
 										>
 											{message(locale, "dismiss")}
@@ -222,16 +228,24 @@ export function OperationsScreen({
 								const state = deletionStates.get(operation) ?? "queued";
 								if (state === "succeeded") return null;
 								const execute = () => {
-									const completed = onCompleteDeletion?.(operation) ?? false;
-									setDeletionState(
-										operation,
-										completed ? "succeeded" : "stale",
-									);
+									const result = onCompleteDeletion?.(operation) ?? false;
+									const nextState: DeletionState =
+										typeof result === "string"
+											? result === "completed"
+												? "succeeded"
+												: result
+											: result
+												? "succeeded"
+												: "stale";
+									setDeletionState(operation, nextState);
 									setNotice(
-										message(
-											locale,
-											completed ? "removalSucceeded" : "removalStale",
-										),
+										nextState === "succeeded"
+											? "removalSucceeded"
+											: nextState === "retry"
+												? "removalRetry"
+												: nextState === "conflict"
+													? "removalConflict"
+													: "removalStale",
 									);
 								};
 								const kind =
@@ -240,17 +254,21 @@ export function OperationsScreen({
 										: operation.kind === "artist"
 											? "deleteKindArtist"
 											: "deleteKindLibrary";
+								const stateMessage =
+									state === "queued"
+										? "queued"
+										: state === "stale"
+											? "staleScope"
+											: state === "retry"
+												? "removalStateRetry"
+												: "removalStateConflict";
 								return (
 									<tr key={`${operation.target}:${index}`}>
 										<td>
 											{operation.target || message(locale, "unknownTarget")}
 										</td>
 										<td>{message(locale, kind)}</td>
-										<td>
-											{state === "stale"
-												? message(locale, "staleScope")
-												: message(locale, "queued")}
-										</td>
+										<td>{message(locale, stateMessage)}</td>
 										<td>{operation.scope}</td>
 										<td>
 											{message(locale, "publicationCount", {
@@ -265,6 +283,11 @@ export function OperationsScreen({
 													: message(locale, "retryRemoval")}
 											</Button>
 											{state === "stale" && (
+												<a href="#library">
+													{message(locale, "returnAndConfirm")}
+												</a>
+											)}
+											{state === "conflict" && (
 												<a href="#library">
 													{message(locale, "returnAndConfirm")}
 												</a>
@@ -323,12 +346,12 @@ export function OperationsScreen({
 									recoveryFixture.tagsMatch &&
 									recoveryFixture.technicalMatch &&
 									recoveryFixture.authorityCurrent;
-								if (!valid) setNotice(message(locale, "recoveryFailed"));
+								if (!valid) setNotice("recoveryFailed");
 								else if (onRecover(recoveredSnapshot) === false)
-									setNotice(message(locale, "recoveryRejected"));
+									setNotice("recoveryRejected");
 								else {
 									dismissOperation("recovery");
-									setNotice(message(locale, "recoveryRegistered"));
+									setNotice("recoveryRegistered");
 								}
 								setOpen(false);
 							}}

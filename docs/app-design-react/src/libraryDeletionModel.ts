@@ -1,6 +1,15 @@
-import type { CatalogArtist, OriginalRelease } from "./catalogData";
+import type {
+	CatalogArtist,
+	OriginalRelease,
+	OriginalTrack,
+} from "./catalogData";
 import type { DeletionOperation } from "./DeletionRequest";
 import { artistDeletionPlan } from "./ArtistDeletionRequest";
+import {
+	type ManagedPathObservation,
+	type ManagedPublicationDeletionResult,
+	resolveManagedPublicationDeletion,
+} from "./managedPublicationDeletionModel";
 
 /** The demo applies only the identities and publication paths confirmed by the operator. */
 export function completeLibraryDeletion(
@@ -87,4 +96,70 @@ export function completeLibraryDeletion(
 				tracks: release.tracks.filter((track) => !trackIds.has(track.id)),
 			})),
 	};
+}
+
+/** Explicit demo evidence for one confirmed managed path; no filesystem access. */
+export interface ManagedPathDeletionEvidence {
+	state: ManagedPathObservation;
+	deleteSucceeded: boolean;
+}
+
+/** Missing is conclusive only when the output root was confirmed available. */
+export function managedDeletionObservation(
+	observation: OriginalTrack["observedFile"],
+): ManagedPathObservation {
+	// The fixed fixture's registered publication is the only default observation.
+	if (!observation) return "present";
+	if (observation.rootAvailable === false) return "unknown";
+	if (observation.state === "missing")
+		return observation.rootAvailable === true ? "absent" : "unknown";
+	if (["changed", "drift"].includes(observation.state ?? "")) return "replaced";
+	if (["available", "unchanged"].includes(observation.state ?? ""))
+		return "present";
+	return "unknown";
+}
+
+/** A missing path entry is unknown and can never justify removing rows. */
+export interface ManagedDeletionEvidence {
+	paths: Partial<Record<string, ManagedPathDeletionEvidence>>;
+	metadataCommitSucceeded: boolean;
+}
+
+export type ManagedLibraryDeletionOutcome =
+	| {
+			status: "completed";
+			releases: OriginalRelease[];
+			artists: CatalogArtist[];
+	  }
+	| {
+			status: Exclude<ManagedPublicationDeletionResult, "completed">;
+	  };
+
+/**
+ * Validates the confirmed scope first, then interprets explicit per-path
+ * evidence and the metadata commit outcome. Rows are released only when every
+ * confirmed managed path is safe and the metadata commit succeeded.
+ */
+export function completeManagedLibraryDeletion(
+	operation: DeletionOperation,
+	releases: OriginalRelease[],
+	artists: CatalogArtist[],
+	evidence: ManagedDeletionEvidence,
+): ManagedLibraryDeletionOutcome {
+	const next = completeLibraryDeletion(operation, releases, artists);
+	if (!next) return { status: "stale" };
+	let retry = !evidence.metadataCommitSucceeded;
+	for (const path of operation.paths) {
+		const observed = evidence.paths[path];
+		const resolution = resolveManagedPublicationDeletion(
+			observed?.state ?? "unknown",
+			observed?.deleteSucceeded ?? false,
+			evidence.metadataCommitSucceeded,
+		);
+		if (resolution === "conflict") return { status: "conflict" };
+		if (resolution === "retry") retry = true;
+	}
+	return retry
+		? { status: "retry" }
+		: { status: "completed", releases: next.releases, artists: next.artists };
 }

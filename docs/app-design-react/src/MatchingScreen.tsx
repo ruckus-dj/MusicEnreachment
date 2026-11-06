@@ -496,7 +496,7 @@ export function MatchingScreen({
 	};
 	return (
 		<main
-			className="relative mx-auto w-full max-w-[1800px] px-[clamp(14px,2vw,30px)] pt-5 pb-[110px] text-[var(--ink)] max-[800px]:px-3 max-[800px]:pt-3.5 max-[800px]:pb-[120px]"
+			className="relative mx-auto w-full max-w-[1800px] px-[clamp(14px,2vw,30px)] pt-5 pb-[110px] text-[var(--ink)] max-[800px]:px-3 max-[800px]:pt-3.5 max-[800px]:pb-[120px] min-[1400px]:flex min-[1400px]:h-full min-[1400px]:min-h-0 min-[1400px]:flex-col"
 			onKeyDown={(event) => {
 				if (event.key === "Escape" && state.selectedFile) {
 					state.selectedFile = null;
@@ -504,7 +504,7 @@ export function MatchingScreen({
 				}
 			}}
 		>
-			<header className="mb-4">
+			<header className="mb-4 min-[1400px]:shrink-0">
 				<p className="demo-eyebrow mb-[5px] text-[11px] text-[var(--muted)]">
 					<a href="#review">{matchingMessage(locale, "incomingLink")}</a> ·{" "}
 					{matchingMessage(locale, "sourceDirectory")}: /mnt/inbox/
@@ -520,7 +520,7 @@ export function MatchingScreen({
 				</p>
 			</header>
 			<div
-				className="mb-2.5 h-12 min-w-0 max-[600px]:h-16"
+				className="mb-2.5 h-12 min-w-0 max-[600px]:h-16 min-[1400px]:shrink-0"
 				data-matching-feedback
 			>
 				<div
@@ -532,7 +532,7 @@ export function MatchingScreen({
 						(state.uiNotice ? formatUiNotice(locale, state.uiNotice) : "")}
 				</div>
 			</div>
-			<div className="incoming-summary mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] px-3 py-[9px] text-[var(--muted)]">
+			<div className="incoming-summary mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-[5px] border border-[var(--line)] bg-[var(--raised)] px-3 py-[9px] text-[var(--muted)] min-[1400px]:shrink-0">
 				<strong className="text-[var(--ink)]">
 					{matchingMessage(locale, "assignedCount", {
 						assigned: Object.keys(assignments).length,
@@ -548,9 +548,9 @@ export function MatchingScreen({
 						: `${target.year ?? ""} · ${target.country ?? ""} · ${target.catalog ?? ""}`}
 				</span>
 			</div>
-			<div className="matching-layout grid grid-cols-[minmax(220px,.72fr)_minmax(450px,2.1fr)_minmax(220px,.78fr)] items-start gap-3 max-[1250px]:grid-cols-[minmax(200px,.72fr)_minmax(0,1.8fr)] max-[800px]:grid-cols-1">
+			<div className="matching-layout grid grid-cols-[minmax(220px,.72fr)_minmax(450px,2.1fr)_minmax(220px,.78fr)] items-start gap-3 max-[1250px]:grid-cols-[minmax(200px,.72fr)_minmax(0,1.8fr)] max-[800px]:grid-cols-1 min-[1400px]:min-h-0 min-[1400px]:flex-1 min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))] min-[1400px]:items-stretch">
 				<section
-					className={`matching-candidates ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-1 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:max-h-none`}
+					className={`matching-candidates ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-1 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:max-h-none min-[1400px]:min-h-0 min-[1400px]:max-h-none`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						{matchingMessage(locale, "findRelease")}
@@ -579,7 +579,7 @@ export function MatchingScreen({
 					</Button>
 				</section>
 				<section
-					className={`matching-target ${surfacePanel} max-[1250px]:row-span-2 max-[1250px]:col-start-2 max-[800px]:row-auto max-[800px]:col-auto`}
+					className={`matching-target ${surfacePanel} max-[1250px]:row-span-2 max-[1250px]:col-start-2 max-[800px]:row-auto max-[800px]:col-auto min-[1400px]:min-h-0 min-[1400px]:max-h-none min-[1400px]:overflow-y-auto`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						{matchingMessage(locale, "positionCount", {
@@ -820,7 +820,7 @@ export function MatchingScreen({
 					<p>{matchingMessage(locale, "matchingDisclaimer")}</p>
 				</section>
 				<section
-					className={`matching-pool ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-2 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:row-auto max-[800px]:col-auto max-[800px]:max-h-none`}
+					className={`matching-pool ${surfacePanel} sticky top-[10px] max-h-[calc(100dvh_-_24px)] overflow-auto max-[1250px]:row-start-2 max-[1250px]:col-start-1 max-[800px]:static max-[800px]:row-auto max-[800px]:col-auto max-[800px]:max-h-none min-[1400px]:min-h-0 min-[1400px]:max-h-none`}
 				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						{matchingMessage(locale, "poolTitle", { count: pool.length })}
@@ -832,9 +832,134 @@ export function MatchingScreen({
 					)}
 					<p>{matchingMessage(locale, "poolInstructions")}</p>
 				</section>
+				<section
+					className={`matching-inspector ${surfacePanel} mt-3 max-[1399px]:col-span-full min-[1400px]:col-span-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto`}
+				>
+					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
+						{matchingMessage(locale, "inspectorTitle", {
+							track: String(inspected.title),
+						})}
+					</h2>
+					<Tabs
+						className="matching-inspector-tabs min-w-0 [&_.ui-tab-panel]:pt-3"
+						selectedKey={state.inspector}
+						onSelectionChange={(key) => {
+							state.inspector = key as "tags" | "evidence";
+							commitState();
+						}}
+					>
+						<TabList aria-label={matchingMessage(locale, "ariaTrackInspector")}>
+							<Tab id="tags">{matchingMessage(locale, "tagComparison")}</Tab>
+							<Tab id="evidence">{matchingMessage(locale, "matchReason")}</Tab>
+						</TabList>
+						{state.inspector === "tags" ? (
+							<TabPanel id="tags">
+								<>
+									<div className="tag-controls mb-2.5 mt-0 flex flex-wrap items-center gap-2.5">
+										<Tabs
+											selectedKey={state.tagScope}
+											onSelectionChange={(key) => {
+												state.tagScope = key as "artist" | "release" | "track";
+												commitState();
+											}}
+										>
+											<TabList
+												aria-label={matchingMessage(locale, "ariaTagScope")}
+											>
+												<Tab id="artist">
+													{matchingMessage(locale, "artistScope")}
+												</Tab>
+												<Tab id="release">
+													{matchingMessage(locale, "releaseScope")}
+												</Tab>
+												<Tab id="track">
+													{matchingMessage(locale, "trackScope")}
+												</Tab>
+											</TabList>
+										</Tabs>
+										<Checkbox
+											isSelected={state.differencesOnly}
+											onChange={(checked) => {
+												state.differencesOnly = checked;
+												commitState();
+											}}
+										>
+											<span className="checkbox" />
+											{matchingMessage(locale, "differencesOnly")}
+										</Checkbox>
+									</div>
+									<div className={comparisonTableWrap}>
+										<table className={table}>
+											<thead>
+												<tr>
+													<th>{matchingMessage(locale, "fieldColumn")}</th>
+													<th>{matchingMessage(locale, "sourceFileColumn")}</th>
+													<th>
+														{matchingMessage(locale, "providerCacheColumn")}
+													</th>
+													<th>
+														{matchingMessage(locale, "localLibraryColumn")}
+													</th>
+													<th>
+														{matchingMessage(
+															locale,
+															"currentPublicationColumn",
+														)}
+													</th>
+												</tr>
+											</thead>
+											<tbody>
+												{tagRows.map((key) => (
+													<tr key={key}>
+														<th>{key}</th>
+														<td>{tagValue(sourceTags, key)}</td>
+														<td>
+															{providerTrack
+																? tagValue(remoteTags, key)
+																: matchingMessage(locale, "noProviderLink")}
+														</td>
+														<td>{tagValue(localTags, key)}</td>
+														<td>
+															{publication
+																? tagValue(publicationTags, key)
+																: matchingMessage(locale, "unpublished")}
+														</td>
+													</tr>
+												))}
+											</tbody>
+										</table>
+									</div>
+									<p>
+										{selectedFile?.path ??
+											matchingMessage(locale, "noSourceSelected")}{" "}
+										·{" "}
+										{publication
+											? matchingMessage(locale, "publicationRead", {
+													path: String(publication.path),
+													readAt: String(publication.readAt),
+												})
+											: matchingMessage(locale, "publicationAbsent")}
+									</p>
+								</>
+							</TabPanel>
+						) : (
+							<TabPanel id="evidence">
+								<Evidence
+									file={selectedFile}
+									track={inspected}
+									assignment={assignment}
+									providerArtists={artists}
+									locale={locale}
+								/>
+							</TabPanel>
+						)}
+					</Tabs>
+				</section>
 			</div>
 			{state.recordingTarget && (
-				<section className={`matching-recording ${surfacePanel} mt-3`}>
+				<section
+					className={`matching-recording ${surfacePanel} mt-3 min-[1400px]:max-h-[25dvh] min-[1400px]:shrink-0 min-[1400px]:overflow-y-auto`}
+				>
 					<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
 						{matchingMessage(locale, "recordingSearch")}
 					</h2>
@@ -884,155 +1009,41 @@ export function MatchingScreen({
 					</ul>
 				</section>
 			)}
-			<section className={`matching-inspector ${surfacePanel} mt-3`}>
-				<h2 className="mb-2.5 mt-0 text-[15px] tracking-[-.01em]">
-					{matchingMessage(locale, "inspectorTitle", {
-						track: String(inspected.title),
-					})}
-				</h2>
-				<Tabs
-					className="matching-inspector-tabs min-w-0 [&_.ui-tab-panel]:pt-3"
-					selectedKey={state.inspector}
-					onSelectionChange={(key) => {
-						state.inspector = key as "tags" | "evidence";
-						commitState();
-					}}
-				>
-					<TabList aria-label={matchingMessage(locale, "ariaTrackInspector")}>
-						<Tab id="tags">{matchingMessage(locale, "tagComparison")}</Tab>
-						<Tab id="evidence">{matchingMessage(locale, "matchReason")}</Tab>
-					</TabList>
-					{state.inspector === "tags" ? (
-						<TabPanel id="tags">
-							<>
-								<div className="tag-controls mb-2.5 mt-0 flex flex-wrap items-center gap-2.5">
-									<Tabs
-										selectedKey={state.tagScope}
-										onSelectionChange={(key) => {
-											state.tagScope = key as "artist" | "release" | "track";
-											commitState();
-										}}
-									>
-										<TabList
-											aria-label={matchingMessage(locale, "ariaTagScope")}
-										>
-											<Tab id="artist">
-												{matchingMessage(locale, "artistScope")}
-											</Tab>
-											<Tab id="release">
-												{matchingMessage(locale, "releaseScope")}
-											</Tab>
-											<Tab id="track">
-												{matchingMessage(locale, "trackScope")}
-											</Tab>
-										</TabList>
-									</Tabs>
-									<Checkbox
-										isSelected={state.differencesOnly}
-										onChange={(checked) => {
-											state.differencesOnly = checked;
-											commitState();
-										}}
-									>
-										<span className="checkbox" />
-										{matchingMessage(locale, "differencesOnly")}
-									</Checkbox>
-								</div>
-								<div className={comparisonTableWrap}>
-									<table className={table}>
-										<thead>
-											<tr>
-												<th>{matchingMessage(locale, "fieldColumn")}</th>
-												<th>{matchingMessage(locale, "sourceFileColumn")}</th>
-												<th>
-													{matchingMessage(locale, "providerCacheColumn")}
-												</th>
-												<th>{matchingMessage(locale, "localLibraryColumn")}</th>
-												<th>
-													{matchingMessage(locale, "currentPublicationColumn")}
-												</th>
-											</tr>
-										</thead>
-										<tbody>
-											{tagRows.map((key) => (
-												<tr key={key}>
-													<th>{key}</th>
-													<td>{tagValue(sourceTags, key)}</td>
-													<td>
-														{providerTrack
-															? tagValue(remoteTags, key)
-															: matchingMessage(locale, "noProviderLink")}
-													</td>
-													<td>{tagValue(localTags, key)}</td>
-													<td>
-														{publication
-															? tagValue(publicationTags, key)
-															: matchingMessage(locale, "unpublished")}
-													</td>
-												</tr>
-											))}
-										</tbody>
-									</table>
-								</div>
-								<p>
-									{selectedFile?.path ??
-										matchingMessage(locale, "noSourceSelected")}{" "}
-									·{" "}
-									{publication
-										? matchingMessage(locale, "publicationRead", {
-												path: String(publication.path),
-												readAt: String(publication.readAt),
-											})
-										: matchingMessage(locale, "publicationAbsent")}
-								</p>
-							</>
-						</TabPanel>
-					) : (
-						<TabPanel id="evidence">
-							<Evidence
-								file={selectedFile}
-								track={inspected}
-								assignment={assignment}
-								providerArtists={artists}
-								locale={locale}
-							/>
-						</TabPanel>
-					)}
-				</Tabs>
-			</section>
-			<div className="matching-commit fixed bottom-3.5 left-[calc(174px_+_18px)] right-[18px] z-[5] m-0 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-md border border-[var(--line)] bg-[color-mix(in_srgb,var(--surface)_95%,transparent)] px-3.5 py-2.5 shadow-[0_6px_24px_#0002] backdrop-blur-[12px] max-[800px]:right-2 max-[800px]:bottom-2 max-[800px]:left-2 max-[800px]:p-2 max-[520px]:items-stretch">
-				<strong>
-					{matchingMessage(locale, "selectedForPublicationCount", {
-						count: Object.values(assignments).filter(
-							(item) =>
-								item.included &&
-								usableFile(files[selectedSourceId(item) ?? ""]),
-						).length,
-					})}
-				</strong>
-				<span className="min-w-[220px] flex-1 text-[11px] text-[var(--muted)] max-[800px]:hidden">
-					{matchingMessage(locale, "unassignedSummary", {
-						empty: tracks.length - Object.keys(assignments).length,
-						files: pool.length,
-					})}
-				</span>
-				<Button
-					className="demo-button max-[520px]:w-full"
-					isDisabled={
-						!Object.values(assignments).some(
-							(item) =>
-								item.included &&
-								usableFile(files[selectedSourceId(item) ?? ""]),
-						)
-					}
-					onPress={openPreview}
-				>
-					{matchingMessage(locale, "publicationPreview")}
-				</Button>
-			</div>
+			{!preview && (
+				<div className="matching-commit fixed bottom-3.5 left-[calc(174px_+_18px)] right-[18px] z-[5] m-0 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-md border border-[var(--line)] bg-[color-mix(in_srgb,var(--surface)_95%,transparent)] px-3.5 py-2.5 shadow-[0_6px_24px_#0002] backdrop-blur-[12px] max-[800px]:right-2 max-[800px]:bottom-2 max-[800px]:left-2 max-[800px]:p-2 max-[520px]:items-stretch">
+					<strong>
+						{matchingMessage(locale, "selectedForPublicationCount", {
+							count: Object.values(assignments).filter(
+								(item) =>
+									item.included &&
+									usableFile(files[selectedSourceId(item) ?? ""]),
+							).length,
+						})}
+					</strong>
+					<span className="min-w-[220px] flex-1 text-[11px] text-[var(--muted)] max-[800px]:hidden">
+						{matchingMessage(locale, "unassignedSummary", {
+							empty: tracks.length - Object.keys(assignments).length,
+							files: pool.length,
+						})}
+					</span>
+					<Button
+						className="demo-button max-[520px]:w-full"
+						isDisabled={
+							!Object.values(assignments).some(
+								(item) =>
+									item.included &&
+									usableFile(files[selectedSourceId(item) ?? ""]),
+							)
+						}
+						onPress={openPreview}
+					>
+						{matchingMessage(locale, "publicationPreview")}
+					</Button>
+				</div>
+			)}
 			{preview && (
 				<section
-					className={`matching-preview ${surfacePanel} mt-3.5 max-w-[min(1100px,95vw)]`}
+					className={`matching-preview ${surfacePanel} mt-3.5 max-w-[min(1100px,95vw)] min-[1400px]:mb-[90px]`}
 					aria-label={matchingMessage(locale, "ariaPublicationPreview")}
 				>
 					<h2 ref={previewHeadingRef} tabIndex={-1}>

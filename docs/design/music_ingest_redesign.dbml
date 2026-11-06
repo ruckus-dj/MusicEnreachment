@@ -183,7 +183,7 @@ Table provider_release_track {
     provider_recording_id
   }
 
-  Note: 'provider_recording — самостоятельная композиция; provider_release_track — её позиция в конкретном provider-релизе. На позиции только title_override и duration_override_ms могут переопределять одноимённые поля recording. Metadata release, включая ALBUMARTIST, принадлежат provider_release; metadata композиции, включая ARTIST, — provider_recording. Автоматическое наследование и explicit-empty semantics для genres, tags, explicit и ISRC отдельно не определены.'
+  Note: 'provider_recording — самостоятельная композиция; provider_release_track — её позиция в конкретном provider-релизе. На позиции только title_override и duration_override_ms могут переопределять одноимённые поля recording. Metadata release, включая ALBUMARTIST, принадлежат provider_release; metadata композиции, включая ARTIST, — provider_recording. Автоматическое наследование genres, tags, explicit и ISRC отдельно не определено. Явный пустой tag override разрешён продуктовым контрактом; это не определяет наследование и смысл пустых structured provider-полей.'
 }
 
 Table artwork_asset {

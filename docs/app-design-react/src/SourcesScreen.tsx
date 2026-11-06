@@ -19,6 +19,7 @@ import { DirectoryPicker } from "./DirectoryPicker";
 import type { SourceFiles } from "./catalogData";
 import {
 	blockStagedSourceQueue,
+	canRemoveSourceRoot,
 	createSourceScan,
 	eligibleSourceCopies,
 	initialSourceProcessingState,
@@ -112,7 +113,14 @@ export function SourcesScreen({
 	const [path, setPath] = useState("/mnt/music");
 	const [mode, setMode] = useState<Mode | "">("");
 	const [picker, setPicker] = useState(false);
-	const [notice, setNotice] = useState("");
+	const [notice, setNotice] = useState<{
+		key: SourceMessageKey;
+		values?: Record<string, string | number>;
+	} | null>(null);
+	const notify = (
+		key: SourceMessageKey,
+		values?: Record<string, string | number>,
+	) => setNotice({ key, values });
 	const [processing, setProcessing] = useState(initialProcessingState);
 	const [removal, setRemoval] = useState<RootRemoval | null>(null);
 
@@ -135,12 +143,7 @@ export function SourcesScreen({
 
 	const updateProcessing = (next: SourceProcessingState) => setProcessing(next);
 	const hasActiveRootWork = (rootId: string) =>
-		processing.files.some(
-			(file) =>
-				file.rootId === rootId &&
-				["queued", "running"].includes(file.status) &&
-				!file.blockedReason,
-		);
+		!canRemoveSourceRoot(processing, rootId);
 	const statusLabel = (status: string) => {
 		const key: Record<string, SourceMessageKey> = {
 			queued: "statusQueued",
@@ -153,7 +156,7 @@ export function SourcesScreen({
 	};
 	const requestRootRemoval = (root: SourceRoot) => {
 		if (hasActiveRootWork(root.id)) {
-			setNotice(m("rootActive"));
+			notify("rootActive");
 			return;
 		}
 		setRemoval({
@@ -175,15 +178,13 @@ export function SourcesScreen({
 		);
 		if (root.mode === "staged" && !workDirectory) {
 			updateProcessing(blockStagedSourceQueue(scanned, root.id));
-			setNotice(m("workDirectoryRequired"));
+			notify("workDirectoryRequired");
 			return;
 		}
 		updateProcessing(processSourceQueue(scanned, root.id));
-		setNotice(
-			queued.length
-				? m("scanStarted", { path: root.path, count: queued.length })
-				: m("noInventory"),
-		);
+		if (queued.length)
+			notify("scanStarted", { path: root.path, count: queued.length });
+		else notify("noInventory");
 	};
 
 	return (
@@ -210,7 +211,7 @@ export function SourcesScreen({
 			</header>
 			{notice && (
 				<p className={styles.formNotice} role="status">
-					{notice}
+					{m(notice.key, notice.values)}
 				</p>
 			)}
 			{adding && (
@@ -258,11 +259,11 @@ export function SourcesScreen({
 						<Button
 							onPress={() => {
 								if (!name.trim()) {
-									setNotice(m("nameRequired"));
+									notify("nameRequired");
 									return;
 								}
 								if (!mode) {
-									setNotice(m("modeRequired"));
+									notify("modeRequired");
 									return;
 								}
 								if (
@@ -272,7 +273,7 @@ export function SourcesScreen({
 										currentOutput,
 									])
 								) {
-									setNotice(m("pathOverlap"));
+									notify("pathOverlap");
 									return;
 								}
 								onRoots([
@@ -287,7 +288,7 @@ export function SourcesScreen({
 									},
 								]);
 								setAdding(false);
-								setNotice(m("sourceAdded"));
+								notify("sourceAdded");
 							}}
 						>
 							{m("addSource")}
@@ -298,20 +299,30 @@ export function SourcesScreen({
 			)}
 			<section className={styles.panel}>
 				<h2>{m("connectedFolders")}</h2>
+				<p className="my-2 text-xs text-[var(--muted)]">
+					{m("sourceTableHelp")}
+				</p>
 				<div className={styles.tableWrap}>
-					<table className={styles.table}>
+					<table className={`${styles.table} table-fixed min-w-[1040px]`}>
+						<colgroup>
+							<col className="w-[14%]" />
+							<col className="w-[26%]" />
+							<col className="w-[22%]" />
+							<col className="w-[12%]" />
+							<col className="w-[12%]" />
+							<col className="w-[14%]" />
+						</colgroup>
 						<thead>
 							<tr>
 								{[
 									m("nameColumn"),
 									m("pathColumn"),
 									m("modeColumn"),
-									m("policyColumn"),
 									m("availabilityColumn"),
 									m("checkedColumn"),
 									m("actionsColumn"),
 								].map((label) => (
-									<th key={label} scope="col">
+									<th key={label} scope="col" className="!whitespace-normal">
 										{label}
 									</th>
 								))}
@@ -322,11 +333,12 @@ export function SourcesScreen({
 								<tr key={root.id}>
 									<td>{root.name}</td>
 									<td>
-										<code>{root.path}</code>
+										<code className="block min-w-0 [overflow-wrap:anywhere]">
+											{root.path}
+										</code>
 									</td>
 									<td>
-										<div className="grid max-w-none gap-[5px] text-xs text-[var(--muted)]">
-											<Label>{m("modeFor", { name: root.name })}</Label>
+										<div className="grid min-w-0 gap-[5px] text-xs text-[var(--muted)]">
 											<Select
 												selectedKey={root.mode}
 												aria-label={m("modeFor", { name: root.name })}
@@ -354,7 +366,6 @@ export function SourcesScreen({
 												</Popover>
 											</Select>
 										</div>
-										<p className="my-2">{m("futureMode")}</p>
 										{root.mode === "staged" && (
 											<p>
 												{m("workDirectory")}: {workDirectory || "—"} ·{" "}
@@ -362,7 +373,6 @@ export function SourcesScreen({
 											</p>
 										)}
 									</td>
-									<td>{m("sourcePolicy")}</td>
 									<td>
 										{root.available === null
 											? m("notChecked")
@@ -445,7 +455,7 @@ export function SourcesScreen({
 												updateProcessing(
 													blockStagedSourceQueue(retried, file.rootId),
 												);
-												setNotice(m("workDirectoryRequired"));
+												notify("workDirectoryRequired");
 												return;
 											}
 											updateProcessing(
@@ -482,7 +492,7 @@ export function SourcesScreen({
 															updateProcessing(
 																blockStagedSourceQueue(retried, file.rootId),
 															);
-															setNotice(m("workDirectoryRequired"));
+															notify("workDirectoryRequired");
 															return;
 														}
 														updateProcessing(
@@ -520,7 +530,7 @@ export function SourcesScreen({
 												updateProcessing(
 													removeEligibleCopy(processing, copy.id),
 												);
-												setNotice(m("copyRemoved"));
+												notify("copyRemoved");
 											}}
 										>
 											{m("removeCopy")}
@@ -570,7 +580,7 @@ export function SourcesScreen({
 						onPress={() => {
 							if (!removal) return;
 							if (hasActiveRootWork(removal.id)) {
-								setNotice(m("rootActive"));
+								notify("rootActive");
 								setRemoval(null);
 								return;
 							}
@@ -578,7 +588,7 @@ export function SourcesScreen({
 								.map((location) => location.id)
 								.sort();
 							if (currentLocations.join("|") !== removal.locations.join("|")) {
-								setNotice(m("rootChanged"));
+								notify("rootChanged");
 								setRemoval(null);
 								return;
 							}
@@ -586,7 +596,7 @@ export function SourcesScreen({
 								removeRootProcessingState(processing, removal.id),
 							);
 							onRemove(removal.id);
-							setNotice(m("rootRemoved"));
+							notify("rootRemoved");
 							setRemoval(null);
 						}}
 					>

@@ -37,10 +37,29 @@ export const settingsMessages = createNamespace({
 		cleanup: "Allow source deletion after successful publication",
 		cleanupTitle: "Source deletion",
 		cleanupHelp:
-			"Off by default. Source files may be deleted after successful publication. Filesystem permission to delete is required. Does not delete working copies or override manual safeguards.",
+			"Off by default. An original file is eligible for removal only after every segment assigned to it has been successfully published, including segments not queued yet. Active consumers and retained holds also block removal. Filesystem permission is required; working copies and manual safeguards are unchanged.",
 		log: "Log level",
 		save: "Save settings",
 		saved: "Settings saved",
+		invalidConcurrency: "Enter a whole number greater than zero.",
+		invalidDelay: "Enter a non-negative delay in seconds.",
+		settingsConflict:
+			"These settings changed elsewhere while you were editing.",
+		takeSaved: "Take saved values",
+		continueEditing: "Continue editing",
+		leaveSettingsTitle: "Leave settings?",
+		leaveSettingsText:
+			"Your unsaved text changes are kept in this tab unless you explicitly discard them.",
+		stay: "Stay",
+		leaveKeepDraft: "Leave and keep draft",
+		leaveDiscard: "Discard draft and leave",
+		leaveSave: "Save valid changes and leave",
+		replaceSettingsTitle: "Replace saved settings?",
+		replaceSettingsText:
+			"The saved values changed while you were editing. Confirm to replace those newer values with your draft.",
+		confirmReplace: "Replace saved values",
+		draftStorageWarning:
+			"Browser storage is unavailable. Your draft remains safe during in-app navigation, but may be lost if you reload or close this tab.",
 		providers: "Provider settings",
 		musicbrainz: "MusicBrainz",
 		publicService: "Public service",
@@ -158,10 +177,29 @@ export const settingsMessages = createNamespace({
 		cleanup: "Разрешить удаление исходного файла после успешной публикации",
 		cleanupTitle: "Удаление исходников",
 		cleanupHelp:
-			"Выключено по умолчанию. После успешной публикации исходные файлы могут быть удалены. Требуется разрешение файловой системы на удаление. Не удаляет рабочие копии и не отменяет ручную защиту.",
+			"Выключено по умолчанию. Исходный файл можно удалить только после успешной публикации всех назначенных ему сегментов, включая ещё не поставленные в очередь. Активные потребители и сохранённые блокировки также запрещают удаление. Требуется разрешение файловой системы; рабочие копии и ручная защита не затрагиваются.",
 		log: "Уровень журнала",
 		save: "Сохранить настройки",
 		saved: "Настройки сохранены",
+		invalidConcurrency: "Введите целое число больше нуля.",
+		invalidDelay: "Введите неотрицательную задержку в секундах.",
+		settingsConflict:
+			"Эти настройки изменились в другом месте, пока вы редактировали их.",
+		takeSaved: "Взять сохранённые значения",
+		continueEditing: "Продолжить редактирование",
+		leaveSettingsTitle: "Выйти из настроек?",
+		leaveSettingsText:
+			"Несохранённые текстовые изменения останутся в этой вкладке, если вы явно не удалите черновик.",
+		stay: "Остаться",
+		leaveKeepDraft: "Выйти, сохранив черновик",
+		leaveDiscard: "Удалить черновик и выйти",
+		leaveSave: "Сохранить корректные изменения и выйти",
+		replaceSettingsTitle: "Заменить сохранённые настройки?",
+		replaceSettingsText:
+			"Сохранённые значения изменились во время редактирования. Подтвердите замену новых значений вашим черновиком.",
+		confirmReplace: "Заменить сохранённые значения",
+		draftStorageWarning:
+			"Хранилище браузера недоступно. Черновик сохранится при переходах внутри приложения, но может быть потерян при перезагрузке или закрытии вкладки.",
 		providers: "Настройки провайдеров",
 		musicbrainz: "MusicBrainz",
 		publicService: "Публичный сервис",
