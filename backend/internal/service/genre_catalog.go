@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 )
 
 const genreCatalogPageSize = 100
@@ -54,7 +55,7 @@ func LoadGenreCatalog(ctx context.Context, provider GenrePageReader) ([]GenreCat
 				return nil, fmt.Errorf("MusicBrainz genre catalog contains a duplicate id")
 			}
 			seen[key] = struct{}{}
-			items = append(items, GenreCatalogItem{ID: key, SourceName: genre.Name, Name: NormalizeGenreName(genre.Name)})
+			items = append(items, GenreCatalogItem{ID: key, SourceName: genre.Name, Name: librarymetadata.NormalizeGenreName(genre.Name)})
 		}
 		if len(page.Genres) < genreCatalogPageSize && offset+len(page.Genres) < count {
 			return nil, fmt.Errorf("MusicBrainz genre catalog page is incomplete")

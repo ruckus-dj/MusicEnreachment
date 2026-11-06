@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/uptrace/bun"
 )
 
@@ -78,6 +79,27 @@ func (repository *GenreCatalogRepository) State(ctx context.Context) (GenreCatal
 		return state, fmt.Errorf("decode genre catalog refresh request: %w", err)
 	}
 	return state, nil
+}
+
+// GenreCatalogItems exposes the validated catalog entries used to canonicalize
+// manually selected metadata genres.
+func (repository *GenreCatalogRepository) GenreCatalogItems(ctx context.Context) ([]librarymetadata.GenreReference, error) {
+	return readGenreCatalogItems(ctx, repository.db)
+}
+
+func readGenreCatalogItems(ctx context.Context, db bun.IDB) ([]librarymetadata.GenreReference, error) {
+	var encoded string
+	if err := db.NewRaw(`SELECT items::text FROM genre_catalog WHERE singleton=true`).Scan(ctx, &encoded); err != nil {
+		return nil, fmt.Errorf("read metadata genre catalog: %w", err)
+	}
+	var items []librarymetadata.GenreReference
+	if encoded == "" || encoded == "null" {
+		return []librarymetadata.GenreReference{}, nil
+	}
+	if err := json.Unmarshal([]byte(encoded), &items); err != nil {
+		return nil, fmt.Errorf("decode persisted genre catalog: %w", err)
+	}
+	return items, nil
 }
 
 // Replace publishes a complete catalog in one statement. Failed and stale

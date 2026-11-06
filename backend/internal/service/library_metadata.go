@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/lrclib"
@@ -31,13 +32,22 @@ type libraryMetadataRepository interface {
 	UpdateMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID, int64, librarymetadata.Envelope) (persistence.LibraryMetadata, error)
 }
 
+type libraryMetadataGenreCatalog interface {
+	GenreCatalogItems(context.Context) ([]librarymetadata.GenreReference, error)
+}
+
 type LibraryMetadataService struct {
 	repository  libraryMetadataRepository
+	genres      libraryMetadataGenreCatalog
 	coordinator *publication.Coordinator
 }
 
 func NewLibraryMetadataService(repository libraryMetadataRepository) *LibraryMetadataService {
-	return &LibraryMetadataService{repository: repository}
+	service := &LibraryMetadataService{repository: repository}
+	if genres, ok := repository.(libraryMetadataGenreCatalog); ok {
+		service.genres = genres
+	}
+	return service
 }
 
 func (service *LibraryMetadataService) WithPublicationCoordinator(coordinator *publication.Coordinator) *LibraryMetadataService {
@@ -125,6 +135,13 @@ func (service *LibraryMetadataService) Update(ctx context.Context, scope library
 		if err := probe.Validate(); err != nil {
 			return LibraryMetadataResult{}, fmt.Errorf("%w: %v", ErrLibraryMetadataInvalidRequest, err)
 		}
+		if name == "genre" && wire.State == librarymetadata.StateValue {
+			canonical, err := service.canonicalGenres(ctx, value, current.Envelope)
+			if err != nil {
+				return LibraryMetadataResult{}, err
+			}
+			field.Value = canonical
+		}
 		current.Envelope.Desired[name] = field
 	}
 	result, err := service.repository.UpdateMetadata(ctx, scope, releaseID, ownerID, expected, current.Envelope)
@@ -138,4 +155,68 @@ func (service *LibraryMetadataService) Update(ctx context.Context, scope library
 		return LibraryMetadataResult{}, fmt.Errorf("update library metadata: %w", err)
 	}
 	return LibraryMetadataResult{Envelope: result.Envelope, Revision: result.Revision}, nil
+}
+
+func (service *LibraryMetadataService) canonicalGenres(ctx context.Context, value any, current librarymetadata.Envelope) ([]librarymetadata.GenreReference, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode genre selection: %w", err)
+	}
+	var selected []librarymetadata.GenreReference
+	if err := json.Unmarshal(encoded, &selected); err != nil {
+		return nil, fmt.Errorf("%w: genre selection is invalid", ErrLibraryMetadataInvalidRequest)
+	}
+	retained := make(map[string]librarymetadata.GenreReference)
+	if saved, exists := current.Desired["genre"]; exists && saved.State == librarymetadata.StateValue {
+		encoded, err := json.Marshal(saved.Value)
+		if err != nil {
+			return nil, fmt.Errorf("encode saved genre references: %w", err)
+		}
+		var references []librarymetadata.GenreReference
+		if err := json.Unmarshal(encoded, &references); err != nil {
+			return nil, fmt.Errorf("decode saved genre references: %w", err)
+		}
+		for _, genre := range references {
+			retained[strings.ToLower(genre.ID)] = genre
+		}
+	}
+	needsCatalog := false
+	for _, genre := range selected {
+		if _, exists := retained[strings.ToLower(genre.ID)]; !exists {
+			needsCatalog = true
+			break
+		}
+	}
+	byID := make(map[string]librarymetadata.GenreReference)
+	if needsCatalog {
+		if service.genres == nil {
+			return nil, errors.New("genre catalog is unavailable for metadata validation")
+		}
+		catalog, err := service.genres.GenreCatalogItems(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("read genre catalog for metadata validation: %w", err)
+		}
+		byID = make(map[string]librarymetadata.GenreReference, len(catalog))
+		for _, genre := range catalog {
+			byID[strings.ToLower(genre.ID)] = genre
+		}
+	}
+	canonical := make([]librarymetadata.GenreReference, 0, len(selected))
+	seen := make(map[string]struct{}, len(selected))
+	for _, genre := range selected {
+		id := strings.ToLower(genre.ID)
+		if _, duplicate := seen[id]; duplicate {
+			continue
+		}
+		seen[id] = struct{}{}
+		item, exists := retained[id]
+		if !exists {
+			item, exists = byID[id]
+			if !exists {
+				return nil, fmt.Errorf("%w: genre ID is not in the current catalog", ErrLibraryMetadataInvalidRequest)
+			}
+		}
+		canonical = append(canonical, item)
+	}
+	return canonical, nil
 }

@@ -55,6 +55,13 @@ type libraryMetadataTrackGetInput struct {
 type libraryMetadataRecordingGetInput struct {
 	RecordingID string `path:"recording_id"`
 }
+type libraryMetadataArtistInput struct {
+	ArtistID string              `path:"artist_id"`
+	Body     libraryMetadataBody `json:"body"`
+}
+type libraryMetadataArtistGetInput struct {
+	ArtistID string `path:"artist_id"`
+}
 
 func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataService) {
 	register := func(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, body *libraryMetadataBody, get bool) (*libraryMetadataOutput, error) {
@@ -95,9 +102,24 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 		scope     librarymetadata.Scope
 		path      string
 		operation string
-	}{{librarymetadata.ScopeRelease, "/library/releases/{release_id}/metadata", "library-release-metadata"}, {librarymetadata.ScopeRecording, "/library/recordings/{recording_id}/metadata", "library-recording-metadata"}, {librarymetadata.ScopeTrack, "/library/tracks/{track_id}/metadata", "library-track-metadata"}, {librarymetadata.ScopePosition, "/library/releases/{release_id}/positions/{position_id}/metadata", "library-position-metadata"}} {
+	}{{librarymetadata.ScopeArtist, "/library/artists/{artist_id}/metadata", "library-artist-metadata"}, {librarymetadata.ScopeRelease, "/library/releases/{release_id}/metadata", "library-release-metadata"}, {librarymetadata.ScopeRecording, "/library/recordings/{recording_id}/metadata", "library-recording-metadata"}, {librarymetadata.ScopeTrack, "/library/tracks/{track_id}/metadata", "library-track-metadata"}, {librarymetadata.ScopePosition, "/library/releases/{release_id}/positions/{position_id}/metadata", "library-position-metadata"}} {
 		s := spec
 		switch s.scope {
+		case librarymetadata.ScopeArtist:
+			huma.Register(api, huma.Operation{OperationID: "get-" + s.operation, Method: http.MethodGet, Path: s.path, Summary: "Read desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataArtistGetInput) (*libraryMetadataOutput, error) {
+				id, e := parse(in.ArtistID)
+				if e != nil {
+					return nil, huma.Error400BadRequest("library artist ID is invalid")
+				}
+				return register(ctx, s.scope, uuid.Nil, id, nil, true)
+			})
+			huma.Register(api, huma.Operation{OperationID: "patch-" + s.operation, Method: http.MethodPatch, Path: s.path, Summary: "Update desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataArtistInput) (*libraryMetadataOutput, error) {
+				id, e := parse(in.ArtistID)
+				if e != nil {
+					return nil, huma.Error400BadRequest("library artist ID is invalid")
+				}
+				return register(ctx, s.scope, uuid.Nil, id, &in.Body, false)
+			})
 		case librarymetadata.ScopeRelease:
 			huma.Register(api, huma.Operation{OperationID: "get-" + s.operation, Method: http.MethodGet, Path: s.path, Summary: "Read desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataReleaseGetInput) (*libraryMetadataOutput, error) {
 				id, e := parse(in.ReleaseID)

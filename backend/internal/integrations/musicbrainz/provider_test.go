@@ -253,6 +253,114 @@ func TestLookupRejectsResponseForDifferentMBID(t *testing.T) {
 	}
 }
 
+func TestLookupReleaseRequestsGenresAndRetainsRawGenres(t *testing.T) {
+	const releaseID = "11111111-1111-4111-8111-111111111111"
+	var inc string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/release/"+releaseID {
+			t.Errorf("request path = %q", r.URL.Path)
+		}
+		inc = r.URL.Query().Get("inc")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"` + releaseID + `","title":"Album","genres":[{"id":"33333333-3333-4333-8333-333333333333","name":"rock","count":2}],"artist-credit":[{"name":"Artist","artist":{"id":"44444444-4444-4444-8444-444444444444","name":"Artist","genres":[{"id":"55555555-5555-4555-8555-555555555555","name":"electronic"}]}}],"recordings":[{"id":"66666666-6666-4666-8666-666666666666","title":"Track","genres":[{"id":"77777777-7777-4777-8777-777777777777","name":"ambient"}]}]}`))
+	}))
+	defer server.Close()
+	provider, err := musicbrainz.NewProvider(musicbrainz.ProviderOptions{BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := provider.LookupRelease(context.Background(), releaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !includesGenre(inc) {
+		t.Fatalf("release lookup inc does not request genres: %q", inc)
+	}
+	names := rawGenreNames(t, result.Entity.Raw)
+	for _, expected := range []string{"rock", "electronic", "ambient"} {
+		if !names[expected] {
+			t.Fatalf("raw release genres do not retain %q: %s", expected, result.Entity.Raw)
+		}
+	}
+}
+
+func TestLookupRecordingRequestsGenresAndRetainsRawGenres(t *testing.T) {
+	const recordingID = "22222222-2222-4222-8222-222222222222"
+	var inc string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/recording/"+recordingID {
+			t.Errorf("request path = %q", r.URL.Path)
+		}
+		inc = r.URL.Query().Get("inc")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"` + recordingID + `","title":"Track","genres":[{"id":"33333333-3333-4333-8333-333333333333","name":"ambient","count":1}],"artist-credit":[{"name":"Artist","artist":{"id":"44444444-4444-4444-8444-444444444444","name":"Artist","genres":[{"id":"55555555-5555-4555-8555-555555555555","name":"electronic"}]}}]}`))
+	}))
+	defer server.Close()
+	provider, err := musicbrainz.NewProvider(musicbrainz.ProviderOptions{BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := provider.LookupRecording(context.Background(), recordingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !includesGenre(inc) {
+		t.Fatalf("recording lookup inc does not request genres: %q", inc)
+	}
+	names := rawGenreNames(t, result.Entity.Raw)
+	for _, expected := range []string{"ambient", "electronic"} {
+		if !names[expected] {
+			t.Fatalf("raw recording genres do not retain %q: %s", expected, result.Entity.Raw)
+		}
+	}
+}
+
+func includesGenre(inc string) bool {
+	for _, value := range strings.Fields(inc) {
+		if value == "genres" {
+			return true
+		}
+	}
+	return false
+}
+
+// rawGenreNames collects every genre name anywhere in the retained raw entity,
+// including genres nested under credited artists.
+func rawGenreNames(t *testing.T, raw []byte) map[string]bool {
+	t.Helper()
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("raw entity is not JSON: %v", err)
+	}
+	names := map[string]bool{}
+	var walk func(any)
+	walk = func(value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			if genres, ok := typed["genres"].([]any); ok {
+				for _, entry := range genres {
+					genre, ok := entry.(map[string]any)
+					if !ok {
+						continue
+					}
+					if name, ok := genre["name"].(string); ok {
+						names[name] = true
+					}
+				}
+			}
+			for _, nested := range typed {
+				walk(nested)
+			}
+		case []any:
+			for _, nested := range typed {
+				walk(nested)
+			}
+		}
+	}
+	walk(decoded)
+	return names
+}
+
 func TestSearchConcurrentCallsKeepRawBodiesIsolated(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

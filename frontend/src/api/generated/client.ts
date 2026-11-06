@@ -2216,6 +2216,248 @@ export function useGetLibraryArtist<TData = Awaited<ReturnType<typeof getLibrary
 
 
 
+export type getLibraryArtistMetadataResponse200 = {
+  data: LibraryMetadataResponse
+  status: 200
+}
+
+export type getLibraryArtistMetadataResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryArtistMetadataResponseSuccess = (getLibraryArtistMetadataResponse200) & {
+  headers: Headers;
+};
+export type getLibraryArtistMetadataResponseError = (getLibraryArtistMetadataResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryArtistMetadataResponse = (getLibraryArtistMetadataResponseSuccess | getLibraryArtistMetadataResponseError)
+
+export const getGetLibraryArtistMetadataUrl = (artistId: string,) => {
+
+
+
+
+  return `/api/library/artists/${artistId}/metadata`
+}
+
+/**
+ * @summary Read desired local metadata
+ */
+export const getLibraryArtistMetadata = async (artistId: string, options?: RequestInit): Promise<getLibraryArtistMetadataResponse> => {
+
+  const res = await fetch(getGetLibraryArtistMetadataUrl(artistId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getLibraryArtistMetadataResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getLibraryArtistMetadataResponse
+}
+
+
+
+
+
+export const getGetLibraryArtistMetadataQueryKey = (artistId: string,) => {
+    return [
+    `/api/library/artists/${artistId}/metadata`
+    ] as const;
+    }
+
+
+export const getGetLibraryArtistMetadataQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError = ErrorModel>(artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryArtistMetadataQueryKey(artistId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryArtistMetadata>>> = ({ signal }) => getLibraryArtistMetadata(artistId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: artistId !== null && artistId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryArtistMetadataQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryArtistMetadata>>>
+export type GetLibraryArtistMetadataQueryError = ErrorModel
+
+
+export function useGetLibraryArtistMetadata<TData = Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError = ErrorModel>(
+ artistId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryArtistMetadata>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryArtistMetadata>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryArtistMetadata<TData = Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryArtistMetadata>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryArtistMetadata>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryArtistMetadata<TData = Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read desired local metadata
+ */
+
+export function useGetLibraryArtistMetadata<TData = Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryArtistMetadata>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryArtistMetadataQueryOptions(artistId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type patchLibraryArtistMetadataResponse200 = {
+  data: LibraryMetadataResponse
+  status: 200
+}
+
+export type patchLibraryArtistMetadataResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type patchLibraryArtistMetadataResponseSuccess = (patchLibraryArtistMetadataResponse200) & {
+  headers: Headers;
+};
+export type patchLibraryArtistMetadataResponseError = (patchLibraryArtistMetadataResponseDefault) & {
+  headers: Headers;
+};
+
+export type patchLibraryArtistMetadataResponse = (patchLibraryArtistMetadataResponseSuccess | patchLibraryArtistMetadataResponseError)
+
+export const getPatchLibraryArtistMetadataUrl = (artistId: string,) => {
+
+
+
+
+  return `/api/library/artists/${artistId}/metadata`
+}
+
+/**
+ * @summary Update desired local metadata
+ */
+export const patchLibraryArtistMetadata = async (artistId: string,
+    libraryMetadataBody: NonReadonly<LibraryMetadataBody>, options?: RequestInit): Promise<patchLibraryArtistMetadataResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getPatchLibraryArtistMetadataUrl(artistId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(libraryMetadataBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: patchLibraryArtistMetadataResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as patchLibraryArtistMetadataResponse
+}
+
+
+
+
+
+export const getPatchLibraryArtistMetadataMutationKey = () => ['patchLibraryArtistMetadata'] as const;
+
+export const getPatchLibraryArtistMetadataMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchLibraryArtistMetadata>>, TError,PatchLibraryArtistMetadataMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof patchLibraryArtistMetadata>>, TError,PatchLibraryArtistMetadataMutationVariables, TContext> => {
+
+const mutationKey = getPatchLibraryArtistMetadataMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchLibraryArtistMetadata>>, PatchLibraryArtistMetadataMutationVariables> = (props) => {
+          const {artistId,data} = props ?? {};
+
+          return  patchLibraryArtistMetadata(artistId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchLibraryArtistMetadataMutationResult = NonNullable<Awaited<ReturnType<typeof patchLibraryArtistMetadata>>>
+    export type PatchLibraryArtistMetadataMutationBody = NonReadonly<LibraryMetadataBody>
+    export type PatchLibraryArtistMetadataMutationError = ErrorModel
+    export type PatchLibraryArtistMetadataMutationVariables = {artistId: string;data: NonReadonly<LibraryMetadataBody>}
+
+    /**
+ * @summary Update desired local metadata
+ */
+export const usePatchLibraryArtistMetadata = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchLibraryArtistMetadata>>, TError,PatchLibraryArtistMetadataMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof patchLibraryArtistMetadata>>,
+        TError,
+        PatchLibraryArtistMetadataMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPatchLibraryArtistMetadataMutationOptions(options), queryClient);
+    }
+
 export type listLibraryCoverCandidatesResponse200 = {
   data: LibraryReleaseOptionsPageLibraryCoverCandidateOption
   status: 200

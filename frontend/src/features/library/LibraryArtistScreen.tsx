@@ -6,6 +6,7 @@ import {
   useListLibraryReleases,
 } from "../../api/generated/client";
 import { useHashLocation } from "../../navigation/hashLocation";
+import { GenreMetadataEditor } from "./GenreMetadataEditor";
 import {
   libraryArtistRouteHref,
   libraryRouteHref,
@@ -93,6 +94,16 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               ))}
             </div>
           </header>
+          <GenreMetadataEditor
+            owner="artist"
+            ownerId={artistId}
+            onSaved={async () => {
+              await Promise.all([
+                artistQuery.refetch(),
+                releasesQuery.refetch(),
+              ]);
+            }}
+          />
           {releasesQuery.isLoading ? (
             <p role="status">Загрузка релизов…</p>
           ) : releasesError ? (

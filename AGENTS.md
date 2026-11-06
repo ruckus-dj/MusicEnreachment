@@ -238,6 +238,10 @@ in frontend/.
 - Re-read canonical metadata into a fresh Bun model after replacing a winning
   capture: scanning SQL NULL into a reused nullable field can retain its former
   value in memory. Test both recording and clearing optional cover diagnostics.
+- Verify provider-binding join columns against the actual baseline schema, not
+  similarly named link tables. Exercise new context readers through PostgreSQL
+  with both missing and real bindings; pure projection fixtures cannot detect
+  a nonexistent FK column in a reader used by every publication preview.
 - Apply the artwork size limit to new source ingestion, not generic CURRENT
   inspection. Legacy embedded artwork must remain observable for preservation
   and optional-failure restoration even when it exceeds the new input limit.
@@ -254,6 +258,9 @@ in frontend/.
   mocks must not remove shared River inserters or transaction-lock helpers.
 
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
+This also applies to delegated agents: a focused frontend suite, standalone
+typecheck or package test is not an authorized preflight before the full gate.
+Formatting and the required `task generate` pipeline are not substitute gates.
 
 **Owner-approved prototype exception**: when changes are confined
 to the standalone design prototype and documentation, use `task design:check`

@@ -17,17 +17,18 @@ import (
 // MusicBrainz release/position projection and its local owners. It deliberately
 // contains no source inventory or optional-asset lookup results.
 type PublicationProviderTagContext struct {
-	Source         ProviderSource              `json:"source"`
-	Release        MatchingRelease             `json:"release"`
-	Position       MatchingReleaseTrack        `json:"position"`
-	Recording      *MatchingProjectionEntity   `json:"recording,omitempty"`
-	ArtistEntities []MatchingProjectionEntity  `json:"artist_entities"`
-	ReleaseOwner   PublicationProviderTagOwner `json:"release_owner"`
-	PositionOwner  PublicationProviderTagEdge  `json:"position_owner"`
-	TrackOwner     PublicationProviderTagOwner `json:"track_owner"`
-	RecordingOwner PublicationProviderTagOwner `json:"recording_owner"`
-	RecordingBound bool                        `json:"recording_bound"`
-	Digest         string                      `json:"digest"`
+	Source         ProviderSource                `json:"source"`
+	Release        MatchingRelease               `json:"release"`
+	Position       MatchingReleaseTrack          `json:"position"`
+	Recording      *MatchingProjectionEntity     `json:"recording,omitempty"`
+	ArtistEntities []MatchingProjectionEntity    `json:"artist_entities"`
+	ReleaseOwner   PublicationProviderTagOwner   `json:"release_owner"`
+	PositionOwner  PublicationProviderTagEdge    `json:"position_owner"`
+	TrackOwner     PublicationProviderTagOwner   `json:"track_owner"`
+	RecordingOwner PublicationProviderTagOwner   `json:"recording_owner"`
+	RecordingBound bool                          `json:"recording_bound"`
+	GenreArtists   []FirstPublicationGenreArtist `json:"genre_artists"`
+	Digest         string                        `json:"digest"`
 }
 
 // PublicationProviderTagEdge captures the local release-track relationship and
@@ -218,6 +219,13 @@ func readPublicationProviderTagContextTxWithAvailability(ctx context.Context, tx
 	if err := readPublicationProviderTagOwners(ctx, tx, release.ID, selected.ID, releaseID, positionID, lockRows, &ctxSnapshot); err != nil {
 		return fmt.Errorf("read publication provider tag context: read local owners: %w", err)
 	}
+	ctxSnapshot.GenreArtists = []FirstPublicationGenreArtist{}
+	if ctxSnapshot.PositionOwner.RecordingID != nil {
+		ctxSnapshot.GenreArtists, err = readFirstPublicationGenreArtists(ctx, tx, *ctxSnapshot.PositionOwner.RecordingID, lockRows)
+		if err != nil {
+			return fmt.Errorf("read publication provider tag context: read recording artist genres: %w", err)
+		}
+	}
 	// Preserve the local recording owner facts unconditionally, but do not expose
 	// provider recording projection as an eligible fallback without its explicit
 	// provider/local recording binding.
@@ -236,7 +244,7 @@ func readPublicationProviderTagContextTxWithAvailability(ctx context.Context, tx
 
 func readPublicationProviderTagOwners(ctx context.Context, tx bun.IDB, providerReleaseID, providerTrackID, requestedReleaseID, requestedPositionID uuid.UUID, lockRows bool, result *PublicationProviderTagContext) error {
 	if lockRows {
-		if _, err := tx.ExecContext(ctx, `LOCK TABLE provider_local_release, provider_local_recording, provider_local_track IN SHARE MODE`); err != nil {
+		if _, err := tx.ExecContext(ctx, `LOCK TABLE provider_local_artist, provider_local_release, provider_local_recording, provider_local_track, recording_artist, local_artist IN SHARE MODE`); err != nil {
 			return fmt.Errorf("lock provider/local bindings: %w", err)
 		}
 	}

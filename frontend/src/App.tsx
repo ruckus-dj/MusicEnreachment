@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { I18nProvider } from "./i18n/I18nProvider";
 import { AppShell } from "./routes/AppShell";
 
 export function App() {
@@ -7,7 +8,9 @@ export function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AppShell />
+      <I18nProvider>
+        <AppShell />
+      </I18nProvider>
     </QueryClientProvider>
   );
 }

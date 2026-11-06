@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
@@ -77,7 +78,7 @@ func TestBuildPublicationProviderCanonicalTagPatchProjectsAcceptedReleaseAndReco
 
 func TestBuildPublicationProviderCanonicalTagPatchProjectsOrderedAcceptedLabelCatalogAndGenres(t *testing.T) {
 	context := publicationTagProjectionFixture()
-	context.Release.Fields = json.RawMessage(`{"label-info":[{"label":{"name":"Label B"},"catalog-number":"CAT-2"},{"catalog-number":"CAT-1"},{"label":{"name":"Label B"},"catalog-number":"CAT-2"}],"genres":[{"name":"Genre B","count":1},{"name":"Genre A","count":99},{"name":"Genre B","count":2}]}`)
+	context.Release.Fields = json.RawMessage(`{"label-info":[{"label":{"name":"Label B"},"catalog-number":"CAT-2"},{"catalog-number":"CAT-1"},{"label":{"name":"Label B"},"catalog-number":"CAT-2"}],"genres":[{"id":"00000000-0000-4000-8000-000000000001","name":"Genre B","count":1},{"id":"00000000-0000-4000-8000-000000000002","name":"Genre A","count":99},{"id":"00000000-0000-4000-8000-000000000001","name":"Genre B","count":2}]}`)
 	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"label-info": {}, "genres": {}}
 	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
 	if err != nil {
@@ -86,10 +87,155 @@ func TestBuildPublicationProviderCanonicalTagPatchProjectsOrderedAcceptedLabelCa
 	want := map[string][]string{
 		"LABEL":         {"Label B", "Label B"},
 		"CATALOGNUMBER": {"CAT-2", "CAT-1", "CAT-2"},
-		"GENRE":         {"Genre B", "Genre A", "Genre B"},
+		"GENRE":         {"Genre B", "Genre A"},
 	}
 	if !reflect.DeepEqual(patch, want) {
 		t.Fatalf("patch = %#v, want %#v", patch, want)
+	}
+}
+
+func TestAcceptedPublicationGenresUsesBoundRecordingThenReleaseThenRecordingArtists(t *testing.T) {
+	const recordingGenre = `[{"id":"00000000-0000-4000-8000-000000000001","name":"recording genre"}]`
+	const releaseGenre = `[{"id":"00000000-0000-4000-8000-000000000002","name":"release genre"}]`
+	const artistA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	const artistB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	context := publicationTagProjectionFixture()
+	context.Position.RecordingProviderKey = "recording-key"
+	context.RecordingBound = true
+	context.Recording = &MatchingProjectionEntity{Kind: "recording", ProviderKey: "recording-key", Fields: json.RawMessage(`{"genres":` + recordingGenre + `,"artist-credit":[]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)}
+	context.Release.Fields = json.RawMessage(`{"genres":` + releaseGenre + `}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"genres": {}}
+	genres, err := acceptedPublicationGenres(context, map[string]json.RawMessage{"genres": json.RawMessage(releaseGenre)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(genres, []librarymetadata.GenreReference{{ID: "00000000-0000-4000-8000-000000000001", SourceName: "recording genre", Name: "Recording Genre"}}) {
+		t.Fatalf("recording genre winner = %#v", genres)
+	}
+	context.Recording.Fields = json.RawMessage(`{"genres":[]}`)
+	genres, err = acceptedPublicationGenres(context, map[string]json.RawMessage{"genres": json.RawMessage(releaseGenre)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(genres, []librarymetadata.GenreReference{{ID: "00000000-0000-4000-8000-000000000002", SourceName: "release genre", Name: "Release Genre"}}) {
+		t.Fatalf("release genre fallback = %#v", genres)
+	}
+
+	context.Recording.Fields = json.RawMessage(`{"artist-credit":[{"name":"A","artist":{"id":"` + artistA + `"}},{"name":"B","artist":{"id":"` + artistB + `"}}]}`)
+	context.Recording.FieldEvidence = json.RawMessage(`{"artist-credit":{}}`)
+	context.Release.Fields = json.RawMessage(`{}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{}
+	artistEnvelope := func(mbid string) FirstPublicationGenreArtist {
+		return FirstPublicationGenreArtist{
+			MBID:     &mbid,
+			Metadata: librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeArtist, Desired: map[string]librarymetadata.FieldValue{}},
+		}
+	}
+	context.GenreArtists = []FirstPublicationGenreArtist{artistEnvelope(artistA), artistEnvelope(artistB)}
+	context.ArtistEntities = []MatchingProjectionEntity{
+		{Kind: "artist", ProviderKey: artistA, Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000003","name":"artist one"},{"id":"00000000-0000-4000-8000-000000000004","name":"shared"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)},
+		{Kind: "artist", ProviderKey: artistB, Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000004","name":"shared"},{"id":"00000000-0000-4000-8000-000000000005","name":"artist two"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)},
+	}
+	genres, err = acceptedPublicationGenres(context, map[string]json.RawMessage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []librarymetadata.GenreReference{
+		{ID: "00000000-0000-4000-8000-000000000003", SourceName: "artist one", Name: "Artist One"},
+		{ID: "00000000-0000-4000-8000-000000000004", SourceName: "shared", Name: "Shared"},
+		{ID: "00000000-0000-4000-8000-000000000005", SourceName: "artist two", Name: "Artist Two"},
+	}
+	if !reflect.DeepEqual(genres, want) {
+		t.Fatalf("artist genre union = %#v, want %#v", genres, want)
+	}
+}
+
+func TestPublicationTagGenreRecordingScopePrecedesReleaseManualGenre(t *testing.T) {
+	for _, releaseGenre := range []string{
+		`{"state":"value","value":[{"id":"00000000-0000-4000-8000-000000000002","source_name":"release","name":"Release"}],"authority":"manual","provenance":{"kind":"manual"}}`,
+		`{"state":"explicit_empty","authority":"manual","provenance":{"kind":"manual"}}`,
+	} {
+		t.Run(releaseGenre, func(t *testing.T) {
+			context := publicationTagProjectionFixture()
+			context.Release.Fields = json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000002","name":"provider release"}]}`)
+			context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"genres": {}}
+			context.Position.RecordingProviderKey = "recording-key"
+			context.RecordingBound = true
+			context.Recording = &MatchingProjectionEntity{Kind: "recording", ProviderKey: "recording-key", Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000001","name":"recording provider"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)}
+			context.ReleaseOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"release","desired":{"genre":` + releaseGenre + `}}}`)
+
+			patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(patch["GENRE"], []string{"Recording Provider"}) {
+				t.Fatalf("genre patch = %#v, want recording provider genre", patch["GENRE"])
+			}
+		})
+	}
+}
+
+func TestPublicationTagRecordingManualAbsentUsesRecordingProviderBeforeRelease(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Release.Fields = json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000002","name":"provider release"}]}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"genres": {}}
+	context.Position.RecordingProviderKey = "recording-key"
+	context.RecordingBound = true
+	context.Recording = &MatchingProjectionEntity{Kind: "recording", ProviderKey: "recording-key", Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000001","name":"recording provider"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)}
+	context.RecordingOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"recording","desired":{"genre":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`)
+
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(patch["GENRE"], []string{"Recording Provider"}) {
+		t.Fatalf("genre patch = %#v, want recording provider genre", patch["GENRE"])
+	}
+}
+
+func TestPublicationTagReachedRecordingExplicitEmptyClearsGenre(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Position.RecordingProviderKey = "recording-key"
+	context.RecordingBound = true
+	context.Recording = &MatchingProjectionEntity{Kind: "recording", ProviderKey: "recording-key", Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000001","name":"recording provider"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)}
+	context.RecordingOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"recording","desired":{"genre":{"state":"explicit_empty","authority":"manual","provenance":{"kind":"manual"}}}}}`)
+
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genres, exists := patch["GENRE"]
+	if !exists || genres == nil || len(genres) != 0 {
+		t.Fatalf("genre patch = %#v, want explicit empty GENRE patch", patch)
+	}
+}
+
+func TestPublicationTagReachedReleaseManualGenreOverridesReleaseProvider(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Release.Fields = json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000001","name":"provider release"}]}`)
+	context.Release.FieldEvidence = map[string]ProviderFieldEvidence{"genres": {}}
+	context.ReleaseOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"release","desired":{"genre":{"state":"value","value":[{"id":"00000000-0000-4000-8000-000000000002","source_name":"manual release","name":"Manual Release"}],"authority":"manual","provenance":{"kind":"manual"}}}}}`)
+
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(patch["GENRE"], []string{"Manual Release"}) {
+		t.Fatalf("genre patch = %#v, want reached release manual genre", patch["GENRE"])
+	}
+}
+
+func TestAcceptedPublicationGenresDoesNotUseUnboundRecordingOrReleaseArtists(t *testing.T) {
+	context := publicationTagProjectionFixture()
+	context.Position.RecordingProviderKey = "recording-key"
+	context.Recording = &MatchingProjectionEntity{Kind: "recording", ProviderKey: "recording-key", Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000001","name":"not bound"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)}
+	context.ArtistEntities = []MatchingProjectionEntity{{Kind: "artist", ProviderKey: "release-artist", Fields: json.RawMessage(`{"genres":[{"id":"00000000-0000-4000-8000-000000000002","name":"not recording artist"}]}`), FieldEvidence: json.RawMessage(`{"genres":{}}`)}}
+	genres, err := acceptedPublicationGenres(context, map[string]json.RawMessage{"artist-credit": json.RawMessage(`[{"name":"X","artist":{"id":"release-artist"}}]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(genres) != 0 {
+		t.Fatalf("unbound/non-recording genres = %#v, want none", genres)
 	}
 }
 
@@ -121,7 +267,8 @@ func TestBuildPublicationProviderCanonicalTagPatchRejectsMalformedLabelAndGenreS
 		`{"label-info":[{"label":{"name":42}}]}`,
 		`{"label-info":[{"catalog-number":42}]}`,
 		`{"genres":{}}`,
-		`{"genres":[{"name":42}]}`,
+		`{"genres":[{"id":"00000000-0000-4000-8000-000000000001","name":42}]}`,
+		`{"genres":[{"name":"missing id"}]}`,
 	} {
 		t.Run(fields, func(t *testing.T) {
 			context := publicationTagProjectionFixture()

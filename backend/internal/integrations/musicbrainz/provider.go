@@ -149,7 +149,7 @@ func (p *Provider) LookupRelease(ctx context.Context, id string) (LookupResult, 
 	}
 	ctx, cancel, collector := p.callContext(ctx)
 	defer cancel()
-	release, err := p.client.LookupRelease(ctx, mbtypes.MBID(id), mb.IncludesFilter{Includes: []string{"artists", "artist-credits", "recordings", "labels", "release-groups"}})
+	release, err := p.client.LookupRelease(ctx, mbtypes.MBID(id), mb.IncludesFilter{Includes: []string{"artists", "artist-credits", "recordings", "labels", "release-groups", "genres"}})
 	if err != nil {
 		return LookupResult{}, safeProviderError(ctx, err)
 	}
@@ -173,7 +173,7 @@ func (p *Provider) LookupRecording(ctx context.Context, id string) (LookupResult
 	}
 	ctx, cancel, collector := p.callContext(ctx)
 	defer cancel()
-	recording, err := p.client.LookupRecording(ctx, mbtypes.MBID(id), mb.IncludesFilter{Includes: []string{"artists", "artist-credits", "releases"}})
+	recording, err := p.client.LookupRecording(ctx, mbtypes.MBID(id), mb.IncludesFilter{Includes: []string{"artists", "artist-credits", "releases", "genres"}})
 	if err != nil {
 		return LookupResult{}, safeProviderError(ctx, err)
 	}

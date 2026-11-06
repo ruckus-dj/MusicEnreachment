@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -263,6 +264,26 @@ func validateTypedValue(valueType ValueType, value any) error {
 				return err
 			}
 		}
+	case TypeGenreList:
+		genres, ok := value.([]any)
+		if !ok || len(genres) == 0 {
+			return fmt.Errorf("genre selection must be a non-empty genre reference list")
+		}
+		return validateObjectList(value, map[string]bool{"id": true, "source_name": true, "name": true}, func(item map[string]any) error {
+			if err := requiredStringFields(item, "id", "source_name", "name"); err != nil {
+				return err
+			}
+			id, err := uuid.Parse(item["id"].(string))
+			if err != nil || id == uuid.Nil {
+				return fmt.Errorf("genre id must be a non-empty uuid")
+			}
+			for _, key := range []string{"source_name", "name"} {
+				if strings.TrimSpace(item[key].(string)) == "" {
+					return fmt.Errorf("genre %s must be a non-empty string", key)
+				}
+			}
+			return nil
+		})
 	case TypeArtistCredit:
 		return validateObjectList(value, map[string]bool{"artist_id": true, "artist_name": true, "credit_name": true, "join_phrase": true, "role": true, "mbid": true}, func(item map[string]any) error {
 			if err := requiredStringFields(item, "artist_id", "artist_name", "credit_name", "join_phrase"); err != nil {

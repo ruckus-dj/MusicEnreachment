@@ -1,6 +1,8 @@
 package persistence
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
@@ -27,9 +29,9 @@ func resolutionEnvelope(scope librarymetadata.Scope, desired map[string]librarym
 }
 
 func resolutionGenreValue(values ...string) librarymetadata.FieldValue {
-	list := make([]any, 0, len(values))
-	for _, value := range values {
-		list = append(list, value)
+	list := make([]librarymetadata.GenreReference, 0, len(values))
+	for index, value := range values {
+		list = append(list, librarymetadata.GenreReference{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", index+1), SourceName: value, Name: value})
 	}
 	return librarymetadata.FieldValue{
 		State:      librarymetadata.StateValue,
@@ -42,6 +44,14 @@ func resolutionGenreValue(values ...string) librarymetadata.FieldValue {
 func resolutionExplicitEmpty() librarymetadata.FieldValue {
 	return librarymetadata.FieldValue{
 		State:      librarymetadata.StateExplicitEmpty,
+		Authority:  librarymetadata.AuthorityManual,
+		Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual},
+	}
+}
+
+func resolutionAbsent() librarymetadata.FieldValue {
+	return librarymetadata.FieldValue{
+		State:      librarymetadata.StateAbsent,
 		Authority:  librarymetadata.AuthorityManual,
 		Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual},
 	}
@@ -75,20 +85,19 @@ func resolutionContext(releaseDesired, positionDesired map[string]librarymetadat
 	}
 }
 
-// TestResolveFirstPublicationOptionalFieldsEmptyPositionGenreFallsBackToRelease
-// pins the priority rule: an empty value in a higher-priority scope loses
-// resolution, so the release genre wins and the raw owner envelopes keep the
-// unresolved empty list unchanged.
-func TestResolveFirstPublicationOptionalFieldsEmptyPositionGenreFallsBackToRelease(t *testing.T) {
+// TestResolveFirstPublicationLocalGenresAbsentPositionFallsBackToRelease
+// pins the genre-specific absent-value fallback: the release genre wins and
+// the raw owner envelopes remain unchanged.
+func TestResolveFirstPublicationLocalGenresAbsentPositionFallsBackToRelease(t *testing.T) {
 	releaseDesired := map[string]librarymetadata.FieldValue{"genre": resolutionGenreValue("Rock")}
-	positionDesired := map[string]librarymetadata.FieldValue{"genre": resolutionGenreValue()}
+	positionDesired := map[string]librarymetadata.FieldValue{"genre": resolutionAbsent()}
 	result := resolutionContext(releaseDesired, positionDesired)
 
 	rawRelease := cloneTagDesired(result.Metadata.Release.Envelope.Desired)
 	rawPosition := cloneTagDesired(result.Metadata.Position.Envelope.Desired)
 
-	if err := resolveFirstPublicationOptionalFields(result); err != nil {
-		t.Fatalf("resolve first publication optional fields: %v", err)
+	if _, err := resolveFirstPublicationLocalGenres(result); err != nil {
+		t.Fatalf("resolve first publication genres: %v", err)
 	}
 
 	resolved, ok := result.ResolvedOptionalFields["genre"]
@@ -126,8 +135,8 @@ func TestResolveFirstPublicationOptionalFieldsExplicitEmptyPositionGenreClearsRe
 	rawRelease := cloneTagDesired(result.Metadata.Release.Envelope.Desired)
 	rawPosition := cloneTagDesired(result.Metadata.Position.Envelope.Desired)
 
-	if err := resolveFirstPublicationOptionalFields(result); err != nil {
-		t.Fatalf("resolve first publication optional fields: %v", err)
+	if _, err := resolveFirstPublicationLocalGenres(result); err != nil {
+		t.Fatalf("resolve first publication genres: %v", err)
 	}
 
 	resolved, ok := result.ResolvedOptionalFields["genre"]
@@ -156,6 +165,110 @@ func TestResolveFirstPublicationOptionalFieldsExplicitEmptyPositionGenreClearsRe
 	if status := projection.Fields["position.genre"]; status.Status != "explicit_empty" {
 		t.Fatalf("position.genre status = %+v, want explicit_empty", status)
 	}
+}
+
+func TestFirstPublicationLocalGenreScopePrecedence(t *testing.T) {
+	result := resolutionContext(map[string]librarymetadata.FieldValue{"genre": resolutionGenreValue("Release")}, map[string]librarymetadata.FieldValue{"genre": resolutionGenreValue()})
+	result.Metadata.Track.Envelope.Desired["genre"] = resolutionGenreValue("Track")
+	result.Metadata.Recording.Envelope = resolutionEnvelope(librarymetadata.ScopeRecording, map[string]librarymetadata.FieldValue{"genre": resolutionGenreValue("Recording")})
+
+	found, err := resolveFirstPublicationLocalGenres(result)
+	if err != nil || !found {
+		t.Fatalf("resolve track genre = found %v, err %v", found, err)
+	}
+	resolved := result.ResolvedOptionalFields["genre"]
+	if resolved.Scope != librarymetadata.ScopeTrack || resolved.Field.Value.([]librarymetadata.GenreReference)[0].Name != "Track" {
+		t.Fatalf("track genre winner = %+v", resolved)
+	}
+
+	result.Metadata.Track.Envelope.Desired = map[string]librarymetadata.FieldValue{}
+	result.Metadata.Position.Envelope.Desired = map[string]librarymetadata.FieldValue{}
+	found, err = resolveFirstPublicationLocalGenres(result)
+	if err != nil || !found {
+		t.Fatalf("resolve recording genre = found %v, err %v", found, err)
+	}
+	resolved = result.ResolvedOptionalFields["genre"]
+	if resolved.Scope != librarymetadata.ScopeRecording || resolved.Field.Value.([]librarymetadata.GenreReference)[0].Name != "Recording" {
+		t.Fatalf("recording genre winner = %+v", resolved)
+	}
+}
+
+func TestFirstPublicationArtistGenreUnionKeepsCreditOrderAndDeduplicatesIDs(t *testing.T) {
+	first := librarymetadata.GenreReference{ID: "00000000-0000-4000-8000-000000000001", SourceName: "first", Name: "First"}
+	shared := librarymetadata.GenreReference{ID: "00000000-0000-4000-8000-000000000002", SourceName: "shared", Name: "Shared"}
+	last := librarymetadata.GenreReference{ID: "00000000-0000-4000-8000-000000000003", SourceName: "last", Name: "Last"}
+	artists := []FirstPublicationGenreArtist{
+		{CreditPosition: 0, Metadata: resolutionEnvelope(librarymetadata.ScopeArtist, map[string]librarymetadata.FieldValue{"genre": resolutionGenreReferences(first, shared)})},
+		{CreditPosition: 1, Metadata: resolutionEnvelope(librarymetadata.ScopeArtist, map[string]librarymetadata.FieldValue{"genre": resolutionGenreReferences(shared, last)})},
+	}
+	want := []librarymetadata.GenreReference{first, shared, last}
+	got, explicitEmpty, err := firstPublicationArtistGenreUnion(artists, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicitEmpty {
+		t.Fatal("nonempty artist genres were marked explicitly empty")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("artist genre union = %#v, want %#v", got, want)
+	}
+}
+
+func TestFirstPublicationArtistGenreUnionPreservesExplicitEmpty(t *testing.T) {
+	artistID := "00000000-0000-4000-8000-000000000001"
+	artist := FirstPublicationGenreArtist{
+		MBID: &artistID,
+		Metadata: resolutionEnvelope(librarymetadata.ScopeArtist, map[string]librarymetadata.FieldValue{
+			"genre": {State: librarymetadata.StateExplicitEmpty, Authority: librarymetadata.AuthorityManual},
+		}),
+	}
+	genres, explicitEmpty, err := firstPublicationArtistGenreUnion([]FirstPublicationGenreArtist{artist}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(genres) != 0 || !explicitEmpty {
+		t.Fatalf("artist genre union = %#v, explicit empty %v; want empty, true", genres, explicitEmpty)
+	}
+
+	other := FirstPublicationGenreArtist{Metadata: resolutionEnvelope(librarymetadata.ScopeArtist, map[string]librarymetadata.FieldValue{
+		"genre": resolutionGenreReferences(librarymetadata.GenreReference{ID: "00000000-0000-4000-8000-000000000002", SourceName: "other", Name: "Other"}),
+	})}
+	genres, explicitEmpty, err = firstPublicationArtistGenreUnion([]FirstPublicationGenreArtist{artist, other}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicitEmpty || len(genres) != 1 || genres[0].Name != "Other" {
+		t.Fatalf("mixed artist genre union = %#v, explicit empty %v; want Other, false", genres, explicitEmpty)
+	}
+}
+
+func TestFirstPublicationGenreArtistDigestIncludesCreditOrderAndMetadataRevision(t *testing.T) {
+	artists := []FirstPublicationGenreArtist{{CreditPosition: 0, MetadataRevision: 1, Metadata: resolutionEnvelope(librarymetadata.ScopeArtist, map[string]librarymetadata.FieldValue{"genre": resolutionGenreValue("First")})}}
+	initial, err := firstPublicationGenreArtistDigest(artists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artists[0].MetadataRevision++
+	changedRevision, err := firstPublicationGenreArtistDigest(artists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial == changedRevision {
+		t.Fatal("artist metadata revision did not affect the genre snapshot digest")
+	}
+	artists[0].MetadataRevision--
+	artists[0].CreditPosition++
+	changedOrder, err := firstPublicationGenreArtistDigest(artists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial == changedOrder {
+		t.Fatal("recording artist credit order did not affect the genre snapshot digest")
+	}
+}
+
+func resolutionGenreReferences(genres ...librarymetadata.GenreReference) librarymetadata.FieldValue {
+	return librarymetadata.FieldValue{State: librarymetadata.StateValue, Value: genres, Authority: librarymetadata.AuthorityManual, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual}}
 }
 
 func assertDesiredUnchanged(t *testing.T, scope string, before, after map[string]librarymetadata.FieldValue) {

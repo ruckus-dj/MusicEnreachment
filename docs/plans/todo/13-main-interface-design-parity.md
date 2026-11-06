@@ -122,7 +122,8 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    cross-provider references сохраняют собственный namespace без зеркал.
    Удалить прямое создание library из API/UI, не запрещая внутреннее создание
    сущностей matching-процессом. Не выбирать незаданные правила распространения
-   provider metadata или наследования genres/tags/explicit/ISRC.
+   provider metadata или наследования tags/explicit/ISRC. Файловый `GENRE`
+   разрешать по текущему контракту без изменения genres сущностей.
 5. [ ] **Фактический каталог.** Довести отображение/агрегацию до factual
    данных, разделив source/audio availability, provider entries, library и
    publications. **Приёмка:** unknown не показывается как ноль, edition и
@@ -189,14 +190,26 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    и явное обновление/статус доступны по контракту. Picker не разрешает свободный
    ввод; MBID и каноническое имя сохраняются, читаемое английское имя используется
    одинаково в UI/preview/GENRE. Наличие каталога не является условием публикации
-   MusicBrainz genres или работы с пустыми Local genres; наследование не вводится.
+   MusicBrainz genres или работы с пустыми Local genres; файловый fallback
+   следует текущему контракту и не меняет genres сущностей.
    - [x] Реализован срез каталога: полный JSON download через общий MusicBrainz
      governor, MBID/каноническое/читаемое имя, атомарное сохранение последнего
      успешного набора; durable initial/weekly dispatch и ручное обновление через
      Operation/SSE; Settings показывает состояние/ошибку, API предоставляет поиск.
      Baseline дополнен без новой цепочки миграций; metadata и CURRENT не меняются.
-   - [ ] Остаются production genre pickers и сквозное применение утверждённых
-     genre scopes/имён в editor → preview → writer → readback. Пункт целиком не закрыт.
+   - [x] Добавлены MBID-bearing overrides artist/release/recording, production
+     catalog-only picker и файловый fallback по текущему контракту. Сохранённые
+     ссылки не переименовываются после обновления каталога; clear и отсутствие
+     override различаются. Artist metadata revisions и порядок recording credits
+     участвуют в authority/freshness. Добавлены API/DB/projection/native readback
+     и UI-регрессии; native executor fixture использует синтетические команды,
+     не подтверждая совместимость реальных ffmpeg/ffprobe.
+     UI проверен на контролируемых API в 1440/390, обеих темах и RU/EN;
+     это не полный upstream E2E. Подробности и границы —
+     [отчёт](../../reports/2026-11-07-genre-metadata-flow.md).
+   - [ ] Остаются явное отображение entity provider genre baseline в карточках,
+     подключение picker к Local CRUD и сквозная приёмка общего explicit
+     repeat/aggregate workflow вместе с пунктами 3/6/8. Пункт целиком не закрыт.
 8. [ ] **Local create/update.** Использовать переиспользуемые формы для provider Local по
    `docs/design/local-provider.md`, с каталогом жанров из пункта 7.
    **Приёмка:** явное создание после поиска и редактирование только provider records,

@@ -91,7 +91,7 @@ func TestProjectTagsRequiresA1Fields(t *testing.T) {
 }
 
 func TestProjectTagsSupportsDecodedEnvelopeValues(t *testing.T) {
-	release, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"release","desired":{"genre":{"state":"value","value":["Jazz","Fusion"],"authority":"manual","provenance":{"kind":"manual"}},"release_secondary_types":{"state":"value","value":["Live","Compilation"],"authority":"manual","provenance":{"kind":"manual"}}}}`))
+	release, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"release","desired":{"genre":{"state":"value","value":[{"id":"11111111-1111-4111-8111-111111111111","source_name":"jazz","name":"Jazz"},{"id":"22222222-2222-4222-8222-222222222222","source_name":"fusion","name":"Fusion"}],"authority":"manual","provenance":{"kind":"manual"}},"release_secondary_types":{"state":"value","value":["Live","Compilation"],"authority":"manual","provenance":{"kind":"manual"}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

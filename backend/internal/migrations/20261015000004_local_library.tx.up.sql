@@ -38,10 +38,12 @@ CREATE TABLE public.local_artist (
     name text DEFAULT ''::text NOT NULL,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     metadata_version integer DEFAULT 1 NOT NULL,
+    metadata_revision bigint DEFAULT 1 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT local_artist_metadata_check CHECK ((jsonb_typeof(metadata) = 'object'::text)),
-    CONSTRAINT local_artist_metadata_version_check CHECK ((metadata_version >= 1))
+    CONSTRAINT local_artist_metadata_version_check CHECK ((metadata_version >= 1)),
+    CONSTRAINT local_artist_metadata_revision_check CHECK ((metadata_revision >= 1))
 );
 
 -- table: local_recording

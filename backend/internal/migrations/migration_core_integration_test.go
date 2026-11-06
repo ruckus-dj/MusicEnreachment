@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
@@ -99,6 +100,10 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO app_setting(setting_name,setting_value) VALUES('rollback-guard','preserve')`); err != nil {
 		t.Fatalf("insert rollback-guard data: %v", err)
 	}
+	artistID := uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO local_artist(id,name,metadata) VALUES(?,?,?::jsonb)`, artistID, "Rollback Guard Artist", `{"local_metadata":{"version":1,"scope":"artist","desired":{"genre":{"state":"explicit_empty","authority":"manual","provenance":{"kind":"manual"}}}}}`).Exec(ctx); err != nil {
+		t.Fatalf("insert edited local artist: %v", err)
+	}
 	statusBefore, err := migrator.MigrationsWithStatus(ctx)
 	if err != nil {
 		t.Fatalf("read migration status before unsafe rollback: %v", err)
@@ -113,6 +118,10 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	var setting string
 	if err := db.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='rollback-guard'`).Scan(ctx, &setting); err != nil || setting != "preserve" {
 		t.Fatalf("rollback-guard data after refusal = %q, %v; want unchanged", setting, err)
+	}
+	var artistGenreState string
+	if err := db.NewRaw(`SELECT metadata->'local_metadata'->'desired'->'genre'->>'state' FROM local_artist WHERE id=?`, artistID).Scan(ctx, &artistGenreState); err != nil || artistGenreState != "explicit_empty" {
+		t.Fatalf("edited artist genre state after refusal = %q, %v; want preserved", artistGenreState, err)
 	}
 	var riverState string
 	if err := db.NewRaw(`SELECT state FROM river_job WHERE id=1`).Scan(ctx, &riverState); err != nil || riverState != "available" {
@@ -231,7 +240,7 @@ func assertMigrationGroup(t *testing.T, group *migrate.MigrationGroup, want []st
 
 func assertCurrentSchema(t *testing.T, database *bun.DB) {
 	t.Helper()
-	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns, coverObserved, coverConstraint, sourceMetadataReference int
+	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns, artistMetadataRevision, artistMetadataConstraint, coverObserved, coverConstraint, sourceMetadataReference int
 	ctx := context.Background()
 	checks := []struct {
 		query  string
@@ -243,6 +252,8 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='release_track' AND column_name='id' AND data_type='uuid' AND is_nullable='NO'`, &identityColumns, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.release_track'::regclass AND conname='release_track_id_key' AND contype='u'`, &identityConstraints, 1},
 		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='release_track' AND column_name='metadata' AND data_type='jsonb' AND is_nullable='NO'`, &positionMetadataColumns, 1},
+		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='local_artist' AND column_name='metadata_revision' AND data_type='bigint' AND is_nullable='NO' AND column_default IS NOT NULL`, &artistMetadataRevision, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.local_artist'::regclass AND conname='local_artist_metadata_revision_check' AND contype='c'`, &artistMetadataConstraint, 1},
 		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='media_metadata_result' AND column_name='cover_observed' AND is_nullable='NO'`, &coverObserved, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.media_metadata_result'::regclass AND conname='media_metadata_result_cover_facts_check'`, &coverConstraint, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.track_source'::regclass AND conname='track_source_source_metadata_result_fk' AND confdeltype='r'`, &sourceMetadataReference, 1},

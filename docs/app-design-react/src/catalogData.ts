@@ -1,6 +1,10 @@
 import original from "./original-fixtures.json";
 import type { Locale } from "./i18n/types";
-import type { MetadataGenre, MetadataValues } from "./metadata/projection";
+import type {
+	MetadataGenre,
+	MetadataValues,
+} from "./metadata/projection";
+import type { MetadataScope } from "./metadata/registry";
 import {
 	metadataValidationMessage,
 	validateMetadataIssues,
@@ -239,6 +243,67 @@ export function applyMetadataPreview(
 	return next;
 }
 
+function explicitGenreValues(
+	values: MetadataValues | undefined,
+): string[] | undefined {
+	if (!values || !Object.hasOwn(values, "genre")) return undefined;
+	const entries = values.genre;
+	if (!Array.isArray(entries)) return undefined;
+	if (!entries.some(Boolean)) return [];
+	return entries.map((value) => resolveCatalogGenreValue(value));
+}
+
+/**
+ * Resolves GENRE per scope before falling back to less specific scopes:
+ * recording override, recording genres, release override, release genres,
+ * then the ordered recording-artist union.
+ */
+export function publicationGenreFallback(
+	release: OriginalRelease,
+	track: OriginalTrack,
+	artists: CatalogArtist[] = originalArtists,
+): string[] {
+	const recordingOverride = explicitGenreValues(track.recordingMetadata);
+	if (recordingOverride !== undefined) return recordingOverride;
+	const recordingGenres = track.recordingGenreRefs?.length
+		? track.recordingGenreRefs
+		: (track.recordingGenres ?? []).map((name) => ({ name }));
+	if (recordingGenres.length)
+		return recordingGenres.map((genre) => resolveCatalogGenreName(genre));
+	const releaseOverride = explicitGenreValues(release.metadataValues);
+	if (releaseOverride !== undefined) return releaseOverride;
+	if (release.metadataGenres?.length)
+		return release.metadataGenres.map((genre) =>
+			resolveCatalogGenreName(genre),
+		);
+	const artist = artists.find((item) => item.id === track.artistId);
+	const recordingCredits =
+		track.recordingCredits ??
+		(artist
+			? [
+					{
+						artistId: artist.id,
+						creditName: artist.name,
+						joinPhrase: "",
+					},
+				]
+			: []);
+	const values: string[] = [];
+	const seen = new Set<string>();
+	for (const credit of recordingCredits) {
+		const linkedArtist = artists.find((item) => item.id === credit.artistId);
+		for (const genre of linkedArtist?.genres ?? []) {
+			const name = resolveCatalogGenreName(genre);
+			if (!name) continue;
+			const identity = genre.id ? `id:${genre.id}` : `name:${name}`;
+			if (seen.has(identity)) continue;
+			seen.add(identity);
+			values.push(name);
+		}
+	}
+	return values;
+}
+
 export function desiredTags(
 	release: OriginalRelease,
 	track: OriginalTrack,
@@ -267,7 +332,7 @@ export function desiredTags(
 			String(track.displayedNumber || track.mediumPosition || track.position),
 		],
 		DISCNUMBER: [String(track.medium ?? 1)],
-		GENRE: track.recordingGenres ?? [],
+		GENRE: publicationGenreFallback(release, track, artists),
 		MUSICBRAINZ_ARTISTID: [],
 		MUSICBRAINZ_ALBUMID:
 			release.manual ||
@@ -408,6 +473,8 @@ export function desiredTags(
 			? valuesForScope(track.audioMetadata?.[audioSourceId] ?? {}, "audio")
 			: {}),
 	};
+	// Genre overrides are resolved per scope by publicationGenreFallback.
+	delete explicitValues.genre;
 	const projected = projectMetadataValues(explicitValues).tags;
 	for (const [key, values] of Object.entries(projected)) result[key] = values;
 	const projectedArtistNames = (
@@ -536,6 +603,20 @@ export function effectivePublicationTags(
 	return tags;
 }
 
+/** Release genre is a recording-scope override; other fields keep their registered scope. */
+function scopeValidationEntries(
+	values: MetadataValues,
+	scope: MetadataScope,
+): [MetadataValues, MetadataScope][] {
+	if (scope !== "release" || !Object.hasOwn(values, "genre"))
+		return [[values, scope]];
+	const { genre, ...releaseValues } = values;
+	return [
+		[releaseValues, scope],
+		[{ genre }, "recording"],
+	];
+}
+
 export function publicationMetadataIssues(
 	release: OriginalRelease,
 	track: OriginalTrack,
@@ -553,7 +634,10 @@ export function publicationMetadataIssues(
 	return [
 		...new Set(
 			scopes.flatMap(([values, scope]) =>
-				validateMetadataValues(values, scope),
+				scopeValidationEntries(values, scope).flatMap(
+					([scopedValues, scopedScope]) =>
+						validateMetadataValues(scopedValues, scopedScope),
+				),
 			),
 		),
 	];
@@ -578,8 +662,11 @@ export function publicationMetadataIssueMessages(
 	return [
 		...new Set(
 			scopes.flatMap(([values, scope]) =>
-				validateMetadataIssues(values, scope).map((issue) =>
-					metadataValidationMessage(issue, locale),
+				scopeValidationEntries(values, scope).flatMap(
+					([scopedValues, scopedScope]) =>
+						validateMetadataIssues(scopedValues, scopedScope).map((issue) =>
+							metadataValidationMessage(issue, locale),
+						),
 				),
 			),
 		),

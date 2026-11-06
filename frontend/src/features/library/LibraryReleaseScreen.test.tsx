@@ -7,7 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
   LibraryMetadataResponse,
   LibraryPublicationResponse,
@@ -17,7 +17,13 @@ import { server } from "../../test/server";
 import { LibraryReleaseScreen } from "./LibraryReleaseScreen";
 
 vi.mock("./FirstPublicationPreview", () => ({
-  FirstPublicationPreview: () => null,
+  FirstPublicationPreview: ({
+    refreshToken,
+  }: {
+    refreshToken?: string | number;
+  }) => (
+    <div data-testid="publication-preview" data-refresh-token={refreshToken} />
+  ),
 }));
 vi.mock("./newReleaseCoverEditor", () => ({
   ReleaseCoverEditor: () => null,
@@ -132,6 +138,18 @@ afterEach(() => {
   cleanup();
 });
 
+beforeEach(() => {
+  server.use(
+    http.get("*/api/library/releases/:releaseId/metadata", () =>
+      HttpResponse.json({
+        envelope: { desired: {}, scope: "release", version: 1 },
+        publication_applied: false,
+        revision: 1,
+      }),
+    ),
+  );
+});
+
 it("shows the current publication summary from release detail without source inventory", async () => {
   installHandlers(true);
 
@@ -166,6 +184,73 @@ it("shows an explicit unpublished state when release detail has no publication s
   });
   expect(summary).toHaveTextContent("Не опубликовано");
   expect(summary).not.toHaveTextContent("Artist/Album");
+});
+
+it("invalidates preview context immediately even if release detail refresh fails", async () => {
+  let releaseReads = 0;
+  let resolveReleaseRefresh!: (response: Response) => void;
+  const releaseGenreMetadata: LibraryMetadataResponse = {
+    envelope: { desired: {}, scope: "release", version: 1 },
+    publication_applied: false,
+    revision: 1,
+  };
+  server.use(
+    http.get("*/api/library/releases/:releaseId", () => {
+      releaseReads += 1;
+      if (releaseReads > 1)
+        return new Promise<Response>((resolve) => {
+          resolveReleaseRefresh = resolve;
+        });
+      return HttpResponse.json(release(false));
+    }),
+    http.get("*/api/library/releases/:releaseId/metadata", () =>
+      HttpResponse.json(releaseGenreMetadata),
+    ),
+    http.patch("*/api/library/releases/:releaseId/metadata", () =>
+      HttpResponse.json({
+        ...releaseGenreMetadata,
+        revision: 2,
+        envelope: {
+          ...releaseGenreMetadata.envelope,
+          desired: { genre: { state: "explicit_empty" } },
+        },
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/metadata",
+      () => HttpResponse.json(metadata),
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/publication",
+      () => HttpResponse.json(publication(false)),
+    ),
+  );
+
+  render(<LibraryReleaseScreen releaseId={releaseID} />);
+  await screen.findByRole("region", { name: "Текущая публикация" });
+  const preview = screen.getByTestId("publication-preview");
+  const initialToken = preview.getAttribute("data-refresh-token");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear genres" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() => expect(releaseReads).toBeGreaterThan(1));
+  await waitFor(() =>
+    expect(preview).not.toHaveAttribute("data-refresh-token", initialToken),
+  );
+  resolveReleaseRefresh(
+    HttpResponse.json({ detail: "detail refresh failed" }, { status: 500 }),
+  );
+  expect(screen.getByTestId("publication-preview")).not.toHaveAttribute(
+    "data-refresh-token",
+    initialToken,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "detail refresh failed",
+  );
 });
 
 it("replaces the release-detail publication summary with refreshed position state", async () => {

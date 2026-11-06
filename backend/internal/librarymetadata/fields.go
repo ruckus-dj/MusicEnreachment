@@ -13,6 +13,7 @@ const (
 	ScopeRecording Scope = "recording"
 	ScopeTrack     Scope = "track"
 	ScopePosition  Scope = "position"
+	ScopeArtist    Scope = "artist"
 )
 
 // ValueType describes the JSON representation accepted for a field.
@@ -32,6 +33,7 @@ const (
 	TypeUUID         ValueType = "uuid"
 	TypeUUIDList     ValueType = "uuid_list"
 	TypeAdvisory     ValueType = "content_advisory"
+	TypeGenreList    ValueType = "genre_reference_list"
 )
 
 // FieldDefinition is the stable registry contract for one local metadata field.
@@ -73,7 +75,7 @@ var fieldDefinitions = []FieldDefinition{
 	{Name: "movement", Type: TypeMovement, Scopes: []Scope{ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "compilation", Type: TypeBoolean, Scopes: []Scope{ScopeRelease}},
 	{Name: "content_advisory", Type: TypeAdvisory, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
-	{Name: "genre", Type: TypeStringList, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
+	{Name: "genre", Type: TypeGenreList, Scopes: []Scope{ScopeArtist, ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "mood", Type: TypeStringList, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "grouping", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "comment", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
@@ -122,7 +124,7 @@ func Field(name string) (FieldDefinition, bool) {
 
 func validScope(scope Scope) bool {
 	switch scope {
-	case ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition:
+	case ScopeArtist, ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition:
 		return true
 	default:
 		return false

@@ -53,6 +53,12 @@ that window's `HTMLDialogElement`, not another realm's constructor. Shared test
 helpers import Vitest assertions explicitly; query the path editor as a textbox
 because its navigation landmark also has a path label.
 
+**Independent metadata editors**: Scope Escape handling to the focused editor;
+one editor must not cancel sibling drafts through a window-level listener.
+Invalidate publication previews immediately after a successful metadata mutation,
+not after a fallible detail reread. Refresh tokens must preserve pending or
+uncertain admission fences; never key-remount a publication controller to refresh it.
+
 **Local-time assertions**: UI timestamps use the browser's time zone. Test the
 original `<time datetime>` instant and derive expected display text with the
 same locale/options in the test environment; do not hard-code the developer's

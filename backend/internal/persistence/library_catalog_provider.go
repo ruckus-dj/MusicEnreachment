@@ -15,8 +15,10 @@ import (
 const libraryCatalogMusicBrainzEndpoint = "https://musicbrainz.org/ws/2"
 
 type catalogProviderSource struct {
-	ID         uuid.UUID `bun:"id,type:uuid"`
-	ProviderID uuid.UUID `bun:"provider_id,type:uuid"`
+	ID                    uuid.UUID `bun:"id,type:uuid"`
+	ProviderID            uuid.UUID `bun:"provider_id,type:uuid"`
+	Endpoint              string    `bun:"endpoint"`
+	ConfigurationIdentity string    `bun:"configuration_identity"`
 }
 
 // enrichLibraryCatalogReleaseProvider reads only the configured MusicBrainz
@@ -163,7 +165,7 @@ func catalogMusicBrainzSource(ctx context.Context, tx bun.Tx) (catalogProviderSo
 		return catalogProviderSource{}, false, nil
 	}
 	var source catalogProviderSource
-	err := tx.NewRaw(`SELECT source.id,source.provider_id FROM provider_source source JOIN provider ON provider.id=source.provider_id
+	err := tx.NewRaw(`SELECT source.id,source.provider_id,source.endpoint,source.configuration_identity FROM provider_source source JOIN provider ON provider.id=source.provider_id
 		WHERE provider.code='musicbrainz' AND source.endpoint=? AND source.configuration_identity=?`, strings.TrimSuffix(endpoint, "/"), config.Identity).Scan(ctx, &source)
 	if err == sql.ErrNoRows {
 		return catalogProviderSource{}, false, nil

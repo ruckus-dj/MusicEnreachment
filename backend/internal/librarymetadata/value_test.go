@@ -9,7 +9,7 @@ import (
 func TestDecodeEnvelopeValidatesReleaseValuesAndPreservesEmptyFalseAndDates(t *testing.T) {
 	data := `{"version":1,"scope":"release","desired":{
 		"title":{"state":"value","value":"","authority":"manual","provenance":{"kind":"manual"}},
-		"genre":{"state":"value","value":[],"authority":"automatic","provenance":{"kind":"provider"}},
+		"genre":{"state":"explicit_empty","authority":"manual","provenance":{"kind":"manual"}},
 		"compilation":{"state":"value","value":false,"authority":"automatic","provenance":{"kind":"source_metadata","source_field":"COMPILATION"}},
 		"release_date":{"state":"value","value":"2024-02-29","authority":"automatic","provenance":{"kind":"provider"}},
 		"comment":{"state":"explicit_empty","authority":"manual","provenance":{"kind":"manual"}},
@@ -25,8 +25,8 @@ func TestDecodeEnvelopeValidatesReleaseValuesAndPreservesEmptyFalseAndDates(t *t
 	if envelope.Desired["compilation"].Value != false {
 		t.Fatalf("false boolean value was not preserved: %#v", envelope.Desired["compilation"])
 	}
-	if envelope.Desired["genre"].Value == nil {
-		t.Fatal("empty list value was not preserved")
+	if envelope.Desired["genre"].Value != nil || envelope.Desired["genre"].State != StateExplicitEmpty {
+		t.Fatalf("explicit empty genre was not represented distinctly: %#v", envelope.Desired["genre"])
 	}
 	if envelope.Desired["release_date"].Value != "2024-02-29" {
 		t.Fatalf("release date value was not preserved: %#v", envelope.Desired["release_date"])
@@ -42,7 +42,7 @@ func TestDecodeEnvelopeValidatesReleaseValuesAndPreservesEmptyFalseAndDates(t *t
 func TestDecodeEnvelopeValidatesPositionValuesAndPreservesEmptyAndFalse(t *testing.T) {
 	data := `{"version":1,"scope":"position","desired":{
 		"title":{"state":"value","value":"","authority":"manual","provenance":{"kind":"manual"}},
-		"genre":{"state":"value","value":[],"authority":"automatic","provenance":{"kind":"provider"}},
+		"genre":{"state":"explicit_empty","authority":"manual","provenance":{"kind":"manual"}},
 		"bpm":{"state":"value","value":120.5,"authority":"automatic","provenance":{"kind":"provider"}},
 		"track_number":{"state":"value","value":1,"authority":"manual","provenance":{"kind":"manual"}},
 		"comment":{"state":"explicit_empty","authority":"manual","provenance":{"kind":"manual"}},
@@ -55,8 +55,8 @@ func TestDecodeEnvelopeValidatesPositionValuesAndPreservesEmptyAndFalse(t *testi
 	if envelope.Desired["title"].Value != "" {
 		t.Fatalf("empty string value was not preserved: %#v", envelope.Desired["title"])
 	}
-	if envelope.Desired["genre"].Value == nil {
-		t.Fatal("empty list value was not preserved")
+	if envelope.Desired["genre"].Value != nil || envelope.Desired["genre"].State != StateExplicitEmpty {
+		t.Fatalf("explicit empty genre was not represented distinctly: %#v", envelope.Desired["genre"])
 	}
 	if envelope.Desired["track_number"].Value == nil {
 		t.Fatal("position integer value was not preserved")
@@ -122,7 +122,10 @@ func TestFieldValueRejectsInvalidStatesAuthorityAndTypes(t *testing.T) {
 		{"bad authority", "title", `{"state":"absent","authority":"maybe","provenance":{"kind":"provider"}}`, "unknown metadata authority"},
 		{"unknown provenance", "title", `{"state":"absent","authority":"manual","provenance":{"kind":"unverified"}}`, "unknown metadata provenance"},
 		{"bad string type", "title", `{"state":"value","value":12,"authority":"manual","provenance":{"kind":"manual"}}`, "must be a string"},
-		{"bad list type", "genre", `{"state":"value","value":["ok",false],"authority":"automatic","provenance":{"kind":"provider"}}`, "list entries must be strings"},
+		{"bad genre list type", "genre", `{"state":"value","value":["ok"],"authority":"automatic","provenance":{"kind":"provider"}}`, "list entry"},
+		{"empty genre value list", "genre", `{"state":"value","value":[],"authority":"manual","provenance":{"kind":"manual"}}`, "non-empty genre reference list"},
+		{"genre missing source name", "genre", `{"state":"value","value":[{"id":"11111111-1111-4111-8111-111111111111","name":"Rock"}],"authority":"automatic","provenance":{"kind":"provider"}}`, "source_name"},
+		{"genre invalid MBID", "genre", `{"state":"value","value":[{"id":"not-an-mbid","source_name":"rock","name":"Rock"}],"authority":"automatic","provenance":{"kind":"provider"}}`, "genre id"},
 		{"bad bpm", "bpm", `{"state":"value","value":0,"authority":"automatic","provenance":{"kind":"provider"}}`, "positive finite number"},
 		{"bad integer", "track_number", `{"state":"value","value":1.5,"authority":"manual","provenance":{"kind":"manual"}}`, "positive integer"},
 		{"bad UUID", "artist_credit", `{"state":"value","value":[{"artist_id":"not-a-uuid","artist_name":"A","credit_name":"A","join_phrase":""}],"authority":"automatic","provenance":{"kind":"provider"}}`, "artist_id must be a uuid"},
@@ -197,6 +200,13 @@ func TestFieldRegistryIsStableAndProtectsCanonicalFields(t *testing.T) {
 			t.Errorf("Field(%q) = %#v, %v; want canonical field", name, definition, ok)
 		}
 	}
+	genre, ok := Field("genre")
+	if !ok || genre.Type != TypeGenreList || !containsScope(genre.Scopes, ScopeArtist) {
+		t.Fatalf("genre field = %#v, %v; want typed genre references including artist scope", genre, ok)
+	}
+	if _, err := DecodeEnvelope([]byte(`{"version":1,"scope":"artist","desired":{"comment":{"state":"value","value":"not registered for artists","authority":"manual","provenance":{"kind":"manual"}}}}`)); err == nil {
+		t.Fatal("artist scope accepted a non-genre field")
+	}
 	fields[0].Scopes[0] = "corrupted"
 	definition, _ := Field("title")
 	if !containsScope(definition.Scopes, ScopeRelease) {
@@ -224,7 +234,7 @@ func TestDecodeEnvelopeRejectsUntrustedMetadataClaimsAndTrailingDocuments(t *tes
 }
 
 func TestManualAuthorityPreservesProviderValueProvenance(t *testing.T) {
-	envelope, err := DecodeEnvelope([]byte(`{"version":1,"scope":"release","desired":{"genre":{"state":"value","value":["Jazz"],"authority":"manual","provenance":{"kind":"provider","reference":"accepted-field"}}}}`))
+	envelope, err := DecodeEnvelope([]byte(`{"version":1,"scope":"release","desired":{"genre":{"state":"value","value":[{"id":"11111111-1111-4111-8111-111111111111","source_name":"Jazz","name":"Jazz"}],"authority":"manual","provenance":{"kind":"provider","reference":"accepted-field"}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

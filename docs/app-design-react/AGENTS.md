@@ -92,6 +92,10 @@ unavailable.
 - Preserve position title overrides when editing a shared recording, including
   legacy fixtures without explicit override slots. Test projection as well as
   state: recording metadata must not overwrite the position's publication title.
+- Genre scope resolution must include each scope's explicit override before
+  considering fallback; a later generic tag merge must not overwrite the winner.
+  Test `applyMetadataPreview` as well as `desiredTags`: correct projected values
+  do not prove that scope validation permits the publication.
 - Display credits include join phrases; plural name/ID lists remain aligned.
   Navidrome advisory values are `1`/`4` for explicit and `2` for clean, not
   booleans. Work MBIDs require UUID validation despite their grouped editor kind.

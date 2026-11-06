@@ -202,6 +202,18 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 			projectStructuredDesired(tags, fields, scope, name, value.Value)
 			continue
 		}
+		if name == "genre" {
+			values, ok := genreTagValues(value.Value)
+			if !ok {
+				fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+				continue
+			}
+			for _, key := range keys {
+				tags[key] = values
+			}
+			fields[string(scope)+"."+name] = TagFieldResult{Status: "represented"}
+			continue
+		}
 		values, ok := normalizedTagValues(name, value.Value)
 		if !ok {
 			fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
@@ -212,6 +224,25 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 		}
 		fields[string(scope)+"."+name] = TagFieldResult{Status: "represented"}
 	}
+}
+
+func genreTagValues(value any) ([]string, bool) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	var genres []librarymetadata.GenreReference
+	if err := json.Unmarshal(encoded, &genres); err != nil {
+		return nil, false
+	}
+	values := make([]string, 0, len(genres))
+	for _, genre := range genres {
+		if strings.TrimSpace(genre.Name) == "" {
+			return nil, false
+		}
+		values = append(values, genre.Name)
+	}
+	return values, true
 }
 
 func projectStructuredDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, field string, value any) {

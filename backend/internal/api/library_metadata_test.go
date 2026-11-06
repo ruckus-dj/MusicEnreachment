@@ -20,6 +20,7 @@ type libraryMetadataRepositoryFixture struct {
 	readErr   error
 	updateErr error
 	updated   librarymetadata.Envelope
+	genres    []librarymetadata.GenreReference
 }
 
 func (fixture *libraryMetadataRepositoryFixture) ReadMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID) (persistence.LibraryMetadata, error) {
@@ -34,6 +35,10 @@ func (fixture *libraryMetadataRepositoryFixture) UpdateMetadata(_ context.Contex
 	return persistence.LibraryMetadata{Envelope: envelope, Revision: expected + 1}, nil
 }
 
+func (fixture *libraryMetadataRepositoryFixture) GenreCatalogItems(context.Context) ([]librarymetadata.GenreReference, error) {
+	return fixture.genres, nil
+}
+
 func libraryMetadataSeed(scope librarymetadata.Scope) persistence.LibraryMetadata {
 	return persistence.LibraryMetadata{Revision: 7, Envelope: librarymetadata.Envelope{
 		Version: librarymetadata.EnvelopeVersion, Scope: scope,
@@ -41,6 +46,96 @@ func libraryMetadataSeed(scope librarymetadata.Scope) persistence.LibraryMetadat
 			"comment": librarymetadata.ManualFieldValue(librarymetadata.StateValue, "stored", true),
 		},
 	}}
+}
+
+func TestLibraryMetadataHTTPCanonicalizesGenreByCatalogID(t *testing.T) {
+	id := uuid.New()
+	genreID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	repository := &libraryMetadataRepositoryFixture{
+		read:   libraryMetadataSeed(librarymetadata.ScopeRelease),
+		genres: []librarymetadata.GenreReference{{ID: genreID.String(), SourceName: "post-punk", Name: "Post-Punk"}},
+	}
+	handler := HandlerWithDependencies(Dependencies{LibraryMetadata: service.NewLibraryMetadataService(repository)})
+	path := "/library/releases/" + id.String() + "/metadata"
+	body := `{"expected_revision":7,"changes":{"genre":{"state":"value","value":[{"id":"22222222-2222-4222-8222-222222222222","source_name":"forged","name":"Forged"}]}}}`
+	response := libraryMetadataRequest(t, handler, http.MethodPatch, path, body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d: %s", response.Code, response.Body)
+	}
+	var result struct {
+		Envelope librarymetadata.Envelope `json:"envelope"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	genres, ok := result.Envelope.Desired["genre"].Value.([]any)
+	if !ok || len(genres) != 1 {
+		t.Fatalf("response genres = %#v", result.Envelope.Desired["genre"].Value)
+	}
+	var genre librarymetadata.GenreReference
+	encoded, err := json.Marshal(genres[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded, &genre); err != nil {
+		t.Fatal(err)
+	}
+	if genre != (librarymetadata.GenreReference{ID: "22222222-2222-4222-8222-222222222222", SourceName: "post-punk", Name: "Post-Punk"}) {
+		t.Fatalf("response genre = %#v, want catalog-canonical names", genre)
+	}
+	persisted, ok := repository.updated.Desired["genre"].Value.([]librarymetadata.GenreReference)
+	if !ok || len(persisted) != 1 || persisted[0] != (librarymetadata.GenreReference{ID: "22222222-2222-4222-8222-222222222222", SourceName: "post-punk", Name: "Post-Punk"}) {
+		t.Fatalf("persisted genre = %#v, want canonical catalog identity and names", repository.updated.Desired["genre"].Value)
+	}
+}
+
+func TestLibraryArtistMetadataHTTPUsesOptimisticGenreEnvelope(t *testing.T) {
+	artistID := uuid.New()
+	genreID := uuid.MustParse("44444444-4444-4444-8444-444444444444")
+	repository := &libraryMetadataRepositoryFixture{
+		read: persistence.LibraryMetadata{Revision: 3, Envelope: librarymetadata.Envelope{
+			Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeArtist, Desired: map[string]librarymetadata.FieldValue{},
+		}},
+		genres: []librarymetadata.GenreReference{{ID: genreID.String(), SourceName: "art rock", Name: "Art Rock"}},
+	}
+	handler := HandlerWithDependencies(Dependencies{LibraryMetadata: service.NewLibraryMetadataService(repository)})
+	path := "/library/artists/" + artistID.String() + "/metadata"
+	response := libraryMetadataRequest(t, handler, http.MethodGet, path, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET status = %d: %s", response.Code, response.Body)
+	}
+	var got struct {
+		Envelope librarymetadata.Envelope `json:"envelope"`
+		Revision int64                    `json:"revision"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Envelope.Scope != librarymetadata.ScopeArtist || got.Revision != 3 {
+		t.Fatalf("GET response = %+v", got)
+	}
+	body := `{"expected_revision":3,"changes":{"genre":{"state":"value","value":[{"id":"44444444-4444-4444-8444-444444444444","source_name":"fake","name":"fake"}]}}}`
+	response = libraryMetadataRequest(t, handler, http.MethodPatch, path, body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d: %s", response.Code, response.Body)
+	}
+	if repository.updated.Scope != librarymetadata.ScopeArtist || repository.updated.Desired["genre"].State != librarymetadata.StateValue {
+		t.Fatalf("persisted artist envelope = %#v", repository.updated)
+	}
+}
+
+func TestLibraryMetadataHTTPRejectsUnknownGenreID(t *testing.T) {
+	id := uuid.New()
+	repository := &libraryMetadataRepositoryFixture{read: libraryMetadataSeed(librarymetadata.ScopeRelease)}
+	handler := HandlerWithDependencies(Dependencies{LibraryMetadata: service.NewLibraryMetadataService(repository)})
+	body := `{"expected_revision":7,"changes":{"genre":{"state":"value","value":[{"id":"33333333-3333-4333-8333-333333333333","source_name":"rock","name":"Rock"}]}}}`
+	response := libraryMetadataRequest(t, handler, http.MethodPatch, "/library/releases/"+id.String()+"/metadata", body)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body)
+	}
+	if repository.updated.Version != 0 {
+		t.Fatalf("unknown genre was persisted: %#v", repository.updated)
+	}
 }
 
 func libraryMetadataRequest(t *testing.T, handler http.Handler, method, path, body string) *httptest.ResponseRecorder {

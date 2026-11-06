@@ -41,6 +41,8 @@ name (`synced_lyrics` belongs to a position). Requests carry only `state`/`value
 manual authority/provenance are server-owned response fields. Serialize request
 bodies with `json.Marshal`, especially lyrics containing CR/LF, and verify the
 real handler/service/repository path rather than relying only on MSW fixtures.
+Compare decoded genre-reference fields semantically. Marshaling an `any`-decoded
+map sorts JSON keys and is not equivalent to marshaling the source DTO's fields.
 
 **Health endpoints**: /health/live (liveness, always 200 if running) and /health/ready (readiness, checks DB connection).
 

@@ -17,8 +17,9 @@ type PublicationProviderTagProtection struct {
 	ManualAbsentFields []string
 }
 
-// BuildPublicationProviderTagProtection collects the normalized tag footprints
-// of all local manual authority, including fields explicitly marked absent.
+// BuildPublicationProviderTagProtection collects normalized tag footprints of
+// local manual authority, including fields explicitly marked absent. Genre is
+// excluded because its precedence is resolved by entity scope in the projection.
 func BuildPublicationProviderTagProtection(context *PublicationProviderTagContext) (PublicationProviderTagProtection, error) {
 	result := PublicationProviderTagProtection{Keys: []string{}, ManualAbsentFields: []string{}}
 	if context == nil {
@@ -40,6 +41,12 @@ func BuildPublicationProviderTagProtection(context *PublicationProviderTagContex
 		}
 		for field, value := range envelope.Desired {
 			if value.Authority != librarymetadata.AuthorityManual {
+				continue
+			}
+			// Genre is resolved by entity scope before building the provider
+			// patch. Treating its manual-absent state as generic tag protection
+			// would suppress accepted provider genres and fallback indefinitely.
+			if field == "genre" {
 				continue
 			}
 			if value.State == librarymetadata.StateAbsent {

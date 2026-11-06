@@ -1,4 +1,4 @@
-package service
+package librarymetadata
 
 import (
 	"strings"
@@ -8,13 +8,21 @@ import (
 	"golang.org/x/text/language"
 )
 
+// GenreReference identifies a MusicBrainz genre and retains its source and
+// readable display names.
+type GenreReference struct {
+	ID         string `json:"id"`
+	SourceName string `json:"source_name"`
+	Name       string `json:"name"`
+}
+
 var protectedGenreAcronyms = map[string]string{
 	"edm": "EDM", "idm": "IDM", "ebm": "EBM", "uk": "UK", "us": "US",
 	"aor": "AOR", "nwobhm": "NWOBHM", "nrg": "NRG",
 }
 
-// NormalizeGenreName mirrors the conservative display casing in the design
-// prototype. Separators and apostrophes are preserved; only word casing changes.
+// NormalizeGenreName applies conservative display casing without rewriting
+// separators or inferring genre aliases.
 func NormalizeGenreName(raw string) string {
 	runes := []rune(raw)
 	var normalized strings.Builder

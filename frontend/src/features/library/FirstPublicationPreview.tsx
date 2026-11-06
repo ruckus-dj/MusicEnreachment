@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getLibraryFirstPublicationPreview,
   startLibraryFirstPublication,
@@ -37,11 +37,13 @@ function responseError(data: { detail?: string }, status: number) {
 export function FirstPublicationPreview({
   releaseId,
   positionId,
+  refreshToken,
   onAdmitted,
   onRefresh,
 }: {
   releaseId: string;
   positionId: string;
+  refreshToken?: number | string;
   onAdmitted: (operationID: string) => void;
   onRefresh: () => void;
 }) {
@@ -59,6 +61,9 @@ export function FirstPublicationPreview({
   const [error, setError] = useState("");
   const [admittedOperationID, setAdmittedOperationID] = useState("");
   const [admissionUncertain, setAdmissionUncertain] = useState(false);
+  const confirmationPending = useRef(false);
+  const admissionLocked = useRef(false);
+  const previousRefreshToken = useRef(refreshToken);
   const mounted = useRef(false);
   const requestSequence = useRef(0);
   const currentIdentity = useRef({
@@ -88,82 +93,130 @@ export function FirstPublicationPreview({
     setError("");
     setAdmittedOperationID("");
     setAdmissionUncertain(false);
+    confirmationPending.current = false;
+    admissionLocked.current = false;
     return () => {
       mounted.current = false;
       requestSequence.current += 1;
     };
   }, [releaseId, positionId]);
 
-  function isCurrentRequest(
-    request: number,
-    requestIdentity: {
-      releaseId: string;
-      positionId: string;
-      choiceKey: string;
+  const isCurrentRequest = useCallback(
+    (
+      request: number,
+      requestIdentity: {
+        releaseId: string;
+        positionId: string;
+        choiceKey: string;
+      },
+    ) => {
+      return (
+        mounted.current &&
+        requestSequence.current === request &&
+        currentIdentity.current.releaseId === requestIdentity.releaseId &&
+        currentIdentity.current.positionId === requestIdentity.positionId &&
+        currentIdentity.current.choiceKey === requestIdentity.choiceKey
+      );
     },
-  ) {
-    return (
-      mounted.current &&
-      requestSequence.current === request &&
-      currentIdentity.current.releaseId === requestIdentity.releaseId &&
-      currentIdentity.current.positionId === requestIdentity.positionId &&
-      currentIdentity.current.choiceKey === requestIdentity.choiceKey
-    );
-  }
+    [],
+  );
 
-  async function loadPreview(choice: SourceChoice | null = selectedChoice) {
-    const request = ++requestSequence.current;
-    const requestIdentity = {
-      releaseId,
-      positionId,
-      choiceKey: choiceKey(choice),
-    };
-    currentIdentity.current = requestIdentity;
-    setLoading(true);
-    setError("");
-    setPreview(undefined);
-    setPreviewChoiceKey("");
-    try {
-      const response = await getLibraryFirstPublicationPreview(
+  const loadPreview = useCallback(
+    async (choice: SourceChoice | null) => {
+      const request = ++requestSequence.current;
+      const requestIdentity = {
         releaseId,
         positionId,
-        choice
-          ? {
-              location_id: choice.location_id,
-              media_variant_id: choice.media_variant_id,
-              stream_index: String(choice.stream_index),
-            }
-          : undefined,
-        { cache: "no-store" },
-      );
-      if (!isCurrentRequest(request, requestIdentity)) return;
-      if (response.status !== 200) {
-        setError(
-          response.status === 409 && choice
-            ? "Выбранный источник больше недоступен. Выберите источник заново и запросите новый предпросмотр."
-            : response.status === 409
-              ? "Снимок устарел. Обновите данные релиза и запросите новый предпросмотр."
-              : responseError(response.data, response.status),
+        choiceKey: choiceKey(choice),
+      };
+      currentIdentity.current = requestIdentity;
+      setLoading(true);
+      setError("");
+      setPreview(undefined);
+      setPreviewChoiceKey("");
+      try {
+        const response = await getLibraryFirstPublicationPreview(
+          releaseId,
+          positionId,
+          choice
+            ? {
+                location_id: choice.location_id,
+                media_variant_id: choice.media_variant_id,
+                stream_index: String(choice.stream_index),
+              }
+            : undefined,
+          { cache: "no-store" },
         );
-        return;
+        if (!isCurrentRequest(request, requestIdentity)) return;
+        if (response.status !== 200) {
+          setError(
+            response.status === 409 && choice
+              ? "Выбранный источник больше недоступен. Выберите источник заново и запросите новый предпросмотр."
+              : response.status === 409
+                ? "Снимок устарел. Обновите данные релиза и запросите новый предпросмотр."
+                : responseError(response.data, response.status),
+          );
+          return;
+        }
+        setPreview(response.data);
+        setSourceCandidates(response.data.source_candidates ?? []);
+        setPreviewChoiceKey(requestIdentity.choiceKey);
+      } catch (reason) {
+        if (!isCurrentRequest(request, requestIdentity)) return;
+        setError(
+          reason instanceof Error && reason.message
+            ? reason.message
+            : "Не удалось загрузить предпросмотр. Проверьте соединение и повторите запрос.",
+        );
+      } finally {
+        if (isCurrentRequest(request, requestIdentity)) setLoading(false);
       }
-      setPreview(response.data);
-      setSourceCandidates(response.data.source_candidates ?? []);
-      setPreviewChoiceKey(requestIdentity.choiceKey);
-    } catch (reason) {
-      if (!isCurrentRequest(request, requestIdentity)) return;
-      setError(
-        reason instanceof Error && reason.message
-          ? reason.message
-          : "Не удалось загрузить предпросмотр. Проверьте соединение и повторите запрос.",
-      );
-    } finally {
-      if (isCurrentRequest(request, requestIdentity)) setLoading(false);
-    }
-  }
+    },
+    [releaseId, positionId, isCurrentRequest],
+  );
+
+  useEffect(() => {
+    if (Object.is(previousRefreshToken.current, refreshToken)) return;
+    previousRefreshToken.current = refreshToken;
+    // A submitted admission is frozen at its captured digest. Never invalidate
+    // its request sequence or reset the uncertainty/admission fence.
+    if (
+      confirmationPending.current ||
+      admissionLocked.current ||
+      confirming ||
+      admissionUncertain ||
+      admittedOperationID
+    )
+      return;
+    const hadPreviewRequest = loading || Boolean(preview);
+    const choice = selectedChoice;
+    ++requestSequence.current;
+    setPreview(undefined);
+    setSourceCandidates([]);
+    setPreviewChoiceKey("");
+    setLoading(false);
+    setError("");
+    if (hadPreviewRequest) void loadPreview(choice);
+  }, [
+    refreshToken,
+    confirming,
+    admissionUncertain,
+    admittedOperationID,
+    loading,
+    preview,
+    selectedChoice,
+    loadPreview,
+  ]);
 
   function changeChoice(choice: SourceChoice | null) {
-    if (confirming || admissionUncertain || admittedOperationID) return;
+    if (
+      confirmationPending.current ||
+      admissionLocked.current ||
+      confirming ||
+      admissionUncertain ||
+      admittedOperationID
+    )
+      return;
     const nextKey = choiceKey(choice);
     ++requestSequence.current;
     currentIdentity.current = { releaseId, positionId, choiceKey: nextKey };
@@ -178,7 +231,15 @@ export function FirstPublicationPreview({
   }
 
   async function confirmPreview() {
-    if (!preview || !canConfirm || confirming || admissionUncertain) return;
+    if (
+      !preview ||
+      !canConfirm ||
+      confirmationPending.current ||
+      admissionLocked.current ||
+      confirming ||
+      admissionUncertain
+    )
+      return;
     const request = ++requestSequence.current;
     const confirmedChoice = selectedChoice;
     const requestIdentity = {
@@ -188,6 +249,7 @@ export function FirstPublicationPreview({
     };
     const confirmedPreview = preview;
     if (previewChoiceKey !== requestIdentity.choiceKey) return;
+    confirmationPending.current = true;
     setConfirming(true);
     setError("");
     try {
@@ -209,12 +271,14 @@ export function FirstPublicationPreview({
       );
       if (!isCurrentRequest(request, requestIdentity)) return;
       if (response.status === 202) {
+        admissionLocked.current = true;
         setAdmittedOperationID(response.data.id);
         setPreview(undefined);
         onAdmitted(response.data.id);
         return;
       }
       if (response.status === 409) {
+        admissionLocked.current = false;
         setPreview(undefined);
         setError(
           confirmedChoice
@@ -224,17 +288,20 @@ export function FirstPublicationPreview({
         onRefresh();
         return;
       }
+      admissionLocked.current = true;
       setAdmissionUncertain(true);
       setError(
         `${responseError(response.data, response.status)} Результат запуска неизвестен. Обновите состояние; повторное подтверждение отключено.`,
       );
     } catch (reason) {
       if (!isCurrentRequest(request, requestIdentity)) return;
+      admissionLocked.current = true;
       setAdmissionUncertain(true);
       setError(
         `${reason instanceof Error && reason.message ? reason.message : "Не удалось подтвердить предпросмотр."} Результат запуска неизвестен. Обновите состояние; повторное подтверждение отключено.`,
       );
     } finally {
+      confirmationPending.current = false;
       if (isCurrentRequest(request, requestIdentity)) setConfirming(false);
     }
   }
@@ -274,9 +341,11 @@ export function FirstPublicationPreview({
           loading ||
           confirming ||
           Boolean(admittedOperationID) ||
-          admissionUncertain
+          admissionUncertain ||
+          confirmationPending.current ||
+          admissionLocked.current
         }
-        onClick={() => void loadPreview()}
+        onClick={() => void loadPreview(selectedChoice)}
       >
         {loading ? "Загрузка предпросмотра…" : "Предпросмотр публикации"}
       </button>
@@ -285,7 +354,11 @@ export function FirstPublicationPreview({
         <fieldset
           className="space-y-2"
           disabled={
-            confirming || admissionUncertain || Boolean(admittedOperationID)
+            confirming ||
+            admissionUncertain ||
+            Boolean(admittedOperationID) ||
+            confirmationPending.current ||
+            admissionLocked.current
           }
         >
           <legend className="font-medium">
@@ -408,7 +481,13 @@ export function FirstPublicationPreview({
           </p>
           <button
             type="button"
-            disabled={!canConfirm || confirming || admissionUncertain}
+            disabled={
+              !canConfirm ||
+              confirming ||
+              admissionUncertain ||
+              confirmationPending.current ||
+              admissionLocked.current
+            }
             onClick={() => void confirmPreview()}
           >
             {confirming ? "Проверка и запуск…" : "Опубликовать"}

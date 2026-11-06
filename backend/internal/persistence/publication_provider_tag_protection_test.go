@@ -35,6 +35,12 @@ func TestCurrentPublicationProviderTagProtection(t *testing.T) {
 			wantAbsent: []string{"title"},
 		},
 		{
+			name:       "manual absent genre does not protect provider genre",
+			position:   `{"local_metadata":{"version":1,"scope":"position","desired":{"genre":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}},"title":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`,
+			wantKeys:   []string{"TITLE"},
+			wantAbsent: []string{"title"},
+		},
+		{
 			name:     "position manual title protects position footprint",
 			position: `{"local_metadata":{"version":1,"scope":"position","desired":{"title":{"state":"value","value":"local","authority":"manual","provenance":{"kind":"manual"}}}}}`,
 			wantKeys: []string{"TITLE"},

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 )
 
@@ -148,14 +149,14 @@ func TestNormalizeGenreNamePreservesEnglishAcronyms(t *testing.T) {
 		{"edm idm ebm uk us aor nwobhm nrg", "EDM IDM EBM UK US AOR NWOBHM NRG"},
 		{"UK garage & drum'n'bass", "UK Garage & Drum'n'bass"},
 	} {
-		if got := service.NormalizeGenreName(tc.raw); got != tc.want {
+		if got := librarymetadata.NormalizeGenreName(tc.raw); got != tc.want {
 			t.Errorf("NormalizeGenreName(%q) = %q, want %q", tc.raw, got, tc.want)
 		}
 	}
 }
 
 func TestNormalizeGenreNameUsesFullEnglishUnicodeCasing(t *testing.T) {
-	if got, want := service.NormalizeGenreName("ßOUND Aİ"), "SSound Ai\u0307"; got != want {
+	if got, want := librarymetadata.NormalizeGenreName("ßOUND Aİ"), "SSound Ai\u0307"; got != want {
 		t.Errorf("NormalizeGenreName Unicode = %q, want %q", got, want)
 	}
 }

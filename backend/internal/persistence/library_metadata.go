@@ -22,22 +22,31 @@ type LibraryMetadata struct {
 	Revision int64
 }
 
+// GenreCatalogItems returns the persisted MusicBrainz catalog used to validate
+// manual genre selections.
+func (repository *LibraryRepository) GenreCatalogItems(ctx context.Context) ([]librarymetadata.GenreReference, error) {
+	return readGenreCatalogItems(ctx, repository.db)
+}
+
 type metadataOwner struct {
 	table     string
 	updatedAt bool
 	where     string
+	revision  string
 }
 
 func metadataOwnerForScope(scope librarymetadata.Scope) (metadataOwner, bool) {
 	switch scope {
 	case librarymetadata.ScopeRelease:
-		return metadataOwner{table: "local_release", updatedAt: true, where: "id=?"}, true
+		return metadataOwner{table: "local_release", updatedAt: true, where: "id=?", revision: "metadata_revision"}, true
 	case librarymetadata.ScopeRecording:
-		return metadataOwner{table: "local_recording", updatedAt: true, where: "id=?"}, true
+		return metadataOwner{table: "local_recording", updatedAt: true, where: "id=?", revision: "metadata_revision"}, true
 	case librarymetadata.ScopeTrack:
-		return metadataOwner{table: "local_track", updatedAt: true, where: "id=?"}, true
+		return metadataOwner{table: "local_track", updatedAt: true, where: "id=?", revision: "metadata_revision"}, true
 	case librarymetadata.ScopePosition:
-		return metadataOwner{table: "release_track", where: "id=? AND release_id=?"}, true
+		return metadataOwner{table: "release_track", where: "id=? AND release_id=?", revision: "metadata_revision"}, true
+	case librarymetadata.ScopeArtist:
+		return metadataOwner{table: "local_artist", updatedAt: true, where: "id=?", revision: "metadata_revision"}, true
 	default:
 		return metadataOwner{}, false
 	}
@@ -57,6 +66,8 @@ func (repository *LibraryRepository) ReadMetadata(ctx context.Context, scope lib
 		query, args = `SELECT metadata,metadata_revision FROM local_track WHERE id=?`, []any{ownerID}
 	case librarymetadata.ScopePosition:
 		query, args = `SELECT metadata,metadata_revision FROM release_track WHERE id=? AND release_id=?`, []any{ownerID, releaseID}
+	case librarymetadata.ScopeArtist:
+		query, args = `SELECT metadata,metadata_revision FROM local_artist WHERE id=?`, []any{ownerID}
 	default:
 		return LibraryMetadata{}, fmt.Errorf("read library metadata: unknown scope %q", scope)
 	}
@@ -111,6 +122,8 @@ func (repository *LibraryRepository) UpdateMetadata(ctx context.Context, scope l
 			query, args = `SELECT metadata,metadata_revision FROM local_track WHERE id=? FOR UPDATE`, []any{ownerID}
 		case librarymetadata.ScopePosition:
 			query, args = `SELECT metadata,metadata_revision FROM release_track WHERE id=? AND release_id=? FOR UPDATE`, []any{ownerID, releaseID}
+		case librarymetadata.ScopeArtist:
+			query, args = `SELECT metadata,metadata_revision FROM local_artist WHERE id=? FOR UPDATE`, []any{ownerID}
 		default:
 			return fmt.Errorf("update library metadata: unknown scope %q", scope)
 		}
@@ -126,7 +139,7 @@ func (repository *LibraryRepository) UpdateMetadata(ctx context.Context, scope l
 		if !ok {
 			return fmt.Errorf("update library metadata: unknown scope %q", scope)
 		}
-		set := `metadata=jsonb_set(COALESCE(metadata,'{}'::jsonb),'{local_metadata}',?::jsonb,true),metadata_revision=metadata_revision+1`
+		set := `metadata=jsonb_set(COALESCE(metadata,'{}'::jsonb),'{local_metadata}',?::jsonb,true),` + owner.revision + `=` + owner.revision + `+1`
 		if owner.updatedAt {
 			set += `,updated_at=now()`
 		}
@@ -134,7 +147,7 @@ func (repository *LibraryRepository) UpdateMetadata(ctx context.Context, scope l
 		if scope == librarymetadata.ScopePosition {
 			args = append(args, releaseID)
 		}
-		if err := tx.NewRaw(`UPDATE `+owner.table+` SET `+set+` WHERE `+owner.where+` RETURNING metadata_revision`, args...).Scan(ctx, &result.Revision); err != nil {
+		if err := tx.NewRaw(`UPDATE `+owner.table+` SET `+set+` WHERE `+owner.where+` RETURNING `+owner.revision, args...).Scan(ctx, &result.Revision); err != nil {
 			return err
 		}
 		result.Envelope = envelope

@@ -2,6 +2,8 @@ package persistence
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -57,11 +59,12 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 			return nil, err
 		}
 	}
-	if hasProviderFieldEvidence(context.Release.FieldEvidence, "genres") {
-		values.Genres, err = acceptedReleaseGenres(releaseFields["genres"])
-		if err != nil {
-			return nil, err
-		}
+	genreReferences, explicitEmptyGenre, err := resolvePublicationTagGenres(context, releaseFields)
+	if err != nil {
+		return nil, err
+	}
+	for _, genre := range genreReferences {
+		values.Genres = append(values.Genres, genre.Name)
 	}
 	values.ReleaseMBID, _ = canonicalProviderMBID(context.Release.ProviderKey)
 	if hasProviderFieldEvidence(context.Release.FieldEvidence, "release-group") {
@@ -160,7 +163,73 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 			}
 		}
 	}
-	return publication.RenderProviderCanonicalTagValues(values), nil
+	patch := publication.RenderProviderCanonicalTagValues(values)
+	if explicitEmptyGenre {
+		patch["GENRE"] = []string{}
+	}
+	return patch, nil
+}
+
+func resolvePublicationTagGenres(context PublicationProviderTagContext, releaseFields map[string]json.RawMessage) ([]librarymetadata.GenreReference, bool, error) {
+	for _, candidate := range []struct {
+		owner PublicationProviderTagOwner
+		scope librarymetadata.Scope
+	}{{context.PositionOwner.Owner, librarymetadata.ScopePosition}, {context.TrackOwner, librarymetadata.ScopeTrack}, {context.RecordingOwner, librarymetadata.ScopeRecording}} {
+		genres, explicitEmpty, found, err := manualPublicationGenreOverride(candidate.owner, candidate.scope)
+		if err != nil {
+			return nil, false, err
+		}
+		if found {
+			return genres, explicitEmpty, nil
+		}
+	}
+
+	providerGenres, providerScope, err := acceptedPublicationGenresWithScope(context, releaseFields)
+	if err != nil {
+		return nil, false, err
+	}
+	if providerScope == librarymetadata.ScopeRecording {
+		return providerGenres, false, nil
+	}
+	genres, explicitEmpty, found, err := manualPublicationGenreOverride(context.ReleaseOwner, librarymetadata.ScopeRelease)
+	if err != nil {
+		return nil, false, err
+	}
+	if found {
+		return genres, explicitEmpty, nil
+	}
+	if providerScope == librarymetadata.ScopeArtist && len(providerGenres) == 0 {
+		return providerGenres, true, nil
+	}
+	return providerGenres, false, nil
+}
+
+func manualPublicationGenreOverride(owner PublicationProviderTagOwner, scope librarymetadata.Scope) ([]librarymetadata.GenreReference, bool, bool, error) {
+	if len(owner.Metadata) == 0 {
+		return nil, false, false, nil
+	}
+	envelope, err := decodeFirstPublicationEnvelopeValue(owner.Metadata, scope)
+	if err != nil {
+		return nil, false, false, err
+	}
+	field, exists := envelope.Desired["genre"]
+	if !exists || field.Authority != librarymetadata.AuthorityManual || field.State == librarymetadata.StateAbsent {
+		return nil, false, false, nil
+	}
+	if field.State == librarymetadata.StateExplicitEmpty {
+		return nil, true, true, nil
+	}
+	if field.State != librarymetadata.StateValue {
+		return nil, false, false, nil
+	}
+	genres, err := genreReferencesFromField(field)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("decode manual %s genre override: %w", scope, err)
+	}
+	if len(genres) == 0 {
+		return nil, false, false, nil
+	}
+	return genres, false, true, nil
 }
 
 func acceptedReleaseLabelInfo(raw json.RawMessage) ([]string, []string, error) {
@@ -197,7 +266,110 @@ func acceptedReleaseLabelInfo(raw json.RawMessage) ([]string, []string, error) {
 	return labels, catalogNumbers, nil
 }
 
-func acceptedReleaseGenres(raw json.RawMessage) ([]string, error) {
+func acceptedPublicationGenres(context PublicationProviderTagContext, releaseFields map[string]json.RawMessage) ([]librarymetadata.GenreReference, error) {
+	genres, _, err := acceptedPublicationGenresWithScope(context, releaseFields)
+	return genres, err
+}
+
+func acceptedPublicationGenresWithScope(context PublicationProviderTagContext, releaseFields map[string]json.RawMessage) ([]librarymetadata.GenreReference, librarymetadata.Scope, error) {
+	// A genre list is authoritative only when the provider supplied field-level
+	// evidence. The recording must also be explicitly bound to this local edge;
+	// otherwise its projection cannot participate in publication.
+	var recordingGenres []librarymetadata.GenreReference
+	if context.RecordingBound && context.Recording != nil && context.Recording.Kind == "recording" &&
+		strings.EqualFold(context.Recording.ProviderKey, context.Position.RecordingProviderKey) {
+		recordingEvidence := decodeEvidence(context.Recording.FieldEvidence)
+		if hasProviderFieldEvidence(recordingEvidence, "genres") {
+			recordingFields, err := decodeFrozenObject(context.Recording.Fields)
+			if err != nil {
+				return nil, "", err
+			}
+			genres, err := acceptedProviderGenreReferences(recordingFields["genres"])
+			if err != nil {
+				return nil, "", err
+			}
+			recordingGenres = genres
+		}
+	}
+	var releaseGenres []librarymetadata.GenreReference
+	if hasProviderFieldEvidence(context.Release.FieldEvidence, "genres") {
+		genres, err := acceptedProviderGenreReferences(releaseFields["genres"])
+		if err != nil {
+			return nil, "", err
+		}
+		releaseGenres = genres
+	}
+	resolved, scope := resolvePublicationGenreReferences(recordingGenres, releaseGenres, nil)
+	if len(resolved) != 0 {
+		return resolved, scope, nil
+	}
+	// Release artist credits are not a substitute for recording artist credits:
+	// MusicBrainz may omit nested recording artist genres for deduplicated artists.
+	genres, explicitEmpty, err := acceptedRecordingArtistGenres(context)
+	if err != nil {
+		return nil, "", err
+	}
+	if explicitEmpty {
+		return []librarymetadata.GenreReference{}, librarymetadata.ScopeArtist, nil
+	}
+	resolved, scope = resolvePublicationGenreReferences(nil, nil, [][]librarymetadata.GenreReference{genres})
+	return resolved, scope, nil
+}
+
+func acceptedRecordingArtistGenres(context PublicationProviderTagContext) ([]librarymetadata.GenreReference, bool, error) {
+	providerGenres, creditOrder, err := acceptedRecordingArtistGenreMap(context)
+	if err != nil {
+		return nil, false, err
+	}
+	return resolvePublicationRecordingArtistGenres(context.GenreArtists, providerGenres, creditOrder)
+}
+
+func acceptedRecordingArtistGenreMap(context PublicationProviderTagContext) (map[string][]librarymetadata.GenreReference, []string, error) {
+	genresByMBID := make(map[string][]librarymetadata.GenreReference)
+	var creditOrder []string
+	if !context.RecordingBound || context.Recording == nil || context.Recording.Kind != "recording" ||
+		!strings.EqualFold(context.Recording.ProviderKey, context.Position.RecordingProviderKey) ||
+		!hasProviderFieldEvidence(decodeEvidence(context.Recording.FieldEvidence), "artist-credit") {
+		return genresByMBID, creditOrder, nil
+	}
+	recordingFields, err := decodeFrozenObject(context.Recording.Fields)
+	if err != nil {
+		return nil, nil, err
+	}
+	credits, _, err := decodeFrozenCredits(recordingFields["artist-credit"])
+	if err != nil {
+		return nil, nil, err
+	}
+	seenArtists := make(map[string]struct{}, len(credits))
+	for _, credit := range credits {
+		mbid, parseErr := uuid.Parse(credit.ArtistProviderKey)
+		if parseErr != nil || mbid == uuid.Nil {
+			continue
+		}
+		key := strings.ToLower(mbid.String())
+		if _, exists := seenArtists[key]; exists {
+			continue
+		}
+		seenArtists[key] = struct{}{}
+		creditOrder = append(creditOrder, key)
+		artist, ok := findProjectionEntity(context.ArtistEntities, "artist", key)
+		if !ok || !hasProviderFieldEvidence(decodeEvidence(artist.FieldEvidence), "genres") {
+			continue
+		}
+		artistFields, decodeErr := decodeFrozenObject(artist.Fields)
+		if decodeErr != nil {
+			return nil, nil, decodeErr
+		}
+		genres, decodeErr := acceptedProviderGenreReferences(artistFields["genres"])
+		if decodeErr != nil {
+			return nil, nil, decodeErr
+		}
+		genresByMBID[key] = genres
+	}
+	return genresByMBID, creditOrder, nil
+}
+
+func acceptedProviderGenreReferences(raw json.RawMessage) ([]librarymetadata.GenreReference, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
@@ -205,17 +377,31 @@ func acceptedReleaseGenres(raw json.RawMessage) ([]string, error) {
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return nil, err
 	}
-	genres := make([]string, 0, len(entries))
+	genres := make([]librarymetadata.GenreReference, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
 		object, err := decodeFrozenObject(entry)
 		if err != nil {
 			return nil, err
 		}
-		name, _, err := acceptedProviderString(object, "name")
+		id, hasID, err := acceptedProviderString(object, "id")
 		if err != nil {
 			return nil, err
 		}
-		genres = append(genres, name)
+		name, hasName, err := acceptedProviderString(object, "name")
+		if err != nil {
+			return nil, err
+		}
+		parsedID, parseErr := uuid.Parse(id)
+		if !hasID || !hasName || parseErr != nil || parsedID == uuid.Nil || strings.TrimSpace(name) == "" {
+			return nil, errors.New("accepted MusicBrainz genre is missing a valid id or name")
+		}
+		canonicalID := parsedID.String()
+		if _, exists := seen[canonicalID]; exists {
+			continue
+		}
+		seen[canonicalID] = struct{}{}
+		genres = append(genres, librarymetadata.GenreReference{ID: canonicalID, SourceName: name, Name: librarymetadata.NormalizeGenreName(name)})
 	}
 	return genres, nil
 }

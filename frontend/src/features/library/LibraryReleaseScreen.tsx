@@ -23,6 +23,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import "./library.css";
 import { FirstPublicationPreview } from "./FirstPublicationPreview";
+import { GenreMetadataEditor, type GenreOwner } from "./GenreMetadataEditor";
 import {
   PositionIdentity,
   PositionSources,
@@ -99,6 +100,8 @@ export function LibraryReleaseScreen({
   const [loadedReleaseID, setLoadedReleaseID] = useState("");
   const [positions, setPositions] = useState<Record<string, PositionData>>({});
   const [error, setError] = useState("");
+  const [genreContextGeneration, setGenreContextGeneration] = useState(0);
+  const [genreRefreshError, setGenreRefreshError] = useState("");
   const [musicBrainzRefresh, setMusicBrainzRefresh] = useState<{
     scope: typeof scope.current;
     operationID?: string;
@@ -263,6 +266,27 @@ export function LibraryReleaseScreen({
     },
     [],
   );
+
+  async function refreshAfterGenreSave(_owner: GenreOwner, _ownerId: string) {
+    const requestScope = scope.current;
+    if (!mounted.current || scope.current !== requestScope) return;
+    // The PATCH is already committed. Invalidate every preview immediately,
+    // even if the follow-up release detail read fails or is superseded.
+    setGenreContextGeneration((generation) => generation + 1);
+    setGenreRefreshError("");
+    try {
+      const detail = await refreshReleaseDetail(requestScope);
+      if (!detail || !mounted.current || scope.current !== requestScope) return;
+    } catch (reason) {
+      if (!mounted.current || scope.current !== requestScope) return;
+      setGenreRefreshError(
+        sharedErrorMessage(
+          reason,
+          "Не удалось обновить предпросмотр метаданных.",
+        ),
+      );
+    }
+  }
 
   const completeMusicBrainzRefresh = useCallback(
     (
@@ -1397,6 +1421,13 @@ export function LibraryReleaseScreen({
           </div>
         )}
       </header>
+      <GenreMetadataEditor
+        owner="release"
+        ownerId={releaseId}
+        refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+        onSaved={refreshAfterGenreSave}
+      />
+      {genreRefreshError ? <p role="alert">{genreRefreshError}</p> : null}
       <ReleaseMetadataFacts metadata={release.metadata} />
       <ReleaseMediaSummary release={release} />
       {positionId && (
@@ -1523,6 +1554,14 @@ export function LibraryReleaseScreen({
             </section>
             <PositionIdentity track={track} />
             <ReleaseCreditList credits={credits} />
+            {track.recording_id ? (
+              <GenreMetadataEditor
+                owner="recording"
+                ownerId={track.recording_id}
+                refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                onSaved={refreshAfterGenreSave}
+              />
+            ) : null}
             {credits.length > 1 && (
               <label className="block">
                 Основной исполнитель композиции
@@ -1702,6 +1741,7 @@ export function LibraryReleaseScreen({
                 <FirstPublicationPreview
                   releaseId={releaseId}
                   positionId={track.id}
+                  refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
                   onAdmitted={(operationID) => {
                     if (!isPositionScopeCurrent()) return;
                     setPositions((current) => {

@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+func testGenreReference(name string) GenreReference {
+	return GenreReference{ID: "11111111-1111-4111-8111-111111111111", SourceName: name, Name: name}
+}
+
 func optionalEnvelope(scope Scope, desired map[string]FieldValue) *Envelope {
 	return &Envelope{Version: EnvelopeVersion, Scope: scope, Desired: desired}
 }
@@ -14,12 +18,12 @@ func optionalValue(value any) FieldValue {
 }
 
 func TestResolveOptionalFieldPrecedenceAndExplicitEmpty(t *testing.T) {
-	t.Run("position empty value falls through to track", func(t *testing.T) {
+	t.Run("absent value falls through to track", func(t *testing.T) {
 		resolved, err := ResolveOptionalField("genre",
-			optionalEnvelope(ScopePosition, map[string]FieldValue{"genre": optionalValue([]string{})}),
-			optionalEnvelope(ScopeTrack, map[string]FieldValue{"genre": optionalValue([]string{"track"})}), nil,
-			optionalEnvelope(ScopeRelease, map[string]FieldValue{"genre": optionalValue([]string{"release"})}))
-		if err != nil || !resolved.Present || resolved.Scope != ScopeTrack || resolved.Field.Value.([]string)[0] != "track" {
+			optionalEnvelope(ScopePosition, map[string]FieldValue{"genre": {State: StateAbsent, Authority: AuthorityAutomatic, Provenance: Provenance{Kind: ProvenanceProvider}}}),
+			optionalEnvelope(ScopeTrack, map[string]FieldValue{"genre": optionalValue([]GenreReference{testGenreReference("track")})}), nil,
+			optionalEnvelope(ScopeRelease, map[string]FieldValue{"genre": optionalValue([]GenreReference{testGenreReference("release")})}))
+		if err != nil || !resolved.Present || resolved.Scope != ScopeTrack || resolved.Field.Value.([]GenreReference)[0].Name != "track" {
 			t.Fatalf("unexpected resolution: %#v, %v", resolved, err)
 		}
 	})
@@ -27,7 +31,7 @@ func TestResolveOptionalFieldPrecedenceAndExplicitEmpty(t *testing.T) {
 	t.Run("explicit empty blocks broader value", func(t *testing.T) {
 		empty := FieldValue{State: StateExplicitEmpty, Authority: AuthorityManual, Provenance: Provenance{Kind: ProvenanceManual}}
 		resolved, err := ResolveOptionalField("genre", optionalEnvelope(ScopePosition, map[string]FieldValue{"genre": empty}), nil, nil,
-			optionalEnvelope(ScopeRelease, map[string]FieldValue{"genre": optionalValue([]string{"release"})}))
+			optionalEnvelope(ScopeRelease, map[string]FieldValue{"genre": optionalValue([]GenreReference{testGenreReference("release")})}))
 		if err != nil || !resolved.Present || resolved.Scope != ScopePosition || resolved.Field.State != StateExplicitEmpty {
 			t.Fatalf("unexpected explicit-empty resolution: %#v, %v", resolved, err)
 		}
@@ -38,9 +42,9 @@ func TestResolveOptionalFieldAbsentFallbackAndBoolean(t *testing.T) {
 	absent := FieldValue{State: StateAbsent, Authority: AuthorityAutomatic, Provenance: Provenance{Kind: ProvenanceProvider}}
 	resolved, err := ResolveOptionalField("genre",
 		optionalEnvelope(ScopePosition, map[string]FieldValue{"genre": absent}),
-		optionalEnvelope(ScopeTrack, map[string]FieldValue{"genre": optionalValue([]string{})}),
+		optionalEnvelope(ScopeTrack, map[string]FieldValue{"genre": absent}),
 		optionalEnvelope(ScopeRecording, map[string]FieldValue{"genre": absent}),
-		optionalEnvelope(ScopeRelease, map[string]FieldValue{"genre": optionalValue([]string{"release"})}))
+		optionalEnvelope(ScopeRelease, map[string]FieldValue{"genre": optionalValue([]GenreReference{testGenreReference("release")})}))
 	if err != nil || !resolved.Present || resolved.Scope != ScopeRelease {
 		t.Fatalf("unexpected fallback resolution: %#v, %v", resolved, err)
 	}
@@ -76,7 +80,6 @@ func TestResolveOptionalFieldEmptySlicesFallThrough(t *testing.T) {
 		empty    any
 		nonempty any
 	}{
-		{field: "genre", empty: []string{}, nonempty: []string{"track"}},
 		{field: "contributors", empty: []Contributor{}, nonempty: []Contributor{{Name: "track contributor", Role: "producer"}}},
 		{field: "works", empty: []Work{}, nonempty: []Work{{Name: "track work"}}},
 		{field: "works", empty: [0]Work{}, nonempty: []Work{{Name: "track work"}}},
@@ -126,7 +129,7 @@ func TestResolveOptionalFieldKeepsNonemptyTypedSliceWithProvenance(t *testing.T)
 }
 
 func TestResolveOptionalFieldValidatesEnvelopesAndFieldEligibility(t *testing.T) {
-	badScope := optionalEnvelope(ScopeTrack, map[string]FieldValue{"genre": optionalValue([]string{"x"})})
+	badScope := optionalEnvelope(ScopeTrack, map[string]FieldValue{"genre": optionalValue([]GenreReference{testGenreReference("x")})})
 	if _, err := ResolveOptionalField("genre", badScope, nil, nil, nil); err == nil {
 		t.Fatal("expected envelope scope mismatch")
 	}
