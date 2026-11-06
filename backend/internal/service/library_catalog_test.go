@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,6 +24,7 @@ type libraryCatalogRepositoryFixture struct {
 	releases  persistence.LibraryCatalogReleasePage
 	positions persistence.LibraryCatalogPositionPage
 	artist    *persistence.LibraryCatalogArtist
+	audio     []persistence.LibraryCatalogAudioCandidate
 	err       error
 	request   persistence.LibraryCatalogRequest
 }
@@ -41,11 +44,34 @@ func (repository *libraryCatalogRepositoryFixture) ReadLibraryPositions(_ contex
 func (repository *libraryCatalogRepositoryFixture) ReadLibraryArtist(context.Context, uuid.UUID) (*persistence.LibraryCatalogArtist, error) {
 	return repository.artist, repository.err
 }
+func (repository *libraryCatalogRepositoryFixture) ReadLibraryAudioCandidates(_ context.Context, request persistence.LibraryCatalogRequest) ([]persistence.LibraryCatalogAudioCandidate, error) {
+	repository.request = request
+	return repository.audio, repository.err
+}
 
 func TestValidateLibraryCatalogFilterRequiresLimit(t *testing.T) {
 	filter := LibraryCatalogFilter{Publication: "all"}
 	if err := validateLibraryCatalogFilter(&filter); err == nil {
 		t.Fatal("expected missing limit to be rejected")
+	}
+}
+
+func TestValidateLibraryCatalogAvailability(t *testing.T) {
+	filter := LibraryCatalogFilter{Limit: 1}
+	if err := validateLibraryCatalogFilter(&filter); err != nil || filter.Availability != "all" {
+		t.Fatalf("default availability = %q, err %v", filter.Availability, err)
+	}
+	for _, value := range []string{"all", "available", "missing"} {
+		filter := LibraryCatalogFilter{Limit: 1, Availability: value}
+		if err := validateLibraryCatalogFilter(&filter); err != nil {
+			t.Errorf("availability %q rejected: %v", value, err)
+		}
+	}
+	for _, value := range []string{"bogus", "AVAILABLE"} {
+		filter := LibraryCatalogFilter{Limit: 1, Availability: value}
+		if err := validateLibraryCatalogFilter(&filter); err == nil {
+			t.Errorf("availability %q accepted", value)
+		}
 	}
 }
 
@@ -97,6 +123,37 @@ func TestLibraryCatalogMapsPersistenceRowsToCleanServiceDTOs(t *testing.T) {
 	}
 }
 
+func TestLibraryCatalogAvailabilityFiltersForwardObservedIDs(t *testing.T) {
+	id := uuid.New()
+	artistID := uuid.New()
+	artist := &persistence.LibraryCatalogArtist{ID: artistID}
+	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "audio"), []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repository := &libraryCatalogRepositoryFixture{artist: artist, audio: []persistence.LibraryCatalogAudioCandidate{{PositionID: id, RootPath: root, RelativePath: "audio", Kind: "publication"}}}
+	_, err = NewLibraryCatalog(repository).Positions(context.Background(), LibraryCatalogFilter{Limit: 10, Availability: "available"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.request.Availability != "available" || len(repository.request.AvailablePositionIDs) != 1 || repository.request.AvailablePositionIDs[0] != id {
+		t.Fatalf("forwarded request = %#v", repository.request)
+	}
+	// Artist detail derives its availability count from the complete observed ID set.
+	repository.audio = []persistence.LibraryCatalogAudioCandidate{{PositionID: id, RootPath: root, RelativePath: "audio", Kind: "publication"}}
+	result, err := NewLibraryCatalog(repository).Artist(context.Background(), artistID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AvailablePositionCount != 1 {
+		t.Fatalf("available count = %d", result.AvailablePositionCount)
+	}
+}
+
 func TestLibraryCatalogUnavailableAndArtistNotFound(t *testing.T) {
 	if _, err := (*LibraryCatalog)(nil).Artists(context.Background(), LibraryCatalogFilter{Limit: 1}); !IsLibraryCatalogUnavailable(err) {
 		t.Fatalf("nil service error = %v", err)
@@ -108,7 +165,7 @@ func TestLibraryCatalogUnavailableAndArtistNotFound(t *testing.T) {
 		t.Fatalf("missing artist error = %v", err)
 	}
 	repository := &libraryCatalogRepositoryFixture{err: errors.New("db unavailable")}
-	if _, err := NewLibraryCatalog(repository).Artists(context.Background(), LibraryCatalogFilter{Limit: 1}); err == nil || !strings.Contains(err.Error(), "read library artists") {
+	if _, err := NewLibraryCatalog(repository).Artists(context.Background(), LibraryCatalogFilter{Limit: 1}); !errors.Is(err, repository.err) {
 		t.Fatalf("repository error = %v", err)
 	}
 }

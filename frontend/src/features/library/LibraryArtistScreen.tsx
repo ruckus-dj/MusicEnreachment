@@ -6,7 +6,11 @@ import {
   useListLibraryReleases,
 } from "../../api/generated/client";
 import { useHashLocation } from "../../navigation/hashLocation";
-import { libraryRouteHref, parseLibraryArtistRoute } from "./libraryRoute";
+import {
+  libraryArtistRouteHref,
+  libraryRouteHref,
+  parseLibraryArtistRoute,
+} from "./libraryRoute";
 import "./catalog.css";
 
 const PAGE_SIZE = 50;
@@ -18,6 +22,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     view: "artists" as const,
     query: "",
     publication: "all" as const,
+    availability: "all" as const,
     offset: 0,
   };
   const artistQuery = useGetLibraryArtist(artistId);
@@ -27,6 +32,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     offset: route.offset,
     q: route.query || undefined,
     publication: route.publication,
+    availability: route.availability,
   });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const error =
@@ -77,7 +83,8 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               )}
               <p className="catalog-muted">
                 {artist.release_count} релизов · {artist.position_count} позиций
-                · {artist.published_position_count} опубликовано
+                · С аудио: {artist.available_position_count} ·{" "}
+                {artist.published_position_count} опубликовано
               </p>
             </div>
             <div className="catalog-genre-list">
@@ -126,6 +133,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                           release.edition.original_release_date ??
                           "Дата не указана"}{" "}
                         · {release.counts.position_count} позиций ·{" "}
+                        {release.counts.available_position_count} с аудио ·{" "}
                         {release.counts.published_position_count} опубликовано
                       </p>
                     </div>
@@ -154,7 +162,9 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
             <section className="catalog-state">
               <h2>Релизов не найдено</h2>
               <p>
-                {route.query || route.publication !== "all"
+                {route.query ||
+                route.publication !== "all" ||
+                route.availability !== "all"
                   ? "Попробуйте изменить фильтры."
                   : "У этого артиста пока нет релизов."}
               </p>
@@ -169,13 +179,19 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               </span>
               <a
                 aria-disabled={route.offset === 0}
-                href={`#/library/artists/${encodeURIComponent(artistId)}?view=artists&q=${encodeURIComponent(route.query)}&publication=${route.publication}&offset=${Math.max(0, route.offset - PAGE_SIZE)}`}
+                href={libraryArtistRouteHref(artistId, {
+                  ...route,
+                  offset: Math.max(0, route.offset - PAGE_SIZE),
+                })}
               >
                 Назад
               </a>
               <a
                 aria-disabled={route.offset + PAGE_SIZE >= releases.total}
-                href={`#/library/artists/${encodeURIComponent(artistId)}?view=artists&q=${encodeURIComponent(route.query)}&publication=${route.publication}&offset=${route.offset + PAGE_SIZE}`}
+                href={libraryArtistRouteHref(artistId, {
+                  ...route,
+                  offset: route.offset + PAGE_SIZE,
+                })}
               >
                 Далее
               </a>
@@ -194,6 +210,7 @@ function ReleasePositions({ releaseId }: { releaseId: string }) {
     limit: PAGE_SIZE,
     offset,
     publication: "all",
+    availability: "all",
   });
   const failure =
     query.data?.status !== undefined && query.data.status !== 200
@@ -228,6 +245,11 @@ function ReleasePositions({ releaseId }: { releaseId: string }) {
               {position.title || "Без названия"}
             </a>
             <span>
+              {position.audio_available
+                ? "Аудио в наличии"
+                : "Аудио не хватает"}
+              {" · "}
+              {position.source_variant_count} исходников ·{" "}
               {position.publication ? "Опубликовано" : "Не опубликовано"}
             </span>
           </li>

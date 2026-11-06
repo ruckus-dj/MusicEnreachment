@@ -1,5 +1,7 @@
 import { expect, it } from "vitest";
 import {
+  libraryArtistRouteHref,
+  libraryRouteHref,
   parseLibraryArtistRoute,
   parseLibraryPositionRoute,
   parseLibraryReleaseRoute,
@@ -45,8 +47,33 @@ it("keeps the library landing and artist route parsers unchanged", () => {
   expect(parseLibraryRoute("#/library?view=tracks&q=blue")).toMatchObject({
     view: "tracks",
     query: "blue",
+    availability: "all",
   });
   expect(
     parseLibraryArtistRoute("#/library/artists/artist-id?view=albums"),
   ).toMatchObject({ artistId: "artist-id", view: "albums" });
+});
+
+it("defaults availability to all, rejects invalid values and round-trips it", () => {
+  expect(parseLibraryRoute("#/library")).toMatchObject({ availability: "all" });
+  expect(parseLibraryRoute("#/library?availability=unknown")).toMatchObject({
+    availability: "all",
+  });
+  expect(
+    parseLibraryArtistRoute(
+      "#/library/artists/artist-id?availability=available&publication=published",
+    ),
+  ).toMatchObject({ availability: "available", publication: "published" });
+
+  const route = {
+    view: "tracks" as const,
+    query: "blue note",
+    publication: "unpublished" as const,
+    availability: "missing" as const,
+    offset: 50,
+  };
+  expect(parseLibraryRoute(libraryRouteHref(route))).toEqual(route);
+  expect(
+    parseLibraryArtistRoute(libraryArtistRouteHref("artist-id", route)),
+  ).toMatchObject({ ...route, artistId: "artist-id" });
 });

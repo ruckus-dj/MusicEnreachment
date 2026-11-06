@@ -32,6 +32,12 @@ All services depend on persistence layer repos (persistence.SetupManagerReposito
 
 **Error handling**: `fmt.Errorf("context: %w", err)` with lowercase messages; no custom error types.
 
+**Inventory timestamps**: Compare live filesystem mtimes through `sourceScanMtime`
+before comparing them with persisted inventory facts. PostgreSQL stores
+microseconds; raw nanosecond equality incorrectly marks unchanged audio missing.
+Availability fixtures must use the persisted precision, including a native
+sub-microsecond timestamp regression where the filesystem supports it.
+
 **Publication fault tests**: Claim the delivery before reading guarded preparation
 inputs. The live publication contract repeats complete private preparation after
 failure, not journal/ACK recovery. Inject a late result-transaction failure after

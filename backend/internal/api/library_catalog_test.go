@@ -18,16 +18,24 @@ type libraryCatalogAPIRepository struct {
 	artist    *persistence.LibraryCatalogArtist
 	positions persistence.LibraryCatalogPositionPage
 	artists   persistence.LibraryCatalogArtistPage
+	audio     []persistence.LibraryCatalogAudioCandidate
+	requests  []persistence.LibraryCatalogRequest
 }
 
-func (repository *libraryCatalogAPIRepository) ReadLibraryArtists(context.Context, persistence.LibraryCatalogRequest) (persistence.LibraryCatalogArtistPage, error) {
+func (repository *libraryCatalogAPIRepository) ReadLibraryArtists(_ context.Context, request persistence.LibraryCatalogRequest) (persistence.LibraryCatalogArtistPage, error) {
+	repository.requests = append(repository.requests, request)
 	return repository.artists, nil
 }
-func (repository *libraryCatalogAPIRepository) ReadLibraryReleases(context.Context, persistence.LibraryCatalogRequest) (persistence.LibraryCatalogReleasePage, error) {
+func (repository *libraryCatalogAPIRepository) ReadLibraryReleases(_ context.Context, request persistence.LibraryCatalogRequest) (persistence.LibraryCatalogReleasePage, error) {
+	repository.requests = append(repository.requests, request)
 	return persistence.LibraryCatalogReleasePage{Items: []persistence.LibraryCatalogRelease{}}, nil
 }
-func (repository *libraryCatalogAPIRepository) ReadLibraryPositions(context.Context, persistence.LibraryCatalogRequest) (persistence.LibraryCatalogPositionPage, error) {
+func (repository *libraryCatalogAPIRepository) ReadLibraryPositions(_ context.Context, request persistence.LibraryCatalogRequest) (persistence.LibraryCatalogPositionPage, error) {
+	repository.requests = append(repository.requests, request)
 	return repository.positions, nil
+}
+func (repository *libraryCatalogAPIRepository) ReadLibraryAudioCandidates(context.Context, persistence.LibraryCatalogRequest) ([]persistence.LibraryCatalogAudioCandidate, error) {
+	return repository.audio, nil
 }
 func (repository *libraryCatalogAPIRepository) ReadLibraryArtist(context.Context, uuid.UUID) (*persistence.LibraryCatalogArtist, error) {
 	return repository.artist, nil
@@ -69,6 +77,9 @@ func TestLibraryCatalogAPIEmitsConcreteModelsAndNullableFields(t *testing.T) {
 	if _, exists := item["total"]; exists {
 		t.Fatal("query-only total leaked into item")
 	}
+	if value, exists := item["audio_available"]; !exists || value != false {
+		t.Errorf("audio_available = %#v (exists %t), expected false", value, exists)
+	}
 	if !strings.Contains(recorder.Body.String(), `"summary"`) {
 		t.Fatalf("missing summary: %s", recorder.Body.String())
 	}
@@ -89,6 +100,9 @@ func TestLibraryCatalogAPIEmitsConcreteModelsAndNullableFields(t *testing.T) {
 	if _, exists := artist["genres_json"]; exists {
 		t.Fatal("query-only genres JSON leaked into artist")
 	}
+	if value, exists := artist["available_position_count"]; !exists || value != float64(0) {
+		t.Errorf("available_position_count = %#v (exists %t), expected 0", value, exists)
+	}
 }
 
 func TestLibraryCatalogAPIHumaValidationAndIDErrors(t *testing.T) {
@@ -101,11 +115,39 @@ func TestLibraryCatalogAPIHumaValidationAndIDErrors(t *testing.T) {
 		{path: "/library/releases?limit=1&artist_id=invalid", want: http.StatusBadRequest},
 		{path: "/library/positions?limit=1&release_id=invalid", want: http.StatusBadRequest},
 		{path: "/library/positions?limit=1&publication=unknown", want: http.StatusUnprocessableEntity},
+		{path: "/library/artists?limit=1&availability=unknown", want: http.StatusUnprocessableEntity},
+		{path: "/library/releases?limit=1&availability=unknown", want: http.StatusUnprocessableEntity},
+		{path: "/library/positions?limit=1&availability=unknown", want: http.StatusUnprocessableEntity},
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
 		if recorder.Code != test.want {
 			t.Errorf("GET %s status = %d, want %d: %s", test.path, recorder.Code, test.want, recorder.Body.String())
+		}
+	}
+}
+
+func TestLibraryCatalogAPIAvailabilityFilterDefaultsAndForwards(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{path: "/library/artists?limit=1", want: "all"},
+		{path: "/library/releases?limit=1&availability=available", want: "available"},
+		{path: "/library/positions?limit=1&availability=missing", want: "missing"},
+	} {
+		repository := &libraryCatalogAPIRepository{}
+		handler := libraryCatalogHandler(service.NewLibraryCatalog(repository))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, body = %s", test.path, recorder.Code, recorder.Body.String())
+		}
+		if len(repository.requests) != 1 {
+			t.Fatalf("GET %s library reads = %d, want 1", test.path, len(repository.requests))
+		}
+		if got := repository.requests[0].Availability; got != test.want {
+			t.Errorf("GET %s availability = %q, want %q", test.path, got, test.want)
 		}
 	}
 }

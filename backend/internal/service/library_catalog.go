@@ -18,12 +18,13 @@ var (
 )
 
 type LibraryCatalogFilter struct {
-	Limit       int
-	Offset      int
-	Query       string
-	Publication string
-	ArtistID    *uuid.UUID
-	ReleaseID   *uuid.UUID
+	Limit        int
+	Offset       int
+	Query        string
+	Publication  string
+	Availability string
+	ArtistID     *uuid.UUID
+	ReleaseID    *uuid.UUID
 }
 
 // Catalog DTOs deliberately contain no persistence models or query-only fields.
@@ -49,6 +50,7 @@ type LibraryCatalogArtist struct {
 	ReleaseCount           int                          `json:"release_count"`
 	PositionCount          int                          `json:"position_count"`
 	PublishedPositionCount int                          `json:"published_position_count"`
+	AvailablePositionCount int                          `json:"available_position_count"`
 }
 
 type LibraryCatalogCredit struct {
@@ -125,6 +127,7 @@ type LibraryCatalogPosition struct {
 	Artists                []LibraryCatalogCredit        `json:"artists"`
 	ProviderDurationMS     *int64                        `json:"provider_duration_ms"`
 	SourceVariantCount     int                           `json:"source_variant_count"`
+	AudioAvailable         bool                          `json:"audio_available"`
 	SelectedMediaVariantID *uuid.UUID                    `json:"selected_media_variant_id"`
 	Publication            *LibraryCatalogPublication    `json:"publication"`
 }
@@ -142,6 +145,7 @@ type libraryCatalogRepository interface {
 	ReadLibraryReleases(context.Context, persistence.LibraryCatalogRequest) (persistence.LibraryCatalogReleasePage, error)
 	ReadLibraryPositions(context.Context, persistence.LibraryCatalogRequest) (persistence.LibraryCatalogPositionPage, error)
 	ReadLibraryArtist(context.Context, uuid.UUID) (*persistence.LibraryCatalogArtist, error)
+	ReadLibraryAudioCandidates(context.Context, persistence.LibraryCatalogRequest) ([]persistence.LibraryCatalogAudioCandidate, error)
 }
 
 type LibraryCatalog struct{ repository libraryCatalogRepository }
@@ -158,7 +162,11 @@ func (catalog *LibraryCatalog) Artists(ctx context.Context, filter LibraryCatalo
 	if err != nil {
 		return LibraryCatalogPage[LibraryCatalogArtist]{}, err
 	}
-	page, err := repository.ReadLibraryArtists(ctx, catalogRequest(filter))
+	request, err := catalog.observedRequest(ctx, filter)
+	if err != nil {
+		return LibraryCatalogPage[LibraryCatalogArtist]{}, err
+	}
+	page, err := repository.ReadLibraryArtists(ctx, request)
 	if err != nil {
 		return LibraryCatalogPage[LibraryCatalogArtist]{}, fmt.Errorf("read library artists: %w", err)
 	}
@@ -177,7 +185,11 @@ func (catalog *LibraryCatalog) Releases(ctx context.Context, filter LibraryCatal
 	if err != nil {
 		return LibraryCatalogPage[LibraryCatalogRelease]{}, err
 	}
-	page, err := repository.ReadLibraryReleases(ctx, catalogRequest(filter))
+	request, err := catalog.observedRequest(ctx, filter)
+	if err != nil {
+		return LibraryCatalogPage[LibraryCatalogRelease]{}, err
+	}
+	page, err := repository.ReadLibraryReleases(ctx, request)
 	if err != nil {
 		return LibraryCatalogPage[LibraryCatalogRelease]{}, fmt.Errorf("read library releases: %w", err)
 	}
@@ -196,7 +208,11 @@ func (catalog *LibraryCatalog) Positions(ctx context.Context, filter LibraryCata
 	if err != nil {
 		return LibraryCatalogPage[LibraryCatalogPosition]{}, err
 	}
-	page, err := repository.ReadLibraryPositions(ctx, catalogRequest(filter))
+	request, err := catalog.observedRequest(ctx, filter)
+	if err != nil {
+		return LibraryCatalogPage[LibraryCatalogPosition]{}, err
+	}
+	page, err := repository.ReadLibraryPositions(ctx, request)
 	if err != nil {
 		return LibraryCatalogPage[LibraryCatalogPosition]{}, fmt.Errorf("read library positions: %w", err)
 	}
@@ -219,6 +235,11 @@ func (catalog *LibraryCatalog) Artist(ctx context.Context, id uuid.UUID) (Librar
 	if artist == nil {
 		return LibraryCatalogArtist{}, ErrLibraryArtistNotFound
 	}
+	request, err := catalog.observedRequest(ctx, LibraryCatalogFilter{ArtistID: &id})
+	if err != nil {
+		return LibraryCatalogArtist{}, err
+	}
+	artist.AvailablePositionCount = len(request.AvailablePositionIDs)
 	return mapLibraryCatalogArtist(*artist), nil
 }
 
@@ -233,7 +254,7 @@ func IsLibraryArtistNotFound(err error) bool     { return errors.Is(err, ErrLibr
 func IsLibraryCatalogUnavailable(err error) bool { return errors.Is(err, errLibraryCatalogUnavailable) }
 
 func catalogRequest(filter LibraryCatalogFilter) persistence.LibraryCatalogRequest {
-	return persistence.LibraryCatalogRequest{Limit: filter.Limit, Offset: filter.Offset, Query: filter.Query, Publication: filter.Publication, ArtistID: filter.ArtistID, ReleaseID: filter.ReleaseID}
+	return persistence.LibraryCatalogRequest{Limit: filter.Limit, Offset: filter.Offset, Query: filter.Query, Publication: filter.Publication, Availability: filter.Availability, ArtistID: filter.ArtistID, ReleaseID: filter.ReleaseID}
 }
 
 func mapLibraryCatalogSummary(value persistence.LibraryCatalogSummary) LibraryCatalogSummary {
@@ -249,7 +270,7 @@ func mapLibraryCatalogArtist(value persistence.LibraryCatalogArtist) LibraryCata
 	if genres == nil {
 		genres = []string{}
 	}
-	return LibraryCatalogArtist{ID: value.ID, Name: value.Name, Disambiguation: value.Disambiguation, Genres: genres, ProviderLinks: links, ReleaseCount: value.ReleaseCount, PositionCount: value.PositionCount, PublishedPositionCount: value.PublishedPositionCount}
+	return LibraryCatalogArtist{ID: value.ID, Name: value.Name, Disambiguation: value.Disambiguation, Genres: genres, ProviderLinks: links, ReleaseCount: value.ReleaseCount, PositionCount: value.PositionCount, PublishedPositionCount: value.PublishedPositionCount, AvailablePositionCount: value.AvailablePositionCount}
 }
 
 func mapLibraryCatalogCredit(value persistence.LibraryCatalogCredit) LibraryCatalogCredit {
@@ -286,7 +307,7 @@ func mapLibraryCatalogPosition(value persistence.LibraryCatalogPosition) Library
 	return LibraryCatalogPosition{ID: value.ID, LocalTrackID: value.LocalTrackID, RecordingID: value.RecordingID,
 		Release: LibraryCatalogPositionRelease{ID: value.Release.ID, Title: value.Release.Title, Artists: mapLibraryCatalogCredits(value.Release.Artists)},
 		Medium:  value.Medium, Position: value.Position, DisplayedNumber: value.DisplayedNumber, Title: value.Title, Artists: mapLibraryCatalogCredits(value.Artists),
-		ProviderDurationMS: value.ProviderDurationMS, SourceVariantCount: value.SourceVariantCount, SelectedMediaVariantID: value.SelectedMediaVariantID, Publication: publication}
+		ProviderDurationMS: value.ProviderDurationMS, SourceVariantCount: value.SourceVariantCount, AudioAvailable: value.AudioAvailable, SelectedMediaVariantID: value.SelectedMediaVariantID, Publication: publication}
 }
 
 func nonNilCatalogStrings(values []string) []string {
@@ -308,6 +329,12 @@ func validateLibraryCatalogFilter(filter *LibraryCatalogFilter) error {
 	}
 	if filter.Publication != "all" && filter.Publication != "published" && filter.Publication != "unpublished" {
 		return errors.New("library catalog publication filter is invalid")
+	}
+	if filter.Availability == "" {
+		filter.Availability = "all"
+	}
+	if filter.Availability != "all" && filter.Availability != "available" && filter.Availability != "missing" {
+		return errors.New("library catalog availability filter is invalid")
 	}
 	filter.Query = normalizeLibraryCatalogQuery(filter.Query)
 	return nil

@@ -392,6 +392,7 @@ export interface LibraryProviderLinkResponse {
 export interface LibraryArtistSummary {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  available_position_count: number;
   /** @nullable */
   disambiguation: string | null;
   genres: string[];
@@ -536,6 +537,7 @@ export interface LibraryPositionReleaseResponse {
 
 export interface LibraryPositionSummary {
   artists: LibraryArtistCreditResponse[];
+  audio_available: boolean;
   displayed_number: string;
   id: string;
   local_track_id: string;
@@ -1907,6 +1909,7 @@ limit: number;
 offset?: number;
 q?: string;
 publication?: ListLibraryArtistsPublication;
+availability?: ListLibraryArtistsAvailability;
 };
 
 export type ListLibraryArtistsPublication = typeof ListLibraryArtistsPublication[keyof typeof ListLibraryArtistsPublication];
@@ -1916,6 +1919,15 @@ export const ListLibraryArtistsPublication = {
   all: 'all',
   published: 'published',
   unpublished: 'unpublished',
+} as const;
+
+export type ListLibraryArtistsAvailability = typeof ListLibraryArtistsAvailability[keyof typeof ListLibraryArtistsAvailability];
+
+
+export const ListLibraryArtistsAvailability = {
+  all: 'all',
+  available: 'available',
+  missing: 'missing',
 } as const;
 
 export type ListLibraryCoverCandidatesParams = {
@@ -1950,6 +1962,7 @@ limit: number;
 offset?: number;
 q?: string;
 publication?: ListLibraryPositionsPublication;
+availability?: ListLibraryPositionsAvailability;
 artist_id?: string;
 release_id?: string;
 };
@@ -1961,6 +1974,15 @@ export const ListLibraryPositionsPublication = {
   all: 'all',
   published: 'published',
   unpublished: 'unpublished',
+} as const;
+
+export type ListLibraryPositionsAvailability = typeof ListLibraryPositionsAvailability[keyof typeof ListLibraryPositionsAvailability];
+
+
+export const ListLibraryPositionsAvailability = {
+  all: 'all',
+  available: 'available',
+  missing: 'missing',
 } as const;
 
 export type ListLibraryPublicationsParams = {
@@ -2001,6 +2023,7 @@ limit: number;
 offset?: number;
 q?: string;
 publication?: ListLibraryReleasesPublication;
+availability?: ListLibraryReleasesAvailability;
 artist_id?: string;
 };
 
@@ -2011,6 +2034,15 @@ export const ListLibraryReleasesPublication = {
   all: 'all',
   published: 'published',
   unpublished: 'unpublished',
+} as const;
+
+export type ListLibraryReleasesAvailability = typeof ListLibraryReleasesAvailability[keyof typeof ListLibraryReleasesAvailability];
+
+
+export const ListLibraryReleasesAvailability = {
+  all: 'all',
+  available: 'available',
+  missing: 'missing',
 } as const;
 
 export type GetLibraryFirstPublicationPreviewParams = {

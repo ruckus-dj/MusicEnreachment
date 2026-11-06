@@ -35,6 +35,12 @@
 .catalog-search { display: flex; gap: 5px; flex: 1 1 16rem; }
 .catalog-search input { width: 100%; min-width: 0; }
 .catalog-filter { display: flex; align-items: center; gap: 7px; }
+.catalog-availability { display: flex; align-items: center; gap: 7px; }
+.catalog-availability > .react-aria-Label { color: var(--muted); white-space: nowrap; }
+.catalog-availability-segments { display: flex; gap: 2px; padding: 3px; border-radius: 5px; background: var(--raised); }
+.catalog-availability-segments .react-aria-Radio { display: inline-flex; align-items: center; min-height: 30px; padding: 4px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.catalog-availability-segments .react-aria-Radio[data-selected] { color: var(--ink); background: var(--surface); box-shadow: 0 1px 3px #0002; }
+.catalog-availability-segments .react-aria-Radio[data-focus-visible] { outline: 2px solid var(--accent); outline-offset: 2px; }
 .catalog-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .catalog-artist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); gap: 8px; }
 .catalog-artist-card { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
@@ -71,6 +77,9 @@
   .catalog-search { flex: 0 0 auto; }
   .catalog-filter { justify-content: space-between; }
   .catalog-filter select { flex: 1; }
+  .catalog-availability { align-items: stretch; flex-direction: column; }
+  .catalog-availability-segments { justify-content: stretch; }
+  .catalog-availability-segments .react-aria-Radio { flex: 1; justify-content: center; }
   .catalog-release-heading { align-items: flex-start; flex-wrap: wrap; }
   .catalog-release-heading button { margin-left: 58px; }
   .catalog-position-list li { flex-direction: column; gap: 2px; }

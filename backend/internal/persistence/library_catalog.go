@@ -12,9 +12,11 @@ import (
 )
 
 type LibraryCatalogRequest struct {
-	Limit, Offset       int
-	Query, Publication  string
-	ArtistID, ReleaseID *uuid.UUID
+	Limit, Offset        int
+	Query, Publication   string
+	Availability         string
+	AvailablePositionIDs []uuid.UUID
+	ArtistID, ReleaseID  *uuid.UUID
 }
 
 type LibraryCatalogSummary struct {
@@ -39,6 +41,7 @@ type LibraryCatalogArtist struct {
 	ReleaseCount           int                          `json:"release_count" bun:"release_count"`
 	PositionCount          int                          `json:"position_count" bun:"position_count"`
 	PublishedPositionCount int                          `json:"published_position_count" bun:"published_position_count"`
+	AvailablePositionCount int                          `json:"available_position_count" bun:"available_position_count"`
 	Total                  int                          `json:"-" bun:"total"`
 	GenresJSON             string                       `json:"-" bun:"genres"`
 }
@@ -139,6 +142,7 @@ type LibraryCatalogPosition struct {
 	SourceVariantCount     int                           `json:"source_variant_count" bun:"-"`
 	SelectedMediaVariantID *uuid.UUID                    `json:"selected_media_variant_id" bun:"-"`
 	Publication            *LibraryCatalogPublication    `json:"publication" bun:"-"`
+	AudioAvailable         bool                          `json:"audio_available" bun:"audio_available"`
 	ReleaseID              uuid.UUID                     `json:"-" bun:"release_id"`
 	ReleaseTitle           string                        `json:"-" bun:"release_title"`
 	Total                  int                           `json:"-" bun:"total"`
@@ -161,6 +165,7 @@ type LibraryCatalogPositionPage struct {
 }
 
 func (repository *LibraryRepository) ReadLibraryArtists(ctx context.Context, request LibraryCatalogRequest) (LibraryCatalogArtistPage, error) {
+	request = normalizeCatalogAvailability(request)
 	var page LibraryCatalogArtistPage
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		if err := readLibraryCatalogSummary(ctx, tx, &page.Summary); err != nil {
@@ -172,23 +177,28 @@ func (repository *LibraryRepository) ReadLibraryArtists(ctx context.Context, req
  COALESCE((SELECT jsonb_agg(x->>'name' ORDER BY n) FROM jsonb_array_elements(COALESCE(a.metadata->'genres','[]'::jsonb)) WITH ORDINALITY g(x,n)), '[]'::jsonb) AS genres,
 				(SELECT count(DISTINCT ra.release_id) FROM release_artist ra WHERE ra.artist_id=a.id) AS release_count,
 				(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id) AS position_count,
-				(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id) AS published_position_count
+				(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id) AS published_position_count,
+				(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id AND rt.id IN (?)) AS available_position_count
  FROM local_artist a
 )
-SELECT id,name,disambiguation,genres::text AS genres,release_count,position_count,published_position_count,
+ SELECT id,name,disambiguation,genres::text AS genres,release_count,position_count,published_position_count,available_position_count,
  count(*) OVER() AS total FROM artist_rows
 			WHERE (?='' OR strpos(lower(btrim(regexp_replace(normalize(name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE((SELECT metadata->'genres' FROM local_artist WHERE id=artist_rows.id),'[]'::jsonb)) g WHERE strpos(lower(btrim(regexp_replace(normalize(g->>'name',NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0))
-AND (?='all' OR (?='published' AND published_position_count>0) OR (?='unpublished' AND position_count>published_position_count))
+			AND (?='all' OR (?='published' AND published_position_count>0) OR (?='unpublished' AND position_count>published_position_count))
+			AND (?='all' OR (?='available' AND available_position_count>0) OR (?='missing' AND available_position_count<position_count))
 			ORDER BY lower(btrim(regexp_replace(normalize(name,NFKC),'[[:space:]]+',' ','g'))),id LIMIT ? OFFSET ?`
-		if err := tx.NewRaw(query, request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Limit, request.Offset).Scan(ctx, &rows); err != nil {
+		if err := tx.NewRaw(query, bun.List(availabilityPositionIDs(request)), request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, request.Availability, request.Limit, request.Offset).Scan(ctx, &rows); err != nil {
 			return fmt.Errorf("read library artist page: %w", err)
 		}
 		if err := tx.NewRaw(`SELECT count(*) FROM (SELECT a.id,
 			(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id) AS positions,
-			(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id) AS published
+			(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id) AS published,
+			(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id AND rt.id IN (?)) AS available
 				FROM local_artist a WHERE (?='' OR strpos(lower(btrim(regexp_replace(normalize(a.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(a.metadata->'genres','[]'::jsonb)) g WHERE strpos(lower(btrim(regexp_replace(normalize(g->>'name',NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0))
 			AND (?='all' OR (?='published' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id)>0)
-			OR (?='unpublished' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id)>(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id)))) matches`, request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication).Scan(ctx, &page.Total); err != nil {
+			OR (?='unpublished' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id)>(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id)))
+			AND (?='all' OR (?='available' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id AND rt.id IN (?))>0)
+			OR (?='missing' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id AND rt.id IN (?))<(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id)))) matches`, bun.List(availabilityPositionIDs(request)), request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, bun.List(availabilityPositionIDs(request)), request.Availability, bun.List(availabilityPositionIDs(request))).Scan(ctx, &page.Total); err != nil {
 			return fmt.Errorf("count library artists: %w", err)
 		}
 		for i := range rows {
@@ -242,6 +252,7 @@ func (repository *LibraryRepository) ReadLibraryArtist(ctx context.Context, id u
 }
 
 func (repository *LibraryRepository) ReadLibraryReleases(ctx context.Context, request LibraryCatalogRequest) (LibraryCatalogReleasePage, error) {
+	request = normalizeCatalogAvailability(request)
 	var page LibraryCatalogReleasePage
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		if err := readLibraryCatalogSummary(ctx, tx, &page.Summary); err != nil {
@@ -265,20 +276,25 @@ func (repository *LibraryRepository) ReadLibraryReleases(ctx context.Context, re
 		query := `WITH release_rows AS (SELECT r.id,r.title,r.metadata,
  (SELECT count(*) FROM release_track rt WHERE rt.release_id=r.id) AS position_count,
  (SELECT count(*) FROM release_track rt JOIN track_publication tp ON tp.position_id=rt.id WHERE rt.release_id=r.id) AS published_position_count,
- (SELECT count(*) FROM release_track rt JOIN track_publication tp ON tp.position_id=rt.id WHERE rt.release_id=r.id) AS available_position_count
+	 (SELECT count(DISTINCT rt.id) FROM release_track rt WHERE rt.release_id=r.id AND rt.id IN (?)) AS available_position_count
 				 FROM local_release r WHERE ` + basePredicate + `)
  SELECT id,title,metadata::text AS metadata,position_count,published_position_count,available_position_count,count(*) OVER() AS total FROM release_rows
- WHERE (?='all' OR (?='published' AND published_position_count>0) OR (?='unpublished' AND position_count>published_position_count)) ORDER BY lower(btrim(regexp_replace(normalize(title,NFKC),'[[:space:]]+',' ','g'))),id LIMIT ? OFFSET ?`
-		pageArgs := append(append([]any(nil), baseArgs...), request.Publication, request.Publication, request.Publication, request.Limit, request.Offset)
+	 WHERE (?='all' OR (?='published' AND published_position_count>0) OR (?='unpublished' AND position_count>published_position_count))
+	 AND (?='all' OR (?='available' AND available_position_count>0) OR (?='missing' AND available_position_count<position_count)) ORDER BY lower(btrim(regexp_replace(normalize(title,NFKC),'[[:space:]]+',' ','g'))),id LIMIT ? OFFSET ?`
+		pageArgs := append([]any{bun.List(availabilityPositionIDs(request))}, baseArgs...)
+		pageArgs = append(pageArgs, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, request.Availability, request.Limit, request.Offset)
 		if err := tx.NewRaw(query, pageArgs...).Scan(ctx, &rows); err != nil {
 			return fmt.Errorf("read library release page: %w", err)
 		}
 		countQuery := `SELECT count(*) FROM (SELECT r.id,
 			(SELECT count(*) FROM release_track rt WHERE rt.release_id=r.id) positions,
-			(SELECT count(*) FROM release_track rt JOIN track_publication tp ON tp.position_id=rt.id WHERE rt.release_id=r.id) published
+			(SELECT count(*) FROM release_track rt JOIN track_publication tp ON tp.position_id=rt.id WHERE rt.release_id=r.id) published,
+			(SELECT count(DISTINCT rt.id) FROM release_track rt WHERE rt.release_id=r.id AND rt.id IN (?)) available
 			FROM local_release r WHERE ` + basePredicate + `) q
-			WHERE (?='all' OR (?='published' AND published>0) OR (?='unpublished' AND positions>published))`
-		countArgs := append(append([]any(nil), baseArgs...), request.Publication, request.Publication, request.Publication)
+			WHERE (?='all' OR (?='published' AND published>0) OR (?='unpublished' AND positions>published))
+			AND (?='all' OR (?='available' AND available>0) OR (?='missing' AND available<positions))`
+		countArgs := append([]any{bun.List(availabilityPositionIDs(request))}, baseArgs...)
+		countArgs = append(countArgs, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, request.Availability)
 		if err := tx.NewRaw(countQuery, countArgs...).Scan(ctx, &page.Total); err != nil {
 			return fmt.Errorf("count library releases: %w", err)
 		}
@@ -334,7 +350,7 @@ func (repository *LibraryRepository) ReadLibraryReleases(ctx context.Context, re
 			}
 		}
 		for i := range rows {
-			rows[i].Counts = LibraryCatalogReleaseCounts{PositionCount: rows[i].PositionCountDB, PublishedPositionCount: rows[i].PublishedPositionCountDB, AvailablePositionCount: rows[i].PublishedPositionCountDB}
+			rows[i].Counts = LibraryCatalogReleaseCounts{PositionCount: rows[i].PositionCountDB, PublishedPositionCount: rows[i].PublishedPositionCountDB, AvailablePositionCount: rows[i].AvailablePositionCountDB}
 			rows[i].Counts.ProviderPositionCount = nil
 			rows[i].Edition = libraryCatalogLocalEdition(rows[i].Metadata)
 		}
@@ -351,6 +367,7 @@ func (repository *LibraryRepository) ReadLibraryReleases(ctx context.Context, re
 }
 
 func (repository *LibraryRepository) ReadLibraryPositions(ctx context.Context, request LibraryCatalogRequest) (LibraryCatalogPositionPage, error) {
+	request = normalizeCatalogAvailability(request)
 	var page LibraryCatalogPositionPage
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		if err := readLibraryCatalogSummary(ctx, tx, &page.Summary); err != nil {
@@ -359,18 +376,20 @@ func (repository *LibraryRepository) ReadLibraryPositions(ctx context.Context, r
 		// Selection, filtering and pagination are performed in SQL; enrich the selected page in batches below.
 		rows := make([]LibraryCatalogPosition, 0)
 		query := `WITH rows AS (SELECT rt.id,rt.track_id,rt.recording_id,r.id AS release_id,r.title AS release_title,rt.medium,rt.position,rt.displayed_number,t.title,
- EXISTS(SELECT 1 FROM track_publication tp WHERE tp.position_id=rt.id) AS published
+	EXISTS(SELECT 1 FROM track_publication tp WHERE tp.position_id=rt.id) AS published,
+	(rt.id IN (?)) AS audio_available
  FROM release_track rt JOIN local_release r ON r.id=rt.release_id JOIN local_track t ON t.id=rt.track_id
  WHERE (?::uuid IS NULL OR r.id=?) AND (?::uuid IS NULL OR EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?))
 	 AND (?='' OR strpos(lower(btrim(regexp_replace(normalize(t.title,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR strpos(lower(btrim(regexp_replace(normalize(rt.displayed_number,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR strpos(lower(btrim(regexp_replace(normalize(r.title,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR EXISTS(SELECT 1 FROM track_artist ta LEFT JOIN local_artist a ON a.id=ta.artist_id WHERE ta.track_id=rt.track_id AND (strpos(lower(btrim(regexp_replace(normalize(ta.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR strpos(lower(btrim(regexp_replace(normalize(a.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0)))
-	 ) SELECT id,track_id,recording_id,release_id,release_title,medium,position,displayed_number,title,count(*) OVER() AS total FROM rows WHERE (?='all' OR (?='published' AND published) OR (?='unpublished' AND NOT published)) ORDER BY lower(btrim(regexp_replace(normalize(release_title,NFKC),'[[:space:]]+',' ','g'))),release_id,medium,position,id LIMIT ? OFFSET ?`
-		if err := tx.NewRaw(query, request.ReleaseID, request.ReleaseID, request.ArtistID, request.ArtistID, request.Query, request.Query, request.Query, request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Limit, request.Offset).Scan(ctx, &rows); err != nil {
+	 ) SELECT id,track_id,recording_id,release_id,release_title,medium,position,displayed_number,title,audio_available,count(*) OVER() AS total FROM rows WHERE (?='all' OR (?='published' AND published) OR (?='unpublished' AND NOT published)) AND (?='all' OR (?='available' AND audio_available) OR (?='missing' AND NOT audio_available)) ORDER BY lower(btrim(regexp_replace(normalize(release_title,NFKC),'[[:space:]]+',' ','g'))),release_id,medium,position,id LIMIT ? OFFSET ?`
+		if err := tx.NewRaw(query, bun.List(availabilityPositionIDs(request)), request.ReleaseID, request.ReleaseID, request.ArtistID, request.ArtistID, request.Query, request.Query, request.Query, request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, request.Availability, request.Limit, request.Offset).Scan(ctx, &rows); err != nil {
 			return fmt.Errorf("read library position page: %w", err)
 		}
 		if err := tx.NewRaw(`SELECT count(*) FROM release_track rt JOIN local_release r ON r.id=rt.release_id JOIN local_track t ON t.id=rt.track_id
 			WHERE (?::uuid IS NULL OR r.id=?) AND (?::uuid IS NULL OR EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?))
 			AND (?='' OR strpos(lower(btrim(regexp_replace(normalize(t.title,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR strpos(lower(btrim(regexp_replace(normalize(rt.displayed_number,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR strpos(lower(btrim(regexp_replace(normalize(r.title,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR EXISTS(SELECT 1 FROM track_artist ta LEFT JOIN local_artist a ON a.id=ta.artist_id WHERE ta.track_id=rt.track_id AND (strpos(lower(btrim(regexp_replace(normalize(ta.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR strpos(lower(btrim(regexp_replace(normalize(a.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0)))
-			AND (?='all' OR (?='published' AND EXISTS(SELECT 1 FROM track_publication tp WHERE tp.position_id=rt.id)) OR (?='unpublished' AND NOT EXISTS(SELECT 1 FROM track_publication tp WHERE tp.position_id=rt.id)))`, request.ReleaseID, request.ReleaseID, request.ArtistID, request.ArtistID, request.Query, request.Query, request.Query, request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication).Scan(ctx, &page.Total); err != nil {
+			AND (?='all' OR (?='published' AND EXISTS(SELECT 1 FROM track_publication tp WHERE tp.position_id=rt.id)) OR (?='unpublished' AND NOT EXISTS(SELECT 1 FROM track_publication tp WHERE tp.position_id=rt.id)))
+			AND (?='all' OR (?='available' AND rt.id IN (?)) OR (?='missing' AND rt.id NOT IN (?)))`, request.ReleaseID, request.ReleaseID, request.ArtistID, request.ArtistID, request.Query, request.Query, request.Query, request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, bun.List(availabilityPositionIDs(request)), request.Availability, bun.List(availabilityPositionIDs(request))).Scan(ctx, &page.Total); err != nil {
 			return fmt.Errorf("count library positions: %w", err)
 		}
 		trackIDs := make([]uuid.UUID, 0, len(rows))

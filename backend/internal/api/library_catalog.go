@@ -10,27 +10,30 @@ import (
 )
 
 type libraryArtistsInput struct {
-	Limit       int    `query:"limit" minimum:"1" maximum:"100" required:"true"`
-	Offset      int    `query:"offset" minimum:"0" default:"0"`
-	Query       string `query:"q"`
-	Publication string `query:"publication" enum:"all,published,unpublished" default:"all"`
+	Limit        int    `query:"limit" minimum:"1" maximum:"100" required:"true"`
+	Offset       int    `query:"offset" minimum:"0" default:"0"`
+	Query        string `query:"q"`
+	Publication  string `query:"publication" enum:"all,published,unpublished" default:"all"`
+	Availability string `query:"availability" enum:"all,available,missing" default:"all"`
 }
 
 type libraryReleasesInput struct {
-	Limit       int    `query:"limit" minimum:"1" maximum:"100" required:"true"`
-	Offset      int    `query:"offset" minimum:"0" default:"0"`
-	Query       string `query:"q"`
-	Publication string `query:"publication" enum:"all,published,unpublished" default:"all"`
-	ArtistID    string `query:"artist_id"`
+	Limit        int    `query:"limit" minimum:"1" maximum:"100" required:"true"`
+	Offset       int    `query:"offset" minimum:"0" default:"0"`
+	Query        string `query:"q"`
+	Publication  string `query:"publication" enum:"all,published,unpublished" default:"all"`
+	Availability string `query:"availability" enum:"all,available,missing" default:"all"`
+	ArtistID     string `query:"artist_id"`
 }
 
 type libraryPositionsInput struct {
-	Limit       int    `query:"limit" minimum:"1" maximum:"100" required:"true"`
-	Offset      int    `query:"offset" minimum:"0" default:"0"`
-	Query       string `query:"q"`
-	Publication string `query:"publication" enum:"all,published,unpublished" default:"all"`
-	ArtistID    string `query:"artist_id"`
-	ReleaseID   string `query:"release_id"`
+	Limit        int    `query:"limit" minimum:"1" maximum:"100" required:"true"`
+	Offset       int    `query:"offset" minimum:"0" default:"0"`
+	Query        string `query:"q"`
+	Publication  string `query:"publication" enum:"all,published,unpublished" default:"all"`
+	Availability string `query:"availability" enum:"all,available,missing" default:"all"`
+	ArtistID     string `query:"artist_id"`
+	ReleaseID    string `query:"release_id"`
 }
 
 type LibraryArtistPage struct {
@@ -73,6 +76,7 @@ type LibraryArtistSummary struct {
 	ReleaseCount           int                           `json:"release_count"`
 	PositionCount          int                           `json:"position_count"`
 	PublishedPositionCount int                           `json:"published_position_count"`
+	AvailablePositionCount int                           `json:"available_position_count"`
 }
 
 type LibraryProviderLinkResponse struct {
@@ -138,6 +142,7 @@ type LibraryPositionSummary struct {
 	Artists                []LibraryArtistCreditResponse       `json:"artists" nullable:"false"`
 	ProviderDurationMS     *int64                              `json:"provider_duration_ms" nullable:"true"`
 	SourceVariantCount     int                                 `json:"source_variant_count"`
+	AudioAvailable         bool                                `json:"audio_available"`
 	SelectedMediaVariantID *string                             `json:"selected_media_variant_id" nullable:"true"`
 	Publication            *LibraryPositionPublicationResponse `json:"publication"`
 }
@@ -163,7 +168,7 @@ func registerLibraryCatalog(api huma.API, catalog *service.LibraryCatalog) {
 		if catalog == nil {
 			return nil, huma.Error503ServiceUnavailable("library catalog service is unavailable")
 		}
-		page, err := catalog.Artists(ctx, service.LibraryCatalogFilter{Limit: input.Limit, Offset: input.Offset, Query: input.Query, Publication: input.Publication})
+		page, err := catalog.Artists(ctx, service.LibraryCatalogFilter{Limit: input.Limit, Offset: input.Offset, Query: input.Query, Publication: input.Publication, Availability: input.Availability})
 		if err != nil {
 			return nil, libraryCatalogError(err)
 		}
@@ -177,7 +182,7 @@ func registerLibraryCatalog(api huma.API, catalog *service.LibraryCatalog) {
 		if err != nil {
 			return nil, err
 		}
-		page, err := catalog.Releases(ctx, service.LibraryCatalogFilter{Limit: input.Limit, Offset: input.Offset, Query: input.Query, Publication: input.Publication, ArtistID: artistID})
+		page, err := catalog.Releases(ctx, service.LibraryCatalogFilter{Limit: input.Limit, Offset: input.Offset, Query: input.Query, Publication: input.Publication, Availability: input.Availability, ArtistID: artistID})
 		if err != nil {
 			return nil, libraryCatalogError(err)
 		}
@@ -195,7 +200,7 @@ func registerLibraryCatalog(api huma.API, catalog *service.LibraryCatalog) {
 		if err != nil {
 			return nil, err
 		}
-		page, err := catalog.Positions(ctx, service.LibraryCatalogFilter{Limit: input.Limit, Offset: input.Offset, Query: input.Query, Publication: input.Publication, ArtistID: artistID, ReleaseID: releaseID})
+		page, err := catalog.Positions(ctx, service.LibraryCatalogFilter{Limit: input.Limit, Offset: input.Offset, Query: input.Query, Publication: input.Publication, Availability: input.Availability, ArtistID: artistID, ReleaseID: releaseID})
 		if err != nil {
 			return nil, libraryCatalogError(err)
 		}
@@ -267,7 +272,7 @@ func libraryCatalogSummary(value service.LibraryCatalogSummary) LibraryCatalogSu
 }
 
 func libraryArtist(value service.LibraryCatalogArtist) LibraryArtistSummary {
-	return LibraryArtistSummary{ID: value.ID, Name: value.Name, Disambiguation: value.Disambiguation, Genres: nonNilAPIStrings(value.Genres), ProviderLinks: libraryProviderLinks(value.ProviderLinks), ReleaseCount: value.ReleaseCount, PositionCount: value.PositionCount, PublishedPositionCount: value.PublishedPositionCount}
+	return LibraryArtistSummary{ID: value.ID, Name: value.Name, Disambiguation: value.Disambiguation, Genres: nonNilAPIStrings(value.Genres), ProviderLinks: libraryProviderLinks(value.ProviderLinks), ReleaseCount: value.ReleaseCount, PositionCount: value.PositionCount, PublishedPositionCount: value.PublishedPositionCount, AvailablePositionCount: value.AvailablePositionCount}
 }
 
 func libraryProviderLinks(values []service.LibraryCatalogProviderLink) []LibraryProviderLinkResponse {
@@ -311,7 +316,7 @@ func libraryPosition(value service.LibraryCatalogPosition) LibraryPositionSummar
 	return LibraryPositionSummary{ID: value.ID, LocalTrackID: value.LocalTrackID, RecordingID: apiUUIDString(value.RecordingID),
 		Release: LibraryPositionReleaseResponse{ID: value.Release.ID, Title: value.Release.Title, Artists: libraryCredits(value.Release.Artists)}, Medium: value.Medium, Position: value.Position,
 		DisplayedNumber: value.DisplayedNumber, Title: value.Title, Artists: libraryCredits(value.Artists), ProviderDurationMS: value.ProviderDurationMS,
-		SourceVariantCount: value.SourceVariantCount, SelectedMediaVariantID: apiUUIDString(value.SelectedMediaVariantID), Publication: publication}
+		SourceVariantCount: value.SourceVariantCount, AudioAvailable: value.AudioAvailable, SelectedMediaVariantID: apiUUIDString(value.SelectedMediaVariantID), Publication: publication}
 }
 
 func apiUUIDString(value *uuid.UUID) *string {

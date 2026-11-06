@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getSetupState, useListSources } from "../api/generated/client";
 import type { SetupStateBody } from "../api/generated/client.schemas";
 import { AppButton } from "../components/AppButton";
-import { ThemeSelect } from "../components/ThemeSelect";
+import { ThemeControl } from "../components/ThemeControl";
 import { IncomingGroupReviewScreen } from "../features/incoming/IncomingGroupReviewScreen";
 import { LibraryArtistScreen } from "../features/library/LibraryArtistScreen";
 import { LibraryPublicationsScreen } from "../features/library/LibraryPublicationsScreen";
@@ -148,7 +148,7 @@ export function AppShell() {
                 <span>Медиатека</span>
               </a>
               <span className="app-section-label">{sectionLabel(route)}</span>
-              <ThemeSelect />
+              <ThemeControl />
             </header>
             <section
               ref={contentRef}
@@ -167,7 +167,7 @@ export function AppShell() {
               <strong>MeloTrove</strong>
               <span>Медиатека</span>
             </div>
-            <ThemeSelect />
+            <ThemeControl />
           </header>
           <section
             ref={contentRef}

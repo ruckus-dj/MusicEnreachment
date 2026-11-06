@@ -1,10 +1,12 @@
 export type LibraryView = "artists" | "albums" | "tracks";
 export type PublicationFilter = "all" | "published" | "unpublished";
+export type AvailabilityFilter = "all" | "available" | "missing";
 
 export interface LibraryRoute {
   view: LibraryView;
   query: string;
   publication: PublicationFilter;
+  availability: AvailabilityFilter;
   offset: number;
 }
 
@@ -25,6 +27,11 @@ const publications = new Set<PublicationFilter>([
   "all",
   "published",
   "unpublished",
+]);
+const availabilities = new Set<AvailabilityFilter>([
+  "all",
+  "available",
+  "missing",
 ]);
 const uuidPattern =
   "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -61,6 +68,9 @@ export function parseLibraryRoute(hash: string): LibraryRoute | undefined {
   const requestedPublication = params.get(
     "publication",
   ) as PublicationFilter | null;
+  const requestedAvailability = params.get(
+    "availability",
+  ) as AvailabilityFilter | null;
   const requestedOffset = Number(params.get("offset") ?? 0);
   return {
     view: requestedView && views.has(requestedView) ? requestedView : "artists",
@@ -68,6 +78,10 @@ export function parseLibraryRoute(hash: string): LibraryRoute | undefined {
     publication:
       requestedPublication && publications.has(requestedPublication)
         ? requestedPublication
+        : "all",
+    availability:
+      requestedAvailability && availabilities.has(requestedAvailability)
+        ? requestedAvailability
         : "all",
     offset:
       Number.isSafeInteger(requestedOffset) && requestedOffset > 0
@@ -88,6 +102,9 @@ export function parseLibraryArtistRoute(
     const params = new URLSearchParams(search);
     const view = params.get("view") as LibraryView | null;
     const publication = params.get("publication") as PublicationFilter | null;
+    const availability = params.get(
+      "availability",
+    ) as AvailabilityFilter | null;
     const offset = Number(params.get("offset") ?? 0);
     return {
       artistId,
@@ -95,6 +112,8 @@ export function parseLibraryArtistRoute(
       query: params.get("q") ?? "",
       publication:
         publication && publications.has(publication) ? publication : "all",
+      availability:
+        availability && availabilities.has(availability) ? availability : "all",
       offset: Number.isSafeInteger(offset) && offset > 0 ? offset : 0,
     };
   } catch {
@@ -107,6 +126,7 @@ export function libraryRouteHref(route: LibraryRoute) {
   params.set("view", route.view);
   if (route.query) params.set("q", route.query);
   params.set("publication", route.publication);
+  params.set("availability", route.availability);
   if (route.offset > 0) params.set("offset", String(route.offset));
   return `#/library?${params.toString()}`;
 }
@@ -116,6 +136,7 @@ export function libraryArtistRouteHref(artistId: string, route: LibraryRoute) {
   params.set("view", route.view);
   if (route.query) params.set("q", route.query);
   params.set("publication", route.publication);
+  params.set("availability", route.availability);
   if (route.offset > 0) params.set("offset", String(route.offset));
   return `#/library/artists/${encodeURIComponent(artistId)}?${params.toString()}`;
 }

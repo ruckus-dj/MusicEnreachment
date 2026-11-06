@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Label, Radio, RadioGroup } from "react-aria-components";
 import { apiResponseError } from "../../api/client/errors";
 import {
   getGetLibraryReleaseCoverImageUrl,
@@ -45,6 +46,7 @@ function useLibraryRoute(): [
     view: "artists" as const,
     query: "",
     publication: "all" as const,
+    availability: "all" as const,
     offset: 0,
   };
   return [
@@ -65,6 +67,7 @@ export function LibraryScreen() {
       offset: route.offset,
       q: route.query || undefined,
       publication: route.publication,
+      availability: route.availability,
     },
     { query: { enabled: route.view === "artists" } },
   );
@@ -74,6 +77,7 @@ export function LibraryScreen() {
       offset: route.offset,
       q: route.query || undefined,
       publication: route.publication,
+      availability: route.availability,
     },
     { query: { enabled: route.view === "albums" } },
   );
@@ -83,6 +87,7 @@ export function LibraryScreen() {
       offset: route.offset,
       q: route.query || undefined,
       publication: route.publication,
+      availability: route.availability,
     },
     { query: { enabled: route.view === "tracks" } },
   );
@@ -204,6 +209,24 @@ export function LibraryScreen() {
             <option value="unpublished">Не опубликованные</option>
           </select>
         </label>
+        <RadioGroup
+          orientation="horizontal"
+          className="catalog-availability"
+          value={route.availability}
+          onChange={(availability) =>
+            updateRoute({
+              availability: availability as LibraryRoute["availability"],
+              offset: 0,
+            })
+          }
+        >
+          <Label>Наличие аудио</Label>
+          <div className="catalog-availability-segments">
+            <Radio value="all">Все</Radio>
+            <Radio value="available">В наличии</Radio>
+            <Radio value="missing">Не хватает</Radio>
+          </div>
+        </RadioGroup>
       </div>
 
       {query.isLoading ? (
@@ -230,16 +253,25 @@ export function LibraryScreen() {
               : route.publication === "published" &&
                   summary?.published_position_count === 0
                 ? "В медиатеке пока нет опубликованных позиций. Неопубликованные релизы доступны в режиме «Все»."
-                : route.query || route.publication !== "all"
+                : route.query ||
+                    route.publication !== "all" ||
+                    route.availability !== "all"
                   ? "Измените поисковый запрос или сбросьте фильтры."
                   : "Для этого представления пока нет записей."}
           </p>
-          {(route.query || route.publication !== "all") && (
+          {(route.query ||
+            route.publication !== "all" ||
+            route.availability !== "all") && (
             <button
               type="button"
               onClick={() => {
                 setSearch("");
-                updateRoute({ query: "", publication: "all", offset: 0 });
+                updateRoute({
+                  query: "",
+                  publication: "all",
+                  availability: "all",
+                  offset: 0,
+                });
               }}
             >
               Сбросить фильтры
@@ -312,6 +344,7 @@ function ArtistCards({
               {artist.release_count} релизов · {artist.position_count} позиций
             </span>
             <span>
+              С аудио: {artist.available_position_count} ·{" "}
               {artist.published_position_count} опубликовано
               {artist.genres.length ? ` · ${artist.genres.join(" · ")}` : ""}
             </span>
@@ -419,7 +452,7 @@ function ReleaseTable({ items }: { items: LibraryReleasePage["items"] }) {
               </td>
               <td>
                 {release.counts.provider_position_count == null
-                  ? "—"
+                  ? `${release.counts.available_position_count} с аудио · полнота неизвестна`
                   : `${release.counts.available_position_count} / ${release.counts.provider_position_count}`}
               </td>
             </tr>
@@ -440,6 +473,7 @@ function PositionTable({ items }: { items: LibraryPositionPage["items"] }) {
             <th>Альбом</th>
             <th>Артист</th>
             <th>Позиция</th>
+            <th>Аудио</th>
             <th>Исходники</th>
             <th>Публикация</th>
           </tr>
@@ -473,7 +507,8 @@ function PositionTable({ items }: { items: LibraryPositionPage["items"] }) {
                 {position.medium} ·{" "}
                 {position.displayed_number || position.position}
               </td>
-              <td>{position.source_variant_count}</td>
+              <td>{position.audio_available ? "В наличии" : "Не хватает"}</td>
+              <td>{position.source_variant_count} исходников</td>
               <td>
                 {position.publication ? "Опубликовано" : "Не опубликовано"}
               </td>
