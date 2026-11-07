@@ -101,9 +101,12 @@ func (repository *SetupManagerRepository) ExecuteObsoletePublicationOutputCleanu
 				JOIN track_publication_attempt a ON a.position_id = r.position_id AND a.epoch = ? AND a.candidate_generation = r.generation
 				WHERE r.namespace_claim_id = ?
 				UNION ALL
+				SELECT 1 FROM publication_root_abandonment archived
+				WHERE archived.epoch = ? AND ? = ANY(archived.namespace_claim_ids)
+				UNION ALL
 				SELECT 1 FROM publication_namespace_reservation r
 				WHERE r.namespace_claim_id = ? AND NOT (r.position_id = ? AND r.generation = ?)
-			)`, row.Epoch, row.NamespaceClaimID, row.Epoch, row.NamespaceClaimID, row.NamespaceClaimID, row.PositionID, row.Generation).Scan(ctx, &protected); err != nil {
+			)`, row.Epoch, row.NamespaceClaimID, row.Epoch, row.NamespaceClaimID, row.Epoch, row.NamespaceClaimID, row.NamespaceClaimID, row.PositionID, row.Generation).Scan(ctx, &protected); err != nil {
 			return fmt.Errorf("execute obsolete publication output cleanup: check namespace consumers: %w", err)
 		}
 		if protected {

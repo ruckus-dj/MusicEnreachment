@@ -60,4 +60,19 @@ cleanup и сохранение frozen attempt/namespace evidence на одно�
 
 Первый `task verify` рабочего среза дошёл до новой archive-проверки и выявил
 неверное чтение массива UUID в тесте; запрос исправлен на чтение строк UUID.
-Окончательный результат обычного hook и полной CI пока не получен.
+Срез `8431f4bf` прошёл обычный полный commit hook и всю
+[CI 42369569762](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42369569762),
+включая платформенную матрицу, Compose smoke и публикацию контейнера.
+
+## Продолжение: защищённый cleanup recovery
+
+Следующий рабочий срез добавляет отдельный transaction-bound архив для failed
+source-cleanup original/retry/frontier, с canonical SQL evidence и deferred
+проверкой полного retirement вместе с root. Исключения из защиты incomplete
+resolution и frontier ограничены exact receipt текущей транзакции. Операции не
+выдаются за успешные; CURRENT/library/namespace сохраняются. Running River job
+или не вернувшийся execution owner продолжают блокировать удаление.
+
+Unrelated obsolete-output cleanup той же позиции не удаляется; admission и
+execution отдельно защищают namespace claims архивированных publications от unlink.
+Новый срез пока не прошёл общий gate и не считается принятым.

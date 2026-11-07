@@ -20,8 +20,20 @@ BEGIN
     IF EXISTS (SELECT 1 FROM public.publication_root_abandonment) THEN
         RAISE EXCEPTION 'cannot roll back incoming matching baseline: publication root abandonment evidence exists';
     END IF;
+    IF EXISTS (SELECT 1 FROM public.source_cleanup_root_abandonment) THEN
+        RAISE EXCEPTION 'cannot roll back incoming matching baseline: source cleanup root abandonment evidence exists';
+    END IF;
 END;
 $guard$;
+
+DROP TRIGGER source_cleanup_root_abandonment_retired ON public.source_cleanup_root_abandonment;
+DROP FUNCTION public.check_source_cleanup_root_abandonment_retired();
+DROP FUNCTION public.assert_source_cleanup_root_abandonment_retired(uuid);
+DROP TRIGGER source_cleanup_root_abandonment_capture ON public.source_cleanup_root_abandonment;
+DROP TRIGGER source_cleanup_root_abandonment_immutable ON public.source_cleanup_root_abandonment;
+DROP FUNCTION public.capture_source_cleanup_root_abandonment();
+DROP FUNCTION public.reject_source_cleanup_root_abandonment_mutation();
+DROP TABLE public.source_cleanup_root_abandonment;
 
 DROP TRIGGER publication_root_abandonment_immutable ON public.publication_root_abandonment;
 DROP FUNCTION public.reject_publication_root_abandonment_mutation();

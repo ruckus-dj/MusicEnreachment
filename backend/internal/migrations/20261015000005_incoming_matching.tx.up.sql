@@ -941,6 +941,27 @@ CREATE TRIGGER publication_root_abandonment_immutable
     BEFORE UPDATE OR DELETE ON public.publication_root_abandonment
     FOR EACH ROW EXECUTE FUNCTION public.reject_publication_root_abandonment_mutation();
 
+-- Permanent evidence for the narrow, explicitly confirmed source-root
+-- abandonment path. This deliberately has no FK to the retired graph.
+CREATE TABLE public.source_cleanup_root_abandonment (
+    original_operation_id uuid PRIMARY KEY,
+    root_id uuid NOT NULL,
+    transaction_id xid8 NOT NULL DEFAULT pg_current_xact_id(),
+    confirmed_path text NOT NULL CHECK (btrim(confirmed_path) <> ''),
+    confirmed_location_count bigint NOT NULL CHECK (confirmed_location_count >= 0),
+    evidence jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(evidence) = 'object'),
+    created_at timestamptz NOT NULL DEFAULT transaction_timestamp()
+);
+
+CREATE FUNCTION public.reject_source_cleanup_root_abandonment_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'source cleanup root abandonment evidence is immutable';
+END $$;
+CREATE TRIGGER source_cleanup_root_abandonment_immutable
+BEFORE UPDATE OR DELETE ON public.source_cleanup_root_abandonment
+FOR EACH ROW EXECUTE FUNCTION public.reject_source_cleanup_root_abandonment_mutation();
+
 -- default: matching_delivery id
 ALTER TABLE ONLY public.matching_delivery ALTER COLUMN id SET DEFAULT nextval('public.matching_delivery_id_seq'::regclass);
 
@@ -2569,7 +2590,18 @@ BEGIN
                OR OLD.resolution_kind='native_removed' AND folded_item->>'kind'='native_removed'
                OR OLD.resolution_kind='absent_after_explicit_retry' AND folded_item->>'kind'='absent_after_explicit_retry' THEN
                 RETURN OLD;
-            END IF;
+             END IF;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM public.source_cleanup_root_abandonment abandonment
+            WHERE abandonment.original_operation_id=grant_row.original_operation_id
+              AND abandonment.transaction_id=pg_current_xact_id()
+              AND EXISTS (SELECT 1 FROM jsonb_array_elements(abandonment.evidence->'retry_resolutions') e(value)
+                  WHERE e.value=to_jsonb(OLD))
+              AND abandonment.evidence->'retry_grant'=to_jsonb(grant_row)
+        ) THEN
+            RETURN OLD;
         END IF;
         IF OLD.completed_at IS NULL OR OLD.resolution_kind IS NULL THEN
             RAISE EXCEPTION 'active source cleanup retry resolution start is immutable outside verified replacement' USING ERRCODE='23514';
@@ -2608,9 +2640,14 @@ DECLARE op_id uuid;
         op_state text;
 BEGIN
    IF TG_OP='DELETE' THEN op_id:=OLD.original_operation_id; ELSE op_id:=NEW.original_operation_id; END IF;
-   SELECT * INTO state_row FROM public.source_cleanup_recovery_state WHERE original_operation_id=op_id;
-   IF NOT FOUND THEN
-     IF EXISTS (SELECT 1 FROM public.source_cleanup_explicit_retry WHERE original_operation_id=op_id AND frontier_revision IS NOT NULL) THEN
+    SELECT * INTO state_row FROM public.source_cleanup_recovery_state WHERE original_operation_id=op_id;
+    IF NOT FOUND THEN
+      IF EXISTS (SELECT 1 FROM public.source_cleanup_root_abandonment
+          WHERE original_operation_id=op_id AND transaction_id=pg_current_xact_id()) THEN
+        PERFORM public.assert_source_cleanup_root_abandonment_retired(op_id);
+        RETURN NULL;
+      END IF;
+      IF EXISTS (SELECT 1 FROM public.source_cleanup_explicit_retry WHERE original_operation_id=op_id AND frontier_revision IS NOT NULL) THEN
        RAISE EXCEPTION 'source cleanup grant cannot pin a missing current frontier' USING ERRCODE='23514';
       END IF;
      IF EXISTS (SELECT 1 FROM public.source_cleanup_recovery_item WHERE original_operation_id=op_id)
@@ -2695,6 +2732,340 @@ FOR EACH ROW EXECUTE FUNCTION public.check_source_cleanup_recovery_coverage();
 CREATE CONSTRAINT TRIGGER source_cleanup_frontier_transfer_proof_consumed
 AFTER INSERT ON public.source_cleanup_frontier_transfer_proof DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION public.finish_source_cleanup_frontier_transfer_proof();
+
+CREATE FUNCTION public.capture_source_cleanup_root_abandonment() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE root_row public.source_root%ROWTYPE;
+        position_row public.release_track%ROWTYPE;
+        original public.operation%ROWTYPE;
+        original_claim public.publication_execution_claim%ROWTYPE;
+        retry public.source_cleanup_explicit_retry%ROWTYPE;
+        retry_operation public.operation%ROWTYPE;
+        retry_claim public.publication_execution_claim%ROWTYPE;
+        v_epoch uuid;
+        v_position_id uuid;
+        location_count bigint;
+        claim_count integer;
+        recovery_claim_count integer;
+        position_count integer;
+        has_running_job boolean := false;
+        job record;
+        canonical jsonb;
+BEGIN
+    IF TG_OP <> 'INSERT' OR NEW.transaction_id IS DISTINCT FROM pg_current_xact_id()
+       OR NEW.created_at IS DISTINCT FROM transaction_timestamp()
+       OR NEW.evidence IS DISTINCT FROM '{}'::jsonb
+       OR NEW.original_operation_id='00000000-0000-0000-0000-000000000000'::uuid
+       OR NEW.root_id='00000000-0000-0000-0000-000000000000'::uuid THEN
+        RAISE EXCEPTION 'source cleanup root abandonment receipt must be caller-empty and database-authored' USING ERRCODE='23514';
+    END IF;
+
+    -- Match root deletion's lock order; the validator is also safe when called
+    -- directly because it reacquires every coordination gate.
+    PERFORM pg_advisory_xact_lock(1297371734, 94017);
+    PERFORM pg_advisory_xact_lock(1297371734, 3);
+    PERFORM pg_advisory_xact_lock(1297371734, 4);
+    IF EXISTS (SELECT 1 FROM public.output_reset_journal WHERE state <> 'finished') THEN
+        RAISE EXCEPTION 'source cleanup root abandonment is blocked by output reset recovery' USING ERRCODE='23514';
+    END IF;
+    SELECT * INTO root_row FROM public.source_root WHERE id=NEW.root_id FOR UPDATE;
+    IF NOT FOUND OR root_row.configured_path IS DISTINCT FROM NEW.confirmed_path THEN
+        RAISE EXCEPTION 'source cleanup root abandonment confirmation does not match current root' USING ERRCODE='23514';
+    END IF;
+    SELECT count(*) INTO location_count FROM public.source_location WHERE source_root_id=NEW.root_id;
+    IF location_count <> NEW.confirmed_location_count THEN
+        RAISE EXCEPTION 'source cleanup root abandonment location confirmation changed' USING ERRCODE='23514';
+    END IF;
+
+    SELECT output_epoch INTO v_epoch FROM public.publication_namespace_state WHERE singleton=true FOR UPDATE;
+    SELECT count(DISTINCT item.position_id) INTO position_count FROM public.source_cleanup_item item WHERE item.operation_id=NEW.original_operation_id;
+    SELECT DISTINCT item.position_id INTO v_position_id
+      FROM public.source_cleanup_item item WHERE item.operation_id=NEW.original_operation_id;
+    IF position_count <> 1 OR v_position_id IS NULL THEN
+        RAISE EXCEPTION 'source cleanup abandonment requires a complete nonempty cleanup graph' USING ERRCODE='23514';
+    END IF;
+    SELECT * INTO position_row FROM public.release_track WHERE id=v_position_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'source cleanup abandonment publication position is missing' USING ERRCODE='23514';
+    END IF;
+    SELECT * INTO original FROM public.operation WHERE id=NEW.original_operation_id FOR UPDATE;
+    IF NOT FOUND OR original.kind <> 'cleanup_publication_sources_v1' OR original.state <> 'failed'
+       OR original.stage <> 'cleanup_recovery_required' OR original.finished_at IS NULL
+       OR original.safe_error IS NULL OR btrim(original.safe_error)='' OR original.river_job_id IS NULL
+       OR original.attempt < 1 OR original.input_snapshot->>'position_id' IS DISTINCT FROM v_position_id::text
+       OR original.input_snapshot->>'output_epoch' IS DISTINCT FROM v_epoch::text THEN
+        RAISE EXCEPTION 'source cleanup original operation is not a valid failed recovery owner' USING ERRCODE='23514';
+    END IF;
+    SELECT count(*) INTO claim_count FROM public.publication_execution_claim WHERE operation_id=original.id;
+    SELECT * INTO original_claim FROM public.publication_execution_claim
+      WHERE operation_id=original.id ORDER BY application_attempt FOR UPDATE;
+    IF claim_count <> 1 OR original_claim.state <> 'recovery_required'
+       OR original_claim.application_attempt <> original.attempt
+       OR original_claim.river_job_id <> original.river_job_id
+       OR original_claim.epoch <> v_epoch OR original_claim.river_attempt <= 0
+       OR original_claim.claim_uuid='00000000-0000-0000-0000-000000000000'::uuid
+       OR original_claim.boot_uuid='00000000-0000-0000-0000-000000000000'::uuid
+       OR original_claim.delivery_token='' THEN
+        RAISE EXCEPTION 'source cleanup original recovery claim is not exact' USING ERRCODE='23514';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.source_cleanup_item WHERE operation_id=original.id)
+       OR EXISTS (
+          SELECT 1 FROM public.source_cleanup_item item
+          LEFT JOIN public.source_cleanup_owner owner ON owner.item_id=item.id
+          WHERE item.operation_id=original.id AND (owner.item_id IS NULL OR owner.operation_id<>original.id
+            OR owner.application_attempt<>original.attempt OR owner.river_job_id<>original.river_job_id
+            OR item.position_id<>v_position_id OR item.epoch<>v_epoch
+            OR owner.source_location_id IS NULL OR owner.work_id IS NULL
+            OR owner.source_root_id IS NULL
+            OR item.source_snapshot->>'source_root_id' IS DISTINCT FROM owner.source_root_id::text
+            OR item.source_snapshot->>'source_location_id' IS DISTINCT FROM owner.source_location_id::text
+            OR item.source_snapshot->>'work_id' IS DISTINCT FROM owner.work_id::text
+            OR NOT EXISTS (SELECT 1 FROM public.source_location location
+                WHERE location.id=owner.source_location_id AND location.source_root_id=owner.source_root_id)
+            OR NOT EXISTS (SELECT 1 FROM public.source_analysis_work work
+                WHERE work.id=owner.work_id AND work.source_root_id=owner.source_root_id
+                  AND work.location_id=owner.source_location_id))
+       )
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_owner owner
+          WHERE owner.operation_id=original.id AND NOT EXISTS
+            (SELECT 1 FROM public.source_cleanup_item item WHERE item.id=owner.item_id AND item.operation_id=original.id))
+       OR NOT EXISTS (SELECT 1 FROM public.source_cleanup_owner WHERE operation_id=original.id AND source_root_id=NEW.root_id) THEN
+        RAISE EXCEPTION 'source cleanup owners do not exactly cover the failed original graph and requested root' USING ERRCODE='23514';
+    END IF;
+
+    SELECT * INTO retry FROM public.source_cleanup_explicit_retry WHERE original_operation_id=original.id FOR UPDATE;
+    IF FOUND THEN
+        SELECT * INTO retry_operation FROM public.operation WHERE id=retry.recovery_operation_id FOR UPDATE;
+        IF retry.position_id<>v_position_id OR retry.epoch<>v_epoch
+           OR retry.original_application_attempt<>original.attempt OR retry.original_river_job_id<>original.river_job_id
+           OR retry.original_claim_uuid<>original_claim.claim_uuid
+           OR retry_operation.kind<>'retry_publication_sources_v1' OR retry_operation.state<>'failed'
+            OR retry_operation.input_snapshot->>'position_id' IS DISTINCT FROM v_position_id::text
+            OR retry_operation.input_snapshot->>'output_epoch' IS DISTINCT FROM v_epoch::text
+           OR retry_operation.input_snapshot->>'original_operation_id' IS DISTINCT FROM original.id::text
+           OR retry_operation.input_snapshot->>'original_claim_uuid' IS DISTINCT FROM original_claim.claim_uuid::text
+           OR (SELECT count(*) FROM public.source_cleanup_explicit_retry_item WHERE retry_id=retry.id) <>
+              (SELECT count(*) FROM public.source_cleanup_item WHERE operation_id=original.id)
+           OR EXISTS (SELECT 1 FROM public.source_cleanup_item item
+               LEFT JOIN public.source_cleanup_owner owner ON owner.item_id=item.id
+               LEFT JOIN public.source_cleanup_explicit_retry_item binding ON binding.retry_id=retry.id
+                 AND binding.original_operation_id=item.operation_id AND binding.item_id=item.id AND binding.owner_uuid=owner.owner_uuid
+               WHERE item.operation_id=original.id AND binding.item_id IS NULL) THEN
+            RAISE EXCEPTION 'source cleanup retry grant or item binding is not exact' USING ERRCODE='23514';
+        END IF;
+        SELECT count(*) INTO recovery_claim_count FROM public.publication_execution_claim WHERE operation_id=retry.recovery_operation_id;
+        IF retry.consumed_claim_uuid IS NOT NULL THEN
+            SELECT * INTO retry_claim FROM public.publication_execution_claim
+              WHERE operation_id=retry.recovery_operation_id ORDER BY application_attempt FOR UPDATE;
+            IF recovery_claim_count<>1 OR retry_claim.state<>'recovery_required'
+               OR retry_claim.application_attempt<>retry.consumed_application_attempt
+               OR retry_claim.river_job_id<>retry.consumed_river_job_id
+               OR retry_claim.claim_uuid<>retry.consumed_claim_uuid
+               OR retry_claim.epoch<>v_epoch OR retry_claim.epoch<>retry.epoch
+               OR retry_claim.river_attempt<=0
+               OR retry_claim.claim_uuid='00000000-0000-0000-0000-000000000000'::uuid
+               OR retry_claim.boot_uuid='00000000-0000-0000-0000-000000000000'::uuid
+               OR retry_claim.delivery_token=''
+               OR retry_operation.attempt<>retry.consumed_application_attempt
+               OR retry_operation.river_job_id IS DISTINCT FROM retry.consumed_river_job_id
+               OR NOT EXISTS (SELECT 1 FROM public.river_job retry_job
+                   WHERE retry_job.id=retry.consumed_river_job_id
+                     AND retry_job.kind='retry_publication_sources_v1'
+                     AND retry_job.args->>'operation_id'=retry.recovery_operation_id::text)
+               OR retry_operation.finished_at IS NULL OR retry_operation.safe_error IS NULL
+               OR btrim(retry_operation.safe_error)=''
+               OR retry_operation.stage<>'cleanup_retry_recovery_required' THEN
+                RAISE EXCEPTION 'consumed source cleanup retry lacks its exact returned recovery claim' USING ERRCODE='23514';
+            END IF;
+            IF EXISTS (SELECT 1 FROM public.source_cleanup_explicit_retry_resolution resolution
+                WHERE resolution.retry_id=retry.id AND
+                  (resolution.recovery_operation_id<>retry.recovery_operation_id
+                   OR resolution.application_attempt<>retry.consumed_application_attempt
+                   OR resolution.river_job_id<>retry.consumed_river_job_id
+                   OR resolution.claim_uuid<>retry.consumed_claim_uuid)) THEN
+                RAISE EXCEPTION 'source cleanup retry resolutions do not match the consumed recovery delivery' USING ERRCODE='23514';
+            END IF;
+        ELSIF retry.consumed_application_attempt IS NOT NULL OR retry.consumed_river_job_id IS NOT NULL
+           OR recovery_claim_count<>0
+           OR EXISTS (SELECT 1 FROM public.source_cleanup_explicit_retry_resolution WHERE retry_id=retry.id) THEN
+            RAISE EXCEPTION 'unconsumed source cleanup retry has partial or resolution evidence' USING ERRCODE='23514';
+        END IF;
+        IF retry.frontier_revision IS NULL THEN
+            IF EXISTS (SELECT 1 FROM public.source_cleanup_recovery_state WHERE original_operation_id=original.id)
+               OR EXISTS (SELECT 1 FROM public.source_cleanup_recovery_item WHERE original_operation_id=original.id) THEN
+                RAISE EXCEPTION 'source cleanup retry has an unpinned frontier' USING ERRCODE='23514';
+            END IF;
+        ELSIF NOT EXISTS (SELECT 1 FROM public.source_cleanup_recovery_state state
+             WHERE state.original_operation_id=original.id AND state.revision=retry.frontier_revision
+               AND (SELECT count(*) FROM public.source_cleanup_recovery_item i WHERE i.original_operation_id=original.id)=
+                   (SELECT count(*) FROM public.source_cleanup_item i WHERE i.operation_id=original.id)
+               AND NOT EXISTS (SELECT 1 FROM public.source_cleanup_item i
+                   WHERE i.operation_id=original.id AND NOT EXISTS (SELECT 1 FROM public.source_cleanup_recovery_item r
+                       WHERE r.original_operation_id=original.id AND r.item_id=i.id))
+               AND NOT EXISTS (SELECT 1 FROM public.source_cleanup_recovery_item r
+                   WHERE r.original_operation_id=original.id AND NOT EXISTS
+                     (SELECT 1 FROM jsonb_array_elements(state.proof->'folded_items') f(value) WHERE f.value=to_jsonb(r)))) THEN
+            RAISE EXCEPTION 'source cleanup retry frontier is not the exact pinned original-item frontier' USING ERRCODE='23514';
+        END IF;
+        IF EXISTS (SELECT 1 FROM public.source_cleanup_frontier_transfer_proof WHERE original_operation_id=original.id) THEN
+            RAISE EXCEPTION 'source cleanup retry has an in-flight frontier transfer' USING ERRCODE='23514';
+        END IF;
+    END IF;
+
+    -- Lock every associated delivery in stable ID order, including ID-only
+    -- River payloads. A recorded ID with the wrong kind or arguments is unsafe.
+    FOR job IN SELECT id,kind,args,state FROM public.river_job
+        WHERE id=original.river_job_id OR
+          (kind='cleanup_publication_sources_v1' AND args->>'operation_id'=original.id::text) OR
+          (retry.recovery_operation_id IS NOT NULL AND
+            (id=(SELECT river_job_id FROM public.operation WHERE id=retry.recovery_operation_id) OR
+             (kind='retry_publication_sources_v1' AND args->>'operation_id'=retry.recovery_operation_id::text)))
+        ORDER BY id FOR UPDATE
+    LOOP
+        IF (job.id=original.river_job_id AND (job.kind IS DISTINCT FROM 'cleanup_publication_sources_v1' OR job.args->>'operation_id' IS DISTINCT FROM original.id::text))
+           OR (retry.recovery_operation_id IS NOT NULL AND job.id=(SELECT river_job_id FROM public.operation WHERE id=retry.recovery_operation_id)
+               AND (job.kind IS DISTINCT FROM 'retry_publication_sources_v1' OR job.args->>'operation_id' IS DISTINCT FROM retry.recovery_operation_id::text)) THEN
+            RAISE EXCEPTION 'source cleanup abandonment has a conflicting River delivery identity' USING ERRCODE='23514';
+        END IF;
+        IF job.state='running' THEN
+            has_running_job := true;
+        END IF;
+    END LOOP;
+
+    canonical := jsonb_build_object(
+      'version',1,'root_id',NEW.root_id,'root',to_jsonb(root_row),
+      'original_operation_id',original.id,'original_operation',to_jsonb(original),
+      'position',to_jsonb(position_row),
+      'original_claim',to_jsonb(original_claim),
+      'items',COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY i.id) FROM public.source_cleanup_item i WHERE i.operation_id=original.id),'[]'::jsonb),
+      'owners',COALESCE((SELECT jsonb_agg(to_jsonb(o) ORDER BY o.item_id) FROM public.source_cleanup_owner o WHERE o.operation_id=original.id),'[]'::jsonb),
+      'retry_grant',(SELECT to_jsonb(r) FROM public.source_cleanup_explicit_retry r WHERE r.original_operation_id=original.id),
+      'retry_operation',(SELECT to_jsonb(o) FROM public.operation o JOIN public.source_cleanup_explicit_retry r ON r.recovery_operation_id=o.id WHERE r.original_operation_id=original.id),
+      'retry_claim',(SELECT to_jsonb(c) FROM public.publication_execution_claim c JOIN public.source_cleanup_explicit_retry r ON r.recovery_operation_id=c.operation_id WHERE r.original_operation_id=original.id),
+      'retry_items',COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY i.item_id) FROM public.source_cleanup_explicit_retry_item i JOIN public.source_cleanup_explicit_retry r ON r.id=i.retry_id WHERE r.original_operation_id=original.id),'[]'::jsonb),
+      'retry_resolutions',COALESCE((SELECT jsonb_agg(to_jsonb(r) ORDER BY r.item_id) FROM public.source_cleanup_explicit_retry_resolution r JOIN public.source_cleanup_explicit_retry g ON g.id=r.retry_id WHERE g.original_operation_id=original.id),'[]'::jsonb),
+      'recovery_state',(SELECT to_jsonb(s) FROM public.source_cleanup_recovery_state s WHERE s.original_operation_id=original.id),
+      'recovery_items',COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY i.item_id) FROM public.source_cleanup_recovery_item i WHERE i.original_operation_id=original.id),'[]'::jsonb),
+      'river_jobs',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',j.id,'kind',j.kind,'args',j.args,'state',j.state) ORDER BY j.id)
+          FROM public.river_job j WHERE j.id=original.river_job_id OR
+            (j.kind='cleanup_publication_sources_v1' AND j.args->>'operation_id'=original.id::text) OR
+            (retry.recovery_operation_id IS NOT NULL AND (j.id=(SELECT river_job_id FROM public.operation WHERE id=retry.recovery_operation_id)
+              OR (j.kind='retry_publication_sources_v1' AND j.args->>'operation_id'=retry.recovery_operation_id::text)))),'[]'::jsonb),
+      'position_id',v_position_id,'epoch',v_epoch,
+      'current_publication',(SELECT to_jsonb(p) FROM public.track_publication p WHERE p.position_id=v_position_id),
+      'namespace_reservations',COALESCE((SELECT jsonb_agg(to_jsonb(r) ORDER BY r.namespace_claim_id,r.position_id,r.generation)
+          FROM public.publication_namespace_reservation r WHERE r.position_id=v_position_id OR r.namespace_claim_id IN
+            (SELECT c.id FROM public.publication_namespace_claim c WHERE c.owner_position_id=v_position_id
+              OR EXISTS (SELECT 1 FROM public.publication_namespace_reservation owned
+                WHERE owned.namespace_claim_id=c.id AND owned.position_id=v_position_id))),'[]'::jsonb),
+      'namespace_claims',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM public.publication_namespace_claim c
+          WHERE c.owner_position_id=v_position_id OR EXISTS (SELECT 1 FROM public.publication_namespace_reservation r
+            WHERE r.namespace_claim_id=c.id AND r.position_id=v_position_id)),'[]'::jsonb));
+    IF has_running_job THEN
+        RAISE EXCEPTION 'source cleanup abandonment has a running River delivery' USING ERRCODE='23514';
+    END IF;
+    NEW.evidence := canonical;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER source_cleanup_root_abandonment_capture
+BEFORE INSERT ON public.source_cleanup_root_abandonment
+FOR EACH ROW EXECUTE FUNCTION public.capture_source_cleanup_root_abandonment();
+
+CREATE FUNCTION public.assert_source_cleanup_root_abandonment_retired(p_original_operation_id uuid) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE receipt public.source_cleanup_root_abandonment%ROWTYPE;
+BEGIN
+    SELECT * INTO receipt FROM public.source_cleanup_root_abandonment
+      WHERE original_operation_id=p_original_operation_id AND transaction_id=pg_current_xact_id();
+    IF NOT FOUND THEN RAISE EXCEPTION 'source cleanup root retirement lacks its current-transaction receipt' USING ERRCODE='23514'; END IF;
+    IF EXISTS (SELECT 1 FROM public.source_root WHERE id=receipt.root_id)
+       OR COALESCE((SELECT to_jsonb(p) FROM public.release_track p WHERE p.id=(receipt.evidence->>'position_id')::uuid),'null'::jsonb)
+          IS DISTINCT FROM receipt.evidence->'position'
+       OR EXISTS (SELECT 1 FROM public.publication_source_hold WHERE source_root_id=receipt.root_id)
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_owner WHERE source_root_id=receipt.root_id)
+       OR EXISTS (SELECT 1 FROM public.operation WHERE id=p_original_operation_id)
+       OR EXISTS (SELECT 1 FROM public.publication_execution_claim WHERE operation_id=p_original_operation_id)
+       OR (receipt.evidence->'retry_operation' IS NOT NULL AND receipt.evidence->'retry_operation'<>'null'::jsonb
+           AND EXISTS (SELECT 1 FROM public.operation WHERE id=(receipt.evidence#>>'{retry_operation,id}')::uuid))
+       OR (receipt.evidence->'retry_operation' IS NOT NULL AND receipt.evidence->'retry_operation'<>'null'::jsonb
+           AND EXISTS (SELECT 1 FROM public.publication_execution_claim WHERE operation_id=(receipt.evidence#>>'{retry_operation,id}')::uuid))
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_item WHERE operation_id=p_original_operation_id)
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_owner WHERE operation_id=p_original_operation_id)
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_explicit_retry WHERE original_operation_id=p_original_operation_id)
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_recovery_state WHERE original_operation_id=p_original_operation_id)
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_recovery_item WHERE original_operation_id=p_original_operation_id)
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_frontier_transfer_proof WHERE original_operation_id=p_original_operation_id) THEN
+        RAISE EXCEPTION 'source cleanup root abandonment graph is not fully retired' USING ERRCODE='23514';
+    END IF;
+     IF EXISTS (SELECT 1 FROM jsonb_array_elements(receipt.evidence->'retry_resolutions') e(value)
+         JOIN public.source_cleanup_explicit_retry_resolution r ON to_jsonb(r)=e.value)
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements(receipt.evidence->'retry_resolutions') e(value)
+         WHERE EXISTS (SELECT 1 FROM public.source_cleanup_explicit_retry_resolution r
+           WHERE r.retry_id=(e.value->>'retry_id')::uuid AND r.item_id=(e.value->>'item_id')::uuid))
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements(receipt.evidence->'retry_items') e(value)
+        JOIN public.source_cleanup_explicit_retry_item i ON to_jsonb(i)=e.value)
+       OR EXISTS (SELECT 1 FROM jsonb_array_elements(receipt.evidence->'items') e(value)
+        JOIN public.source_cleanup_item i ON i.id=(e.value->>'id')::uuid AND i.operation_id=(e.value->>'operation_id')::uuid)
+       OR EXISTS (SELECT 1 FROM jsonb_array_elements(receipt.evidence->'owners') e(value)
+        JOIN public.source_cleanup_owner o ON o.item_id=(e.value->>'item_id')::uuid AND o.operation_id=(e.value->>'operation_id')::uuid)
+       OR EXISTS (SELECT 1 FROM jsonb_array_elements(receipt.evidence->'retry_items') e(value)
+        WHERE EXISTS (SELECT 1 FROM public.source_cleanup_explicit_retry_item i
+          WHERE i.retry_id=(e.value->>'retry_id')::uuid AND i.item_id=(e.value->>'item_id')::uuid))
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_explicit_retry g
+          WHERE g.original_operation_id=p_original_operation_id)
+       OR (receipt.evidence->'retry_grant' IS NOT NULL AND receipt.evidence->'retry_grant'<>'null'::jsonb
+           AND EXISTS (SELECT 1 FROM public.source_cleanup_explicit_retry g
+             WHERE g.id=(receipt.evidence#>>'{retry_grant,id}')::uuid OR
+                   (g.original_operation_id=p_original_operation_id AND g.recovery_operation_id=(receipt.evidence#>>'{retry_grant,recovery_operation_id}')::uuid)))
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_recovery_state s
+          WHERE s.original_operation_id=p_original_operation_id)
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_recovery_item r
+          WHERE r.original_operation_id=p_original_operation_id)
+       OR EXISTS (SELECT 1 FROM public.source_cleanup_frontier_transfer_proof p
+          WHERE p.original_operation_id=p_original_operation_id)
+       OR EXISTS (SELECT 1 FROM jsonb_array_elements(receipt.evidence->'river_jobs') e(value)
+          JOIN public.river_job j ON j.id=(e.value->>'id')::bigint
+          WHERE j.kind IS DISTINCT FROM e.value->>'kind' OR j.args IS DISTINCT FROM e.value->'args')
+       OR EXISTS (SELECT 1 FROM jsonb_array_elements(receipt.evidence->'river_jobs') e(value)
+        JOIN public.river_job j ON j.id=(e.value->>'id')::bigint
+        WHERE j.state IN ('running','available','pending','retryable','scheduled')) THEN
+        RAISE EXCEPTION 'source cleanup root abandonment retained child evidence or runnable delivery' USING ERRCODE='23514';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.river_job j WHERE j.state IN ('running','available','pending','retryable','scheduled')
+        AND ((j.kind='cleanup_publication_sources_v1' AND j.args->>'operation_id'=p_original_operation_id::text)
+          OR (j.kind='retry_publication_sources_v1' AND j.args->>'operation_id'=receipt.evidence#>>'{retry_operation,id}'))) THEN
+        RAISE EXCEPTION 'source cleanup root abandonment left an associated runnable delivery' USING ERRCODE='23514';
+    END IF;
+    IF (SELECT output_epoch FROM public.publication_namespace_state WHERE singleton=true)
+       IS DISTINCT FROM (receipt.evidence->>'epoch')::uuid THEN
+        RAISE EXCEPTION 'source cleanup root abandonment changed publication namespace epoch' USING ERRCODE='23514';
+    END IF;
+    IF COALESCE((SELECT to_jsonb(p) FROM public.track_publication p WHERE p.position_id=(receipt.evidence->>'position_id')::uuid),'null'::jsonb)
+       IS DISTINCT FROM receipt.evidence->'current_publication'
+       OR COALESCE((SELECT jsonb_agg(to_jsonb(r) ORDER BY r.namespace_claim_id,r.position_id,r.generation)
+          FROM public.publication_namespace_reservation r WHERE r.position_id=(receipt.evidence->>'position_id')::uuid OR r.namespace_claim_id IN
+            (SELECT c.id FROM public.publication_namespace_claim c WHERE c.owner_position_id=(receipt.evidence->>'position_id')::uuid
+              OR EXISTS (SELECT 1 FROM public.publication_namespace_reservation owned
+                WHERE owned.namespace_claim_id=c.id AND owned.position_id=(receipt.evidence->>'position_id')::uuid))),'[]'::jsonb)
+          IS DISTINCT FROM receipt.evidence->'namespace_reservations'
+       OR COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM public.publication_namespace_claim c
+          WHERE c.owner_position_id=(receipt.evidence->>'position_id')::uuid OR EXISTS
+            (SELECT 1 FROM public.publication_namespace_reservation r WHERE r.namespace_claim_id=c.id
+              AND r.position_id=(receipt.evidence->>'position_id')::uuid)),'[]'::jsonb)
+          IS DISTINCT FROM receipt.evidence->'namespace_claims' THEN
+        RAISE EXCEPTION 'source cleanup root abandonment changed current publication namespace authority' USING ERRCODE='23514';
+    END IF;
+END $$;
+
+CREATE FUNCTION public.check_source_cleanup_root_abandonment_retired() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM public.assert_source_cleanup_root_abandonment_retired(NEW.original_operation_id);
+    RETURN NULL;
+END $$;
+CREATE CONSTRAINT TRIGGER source_cleanup_root_abandonment_retired
+AFTER INSERT ON public.source_cleanup_root_abandonment DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION public.check_source_cleanup_root_abandonment_retired();
 
 -- Former migration: 20261027000001_source_cleanup_completion.tx.up.sql
 CREATE TABLE public.source_cleanup_completion (

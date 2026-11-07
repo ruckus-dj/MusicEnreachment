@@ -115,15 +115,14 @@ func abandonFailedPublicationsForRoot(ctx context.Context, tx bun.Tx, rootID uui
 		if activeClaim {
 			return fmt.Errorf("publication delivery claim has not been returned")
 		}
-		// These dependants are outside the narrow abandonment graph. Refuse them
-		// explicitly rather than relying on a later FK failure during deletion.
+		// Keep exact operation-identity blockers for dependencies not retired by
+		// this graph; unrelated cleanup at the same position is not authority.
 		var unsupported bool
 		if err := tx.NewRaw(`SELECT EXISTS (
-			SELECT 1 FROM source_cleanup_item WHERE operation_id=? OR (position_id=? AND epoch=? )
+			SELECT 1 FROM source_cleanup_item WHERE operation_id=?
 			UNION ALL
-			SELECT 1 FROM obsolete_publication_output_cleanup cleanup
-			WHERE cleanup.operation_id=? OR cleanup.position_id=?
-		)`, attempt.OperationID, attempt.PositionID, attempt.Epoch, attempt.OperationID, attempt.PositionID).Scan(ctx, &unsupported); err != nil {
+			SELECT 1 FROM obsolete_publication_output_cleanup WHERE operation_id=?
+		)`, attempt.OperationID, attempt.OperationID).Scan(ctx, &unsupported); err != nil {
 			return err
 		}
 		if unsupported {

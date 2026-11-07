@@ -261,6 +261,10 @@ in frontend/.
   a pooled Registry read inside the locked filesystem callback can deadlock
   the connection pool. Native cleanup fixtures need actual canonical
   `analysis/staging/<root>/<work>/<artifact>` paths, not placeholder paths.
+- Cleanup failure writers return application ownership but do not finalize River
+  deliveries. Root-abandonment fixtures must finalize their exact jobs before
+  testing cleanup callbacks; assert the injected callback error so an earlier
+  running-delivery rejection cannot masquerade as rollback coverage.
 
 ### Owner-directed test scope
 

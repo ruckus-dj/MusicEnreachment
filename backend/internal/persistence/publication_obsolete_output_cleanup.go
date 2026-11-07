@@ -84,8 +84,11 @@ func (repository *SetupManagerRepository) AdmitObsoletePublicationOutputCleanupT
 		JOIN track_publication_attempt a ON a.position_id=r.position_id AND a.epoch=? AND a.candidate_generation=r.generation
 		WHERE r.namespace_claim_id=?
 		UNION ALL
+		SELECT 1 FROM publication_root_abandonment archived
+		WHERE archived.epoch=? AND ?=ANY(archived.namespace_claim_ids)
+		UNION ALL
 		SELECT 1 FROM publication_namespace_reservation r WHERE r.namespace_claim_id=? AND NOT (r.position_id=? AND r.generation=?)
-	)`, request.Epoch, request.NamespaceClaimID, request.Epoch, request.NamespaceClaimID, request.NamespaceClaimID, request.PositionID, request.Generation).Scan(ctx, &protected); err != nil {
+	)`, request.Epoch, request.NamespaceClaimID, request.Epoch, request.NamespaceClaimID, request.Epoch, request.NamespaceClaimID, request.NamespaceClaimID, request.PositionID, request.Generation).Scan(ctx, &protected); err != nil {
 		return nil, fmt.Errorf("admit obsolete publication output cleanup: check namespace consumers: %w", err)
 	}
 	if protected {
