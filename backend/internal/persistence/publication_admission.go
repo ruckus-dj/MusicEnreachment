@@ -95,6 +95,9 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("admit publication: %w", err)
 	}
+	if input.Version == PublicationSourceRepublishInputsVersion {
+		return uuid.Nil, fmt.Errorf("admit publication: source republish execution is not activated: %w", ErrPublicationAdmissionConflict)
+	}
 	if input.IntentKind != request.IntentKind || !samePublicationTools(request.Tools, input.Tools) {
 		return uuid.Nil, fmt.Errorf("admit publication: request conflicts with frozen publication inputs")
 	}

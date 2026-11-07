@@ -23,6 +23,7 @@ import (
 const PublicationInputsVersion = 1
 const PublicationAudioUpgradeInputsVersion = 2
 const PublicationProviderTagInputsVersion = 3
+const PublicationSourceRepublishInputsVersion = 4
 
 // PublicationInputs is the versioned, immutable execution contract retained by
 // a publication attempt. Intent-specific data is deliberately disjoint.
@@ -39,6 +40,7 @@ type PublicationInputs struct {
 	InitialLyrics        *PublicationInitialLyricsInput        `json:"initial_lyrics,omitempty"`
 	AudioUpgrade         *PublicationAudioUpgradeInput         `json:"audio_upgrade,omitempty"`
 	ProviderTags         *PublicationProviderTagInput          `json:"provider_tags,omitempty"`
+	SourceRepublish      *PublicationSourceRepublishInput      `json:"source_republish,omitempty"`
 	Format               publication.AudioPublicationFormat    `json:"format"`
 	DesiredTags          map[string][]string                   `json:"desired_tags"`
 	Tools                []SourceAnalysisToolSelection         `json:"tools"`
@@ -190,7 +192,7 @@ func DecodePublicationInputs(raw json.RawMessage) (PublicationInputs, error) {
 
 // Validate enforces version, discriminated intent, selectors and portable paths.
 func (input PublicationInputs) Validate() error {
-	if input.Version != PublicationInputsVersion && input.Version != PublicationAudioUpgradeInputsVersion && input.Version != PublicationProviderTagInputsVersion {
+	if input.Version != PublicationInputsVersion && input.Version != PublicationAudioUpgradeInputsVersion && input.Version != PublicationProviderTagInputsVersion && input.Version != PublicationSourceRepublishInputsVersion {
 		return fmt.Errorf("unsupported publication inputs version %d", input.Version)
 	}
 	if input.Version == PublicationInputsVersion && input.AudioUpgrade != nil {
@@ -211,6 +213,17 @@ func (input PublicationInputs) Validate() error {
 		}
 		if input.QualityPolicyVersion != publication.QualityPolicyVersion {
 			return fmt.Errorf("unsupported publication quality policy version %d", input.QualityPolicyVersion)
+		}
+	}
+	if input.Version != PublicationSourceRepublishInputsVersion && input.SourceRepublish != nil {
+		return errors.New("source republish data requires version 4 publication inputs")
+	}
+	if input.Version == PublicationSourceRepublishInputsVersion {
+		if input.IntentKind != "audio" || input.Audio == nil || input.Rewrite != nil || input.AudioUpgrade != nil || input.ProviderTags != nil || input.InitialLyrics != nil || input.ManualLyrics != nil || input.ManualCover != nil || input.AutomaticLyricsRetry != nil || input.SourceAuthorityMode != "" || input.SourceRepublish == nil {
+			return errors.New("version 4 publication inputs require exclusive source republish audio")
+		}
+		if err := input.SourceRepublish.Validate(*input.Audio); err != nil {
+			return fmt.Errorf("invalid source republish inputs: %w", err)
 		}
 	}
 	if input.Version == PublicationAudioUpgradeInputsVersion {
@@ -339,6 +352,9 @@ func (input PublicationInputs) Validate() error {
 // SupportsExecution reports whether this frozen contract is executable by the
 // generic publication path. Private manual-lyrics execution is separate.
 func (input PublicationInputs) SupportsExecution() bool {
+	if input.Version == PublicationSourceRepublishInputsVersion {
+		return false
+	}
 	if input.Version == PublicationProviderTagInputsVersion {
 		return validProviderTagRewrite(input)
 	}
@@ -509,6 +525,10 @@ func (input PublicationInputs) Clone() PublicationInputs {
 			providerTags.ProtectedKeys = append([]string{}, providerTags.ProtectedKeys...)
 		}
 		clone.ProviderTags = &providerTags
+	}
+	if input.SourceRepublish != nil {
+		republish := input.SourceRepublish.Clone()
+		clone.SourceRepublish = &republish
 	}
 	return clone
 }

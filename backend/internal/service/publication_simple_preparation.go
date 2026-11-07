@@ -47,6 +47,169 @@ type PublicationSimplePreparationResult struct {
 	// Generation is intentionally left unset here; the committing caller binds it.
 	InitialLyrics  *persistence.PublicationInitialLyricsProjection
 	CoverEmbedding *persistence.PublicationCoverEmbeddingProjection
+	// SourceRepublishCoverWarning retains only the frozen safe warning code.
+	SourceRepublishCoverWarning string
+}
+
+// PrepareSourceRepublish builds a fresh source-backed candidate using only the
+// frozen v4 republish contract. CURRENT is a freshness witness, never an input.
+func (preparation PublicationSimplePreparation) PrepareSourceRepublish(
+	ctx context.Context,
+	input persistence.PublicationInputs,
+	inputPath, tempDir, outputPath string,
+) (PublicationSimplePreparationResult, error) {
+	if input.Version != persistence.PublicationSourceRepublishInputsVersion || input.Audio == nil || input.SourceRepublish == nil ||
+		inputPath == "" || tempDir == "" || outputPath == "" || !filepath.IsAbs(inputPath) || !filepath.IsAbs(tempDir) || !filepath.IsAbs(outputPath) ||
+		preparation.Commands == nil || preparation.Validator == nil || preparation.Metadata == nil || preparation.FFmpegPath == "" {
+		return PublicationSimplePreparationResult{}, errors.New("source republish preparation dependencies or frozen inputs are incomplete")
+	}
+	input = input.Clone()
+	if err := input.Validate(); err != nil {
+		return PublicationSimplePreparationResult{}, fmt.Errorf("validate frozen source republish input: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return PublicationSimplePreparationResult{}, err
+	}
+	if _, err := os.Lstat(outputPath); err == nil {
+		return PublicationSimplePreparationResult{}, errors.New("publication candidate output already exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return PublicationSimplePreparationResult{}, fmt.Errorf("inspect publication candidate output: %w", err)
+	}
+	if err := os.MkdirAll(tempDir, 0o700); err != nil {
+		return PublicationSimplePreparationResult{}, fmt.Errorf("create publication temporary directory: %w", err)
+	}
+	facts := input.Audio.AudioFacts.AudioSourceFacts()
+	if err := buildSimpleAudioCandidate(ctx, preparation.Commands, preparation.FFmpegPath, input.Format, facts, inputPath, outputPath); err != nil {
+		return PublicationSimplePreparationResult{}, fmt.Errorf("build source republish candidate: %w", err)
+	}
+	if err := metadata.ClearArtwork(ctx, outputPath); err != nil {
+		return PublicationSimplePreparationResult{}, fmt.Errorf("clear source artwork from republish candidate: %w", err)
+	}
+
+	republish := input.SourceRepublish
+	tags := cloneTagMap(input.DesiredTags)
+	if republish.Lyrics.State == "value" {
+		tags["LYRICS"] = []string{republish.Lyrics.Text}
+	} else {
+		deleteTag(tags, "LYRICS")
+	}
+	var cover *metadata.Cover
+	if republish.Cover.Derivation == "ready" {
+		cover = &metadata.Cover{Data: append([]byte(nil), republish.Cover.PNG...), MIME: republish.Cover.MIME}
+	}
+	prepared := PublicationSimplePreparationResult{}
+	if republish.Cover.Derivation == "optional_failure" {
+		prepared.SourceRepublishCoverWarning = republish.Cover.Failure
+	}
+
+	assetsWriter, supportsOptionalAssets := preparation.Metadata.(interface {
+		WriteWithOptionalAssets(context.Context, string, map[string][]string, *metadata.Cover) (metadata.OptionalAssetsWriteResult, error)
+	})
+	if !supportsOptionalAssets {
+		return PublicationSimplePreparationResult{}, errors.New("source republish optional-asset writer is unavailable")
+	}
+	writeResult, err := assetsWriter.WriteWithOptionalAssets(ctx, outputPath, tags, cover)
+	if err != nil {
+		return PublicationSimplePreparationResult{}, fmt.Errorf("write source republish candidate metadata and assets: %w", err)
+	}
+	if republish.Lyrics.State == "value" && writeResult.LyricsStatus != metadata.OptionalLyricsVerified {
+		deleteTag(tags, "LYRICS")
+		writeResult, err = preparation.rebuildSourceRepublishCandidate(ctx, input, inputPath, outputPath, tags, cover)
+		if err != nil {
+			return PublicationSimplePreparationResult{}, fmt.Errorf("rebuild source republish candidate without optional lyrics: %w", err)
+		}
+		prepared.LyricsOutcome = &persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetAbsent}
+	} else if republish.Lyrics.State == "value" {
+		prepared.LyricsOutcome = &persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetEmbedded, SHA256: republish.Lyrics.SHA256, Format: "lrc"}
+	} else {
+		prepared.LyricsOutcome = &persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetAbsent}
+	}
+	if cover != nil && writeResult.CoverStatus != metadata.OptionalCoverVerified {
+		prepared.SourceRepublishCoverWarning = sourceRepublishCoverWarning(writeResult.CoverStatus)
+		if _, err := preparation.rebuildSourceRepublishCandidate(ctx, input, inputPath, outputPath, tags, nil); err != nil {
+			return PublicationSimplePreparationResult{}, fmt.Errorf("rebuild source republish candidate without optional cover: %w", err)
+		}
+	}
+
+	expectedCover := persistence.PublicationCoverOutcome{State: persistence.PublicationAssetAbsent}
+	if cover != nil && prepared.SourceRepublishCoverWarning == "" {
+		size := int64(len(cover.Data))
+		expectedCover = persistence.PublicationCoverOutcome{
+			State: persistence.PublicationAssetEmbedded, SHA256: republish.Cover.SHA256,
+			MIME: republish.Cover.MIME, SizeBytes: &size,
+		}
+	}
+
+	validator, ok := preparation.Validator.(interface {
+		ValidateSourceRepublish(context.Context, string, persistence.PublicationInputs, persistence.PublicationCoverOutcome) (PublicationStageObservation, error)
+	})
+	if !ok {
+		return PublicationSimplePreparationResult{}, errors.New("source republish candidate validator is unavailable")
+	}
+	observed, err := validator.ValidateSourceRepublish(ctx, outputPath, input, expectedCover)
+	if err != nil {
+		return PublicationSimplePreparationResult{}, fmt.Errorf("validate source republish candidate: %w", err)
+	}
+	prepared.Observation = persistence.PublicationStageObservation{
+		Version: 1, RelativePath: filepath.Base(outputPath), Ownership: observed.Ownership,
+		PayloadSHA256: observed.SHA256, ActualAudio: observed.Audio, ActualMetadata: observed.Metadata,
+		ActualAssets: observed.Assets, QualityPolicyVersion: observed.QualityPolicyVersion,
+	}
+	return prepared, nil
+}
+
+func (preparation PublicationSimplePreparation) rebuildSourceRepublishCandidate(
+	ctx context.Context,
+	input persistence.PublicationInputs,
+	inputPath, outputPath string,
+	tags map[string][]string,
+	cover *metadata.Cover,
+) (metadata.OptionalAssetsWriteResult, error) {
+	if err := ctx.Err(); err != nil {
+		return metadata.OptionalAssetsWriteResult{}, err
+	}
+	if runner, ok := preparation.Commands.(interface{ QuiescenceUnknown() bool }); ok && runner.QuiescenceUnknown() {
+		return metadata.OptionalAssetsWriteResult{}, errors.New("source-republish command quiescence is unknown")
+	}
+	if err := os.Remove(outputPath); err != nil {
+		return metadata.OptionalAssetsWriteResult{}, fmt.Errorf("remove failed source republish candidate: %w", err)
+	}
+	if err := buildSimpleAudioCandidate(ctx, preparation.Commands, preparation.FFmpegPath, input.Format, input.Audio.AudioFacts.AudioSourceFacts(), inputPath, outputPath); err != nil {
+		return metadata.OptionalAssetsWriteResult{}, fmt.Errorf("rebuild source republish audio candidate: %w", err)
+	}
+	if err := metadata.ClearArtwork(ctx, outputPath); err != nil {
+		return metadata.OptionalAssetsWriteResult{}, fmt.Errorf("clear source artwork from rebuilt candidate: %w", err)
+	}
+	if cover == nil {
+		if _, err := preparation.Metadata.Write(ctx, outputPath, tags, nil); err != nil {
+			return metadata.OptionalAssetsWriteResult{}, fmt.Errorf("write mandatory source republish tags: %w", err)
+		}
+		return metadata.OptionalAssetsWriteResult{LyricsStatus: metadata.OptionalLyricsNotRequested, CoverStatus: metadata.OptionalCoverNotRequested}, nil
+	}
+	assetsWriter, ok := preparation.Metadata.(interface {
+		WriteWithOptionalAssets(context.Context, string, map[string][]string, *metadata.Cover) (metadata.OptionalAssetsWriteResult, error)
+	})
+	if !ok {
+		return metadata.OptionalAssetsWriteResult{}, errors.New("source republish optional-asset writer is unavailable")
+	}
+	result, err := assetsWriter.WriteWithOptionalAssets(ctx, outputPath, tags, cover)
+	if err != nil {
+		return metadata.OptionalAssetsWriteResult{}, fmt.Errorf("write rebuilt source republish optional assets: %w", err)
+	}
+	return result, nil
+}
+
+func sourceRepublishCoverWarning(status metadata.OptionalCoverWriteStatus) string {
+	switch status {
+	case metadata.OptionalCoverWriteFailed:
+		return "cover_write_failed"
+	case metadata.OptionalCoverReadFailed:
+		return "cover_read_failed"
+	case metadata.OptionalCoverMismatch:
+		return "cover_mismatch"
+	default:
+		return "derivative_failed"
+	}
 }
 
 func publicationCoverThumbnail(ctx context.Context, tempDir string, receipt *persistence.PublicationAttemptCoverInput) (*metadata.Cover, error) {

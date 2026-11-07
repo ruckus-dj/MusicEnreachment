@@ -38,12 +38,20 @@ type RealPublicationStageValidator struct {
 // intentionally not used for I/O, tool, cancellation, or adapter failures.
 var errPublicationStageMismatch = errors.New("publication stage content mismatch")
 
+type publicationStageValidationMode uint8
+
+const (
+	publicationStageGeneric publicationStageValidationMode = iota
+	publicationStageProviderTags
+	publicationStageSourceRepublish
+)
+
 func publicationStageMismatch(message string) error {
 	return fmt.Errorf("%w: %s", errPublicationStageMismatch, message)
 }
 
 func (validator RealPublicationStageValidator) Validate(ctx context.Context, stagePath string, input persistence.PublicationInputs) (result PublicationStageObservation, resultErr error) {
-	return validator.validate(ctx, stagePath, input, nil, nil, false)
+	return validator.validate(ctx, stagePath, input, nil, nil, publicationStageGeneric)
 }
 
 // ValidateProviderTags requires exclusive provider authority when validating a
@@ -52,24 +60,50 @@ func (validator RealPublicationStageValidator) ValidateProviderTags(ctx context.
 	if input.Version != persistence.PublicationProviderTagInputsVersion || input.ProviderTags == nil {
 		return PublicationStageObservation{}, errors.New("provider-tag validation requires exclusive provider authority")
 	}
-	return validator.validate(ctx, stagePath, input, nil, nil, true)
+	return validator.validate(ctx, stagePath, input, nil, nil, publicationStageProviderTags)
+}
+
+// ValidateSourceRepublish validates only a private candidate against its frozen
+// source-republish inputs. It does not make v4 executable through Validate.
+func (validator RealPublicationStageValidator) ValidateSourceRepublish(
+	ctx context.Context,
+	stagePath string,
+	input persistence.PublicationInputs,
+	expectedCover persistence.PublicationCoverOutcome,
+) (PublicationStageObservation, error) {
+	input = input.Clone()
+	if input.Version != persistence.PublicationSourceRepublishInputsVersion || input.SourceRepublish == nil || input.Audio == nil {
+		return PublicationStageObservation{}, errors.New("source-republish validation requires exclusive v4 source authority")
+	}
+	for key := range input.DesiredTags {
+		if strings.EqualFold(strings.TrimSpace(key), "LYRICS") {
+			return PublicationStageObservation{}, errors.New("source-republish mandatory tags must exclude optional lyrics")
+		}
+	}
+	plannedCover := input.SourceRepublish.Cover
+	coverAbsent := expectedCover.State == persistence.PublicationAssetAbsent && expectedCover.SHA256 == "" && expectedCover.MIME == "" && expectedCover.SizeBytes == nil
+	coverEmbedded := plannedCover.Derivation == "ready" && expectedCover.State == persistence.PublicationAssetEmbedded && expectedCover.SHA256 == plannedCover.SHA256 && expectedCover.MIME == plannedCover.MIME && expectedCover.SizeBytes != nil && *expectedCover.SizeBytes == plannedCover.SizeBytes
+	if !coverAbsent && !coverEmbedded || plannedCover.Derivation != "ready" && !coverAbsent {
+		return PublicationStageObservation{}, errors.New("source-republish cover outcome is not authorized by frozen derivative")
+	}
+	return validator.validate(ctx, stagePath, input, nil, &expectedCover, publicationStageSourceRepublish)
 }
 
 // ValidateFirstAudioCover validates the first-audio candidate against the
 // independently observed result of its cover attempt (or baseline fallback).
 func (validator RealPublicationStageValidator) ValidateFirstAudioCover(ctx context.Context, stagePath string, input persistence.PublicationInputs, expected persistence.PublicationCoverOutcome) (PublicationStageObservation, error) {
-	return validator.validate(ctx, stagePath, input, nil, &expected, false)
+	return validator.validate(ctx, stagePath, input, nil, &expected, publicationStageGeneric)
 }
 
 func (validator RealPublicationStageValidator) ValidateAutomaticLyricsRetry(ctx context.Context, stagePath string, input persistence.PublicationInputs, lyrics string) (PublicationStageObservation, error) {
 	if input.AutomaticLyricsRetry == nil || input.ManualLyrics != nil {
 		return PublicationStageObservation{}, errors.New("automatic retry validation requires retry authority")
 	}
-	return validator.validate(ctx, stagePath, input, &lyrics, nil, false)
+	return validator.validate(ctx, stagePath, input, &lyrics, nil, publicationStageGeneric)
 }
 
-func (validator RealPublicationStageValidator) validate(ctx context.Context, stagePath string, input persistence.PublicationInputs, retryLyrics *string, firstAudioCover *persistence.PublicationCoverOutcome, privateProviderTags bool) (result PublicationStageObservation, resultErr error) {
-	if !input.SupportsExecution() && !privateProviderTags {
+func (validator RealPublicationStageValidator) validate(ctx context.Context, stagePath string, input persistence.PublicationInputs, retryLyrics *string, firstAudioCover *persistence.PublicationCoverOutcome, mode publicationStageValidationMode) (result PublicationStageObservation, resultErr error) {
+	if !input.SupportsExecution() && mode != publicationStageProviderTags && mode != publicationStageSourceRepublish {
 		return PublicationStageObservation{}, fmt.Errorf("publication inputs version %d does not support execution", input.Version)
 	}
 	if err := ctx.Err(); err != nil {
@@ -208,6 +242,17 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 			if err := validateAudioUpgradeTopology(raw, inventory); err != nil {
 				return PublicationStageObservation{}, err
 			}
+		} else if mode == publicationStageSourceRepublish {
+			assets, assetErr := ObservePublicationAssets(capture)
+			if assetErr != nil {
+				return PublicationStageObservation{}, fmt.Errorf("observe source-republish publication assets: %w", assetErr)
+			}
+			if firstAudioCover == nil || assets.Cover.State != firstAudioCover.State || assets.Cover.SHA256 != firstAudioCover.SHA256 || assets.Cover.MIME != firstAudioCover.MIME || !samePublicationOptionalInt64(assets.Cover.SizeBytes, firstAudioCover.SizeBytes) {
+				return PublicationStageObservation{}, publicationStageMismatch("source-republish cover does not match the independently observed write outcome")
+			}
+			if err := validateFirstAudioCoverTopology(raw, plan.OutputContainer, assets.Cover); err != nil {
+				return PublicationStageObservation{}, publicationStageMismatch(err.Error())
+			}
 		} else if firstAudioCover != nil {
 			assets, assetErr := ObservePublicationAssets(capture)
 			if assetErr != nil {
@@ -232,13 +277,20 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 		}
 	}
 	expectedTags := input.DesiredTags
+	actualTags := capture.Tags
+	if mode == publicationStageSourceRepublish {
+		expectedTags = cloneTagMap(input.DesiredTags)
+		actualTags = cloneTagMap(capture.Tags)
+		deleteTag(expectedTags, "LYRICS")
+		deleteTag(actualTags, "LYRICS")
+	}
 	if retryLyrics != nil {
 		expectedTags = cloneTagMap(input.DesiredTags)
 		if *retryLyrics != "" {
 			expectedTags["LYRICS"] = []string{*retryLyrics}
 		}
 	}
-	if !equalTags(capture.Tags, expectedTags) {
+	if !equalTags(actualTags, expectedTags) {
 		return PublicationStageObservation{}, publicationStageMismatch("publication stage metadata does not match requested tags")
 	}
 	if err := ctx.Err(); err != nil {
@@ -303,6 +355,29 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	assets, err := ObservePublicationAssets(capture)
 	if err != nil {
 		return PublicationStageObservation{}, fmt.Errorf("observe publication stage assets: %w", err)
+	}
+	if mode == publicationStageSourceRepublish {
+		cover := input.SourceRepublish.Cover
+		if cover.Derivation == "ready" && firstAudioCover != nil && firstAudioCover.State == persistence.PublicationAssetEmbedded {
+			size := cover.SizeBytes
+			if assets.Cover.State != persistence.PublicationAssetEmbedded || assets.Cover.SHA256 != cover.SHA256 || assets.Cover.MIME != cover.MIME || !samePublicationOptionalInt64(assets.Cover.SizeBytes, &size) {
+				return PublicationStageObservation{}, publicationStageMismatch("source-republish cover does not match frozen derivative")
+			}
+		} else if assets.Cover.State != persistence.PublicationAssetAbsent || firstAudioCover == nil || firstAudioCover.State != persistence.PublicationAssetAbsent {
+			return PublicationStageObservation{}, publicationStageMismatch("source-republish candidate contains an unplanned cover")
+		}
+		lyrics := input.SourceRepublish.Lyrics
+		if lyrics.State == "value" {
+			readbackLyrics := capture.Tags["LYRICS"]
+			if assets.Lyrics.State == persistence.PublicationAssetEmbedded && (assets.Lyrics.SHA256 != lyrics.SHA256 || assets.Lyrics.Format != "lrc" || len(readbackLyrics) != 1 || readbackLyrics[0] != lyrics.Text) {
+				return PublicationStageObservation{}, publicationStageMismatch("source-republish lyrics do not match frozen text")
+			}
+			if assets.Lyrics.State != persistence.PublicationAssetEmbedded && assets.Lyrics.State != persistence.PublicationAssetAbsent {
+				return PublicationStageObservation{}, publicationStageMismatch("source-republish lyrics have an invalid optional outcome")
+			}
+		} else if assets.Lyrics.State != persistence.PublicationAssetAbsent {
+			return PublicationStageObservation{}, publicationStageMismatch("source-republish candidate contains unplanned lyrics")
+		}
 	}
 	if retryLyrics != nil && (assets.Cover.State != input.AutomaticLyricsRetry.CurrentAssets.Cover.State || assets.Cover.SHA256 != input.AutomaticLyricsRetry.CurrentAssets.Cover.SHA256 || assets.Cover.MIME != input.AutomaticLyricsRetry.CurrentAssets.Cover.MIME || !sameOptionalPublicationSize(assets.Cover.SizeBytes, input.AutomaticLyricsRetry.CurrentAssets.Cover.SizeBytes)) {
 		return PublicationStageObservation{}, errors.New("automatic retry changed the verified current cover")

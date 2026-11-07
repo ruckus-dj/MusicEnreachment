@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"image/color"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
+	"go.senan.xyz/taglib"
 )
 
 func TestPublicationSimplePreparationManualLyricsNativeFLAC(t *testing.T) {
@@ -289,6 +291,238 @@ func TestCopyCurrentPublicationFailureLeavesInputUnchanged(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Fatalf("current publication changed: got %q, want %q", got, want)
+	}
+}
+
+type sourceRepublishOptionalWriter struct {
+	metadata.Writer
+	lyricsFallback bool
+	coverFailure   bool
+	calls          int
+}
+
+func (writer *sourceRepublishOptionalWriter) WriteWithOptionalAssets(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.OptionalAssetsWriteResult, error) {
+	writer.calls++
+	if writer.coverFailure {
+		result, err := (metadata.Writer{}).WriteWithOptionalAssets(ctx, path, tags, nil)
+		if err != nil {
+			return result, err
+		}
+		result.CoverStatus = metadata.OptionalCoverWriteFailed
+		return result, nil
+	}
+	result, err := (metadata.Writer{}).WriteWithOptionalAssets(ctx, path, tags, cover)
+	if err == nil && writer.lyricsFallback && writer.calls == 1 {
+		result.LyricsStatus = metadata.OptionalLyricsAbsent
+	}
+	return result, err
+}
+
+func TestPrepareSourceRepublishBuildsFromSelectedSourceAndHandlesOptionalAssets(t *testing.T) {
+	ctx := context.Background()
+	fixture := makeRewriteFixture(t)
+	currentPath := filepath.Join(fixture.output, "current.flac")
+	sourcePath := filepath.Join(t.TempDir(), "selected-source.flac")
+	contents, err := os.ReadFile("../integrations/metadata/testdata/eg.flac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err = flacFixtureWithoutPictures(contents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{currentPath, sourcePath} {
+		if err := os.WriteFile(path, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	currentTags := map[string][]string{"TITLE": {"CURRENT title"}, "ARTIST": {"CURRENT artist"}, "LYRICS": {"[00:02.00]stale current lyrics"}}
+	if _, err := (metadata.Writer{}).Write(ctx, currentPath, currentTags, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (metadata.Writer{}).Write(ctx, sourcePath, map[string][]string{"TITLE": {"source title must not win"}, "ARTIST": {"source artist must not win"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	currentOriginalCover := audioUpgradeImage(t, "image/jpeg", color.RGBA{R: 220, A: 255})
+	if err := taglib.WriteImageOptions(currentPath, currentOriginalCover, 0, "Front Cover", "current", "image/jpeg"); err != nil {
+		t.Fatal(err)
+	}
+	currentCapture, err := (metadata.Reader{}).Read(ctx, currentPath, metadata.ReadRequest{CoverInspection: true, LimitSourceCover: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentAssets, err := ObservePublicationAssets(currentCapture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentArtwork, err := metadata.ReadArtworkSnapshot(ctx, currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentInfo, err := os.Stat(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentBytes, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentHash := sha256.Sum256(currentBytes)
+	currentSize, currentMTime := currentInfo.Size(), currentInfo.ModTime().UnixMicro()
+	currentLossless, currentChannels, currentDepth, currentRate := true, 2, 16, 44100
+	currentFacts := persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &currentLossless, Channels: &currentChannels, ChannelLayout: "stereo", BitDepth: &currentDepth, SampleRate: &currentRate, Container: "flac", SupportedSourceContainer: true}
+	currentWitness := persistence.PublicationCurrentWitness{
+		Generation: uuid.New(), RelativePath: "Artist/Album/current.flac",
+		Ownership:  persistence.PublicationFileIdentity{SizeBytes: &currentSize, MTime: &currentMTime, SHA256: hex.EncodeToString(currentHash[:])},
+		AudioFacts: currentFacts, Assets: currentAssets, Tags: currentCapture.Tags,
+		ArtworkInventory: audioUpgradeArtworkWitnesses(currentArtwork.ArtworkInventory()),
+	}
+
+	lyrics := "[ar:Selected Artist]\r\n[00:01.00]selected source lyrics\r\n"
+	lyricsHash := sha256.Sum256([]byte(lyrics))
+	derivative := audioUpgradeImage(t, "image/png", color.RGBA{B: 230, A: 255})
+	derivativeHash := sha256.Sum256(derivative)
+	originalHash := sha256.Sum256(currentOriginalCover)
+	originalCoverSize := int64(len(currentOriginalCover))
+	sourceInfo, err := os.Stat(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceLossless, sourceChannels, sourceDepth, sourceRate := true, 2, 16, 44100
+	_, tools, _ := pinnedToolFixture(t, true)
+	metadataResultID, winningResultID := uuid.New(), uuid.New()
+	duration := 183.456789
+	input := persistence.PublicationInputs{
+		Version: persistence.PublicationSourceRepublishInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
+		IntentKind: "audio", Format: publication.AudioFormatSource,
+		DesiredTags: map[string][]string{"TITLE": {"Frozen desired title"}, "ARTIST": {"Frozen desired artist"}, "ALBUM": {"Frozen desired album"}}, Tools: tools,
+		Audio: &persistence.PublicationAudioInput{
+			WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(),
+			ConfiguredRootPath: filepath.Dir(sourcePath), InventoryRootPath: filepath.Dir(sourcePath), RelativePath: filepath.Base(sourcePath),
+			SizeBytes: sourceInfo.Size(), MTime: sourceInfo.ModTime().UTC().Truncate(time.Microsecond), AnalysisPolicyVersion: 1, FFProbeVersion: "test",
+			AudioFacts:       persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: &sourceLossless, Channels: &sourceChannels, ChannelLayout: "stereo", BitDepth: &sourceDepth, SampleRate: &sourceRate, Container: "flac", SupportedSourceContainer: true},
+			AnalysedMetadata: &persistence.PublicationAnalysedMetadata{Tags: map[string][]string{"ARTIST": {"Selected Artist"}, "TITLE": {"Selected Title"}, "ALBUM": {"Selected Album"}, "LYRICS": {lyrics}}, DurationSeconds: &duration, MetadataResultID: metadataResultID, WinningResultID: winningResultID},
+		},
+		SourceRepublish: &persistence.PublicationSourceRepublishInput{
+			Current: currentWitness, Mode: "ordinary", Association: persistence.PublicationRepublishAssociation{ID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New()},
+			Lyrics:          persistence.PublicationRepublishLyrics{State: "value", Origin: "source", Text: lyrics, SHA256: hex.EncodeToString(lyricsHash[:])},
+			LyricsAuthority: persistence.PublicationInitialLyricsInput{ExpectedMetadataRevision: 3},
+			Cover:           persistence.PublicationRepublishCover{ReleaseID: uuid.New(), AuthorityRevision: 4, AuthorityMode: "manual", SelectedGeneration: uuid.New(), OriginalSHA256: hex.EncodeToString(originalHash[:]), OriginalMIME: "image/jpeg", OriginalSizeBytes: &originalCoverSize, Derivation: "ready", PNG: derivative, SHA256: hex.EncodeToString(derivativeHash[:]), MIME: "image/png", SizeBytes: int64(len(derivative))},
+		},
+	}
+	input.SourceRepublish.Association.LocationID = input.Audio.LocationID
+	input.SourceRepublish.Association.MediaVariantID = input.Audio.MediaVariantID
+	probe := func(ctx context.Context, _ string, candidate sourcefs.RegularFile, _ publication.AudioContainer) ([]byte, error) {
+		var candidatePath string
+		if err := candidate.Borrow(ctx, func(file *os.File) error {
+			candidatePath = file.Name()
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		capture, err := (metadata.Reader{}).Read(ctx, candidatePath, metadata.ReadRequest{CoverInspection: true})
+		if err != nil {
+			return nil, err
+		}
+		assets, err := ObservePublicationAssets(capture)
+		if err != nil {
+			return nil, err
+		}
+		// Report the actual candidate topology: the built artifact only carries
+		// the cover when this run's optional cover write was verified.
+		streams := `{"index":0,"codec_type":"audio","codec_name":"flac","channels":2,"sample_rate":"44100","bits_per_raw_sample":"16"}`
+		if assets.Cover.State == persistence.PublicationAssetEmbedded {
+			streams += `,{"index":1,"codec_type":"video","codec_name":"png","disposition":{"attached_pic":1}}`
+		}
+		return []byte(`{"format":{"format_name":"flac"},"streams":[` + streams + `]}`), nil
+	}
+	commands := &simplePreparationProbeCommand{}
+	validator := RealPublicationStageValidator{Tools: publicationValidatorTools{}, MetadataReader: metadata.Reader{}, Probe: probe}
+	run := func(writer PublicationMetadataWriter, output string) (PublicationSimplePreparationResult, error) {
+		return (PublicationSimplePreparation{Commands: commands, FFmpegPath: "ffmpeg", Metadata: writer, Validator: validator}).PrepareSourceRepublish(ctx, input, sourcePath, filepath.Join(t.TempDir(), "temporary"), output)
+	}
+	readCandidate := func(path string) (metadata.Capture, metadata.ArtworkSnapshot) {
+		t.Helper()
+		capture, err := (metadata.Reader{}).Read(ctx, path, metadata.ReadRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		artwork, err := metadata.ReadArtworkSnapshot(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return capture, artwork
+	}
+	assertFrozenTagsAndCover := func(capture metadata.Capture, artwork metadata.ArtworkSnapshot, wantLyrics bool) {
+		if capture.Tags["TITLE"][0] != "Frozen desired title" || capture.Tags["ARTIST"][0] != "Frozen desired artist" {
+			t.Fatalf("prepared selected-source tags = %#v", capture.Tags)
+		}
+		if wantLyrics {
+			if got := capture.Tags["LYRICS"]; len(got) != 1 || got[0] != lyrics {
+				t.Fatalf("prepared frozen lyrics = %#v, want exact lyrics", got)
+			}
+		} else if _, exists := capture.Tags["LYRICS"]; exists {
+			t.Fatalf("optional lyrics fallback retained LYRICS: %#v", capture.Tags["LYRICS"])
+		}
+		if len(artwork.Images) != 1 || !bytes.Equal(artwork.Images[0].Data, derivative) || artwork.Images[0].MIME != "image/png" {
+			t.Fatalf("prepared cover = %#v, want exact frozen PNG derivative", artwork.ArtworkInventory())
+		}
+	}
+
+	// Successful optional-asset embedding proves the frozen text and derivative
+	// are used instead of metadata and pictures carried by CURRENT or SOURCE.
+	commands.calls = 0
+	output := filepath.Join(t.TempDir(), "candidate.flac")
+	prepared, err := run(metadata.Writer{}, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture, artwork := readCandidate(output)
+	assertFrozenTagsAndCover(capture, artwork, true)
+	if commands.calls != 1 || prepared.LyricsOutcome == nil || prepared.LyricsOutcome.State != persistence.PublicationAssetEmbedded || prepared.SourceRepublishCoverWarning != "" {
+		t.Fatalf("successful preparation builds=%d lyrics=%#v cover warning=%q", commands.calls, prepared.LyricsOutcome, prepared.SourceRepublishCoverWarning)
+	}
+
+	// A simulated lyrics readback fallback must rebuild from the selected source
+	// while retaining the successfully written frozen derivative.
+	lyricsFallbackWriter := &sourceRepublishOptionalWriter{lyricsFallback: true}
+	commands.calls = 0
+	output = filepath.Join(t.TempDir(), "candidate.flac")
+	prepared, err = run(lyricsFallbackWriter, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lyricsFallbackWriter.calls != 2 || commands.calls != 2 {
+		t.Fatalf("optional writer calls=%d source builds=%d, want 2 each", lyricsFallbackWriter.calls, commands.calls)
+	}
+	actual, artwork := readCandidate(output)
+	assertFrozenTagsAndCover(actual, artwork, false)
+	if prepared.LyricsOutcome == nil || prepared.LyricsOutcome.State != persistence.PublicationAssetAbsent || prepared.SourceRepublishCoverWarning != "" {
+		t.Fatalf("optional outcomes after lyrics fallback = lyrics %#v cover warning %q", prepared.LyricsOutcome, prepared.SourceRepublishCoverWarning)
+	}
+
+	// Cover write failure is independent: it is accepted only with no cover,
+	// while the exact mandatory tags and optional lyrics remain on the candidate.
+	coverFailureWriter := &sourceRepublishOptionalWriter{coverFailure: true}
+	commands.calls = 0
+	output = filepath.Join(t.TempDir(), "cover-failure.flac")
+	prepared, err = run(coverFailureWriter, output)
+	if err != nil {
+		t.Fatalf("optional cover failure was not accepted as absent: %v", err)
+	}
+	actual, err = (metadata.Reader{}).Read(ctx, output, metadata.ReadRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Tags["TITLE"][0] != "Frozen desired title" || actual.Tags["LYRICS"][0] != lyrics {
+		t.Fatalf("cover-failure candidate tags = %#v", actual.Tags)
+	}
+	artwork, err = metadata.ReadArtworkSnapshot(ctx, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artwork.Images) != 0 || prepared.SourceRepublishCoverWarning == "" || prepared.LyricsOutcome == nil || prepared.LyricsOutcome.State != persistence.PublicationAssetEmbedded {
+		t.Fatalf("cover failure accepted with artwork=%d warning=%q lyrics=%#v", len(artwork.Images), prepared.SourceRepublishCoverWarning, prepared.LyricsOutcome)
 	}
 }
 
