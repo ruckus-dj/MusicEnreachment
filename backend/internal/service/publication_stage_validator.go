@@ -34,6 +34,14 @@ type RealPublicationStageValidator struct {
 	Probe PublicationStageProbe
 }
 
+// errPublicationStageMismatch marks only deterministic content mismatches. It is
+// intentionally not used for I/O, tool, cancellation, or adapter failures.
+var errPublicationStageMismatch = errors.New("publication stage content mismatch")
+
+func publicationStageMismatch(message string) error {
+	return fmt.Errorf("%w: %s", errPublicationStageMismatch, message)
+}
+
 func (validator RealPublicationStageValidator) Validate(ctx context.Context, stagePath string, input persistence.PublicationInputs) (result PublicationStageObservation, resultErr error) {
 	return validator.validate(ctx, stagePath, input, nil, nil, false)
 }
@@ -125,6 +133,9 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	}
 	audio, err := ParseSourceTechnicalAnalysis(raw)
 	if err != nil {
+		if errors.Is(err, ErrSourceTechnicalMalformed) {
+			return PublicationStageObservation{}, publicationStageMismatch("technical probe output is malformed")
+		}
 		return PublicationStageObservation{}, fmt.Errorf("parse publication stage probe: %w", err)
 	}
 	if retryLyrics != nil {
@@ -134,15 +145,15 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	}
 	facts := inputAudioFacts(input)
 	if len(audio.Streams) != 1 {
-		return PublicationStageObservation{}, errors.New("publication stage must contain exactly one audio stream")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage must contain exactly one audio stream")
 	}
 	actual := audio.Streams[0]
 	if actual.CodecName == nil || strings.TrimSpace(*actual.CodecName) == "" {
-		return PublicationStageObservation{}, errors.New("publication stage audio codec is missing")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage audio codec is missing")
 	}
 	actualCodec := *actual.CodecName
 	if audio.Container.Name == nil || strings.TrimSpace(*audio.Container.Name) == "" {
-		return PublicationStageObservation{}, errors.New("publication stage container is missing")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage container is missing")
 	}
 	actualContainer := *audio.Container.Name
 	expectedCodec := facts.Codec
@@ -153,22 +164,22 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 		expectedCodec = "aac"
 	}
 	if actualCodec != expectedCodec {
-		return PublicationStageObservation{}, errors.New("publication stage audio codec does not match the frozen plan")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage audio codec does not match the frozen plan")
 	}
 	if !publicationContainerMatches(actualContainer, plan.OutputContainer) {
-		return PublicationStageObservation{}, errors.New("publication stage container does not match the frozen plan")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage container does not match the frozen plan")
 	}
 	if facts.Channels != nil && (actual.Channels == nil || *actual.Channels != int64(*facts.Channels)) {
-		return PublicationStageObservation{}, errors.New("publication stage channel count does not match the frozen plan")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage channel count does not match the frozen plan")
 	}
 	if plan.Action == publication.AudioCodecALAC && facts.ChannelLayout != "" && (actual.ChannelLayout == nil || *actual.ChannelLayout != facts.ChannelLayout) {
-		return PublicationStageObservation{}, errors.New("publication stage channel layout does not match the frozen lossless plan")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage channel layout does not match the frozen lossless plan")
 	}
 	if !publicationStageSampleRateMatches(facts.SampleRate, actual.SampleRateHz) {
-		return PublicationStageObservation{}, errors.New("publication stage sample rate does not match the frozen plan")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage sample rate does not match the frozen plan")
 	}
 	if facts.Lossless != nil && *facts.Lossless && facts.BitDepth != nil && (actual.BitsPerSample == nil || *actual.BitsPerSample != int64(*facts.BitDepth)) {
-		return PublicationStageObservation{}, errors.New("publication stage bit depth does not preserve the frozen lossless plan")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage bit depth does not preserve the frozen lossless plan")
 	}
 	if validator.MetadataReader == nil {
 		return PublicationStageObservation{}, errors.New("publication metadata reader is unavailable")
@@ -203,10 +214,10 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 				return PublicationStageObservation{}, fmt.Errorf("observe first-audio publication assets: %w", assetErr)
 			}
 			if assets.Cover.State != firstAudioCover.State || assets.Cover.SHA256 != firstAudioCover.SHA256 || assets.Cover.MIME != firstAudioCover.MIME || !samePublicationOptionalInt64(assets.Cover.SizeBytes, firstAudioCover.SizeBytes) {
-				return PublicationStageObservation{}, errors.New("first-audio cover readback does not match the requested outcome")
+				return PublicationStageObservation{}, publicationStageMismatch("first-audio cover readback does not match the requested outcome")
 			}
 			if err := validateFirstAudioCoverTopology(raw, plan.OutputContainer, assets.Cover); err != nil {
-				return PublicationStageObservation{}, err
+				return PublicationStageObservation{}, publicationStageMismatch(err.Error())
 			}
 		} else if input.IntentKind == "rewrite" && input.Format == publication.AudioFormatSource {
 			assets, assetErr := ObservePublicationAssets(capture)
@@ -228,7 +239,7 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 		}
 	}
 	if !equalTags(capture.Tags, expectedTags) {
-		return PublicationStageObservation{}, errors.New("publication stage metadata does not match requested tags")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage metadata does not match requested tags")
 	}
 	if err := ctx.Err(); err != nil {
 		return PublicationStageObservation{}, err

@@ -170,7 +170,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	}
 	releaseResources = release
 	claim, err := executor.repository.ClaimPublicationDelivery(ctx, guard)
-	if err != nil || claim != persistence.PublicationDeliveryAcquired {
+	if err != nil || claim != persistence.PublicationDeliveryAcquired && claim != persistence.PublicationDeliveryInterrupted {
 		return errors.Join(err, errors.New("publication delivery claim was not acquired"))
 	}
 	defer func() {
@@ -197,5 +197,14 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		return errors.Join(errors.New("publication frozen inputs are unavailable for this delivery"), err)
 	}
 	input = guarded
+	if claim == persistence.PublicationDeliveryInterrupted {
+		recovered, err := executor.recoverInterruptedFirstAudio(ctx, attempt, input, guard, outputPath, root, commands)
+		if err != nil {
+			return err
+		}
+		if recovered {
+			return nil
+		}
+	}
 	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root, commands)
 }

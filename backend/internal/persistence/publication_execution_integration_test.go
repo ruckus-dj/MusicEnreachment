@@ -154,11 +154,10 @@ func runPublicationDeliveryClaimBlocksStaleFencesButReplacesSameAttemptIdentity(
 			}
 		})
 	}
-	// A fresh delivery identity at the same River attempt is a legitimate
-	// redelivery and replaces the executing claim. In-process coordination, not
-	// the database claim, decides which delivery may actually mutate.
+	// A fresh identity from the same boot replaces an executing claim without
+	// treating the prior delivery as interrupted.
 	fresh := f.guard
-	fresh.ClaimUUID, fresh.BootUUID, fresh.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	fresh.ClaimUUID, fresh.DeliveryToken = uuid.New(), uuid.NewString()
 	if outcome, err := repo.ClaimPublicationDelivery(ctx, fresh); err != nil || outcome != PublicationDeliveryAcquired {
 		t.Fatalf("same-attempt replacement = %q, %v", outcome, err)
 	}
@@ -196,7 +195,7 @@ func runPublicationDeliveryReclaimsEqualRiverAttemptWithRunningJob(t *testing.T,
 	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='running' WHERE id=?`, f.guard.RiverJobID); err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := repo.ClaimPublicationDelivery(ctx, redelivery); err != nil || outcome != PublicationDeliveryAcquired {
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, redelivery); err != nil || outcome != PublicationDeliveryInterrupted {
 		t.Fatalf("same-attempt reclaim = %q, %v", outcome, err)
 	}
 	var claim PublicationExecutionClaim
@@ -263,7 +262,7 @@ func runPublicationDeliveryRetryReplacesExecutingClaimAndRestartsPreparation(t *
 	if outcome, err := repo.ClaimPublicationDelivery(ctx, fabricated); err != nil || outcome != PublicationDeliveryBlocked {
 		t.Fatalf("fabricated future River attempt = %q, %v", outcome, err)
 	}
-	if outcome, err := repo.ClaimPublicationDelivery(ctx, retry); err != nil || outcome != PublicationDeliveryAcquired {
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, retry); err != nil || outcome != PublicationDeliveryInterrupted {
 		t.Fatalf("retry claim = %q, %v", outcome, err)
 	}
 	if outcome, err := repo.ClaimPublicationDelivery(ctx, f.guard); err != nil || outcome != PublicationDeliveryBlocked {
@@ -297,6 +296,14 @@ func runPublicationDeliveryRetryReplacesExecutingClaimAndRestartsPreparation(t *
 	if afterInputs != frozenInputs || afterManifest != manifest {
 		t.Fatal("retry changed frozen inputs or namespace manifest")
 	}
+	if err := repo.MarkPublicationDeliveryReturned(ctx, retry); err != nil {
+		t.Fatalf("mark retry delivery returned: %v", err)
+	}
+	quiescentRedelivery := retry
+	quiescentRedelivery.ClaimUUID, quiescentRedelivery.DeliveryToken = uuid.New(), uuid.NewString()
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, quiescentRedelivery); err != nil || outcome != PublicationDeliveryAcquired {
+		t.Fatalf("quiescent same-boot redelivery = %q, %v", outcome, err)
+	}
 }
 
 func runPublicationDeliveryConcurrentEqualAttemptClaimsSerializeToOneLiveGuard(t *testing.T, db *bun.DB) {
@@ -319,10 +326,8 @@ func runPublicationDeliveryConcurrentEqualAttemptClaimsSerializeToOneLiveGuard(t
 	}
 	close(start)
 	wg.Wait()
-	// The two fresh identities share an equal River attempt. The locked attempt
-	// and operation rows serialize them, and equal-attempt replacement lets both
-	// acquire; exactly one durable claim row keeps the identity that committed
-	// last. In-process coordination, not this claim, prevents two live mutators.
+	// The first claim acquires; the competing identity replaces its executing
+	// claim and reports interruption because it belongs to another boot.
 	var claims []PublicationExecutionClaim
 	if err := f.db.NewSelect().Model(&claims).Where("operation_id=?", f.guard.OperationID).Scan(ctx); err != nil {
 		t.Fatal(err)
@@ -335,8 +340,8 @@ func runPublicationDeliveryConcurrentEqualAttemptClaimsSerializeToOneLiveGuard(t
 		if errs[i] != nil {
 			t.Fatalf("concurrent claim %d: %v", i, errs[i])
 		}
-		if results[i] != PublicationDeliveryAcquired {
-			t.Fatalf("concurrent claim %d outcome = %q, want acquired", i, results[i])
+		if results[i] != PublicationDeliveryAcquired && results[i] != PublicationDeliveryInterrupted {
+			t.Fatalf("concurrent claim %d outcome = %q, want acquired or interrupted", i, results[i])
 		}
 		mutable, err := repo.CheckPublicationDelivery(ctx, guards[i])
 		if err != nil {
@@ -351,5 +356,16 @@ func runPublicationDeliveryConcurrentEqualAttemptClaimsSerializeToOneLiveGuard(t
 	}
 	if live != 1 {
 		t.Fatalf("live guards = %d, want exactly one of %+v", live, results)
+	}
+	acquired, interrupted := 0, 0
+	for _, outcome := range results {
+		if outcome == PublicationDeliveryAcquired {
+			acquired++
+		} else if outcome == PublicationDeliveryInterrupted {
+			interrupted++
+		}
+	}
+	if acquired != 1 || interrupted != 1 {
+		t.Fatalf("concurrent outcomes = %+v, want one acquired and one interrupted", results)
 	}
 }

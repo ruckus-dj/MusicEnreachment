@@ -30,6 +30,7 @@ type PublicationDeliveryClaimOutcome string
 
 const (
 	PublicationDeliveryAcquired     PublicationDeliveryClaimOutcome = "acquired"
+	PublicationDeliveryInterrupted  PublicationDeliveryClaimOutcome = "interrupted"
 	PublicationDeliveryAlreadyOwned PublicationDeliveryClaimOutcome = "already_owned"
 	PublicationDeliveryBlocked      PublicationDeliveryClaimOutcome = "blocked"
 )
@@ -143,7 +144,14 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 			if _, err := tx.NewRaw(`UPDATE track_publication_attempt SET phase='preparing' WHERE operation_id=?`, guard.OperationID).Exec(ctx); err != nil {
 				return fmt.Errorf("claim publication delivery: restart attempt preparation: %w", err)
 			}
+			// A previous executing owner from another process boot is an
+			// interrupted delivery. Quiescent claims (and other claim states)
+			// remain ordinary acquisitions; River attempt equality alone is not
+			// evidence of interruption.
 			outcome = PublicationDeliveryAcquired
+			if claim.State == "executing" && claim.BootUUID != guard.BootUUID {
+				outcome = PublicationDeliveryInterrupted
+			}
 			return nil
 		}
 		// A running operation without its durable claim cannot safely be borrowed.
