@@ -207,8 +207,12 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      UI проверен на контролируемых API в 1440/390, обеих темах и RU/EN;
      это не полный upstream E2E. Подробности и границы —
      [отчёт](../../reports/2026-11-07-genre-metadata-flow.md).
-   - [ ] Остаются явное отображение entity provider genre baseline в карточках,
-     подключение picker к Local CRUD и сквозная приёмка общего explicit
+   - [x] В `2c81f970` добавлен отдельный read-only provider genre baseline
+     для artist/release/recording: same-scope accepted evidence текущего source,
+     без файлового fallback, копирования в draft или PATCH. Полный hook и вся CI
+     прошли; populated baseline проверен в восьми свежих browser contexts.
+     Границы — [отчёт](../../reports/2026-11-07-provider-genre-baseline.md).
+   - [ ] Остаются подключение picker к Local CRUD и сквозная приёмка общего explicit
      repeat/aggregate workflow вместе с пунктами 3/6/8. Пункт целиком не закрыт.
 8. [ ] **Local create/update.** Использовать переиспользуемые формы для provider Local по
    `docs/design/local-provider.md`, с каталогом жанров из пункта 7.

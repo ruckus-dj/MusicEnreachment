@@ -296,6 +296,11 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 		if held {
 			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
 		}
+		var affectedVariantIDs []uuid.UUID
+		if err := tx.NewRaw(`SELECT DISTINCT media_variant_id FROM source_location
+			WHERE source_root_id = ? AND media_variant_id IS NOT NULL ORDER BY media_variant_id`, id).Scan(ctx, &affectedVariantIDs); err != nil {
+			return fmt.Errorf("delete source root: list associated media variants: %w", err)
+		}
 		var workIDs []uuid.UUID
 		if err := tx.NewRaw(`SELECT id FROM source_analysis_work WHERE source_root_id=? AND current_location_id IS NOT NULL ORDER BY id FOR UPDATE`, id).Scan(ctx, &workIDs); err != nil {
 			return fmt.Errorf("delete source root: list current analysis work: %w", err)
@@ -312,8 +317,12 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 		if count, _ := removed.RowsAffected(); count != 1 {
 			return fmt.Errorf("delete source root: root does not exist")
 		}
-		// The locations of the root went with it; a variant their links kept
-		// alive is now unreferenced and is removed in the same transaction.
+		// A variant may have associated tracks even when its final source location
+		// disappears. Remove only associations for variants captured from this root
+		// that have no remaining location anywhere; surviving variants remain cached.
+		if err := deleteTrackSourcesWithoutLocations(ctx, tx, affectedVariantIDs); err != nil {
+			return fmt.Errorf("delete source root: clean track source associations: %w", err)
+		}
 		if err := deleteOrphanedMediaVariants(ctx, tx); err != nil {
 			return fmt.Errorf("delete source root: %w", err)
 		}
@@ -322,6 +331,25 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 		}
 		return nil
 	})
+}
+
+// deleteTrackSourcesWithoutLocations removes associations for variants captured
+// from a deleting root only when no source location still refers to the variant.
+// Root deletion is intentionally the only caller: this is not a global inventory
+// invariant for other location-retirement paths.
+func deleteTrackSourcesWithoutLocations(ctx context.Context, tx bun.IDB, variantIDs []uuid.UUID) error {
+	if len(variantIDs) == 0 {
+		return nil
+	}
+	if _, err := tx.NewRaw(`DELETE FROM track_source association
+		WHERE association.media_variant_id IN (?)
+		AND NOT EXISTS (
+			SELECT 1 FROM source_location location
+			WHERE location.media_variant_id = association.media_variant_id
+		)`, bun.List(variantIDs)).Exec(ctx); err != nil {
+		return fmt.Errorf("delete track sources without locations: %w", err)
+	}
+	return nil
 }
 
 // activeSourceScan reports whether a scan or an analysis of the root is still
