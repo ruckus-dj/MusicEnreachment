@@ -107,7 +107,15 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      прошёл полный hook и всю [CI 42365879090](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42365879090).
      Publication/recovery holds пока блокируют
      удаление: согласованный safe abandonment остаётся отдельным следующим срезом.
-     Свидетельства — [отчёт](../../reports/2026-11-07-root-staged-task-cleanup.md).
+      Свидетельства — [отчёт](../../reports/2026-11-07-root-staged-task-cleanup.md).
+    - [x] В `8431f4bf` и `c475140b` добавлен safe abandonment ordinary failed
+      publication и защищённого source-cleanup recovery внутри удаления root.
+      Frozen evidence остаётся неисполняемым архивом; CURRENT/library/output и
+      namespace сохраняются, active/unreturned owners блокируют удаление.
+      Оба среза прошли обычный полный hook и всю CI, включая контейнер:
+      [42369569762](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42369569762),
+      [42408036183](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42408036183).
+      Ограничения приёмки — [отчёт](../../reports/2026-11-07-root-publication-abandonment.md).
 3. [ ] **Recovery и явная republish.** Устранить расхождения восстановления и
    повторной публикации с утверждёнными правилами. **Приёмка:** interrupted,
    frozen target при актуальной authority регистрируется по соответствующим
