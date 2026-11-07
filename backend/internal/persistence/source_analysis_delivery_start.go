@@ -37,6 +37,17 @@ func (repository *SourceInventoryRepository) StartNormalizedSourceAnalysisDelive
 		if operation.Kind != "analyze_source" || operation.State != "queued" || operation.Attempt != delivery.Attempt || operation.RiverJobID == nil || *operation.RiverJobID != delivery.JobID || operation.TargetSourceRootID == nil {
 			return fmt.Errorf("start source analysis delivery: %w", ErrSourceAnalysisStale)
 		}
+		var invalidated bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM operation_source_work_hold hold
+				JOIN source_analysis_work work ON work.id=hold.work_id
+				WHERE hold.operation_id=? AND work.invalidated_at IS NOT NULL
+			)`, operationID).Scan(ctx, &invalidated); err != nil {
+			return fmt.Errorf("start source analysis delivery: check invalidated work: %w", err)
+		}
+		if invalidated {
+			return fmt.Errorf("start source analysis delivery: %w", ErrSourceAnalysisStale)
+		}
 		var steps []string
 		if err := tx.NewRaw(`SELECT step FROM source_analysis_step WHERE execution_operation_id=? AND execution_operation_attempt=? AND execution_job_id=? AND state='queued' ORDER BY step`, operationID, delivery.Attempt, delivery.JobID).Scan(ctx, &steps); err != nil {
 			return fmt.Errorf("start source analysis delivery: read queued steps: %w", err)

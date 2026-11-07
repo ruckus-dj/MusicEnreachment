@@ -861,7 +861,7 @@ func lockSourceAnalysisStep(ctx context.Context, tx bun.Tx, workID, operationID 
 	if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? FOR UPDATE`, workID).Scan(ctx, &locked.Work); err != nil {
 		return nil, ErrSourceAnalysisStale
 	}
-	if locked.Work.CurrentLocationID == nil || *locked.Work.CurrentLocationID != locked.Work.LocationID || *locked.Work.CurrentLocationID != locked.Location.ID ||
+	if locked.Work.InvalidatedAt != nil || locked.Work.CurrentLocationID == nil || *locked.Work.CurrentLocationID != locked.Work.LocationID || *locked.Work.CurrentLocationID != locked.Location.ID ||
 		!locked.Root.Enabled || locked.Root.Stale() || locked.Root.ConfiguredPath != locked.Work.ConfiguredPath || locked.Root.InventoryPath == nil || *locked.Root.InventoryPath != locked.Work.InventoryPath || locked.Location.RelativePath != locked.Work.RelativePath || locked.Location.SizeBytes != locked.Work.SizeBytes || !sourceAnalysisMtime(locked.Location.Mtime).Equal(sourceAnalysisMtime(locked.Work.Mtime)) {
 		return nil, ErrSourceAnalysisStale
 	}

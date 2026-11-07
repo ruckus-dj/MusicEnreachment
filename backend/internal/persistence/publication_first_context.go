@@ -794,7 +794,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 	}
 	if err := tx.NewRaw(`SELECT
 		count(*) FILTER (WHERE root.id IS NULL OR NOT root.enabled OR root.status<>'available' OR root.inventory_path IS DISTINCT FROM work.inventory_path OR root.configured_path IS DISTINCT FROM work.configured_path) AS unavailable_roots,
-			count(*) FILTER (WHERE location.id IS NULL OR work.current_location_id IS DISTINCT FROM location.id OR location.media_variant_id IS DISTINCT FROM identity.media_variant_id OR location.relative_path IS DISTINCT FROM work.relative_path OR location.size_bytes<>work.size_bytes OR location.mtime<>work.mtime OR location.probe_status<>'audio') AS stale_locations,
+			count(*) FILTER (WHERE work.invalidated_at IS NOT NULL OR location.id IS NULL OR work.current_location_id IS DISTINCT FROM location.id OR location.media_variant_id IS DISTINCT FROM identity.media_variant_id OR location.relative_path IS DISTINCT FROM work.relative_path OR location.size_bytes<>work.size_bytes OR location.mtime<>work.mtime OR location.probe_status<>'audio') AS stale_locations,
 		count(*) FILTER (WHERE probe.work_id IS NULL OR probe.state<>'succeeded' OR probe.success_probe_variant_id IS NULL OR probeResult.id IS NULL) AS unprobed
 		FROM track_source selected
 		LEFT JOIN source_work_variant_identity identity ON identity.media_variant_id=selected.media_variant_id
@@ -834,7 +834,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		AND v.analysis_policy_version IS NOT NULL AND v.ffprobe_version IS NOT NULL AND v.inspected_at IS NOT NULL
 		AND v.applied_operation_id IS NOT NULL AND v.audio_stream_count IS NOT NULL
 		AND l.media_variant_id=i.media_variant_id AND l.size_bytes=w.size_bytes AND l.mtime=w.mtime
-		AND w.relative_path=l.relative_path
+		AND w.relative_path=l.relative_path AND w.invalidated_at IS NULL
 		ORDER BY ts.created_at, ts.id`, trackID).Scan(ctx, &rows)
 	if err != nil {
 		return fmt.Errorf("read first publication source candidates: %w", err)

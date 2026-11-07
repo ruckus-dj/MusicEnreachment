@@ -73,8 +73,15 @@ func runEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T, data
 	if err := database.NewRaw(`SELECT count(*) FROM source_work_variant_identity WHERE work_id=?`, workID).Scan(ctx, &mappings); err != nil {
 		t.Fatalf("read retired work identity: %v", err)
 	}
-	if attached != 1 || artifacts != 1 || mappings != 0 {
-		t.Fatalf("retired work/artifact/identity counts = %d/%d/%d, want 1/1/0", attached, artifacts, mappings)
+	if attached != 1 || artifacts != 1 || mappings != 1 {
+		t.Fatalf("invalidated work/artifact/identity counts = %d/%d/%d, want 1/1/1", attached, artifacts, mappings)
+	}
+	var invalidated int
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND invalidated_at IS NOT NULL`, workID).Scan(ctx, &invalidated); err != nil {
+		t.Fatalf("read invalidated work marker: %v", err)
+	}
+	if invalidated != 1 {
+		t.Fatalf("invalidated work marker rows = %d, want 1", invalidated)
 	}
 	if _, err := database.NewRaw(`UPDATE source_analysis_work SET current_location_id=location_id WHERE id=?`, workID).Exec(ctx); err == nil {
 		t.Fatal("retired work was reattached")
@@ -90,7 +97,7 @@ func runEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T, data
 	t.Logf("phase=assertions duration=%s", time.Since(assertionsStarted))
 }
 
-func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeWorkIsDeleted(t *testing.T, database *bun.DB) {
+func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeTombstone(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, t.TempDir())
@@ -135,8 +142,15 @@ func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeWorkIsDeleted(t *te
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=?`, removedID).Scan(ctx, &removedCount); err != nil {
 		t.Fatalf("read artifact-free work result: %v", err)
 	}
-	if removedCount != 0 {
-		t.Fatalf("artifact-free missing work remains %d times", removedCount)
+	if removedCount != 1 {
+		t.Fatalf("invalidated missing-file tombstone rows = %d, want 1", removedCount)
+	}
+	var invalidatedCount int
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND invalidated_at IS NOT NULL AND current_location_id IS NULL`, removedID).Scan(ctx, &invalidatedCount); err != nil {
+		t.Fatalf("read missing-file invalidated tombstone: %v", err)
+	}
+	if invalidatedCount != 1 {
+		t.Fatalf("missing-file invalidated tombstone rows = %d, want 1", invalidatedCount)
 	}
 	var unreadableRetained int
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id=?`, unreadableID, unreadableLocation.ID).Scan(ctx, &unreadableRetained); err != nil {

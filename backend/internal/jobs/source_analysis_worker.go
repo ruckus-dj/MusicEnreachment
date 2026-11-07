@@ -41,6 +41,7 @@ type analysisWorkerRepository interface {
 	ReuseSourceProbe(context.Context, persistence.SourceStepClaim, int, uuid.UUID, string, int) (*persistence.SourceMediaVariant, error)
 	ReuseSourceFingerprint(context.Context, persistence.SourceStepClaim, int) (*persistence.SourceFingerprintResult, error)
 	FailSourceAnalysisStep(context.Context, persistence.SourceStepFailure) error
+	InvalidateSourceAnalysisWork(context.Context, persistence.SourceStepClaim, int) error
 	SettleNormalizedSourceAnalysisDelivery(context.Context, uuid.UUID, persistence.SourceAnalysisOperationDelivery, string, string, string) error
 	RecoverNormalizedSourceAnalysisDelivery(context.Context, uuid.UUID, persistence.SourceAnalysisOperationDelivery, string) error
 	CheckNormalizedSourceAnalysisToolHold(context.Context, uuid.UUID, uuid.UUID, int, int64, string) error
@@ -291,7 +292,7 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 		if err != nil {
 			return err
 		}
-		if operation.State != "failed" || operation.Stage != "recovered" {
+		if operation.State != "failed" || (operation.Stage != "recovered" && operation.Stage != "source_changed") {
 			return nil
 		}
 		operation.TargetSourceRootID = rootID
@@ -301,9 +302,22 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	if operation.State != "queued" {
 		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeInvalidInput)
 	}
-	if err := worker.ready(ctx); err != nil {
-		slog.Warn("source analysis cannot start", "operation", operation.ID, "cause", err)
-		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeNotReady)
+	invalidatedQueuedWork := false
+	for _, workID := range snapshot.WorkIDs {
+		work, _, readErr := worker.repository.GetNormalizedSourceAnalysisWork(ctx, workID)
+		if readErr != nil {
+			return readErr
+		}
+		if work != nil && work.InvalidatedAt != nil {
+			invalidatedQueuedWork = true
+			break
+		}
+	}
+	if !invalidatedQueuedWork {
+		if err := worker.ready(ctx); err != nil {
+			slog.Warn("source analysis cannot start", "operation", operation.ID, "cause", err)
+			return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeNotReady)
+		}
 	}
 	if err := worker.fileLimiter.Refresh(ctx); err != nil {
 		return fmt.Errorf("refresh source file concurrency: %w", err)
@@ -353,6 +367,9 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	// Every group has exited and released its limiter hold before delivery
 	// recovery can clear the durable work holds.
 	if fatalErr != nil {
+		if errors.Is(fatalErr, service.ErrSourceAnalysisInputChanged) {
+			return worker.settleDelivery(ctx, operation, job.ID, "failed", service.SourceAnalysisStageApplying, "The source file changed. Start a new analysis.")
+		}
 		if errors.Is(fatalErr, context.Canceled) || errors.Is(fatalErr, context.DeadlineExceeded) {
 			return fatalErr
 		}
@@ -473,11 +490,15 @@ func (worker *SourceAnalysisWorker) recoverStaleDelivery(ctx context.Context, op
 	if err != nil {
 		return err
 	}
-	if recovered.State != "failed" || recovered.Stage != "recovered" {
+	if recovered.State != "failed" || (recovered.Stage != "recovered" && recovered.Stage != "source_changed") {
 		return nil
 	}
 	if rootID != nil {
 		recovered.TargetSourceRootID = rootID
+	}
+	if recovered.Stage == "source_changed" {
+		worker.finishNormalizedDelivery(ctx, recovered)
+		return nil
 	}
 	worker.operations.Notify(operation.ID)
 	worker.refreshIncomingGroups(ctx, operation)
@@ -519,11 +540,17 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 	if execution == nil || execution.WorkID != workID || execution.ProcessingMode == "" {
 		return fmt.Errorf("source analysis execution mode is unavailable")
 	}
+	if executions[0].Work.InvalidatedAt != nil {
+		return service.ErrSourceAnalysisInputChanged
+	}
 	if worker.inputPreparer == nil {
 		return fmt.Errorf("source analysis input preparer is unavailable")
 	}
 	input, err := worker.inputPreparer.PrepareMode(ctx, fence, execution.ProcessingMode)
 	if err != nil {
+		if errors.Is(err, service.ErrSourceAnalysisInputChanged) {
+			return worker.invalidateChangedInput(ctx, operation, jobID, executions, claims)
+		}
 		return worker.failClaimedSteps(ctx, operation, jobID, executions, claims, "The source file could not be prepared for analysis.")
 	}
 	defer func() { _ = input.Close() }()
@@ -559,6 +586,9 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 	if _, hasSHA := byStep[persistence.SourceStepSHA256]; hasSHA {
 		prepared := preparer.Prepare(ctx, service.SourceAnalysisPrepareRequest{File: input.File, Targets: service.SourceAnalysisTargetSHA256})
 		if err := input.Validate(ctx); err != nil {
+			if errors.Is(err, service.ErrSourceAnalysisInputChanged) {
+				return worker.invalidateChangedInput(ctx, operation, jobID, executions, claims)
+			}
 			failures = append(failures, worker.failStep(ctx, operation, byStep[persistence.SourceStepSHA256], persistence.SourceStepSHA256, claims[persistence.SourceStepSHA256], jobID, "The source file changed. Start a new analysis."))
 		} else {
 			computed, applyErr := worker.applyPreparedStep(ctx, operation, snapshot, jobID, byStep[persistence.SourceStepSHA256], claims[persistence.SourceStepSHA256], &executions[0].Work, persistence.SourceStepSHA256, prepared)
@@ -577,6 +607,8 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 		err      error
 	}
 	outcomes := make(chan stepOutcome, len(steps))
+	runnerCtx, cancelRunners := context.WithCancel(ctx)
+	defer cancelRunners()
 	for _, step := range steps {
 		step := step
 		go func() {
@@ -586,24 +618,41 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 			}
 			// The metadata reader resolves the prepared pathname instead of the
 			// pinned handle, so revalidate the shared input immediately before it
-			// runs. A failure is reported through this step's outcome and never
-			// cancels the sibling runners.
+			// runs. A confirmed identity mismatch invalidates this work and stops
+			// siblings; other validation failures remain step-local outcomes.
 			if step == persistence.SourceStepMetadata {
-				if err := input.Validate(ctx); err != nil {
+				if err := input.Validate(runnerCtx); err != nil {
 					outcomes <- stepOutcome{step: step, err: err}
 					return
 				}
 			}
-			outcomes <- stepOutcome{step: step, prepared: preparer.Prepare(ctx, request)}
+			outcomes <- stepOutcome{step: step, prepared: preparer.Prepare(runnerCtx, request)}
 		}()
 	}
+	inputChanged := false
+	var invalidationErr error
 	for range steps {
 		outcome := <-outcomes // Join every runner before releasing the prepared input.
+		if inputChanged {
+			continue
+		}
+		if errors.Is(outcome.err, service.ErrSourceAnalysisInputChanged) {
+			inputChanged = true
+			cancelRunners()
+			invalidationErr = worker.invalidateChangedInput(ctx, operation, jobID, executions, claims, outcome.step)
+			continue
+		}
 		if outcome.err != nil {
 			failures = append(failures, worker.failStep(ctx, operation, byStep[outcome.step], outcome.step, claims[outcome.step], jobID, "The source file changed. Start a new analysis."))
 			continue
 		}
 		if err := input.Validate(ctx); err != nil {
+			if errors.Is(err, service.ErrSourceAnalysisInputChanged) {
+				inputChanged = true
+				cancelRunners()
+				invalidationErr = worker.invalidateChangedInput(ctx, operation, jobID, executions, claims, outcome.step)
+				continue
+			}
 			failures = append(failures, worker.failStep(ctx, operation, byStep[outcome.step], outcome.step, claims[outcome.step], jobID, "The source file changed. Start a new analysis."))
 			continue
 		}
@@ -612,10 +661,40 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 			failures = append(failures, applyErr)
 		}
 	}
+	if inputChanged {
+		if invalidationErr != nil && !errors.Is(invalidationErr, service.ErrSourceAnalysisInputChanged) {
+			return invalidationErr
+		}
+		return service.ErrSourceAnalysisInputChanged
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return errors.Join(failures...)
+}
+
+func (worker *SourceAnalysisWorker) invalidateChangedInput(ctx context.Context, operation *persistence.Operation, jobID int64, executions []persistence.SourceAnalysisExecution, claims map[persistence.SourceStepName]int, changedSteps ...persistence.SourceStepName) error {
+	step := persistence.SourceStepName("")
+	if len(changedSteps) != 0 {
+		step = changedSteps[0]
+	}
+	if step == "" {
+		for _, candidate := range []persistence.SourceStepName{persistence.SourceStepSHA256, persistence.SourceStepProbe, persistence.SourceStepFingerprint, persistence.SourceStepMetadata} {
+			if claims[candidate] > 0 {
+				step = candidate
+				break
+			}
+		}
+	}
+	if step == "" || claims[step] <= 0 {
+		return fmt.Errorf("source analysis input changed without a claimed step")
+	}
+	if err := worker.repository.InvalidateSourceAnalysisWork(ctx, persistence.SourceStepClaim{
+		WorkID: executions[0].Work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, Step: step,
+	}, claims[step]); err != nil {
+		return fmt.Errorf("invalidate changed source analysis work: %w", err)
+	}
+	return service.ErrSourceAnalysisInputChanged
 }
 
 func (worker *SourceAnalysisWorker) failClaimedSteps(ctx context.Context, operation *persistence.Operation, jobID int64, executions []persistence.SourceAnalysisExecution, claims map[persistence.SourceStepName]int, safe string) error {

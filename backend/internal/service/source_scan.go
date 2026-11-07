@@ -29,10 +29,12 @@ const (
 const SourceScanDirectoryUnavailableReason = persistence.SourceEnumerationRootUnavailableReason
 
 // SourceScanRepository is the persistence contract needed to stage a
-// stat-only enumeration. It does not read or modify the currently applied
-// inventory; publication is a separate transactional step.
+// stat-only enumeration. Confirmed changes revoke live source identities;
+// applying inventory facts remains a separate transactional step.
 type SourceScanRepository interface {
 	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
+	ListSourceScanIdentityTargets(context.Context, persistence.SourceScanIdentityFence) ([]persistence.SourceScanIdentityTarget, error)
+	ObserveChangedSourceFile(context.Context, persistence.SourceChangedFileObservation) error
 	DeleteSourceScanCandidatesForRootDelivery(context.Context, uuid.UUID, uuid.UUID, string, int, int64) error
 	AppendSourceScanCandidatesForDelivery(context.Context, uuid.UUID, int, int64, []persistence.SourceScanCandidateInput) error
 }
@@ -87,13 +89,35 @@ func (s *SourceScan) EnumerateObserved(ctx context.Context, request SourceScanRe
 	if err := sourcefs.ValidateRootPathSupport(root.ConfiguredPath); err != nil {
 		return nil, fmt.Errorf("enumerate source root: %w", err)
 	}
+	fence := persistence.SourceScanIdentityFence{
+		OperationID: request.OperationID, RootID: root.ID, ExpectedAttempt: request.ExpectedAttempt,
+		ExpectedJobID: request.ExpectedJobID, ExpectedConfiguredPath: root.ConfiguredPath,
+	}
+	identityTargets, err := s.repository.ListSourceScanIdentityTargets(ctx, fence)
+	if err != nil {
+		return nil, fmt.Errorf("enumerate source root: load inventory identities: %w", err)
+	}
+	targetsByPath := make(map[string]persistence.SourceScanIdentityTarget, len(identityTargets))
+	for _, target := range identityTargets {
+		targetsByPath[target.RelativePath] = target
+	}
 	if err := s.repository.DeleteSourceScanCandidatesForRootDelivery(ctx, request.OperationID, root.ID, root.ConfiguredPath, request.ExpectedAttempt, request.ExpectedJobID); err != nil {
 		return nil, fmt.Errorf("enumerate source root: clear earlier candidates: %w", err)
 	}
 	candidates := make([]persistence.SourceScanCandidateInput, 0)
 	scopes, err := enumerateSourceTree(ctx, s.opener, root.ConfiguredPath, func(entry SourceWalkEntry) error {
+		relativePath := filepath.ToSlash(entry.RelativePath)
+		observedMtime := sourceScanMtime(entry.Mtime)
+		if target, known := targetsByPath[relativePath]; known &&
+			(target.SizeBytes != entry.SizeBytes || !sourceScanMtime(target.Mtime).Equal(observedMtime)) {
+			if err := s.repository.ObserveChangedSourceFile(ctx, persistence.SourceChangedFileObservation{
+				Fence: fence, Target: target, SizeBytes: entry.SizeBytes, Mtime: observedMtime,
+			}); err != nil {
+				return fmt.Errorf("observe changed source file: %w", err)
+			}
+		}
 		candidates = append(candidates, persistence.SourceScanCandidateInput{
-			RelativePath: filepath.ToSlash(entry.RelativePath), SizeBytes: entry.SizeBytes, Mtime: sourceScanMtime(entry.Mtime),
+			RelativePath: relativePath, SizeBytes: entry.SizeBytes, Mtime: observedMtime,
 			ProbeStatus: persistence.SourceProbeStatusNotAnalyzed,
 		})
 		return nil

@@ -198,6 +198,7 @@ func TestPendingSourceAnalysisAdmitsOneBatchPerWorkWithExactSteps(t *testing.T) 
 		work := pendingWork(rootID, rootPath, filepath.Base(filePath), info.Size(), info.ModTime().UTC().Truncate(time.Microsecond), true)
 		workID, locationID := uuid.New(), uuid.New()
 		work.Work.ID, work.Work.LocationID = workID, locationID
+		work.Work.CurrentLocationID = &locationID
 		work.Location.ID = locationID
 		wantSteps[workID] = step
 		work.Steps = nil
@@ -263,6 +264,7 @@ func TestRetainedRecoveryUsesCurrentToolsAndAdmitsOneRemainingStep(t *testing.T)
 		workID, locationID := uuid.New(), uuid.New()
 		work := pendingWork(rootID, rootPath, filepath.Base(filePath), info.Size(), mtime, true)
 		work.Work.ID, work.Work.LocationID = workID, locationID
+		work.Work.CurrentLocationID = &locationID
 		work.Location.ID = locationID
 		work.Steps = nil
 		step := persistence.SourceAnalysisStep{WorkID: workID, Step: entry.step, State: "pending", LastOperationID: &ownerID}
@@ -373,6 +375,7 @@ func TestRetainedRecoverySkipsBusyWorkAndAdmitsIndependentSibling(t *testing.T) 
 		workID, locationID := uuid.New(), uuid.New()
 		work := pendingWork(rootID, rootPath, filepath.Base(filePath), info.Size(), info.ModTime().UTC().Truncate(time.Microsecond), true)
 		work.Work.ID, work.Work.LocationID = workID, locationID
+		work.Work.CurrentLocationID = &locationID
 		work.Location.ID = locationID
 		run, shaEnabled, cacheOnly := false, true, false
 		stepName := string(persistence.SourceStepProbe)

@@ -225,6 +225,7 @@ func loadIncomingGroupingCapturesForLocations(ctx context.Context, database bun.
 		FROM source_root root
 		JOIN source_location location ON location.source_root_id=root.id
 		LEFT JOIN source_analysis_work work ON work.current_location_id=location.id AND work.location_id=location.id
+			AND work.invalidated_at IS NULL
 			AND work.configured_path=root.configured_path AND work.inventory_path=root.inventory_path
 			AND work.relative_path=location.relative_path AND work.size_bytes=location.size_bytes AND work.mtime=location.mtime
 		LEFT JOIN source_analysis_step metadata ON metadata.work_id=work.id AND metadata.step='metadata'

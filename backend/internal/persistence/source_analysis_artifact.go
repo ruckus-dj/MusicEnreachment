@@ -229,7 +229,7 @@ func artifactOwnedByFence(artifact *SourceAnalysisArtifact, fence SourceAnalysis
 }
 
 func sourceAnalysisArtifactOwnerCurrent(work *SourceAnalysisWork, root *SourceRoot, location *SourceLocation) bool {
-	return root.Enabled && !root.Stale() && root.InventoryPath != nil && *root.InventoryPath == root.ConfiguredPath &&
+	return work.InvalidatedAt == nil && root.Enabled && !root.Stale() && root.InventoryPath != nil && *root.InventoryPath == root.ConfiguredPath &&
 		work.SourceRootID == root.ID && work.ConfiguredPath == root.ConfiguredPath && work.InventoryPath == *root.InventoryPath && work.CurrentLocationID != nil && *work.CurrentLocationID == work.LocationID && *work.CurrentLocationID == location.ID &&
 		location.SourceRootID == root.ID && location.RelativePath == work.RelativePath && location.SizeBytes == work.SizeBytes &&
 		sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime))
@@ -242,7 +242,7 @@ func lockSourceAnalysisArtifactOwner(ctx context.Context, tx bun.Tx, fence Sourc
 		return nil, nil, nil, nil, fmt.Errorf("lock output admission gate: %w", err)
 	}
 	initial := new(SourceAnalysisWork)
-	if err := tx.NewSelect().Model(initial).Column("source_root_id", "current_location_id").Where("id=?", fence.WorkID).Where("current_location_id IS NOT NULL AND current_location_id=location_id").Scan(ctx); err != nil {
+	if err := tx.NewSelect().Model(initial).Column("source_root_id", "current_location_id").Where("id=?", fence.WorkID).Where("current_location_id IS NOT NULL AND current_location_id=location_id AND invalidated_at IS NULL").Scan(ctx); err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("read work identity: %w", err)
 	}
 	root := new(SourceRoot)
@@ -254,7 +254,7 @@ func lockSourceAnalysisArtifactOwner(ctx context.Context, tx bun.Tx, fence Sourc
 		return nil, nil, nil, nil, fmt.Errorf("lock source location: %w", err)
 	}
 	work := new(SourceAnalysisWork)
-	if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? AND source_root_id=? AND current_location_id=? AND current_location_id=location_id FOR UPDATE`, fence.WorkID, root.ID, location.ID).Scan(ctx, work); err != nil {
+	if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? AND source_root_id=? AND current_location_id=? AND current_location_id=location_id AND invalidated_at IS NULL FOR UPDATE`, fence.WorkID, root.ID, location.ID).Scan(ctx, work); err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("lock source analysis work: %w", err)
 	}
 	operation := new(Operation)

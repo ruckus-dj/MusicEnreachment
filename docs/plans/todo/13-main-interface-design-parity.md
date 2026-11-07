@@ -92,6 +92,16 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      [42253784784](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42253784784).
    - [ ] Остаётся приёмка удаления root и reset lifecycle, поэтому пункт целиком
      не закрыт.
+   - [x] В `91d8e281` удаление последней location при удалении root очищает
+     все `track_source`-связи без fallback и изменения CURRENT. В `9b5725de`
+     добавлены приватная publication source copy с size/mtime-проверками и
+     сохранение inventory при неполном scan; оба среза прошли полный hook и CI.
+     Ограничения — [отчёт source freshness](../../reports/2026-11-07-source-freshness-safety.md).
+   - [ ] Durable отзыв identity при обнаруженном size/mtime mismatch реализован
+     для analysis/scan; полный gate и CI текущего среза ещё требуются.
+     Tombstones, execution history, artifacts и publication/recovery ownership
+     сохраняются; это не завершение staged/root failed-task lifecycle.
+     Свидетельства — [отчёт](../../reports/2026-11-07-source-identity-invalidation.md).
 3. [ ] **Recovery и явная republish.** Устранить расхождения восстановления и
    повторной публикации с утверждёнными правилами. **Приёмка:** interrupted,
    frozen target при актуальной authority регистрируется по соответствующим

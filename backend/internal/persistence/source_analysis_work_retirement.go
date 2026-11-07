@@ -20,6 +20,9 @@ func retireSourceAnalysisWork(ctx context.Context, tx bun.IDB, workID uuid.UUID)
 	if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? FOR UPDATE`, workID).Scan(ctx, &work); err != nil {
 		return fmt.Errorf("retire source analysis work: read work: %w", err)
 	}
+	if work.InvalidatedAt != nil {
+		return nil
+	}
 	held, err := sourceHoldExists(ctx, tx, work.SourceRootID, work.LocationID, workID)
 	if err != nil {
 		return fmt.Errorf("retire source analysis work: check publication holds: %w", err)

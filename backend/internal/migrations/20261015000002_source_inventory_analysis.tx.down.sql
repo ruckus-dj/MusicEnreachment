@@ -16,6 +16,8 @@ $baseline_rollback$;
 
 DROP TRIGGER source_work_variant_identity_no_rekey ON public.source_work_variant_identity;
 DROP TRIGGER source_analysis_work_execution_immutable ON public.source_analysis_work_execution;
+DROP TRIGGER source_analysis_work_execution_requires_live_identity ON public.source_analysis_work_execution;
+DROP TRIGGER source_work_variant_identity_requires_live_identity ON public.source_work_variant_identity;
 DROP TRIGGER source_analysis_work_attachment_guard ON public.source_analysis_work;
 DROP TRIGGER source_analysis_step_membership_guard ON public.source_analysis_step;
 DROP TRIGGER operation_tool_read_hold_guard ON public.operation_tool_read_hold;
@@ -74,6 +76,8 @@ DROP TABLE public.media_fingerprint_result;
 DROP FUNCTION public.validate_media_probe_cache_association();
 DROP FUNCTION public.source_fingerprint_result_identity_immutable();
 DROP FUNCTION public.source_analysis_work_hold_requires_current_attachment();
+DROP FUNCTION public.source_analysis_work_execution_requires_live_identity();
+DROP FUNCTION public.source_work_variant_identity_requires_live_identity();
 DROP FUNCTION public.source_analysis_work_attachment_guard();
 DROP FUNCTION public.source_analysis_immutable_result();
 DROP FUNCTION public.reject_manual_picker_search_result_mutation();

@@ -169,7 +169,7 @@ func (s *SourceAnalysisOperations) RetryOperation(ctx context.Context, originalI
 		}
 		return nil, fmt.Errorf("retry source analysis operation: read normalized work: %w", err)
 	}
-	if work == nil || location == nil || work.ID != *snapshot.TargetWorkID || location.ID != work.LocationID || location.SourceRootID != work.SourceRootID ||
+	if work == nil || work.InvalidatedAt != nil || location == nil || work.ID != *snapshot.TargetWorkID || location.ID != work.LocationID || location.SourceRootID != work.SourceRootID ||
 		location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !analysisMtime(location.Mtime).Equal(analysisMtime(work.Mtime)) {
 		return nil, fmt.Errorf("retry source analysis operation: normalized work identity is stale: %w", ErrSourceAnalysisStale)
 	}
@@ -226,7 +226,7 @@ func (s *SourceAnalysisOperations) enqueueFromSnapshot(ctx context.Context, snap
 	if err != nil {
 		return nil, fmt.Errorf("read current source analysis work for retry: %w", err)
 	}
-	if work == nil {
+	if work == nil || work.InvalidatedAt != nil || work.CurrentLocationID == nil {
 		return nil, fmt.Errorf("read current source analysis work for retry: %w", ErrSourceAnalysisStale)
 	}
 	shaEnabled, cacheOnly := work.SHA256Enabled, false
@@ -326,7 +326,7 @@ func validateCurrentAnalysisWork(detail *persistence.SourceLocationDetailSnapsho
 		return nil, ErrSourceAnalysisStale
 	}
 	work, root, location := detail.Work, detail.Root, detail.Location
-	if location.SizeBytes != expectedSize || !analysisMtime(location.Mtime).Equal(analysisMtime(expectedMtime)) ||
+	if work.InvalidatedAt != nil || location.SizeBytes != expectedSize || !analysisMtime(location.Mtime).Equal(analysisMtime(expectedMtime)) ||
 		work.SizeBytes != expectedSize || !analysisMtime(work.Mtime).Equal(analysisMtime(expectedMtime)) ||
 		work.CurrentLocationID == nil || *work.CurrentLocationID != work.LocationID || *work.CurrentLocationID != location.ID ||
 		work.LocationID != location.ID || work.SourceRootID != root.ID || work.RelativePath != location.RelativePath ||

@@ -25,7 +25,12 @@ publication-copy проверки (успешный baseline, независим
 ограниченный basename), но остановился на трёх старых scan-сценариях с ожиданием
 частичного pruning при неполном обходе. Fixtures исправлены на полный/неполный
 сценарий согласно контракту; диагностический integration-прогон jobs/persistence
-прошёл. Итоговый полный gate ещё требуется.
+прошёл. Итоговый обычный commit-hook с полным `task verify` прошёл для
+`9b5725dec44ead2f9617a2243a19735a1dfeb740`. Полностью завершён
+[CI 42357464505](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42357464505):
+verify, Docker Compose smoke, Linux arm64, macOS x64/arm64, Windows x64 и
+публикация контейнера — success. Это подтверждает первый защитный срез, но не
+устраняет перечисленные ниже ограничения.
 
 ## Незавершённая защита
 

@@ -34,8 +34,17 @@ func ensureReadySourceWorkVariant(ctx context.Context, tx bun.IDB, work SourceAn
 					OR (step.state='skipped' AND step.skip_reason IN ('disabled','not_requested'))))
 			)), false)
 		FROM source_analysis_work work
+		JOIN source_root root ON root.id=work.source_root_id
+		JOIN source_location location ON location.id=work.current_location_id AND location.source_root_id=work.source_root_id
 		LEFT JOIN source_analysis_step metadata ON metadata.work_id=work.id AND metadata.step='metadata'
-		WHERE work.id=? AND work.current_location_id=?`, work.ID, location.ID).Scan(ctx, &ready)
+		WHERE work.id=? AND work.current_location_id=? AND work.current_location_id=work.location_id
+		AND work.invalidated_at IS NULL AND work.source_root_id=? AND location.source_root_id=?
+		AND work.relative_path=? AND location.relative_path=? AND work.size_bytes=? AND location.size_bytes=?
+		AND work.mtime=? AND location.mtime=? AND root.enabled AND root.inventory_path IS NOT NULL
+		AND root.inventory_path=root.configured_path AND work.configured_path=root.configured_path
+		AND work.inventory_path=root.inventory_path`, work.ID, location.ID, work.SourceRootID, location.SourceRootID,
+		work.RelativePath, location.RelativePath, work.SizeBytes, location.SizeBytes,
+		sourceAnalysisMtime(work.Mtime), sourceAnalysisMtime(location.Mtime)).Scan(ctx, &ready)
 	if err != nil {
 		return fmt.Errorf("ensure source work variant identity: check durable readiness: %w", err)
 	}
@@ -78,8 +87,26 @@ func ensureReadySourceWorkVariant(ctx context.Context, tx bun.IDB, work SourceAn
 	default:
 		return fmt.Errorf("ensure source work variant identity: lock existing identity: %w", err)
 	}
-	if _, err := tx.NewRaw(`UPDATE source_location SET media_variant_id=?,updated_at=now() WHERE id=?`, anchorID, location.ID).Exec(ctx); err != nil {
+	result, err := tx.NewRaw(`UPDATE source_location location SET media_variant_id=?,updated_at=now()
+		FROM source_analysis_work work JOIN source_root root ON root.id=work.source_root_id
+		WHERE location.id=? AND location.source_root_id=? AND location.relative_path=?
+		AND location.size_bytes=? AND location.mtime=?
+		AND work.id=? AND work.location_id=location.id AND work.current_location_id=location.id
+		AND work.current_location_id=work.location_id AND work.invalidated_at IS NULL
+		AND work.source_root_id=location.source_root_id AND work.relative_path=location.relative_path
+		AND work.size_bytes=location.size_bytes AND work.mtime=location.mtime
+		AND work.source_root_id=? AND work.relative_path=? AND work.size_bytes=? AND work.mtime=?
+		AND work.configured_path=? AND work.inventory_path=?
+		AND root.enabled AND root.inventory_path IS NOT NULL AND root.inventory_path=root.configured_path
+		AND work.configured_path=root.configured_path AND work.inventory_path=root.inventory_path`,
+		anchorID, location.ID, location.SourceRootID, location.RelativePath, location.SizeBytes,
+		sourceAnalysisMtime(location.Mtime), work.ID, work.SourceRootID, work.RelativePath,
+		work.SizeBytes, sourceAnalysisMtime(work.Mtime), work.ConfiguredPath, work.InventoryPath).Exec(ctx)
+	if err != nil {
 		return fmt.Errorf("ensure source work variant identity: link current location: %w", err)
+	}
+	if err := requireRowsAffected(result, 1, "link current source location identity"); err != nil {
+		return fmt.Errorf("ensure source work variant identity: %w", err)
 	}
 	return nil
 }

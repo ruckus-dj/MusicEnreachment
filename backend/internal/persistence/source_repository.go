@@ -297,8 +297,15 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
 		}
 		var affectedVariantIDs []uuid.UUID
-		if err := tx.NewRaw(`SELECT DISTINCT media_variant_id FROM source_location
-			WHERE source_root_id = ? AND media_variant_id IS NOT NULL ORDER BY media_variant_id`, id).Scan(ctx, &affectedVariantIDs); err != nil {
+		if err := tx.NewRaw(`SELECT variant_id FROM (
+				SELECT media_variant_id AS variant_id FROM source_location
+				WHERE source_root_id=? AND media_variant_id IS NOT NULL
+				UNION
+				SELECT identity.media_variant_id AS variant_id
+				FROM source_analysis_work work
+				JOIN source_work_variant_identity identity ON identity.work_id=work.id
+				WHERE work.source_root_id=?
+			) affected ORDER BY variant_id`, id, id).Scan(ctx, &affectedVariantIDs); err != nil {
 			return fmt.Errorf("delete source root: list associated media variants: %w", err)
 		}
 		var workIDs []uuid.UUID

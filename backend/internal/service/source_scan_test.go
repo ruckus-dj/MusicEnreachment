@@ -17,12 +17,16 @@ import (
 )
 
 type sourceScanRepositoryFixture struct {
-	root       *persistence.SourceRoot
-	candidates map[uuid.UUID][]persistence.SourceScanCandidateInput
-	deletions  []sourceScanCandidateDeletion
-	batchSizes []int
-	deleteErr  error
-	appendErr  error
+	root            *persistence.SourceRoot
+	candidates      map[uuid.UUID][]persistence.SourceScanCandidateInput
+	deletions       []sourceScanCandidateDeletion
+	batchSizes      []int
+	identityTargets []persistence.SourceScanIdentityTarget
+	identityFences  []persistence.SourceScanIdentityFence
+	observations    []persistence.SourceChangedFileObservation
+	observe         func(persistence.SourceChangedFileObservation) error
+	deleteErr       error
+	appendErr       error
 }
 
 type sourceScanCandidateDeletion struct {
@@ -35,6 +39,19 @@ type sourceScanCandidateDeletion struct {
 
 func (fixture *sourceScanRepositoryFixture) GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error) {
 	return fixture.root, nil
+}
+
+func (fixture *sourceScanRepositoryFixture) ListSourceScanIdentityTargets(_ context.Context, fence persistence.SourceScanIdentityFence) ([]persistence.SourceScanIdentityTarget, error) {
+	fixture.identityFences = append(fixture.identityFences, fence)
+	return fixture.identityTargets, nil
+}
+
+func (fixture *sourceScanRepositoryFixture) ObserveChangedSourceFile(_ context.Context, observation persistence.SourceChangedFileObservation) error {
+	fixture.observations = append(fixture.observations, observation)
+	if fixture.observe != nil {
+		return fixture.observe(observation)
+	}
+	return nil
 }
 
 func (fixture *sourceScanRepositoryFixture) DeleteSourceScanCandidatesForRootDelivery(_ context.Context, operationID, rootID uuid.UUID, path string, attempt int, jobID int64) error {
@@ -184,6 +201,66 @@ func TestSourceScanStopsWhenCandidateCleanupFails(t *testing.T) {
 	}
 	if len(repository.batchSizes) != 0 {
 		t.Fatalf("candidate batches after cleanup failure = %v, want none", repository.batchSizes)
+	}
+}
+
+func TestSourceScanObservesChangedKnownFileBeforeCancellationAndSkipsUnchanged(t *testing.T) {
+	repository, scan, request := newSourceScanFixture(t)
+	writeSourceScanFile(t, repository.root.ConfiguredPath, "track.flac", "changed audio")
+	path := filepath.Join(repository.root.ConfiguredPath, "track.flac")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workID := uuid.New()
+	target := persistence.SourceScanIdentityTarget{
+		LocationID: uuid.New(), WorkID: &workID, RelativePath: "track.flac",
+		SizeBytes: info.Size() - 1, Mtime: sourceScanMtime(info.ModTime()).Add(-time.Second),
+	}
+	repository.identityTargets = []persistence.SourceScanIdentityTarget{target}
+	ctx, cancel := context.WithCancel(context.Background())
+	repository.observe = func(persistence.SourceChangedFileObservation) error {
+		cancel()
+		return nil
+	}
+	if _, err := scan.EnumerateObserved(ctx, request); !errors.Is(err, context.Canceled) {
+		t.Fatalf("enumeration error = %v, want cancellation after observation", err)
+	}
+	if len(repository.identityFences) != 1 {
+		t.Fatalf("identity target loads = %d, want exactly one", len(repository.identityFences))
+	}
+	wantFence := persistence.SourceScanIdentityFence{
+		OperationID: request.OperationID, RootID: request.RootID, ExpectedAttempt: request.ExpectedAttempt,
+		ExpectedJobID: request.ExpectedJobID, ExpectedConfiguredPath: repository.root.ConfiguredPath,
+	}
+	if repository.identityFences[0] != wantFence {
+		t.Fatalf("identity fence = %+v, want %+v", repository.identityFences[0], wantFence)
+	}
+	if len(repository.observations) != 1 {
+		t.Fatalf("changed-file observations = %d, want one before cancellation", len(repository.observations))
+	}
+	observation := repository.observations[0]
+	if observation.Fence != wantFence || observation.Target != target || observation.SizeBytes != info.Size() || !observation.Mtime.Equal(sourceScanMtime(info.ModTime())) {
+		t.Fatalf("changed-file observation = %+v, want fenced target and observed facts", observation)
+	}
+	if len(repository.batchSizes) != 0 {
+		t.Fatalf("candidate batches after cancellation = %v, want none", repository.batchSizes)
+	}
+
+	unchangedRepository, unchangedScan, unchangedRequest := newSourceScanFixture(t)
+	writeSourceScanFile(t, unchangedRepository.root.ConfiguredPath, "track.flac", "same audio")
+	unchangedInfo, err := os.Stat(filepath.Join(unchangedRepository.root.ConfiguredPath, "track.flac"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchangedRepository.identityTargets = []persistence.SourceScanIdentityTarget{{
+		LocationID: uuid.New(), RelativePath: "track.flac", SizeBytes: unchangedInfo.Size(), Mtime: sourceScanMtime(unchangedInfo.ModTime()),
+	}}
+	if _, err := unchangedScan.EnumerateObserved(context.Background(), unchangedRequest); err != nil {
+		t.Fatalf("enumerate unchanged source root: %v", err)
+	}
+	if len(unchangedRepository.identityFences) != 1 || len(unchangedRepository.observations) != 0 {
+		t.Fatalf("unchanged identity loads/observations = %d/%d, want one load and no observation", len(unchangedRepository.identityFences), len(unchangedRepository.observations))
 	}
 }
 

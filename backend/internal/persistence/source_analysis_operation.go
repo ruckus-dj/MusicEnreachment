@@ -111,6 +111,19 @@ func (repository *SourceInventoryRepository) settleNormalizedSourceAnalysisOpera
 		if operation.State != "queued" && operation.State != "running" {
 			return fmt.Errorf("settle source analysis: operation is not active")
 		}
+		var invalidated bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM operation_source_work_hold hold
+			JOIN source_analysis_work work ON work.id=hold.work_id
+			WHERE hold.operation_id=? AND work.invalidated_at IS NOT NULL
+		)`, operationID).Scan(ctx, &invalidated); err != nil {
+			return fmt.Errorf("settle source analysis: check invalidated work: %w", err)
+		}
+		if invalidated {
+			state = "failed"
+			stage = "source_changed"
+			safeError = sourceAnalysisChangedSafeError
+		}
 		if state == "failed" {
 			if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='failed',safe_error=?,skip_reason=NULL,
 				execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,

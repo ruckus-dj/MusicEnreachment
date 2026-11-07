@@ -17,6 +17,11 @@ import (
 
 const sourceAnalysisCopyBufferSize = 128 * 1024
 
+// ErrSourceAnalysisInputChanged identifies a confirmed source size or
+// microsecond-precision mtime mismatch. Other source access failures remain
+// ordinary errors so that they can be retried or diagnosed.
+var ErrSourceAnalysisInputChanged = errors.New("source analysis input changed")
+
 type sourceAnalysisInputRepository interface {
 	GetNormalizedSourceAnalysisWork(context.Context, uuid.UUID) (*persistence.SourceAnalysisWork, *persistence.SourceLocation, error)
 	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
@@ -130,13 +135,20 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 			return nil, fmt.Errorf("open pinned inventory file: %w", openErr)
 		}
 		info, statErr := file.Stat(ctx)
-		if statErr != nil || !matchesSourceIdentity(info, work.SizeBytes, work.Mtime) {
+		if statErr != nil {
 			_ = file.Close()
 			_ = pinnedRoot.Close()
-			if statErr != nil {
-				return nil, fmt.Errorf("stat source analysis input: %w", statErr)
-			}
-			return nil, fmt.Errorf("source analysis input changed")
+			return nil, fmt.Errorf("stat source analysis input: %w", statErr)
+		}
+		if sourceIdentityMismatch(info, work.SizeBytes, work.Mtime) {
+			_ = file.Close()
+			_ = pinnedRoot.Close()
+			return nil, ErrSourceAnalysisInputChanged
+		}
+		if info == nil || !info.Mode().IsRegular() {
+			_ = file.Close()
+			_ = pinnedRoot.Close()
+			return nil, fmt.Errorf("source analysis input is not a regular file")
 		}
 		input := &SourceAnalysisPreparedInput{File: file, ServerPath: filepath.Join(work.InventoryPath, filepath.FromSlash(work.RelativePath))}
 		input.validate = func(ctx context.Context) error {
@@ -144,8 +156,11 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 			if err != nil {
 				return err
 			}
-			if !matchesSourceIdentity(current, work.SizeBytes, work.Mtime) {
-				return fmt.Errorf("source analysis input changed")
+			if sourceIdentityMismatch(current, work.SizeBytes, work.Mtime) {
+				return ErrSourceAnalysisInputChanged
+			}
+			if current == nil || !current.Mode().IsRegular() {
+				return fmt.Errorf("source analysis input is not a regular file")
 			}
 			if err := verifySourceNamespace(ctx, preparer.sourceOpen, pinnedRoot, work.InventoryPath); err != nil {
 				return err
@@ -265,14 +280,22 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 	if err != nil {
 		return failCreated(fmt.Errorf("stat source before copy: %w", err))
 	}
-	if !matchesSourceIdentity(before, work.SizeBytes, work.Mtime) {
-		return failCreated(fmt.Errorf("source changed before staged copy"))
+	if sourceIdentityMismatch(before, work.SizeBytes, work.Mtime) {
+		return failCreated(ErrSourceAnalysisInputChanged)
+	}
+	if before == nil || !before.Mode().IsRegular() {
+		return failCreated(fmt.Errorf("source analysis input is not a regular file"))
 	}
 	if err := verifySourceNamespace(ctx, preparer.sourceOpen, sourceRoot, work.InventoryPath); err != nil {
 		return failCreated(fmt.Errorf("verify inventory namespace before copy: %w", err))
 	}
 	copied, err := copySourceOnce(ctx, sourceFile, outputFile, work.SizeBytes)
 	if err != nil {
+		if ctx.Err() == nil {
+			if current, statErr := sourceFile.Stat(ctx); statErr == nil && sourceIdentityMismatch(current, work.SizeBytes, work.Mtime) {
+				err = errors.Join(err, ErrSourceAnalysisInputChanged)
+			}
+		}
 		return failCreated(fmt.Errorf("copy source into staged artifact: %w", err))
 	}
 	if err := outputFile.Sync(ctx); err != nil {
@@ -282,8 +305,14 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 	if err != nil {
 		return failCreated(fmt.Errorf("stat source after copy: %w", err))
 	}
-	if !matchesSourceIdentity(after, work.SizeBytes, work.Mtime) || copied != work.SizeBytes {
-		return failCreated(fmt.Errorf("source changed during staged copy"))
+	if sourceIdentityMismatch(after, work.SizeBytes, work.Mtime) {
+		return failCreated(ErrSourceAnalysisInputChanged)
+	}
+	if after == nil || !after.Mode().IsRegular() {
+		return failCreated(fmt.Errorf("source analysis input is not a regular file"))
+	}
+	if copied != work.SizeBytes {
+		return failCreated(fmt.Errorf("staged source copy has an unexpected size"))
 	}
 	destinationInfo, err := outputFile.Stat(ctx)
 	if err != nil {
@@ -336,8 +365,11 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 		if err != nil {
 			return err
 		}
-		if !matchesSourceIdentity(current, work.SizeBytes, work.Mtime) {
-			return fmt.Errorf("source analysis input changed")
+		if sourceIdentityMismatch(current, work.SizeBytes, work.Mtime) {
+			return ErrSourceAnalysisInputChanged
+		}
+		if current == nil || !current.Mode().IsRegular() {
+			return fmt.Errorf("source analysis input is not a regular file")
 		}
 		if err := verifySourceNamespace(ctx, preparer.sourceOpen, sourceRoot, work.InventoryPath); err != nil {
 			return err
@@ -458,6 +490,9 @@ func (preparer *SourceAnalysisInputPreparer) prepareRetained(
 		close:      func() error { return errors.Join(file.Close(), pinnedRoot.Close()) },
 	}
 	input.validate = func(ctx context.Context) error {
+		if err := preparer.validateRetainedSource(ctx, work); err != nil {
+			return err
+		}
 		current, err := file.Stat(ctx)
 		if err != nil {
 			return err
@@ -485,8 +520,11 @@ func (preparer *SourceAnalysisInputPreparer) validateRetainedSource(ctx context.
 	if err != nil {
 		return fmt.Errorf("stat source analysis input: %w", err)
 	}
-	if !matchesSourceIdentity(info, work.SizeBytes, work.Mtime) {
-		return fmt.Errorf("source analysis input changed")
+	if sourceIdentityMismatch(info, work.SizeBytes, work.Mtime) {
+		return ErrSourceAnalysisInputChanged
+	}
+	if info == nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("source analysis input is not a regular file")
 	}
 	if err := verifySourceNamespace(ctx, preparer.sourceOpen, pinnedRoot, work.InventoryPath); err != nil {
 		return err
@@ -571,8 +609,8 @@ func copySourceOnce(ctx context.Context, source sourcefs.RegularFile, destinatio
 	return total, err
 }
 
-func matchesSourceIdentity(info os.FileInfo, size int64, mtime time.Time) bool {
-	return info != nil && info.Mode().IsRegular() && info.Size() == size && sameSourceMtime(mtime, info.ModTime())
+func sourceIdentityMismatch(info os.FileInfo, size int64, mtime time.Time) bool {
+	return info != nil && (info.Size() != size || !sameSourceMtime(mtime, info.ModTime()))
 }
 
 func sameSourceMtime(left, right time.Time) bool {
@@ -611,6 +649,9 @@ func verifySourceFileNamespace(ctx context.Context, root sourcefs.Directory, rel
 	currentInfo, err := current.Stat(ctx)
 	if err != nil {
 		return err
+	}
+	if sourceIdentityMismatch(currentInfo, expected.Size(), expected.ModTime()) {
+		return ErrSourceAnalysisInputChanged
 	}
 	if !os.SameFile(expected, currentInfo) {
 		return fmt.Errorf("inventory file namespace changed")

@@ -57,7 +57,7 @@ func validateAndLockPublicationSourceIdentity(ctx context.Context, tx bun.IDB, s
 	if err := tx.NewSelect().Model(&work).Where("id=?", source.WorkID).For("UPDATE").Scan(ctx); err != nil {
 		return fmt.Errorf("admit publication: lock source work: %w", err)
 	}
-	if work.CurrentLocationID == nil || *work.CurrentLocationID != source.LocationID || work.LocationID != source.LocationID || work.SourceRootID != source.RootID || work.ConfiguredPath != frozen.ConfiguredRootPath || work.InventoryPath != frozen.InventoryRootPath || work.RelativePath != frozen.RelativePath || work.SizeBytes != frozen.SizeBytes || !work.Mtime.Equal(frozen.MTime) {
+	if work.InvalidatedAt != nil || work.CurrentLocationID == nil || *work.CurrentLocationID != source.LocationID || work.LocationID != source.LocationID || work.SourceRootID != source.RootID || work.ConfiguredPath != frozen.ConfiguredRootPath || work.InventoryPath != frozen.InventoryRootPath || work.RelativePath != frozen.RelativePath || work.SizeBytes != frozen.SizeBytes || !work.Mtime.Equal(frozen.MTime) {
 		return fmt.Errorf("admit publication: source work changed")
 	}
 	var canonical uuid.UUID

@@ -46,8 +46,114 @@ func TestSourceAnalysisDatabaseGroupWithPostgreSQL(t *testing.T) {
 		runRecoverInterruptedNormalizedSourceAnalysisOldFenceCannotRetireNewBorrowerWithPostgreSQL(t, database)
 	})
 	t.Run("scenario_11", func(t *testing.T) { runEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t, database) })
-	t.Run("scenario_12", func(t *testing.T) { runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeWorkIsDeleted(t, database) })
+	t.Run("scenario_12", func(t *testing.T) { runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeTombstone(t, database) })
 	t.Run("scenario_13", func(t *testing.T) { runRecoveredFingerprintRerunAdmissionUsesOriginalIntentWithPostgreSQL(t, database) })
+	t.Run("scenario_14", func(t *testing.T) { runInvalidationRetainsExecutionAuthorityAndRevokesStep(t, database) })
+}
+
+func runInvalidationRetainsExecutionAuthorityAndRevokesStep(t *testing.T, database *bun.DB) {
+	ctx := context.Background()
+	fixture := normalizedWorkOperationWithDatabase(t, database, t.TempDir(), true,
+		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
+	artifacts := persistence.NewSourceAnalysisArtifactRepository(database)
+	if _, err := database.ExecContext(ctx, `UPDATE source_root SET processing_mode='staged' WHERE id=?`, fixture.root.ID); err != nil {
+		t.Fatal(err)
+	}
+	operation := fixture.batchOperation(t)
+	if err := fixture.admit(t, ctx, operation); err != nil {
+		t.Fatalf("admit operation: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE operation SET state='running',stage='analysis',started_at=now() WHERE id=?`, operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	fence := persistence.SourceAnalysisArtifactFence{WorkID: fixture.work.ID, OperationID: operation.ID,
+		OperationAttempt: operation.Attempt, JobID: *operation.RiverJobID}
+	insertWorkExecution(t, ctx, fixture, fence, "staged")
+	claim := persistence.SourceStepClaim{WorkID: fence.WorkID, OperationID: fence.OperationID,
+		OperationAttempt: fence.OperationAttempt, JobID: fence.JobID, Step: persistence.SourceStepSHA256}
+	attempt, err := fixture.repository.ClaimSourceAnalysisStep(ctx, claim)
+	if err != nil || attempt != 1 {
+		t.Fatalf("claim running step baseline: attempt=%d err=%v", attempt, err)
+	}
+	artifactID := uuid.New()
+	if _, err := artifacts.Acquire(ctx, artifactID, fence); err != nil {
+		t.Fatalf("acquire staged artifact: %v", err)
+	}
+	if _, err := artifacts.MarkReady(ctx, artifactID, fence, fixture.work.SizeBytes); err != nil {
+		t.Fatalf("mark staged artifact ready: %v", err)
+	}
+	previousVariantID := uuid.New()
+	if _, err := database.NewRaw(`INSERT INTO media_variant(id,size_bytes) VALUES(?,?)`, previousVariantID, fixture.work.SizeBytes).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.NewRaw(`UPDATE source_location SET media_variant_id=? WHERE id=?`, previousVariantID, fixture.location.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var previousLink uuid.UUID
+	if err := database.NewRaw(`SELECT media_variant_id FROM source_location WHERE id=?`, fixture.location.ID).Scan(ctx, &previousLink); err != nil || previousLink != previousVariantID {
+		t.Fatalf("prior source identity baseline: variant=%s err=%v", previousLink, err)
+	}
+	var running bool
+	if err := database.NewRaw(`SELECT state='running' FROM source_analysis_step WHERE work_id=? AND step='sha256'`, fixture.work.ID).Scan(ctx, &running); err != nil || !running {
+		t.Fatalf("step not running before invalidation: running=%v err=%v", running, err)
+	}
+	if err := fixture.repository.InvalidateSourceAnalysisWork(ctx, claim, attempt); err != nil {
+		t.Fatalf("invalidate running work: %v", err)
+	}
+	var detached, invalidated bool
+	if err := database.NewRaw(`SELECT current_location_id IS NULL, invalidated_at IS NOT NULL FROM source_analysis_work WHERE id=?`, fixture.work.ID).Scan(ctx, &detached, &invalidated); err != nil {
+		t.Fatal(err)
+	}
+	if !detached || !invalidated {
+		t.Fatalf("work not atomically invalidated and detached: detached=%v invalidated=%v", detached, invalidated)
+	}
+	var location struct {
+		MediaVariantID *uuid.UUID `bun:"media_variant_id,type:uuid"`
+		SizeBytes      int64      `bun:"size_bytes"`
+		Mtime          time.Time  `bun:"mtime"`
+	}
+	if err := database.NewRaw(`SELECT media_variant_id,size_bytes,mtime FROM source_location WHERE id=?`, fixture.location.ID).Scan(ctx, &location); err != nil {
+		t.Fatal(err)
+	}
+	if location.MediaVariantID != nil || location.SizeBytes != fixture.work.SizeBytes || !location.Mtime.Equal(fixture.work.Mtime) {
+		t.Fatalf("invalidation changed location identity unexpectedly: %+v", location)
+	}
+	if err := fixture.repository.InvalidateSourceAnalysisWork(ctx, claim, attempt); err != nil {
+		t.Fatalf("repeat invalidation: %v", err)
+	}
+	if _, err := fixture.repository.ClaimSourceAnalysisStep(ctx, claim); err == nil {
+		t.Fatal("late delivery successfully claimed an invalidated step")
+	}
+	if _, err := fixture.repository.ApplySourceSHA256(ctx, persistence.SourceSHA256Apply{
+		WorkID: claim.WorkID, OperationID: claim.OperationID, OperationAttempt: claim.OperationAttempt,
+		JobID: claim.JobID, StepAttempt: attempt, SHA256: make([]byte, 32), Algorithm: "sha256", CalculatedAt: time.Now(),
+	}); err == nil {
+		t.Fatal("late successful SHA result was accepted for invalidated work")
+	}
+	if err := fixture.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID,
+		persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: fence.JobID}, "failed", "failed", "source changed"); err != nil {
+		t.Fatalf("settle invalidated delivery: %v", err)
+	}
+	var artifactState string
+	if err := database.NewRaw(`SELECT state FROM source_analysis_artifact WHERE id=?`, artifactID).Scan(ctx, &artifactState); err != nil || artifactState != persistence.SourceAnalysisArtifactReady {
+		t.Fatalf("settlement did not retain ready artifact: state=%q err=%v", artifactState, err)
+	}
+	var executionCount, holdCount int
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work_execution WHERE work_id=?`, fixture.work.ID).Scan(ctx, &executionCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.NewRaw(`SELECT count(*) FROM operation_source_work_hold WHERE operation_id=? AND work_id=?`, operation.ID, fixture.work.ID).Scan(ctx, &holdCount); err != nil {
+		t.Fatal(err)
+	}
+	if executionCount != 1 || holdCount != 0 {
+		t.Fatalf("settlement authority/hold state: executions=%d holds=%d, want 1 and 0", executionCount, holdCount)
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM source_analysis_work_execution WHERE work_id=?`, fixture.work.ID); err == nil {
+		t.Fatal("execution authority was deletable despite retained invalidated work")
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE source_analysis_work SET invalidated_at=NULL,current_location_id=location_id WHERE id=?`, fixture.work.ID); err == nil {
+		t.Fatal("SQL reset/reattachment of invalidated work was accepted")
+	}
 }
 
 func runSourceAnalysisArtifactAcquireAndReadyFencingWithPostgreSQL(t *testing.T, database *bun.DB) {

@@ -57,11 +57,14 @@ func (repository *SourceInventoryRepository) ListNormalizedSourceAnalysisExecuti
 func (repository *SourceInventoryRepository) GetNormalizedSourceAnalysisWork(ctx context.Context, workID uuid.UUID) (*SourceAnalysisWork, *SourceLocation, error) {
 	work := new(SourceAnalysisWork)
 	if err := repository.db.NewSelect().Model(work).Where("id = ?", workID).
-		Where("current_location_id IS NOT NULL AND current_location_id=location_id").Scan(ctx); err != nil {
+		Where("(current_location_id IS NOT NULL AND current_location_id=location_id) OR invalidated_at IS NOT NULL").Scan(ctx); err != nil {
 		return nil, nil, fmt.Errorf("read normalized source analysis work: %w", err)
 	}
 	location := new(SourceLocation)
 	if err := repository.db.NewSelect().Model(location).Where("id = ? AND source_root_id = ?", work.LocationID, work.SourceRootID).Scan(ctx); err != nil {
+		if err == sql.ErrNoRows && work.InvalidatedAt != nil {
+			return work, nil, nil
+		}
 		return nil, nil, fmt.Errorf("read normalized source analysis location: %w", err)
 	}
 	return work, location, nil

@@ -84,6 +84,12 @@ func TestSourceAnalysisInputPreparerReusesReadyArtifactWithoutBorrowingSource(t 
 	if err := input.Validate(context.Background()); err != nil {
 		t.Fatalf("validate retained artifact: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(fixture.sourcePath, "audio.bin"), []byte("changed source identity"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := input.Validate(context.Background()); !errors.Is(err, ErrSourceAnalysisInputChanged) {
+		t.Fatalf("validate retained artifact after source changed = %v, want confirmed input change", err)
+	}
 }
 
 func TestSourceAnalysisInputPreparerInvalidatesMissingBindingAndAcquiresFreshArtifact(t *testing.T) {
@@ -339,8 +345,8 @@ func TestSourceAnalysisInputPreparerRejectsMismatchedSourceBeforeAcquiring(t *te
 	if err := os.Chtimes(filepath.Join(fixture.sourcePath, "audio.bin"), future, future); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.preparer.Prepare(context.Background(), fixture.fence); err == nil {
-		t.Fatal("Prepare accepted a source with a different observed mtime")
+	if _, err := fixture.preparer.Prepare(context.Background(), fixture.fence); !errors.Is(err, ErrSourceAnalysisInputChanged) {
+		t.Fatalf("Prepare error = %v, want confirmed input change", err)
 	}
 	// The retained source is validated before any artifact is acquired, so a
 	// mismatch fails safely without creating an orphaned copy or ownership row.
@@ -364,8 +370,8 @@ func TestSourceAnalysisInputPreparerRetainsArtifactWhenSourceChangesDuringCopy(t
 			return os.Chtimes(path, future, future)
 		}}
 	}}
-	if _, err := fixture.preparer.Prepare(context.Background(), fixture.fence); err == nil {
-		t.Fatal("Prepare accepted a source whose mtime changed during copy")
+	if _, err := fixture.preparer.Prepare(context.Background(), fixture.fence); !errors.Is(err, ErrSourceAnalysisInputChanged) {
+		t.Fatalf("Prepare error = %v, want confirmed input change", err)
 	}
 	if fixture.artifacts.readyCalls != 0 || fixture.artifacts.forgetCalls != 0 {
 		t.Fatalf("post-copy mismatch transitions: ready=%d forget=%d", fixture.artifacts.readyCalls, fixture.artifacts.forgetCalls)

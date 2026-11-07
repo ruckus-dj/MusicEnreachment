@@ -98,10 +98,6 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 			}
 			return nil
 		}
-		if err := validateHeldSourceLocations(ctx, tx, *root, candidates); err != nil {
-			return fmt.Errorf("apply source enumeration: %w", err)
-		}
-
 		oldLocations := make([]SourceLocation, 0)
 		if err := tx.NewSelect().Model(&oldLocations).Where("source_root_id=?", root.ID).Order("relative_path").For("UPDATE").Scan(ctx); err != nil {
 			return fmt.Errorf("apply source enumeration: lock existing locations: %w", err)
@@ -110,8 +106,12 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 		for _, candidate := range candidates {
 			candidateByPath[candidate.RelativePath] = candidate
 		}
+		missingObservedVariantIDs := make([]uuid.UUID, 0)
 		for _, location := range oldLocations {
 			candidate, seen := candidateByPath[location.RelativePath]
+			if !seen && location.MediaVariantID != nil {
+				missingObservedVariantIDs = append(missingObservedVariantIDs, *location.MediaVariantID)
+			}
 			var old SourceAnalysisWork
 			err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE current_location_id=? FOR UPDATE`, location.ID).Scan(ctx, &old)
 			if err == sql.ErrNoRows {
@@ -125,8 +125,8 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 			if unchanged {
 				continue
 			}
-			if err := retireSourceAnalysisWork(ctx, tx, old.ID); err != nil {
-				return fmt.Errorf("apply source enumeration: safely retire old analysis work: %w", err)
+			if err := invalidateCurrentSourceAnalysisWork(ctx, tx, old.ID, location.ID); err != nil {
+				return fmt.Errorf("apply source enumeration: invalidate changed analysis work: %w", err)
 			}
 		}
 
@@ -193,6 +193,7 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 		if err != nil {
 			return fmt.Errorf("apply source enumeration: reconcile missing locations: %w", err)
 		}
+		missingVariantIDs = append(missingVariantIDs, missingObservedVariantIDs...)
 		if err := deleteTrackSourcesWithoutLocations(ctx, tx, missingVariantIDs); err != nil {
 			return fmt.Errorf("apply source enumeration: clean track sources for missing locations: %w", err)
 		}
@@ -247,9 +248,19 @@ func pruneEnumeratedLocations(ctx context.Context, tx bun.Tx, rootID, operationI
 		if held {
 			return nil, fmt.Errorf("source location %q is pinned by a publication hold", location.RelativePath)
 		}
-		if location.MediaVariantID != nil {
-			missingVariantIDs = append(missingVariantIDs, *location.MediaVariantID)
+		var locationVariantIDs []uuid.UUID
+		if err := tx.NewRaw(`SELECT variant_id FROM (
+			SELECT media_variant_id AS variant_id FROM source_location
+			WHERE id=? AND media_variant_id IS NOT NULL
+			UNION
+			SELECT identity.media_variant_id AS variant_id
+			FROM source_analysis_work work
+			JOIN source_work_variant_identity identity ON identity.work_id=work.id
+			WHERE work.source_root_id=? AND work.location_id=?
+		) affected ORDER BY variant_id`, location.ID, rootID, location.ID).Scan(ctx, &locationVariantIDs); err != nil {
+			return nil, fmt.Errorf("read variants for missing source location: %w", err)
 		}
+		missingVariantIDs = append(missingVariantIDs, locationVariantIDs...)
 		var workID uuid.UUID
 		err = tx.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=? FOR UPDATE`, location.ID).Scan(ctx, &workID)
 		if err != nil && err != sql.ErrNoRows {

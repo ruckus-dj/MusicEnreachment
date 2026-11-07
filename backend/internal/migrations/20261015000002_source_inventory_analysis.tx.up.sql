@@ -111,6 +111,14 @@ BEGIN
         step_value := NEW.step;
     END IF;
     IF operation_id_value IS NULL THEN RETURN NULL; END IF;
+    -- A later settlement may clear an exact execution tuple in the same
+    -- transaction. Deferred events for its earlier state must not validate an
+    -- obsolete NEW tuple against the now-terminal operation.
+    IF NOT EXISTS (SELECT 1 FROM source_analysis_step current_step
+        WHERE current_step.work_id=work_id_value AND current_step.step=step_value
+          AND current_step.execution_operation_id=operation_id_value) THEN
+        RETURN NULL;
+    END IF;
     SELECT * INTO operation_row FROM operation WHERE id=operation_id_value;
     IF NOT FOUND THEN RAISE EXCEPTION 'source-analysis execution must reference an existing operation'; END IF;
     IF operation_row.source_analysis_mode IS NULL THEN RAISE EXCEPTION 'source-analysis execution must reference a normalized analysis operation'; END IF;
@@ -217,12 +225,47 @@ BEGIN
         END IF;
     ELSIF OLD.current_location_id IS NULL AND NEW.current_location_id IS NOT NULL THEN
         RAISE EXCEPTION 'retired source analysis work cannot be reattached';
-    ELSIF OLD.current_location_id IS NOT NULL AND NEW.current_location_id IS NULL AND EXISTS (
+    ELSIF OLD.invalidated_at IS NOT NULL AND NEW.invalidated_at IS DISTINCT FROM OLD.invalidated_at THEN
+        RAISE EXCEPTION 'invalidated source analysis work marker is irreversible';
+    ELSIF OLD.current_location_id IS NOT NULL AND NEW.current_location_id IS NULL AND NEW.invalidated_at IS NULL AND EXISTS (
         SELECT 1 FROM operation_source_work_hold hold
         JOIN operation operation ON operation.id=hold.operation_id
         WHERE hold.work_id=OLD.id AND operation.state IN ('queued','running')
     ) THEN
         RAISE EXCEPTION 'active source analysis work cannot be retired';
+    END IF;
+    IF NEW.invalidated_at IS NOT NULL AND NEW.current_location_id IS NOT NULL THEN
+        RAISE EXCEPTION 'invalidated source analysis work cannot remain attached';
+    END IF;
+    RETURN NEW;
+END $$;
+
+-- function: source_analysis_work_execution_requires_live_identity()
+CREATE FUNCTION public.source_analysis_work_execution_requires_live_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM 1 FROM source_analysis_work
+        WHERE id=NEW.work_id AND current_location_id IS NOT NULL
+          AND current_location_id=location_id AND invalidated_at IS NULL
+        FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'invalidated source analysis work cannot start execution';
+    END IF;
+    RETURN NEW;
+END $$;
+
+-- function: source_work_variant_identity_requires_live_identity()
+CREATE FUNCTION public.source_work_variant_identity_requires_live_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM 1 FROM source_analysis_work
+        WHERE id=NEW.work_id AND current_location_id IS NOT NULL
+          AND current_location_id=location_id AND invalidated_at IS NULL
+        FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'invalidated source analysis work cannot acquire media identity';
     END IF;
     RETURN NEW;
 END $$;
@@ -234,7 +277,8 @@ CREATE FUNCTION public.source_analysis_work_hold_requires_current_attachment() R
 BEGIN
     PERFORM 1 FROM source_analysis_work
         WHERE id=NEW.work_id AND current_location_id IS NOT NULL
-        FOR KEY SHARE;
+          AND current_location_id=location_id AND invalidated_at IS NULL
+        FOR SHARE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'retired source analysis work cannot be held';
     END IF;
@@ -469,7 +513,9 @@ CREATE TABLE public.source_analysis_work (
     origin_scan_operation_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     current_location_id uuid,
+    invalidated_at timestamp with time zone,
     CONSTRAINT source_analysis_work_current_location_origin_check CHECK (((current_location_id IS NULL) OR (current_location_id = location_id))),
+    CONSTRAINT source_analysis_work_invalidated_detached CHECK (((invalidated_at IS NULL) OR (current_location_id IS NULL))),
     CONSTRAINT source_analysis_work_relative_path_check CHECK ((relative_path <> ''::text)),
     CONSTRAINT source_analysis_work_size_bytes_check CHECK ((size_bytes >= 0))
 );
@@ -860,10 +906,16 @@ CREATE CONSTRAINT TRIGGER operation_tool_read_hold_guard AFTER INSERT OR DELETE 
 CREATE CONSTRAINT TRIGGER source_analysis_step_membership_guard AFTER INSERT OR DELETE OR UPDATE ON public.source_analysis_step DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.check_source_analysis_step_membership();
 
 -- trigger: source_analysis_work source_analysis_work_attachment_guard
-CREATE TRIGGER source_analysis_work_attachment_guard BEFORE INSERT OR UPDATE OF current_location_id ON public.source_analysis_work FOR EACH ROW EXECUTE FUNCTION public.source_analysis_work_attachment_guard();
+CREATE TRIGGER source_analysis_work_attachment_guard BEFORE INSERT OR UPDATE OF current_location_id, invalidated_at ON public.source_analysis_work FOR EACH ROW EXECUTE FUNCTION public.source_analysis_work_attachment_guard();
+
+-- trigger: source_analysis_work_execution source_analysis_work_execution_requires_live_identity
+CREATE TRIGGER source_analysis_work_execution_requires_live_identity BEFORE INSERT ON public.source_analysis_work_execution FOR EACH ROW EXECUTE FUNCTION public.source_analysis_work_execution_requires_live_identity();
 
 -- trigger: source_analysis_work_execution source_analysis_work_execution_immutable
 CREATE TRIGGER source_analysis_work_execution_immutable BEFORE UPDATE ON public.source_analysis_work_execution FOR EACH ROW EXECUTE FUNCTION public.prevent_source_analysis_work_execution_mutation();
 
 -- trigger: source_work_variant_identity source_work_variant_identity_no_rekey
 CREATE TRIGGER source_work_variant_identity_no_rekey BEFORE UPDATE ON public.source_work_variant_identity FOR EACH ROW EXECUTE FUNCTION public.prevent_source_work_variant_identity_rekey();
+
+-- trigger: source_work_variant_identity source_work_variant_identity_requires_live_identity
+CREATE TRIGGER source_work_variant_identity_requires_live_identity BEFORE INSERT ON public.source_work_variant_identity FOR EACH ROW EXECUTE FUNCTION public.source_work_variant_identity_requires_live_identity();

@@ -135,10 +135,24 @@ func recoverInterruptedNormalizedSourceAnalysis(
 			operationID, delivery.Attempt, delivery.JobID).Scan(ctx, &artifactWorkIDs); err != nil {
 			return fmt.Errorf("recover source analysis: list delivery artifact bindings: %w", err)
 		}
-		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='pending',safe_error=NULL,skip_reason=NULL,
+		var invalidated bool
+		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM operation_source_work_hold hold
+			JOIN source_analysis_work work ON work.id=hold.work_id
+			WHERE hold.operation_id=? AND work.invalidated_at IS NOT NULL)`, operationID).Scan(ctx, &invalidated); err != nil {
+			return fmt.Errorf("recover source analysis: check invalidated work: %w", err)
+		}
+		stepState, stepSafeError, operationSafeError := "pending", (*string)(nil), safeError
+		operationStage := "recovered"
+		if invalidated {
+			stepState = "failed"
+			operationSafeError = sourceAnalysisChangedSafeError
+			stepSafeError = &operationSafeError
+			operationStage = "source_changed"
+		}
+		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state=?,safe_error=?,skip_reason=NULL,
 			execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,last_operation_id=?,updated_at=now()
 			WHERE execution_operation_id=? AND execution_operation_attempt=? AND execution_job_id=? AND state IN ('queued','running')`,
-			operationID, operationID, operation.Attempt, *operation.RiverJobID).Exec(ctx); err != nil {
+			stepState, stepSafeError, operationID, operationID, operation.Attempt, *operation.RiverJobID).Exec(ctx); err != nil {
 			return fmt.Errorf("recover source analysis: reset interrupted steps: %w", err)
 		}
 		if err := releaseSourceAnalysisArtifactBindings(ctx, tx, operationID, delivery); err != nil {
@@ -155,8 +169,8 @@ func recoverInterruptedNormalizedSourceAnalysis(
 		}
 		now := time.Now().UTC()
 		operation.State = "failed"
-		operation.Stage = "recovered"
-		operation.SafeError = &safeError
+		operation.Stage = operationStage
+		operation.SafeError = &operationSafeError
 		operation.TargetWorkID = nil
 		operation.TargetStep = nil
 		operation.TargetSourceRootID = nil

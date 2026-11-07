@@ -110,6 +110,10 @@ type workerGroupRepository struct {
 	probeApplies  int
 	fpApplies     int
 	failures      []persistence.SourceStepFailure
+	invalidations []struct {
+		claim   persistence.SourceStepClaim
+		attempt int
+	}
 	applyMu       sync.Mutex
 	probeApplied  chan struct{}
 	failureSignal chan persistence.SourceStepName
@@ -153,6 +157,14 @@ func (repository *workerGroupRepository) FailSourceAnalysisStep(_ context.Contex
 	if repository.failureSignal != nil {
 		repository.failureSignal <- persistence.SourceStepName(failure.Step)
 	}
+	return nil
+}
+
+func (repository *workerGroupRepository) InvalidateSourceAnalysisWork(_ context.Context, claim persistence.SourceStepClaim, attempt int) error {
+	repository.invalidations = append(repository.invalidations, struct {
+		claim   persistence.SourceStepClaim
+		attempt int
+	}{claim: claim, attempt: attempt})
 	return nil
 }
 
@@ -316,6 +328,35 @@ func TestSourceAnalysisWorkerWithInputPreparerOmitsSHAWhenNotSelected(t *testing
 	}
 	if len(input.modes) != 1 || input.modes[0] != "in_place" {
 		t.Fatalf("input preparation modes = %v", input.modes)
+	}
+}
+
+func TestSourceAnalysisWorkerInvalidatesChangedInputWithoutFailingStep(t *testing.T) {
+	repo := &workerInputRepository{}
+	var sourcePath string
+	runner := workerGroupPreparingFunc(func(_ context.Context, request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+		if err := os.WriteFile(sourcePath, []byte("changed input bytes"), 0o600); err != nil {
+			t.Errorf("change source: %v", err)
+		}
+		return preparedSHA()
+	})
+	worker, snapshot, operation, executions, _ := newWorkerGroup(t, repo, runner)
+	executions = executions[:1]
+	sourcePath = filepath.Join(*repo.root.InventoryPath, repo.work.RelativePath)
+
+	err := worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions)
+	if !errors.Is(err, service.ErrSourceAnalysisInputChanged) {
+		t.Fatalf("run work group error = %v, want input changed", err)
+	}
+	if len(repo.invalidations) != 1 {
+		t.Fatalf("invalidation count = %d, want 1", len(repo.invalidations))
+	}
+	invalidation := repo.invalidations[0]
+	if invalidation.claim.WorkID != repo.work.ID || invalidation.claim.OperationID != operation.ID || invalidation.claim.OperationAttempt != operation.Attempt || invalidation.claim.JobID != 9 || invalidation.claim.Step != persistence.SourceStepSHA256 || invalidation.attempt != 1 {
+		t.Fatalf("invalidation fence = %+v attempt=%d", invalidation.claim, invalidation.attempt)
+	}
+	if len(repo.failures) != 0 || repo.shaApplies != 0 {
+		t.Fatalf("invalidated input was ordinarily failed/applied: failures=%+v SHA applies=%d", repo.failures, repo.shaApplies)
 	}
 }
 
