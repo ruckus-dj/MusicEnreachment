@@ -45,6 +45,10 @@ type SourceRootRepository interface {
 	CountSourceLocations(context.Context, uuid.UUID) (int64, error)
 }
 
+type sourceRootCleanupRepository interface {
+	DeleteSourceRootWithCleanup(context.Context, uuid.UUID, string, int64, func(context.Context, string, []persistence.SourceAnalysisArtifact) error) error
+}
+
 // ManagedPathsReader exposes the managed roots a source path must never overlap.
 type ManagedPathsReader interface {
 	GetToolsDirectory(context.Context) (string, bool, error)
@@ -90,16 +94,21 @@ const (
 )
 
 // SourceRoots manages registered source directories. It only records and
-// validates paths: a source directory belongs to the operator, MeloTrove reads
-// it, and nothing is ever created or probed inside it.
+// validates source paths; root deletion may remove registered analysis copies
+// from MeloTrove's work directory, but never changes source files.
 type SourceRoots struct {
 	repository   SourceRootRepository
 	managedPaths ManagedPathsReader
 	pending      sourceRootPendingAdmitter
+	cleaner      sourceArtifactRootCleaner
+}
+
+type sourceArtifactRootCleaner interface {
+	RemoveRegistered(context.Context, string, string) (sourcefs.CleanupOutcome, error)
 }
 
 func NewSourceRoots(repository SourceRootRepository, managedPaths ManagedPathsReader) *SourceRoots {
-	return &SourceRoots{repository: repository, managedPaths: managedPaths}
+	return &SourceRoots{repository: repository, managedPaths: managedPaths, cleaner: sourcefs.NewCleaner()}
 }
 
 // SetPendingDispatcher wires best-effort pending analysis admission after an
@@ -210,10 +219,10 @@ func (s *SourceRoots) Edit(ctx context.Context, id uuid.UUID, edit SourceRootEdi
 
 // Delete removes a root and its inventory. The operator confirms the exact
 // configured path and the number of locations the deletion discards; the count
-// is read again here, so a stale confirmation is refused. Only database rows are
-// removed: no source file and nothing in the managed output directory is ever
-// touched. A deletion is refused with ErrSourceRootBusy while a scan of the root
-// is active.
+// is read again here, so a stale confirmation is refused. Registered staged
+// analysis copies are removed from the work directory, never from publication
+// output; publication and recovery holds continue to block deletion. A deletion
+// is refused with ErrSourceRootBusy while root work is active.
 func (s *SourceRoots) Delete(ctx context.Context, id uuid.UUID, confirmedPath string, confirmedLocations int64) error {
 	current, err := s.repository.GetSourceRoot(ctx, id)
 	if err != nil {
@@ -231,7 +240,28 @@ func (s *SourceRoots) Delete(ctx context.Context, id uuid.UUID, confirmedPath st
 		return fmt.Errorf("delete source root: confirmed %d locations but the inventory holds %d: %w",
 			confirmedLocations, count, ErrSourceRootConfirmation)
 	}
-	if err := s.repository.DeleteSourceRoot(ctx, id, confirmedPath, confirmedLocations); err != nil {
+	removeArtifacts := func(ctx context.Context, workRoot string, artifacts []persistence.SourceAnalysisArtifact) error {
+		if len(artifacts) == 0 {
+			return nil
+		}
+		if workRoot == "" {
+			return fmt.Errorf("work directory is unavailable for staged artifact cleanup")
+		}
+		for _, artifact := range artifacts {
+			if _, err := s.cleaner.RemoveRegistered(ctx, workRoot, artifact.RelativeOutputPath); err != nil {
+				return fmt.Errorf("remove registered staged analysis artifact %s: %w", artifact.ID, err)
+			}
+		}
+		return nil
+	}
+	deleteRepository, ok := s.repository.(sourceRootCleanupRepository)
+	var deleteErr error
+	if ok {
+		deleteErr = deleteRepository.DeleteSourceRootWithCleanup(ctx, id, confirmedPath, confirmedLocations, removeArtifacts)
+	} else {
+		deleteErr = s.repository.DeleteSourceRoot(ctx, id, confirmedPath, confirmedLocations)
+	}
+	if err := deleteErr; err != nil {
 		if errors.Is(err, persistence.ErrSourceRootActiveScan) {
 			return fmt.Errorf("delete source root: %w", ErrSourceRootBusy)
 		}

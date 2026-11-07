@@ -4,11 +4,15 @@ package persistence_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	appsettings "github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/uptrace/bun"
 )
 
@@ -97,10 +101,36 @@ func runEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T, data
 	t.Logf("phase=assertions duration=%s", time.Since(assertionsStarted))
 }
 
-func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeTombstone(t *testing.T, database *bun.DB) {
+func runDeletingRootCleansArtifactsAndAnalysisState(t *testing.T, database *bun.DB) {
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, t.TempDir())
+	rootDir := t.TempDir()
+	canonicalRoot, err := filepath.EvalSymlinks(rootDir)
+	if err != nil {
+		t.Fatalf("canonicalize source root: %v", err)
+	}
+	root := createInventoryRoot(t, ctx, inventory, canonicalRoot)
+	workDir := t.TempDir()
+	outputDir := t.TempDir()
+	workDir, err = filepath.EvalSymlinks(workDir)
+	if err != nil {
+		t.Fatalf("canonicalize work directory: %v", err)
+	}
+	outputDir, err = filepath.EvalSymlinks(outputDir)
+	if err != nil {
+		t.Fatalf("canonicalize output directory: %v", err)
+	}
+	settings := persistence.NewSettingsRepository(database)
+	if err := settings.Set(ctx, "work_directory", workDir); err != nil {
+		t.Fatalf("set work directory: %v", err)
+	}
+	if err := settings.Set(ctx, "output_directory", outputDir); err != nil {
+		t.Fatalf("set output directory: %v", err)
+	}
+	outputPath := filepath.Join(outputDir, "host-output")
+	if err := os.WriteFile(outputPath, []byte("host output"), 0o600); err != nil {
+		t.Fatalf("write host output: %v", err)
+	}
 	mtime := probeMtime()
 	first := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, first.ID, []persistence.SourceScanCandidateInput{
@@ -125,8 +155,16 @@ func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeTombstone(t *testin
 	if err := database.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=?`, unreadableLocation.ID).Scan(ctx, &unreadableID); err != nil {
 		t.Fatalf("read unreadable work: %v", err)
 	}
-	insertStagedAnalysisArtifact(t, ctx, database, retainedID, first.ID, first.Attempt, *first.RiverJobID, "retirement/root-copy", 5, mtime)
-	insertStagedAnalysisArtifact(t, ctx, database, unreadableID, first.ID, first.Attempt, *first.RiverJobID, "retirement/unreadable-copy", 9, mtime)
+	artifactID := insertStagedAnalysisArtifact(t, ctx, database, retainedID, first.ID, first.Attempt, *first.RiverJobID, "", 5, mtime)
+	artifactRelativePath := filepath.Join("analysis", "staging", root.ID.String(), retainedID.String(), artifactID.String())
+	artifactPath := filepath.Join(workDir, artifactRelativePath)
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
+		t.Fatalf("create staged artifact directory: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("staged analysis copy"), 0o600); err != nil {
+		t.Fatalf("write staged analysis copy: %v", err)
+	}
+	insertStagedAnalysisArtifact(t, ctx, database, unreadableID, first.ID, first.Attempt, *first.RiverJobID, "", 9, mtime)
 	setOperationState(t, ctx, database, first.ID, "succeeded")
 	second := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, second.ID, []persistence.SourceScanCandidateInput{
@@ -160,27 +198,57 @@ func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeTombstone(t *testin
 		t.Fatalf("work for a present file = %d, want 1", unreadableRetained)
 	}
 	setOperationState(t, ctx, database, second.ID, "succeeded")
-	if err := inventory.DeleteSourceRoot(ctx, root.ID, root.ConfiguredPath, 2); err != nil {
+	var failedWork persistence.SourceAnalysisWork
+	if err := database.NewSelect().Model(&failedWork).Where("id=?", retainedID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	failedOperation := normalizedOperation(t, root, retainedLocation, &failedWork, persistence.SourceAnalysisModeBatch, nil, nil, true, false, nil)
+	if err := inventory.CreateNormalizedSourceAnalysisOperationAndEnqueue(ctx, failedOperation, openScanEnqueueRiver(t, database), service.SourceAnalysisJobArgs{OperationID: failedOperation.ID}, nil); err != nil {
+		t.Fatalf("admit analysis before root deletion: %v", err)
+	}
+	if err := inventory.SettleNormalizedSourceAnalysisOperation(ctx, failedOperation.ID, "failed", "analysis", "fixture analysis failure"); err != nil {
+		t.Fatalf("settle failed analysis before root deletion: %v", err)
+	}
+	storedFailure, err := persistence.NewSetupManagerRepository(database).GetOperation(ctx, failedOperation.ID)
+	if err != nil || storedFailure.TargetSourceRootID != nil || storedFailure.State != "failed" {
+		t.Fatalf("failed analysis baseline with cleared selectors: %+v, %v", storedFailure, err)
+	}
+	roots := service.NewSourceRoots(inventory, appsettings.New(settings, nil))
+	if err := roots.Delete(ctx, root.ID, root.ConfiguredPath, 2); err != nil {
 		t.Fatalf("delete source root: %v", err)
 	}
+	if _, err := os.Stat(artifactPath); !os.IsNotExist(err) {
+		t.Fatalf("staged artifact remains after root deletion (stat err = %v)", err)
+	}
+	if content, err := os.ReadFile(outputPath); err != nil || string(content) != "host output" {
+		t.Fatalf("host output after root deletion = %q, err %v; want preserved", content, err)
+	}
+	var failedTaskCount int
+	if err := database.NewRaw(`SELECT count(*) FROM operation WHERE id=?`, failedOperation.ID).Scan(ctx, &failedTaskCount); err != nil || failedTaskCount != 0 {
+		t.Fatalf("failed analysis task after root deletion: count=%d err=%v", failedTaskCount, err)
+	}
+	var failedJobState string
+	if err := database.NewRaw(`SELECT state FROM river_job WHERE id=?`, *failedOperation.RiverJobID).Scan(ctx, &failedJobState); err != nil || failedJobState != "cancelled" {
+		t.Fatalf("failed analysis delivery after root deletion: state=%q err=%v", failedJobState, err)
+	}
 	var retainedCount, artifactCount, unreadableCount, unreadableArtifactCount int
-	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id IS NULL`, retainedID).Scan(ctx, &retainedCount); err != nil {
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=?`, retainedID).Scan(ctx, &retainedCount); err != nil {
 		t.Fatalf("read root-deleted work: %v", err)
 	}
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_artifact WHERE work_id=?`, retainedID).Scan(ctx, &artifactCount); err != nil {
 		t.Fatalf("read root-deleted artifact: %v", err)
 	}
-	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id IS NULL`, unreadableID).Scan(ctx, &unreadableCount); err != nil {
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=?`, unreadableID).Scan(ctx, &unreadableCount); err != nil {
 		t.Fatalf("read root-deleted formerly unreadable work: %v", err)
 	}
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_artifact WHERE work_id=?`, unreadableID).Scan(ctx, &unreadableArtifactCount); err != nil {
 		t.Fatalf("read root-deleted formerly unreadable artifact: %v", err)
 	}
-	if retainedCount != 1 || artifactCount != 1 {
-		t.Fatalf("root-deleted work/artifact counts = %d/%d, want 1/1", retainedCount, artifactCount)
+	if retainedCount != 0 || artifactCount != 0 {
+		t.Fatalf("root-deleted work/artifact counts = %d/%d, want 0/0", retainedCount, artifactCount)
 	}
-	if unreadableCount != 1 || unreadableArtifactCount != 1 {
-		t.Fatalf("root-deleted second work/artifact counts = %d/%d, want 1/1", unreadableCount, unreadableArtifactCount)
+	if unreadableCount != 0 || unreadableArtifactCount != 0 {
+		t.Fatalf("root-deleted second work/artifact counts = %d/%d, want 0/0", unreadableCount, unreadableArtifactCount)
 	}
 }
 
@@ -188,8 +256,16 @@ func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeTombstone(t *testin
 // artifact must reference, then inserts the owned artifact row. Artifacts can
 // only originate from a staged execution, so every artifact fixture goes
 // through this shared helper.
-func insertStagedAnalysisArtifact(t *testing.T, ctx context.Context, database *bun.DB, workID, ownerOperationID uuid.UUID, ownerAttempt int, ownerJobID int64, relativePath string, sizeBytes int64, mtime time.Time) {
+func insertStagedAnalysisArtifact(t *testing.T, ctx context.Context, database *bun.DB, workID, ownerOperationID uuid.UUID, ownerAttempt int, ownerJobID int64, relativePath string, sizeBytes int64, mtime time.Time) uuid.UUID {
 	t.Helper()
+	artifactID := uuid.New()
+	if relativePath == "" {
+		var rootID uuid.UUID
+		if err := database.NewRaw(`SELECT source_root_id FROM source_analysis_work WHERE id=?`, workID).Scan(ctx, &rootID); err != nil {
+			t.Fatalf("read source root for artifact %s: %v", workID, err)
+		}
+		relativePath = filepath.ToSlash(filepath.Join("analysis", "staging", rootID.String(), workID.String(), artifactID.String()))
+	}
 	if _, err := database.NewRaw(`INSERT INTO source_analysis_work_execution
 		(work_id,operation_id,operation_attempt,job_id,processing_mode)
 		VALUES (?,?,?,?,'staged')`, workID, ownerOperationID, ownerAttempt, ownerJobID).Exec(ctx); err != nil {
@@ -197,7 +273,8 @@ func insertStagedAnalysisArtifact(t *testing.T, ctx context.Context, database *b
 	}
 	if _, err := database.NewRaw(`INSERT INTO source_analysis_artifact
 		(id,work_id,relative_output_path,source_size_bytes,source_mtime,owner_operation_id,owner_operation_attempt,owner_job_id,state)
-		VALUES (gen_random_uuid(),?,?,?,?,?,?,?,'acquiring')`, workID, relativePath, sizeBytes, mtime, ownerOperationID, ownerAttempt, ownerJobID).Exec(ctx); err != nil {
+		VALUES (?,?,?,?,?,?,?,?,'acquiring')`, artifactID, workID, relativePath, sizeBytes, mtime, ownerOperationID, ownerAttempt, ownerJobID).Exec(ctx); err != nil {
 		t.Fatalf("create retained artifact %q: %v", relativePath, err)
 	}
+	return artifactID
 }

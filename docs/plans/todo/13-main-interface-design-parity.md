@@ -97,11 +97,16 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      добавлены приватная publication source copy с size/mtime-проверками и
      сохранение inventory при неполном scan; оба среза прошли полный hook и CI.
      Ограничения — [отчёт source freshness](../../reports/2026-11-07-source-freshness-safety.md).
-   - [ ] Durable отзыв identity при обнаруженном size/mtime mismatch реализован
-     для analysis/scan; полный gate и CI текущего среза ещё требуются.
+   - [x] В `686028c1` durable отзыв identity при обнаруженном size/mtime mismatch
+     реализован для analysis/scan; полный hook и вся CI прошли:
+     [42360466600](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42360466600).
      Tombstones, execution history, artifacts и publication/recovery ownership
      сохраняются; это не завершение staged/root failed-task lifecycle.
      Свидетельства — [отчёт](../../reports/2026-11-07-source-identity-invalidation.md).
+   - [ ] Root-specific cleanup staged-копий и failed analysis tasks реализован;
+     полный hook и CI ещё требуются. Publication/recovery holds пока блокируют
+     удаление: согласованный safe abandonment остаётся отдельным следующим срезом.
+     Свидетельства — [отчёт](../../reports/2026-11-07-root-staged-task-cleanup.md).
 3. [ ] **Recovery и явная republish.** Устранить расхождения восстановления и
    повторной публикации с утверждёнными правилами. **Приёмка:** interrupted,
    frozen target при актуальной authority регистрируется по соответствующим

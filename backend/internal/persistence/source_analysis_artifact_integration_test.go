@@ -46,7 +46,7 @@ func TestSourceAnalysisDatabaseGroupWithPostgreSQL(t *testing.T) {
 		runRecoverInterruptedNormalizedSourceAnalysisOldFenceCannotRetireNewBorrowerWithPostgreSQL(t, database)
 	})
 	t.Run("scenario_11", func(t *testing.T) { runEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t, database) })
-	t.Run("scenario_12", func(t *testing.T) { runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeTombstone(t, database) })
+	t.Run("scenario_12", func(t *testing.T) { runDeletingRootCleansArtifactsAndAnalysisState(t, database) })
 	t.Run("scenario_13", func(t *testing.T) { runRecoveredFingerprintRerunAdmissionUsesOriginalIntentWithPostgreSQL(t, database) })
 	t.Run("scenario_14", func(t *testing.T) { runInvalidationRetainsExecutionAuthorityAndRevokesStep(t, database) })
 }

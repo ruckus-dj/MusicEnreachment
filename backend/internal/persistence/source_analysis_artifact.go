@@ -29,7 +29,7 @@ type SourceAnalysisArtifactFence struct {
 }
 
 // SourceAnalysisArtifact is the database ownership record for one staged copy.
-// RelativeOutputPath is always relative to the current managed output directory.
+// RelativeOutputPath is always relative to the configured work directory.
 type SourceAnalysisArtifact struct {
 	bun.BaseModel `bun:"table:source_analysis_artifact"`
 

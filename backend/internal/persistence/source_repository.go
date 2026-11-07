@@ -260,11 +260,32 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 }
 
 // DeleteSourceRoot removes a root and every one of its locations in one
-// transaction. It never touches source files or the managed output directory.
-// Deletion is refused while an operation of the root is queued or running. The
-// root row lock serializes the check against every operation admission.
+// transaction. It refuses roots with registered staged artifacts because this
+// persistence-only entry point cannot clean their managed files.
 func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Context, id uuid.UUID, confirmedPath string, confirmedLocations int64) error {
+	return repository.DeleteSourceRootWithCleanup(ctx, id, confirmedPath, confirmedLocations, nil)
+}
+
+// DeleteSourceRootWithCleanup removes root-owned analysis state and invokes the
+// registered-artifact callback while the root, work-directory and output
+// admission locks remain held. Filesystem removal precedes database deletion;
+// a failed callback or transaction rolls back the database and missing files
+// are accepted by the callback on a subsequent request.
+func (repository *SourceInventoryRepository) DeleteSourceRootWithCleanup(ctx context.Context, id uuid.UUID, confirmedPath string, confirmedLocations int64, cleanup func(context.Context, string, []SourceAnalysisArtifact) error) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockWorkDirectoryGate(ctx, tx); err != nil {
+			return fmt.Errorf("delete source root: lock work directory configuration: %w", err)
+		}
+		if err := advisoryXactLock(ctx, tx, false, toolsCoordinationNamespace, outputAdmissionGateKey); err != nil {
+			return fmt.Errorf("delete source root: lock output admission: %w", err)
+		}
+		var unresolvedReset bool
+		if err := tx.NewRaw("SELECT EXISTS (SELECT 1 FROM output_reset_journal WHERE state <> 'finished')").Scan(ctx, &unresolvedReset); err != nil {
+			return fmt.Errorf("delete source root: check output reset: %w", err)
+		}
+		if unresolvedReset {
+			return fmt.Errorf("delete source root: output reset recovery is required")
+		}
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("delete source root: lock fingerprint mutations: %w", err)
 		}
@@ -289,12 +310,112 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 		if active {
 			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
 		}
+		var activeWorkConsumer bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM operation_source_work_hold hold
+			JOIN source_analysis_work work ON work.id=hold.work_id
+			JOIN operation op ON op.id=hold.operation_id
+			WHERE work.source_root_id=? AND op.state IN ('queued','running')
+		)`, id).Scan(ctx, &activeWorkConsumer); err != nil {
+			return fmt.Errorf("delete source root: check active work consumers: %w", err)
+		}
+		if activeWorkConsumer {
+			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
+		}
+		var liveAnalysisDelivery bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM source_analysis_work_execution execution
+			JOIN source_analysis_work work ON work.id=execution.work_id
+			JOIN river_job job ON job.id=execution.job_id
+			JOIN operation op ON op.id=execution.operation_id
+			WHERE work.source_root_id=? AND (job.state='running'
+				OR (op.state IN ('queued','running') AND job.state IN ('available','pending','retryable','scheduled')))
+		)`, id).Scan(ctx, &liveAnalysisDelivery); err != nil {
+			return fmt.Errorf("delete source root: check live analysis deliveries: %w", err)
+		}
+		if liveAnalysisDelivery {
+			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
+		}
 		held, err := sourceHoldExists(ctx, tx, id, uuid.Nil, uuid.Nil)
 		if err != nil {
 			return fmt.Errorf("delete source root: check publication holds: %w", err)
 		}
 		if held {
 			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
+		}
+		var works []uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM source_analysis_work WHERE source_root_id=? ORDER BY id FOR UPDATE`, id).Scan(ctx, &works); err != nil {
+			return fmt.Errorf("delete source root: lock root analysis work: %w", err)
+		}
+		var failedOperationIDs []uuid.UUID
+		if err := tx.NewRaw(`SELECT op.id FROM operation op
+			WHERE op.kind='analyze_source' AND op.state='failed'
+			AND (op.target_source_root_id=? OR EXISTS (
+				SELECT 1 FROM source_analysis_work work WHERE work.source_root_id=? AND (
+					EXISTS (SELECT 1 FROM source_analysis_work_execution execution WHERE execution.work_id=work.id AND execution.operation_id=op.id)
+					OR op.input_snapshot->'work_ids' @> jsonb_build_array(work.id::text)
+				))) ORDER BY op.id FOR UPDATE`, id, id).Scan(ctx, &failedOperationIDs); err != nil {
+			return fmt.Errorf("delete source root: lock failed analysis operations: %w", err)
+		}
+		artifacts := make([]SourceAnalysisArtifact, 0)
+		if err := tx.NewRaw(`SELECT artifact.* FROM source_analysis_artifact artifact
+			JOIN source_analysis_work work ON work.id=artifact.work_id
+			WHERE work.source_root_id=? ORDER BY artifact.id FOR UPDATE OF artifact`, id).Scan(ctx, &artifacts); err != nil {
+			return fmt.Errorf("delete source root: lock staged artifacts: %w", err)
+		}
+		for _, artifact := range artifacts {
+			if artifact.RelativeOutputPath != sourceAnalysisArtifactPath(id, artifact.WorkID, artifact.ID) {
+				return fmt.Errorf("delete source root: staged artifact %s path does not match ownership", artifact.ID)
+			}
+		}
+		if len(failedOperationIDs) != 0 {
+			var deliveryStates []string
+			if err := tx.NewRaw(`SELECT job.state FROM river_job job
+				WHERE job.kind='analyze_source_v1' AND EXISTS (SELECT 1 FROM operation op WHERE op.id IN (?)
+					AND (op.river_job_id=job.id OR job.args->>'operation_id'=op.id::text))
+				ORDER BY job.id FOR UPDATE OF job`, bun.List(failedOperationIDs)).Scan(ctx, &deliveryStates); err != nil {
+				return fmt.Errorf("delete source root: lock failed analysis deliveries: %w", err)
+			}
+			for _, state := range deliveryStates {
+				if state == "running" {
+					return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
+				}
+			}
+		}
+		var activeCleanup bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM source_analysis_artifact artifact
+			JOIN source_analysis_work work ON work.id=artifact.work_id
+			WHERE work.source_root_id=? AND (
+				EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item item WHERE item.artifact_id=artifact.id AND item.state='claimed')
+				OR EXISTS (SELECT 1 FROM operation cleanup_operation
+					WHERE cleanup_operation.kind='cleanup_source_analysis_artifacts' AND cleanup_operation.state IN ('queued','running')
+					AND cleanup_operation.input_snapshot->'artifact_ids' @> jsonb_build_array(artifact.id::text))
+			)
+		)`, id).Scan(ctx, &activeCleanup); err != nil {
+			return fmt.Errorf("delete source root: check artifact cleanup claims: %w", err)
+		}
+		if activeCleanup {
+			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
+		}
+		if len(artifacts) != 0 && cleanup == nil {
+			return fmt.Errorf("delete source root: registered staged artifacts require cleanup")
+		}
+		if cleanup != nil {
+			workRoot := ""
+			if len(artifacts) != 0 {
+				value, err := readOptionalSetting(ctx, tx, "work_directory")
+				if err != nil {
+					return fmt.Errorf("delete source root: read work directory: %w", err)
+				}
+				if value == nil || *value == "" {
+					return fmt.Errorf("delete source root: work directory is unavailable for staged artifact cleanup")
+				}
+				workRoot = *value
+			}
+			if err := cleanup(ctx, workRoot, artifacts); err != nil {
+				return fmt.Errorf("delete source root: clean registered staged artifacts: %w", err)
+			}
 		}
 		var affectedVariantIDs []uuid.UUID
 		if err := tx.NewRaw(`SELECT variant_id FROM (
@@ -308,14 +429,8 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 			) affected ORDER BY variant_id`, id, id).Scan(ctx, &affectedVariantIDs); err != nil {
 			return fmt.Errorf("delete source root: list associated media variants: %w", err)
 		}
-		var workIDs []uuid.UUID
-		if err := tx.NewRaw(`SELECT id FROM source_analysis_work WHERE source_root_id=? AND current_location_id IS NOT NULL ORDER BY id FOR UPDATE`, id).Scan(ctx, &workIDs); err != nil {
-			return fmt.Errorf("delete source root: list current analysis work: %w", err)
-		}
-		for _, workID := range workIDs {
-			if err := retireSourceAnalysisWork(ctx, tx, workID); err != nil {
-				return fmt.Errorf("delete source root: retain analysis work: %w", err)
-			}
+		if err := deleteRootAnalysisState(ctx, tx, works, failedOperationIDs); err != nil {
+			return fmt.Errorf("delete source root: remove root analysis state: %w", err)
 		}
 		removed, err := tx.NewDelete().Model((*SourceRoot)(nil)).Where("id = ?", id).Exec(ctx)
 		if err != nil {
@@ -354,6 +469,46 @@ func deleteTrackSourcesWithoutLocations(ctx context.Context, tx bun.IDB, variant
 			WHERE location.media_variant_id = association.media_variant_id
 		)`, bun.List(variantIDs)).Exec(ctx); err != nil {
 		return fmt.Errorf("delete track sources without locations: %w", err)
+	}
+	return nil
+}
+
+func deleteRootAnalysisState(ctx context.Context, tx bun.IDB, workIDs, operationIDs []uuid.UUID) error {
+	if len(workIDs) > 0 {
+		if _, err := tx.NewRaw(`DELETE FROM source_analysis_artifact_cleanup_item item
+		USING source_analysis_artifact artifact
+		WHERE item.artifact_id=artifact.id AND artifact.work_id IN (?)`, bun.List(workIDs)).Exec(ctx); err != nil {
+			return fmt.Errorf("delete artifact cleanup history: %w", err)
+		}
+		if _, err := tx.NewRaw("DELETE FROM source_analysis_artifact WHERE work_id IN (?)", bun.List(workIDs)).Exec(ctx); err != nil {
+			return fmt.Errorf("delete staged artifact ownership: %w", err)
+		}
+		if _, err := tx.NewRaw("DELETE FROM source_analysis_step WHERE work_id IN (?)", bun.List(workIDs)).Exec(ctx); err != nil {
+			return fmt.Errorf("delete source analysis steps: %w", err)
+		}
+		if _, err := tx.NewRaw("DELETE FROM source_analysis_work_execution WHERE work_id IN (?)", bun.List(workIDs)).Exec(ctx); err != nil {
+			return fmt.Errorf("delete source analysis execution history: %w", err)
+		}
+		if _, err := tx.NewRaw("DELETE FROM operation_source_work_hold WHERE work_id IN (?)", bun.List(workIDs)).Exec(ctx); err != nil {
+			return fmt.Errorf("delete source analysis work holds: %w", err)
+		}
+		if _, err := tx.NewRaw("DELETE FROM source_work_variant_identity WHERE work_id IN (?)", bun.List(workIDs)).Exec(ctx); err != nil {
+			return fmt.Errorf("delete source work variant identities: %w", err)
+		}
+		if _, err := tx.NewRaw("DELETE FROM source_analysis_work WHERE id IN (?)", bun.List(workIDs)).Exec(ctx); err != nil {
+			return fmt.Errorf("delete source analysis work: %w", err)
+		}
+	}
+	if len(operationIDs) > 0 {
+		if _, err := tx.NewRaw(`UPDATE river_job job SET state='cancelled',finalized_at=now()
+			FROM operation op WHERE op.id IN (?) AND job.kind='analyze_source_v1'
+			AND (job.id=op.river_job_id OR job.args->>'operation_id'=op.id::text)
+			AND job.state IN ('available','pending','retryable','scheduled')`, bun.List(operationIDs)).Exec(ctx); err != nil {
+			return fmt.Errorf("cancel failed root analysis deliveries: %w", err)
+		}
+		if _, err := tx.NewRaw("DELETE FROM operation WHERE id IN (?)", bun.List(operationIDs)).Exec(ctx); err != nil {
+			return fmt.Errorf("delete failed root analysis operations: %w", err)
+		}
 	}
 	return nil
 }

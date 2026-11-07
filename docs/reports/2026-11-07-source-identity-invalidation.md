@@ -14,8 +14,12 @@ immutable результаты, retained artifacts и recovery evidence не я�
 расходным материалом для отзыва identity.
 
 Это продолжение первого защитного среза, а не подтверждение завершения
-source lifecycle или пунктов 2/7 общего плана. Проверка текущих изменений
-полным gate и CI пока не завершена.
+source lifecycle или пунктов 2/7 общего плана.
+Ревизия `686028c125f055382c48412c2218430908c2271f`
+прошла итоговый обычный commit-hook с полным `task verify` и отправлена в
+`go-development`; [CI 42360466600](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42360466600)
+полностью завершён: verify, Docker Compose smoke, Linux arm64, macOS x64/arm64,
+Windows x64 и публикация контейнера — success.
 
 - Baseline 02 содержит необратимый `invalidated_at`: marker и detach фиксируются
   атомарно, включая active analysis holds; новое attachment/hold/execution/identity
@@ -45,7 +49,8 @@ Review worker выявил отсутствие повторной провер�
 unit fixture расширена изменением source после подготовки. Повторное review
 подтвердило исправление и отсутствие найденных ошибок drainage: sibling runners
 дожидаются завершения, input закрывается до завершения группы, active groups —
-до settlement. Полный gate ещё не запускался; ревью не является приёмкой среза.
+до settlement. На момент этого промежуточного review полный gate ещё не
+запускался; итог его последующих запусков приведён ниже.
 
 Интеграционная сверка выявила две дополнительные ошибки, не замеченные первым
 review persistence: current-only reader скрывал marker queued work до settlement,
@@ -58,8 +63,8 @@ terminal `source_changed`, уведомляет UI и будит pending admissi
 artifact-тестов: реальный staged artifact с execution FK, исходная variant-связь,
 invalidation, late SHA result, settlement и сохранение retained authority.
 Новые отдельные БД для этих утверждений не создаются. Финальное независимое
-review интеграционных исправлений не нашло дополнительных ошибок. Сценарий
-ещё не запускался. Первый обычный hook остановился на Go typecheck: worker
+review интеграционных исправлений не нашло дополнительных ошибок. При добавлении
+сценарий ещё не запускался. Первый обычный hook остановился на Go typecheck: worker
 обращался к `Work` у immutable execution registry record вместо work/step
 execution snapshot. Обращение исправлено; полный hook повторяется без пропуска
 проверок. Повторный hook выявил оставшийся неиспользуемый helper прежней
@@ -76,7 +81,7 @@ fixtures. Эти отказы не объявляются инфраструкт
 изменённый, но присутствующий файл этим missing-path pruning не затрагивается.
 Retry fixtures явно задают live attachment. Разрешённый диагностический прогон
 упавших jobs/service/persistence-сценариев и критического artifact-сценария прошёл;
-итоговый полный hook ещё требуется.
+после исправлений итоговый полный hook прошёл в `686028c1`.
 
 Дополнительная сверка native input validation закрыла replacement-путь:
 при повторном открытии live leaf подтверждённое отличие size/mtime также
