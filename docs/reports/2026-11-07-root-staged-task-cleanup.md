@@ -18,7 +18,14 @@ cleanup host sources, CURRENT и файлов публикаций сюда не
 Отдельные новые гарантии inode/device/hash identity временных staged-копий,
 новый пользовательский retry workflow или speculative cleanup matrix не
 вводятся. Используется существующий безопасный cleaner зарегистрированных
-app-owned путей. Полная проверка текущего среза ещё выполняется.
+app-owned путей. Ревизия `4c7e263340170a71f20584d032c6e4ee3cd492f3`
+прошла итоговый обычный commit-hook с полным `task verify` с первой попытки и
+отправлена в `go-development`.
+
+[CI 42365879090](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42365879090)
+полностью прошёл: verify, Docker Compose smoke, Linux arm64, macOS x64/arm64,
+Windows x64 и публикация контейнера — success. Новая native cleanup fixture
+проверена платформенной матрицей.
 
 ## Реализация и review
 
@@ -42,7 +49,7 @@ app-owned путей. Полная проверка текущего среза 
   второй копией, сохранением файла в отдельном output directory и реальным
   admission → failed settlement → удаление failed task/отмена job. Отдельная БД
   или новая матрица не добавлялись. Финальное независимое review не выявило
-  дополнительных ошибок; gate ещё не запускался.
+  дополнительных ошибок; последующий полный hook прошёл в `4c7e2633`.
 
 Файлы удаляются до commit БД; rollback сохраняет root/учёт, но не может вернуть
 уже удалённую копию. При следующем явном удалении её отсутствие допустимо.

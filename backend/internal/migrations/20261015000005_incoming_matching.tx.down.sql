@@ -17,8 +17,15 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'cannot roll back incoming matching baseline: genre catalog contains retained state';
     END IF;
+    IF EXISTS (SELECT 1 FROM public.publication_root_abandonment) THEN
+        RAISE EXCEPTION 'cannot roll back incoming matching baseline: publication root abandonment evidence exists';
+    END IF;
 END;
 $guard$;
+
+DROP TRIGGER publication_root_abandonment_immutable ON public.publication_root_abandonment;
+DROP FUNCTION public.reject_publication_root_abandonment_mutation();
+DROP TABLE public.publication_root_abandonment;
 
 -- Former migration: 20261101000001_release_media_and_manual_credits.tx.down.sql
 DO $guard$

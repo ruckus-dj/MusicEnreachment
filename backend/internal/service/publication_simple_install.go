@@ -278,6 +278,13 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		if !ok {
 			return errors.New("native atomic publication replacement is unavailable")
 		}
+		replaceAllowed, err := executor.repository.CheckPublicationTargetReplacement(ctx, guard, manifest.RelativePath)
+		if err != nil {
+			return fmt.Errorf("check publication replacement authority: %w", err)
+		}
+		if !replaceAllowed {
+			return persistence.ErrPublicationAdmissionConflict
+		}
 		if err := replacer.AtomicReplaceExisting(ctx, candidateRoot, tempName, candidateInfo, targetName, currentInfo); err != nil {
 			return fmt.Errorf("atomically replace current publication: %w", err)
 		}

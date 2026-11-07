@@ -336,6 +336,9 @@ func (repository *SourceInventoryRepository) DeleteSourceRootWithCleanup(ctx con
 		if liveAnalysisDelivery {
 			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
 		}
+		if err := abandonFailedPublicationsForRoot(ctx, tx, id); err != nil {
+			return fmt.Errorf("delete source root: abandon failed publications: %w", err)
+		}
 		held, err := sourceHoldExists(ctx, tx, id, uuid.Nil, uuid.Nil)
 		if err != nil {
 			return fmt.Errorf("delete source root: check publication holds: %w", err)

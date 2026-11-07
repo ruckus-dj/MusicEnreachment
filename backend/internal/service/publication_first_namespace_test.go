@@ -83,6 +83,35 @@ func TestPlanFirstPublicationNamespaceAddsStableSuffixForFilesystemCollision(t *
 	}
 }
 
+func TestPlanFirstPublicationNamespaceDoesNotReuseAbandonedSamePositionPath(t *testing.T) {
+	root := prepareFirstPublicationRoot(t)
+	positionID := uuid.MustParse("12345678-1234-4234-8234-123456789abc")
+	if err := os.WriteFile(filepath.Join(root, "Track.ogg"), []byte("archived publication"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	claims := []persistence.PublicationNamespaceClaim{{
+		CanonicalKey: "Track.ogg", RelativePath: "Track.ogg", NodeKind: "file",
+		OwnerPositionID: &positionID, Abandoned: true,
+	}}
+	candidates := []publication.NamespaceCandidate{{RelativePath: "Track.ogg", NodeKind: "file", PositionID: positionID}}
+	nodes, err := planFirstPublicationNamespace(context.Background(), root, positionID, candidates, claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].RelativePath == "Track.ogg" {
+		t.Fatalf("abandoned same-position path was reused: %#v", nodes)
+	}
+
+	free := []publication.NamespaceCandidate{{RelativePath: "Alternate.ogg", NodeKind: "file", PositionID: positionID}}
+	nodes, err = planFirstPublicationNamespace(context.Background(), root, positionID, free, claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].RelativePath != "Alternate.ogg" {
+		t.Fatalf("abandoned claim blocked a free path: %#v", nodes)
+	}
+}
+
 func TestPlanFirstPublicationNamespaceDetectsNativeEquivalentFilesystemCollision(t *testing.T) {
 	root := prepareFirstPublicationRoot(t)
 	positionID := uuid.New()

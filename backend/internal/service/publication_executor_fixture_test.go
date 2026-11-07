@@ -105,6 +105,15 @@ func (repository *scriptedPublicationExecutorRepository) CheckPublicationResultC
 	}
 	return repository.resultCurrent(ctx, guard)
 }
+
+func (repository *scriptedPublicationExecutorRepository) CheckPublicationTargetReplacement(ctx context.Context, guard persistence.PublicationDeliveryGuard, relativePath string) (bool, error) {
+	return true, nil
+}
+
+func (repository *scriptedPublicationExecutorRepository) MarkPublicationDeliveryReturned(ctx context.Context, guard persistence.PublicationDeliveryGuard) error {
+	return nil
+}
+
 func (repository *scriptedPublicationExecutorRepository) CommitPublicationResult(ctx context.Context, guard persistence.PublicationDeliveryGuard, result persistence.PublicationResult) (bool, error) {
 	repository.record(guard)
 	repository.committedResult = &result

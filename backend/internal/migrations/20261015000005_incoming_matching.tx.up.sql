@@ -915,6 +915,32 @@ CREATE TABLE public.matching_run_target (
 -- sequence owned by: matching_delivery_id_seq
 ALTER SEQUENCE public.matching_delivery_id_seq OWNED BY public.matching_delivery.id;
 
+-- table: publication_root_abandonment
+CREATE TABLE public.publication_root_abandonment (
+    operation_id uuid PRIMARY KEY,
+    root_id uuid NOT NULL,
+    epoch uuid NOT NULL,
+    position_id uuid NOT NULL,
+    candidate_generation uuid NOT NULL,
+    namespace_claim_ids uuid[] NOT NULL DEFAULT '{}',
+    evidence jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT publication_root_abandonment_evidence_object CHECK (jsonb_typeof(evidence) = 'object')
+);
+
+-- function: reject_publication_root_abandonment_mutation()
+CREATE FUNCTION public.reject_publication_root_abandonment_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'publication root abandonment evidence is immutable';
+END;
+$$;
+
+CREATE TRIGGER publication_root_abandonment_immutable
+    BEFORE UPDATE OR DELETE ON public.publication_root_abandonment
+    FOR EACH ROW EXECUTE FUNCTION public.reject_publication_root_abandonment_mutation();
+
 -- default: matching_delivery id
 ALTER TABLE ONLY public.matching_delivery ALTER COLUMN id SET DEFAULT nextval('public.matching_delivery_id_seq'::regclass);
 

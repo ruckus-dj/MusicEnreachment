@@ -256,6 +256,11 @@ in frontend/.
   tagged tests, including both internal and external test packages. Check
   references for every helper declared in the deleted file; moving a test to
   mocks must not remove shared River inserters or transaction-lock helpers.
+- Staged-artifact deletion uses `work_directory`, never `output_directory`.
+  Freeze it through the same transaction that holds the configuration gate;
+  a pooled Registry read inside the locked filesystem callback can deadlock
+  the connection pool. Native cleanup fixtures need actual canonical
+  `analysis/staging/<root>/<work>/<artifact>` paths, not placeholder paths.
 
 ### Owner-directed test scope
 

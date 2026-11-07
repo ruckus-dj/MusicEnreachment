@@ -258,6 +258,7 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 	}
 	digestInput := struct {
 		Context                    *persistence.LibraryFirstPublicationContext `json:"context"`
+		AbandonedNamespaceClaims   []uuid.UUID                                 `json:"abandoned_namespace_claims"`
 		Format                     string                                      `json:"format"`
 		Template                   string                                      `json:"template"`
 		OutputDirectory            string                                      `json:"output_directory"`
@@ -267,7 +268,7 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 		FPCalc                     string                                      `json:"fpcalc_installation"`
 		SelectedTools              []persistence.SourceAnalysisToolSelection   `json:"selected_tools"`
 		Choice                     *FirstPublicationSourceChoice               `json:"selected_source_choice"`
-	}{contextSnapshot, format, pathTemplate, runtimeSettings.OutputDirectory, runtimeSettings.OutputCaseSensitive,
+	}{contextSnapshot, contextSnapshot.Library.AbandonedNamespaceClaims, format, pathTemplate, runtimeSettings.OutputDirectory, runtimeSettings.OutputCaseSensitive,
 		runtimeSettings.OutputUnicodeNormalization, runtimeSettings.ActiveFFmpegInstallation, runtimeSettings.ActiveFPCalcInstallation, selectedTools, boundChoice}
 	encoded, err := json.Marshal(digestInput)
 	if err != nil {

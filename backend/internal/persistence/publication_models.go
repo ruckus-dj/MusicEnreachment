@@ -88,6 +88,7 @@ type PublicationNamespaceClaim struct {
 	NodeKind          string     `bun:"node_kind"`
 	OwnerPositionID   *uuid.UUID `bun:"owner_position_id,type:uuid,nullzero"`
 	DirectoryScopeKey *string    `bun:"directory_scope_key,nullzero"`
+	Abandoned         bool       `bun:"abandoned,scanonly"`
 }
 
 // PublicationNamespaceReservation ties one owner generation to a claimed key.

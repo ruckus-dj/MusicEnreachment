@@ -127,6 +127,7 @@ func planPublicationNamespace(ctx context.Context, outputRoot string, positionID
 	}
 
 	nativeClaims := make([]publication.NamespaceClaim, 0, len(claims))
+	abandonedClaims := make(map[string]bool, len(claims))
 	for _, claim := range claims {
 		kind := claim.NodeKind
 		if kind == "dir" {
@@ -137,6 +138,9 @@ func planPublicationNamespace(ctx context.Context, outputRoot string, positionID
 			scope = *claim.DirectoryScopeKey
 		}
 		nativeClaims = append(nativeClaims, publication.NamespaceClaim{CanonicalKey: claim.CanonicalKey, RelativePath: claim.RelativePath, NodeKind: kind, DirectoryScope: scope, OwnerPositionID: claim.OwnerPositionID})
+		if claim.Abandoned {
+			abandonedClaims[claim.CanonicalKey] = true
+		}
 	}
 
 	// Resolve the directory portion first so sibling discovery runs under the
@@ -196,7 +200,7 @@ func planPublicationNamespace(ctx context.Context, outputRoot string, positionID
 		// extension) name.
 		if !exactTarget {
 			for _, claim := range nativeClaims {
-				if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
+				if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && !abandonedClaims[claim.CanonicalKey] && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
 					candidate.RelativePath = path.Join(parentCandidate, path.Base(claim.RelativePath))
 					base = path.Base(candidate.RelativePath)
 					break
@@ -205,7 +209,7 @@ func planPublicationNamespace(ctx context.Context, outputRoot string, positionID
 		}
 		ownClaim := false
 		for _, claim := range nativeClaims {
-			if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
+			if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && !abandonedClaims[claim.CanonicalKey] && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
 				if !exactTarget || path.Base(claim.RelativePath) == base {
 					ownClaim = true
 					break
@@ -232,7 +236,7 @@ func planPublicationNamespace(ctx context.Context, outputRoot string, positionID
 				if canonicalNamespaceParent(claim.CanonicalKey) != parentKey {
 					continue
 				}
-				if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && (!exactTarget || path.Base(claim.RelativePath) == name) {
+				if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && !abandonedClaims[claim.CanonicalKey] && (!exactTarget || path.Base(claim.RelativePath) == name) {
 					continue
 				}
 				claimName := path.Base(claim.RelativePath)

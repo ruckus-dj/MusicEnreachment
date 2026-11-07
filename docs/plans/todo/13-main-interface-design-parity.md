@@ -103,8 +103,9 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      Tombstones, execution history, artifacts и publication/recovery ownership
      сохраняются; это не завершение staged/root failed-task lifecycle.
      Свидетельства — [отчёт](../../reports/2026-11-07-source-identity-invalidation.md).
-   - [ ] Root-specific cleanup staged-копий и failed analysis tasks реализован;
-     полный hook и CI ещё требуются. Publication/recovery holds пока блокируют
+   - [x] В `4c7e2633` root-specific cleanup staged-копий и failed analysis tasks
+     прошёл полный hook и всю [CI 42365879090](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42365879090).
+     Publication/recovery holds пока блокируют
      удаление: согласованный safe abandonment остаётся отдельным следующим срезом.
      Свидетельства — [отчёт](../../reports/2026-11-07-root-staged-task-cleanup.md).
 3. [ ] **Recovery и явная republish.** Устранить расхождения восстановления и

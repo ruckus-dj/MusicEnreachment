@@ -35,6 +35,7 @@ type publicationExecutorRepository interface {
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	ReadPublicationAttempt(context.Context, uuid.UUID) (*persistence.TrackPublicationAttempt, error)
 	ClaimPublicationDelivery(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationDeliveryClaimOutcome, error)
+	MarkPublicationDeliveryReturned(context.Context, persistence.PublicationDeliveryGuard) error
 	PublicationPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error)
 	PublicationManualLyricsPreparationInputs(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error)
 	PublicationAttemptCoverInputForDelivery(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationAttemptCoverInput, bool, error)
@@ -42,6 +43,7 @@ type publicationExecutorRepository interface {
 	CheckPublicationSourceHoldForDelivery(context.Context, persistence.PublicationDeliveryGuard, uuid.UUID) (persistence.PublicationSourceHold, bool, error)
 	ReadPublicationObsoleteOutputCandidate(context.Context, persistence.PublicationDeliveryGuard, string) (*persistence.PublicationObsoleteOutputCandidate, error)
 	CheckPublicationResultCurrent(context.Context, persistence.PublicationDeliveryGuard) (bool, error)
+	CheckPublicationTargetReplacement(context.Context, persistence.PublicationDeliveryGuard, string) (bool, error)
 	CommitPublicationResult(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationResult) (bool, error)
 }
 
@@ -171,6 +173,14 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	if err != nil || claim != persistence.PublicationDeliveryAcquired {
 		return errors.Join(err, errors.New("publication delivery claim was not acquired"))
 	}
+	defer func() {
+		if commands.QuiescenceUnknown() {
+			return
+		}
+		markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		resultErr = errors.Join(resultErr, executor.repository.MarkPublicationDeliveryReturned(markCtx, guard))
+	}()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			resultErr = fmt.Errorf("publication execution panicked: %v", recovered)

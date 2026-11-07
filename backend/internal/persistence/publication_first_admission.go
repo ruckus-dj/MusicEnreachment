@@ -279,9 +279,11 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 		return nil, fmt.Errorf("admit first publication: read ffmpeg installations: %w", err)
 	}
 	snapshot.Claims = make([]PublicationNamespaceClaim, 0)
-	if err := tx.NewSelect().Model(&snapshot.Claims).Where("epoch = ?", request.ExpectedEpoch).Scan(ctx); err != nil && err != sql.ErrNoRows {
+	claims, err := readPublicationNamespaceClaims(ctx, tx, request.ExpectedEpoch)
+	if err != nil {
 		return nil, fmt.Errorf("admit first publication: read namespace claims: %w", err)
 	}
+	snapshot.Claims = claims
 	snapshot.PreviewDigest = hook.digest
 	authoritativeCoverInput, err := readEffectiveReleaseCoverInput(ctx, tx, request.ExpectedReleaseID, snapshot.Context.EffectiveCover)
 	if err != nil {

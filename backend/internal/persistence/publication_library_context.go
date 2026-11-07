@@ -37,17 +37,18 @@ type LibraryPublicationNamespaceNode struct {
 }
 
 type LibraryPublicationContext struct {
-	ReleaseID             uuid.UUID
-	PositionID            uuid.UUID
-	ActiveEpoch           uuid.UUID
-	Metadata              LibraryMetadata
-	Current               *LibraryPublicationCurrent
-	ActiveAttempt         *LibraryPublicationOperation
-	AttemptCandidate      *uuid.UUID
-	AttemptPhase          *string
-	NamespaceManifest     []LibraryPublicationNamespaceNode
-	ManualLyrics          ManualLyricsReceiptProjection
-	SourceCleanupWarnings []LibraryPublicationSourceCleanupWarning
+	ReleaseID                uuid.UUID
+	PositionID               uuid.UUID
+	ActiveEpoch              uuid.UUID
+	Metadata                 LibraryMetadata
+	Current                  *LibraryPublicationCurrent
+	ActiveAttempt            *LibraryPublicationOperation
+	AttemptCandidate         *uuid.UUID
+	AttemptPhase             *string
+	NamespaceManifest        []LibraryPublicationNamespaceNode
+	AbandonedNamespaceClaims []uuid.UUID
+	ManualLyrics             ManualLyricsReceiptProjection
+	SourceCleanupWarnings    []LibraryPublicationSourceCleanupWarning
 }
 
 type LibraryPublicationSourceCleanupWarning struct {
@@ -188,8 +189,41 @@ func readLibraryPublicationContextTx(ctx context.Context, tx bun.IDB, releaseUUI
 			}
 			(*result).SourceCleanupWarnings = warnings
 		}
+		if (*result).ActiveEpoch != uuid.Nil {
+			if err := tx.NewRaw(`SELECT DISTINCT claim_id FROM publication_root_abandonment a
+				CROSS JOIN LATERAL unnest(a.namespace_claim_ids) AS claims(claim_id)
+				WHERE a.position_id=? AND a.epoch=? AND NOT EXISTS (
+					SELECT 1 FROM track_publication p
+					JOIN publication_namespace_reservation r ON r.position_id=a.position_id
+						AND r.position_id=p.position_id AND r.generation=p.generation
+					WHERE p.position_id=a.position_id AND p.epoch=a.epoch AND r.namespace_claim_id=claims.claim_id
+				) ORDER BY claim_id`, positionUUID, (*result).ActiveEpoch).Scan(ctx, &(*result).AbandonedNamespaceClaims); err != nil && err != sql.ErrNoRows {
+				return fmt.Errorf("read abandoned publication namespace claims: %w", err)
+			}
+		}
 		return nil
 	}
+}
+
+func readPublicationNamespaceClaims(ctx context.Context, tx bun.IDB, epoch uuid.UUID) ([]PublicationNamespaceClaim, error) {
+	var claims []PublicationNamespaceClaim
+	err := tx.NewRaw(`SELECT c.id, c.epoch, c.key_digest, c.canonical_key, c.relative_path, c.node_kind,
+		c.owner_position_id, c.directory_scope_key,
+		(EXISTS (
+			SELECT 1 FROM publication_root_abandonment a
+			WHERE a.epoch=c.epoch AND c.id=ANY(a.namespace_claim_ids)
+			  AND NOT EXISTS (
+				SELECT 1 FROM track_publication p
+				JOIN publication_namespace_reservation r ON r.position_id=a.position_id
+					AND r.position_id=p.position_id AND r.generation=p.generation
+				WHERE p.position_id=a.position_id AND p.epoch=a.epoch AND r.namespace_claim_id=c.id
+			  )
+		)) AS abandoned
+		FROM publication_namespace_claim c WHERE c.epoch=? ORDER BY c.canonical_key`, epoch).Scan(ctx, &claims)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	return claims, nil
 }
 
 func decodePositionPublicationMetadata(raw json.RawMessage, revision int64) (LibraryMetadata, error) {

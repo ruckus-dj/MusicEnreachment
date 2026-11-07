@@ -106,9 +106,11 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 	result := &LibraryFirstPublicationContext{Library: library, Sources: []FirstPublicationSource{}, SourceAssociations: []PublicationSourceAssociation{}, TemplateTokens: map[string]string{}, Blockers: []string{}, DefaultSourceBlockers: []string{}}
 	result.NamespaceClaims = make([]PublicationNamespaceClaim, 0)
 	if library.ActiveEpoch != uuid.Nil {
-		if err := tx.NewSelect().Model(&result.NamespaceClaims).Where("epoch = ?", library.ActiveEpoch).Scan(ctx); err != nil && err != sql.ErrNoRows {
+		claims, err := readPublicationNamespaceClaims(ctx, tx, library.ActiveEpoch)
+		if err != nil {
 			return fmt.Errorf("read first publication namespace claims: %w", err)
 		}
+		result.NamespaceClaims = claims
 	}
 	var release struct {
 		ID              uuid.UUID       `bun:"id,type:uuid"`
