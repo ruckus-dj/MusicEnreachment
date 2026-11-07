@@ -333,10 +333,9 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 	})
 }
 
-// deleteTrackSourcesWithoutLocations removes associations for variants captured
-// from a deleting root only when no source location still refers to the variant.
-// Root deletion is intentionally the only caller: this is not a global inventory
-// invariant for other location-retirement paths.
+// deleteTrackSourcesWithoutLocations removes associations for the affected
+// variants only when no source location still refers to each variant. Callers
+// must bound variantIDs to locations genuinely removed by that operation.
 func deleteTrackSourcesWithoutLocations(ctx context.Context, tx bun.IDB, variantIDs []uuid.UUID) error {
 	if len(variantIDs) == 0 {
 		return nil
@@ -470,6 +469,17 @@ func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context
 		if err != nil {
 			return fmt.Errorf("apply source scan: %w", err)
 		}
+		var missingVariantIDs []uuid.UUID
+		if err := tx.NewRaw(`SELECT DISTINCT location.media_variant_id
+			FROM source_location location
+			WHERE location.source_root_id = ? AND location.media_variant_id IS NOT NULL
+			AND NOT EXISTS (
+				SELECT 1 FROM source_scan_candidate candidate
+				WHERE candidate.operation_id = ? AND candidate.relative_path = location.relative_path
+			)
+			ORDER BY location.media_variant_id`, root.ID, apply.OperationID).Scan(ctx, &missingVariantIDs); err != nil {
+			return fmt.Errorf("apply source scan: list variants of missing locations: %w", err)
+		}
 		generation := root.ScanGeneration + 1
 		if err := applySourceScanCandidates(ctx, tx, root, generation, stored); err != nil {
 			return fmt.Errorf("apply source scan: %w", err)
@@ -485,6 +495,9 @@ func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context
 				return fmt.Errorf("apply source scan: %w", err)
 			}
 			break
+		}
+		if err := deleteTrackSourcesWithoutLocations(ctx, tx, missingVariantIDs); err != nil {
+			return fmt.Errorf("apply source scan: clean track sources for missing locations: %w", err)
 		}
 		if err := deleteOrphanedMediaVariants(ctx, tx); err != nil {
 			return fmt.Errorf("apply source scan: %w", err)

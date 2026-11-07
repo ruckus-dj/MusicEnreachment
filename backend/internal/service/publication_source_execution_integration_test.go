@@ -52,8 +52,9 @@ type explicitFirstPublicationAuthority struct{}
 // publicationDeliveryScenario lets lifecycle regressions drive more than one
 // River delivery while reusing this integration fixture's real admission.
 type publicationDeliveryScenario struct {
-	beforeAdmission func(context.Context, *bun.DB, *persistence.SetupManagerRepository, uuid.UUID)
-	run             func(context.Context, *bun.DB, *persistence.SetupManagerRepository, *PublicationExecutor, uuid.UUID, int64, string, string, string, []byte)
+	beforeAdmission  func(context.Context, *bun.DB, *persistence.SetupManagerRepository, uuid.UUID)
+	afterToolVersion func(string)
+	run              func(context.Context, *bun.DB, *persistence.SetupManagerRepository, *PublicationExecutor, uuid.UUID, int64, string, string, string, []byte)
 }
 
 func testPublicationSourceExecution(t *testing.T, target string, confirmation ...any) {
@@ -392,7 +393,15 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 				t.Fatal(err)
 			}
 		}
-		executor := NewPublicationExecutor(manager, registry, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), audioDeliveryTestCommands{})
+		var afterToolVersion func()
+		for _, option := range confirmation {
+			if scenario, ok := option.(publicationDeliveryScenario); ok {
+				if scenario.afterToolVersion != nil {
+					afterToolVersion = func() { scenario.afterToolVersion(sourceFile) }
+				}
+			}
+		}
+		executor := NewPublicationExecutor(manager, registry, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), audioDeliveryTestCommands{afterVersion: afterToolVersion})
 		for _, option := range confirmation {
 			if scenario, ok := option.(publicationDeliveryScenario); ok {
 				scenario.run(ctx, db, manager, executor, operationID, riverJobID, sourceFile, scenarioOutput, target, sourceBytes)
@@ -441,11 +450,14 @@ func preparationIntPointer(value int) *int { return &value }
 
 // This transport exercises dispatch/settlement with real FLAC bytes, not codec
 // or executable compatibility. All metadata and filesystem readback stay native.
-type audioDeliveryTestCommands struct{}
+type audioDeliveryTestCommands struct{ afterVersion func() }
 
-func (audioDeliveryTestCommands) Run(ctx context.Context, executable string, args ...string) (PublicationCommandResult, error) {
+func (commands audioDeliveryTestCommands) Run(ctx context.Context, executable string, args ...string) (PublicationCommandResult, error) {
 	result := PublicationCommandResult{QuiescenceEstablished: true}
 	if len(args) == 1 && args[0] == "-version" {
+		if commands.afterVersion != nil {
+			commands.afterVersion()
+		}
 		name := strings.TrimSuffix(filepath.Base(executable), ".exe")
 		result.Output = []byte(name + " version 1")
 		return result, nil

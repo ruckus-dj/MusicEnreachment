@@ -71,8 +71,8 @@ func NewSourceScan(repository SourceScanRepository, options ...SourceScanOption)
 }
 
 // EnumerateObserved prepares stat-only candidates and returns unreadable scopes
-// for the worker's transactional reconciliation. The worker applies the
-// enumeration before admitting per-file analysis.
+// so the worker can reject an incomplete inventory transactionally. The worker
+// applies a complete enumeration before admitting per-file analysis.
 func (s *SourceScan) EnumerateObserved(ctx context.Context, request SourceScanRequest) ([]SourceEnumerationScope, error) {
 	if request.ExpectedAttempt <= 0 || request.ExpectedJobID <= 0 {
 		return nil, fmt.Errorf("enumerate source root: delivery identity is required")

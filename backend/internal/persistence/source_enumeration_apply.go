@@ -77,13 +77,27 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 				return fmt.Errorf("apply source enumeration: duplicate candidate path %q", candidate.RelativePath)
 			}
 		}
-		filteredCandidates := candidates[:0]
-		for _, candidate := range candidates {
-			if !sourceEnumerationPathUnreadable(candidate.RelativePath, apply.Scopes) {
-				filteredCandidates = append(filteredCandidates, candidate)
+		// An unreadable scope means the traversal did not establish a complete
+		// inventory. Keep the last published generation and all its locations;
+		// only a root-level failure may update availability metadata.
+		if len(apply.Scopes) > 0 {
+			if rootUnavailable {
+				if _, err := tx.NewUpdate().Model((*SourceRoot)(nil)).
+					Set("status = ?", SourceRootStatusUnavailable).
+					Set("safe_error = ?", SourceEnumerationRootUnavailableReason).
+					Set("updated_at = now()").Where("id = ?", root.ID).Exec(ctx); err != nil {
+					return fmt.Errorf("apply source enumeration: record unavailable root: %w", err)
+				}
 			}
+			failure := apply.FailureSafeError
+			operation.SafeError = &failure
+			operation.Stage = "traversing"
+			operation.UpdatedAt = time.Now().UTC()
+			if _, err := tx.NewUpdate().Model(operation).Column("safe_error", "stage", "updated_at").WherePK().Exec(ctx); err != nil {
+				return fmt.Errorf("apply source enumeration: record incomplete traversal: %w", err)
+			}
+			return nil
 		}
-		candidates = filteredCandidates
 		if err := validateHeldSourceLocations(ctx, tx, *root, candidates); err != nil {
 			return fmt.Errorf("apply source enumeration: %w", err)
 		}
@@ -175,11 +189,12 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 			}
 		}
 
-		if err := discardUnreadableEnumerationCandidates(ctx, tx, apply.OperationID, apply.Scopes); err != nil {
-			return fmt.Errorf("apply source enumeration: discard candidates from unreadable scopes: %w", err)
-		}
-		if err := pruneEnumeratedLocations(ctx, tx, root.ID, apply.OperationID); err != nil {
+		missingVariantIDs, err := pruneEnumeratedLocations(ctx, tx, root.ID, apply.OperationID)
+		if err != nil {
 			return fmt.Errorf("apply source enumeration: reconcile missing locations: %w", err)
+		}
+		if err := deleteTrackSourcesWithoutLocations(ctx, tx, missingVariantIDs); err != nil {
+			return fmt.Errorf("apply source enumeration: clean track sources for missing locations: %w", err)
 		}
 		if _, err := tx.NewDelete().Model((*SourceScanCandidate)(nil)).Where("operation_id=?", operation.ID).Exec(ctx); err != nil {
 			return fmt.Errorf("apply source enumeration: remove applied candidates: %w", err)
@@ -211,71 +226,45 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 	})
 }
 
-func discardUnreadableEnumerationCandidates(ctx context.Context, tx bun.Tx, operationID uuid.UUID, scopes []SourceEnumerationScope) error {
-	for _, scope := range scopes {
-		query := `DELETE FROM source_scan_candidate WHERE operation_id=? AND relative_path=?`
-		args := []any{operationID, scope.RelativePath}
-		switch scope.Kind {
-		case "root":
-			query = `DELETE FROM source_scan_candidate WHERE operation_id=?`
-			args = []any{operationID}
-		case "subtree":
-			query = `DELETE FROM source_scan_candidate WHERE operation_id=? AND
-				(relative_path=? OR left(relative_path,char_length(?)+1)=? || '/')`
-			args = []any{operationID, scope.RelativePath, scope.RelativePath, scope.RelativePath}
-		}
-		if _, err := tx.NewRaw(query, args...).Exec(ctx); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func pruneEnumeratedLocations(ctx context.Context, tx bun.Tx, rootID, operationID uuid.UUID) error {
+func pruneEnumeratedLocations(ctx context.Context, tx bun.Tx, rootID, operationID uuid.UUID) ([]uuid.UUID, error) {
 	locations := make([]SourceLocation, 0)
 	if err := tx.NewSelect().Model(&locations).Where("source_root_id=?", rootID).Order("relative_path").For("UPDATE").Scan(ctx); err != nil {
-		return err
+		return nil, err
 	}
+	missingVariantIDs := make([]uuid.UUID, 0)
 	for _, location := range locations {
 		var exists bool
 		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM source_scan_candidate WHERE operation_id=? AND relative_path=?)`, operationID, location.RelativePath).Scan(ctx, &exists); err != nil {
-			return err
+			return nil, err
 		}
 		if exists {
 			continue
 		}
 		held, err := sourceHoldExists(ctx, tx, rootID, location.ID, uuid.Nil)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if held {
-			return fmt.Errorf("source location %q is pinned by a publication hold", location.RelativePath)
+			return nil, fmt.Errorf("source location %q is pinned by a publication hold", location.RelativePath)
+		}
+		if location.MediaVariantID != nil {
+			missingVariantIDs = append(missingVariantIDs, *location.MediaVariantID)
 		}
 		var workID uuid.UUID
 		err = tx.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=? FOR UPDATE`, location.ID).Scan(ctx, &workID)
 		if err != nil && err != sql.ErrNoRows {
-			return err
+			return nil, err
 		}
 		if err == nil {
 			if err := retireSourceAnalysisWork(ctx, tx, workID); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if _, err := tx.NewDelete().Model((*SourceLocation)(nil)).Where("id=?", location.ID).Exec(ctx); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
-}
-
-func sourceEnumerationPathUnreadable(path string, scopes []SourceEnumerationScope) bool {
-	for _, scope := range scopes {
-		if scope.Kind == "root" || path == scope.RelativePath ||
-			(scope.Kind == "subtree" && strings.HasPrefix(path, scope.RelativePath+"/")) {
-			return true
-		}
-	}
-	return false
+	return missingVariantIDs, nil
 }
 
 func validSourceEnumerationScope(scope SourceEnumerationScope) bool {

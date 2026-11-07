@@ -166,11 +166,11 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	}
 	awaitRiverCompletion(t, ctx, events, *second.RiverJobID)
 
-	// Then the scan records its readable portion as generation 2, while the
-	// unreadable subtree does not disturb the locations already inventoried.
+	// Then the incomplete traversal fails without publishing a generation or
+	// changing any of the locations already inventoried.
 	assertOperationStage(t, ctx, setupManager, second.ID, "failed", service.SourceScanStageTraversing)
 	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, second.ID), scanSafeTraversal)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 2)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 1)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
 	requireScanDispatchCandidates(t, ctx, database, second.ID, 0)
 	// An unreadable subtree is not the root's inaccessibility.
@@ -190,10 +190,10 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	}
 	awaitRiverCompletion(t, ctx, events, *third.RiverJobID)
 
-	// Then traversal succeeds and installs generation 3 without changing the
+	// Then traversal succeeds and installs generation 2 without changing the
 	// locations already present.
 	assertOperationStage(t, ctx, setupManager, third.ID, "succeeded", "succeeded")
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 3)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 2)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
 	if delta := scanDispatchProbeCount(t, probes) - beforeRecovery; delta != 0 {
 		t.Fatalf("probes during the recovery scan = %d, want none", delta)
@@ -212,15 +212,13 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	awaitRiverCompletion(t, ctx, events, deliverScanDispatchJob(t, ctx, database, riverClient, missing.ID))
 
 	// Then the traversal proves the root unavailable: the operation fails with
-	// the path reason, the root records that observation without advancing its
-	// last-success timestamp, and the unavailable root's locations are removed.
+	// the path reason, the root records that observation without changing its
+	// last-success timestamp or inventory.
 	assertOperationStage(t, ctx, setupManager, missing.ID, "failed", service.SourceScanStageTraversing)
 	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, missing.ID), scanSafePath)
 	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusUnavailable)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
-	if got := readScanDispatchLocations(t, ctx, database, root.ID); len(got) != 0 {
-		t.Fatalf("locations after the missing-root scan = %#v, want none", got)
-	}
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 2)
+	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
 	rootAfterMissing, err := inventory.GetSourceRoot(ctx, root.ID)
 	if err != nil {
 		t.Fatalf("read the source root after the missing-root scan: %v", err)
@@ -240,19 +238,19 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	}
 	awaitRiverCompletion(t, ctx, events, *restored.RiverJobID)
 
-	// Then the next successful scan restores availability with newly created
-	// locations; the unavailable-root scan removed the previous location rows.
+	// Then the next successful scan restores availability and retains the
+	// unchanged locations from the last successful generation.
 	assertOperationStage(t, ctx, setupManager, restored.ID, "succeeded", "succeeded")
 	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 5)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 3)
 	restoredLocations := readScanDispatchLocations(t, ctx, database, root.ID)
 	if len(restoredLocations) != len(locations) {
 		t.Fatalf("restored locations = %d, want %d", len(restoredLocations), len(locations))
 	}
 	for path, previous := range locations {
 		current, ok := restoredLocations[path]
-		if !ok || current.ID == previous.ID || current.ProbeStatus != previous.ProbeStatus {
-			t.Fatalf("restored location %q = %#v, want a new ID with previous status %q (old ID %s)", path, current, previous.ProbeStatus, previous.ID)
+		if !ok || current.ID != previous.ID || current.ProbeStatus != previous.ProbeStatus {
+			t.Fatalf("restored location %q = %#v, want the retained ID/status %#v", path, current, previous)
 		}
 	}
 
@@ -272,7 +270,7 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 
 	// Then traversal succeeds and records the new file without invoking ffprobe.
 	assertOperationStage(t, ctx, setupManager, fourth.ID, "succeeded", "succeeded")
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 6)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
 	fourthLocations := readScanDispatchLocations(t, ctx, database, root.ID)
 	for path, previous := range restoredLocations {
 		if current := fourthLocations[path]; current.ID != previous.ID || current.ProbeStatus != previous.ProbeStatus {
@@ -305,7 +303,7 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	// inventory of the disabled root stays visible.
 	assertOperationStage(t, ctx, setupManager, queued.ID, "failed", service.SourceScanStageQueued)
 	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, queued.ID), scanSafeDisabled)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 6)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), fourthLocations)
 	// Disabling a root reports no directory problem.
 	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)

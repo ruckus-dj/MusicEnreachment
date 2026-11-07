@@ -210,10 +210,9 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	return worker.finishApplied(ctx, operation.ID, root.ID)
 }
 
-// finishApplied reloads the outcome committed atomically with the inventory.
-// Unreadable scopes reconcile the readable portion of the tree but leave the
-// operation failed; recovery must preserve that outcome rather than infer
-// success from LastAppliedOperationID alone.
+// finishApplied reloads the outcome committed with the enumeration. An
+// incomplete traversal records its failure without publishing inventory, so
+// recovery must not infer success from that outcome alone.
 func (worker *SourceScanWorker) finishApplied(ctx context.Context, operationID, rootID uuid.UUID) error {
 	operation, err := worker.repository.GetOperation(ctx, operationID)
 	if err != nil {

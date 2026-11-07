@@ -191,6 +191,13 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		Commands: commands.PublicationCommandRunner(), FFmpegPath: ffmpegPath, FFprobePath: toolPair.FFprobe,
 		Validator: validator, Metadata: writer, MetadataReader: metadata.Reader{}, Lyrics: executor.lyrics, CoverInput: coverInput,
 	}
+	if input.Audio != nil {
+		privateInputPath := filepath.Join(tempDir, simplePublicationPrivateInputName)
+		if err := copyHeldPublicationSource(ctx, input.Audio, privateInputPath); err != nil {
+			return err
+		}
+		inputPath = privateInputPath
+	}
 	var prepared PublicationSimplePreparationResult
 	if input.ProviderTags != nil {
 		prepared, err = preparation.PrepareProviderTags(ctx, input, targetAbsolute, tempDir, candidatePath)
@@ -372,6 +379,59 @@ func resolveSimpleAudioSourcePath(ctx context.Context, rootPath, relativePath st
 		return "", errors.New("held publication source changed before preparation")
 	}
 	return filepath.Join(rootPath, filepath.FromSlash(relativePath)), nil
+}
+
+// simplePublicationPrivateInputName is a fixed, extensionless private copy name.
+// A valid source basename can already use the filesystem's whole per-component
+// budget, so prefixing it would overflow; ffmpeg receives an explicit demuxer
+// and metadata capture sniffs content, so no extension is required.
+const simplePublicationPrivateInputName = "source-input"
+
+// copyHeldPublicationSource copies only bytes whose opened-file size and mtime
+// still match the frozen inventory facts. The copy is made after tool resolution
+// so a source changed since the earlier hold check can never reach a transformer.
+func copyHeldPublicationSource(ctx context.Context, input *persistence.PublicationAudioInput, destination string) (resultErr error) {
+	root, err := sourcefs.NewOpener().OpenRoot(ctx, input.ConfiguredRootPath)
+	if err != nil {
+		return fmt.Errorf("open held publication source root for private copy: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, root.Close()) }()
+	source, err := sourcefs.OpenRegularAt(ctx, root, input.RelativePath)
+	if err != nil {
+		return fmt.Errorf("open held publication source for private copy: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, source.Close()) }()
+	validate := func() error {
+		info, err := source.Stat(ctx)
+		if err != nil {
+			return fmt.Errorf("inspect held publication source for private copy: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Size() != input.SizeBytes || !sourceScanMtime(info.ModTime()).Equal(input.MTime) {
+			return errors.New("held publication source changed before or during private copy")
+		}
+		return nil
+	}
+	if err := validate(); err != nil {
+		return err
+	}
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create private publication source copy: %w", err)
+	}
+	copyErr := source.Borrow(ctx, func(file *os.File) error {
+		_, err := io.Copy(output, file)
+		return err
+	})
+	if copyErr == nil {
+		copyErr = validate()
+	}
+	syncErr := output.Sync()
+	closeErr := output.Close()
+	if err := errors.Join(copyErr, syncErr, closeErr); err != nil {
+		_ = os.Remove(destination)
+		return fmt.Errorf("copy held publication source to private input: %w", err)
+	}
+	return nil
 }
 
 func (executor *PublicationExecutor) checkSimplePublicationCurrent(ctx context.Context, guard persistence.PublicationDeliveryGuard, input persistence.PublicationInputs) error {

@@ -124,11 +124,12 @@ func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeWorkIsDeleted(t *te
 	second := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.ReplaceSourceScanCandidates(ctx, second.ID, []persistence.SourceScanCandidateInput{
 		enumerationCandidate("retained.flac", 5, mtime),
+		enumerationCandidate("unreadable.flac", 9, mtime),
 	}); err != nil {
 		t.Fatalf("store missing-file enumeration: %v", err)
 	}
-	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, []persistence.SourceEnumerationScope{{Kind: "file", RelativePath: "unreadable.flac"}})); err != nil {
-		t.Fatalf("apply missing-file enumeration: %v", err)
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, nil)); err != nil {
+		t.Fatalf("apply complete missing-file enumeration: %v", err)
 	}
 	var removedCount int
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=?`, removedID).Scan(ctx, &removedCount); err != nil {
@@ -138,25 +139,34 @@ func runDeletingRootRetainsArtifactWorkAndMissingArtifactFreeWorkIsDeleted(t *te
 		t.Fatalf("artifact-free missing work remains %d times", removedCount)
 	}
 	var unreadableRetained int
-	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id IS NULL`, unreadableID).Scan(ctx, &unreadableRetained); err != nil {
-		t.Fatalf("read unreadable-scope tombstone: %v", err)
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id=?`, unreadableID, unreadableLocation.ID).Scan(ctx, &unreadableRetained); err != nil {
+		t.Fatalf("read retained work for a present file: %v", err)
 	}
 	if unreadableRetained != 1 {
-		t.Fatalf("unreadable-scope work tombstone count = %d, want 1", unreadableRetained)
+		t.Fatalf("work for a present file = %d, want 1", unreadableRetained)
 	}
 	setOperationState(t, ctx, database, second.ID, "succeeded")
-	if err := inventory.DeleteSourceRoot(ctx, root.ID, root.ConfiguredPath, 1); err != nil {
+	if err := inventory.DeleteSourceRoot(ctx, root.ID, root.ConfiguredPath, 2); err != nil {
 		t.Fatalf("delete source root: %v", err)
 	}
-	var retainedCount, artifactCount int
+	var retainedCount, artifactCount, unreadableCount, unreadableArtifactCount int
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id IS NULL`, retainedID).Scan(ctx, &retainedCount); err != nil {
 		t.Fatalf("read root-deleted work: %v", err)
 	}
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_artifact WHERE work_id=?`, retainedID).Scan(ctx, &artifactCount); err != nil {
 		t.Fatalf("read root-deleted artifact: %v", err)
 	}
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id IS NULL`, unreadableID).Scan(ctx, &unreadableCount); err != nil {
+		t.Fatalf("read root-deleted formerly unreadable work: %v", err)
+	}
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_artifact WHERE work_id=?`, unreadableID).Scan(ctx, &unreadableArtifactCount); err != nil {
+		t.Fatalf("read root-deleted formerly unreadable artifact: %v", err)
+	}
 	if retainedCount != 1 || artifactCount != 1 {
 		t.Fatalf("root-deleted work/artifact counts = %d/%d, want 1/1", retainedCount, artifactCount)
+	}
+	if unreadableCount != 1 || unreadableArtifactCount != 1 {
+		t.Fatalf("root-deleted second work/artifact counts = %d/%d, want 1/1", unreadableCount, unreadableArtifactCount)
 	}
 }
 

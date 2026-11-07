@@ -4,11 +4,13 @@ package persistence_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
@@ -33,6 +35,19 @@ func runApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(t
 		t.Fatalf("repeat applied enumeration: %v", err)
 	}
 	outside := readLocation(t, ctx, database, root.ID, "outside.flac")
+	retainedVariant := insertAssociationCleanupVariant(t, ctx, database, true)
+	if _, err := database.ExecContext(ctx, `UPDATE source_location SET media_variant_id=? WHERE id=?`, retainedVariant, outside.ID); err != nil {
+		t.Fatal(err)
+	}
+	trackID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?, 'Incomplete enumeration association')`, trackID); err != nil {
+		t.Fatal(err)
+	}
+	association := &persistence.TrackSource{ID: uuid.New(), TrackID: trackID, MediaVariantID: retainedVariant,
+		Selected: true, Compatible: true, DecisionMethod: "manual", Metadata: json.RawMessage(`{}`)}
+	if _, err := database.NewInsert().Model(association).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
 	var originalWorkID string
 	if err := database.NewRaw(`SELECT id FROM source_analysis_work WHERE location_id=?`, outside.ID).Scan(ctx, &originalWorkID); err != nil {
 		t.Fatalf("read initial work: %v", err)
@@ -82,12 +97,20 @@ func runApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(t
 	if unchangedWorkID != originalWorkID {
 		t.Fatalf("unchanged work identity = %s, want %s", unchangedWorkID, originalWorkID)
 	}
-	if _, err := readLocationResult(ctx, database, root.ID, "album/removed.flac"); err == nil {
-		t.Fatal("location from an unreadable subtree was retained")
+	if _, err := readLocationResult(ctx, database, root.ID, "album/removed.flac"); err != nil {
+		t.Fatalf("incomplete enumeration removed location from unreadable subtree: %v", err)
 	}
-	if _, err := readLocationResult(ctx, database, root.ID, "gone.flac"); err == nil {
-		t.Fatal("missing location outside inaccessible scope was retained")
+	if _, err := readLocationResult(ctx, database, root.ID, "gone.flac"); err != nil {
+		t.Fatalf("incomplete enumeration removed an observed missing location: %v", err)
 	}
+	rootAfterPartial, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read root after incomplete enumeration: %v", err)
+	}
+	if rootAfterPartial.ScanGeneration != 1 || rootAfterPartial.LastAppliedOperationID == nil || *rootAfterPartial.LastAppliedOperationID != first.ID {
+		t.Fatalf("incomplete enumeration changed published inventory identity: %+v", rootAfterPartial)
+	}
+	assertTrackSourceCount(t, ctx, database, retainedVariant, 1)
 	setOperationState(t, ctx, database, second.ID, "succeeded")
 	rootBeforeFailure, err := inventory.GetSourceRoot(ctx, root.ID)
 	if err != nil {
@@ -120,12 +143,13 @@ func runApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(t
 	if err != nil {
 		t.Fatalf("read root after repeated unavailable observation: %v", err)
 	}
-	if rootAfterRepeat.ScanGeneration != rootAfterFailure.ScanGeneration || rootAfterRepeat.LastAppliedOperationID == nil || *rootAfterRepeat.LastAppliedOperationID != rootScoped.ID {
+	if rootAfterRepeat.ScanGeneration != rootAfterFailure.ScanGeneration || rootAfterRepeat.LastAppliedOperationID == nil || *rootAfterRepeat.LastAppliedOperationID != first.ID {
 		t.Fatalf("repeated root-scoped apply was not idempotent: before=%+v after=%+v", rootAfterFailure, rootAfterRepeat)
 	}
-	if _, err := readLocationResult(ctx, database, root.ID, "outside.flac"); err == nil {
-		t.Fatal("root-level failure retained locations outside an unreadable scope")
+	if _, err := readLocationResult(ctx, database, root.ID, "outside.flac"); err != nil {
+		t.Fatalf("root-level failure removed the published location: %v", err)
 	}
+	assertTrackSourceCount(t, ctx, database, retainedVariant, 1)
 	setOperationState(t, ctx, database, rootScoped.ID, "succeeded")
 
 	third := newSourceScanOperation(t, ctx, database, root, "running")
@@ -209,6 +233,115 @@ func runApplySourceEnumerationReplacesCompletedInPlaceWork(t *testing.T, databas
 	if remaining != 0 {
 		t.Fatalf("old completed work rows = %d, want 0", remaining)
 	}
+}
+
+func TestApplySourceEnumerationCleansAssociationsOnlyForVariantsWithoutLocationsPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database := testpostgres.OpenMigratedWithRiver(t)
+	inventory := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-association-cleanup")
+	mtime := probeMtime()
+	first := newSourceScanOperation(t, ctx, database, root, "running")
+	paths := []string{"sha-missing.flac", "digestless-missing.flac", "shared-missing.flac", "shared-survivor.flac"}
+	candidates := make([]persistence.SourceScanCandidateInput, 0, len(paths))
+	for _, path := range paths {
+		candidates = append(candidates, enumerationCandidate(path, 5, mtime))
+	}
+	if err := inventory.ReplaceSourceScanCandidates(ctx, first.ID, candidates); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(first, root, nil)); err != nil {
+		t.Fatal(err)
+	}
+	shaVariant := insertAssociationCleanupVariant(t, ctx, database, true)
+	digestlessVariant := insertAssociationCleanupVariant(t, ctx, database, false)
+	sharedVariant := insertAssociationCleanupVariant(t, ctx, database, true)
+	variants := map[string]uuid.UUID{
+		paths[0]: shaVariant, paths[1]: digestlessVariant,
+		paths[2]: sharedVariant, paths[3]: sharedVariant,
+	}
+	for path, variantID := range variants {
+		location := readLocation(t, ctx, database, root.ID, path)
+		if _, err := database.ExecContext(ctx, `UPDATE source_location SET media_variant_id=? WHERE id=?`, variantID, location.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, variantID := range []uuid.UUID{shaVariant, digestlessVariant, sharedVariant} {
+		trackID := uuid.New()
+		if _, err := database.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?, 'Enumeration association')`, trackID); err != nil {
+			t.Fatal(err)
+		}
+		association := &persistence.TrackSource{ID: uuid.New(), TrackID: trackID, MediaVariantID: variantID,
+			Selected: true, Compatible: true, DecisionMethod: "manual", Metadata: json.RawMessage(`{}`)}
+		if _, err := database.NewInsert().Model(association).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setOperationState(t, ctx, database, first.ID, "succeeded")
+
+	second := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, second.ID, []persistence.SourceScanCandidateInput{
+		enumerationCandidate(paths[3], 5, mtime),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, nil)); err != nil {
+		t.Fatal(err)
+	}
+	assertTrackSourceCount(t, ctx, database, shaVariant, 0)
+	assertTrackSourceCount(t, ctx, database, digestlessVariant, 0)
+	assertTrackSourceCount(t, ctx, database, sharedVariant, 1)
+	if _, err := readLocationResult(ctx, database, root.ID, paths[0]); err == nil {
+		t.Fatal("genuinely missing location was retained")
+	}
+	if _, err := readLocationResult(ctx, database, root.ID, paths[1]); err == nil {
+		t.Fatal("genuinely missing digestless location was retained")
+	}
+}
+
+func TestApplySourceEnumerationChangedFileDoesNotInheritVariantOrCleanItsAssociationPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database := testpostgres.OpenMigratedWithRiver(t)
+	inventory := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-changed-association")
+	mtime := probeMtime()
+	first := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, first.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("changed.flac", 5, mtime)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(first, root, nil)); err != nil {
+		t.Fatal(err)
+	}
+	location := readLocation(t, ctx, database, root.ID, "changed.flac")
+	variantID := insertAssociationCleanupVariant(t, ctx, database, true)
+	if _, err := database.ExecContext(ctx, `UPDATE source_location SET media_variant_id=? WHERE id=?`, variantID, location.ID); err != nil {
+		t.Fatal(err)
+	}
+	trackID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?, 'Changed source association')`, trackID); err != nil {
+		t.Fatal(err)
+	}
+	association := &persistence.TrackSource{ID: uuid.New(), TrackID: trackID, MediaVariantID: variantID,
+		Selected: true, Compatible: true, DecisionMethod: "manual", Metadata: json.RawMessage(`{}`)}
+	if _, err := database.NewInsert().Model(association).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	setOperationState(t, ctx, database, first.ID, "succeeded")
+
+	second := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, second.ID, []persistence.SourceScanCandidateInput{enumerationCandidate("changed.flac", 6, mtime.Add(time.Second))}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, nil)); err != nil {
+		t.Fatal(err)
+	}
+	changed := readLocation(t, ctx, database, root.ID, "changed.flac")
+	if changed.ID != location.ID || changed.MediaVariantID != nil || changed.ProbeStatus != persistence.SourceProbeStatusNotAnalyzed {
+		t.Fatalf("changed file retained old identity or analysis: %+v", changed)
+	}
+	assertTrackSourceCount(t, ctx, database, variantID, 1)
 }
 
 func runDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMutation(t *testing.T, database *bun.DB) {
@@ -366,8 +499,15 @@ func runApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgre
 		t.Fatalf("apply enumeration with unreadable scope: %v", err)
 	}
 	assertEnumerationCleanupMarker(t, ctx, database, root.ID, true)
-	if _, err := readLocationResult(ctx, database, root.ID, "album/track.flac"); err == nil {
-		t.Fatal("unreadable location was retained in inventory")
+	if retained := readLocation(t, ctx, database, root.ID, "album/track.flac"); retained.ID != oldLocation.ID {
+		t.Fatalf("incomplete enumeration replaced the published location: before=%s after=%s", oldLocation.ID, retained.ID)
+	}
+	rootAfterIncomplete, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootAfterIncomplete.ScanGeneration != 1 {
+		t.Fatalf("incomplete enumeration advanced generation to %d, want 1", rootAfterIncomplete.ScanGeneration)
 	}
 	setOperationState(t, ctx, database, operation.ID, "succeeded")
 
@@ -379,8 +519,8 @@ func runApplySourceEnumerationUnreadableScopePreservesScopedCleanupMarkerPostgre
 		t.Fatalf("apply accepted re-observation: %v", err)
 	}
 	newLocation := readLocation(t, ctx, database, root.ID, "album/track.flac")
-	if newLocation.ID == oldLocation.ID {
-		t.Fatalf("re-observed location reused pruned identity %s", oldLocation.ID)
+	if newLocation.ID != oldLocation.ID {
+		t.Fatalf("complete re-observation replaced retained location identity %s with %s", oldLocation.ID, newLocation.ID)
 	}
 	assertEnumerationCleanupMarker(t, ctx, database, root.ID, false)
 }

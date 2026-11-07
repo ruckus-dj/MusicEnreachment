@@ -4,16 +4,88 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/uptrace/bun"
 )
+
+func TestPublicationRejectsChangedSourceAfterToolResolutionPostgreSQL(t *testing.T) {
+	t.Run("unchanged baseline publishes", func(t *testing.T) {
+		testPublicationSourceExecution(t, "Track.flac", true)
+	})
+	for _, changed := range []string{"size", "mtime"} {
+		t.Run(changed, func(t *testing.T) {
+			var once sync.Once
+			var mutated bool
+			scenario := publicationDeliveryScenario{
+				afterToolVersion: func(sourceFile string) {
+					once.Do(func() {
+						if err := mutatePublicationSourceForFreshnessTest(sourceFile, changed); err != nil {
+							t.Fatal(err)
+						}
+						mutated = true
+					})
+				},
+				run: func(ctx context.Context, db *bun.DB, manager *persistence.SetupManagerRepository, executor *PublicationExecutor, operationID uuid.UUID, riverJobID int64, _ string, output, target string, _ []byte) {
+					attempt, err := manager.ReadPublicationAttempt(ctx, operationID)
+					if err != nil || attempt == nil {
+						t.Fatalf("read rejected publication attempt = %+v, %v", attempt, err)
+					}
+					err = executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
+					if !mutated {
+						t.Fatal("tool-version barrier did not mutate the source")
+					}
+					if err == nil || !strings.Contains(err.Error(), "held publication source changed") {
+						t.Fatalf("changed source delivery error = %v, want safe freshness rejection", err)
+					}
+					if _, err := os.Lstat(filepath.Join(output, filepath.FromSlash(target))); !os.IsNotExist(err) {
+						t.Fatalf("changed-source publication was installed: %v", err)
+					}
+					var current persistence.TrackPublication
+					err = db.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).Scan(ctx)
+					if !errors.Is(err, sql.ErrNoRows) {
+						t.Fatalf("CURRENT after rejected source mutation = %+v, %v; want no row", current, err)
+					}
+				},
+			}
+			testPublicationSourceExecution(t, "Track.flac", true, scenario)
+		})
+	}
+}
+
+func mutatePublicationSourceForFreshnessTest(sourceFile, changed string) error {
+	contents, err := os.ReadFile(sourceFile)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(sourceFile)
+	if err != nil {
+		return err
+	}
+	if changed == "size" {
+		contents = append(contents, '!')
+	} else {
+		contents[0] ^= 1
+	}
+	if err := os.WriteFile(sourceFile, contents, 0o600); err != nil {
+		return err
+	}
+	modified := info.ModTime()
+	if changed == "mtime" {
+		modified = modified.Add(2 * time.Second)
+	}
+	return os.Chtimes(sourceFile, modified, modified)
+}
 
 func TestPublicationSimpleDeliveryRetriesSettlementAndAcknowledgesRedeliveryPostgreSQL(t *testing.T) {
 	testPublicationSourceExecution(t, "Track.flac", true, false, publicationDeliveryScenario{run: func(ctx context.Context, db *bun.DB, manager *persistence.SetupManagerRepository, executor *PublicationExecutor, operationID uuid.UUID, riverJobID int64, sourceFile, output, target string, sourceBytes []byte) {

@@ -257,6 +257,19 @@ in frontend/.
   references for every helper declared in the deleted file; moving a test to
   mocks must not remove shared River inserters or transaction-lock helpers.
 
+### Owner-directed test scope
+
+- Add only the minimum necessary regression tests. Prefer not adding a test when
+  existing coverage or a simpler check is sufficient; do not build speculative
+  matrices, duplicate coverage across layers, or add tests merely for completeness.
+- Database-backed tests are reserved for critical behavior that cannot be proved
+  without the real database (for example transactional authority or rollback).
+  Combine related assertions and scenarios in one test using the same fixture and
+  database where safe, rather than creating a database for every assertion/case.
+- Preserve the normal verification gates. This policy limits new test volume;
+  it does not authorize skipping hooks, weakening safety checks, or claiming
+  unverified behavior.
+
 **Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
 This also applies to delegated agents: a focused frontend suite, standalone
 typecheck or package test is not an authorized preflight before the full gate.

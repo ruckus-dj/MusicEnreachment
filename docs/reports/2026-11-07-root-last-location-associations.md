@@ -13,7 +13,10 @@ SHA variants остаются cache, digestless проходят прежний 
 
 Проверки добавлены для shared roots, SHA/digestless, конкуренции association
 writer, сохранения реального CURRENT и unselected альтернативы, подтверждения
-и rollback при поздней SQL-ошибке. Полный gate и CI среза пока не выполнены.
+и rollback при поздней SQL-ошибке. Ревизия
+`91d8e28148f70cd3de5e3cc1f799440096c93c4c` прошла обычный полный hook и
+[CI 42318931812](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42318931812):
+verify, compose-smoke, все платформы и публикацию контейнера.
 
 ## Границы
 
