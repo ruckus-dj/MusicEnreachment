@@ -42,6 +42,18 @@ type repositoryWithoutGenreCatalog struct {
 	updates int
 }
 
+type displayLibraryMetadataRepository struct {
+	*fakeLibraryMetadataRepository
+	display      persistence.LibraryMetadataDisplay
+	displayErr   error
+	displayReads int
+}
+
+func (repository *displayLibraryMetadataRepository) ReadMetadataDisplay(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID) (persistence.LibraryMetadataDisplay, error) {
+	repository.displayReads++
+	return repository.display, repository.displayErr
+}
+
 func (repository *repositoryWithoutGenreCatalog) ReadMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID) (persistence.LibraryMetadata, error) {
 	return repository.current, nil
 }
@@ -368,5 +380,25 @@ func TestLibraryMetadataResultExposesNoPublicationFlag(t *testing.T) {
 	}
 	if len(result) != 2 || result["envelope"] == nil || result["revision"] == nil {
 		t.Fatalf("result keys = %v, want only envelope and revision", result)
+	}
+}
+
+func TestLibraryMetadataDisplayReadErrorsAndUpdatesRemainDesiredOnly(t *testing.T) {
+	base := &fakeLibraryMetadataRepository{current: persistence.LibraryMetadata{Revision: 3, Envelope: librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeArtist, Desired: map[string]librarymetadata.FieldValue{},
+	}}}
+	repository := &displayLibraryMetadataRepository{fakeLibraryMetadataRepository: base, displayErr: errors.New("display read failed")}
+	metadata := NewLibraryMetadataService(repository)
+	if _, err := metadata.ReadDisplay(context.Background(), librarymetadata.ScopeArtist, uuid.Nil, uuid.New()); err == nil {
+		t.Fatal("ReadDisplay succeeded despite display repository error")
+	}
+	if repository.displayReads != 1 {
+		t.Fatalf("display reads = %d, want 1", repository.displayReads)
+	}
+	if _, err := metadata.Update(context.Background(), librarymetadata.ScopeArtist, uuid.Nil, uuid.New(), 3, libraryMetadataChanges(t, `{"genre":{"state":"explicit_empty"}}`)); err != nil {
+		t.Fatalf("Update used failed display reader: %v", err)
+	}
+	if repository.displayReads != 1 {
+		t.Fatalf("Update called display reader: reads = %d", repository.displayReads)
 	}
 }

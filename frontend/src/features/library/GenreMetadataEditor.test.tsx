@@ -10,7 +10,10 @@ import {
 } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { LibraryMetadataResponse } from "../../api/generated/client.schemas";
+import type {
+  LibraryMetadataGetResponse,
+  ProviderGenreBaseline,
+} from "../../api/generated/client.schemas";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
 
@@ -29,17 +32,34 @@ vi.mock("../../api/generated/client", () => api);
 
 import { GenreMetadataEditor } from "./GenreMetadataEditor";
 
-const metadata = (revision = 4, genre?: unknown): LibraryMetadataResponse => ({
+const metadata = (
+  revision = 4,
+  genre?: unknown,
+  providerGenreBaseline?: ProviderGenreBaseline,
+): LibraryMetadataGetResponse => ({
   envelope: {
     desired: genre ? { genre: genre as never } : {},
     scope: "release",
     version: 1,
   },
+  ...(providerGenreBaseline === undefined
+    ? {}
+    : { provider_genre_baseline: providerGenreBaseline }),
   publication_applied: false,
   revision,
 });
 
 const indie = { id: "genre-id", source_name: "indie rock", name: "Indie Rock" };
+const providerGenreBaseline: ProviderGenreBaseline = {
+  genres: [
+    { id: "mb-genre-id", source_name: "alternative", name: "Alternative" },
+  ],
+  provider_code: "musicbrainz",
+  provider_source_id: "source-1",
+  provider_key: "release-key",
+  digest: "digest-1",
+  evidence: { authority: 1, fetch_order: 1 },
+};
 
 function catalogStatus(overrides: Record<string, unknown> = {}) {
   return {
@@ -279,7 +299,7 @@ it("allows removing a saved chip offline and saves the final removal as an expli
 it("does not let a stale owner read replace the current owner's metadata", async () => {
   let resolveFirst!: (value: {
     status: number;
-    data: LibraryMetadataResponse;
+    data: LibraryMetadataGetResponse;
   }) => void;
   api.getLibraryReleaseMetadata.mockImplementationOnce(
     () =>
@@ -319,7 +339,7 @@ it("deduplicates same-tick Save presses while a metadata write is pending", asyn
   });
   let resolveWrite!: (value: {
     status: number;
-    data: LibraryMetadataResponse;
+    data: LibraryMetadataGetResponse;
   }) => void;
   api.patchLibraryReleaseMetadata.mockImplementation(
     () =>
@@ -353,7 +373,7 @@ it("does not silently rebase a dirty draft when a refresh read finishes", async 
   });
   let resolveRefresh!: (value: {
     status: number;
-    data: LibraryMetadataResponse;
+    data: LibraryMetadataGetResponse;
   }) => void;
   api.getLibraryReleaseMetadata.mockImplementationOnce(
     () =>
@@ -408,6 +428,239 @@ it("patches artist genres through the artist metadata revision", async () => {
       changes: { genre: { state: "explicit_empty" } },
     }),
   );
+});
+
+it("shows provider genres separately from local overrides and never patches them", async () => {
+  api.getLibraryReleaseMetadata.mockResolvedValueOnce({
+    status: 200,
+    data: metadata(
+      7,
+      { state: "value", value: [indie] },
+      providerGenreBaseline,
+    ),
+  });
+  api.getLibraryReleaseMetadata.mockRejectedValueOnce(
+    new Error("refresh failed"),
+  );
+  api.patchLibraryReleaseMetadata.mockResolvedValue({
+    status: 200,
+    data: metadata(8, { state: "explicit_empty" }),
+  });
+
+  renderEditor({ owner: "release", ownerId: "genre-baseline" });
+  expect(await screen.findByText("Alternative")).toBeInTheDocument();
+  expect(screen.getByText("Indie Rock")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Очистить жанры" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+
+  await waitFor(() =>
+    expect(api.patchLibraryReleaseMetadata).toHaveBeenCalledWith(
+      "genre-baseline",
+      { expected_revision: 7, changes: { genre: { state: "explicit_empty" } } },
+    ),
+  );
+  await waitFor(() =>
+    expect(api.getLibraryReleaseMetadata).toHaveBeenCalledTimes(2),
+  );
+  expect(screen.getByText("Alternative")).toBeInTheDocument();
+  expect(screen.queryByText("Indie Rock")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("Данные о жанрах MusicBrainz недоступны."),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("distinguishes an unavailable provider baseline from an accepted empty list", async () => {
+  api.getLibraryReleaseMetadata
+    .mockResolvedValueOnce({ status: 200, data: metadata() })
+    .mockResolvedValueOnce({
+      status: 200,
+      data: metadata(4, undefined, { ...providerGenreBaseline, genres: [] }),
+    });
+
+  const view = renderEditor({
+    owner: "release",
+    ownerId: "baseline-availability",
+  });
+  expect(
+    await screen.findByText("Данные о жанрах MusicBrainz недоступны."),
+  ).toBeInTheDocument();
+  view.rerender(
+    <I18nProvider>
+      <GenreMetadataEditor
+        owner="release"
+        ownerId="baseline-availability"
+        refreshToken="provider-refreshed"
+      />
+    </I18nProvider>,
+  );
+  expect(
+    await screen.findByText("MusicBrainz вернул пустой список жанров."),
+  ).toBeInTheDocument();
+});
+
+it("reloads provider genres after refresh without discarding a same-revision draft", async () => {
+  api.getLibraryReleaseMetadata
+    .mockResolvedValueOnce({ status: 200, data: metadata(4) })
+    .mockResolvedValueOnce({
+      status: 200,
+      data: metadata(4, undefined, providerGenreBaseline),
+    });
+
+  const view = renderEditor({
+    owner: "release",
+    ownerId: "provider-refresh-draft",
+  });
+  await screen.findByText(/Переопределение жанров не задано/);
+  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Очистить жанры" }));
+  view.rerender(
+    <I18nProvider>
+      <GenreMetadataEditor
+        owner="release"
+        ownerId="provider-refresh-draft"
+        refreshToken="provider-refreshed"
+      />
+    </I18nProvider>,
+  );
+
+  expect(await screen.findByText("Alternative")).toBeInTheDocument();
+  expect(screen.getByText("Жанры явно очищены.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Сохранить" })).toBeEnabled();
+  expect(
+    screen.queryByText(/Метаданные изменились во время редактирования/),
+  ).not.toBeInTheDocument();
+});
+
+it("lets a committed PATCH supersede a stale external read", async () => {
+  type MetadataResult = {
+    status: number;
+    data: LibraryMetadataGetResponse;
+  };
+  let resolvePatch!: (value: MetadataResult) => void;
+  let resolveExternal!: (value: MetadataResult) => void;
+  const oldProviderBaseline: ProviderGenreBaseline = {
+    ...providerGenreBaseline,
+    genres: [{ id: "old-genre", source_name: "old", name: "Old Provider" }],
+  };
+  api.getLibraryReleaseMetadata
+    .mockResolvedValueOnce({ status: 200, data: metadata(4) })
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveExternal = resolve;
+        }),
+    )
+    .mockResolvedValueOnce({
+      status: 200,
+      data: metadata(5, undefined, providerGenreBaseline),
+    })
+    .mockResolvedValue({
+      status: 200,
+      data: metadata(5, undefined, providerGenreBaseline),
+    });
+  api.patchLibraryReleaseMetadata
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePatch = resolve;
+        }),
+    )
+    .mockResolvedValueOnce({
+      status: 200,
+      data: metadata(6, { state: "explicit_empty" }),
+    });
+
+  const view = renderEditor({
+    owner: "release",
+    ownerId: "stale-patch-read",
+  });
+  await screen.findByText(/Переопределение жанров не задано/);
+  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Очистить жанры" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() =>
+    expect(api.patchLibraryReleaseMetadata).toHaveBeenCalledTimes(1),
+  );
+
+  view.rerender(
+    <I18nProvider>
+      <GenreMetadataEditor
+        owner="release"
+        ownerId="stale-patch-read"
+        refreshToken="external-read"
+      />
+    </I18nProvider>,
+  );
+  await waitFor(() =>
+    expect(api.getLibraryReleaseMetadata).toHaveBeenCalledTimes(2),
+  );
+
+  await act(async () =>
+    resolvePatch({
+      status: 200,
+      data: metadata(5, { state: "explicit_empty" }),
+    }),
+  );
+  expect(await screen.findByText("Жанры явно очищены.")).toBeInTheDocument();
+
+  await act(async () =>
+    resolveExternal({
+      status: 200,
+      data: metadata(
+        6,
+        { state: "value", value: [indie] },
+        oldProviderBaseline,
+      ),
+    }),
+  );
+
+  expect(await screen.findByText("Alternative")).toBeInTheDocument();
+  expect(screen.queryByText("Old Provider")).not.toBeInTheDocument();
+  expect(screen.queryByText("Indie Rock")).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Изменить" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Очистить жанры" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() =>
+    expect(api.patchLibraryReleaseMetadata).toHaveBeenLastCalledWith(
+      "stale-patch-read",
+      { expected_revision: 5, changes: { genre: { state: "explicit_empty" } } },
+    ),
+  );
+});
+
+it("rereads the provider baseline when the saved callback resolves without changing props", async () => {
+  api.getLibraryArtistMetadata
+    .mockResolvedValueOnce({ status: 200, data: metadata(4) })
+    .mockResolvedValueOnce({
+      status: 200,
+      data: metadata(5, undefined, providerGenreBaseline),
+    });
+  api.patchLibraryArtistMetadata.mockResolvedValue({
+    status: 200,
+    data: metadata(5, { state: "explicit_empty" }),
+  });
+  const onSaved = vi.fn().mockResolvedValue(undefined);
+
+  renderEditor({
+    owner: "artist",
+    ownerId: "callback-baseline",
+    onSaved,
+  });
+  await screen.findByText(/Переопределение жанров не задано/);
+  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Очистить жанры" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+
+  expect(await screen.findByText("Alternative")).toBeInTheDocument();
+  expect(onSaved).toHaveBeenCalledTimes(1);
+  expect(
+    screen.queryByText("Не удалось сохранить жанры."),
+  ).not.toBeInTheDocument();
 });
 
 it("distinguishes an unloaded catalog from an empty search result", async () => {

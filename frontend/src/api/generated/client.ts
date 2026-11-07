@@ -51,6 +51,7 @@ import type {
   LibraryFirstPublicationAdmissionInputBody,
   LibraryFirstPublicationPreviewResponse,
   LibraryMetadataBody,
+  LibraryMetadataGetResponse,
   LibraryMetadataResponse,
   LibraryPositionPage,
   LibraryPrimaryArtistBody,
@@ -2217,7 +2218,7 @@ export function useGetLibraryArtist<TData = Awaited<ReturnType<typeof getLibrary
 
 
 export type getLibraryArtistMetadataResponse200 = {
-  data: LibraryMetadataResponse
+  data: LibraryMetadataGetResponse
   status: 200
 }
 
@@ -3243,7 +3244,7 @@ export function useGetLibraryRecordingSearch<TData = Awaited<ReturnType<typeof g
 
 
 export type getLibraryRecordingMetadataResponse200 = {
-  data: LibraryMetadataResponse
+  data: LibraryMetadataGetResponse
   status: 200
 }
 
@@ -4471,7 +4472,7 @@ export const useRetryLibraryReleaseCover = <TError = ErrorModel,
     }
 
 export type getLibraryReleaseMetadataResponse200 = {
-  data: LibraryMetadataResponse
+  data: LibraryMetadataGetResponse
   status: 200
 }
 

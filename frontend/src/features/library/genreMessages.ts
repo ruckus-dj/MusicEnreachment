@@ -44,6 +44,9 @@ export const genreMessages = {
     refreshConflict:
       "Metadata changed while you were editing. Your draft is preserved; cancel and reopen to load the latest revision.",
     readError: "Could not load saved genres.",
+    providerGenres: "MusicBrainz genres",
+    providerGenresUnavailable: "No MusicBrainz genre baseline is available.",
+    providerGenresEmpty: "MusicBrainz accepted an empty genre list.",
   },
   ru: {
     label: {
@@ -90,6 +93,9 @@ export const genreMessages = {
     refreshConflict:
       "Метаданные изменились во время редактирования. Черновик сохранён; отмените изменения и откройте редактор снова, чтобы загрузить новую версию.",
     readError: "Не удалось загрузить сохранённые жанры.",
+    providerGenres: "Жанры MusicBrainz",
+    providerGenresUnavailable: "Данные о жанрах MusicBrainz недоступны.",
+    providerGenresEmpty: "MusicBrainz вернул пустой список жанров.",
   },
 } as const;
 

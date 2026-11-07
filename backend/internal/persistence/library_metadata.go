@@ -22,6 +22,21 @@ type LibraryMetadata struct {
 	Revision int64
 }
 
+type ProviderGenreBaseline struct {
+	ProviderCode string
+	SourceID     uuid.UUID
+	ProviderKey  string
+	Authority    int
+	FetchOrder   int64
+	Genres       []librarymetadata.GenreReference
+	Digest       string
+}
+
+type LibraryMetadataDisplay struct {
+	Metadata              LibraryMetadata
+	ProviderGenreBaseline *ProviderGenreBaseline
+}
+
 // GenreCatalogItems returns the persisted MusicBrainz catalog used to validate
 // manual genre selections.
 func (repository *LibraryRepository) GenreCatalogItems(ctx context.Context) ([]librarymetadata.GenreReference, error) {
@@ -53,6 +68,10 @@ func metadataOwnerForScope(scope librarymetadata.Scope) (metadataOwner, bool) {
 }
 
 func (repository *LibraryRepository) ReadMetadata(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID) (LibraryMetadata, error) {
+	return readMetadata(ctx, repository.db, scope, releaseID, ownerID)
+}
+
+func readMetadata(ctx context.Context, db bun.IDB, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID) (LibraryMetadata, error) {
 	result := LibraryMetadata{Envelope: librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: scope, Desired: map[string]librarymetadata.FieldValue{}}}
 	var metadata []byte
 	var query string
@@ -71,7 +90,7 @@ func (repository *LibraryRepository) ReadMetadata(ctx context.Context, scope lib
 	default:
 		return LibraryMetadata{}, fmt.Errorf("read library metadata: unknown scope %q", scope)
 	}
-	if err := repository.db.NewRaw(query, args...).Scan(ctx, &metadata, &result.Revision); errors.Is(err, sql.ErrNoRows) {
+	if err := db.NewRaw(query, args...).Scan(ctx, &metadata, &result.Revision); errors.Is(err, sql.ErrNoRows) {
 		return LibraryMetadata{}, ErrLibraryMetadataNotFound
 	} else if err != nil {
 		return LibraryMetadata{}, fmt.Errorf("read library metadata: %w", err)
@@ -92,6 +111,30 @@ func (repository *LibraryRepository) ReadMetadata(ctx context.Context, scope lib
 			return LibraryMetadata{}, fmt.Errorf("read library metadata: %w", err)
 		}
 		result.Envelope = stored
+	}
+	return result, nil
+}
+
+// ReadMetadataDisplay captures desired metadata and optional provider genre
+// evidence from one repeatable-read snapshot. Desired-only ReadMetadata remains
+// the write path's source of truth.
+func (repository *LibraryRepository) ReadMetadataDisplay(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID) (LibraryMetadataDisplay, error) {
+	var result LibraryMetadataDisplay
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		metadata, err := readMetadata(ctx, tx, scope, releaseID, ownerID)
+		if err != nil {
+			return err
+		}
+		result.Metadata = metadata
+		baseline, err := readProviderGenreBaseline(ctx, tx, scope, ownerID)
+		if err != nil {
+			return err
+		}
+		result.ProviderGenreBaseline = baseline
+		return nil
+	})
+	if err != nil {
+		return LibraryMetadataDisplay{}, fmt.Errorf("read library metadata display: %w", err)
 	}
 	return result, nil
 }

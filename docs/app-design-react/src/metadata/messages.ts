@@ -306,6 +306,10 @@ const ui = createNamespace({
 		"genre.noMatches": "No matches found.",
 		"genre.loadError": "Could not load the genre catalog.",
 		"genre.available": "Available genres",
+		"genre.providerBaseline": "MusicBrainz genres",
+		"genre.providerBaselineUnavailable":
+			"No MusicBrainz genre baseline is available.",
+		"genre.providerBaselineEmpty": "MusicBrainz accepted an empty genre list.",
 		"state.loading": "Loading…",
 		"scope.release": "release",
 		"scope.recording": "recording",
@@ -418,6 +422,10 @@ const ui = createNamespace({
 		"genre.noMatches": "Совпадений не найдено.",
 		"genre.loadError": "Не удалось загрузить каталог жанров.",
 		"genre.available": "Доступные жанры",
+		"genre.providerBaseline": "Жанры MusicBrainz",
+		"genre.providerBaselineUnavailable":
+			"Данные о жанрах MusicBrainz недоступны.",
+		"genre.providerBaselineEmpty": "MusicBrainz вернул пустой список жанров.",
 		"state.loading": "Загрузка…",
 		"scope.release": "издания",
 		"scope.recording": "записи",

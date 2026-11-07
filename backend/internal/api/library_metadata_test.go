@@ -16,15 +16,27 @@ import (
 )
 
 type libraryMetadataRepositoryFixture struct {
-	read      persistence.LibraryMetadata
-	readErr   error
-	updateErr error
-	updated   librarymetadata.Envelope
-	genres    []librarymetadata.GenreReference
+	read       persistence.LibraryMetadata
+	readErr    error
+	updateErr  error
+	updated    librarymetadata.Envelope
+	genres     []librarymetadata.GenreReference
+	display    *persistence.LibraryMetadataDisplay
+	displayErr error
 }
 
 func (fixture *libraryMetadataRepositoryFixture) ReadMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID) (persistence.LibraryMetadata, error) {
 	return fixture.read, fixture.readErr
+}
+
+func (fixture *libraryMetadataRepositoryFixture) ReadMetadataDisplay(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID) (persistence.LibraryMetadataDisplay, error) {
+	if fixture.displayErr != nil {
+		return persistence.LibraryMetadataDisplay{}, fixture.displayErr
+	}
+	if fixture.display != nil {
+		return *fixture.display, nil
+	}
+	return persistence.LibraryMetadataDisplay{Metadata: fixture.read}, fixture.readErr
 }
 
 func (fixture *libraryMetadataRepositoryFixture) UpdateMetadata(_ context.Context, _ librarymetadata.Scope, _, _ uuid.UUID, expected int64, envelope librarymetadata.Envelope) (persistence.LibraryMetadata, error) {
@@ -121,6 +133,25 @@ func TestLibraryArtistMetadataHTTPUsesOptimisticGenreEnvelope(t *testing.T) {
 	}
 	if repository.updated.Scope != librarymetadata.ScopeArtist || repository.updated.Desired["genre"].State != librarymetadata.StateValue {
 		t.Fatalf("persisted artist envelope = %#v", repository.updated)
+	}
+}
+
+func TestLibraryMetadataProviderGenreBaselineIsGETOnly(t *testing.T) {
+	artistID := uuid.New()
+	repository := &libraryMetadataRepositoryFixture{read: libraryMetadataSeed(librarymetadata.ScopeArtist)}
+	repository.display = &persistence.LibraryMetadataDisplay{Metadata: repository.read, ProviderGenreBaseline: &persistence.ProviderGenreBaseline{
+		ProviderCode: "musicbrainz", SourceID: uuid.New(), ProviderKey: "artist-key", Authority: 2, FetchOrder: 4,
+		Genres: []librarymetadata.GenreReference{{ID: "11111111-1111-4111-8111-111111111111", SourceName: "rock", Name: "Rock"}}, Digest: "baseline-digest",
+	}}
+	handler := HandlerWithDependencies(Dependencies{LibraryMetadata: service.NewLibraryMetadataService(repository)})
+	path := "/library/artists/" + artistID.String() + "/metadata"
+	response := libraryMetadataRequest(t, handler, http.MethodGet, path, "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"provider_genre_baseline"`) {
+		t.Fatalf("GET response = %d %s; expected provider baseline", response.Code, response.Body)
+	}
+	response = libraryMetadataRequest(t, handler, http.MethodPatch, path, `{"expected_revision":7,"changes":{"genre":{"state":"explicit_empty"}}}`)
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"provider_genre_baseline"`) {
+		t.Fatalf("PATCH response = %d %s; provider baseline must be GET-only", response.Code, response.Body)
 	}
 }
 

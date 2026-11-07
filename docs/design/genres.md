@@ -97,6 +97,16 @@ gate self-hosted экземпляру.
 на сервере до замораживания тегов publication attempt; worker не перечитывает
 каталог для переименования уже подтверждённых тегов.
 
+Readback принятых provider genres отделён от desired envelope: поле
+`provider_genre_baseline` в metadata GET artist/release/recording представляет
+только жанры той же связанной сущности текущего MusicBrainz source. Оно не
+использует файловый fallback и не заполняет локальный draft. Отсутствие поля
+означает отсутствие пригодного принятого значения; присутствующий пустой
+`genres` означает принятое пустое provider-значение, не ручное очищение.
+Evidence и digest относятся к этому readback, не служат PATCH precondition
+или разрешением публикации. Mutation workflow сохраняет прежний desired-only
+read и optimistic metadata revision.
+
 ## Внешний контракт
 
 - [MusicBrainz API](https://musicbrainz.org/doc/MusicBrainz_API): полный список

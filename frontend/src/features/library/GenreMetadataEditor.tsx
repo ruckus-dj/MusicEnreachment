@@ -14,6 +14,7 @@ import type {
   GenreCatalogItem,
   GenreCatalogStatus,
   LibraryMetadataResponse,
+  ProviderGenreBaseline,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -108,12 +109,14 @@ function GenreMetadataEditorSession({
   const metadataReadGeneration = useRef(0);
   const searchGeneration = useRef(0);
   const searchAttemptRef = useRef(0);
-  const draftGeneration = useRef(0);
   const metadataController = useRef<AbortController | undefined>(undefined);
   const searchController = useRef<AbortController | undefined>(undefined);
   const statusController = useRef<AbortController | undefined>(undefined);
   const previousRefreshToken = useRef(refreshToken);
   const [metadata, setMetadata] = useState<LibraryMetadataResponse>();
+  const metadataRevision = useRef<number | undefined>(undefined);
+  const [providerGenreBaseline, setProviderGenreBaseline] =
+    useState<ProviderGenreBaseline>();
   const [catalogStatus, setCatalogStatus] = useState<GenreCatalogStatus>();
   const [catalogStatusLoading, setCatalogStatusLoading] = useState(false);
   const [catalogStatusError, setCatalogStatusError] = useState("");
@@ -140,67 +143,73 @@ function GenreMetadataEditorSession({
     [],
   );
 
-  const loadMetadata = useCallback(async () => {
-    const capturedIdentity = identity;
-    const generation = ++metadataReadGeneration.current;
-    const capturedDraftGeneration = draftGeneration.current;
-    metadataController.current?.abort();
-    const controller = new AbortController();
-    metadataController.current = controller;
-    setLoadingSaved(true);
-    try {
-      const response =
-        owner === "artist"
-          ? await getLibraryArtistMetadata(ownerId, {
-              cache: "no-store",
-              signal: controller.signal,
-            })
-          : owner === "release"
-            ? await getLibraryReleaseMetadata(ownerId, {
+  const loadMetadata = useCallback(
+    async (baselineOnly = false) => {
+      const capturedIdentity = identity;
+      const generation = ++metadataReadGeneration.current;
+      metadataController.current?.abort();
+      const controller = new AbortController();
+      metadataController.current = controller;
+      setLoadingSaved(true);
+      try {
+        const response =
+          owner === "artist"
+            ? await getLibraryArtistMetadata(ownerId, {
                 cache: "no-store",
                 signal: controller.signal,
               })
-            : await getLibraryRecordingMetadata(ownerId, {
-                cache: "no-store",
-                signal: controller.signal,
-              });
-      if (
-        !isCurrent(capturedIdentity) ||
-        generation !== metadataReadGeneration.current
-      )
-        return;
-      if (response.status !== 200) throw apiResponseError(response);
-      if (
-        dirtyRef.current &&
-        draftGeneration.current !== capturedDraftGeneration
-      ) {
-        setRefreshConflict(true);
-        return;
+            : owner === "release"
+              ? await getLibraryReleaseMetadata(ownerId, {
+                  cache: "no-store",
+                  signal: controller.signal,
+                })
+              : await getLibraryRecordingMetadata(ownerId, {
+                  cache: "no-store",
+                  signal: controller.signal,
+                });
+        if (
+          !isCurrent(capturedIdentity) ||
+          generation !== metadataReadGeneration.current
+        )
+          return;
+        if (response.status !== 200) throw apiResponseError(response);
+        setProviderGenreBaseline(response.data.provider_genre_baseline);
+        if (baselineOnly) return;
+        if (
+          dirtyRef.current &&
+          metadataRevision.current !== response.data.revision
+        ) {
+          setRefreshConflict(true);
+          return;
+        }
+        const genres = savedGenres(response.data);
+        metadataRevision.current = response.data.revision;
+        setMetadata(response.data);
+        setSelected(genres.value);
+        setSavedState(genres.state);
+        if (!dirtyRef.current) {
+          setDraft(genres.value);
+          setDraftState(genres.state);
+        }
+        setReadError("");
+      } catch (reason) {
+        if (
+          !baselineOnly &&
+          !controller.signal.aborted &&
+          isCurrent(capturedIdentity) &&
+          generation === metadataReadGeneration.current
+        )
+          setReadError(errorMessage(reason, ""));
+      } finally {
+        if (
+          isCurrent(capturedIdentity) &&
+          generation === metadataReadGeneration.current
+        )
+          setLoadingSaved(false);
       }
-      const genres = savedGenres(response.data);
-      setMetadata(response.data);
-      setSelected(genres.value);
-      setSavedState(genres.state);
-      if (!dirtyRef.current) {
-        setDraft(genres.value);
-        setDraftState(genres.state);
-      }
-      setReadError("");
-    } catch (reason) {
-      if (
-        !controller.signal.aborted &&
-        isCurrent(capturedIdentity) &&
-        generation === metadataReadGeneration.current
-      )
-        setReadError(errorMessage(reason, ""));
-    } finally {
-      if (
-        isCurrent(capturedIdentity) &&
-        generation === metadataReadGeneration.current
-      )
-        setLoadingSaved(false);
-    }
-  }, [identity, isCurrent, owner, ownerId]);
+    },
+    [identity, isCurrent, owner, ownerId],
+  );
 
   useEffect(() => {
     mounted.current = true;
@@ -218,10 +227,6 @@ function GenreMetadataEditorSession({
   useEffect(() => {
     if (Object.is(previousRefreshToken.current, refreshToken)) return;
     previousRefreshToken.current = refreshToken;
-    if (dirtyRef.current) {
-      setRefreshConflict(true);
-      return;
-    }
     void loadMetadata();
   }, [loadMetadata, refreshToken]);
 
@@ -306,7 +311,6 @@ function GenreMetadataEditorSession({
   }
 
   function markDraftDirty() {
-    draftGeneration.current += 1;
     dirtyRef.current = true;
     setDraftDirty(true);
   }
@@ -358,7 +362,14 @@ function GenreMetadataEditorSession({
             : await patchLibraryRecordingMetadata(ownerId, body);
       if (!isCurrent(capturedIdentity)) return;
       if (response.status !== 200) throw apiResponseError(response);
+      // A read captured before this commit may still resolve after it. Abort it
+      // and advance the generation before installing the committed revision so
+      // the stale response cannot overwrite revision, draft, or baseline.
+      metadataController.current?.abort();
+      metadataReadGeneration.current += 1;
+      setLoadingSaved(false);
       const genres = savedGenres(response.data);
+      metadataRevision.current = response.data.revision;
       setMetadata(response.data);
       setSelected(genres.value);
       setSavedState(genres.state);
@@ -368,9 +379,14 @@ function GenreMetadataEditorSession({
       setDraftDirty(false);
       setRefreshConflict(false);
       setEditing(false);
-      void Promise.resolve(onSaved?.(owner, ownerId, response.data)).catch(
-        () => undefined,
-      );
+      void Promise.resolve()
+        .then(() => onSaved?.(owner, ownerId, response.data))
+        .catch(() => undefined);
+      // PATCH responses intentionally contain only desired metadata, so always
+      // reload the baseline independently. The parent callback may also trigger
+      // a full read; generation/abort keeps the latest read authoritative, and
+      // neither follow-up can turn the committed save into a reported failure.
+      void loadMetadata(true);
     } catch (reason) {
       if (isCurrent(capturedIdentity)) setSaveError(errorMessage(reason, ""));
     } finally {
@@ -483,6 +499,34 @@ function GenreMetadataEditorSession({
           </AppButton>
         </div>
       </div>
+      <section
+        className="grid gap-1 border-t border-[var(--line)] pt-2 text-sm"
+        aria-label={copy.providerGenres}
+      >
+        <h4 className="m-0 font-medium">{copy.providerGenres}</h4>
+        {providerGenreBaseline ? (
+          (providerGenreBaseline.genres ?? []).length ? (
+            <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+              {(providerGenreBaseline.genres ?? []).map((genre) => (
+                <li
+                  className="rounded-full border border-[var(--line)] px-2 py-0.5"
+                  key={genre.id}
+                >
+                  {genre.name}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="m-0 text-[var(--muted)]">
+              {copy.providerGenresEmpty}
+            </p>
+          )
+        ) : (
+          <p className="m-0 text-[var(--muted)]">
+            {copy.providerGenresUnavailable}
+          </p>
+        )}
+      </section>
       {loadingSaved ? (
         <p role="status" className="m-0 text-sm text-[var(--muted)]">
           {copy.loading}

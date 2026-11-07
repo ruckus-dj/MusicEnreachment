@@ -317,6 +317,9 @@ export function LibraryReleaseScreen({
           : current,
       );
       if (snapshot.state !== "succeeded") return;
+      // A provider refresh can change the read-only genre baseline without
+      // changing local metadata revision. Ask the editor to reload its GET data.
+      setGenreContextGeneration((generation) => generation + 1);
       void (async () => {
         try {
           const detail = await refreshReleaseDetail(requestScope);

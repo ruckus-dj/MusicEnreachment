@@ -252,6 +252,12 @@ export interface GenreCatalogStatus {
   updated_at: string | null;
 }
 
+export interface GenreReference {
+  id: string;
+  name: string;
+  source_name: string;
+}
+
 export type IncomingFileResponseTags = {[key: string]: string[] | null};
 
 export interface IncomingLocationResponse {
@@ -524,6 +530,30 @@ export interface LibraryMetadataBody {
   readonly $schema?: string;
   changes: LibraryMetadataBodyChanges;
   expected_revision: number;
+}
+
+export interface ProviderGenreEvidence {
+  authority: number;
+  fetch_order: number;
+}
+
+export interface ProviderGenreBaseline {
+  digest: string;
+  evidence: ProviderGenreEvidence;
+  /** @nullable */
+  genres: GenreReference[] | null;
+  provider_code: string;
+  provider_key: string;
+  provider_source_id: string;
+}
+
+export interface LibraryMetadataGetResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  envelope: Envelope;
+  provider_genre_baseline?: ProviderGenreBaseline;
+  publication_applied: boolean;
+  revision: number;
 }
 
 export interface LibraryMetadataResponse {

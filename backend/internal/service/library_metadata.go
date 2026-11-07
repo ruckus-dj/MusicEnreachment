@@ -21,6 +21,25 @@ type LibraryMetadataResult struct {
 	Revision int64                    `json:"revision"`
 }
 
+type ProviderGenreBaseline struct {
+	ProviderCode     string                           `json:"provider_code"`
+	ProviderSourceID uuid.UUID                        `json:"provider_source_id"`
+	ProviderKey      string                           `json:"provider_key"`
+	Evidence         ProviderGenreEvidence            `json:"evidence"`
+	Genres           []librarymetadata.GenreReference `json:"genres"`
+	Digest           string                           `json:"digest"`
+}
+
+type ProviderGenreEvidence struct {
+	Authority  int   `json:"authority"`
+	FetchOrder int64 `json:"fetch_order"`
+}
+
+type LibraryMetadataDisplayResult struct {
+	Metadata              LibraryMetadataResult
+	ProviderGenreBaseline *ProviderGenreBaseline
+}
+
 var (
 	ErrLibraryMetadataInvalidRequest = errors.New("library metadata request is invalid")
 	ErrLibraryMetadataConflict       = errors.New("library metadata revision conflict")
@@ -30,6 +49,10 @@ var (
 type libraryMetadataRepository interface {
 	ReadMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID) (persistence.LibraryMetadata, error)
 	UpdateMetadata(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID, int64, librarymetadata.Envelope) (persistence.LibraryMetadata, error)
+}
+
+type libraryMetadataDisplayRepository interface {
+	ReadMetadataDisplay(context.Context, librarymetadata.Scope, uuid.UUID, uuid.UUID) (persistence.LibraryMetadataDisplay, error)
 }
 
 type libraryMetadataGenreCatalog interface {
@@ -67,6 +90,29 @@ func (service *LibraryMetadataService) Read(ctx context.Context, scope libraryme
 		return LibraryMetadataResult{}, fmt.Errorf("read library metadata: %w", err)
 	}
 	return LibraryMetadataResult{Envelope: result.Envelope, Revision: result.Revision}, nil
+}
+
+func (service *LibraryMetadataService) ReadDisplay(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID) (LibraryMetadataDisplayResult, error) {
+	if service == nil || service.repository == nil {
+		return LibraryMetadataDisplayResult{}, errors.New("library metadata is unavailable")
+	}
+	displayRepository, ok := service.repository.(libraryMetadataDisplayRepository)
+	if !ok {
+		metadata, err := service.Read(ctx, scope, releaseID, ownerID)
+		return LibraryMetadataDisplayResult{Metadata: metadata}, err
+	}
+	display, err := displayRepository.ReadMetadataDisplay(ctx, scope, releaseID, ownerID)
+	if errors.Is(err, persistence.ErrLibraryMetadataNotFound) {
+		return LibraryMetadataDisplayResult{}, fmt.Errorf("read library metadata: %w", ErrLibraryMetadataNotFound)
+	}
+	if err != nil {
+		return LibraryMetadataDisplayResult{}, fmt.Errorf("read library metadata display: %w", err)
+	}
+	result := LibraryMetadataDisplayResult{Metadata: LibraryMetadataResult{Envelope: display.Metadata.Envelope, Revision: display.Metadata.Revision}}
+	if baseline := display.ProviderGenreBaseline; baseline != nil {
+		result.ProviderGenreBaseline = &ProviderGenreBaseline{ProviderCode: baseline.ProviderCode, ProviderSourceID: baseline.SourceID, ProviderKey: baseline.ProviderKey, Evidence: ProviderGenreEvidence{Authority: baseline.Authority, FetchOrder: baseline.FetchOrder}, Genres: append([]librarymetadata.GenreReference{}, baseline.Genres...), Digest: baseline.Digest}
+	}
+	return result, nil
 }
 
 func (service *LibraryMetadataService) Update(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, changes map[string]json.RawMessage) (LibraryMetadataResult, error) {
