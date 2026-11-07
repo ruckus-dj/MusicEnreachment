@@ -28,6 +28,17 @@ func planExactTargetPublicationNamespace(ctx context.Context, outputRoot string,
 }
 
 func planPublicationNamespace(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim, exactTarget bool) (_ []persistence.PublicationNamespaceNode, resultErr error) {
+	return planPublicationNamespaceWithCurrentExemption(ctx, outputRoot, positionID, candidates, claims, exactTarget, false, "", nil)
+}
+
+func planCurrentComparisonNamespace(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim, currentPath string, currentClaimID *uuid.UUID) (_ []persistence.PublicationNamespaceNode, resultErr error) {
+	return planPublicationNamespaceWithCurrentExemption(ctx, outputRoot, positionID, candidates, claims, true, true, currentPath, currentClaimID)
+}
+
+// comparison mode never falls back to the legacy same-position exemption: only
+// an exact CURRENT claim identity may be exempted. Without that authority the
+// rendered target is checked against collisions like any other exact target.
+func planPublicationNamespaceWithCurrentExemption(ctx context.Context, outputRoot string, positionID uuid.UUID, candidates []publication.NamespaceCandidate, claims []persistence.PublicationNamespaceClaim, exactTarget, comparison bool, currentPath string, currentClaimID *uuid.UUID) (_ []persistence.PublicationNamespaceNode, resultErr error) {
 	candidates = append([]publication.NamespaceCandidate(nil), candidates...)
 	root, err := sourcefs.NewOutputOpener().OpenRoot(ctx, outputRoot)
 	if err != nil {
@@ -128,7 +139,11 @@ func planPublicationNamespace(ctx context.Context, outputRoot string, positionID
 
 	nativeClaims := make([]publication.NamespaceClaim, 0, len(claims))
 	abandonedClaims := make(map[string]bool, len(claims))
+	currentCanonicalKey := ""
 	for _, claim := range claims {
+		if currentClaimID != nil && claim.ID == *currentClaimID && claim.RelativePath == currentPath && claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && !claim.Abandoned {
+			currentCanonicalKey = claim.CanonicalKey
+		}
 		kind := claim.NodeKind
 		if kind == "dir" {
 			kind = "directory"
@@ -210,7 +225,12 @@ func planPublicationNamespace(ctx context.Context, outputRoot string, positionID
 		ownClaim := false
 		for _, claim := range nativeClaims {
 			if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && !abandonedClaims[claim.CanonicalKey] && canonicalNamespaceParent(claim.CanonicalKey) == parentKey {
-				if !exactTarget || path.Base(claim.RelativePath) == base {
+				if currentClaimID != nil {
+					if currentCanonicalKey != "" && claim.CanonicalKey == currentCanonicalKey && claim.RelativePath == currentPath && candidate.RelativePath == currentPath {
+						ownClaim = true
+						break
+					}
+				} else if !comparison && (!exactTarget || path.Base(claim.RelativePath) == base) {
 					ownClaim = true
 					break
 				}
@@ -226,6 +246,9 @@ func planPublicationNamespace(ctx context.Context, outputRoot string, positionID
 					return false, compareErr
 				}
 				if equal {
+					if currentClaimID != nil && candidate.RelativePath == currentPath && path.Join(parentPath, name) == currentPath && entry.Name == path.Base(currentPath) {
+						continue
+					}
 					if exactTarget && ownClaim && entry.Name == base && name == base {
 						continue
 					}
@@ -236,7 +259,10 @@ func planPublicationNamespace(ctx context.Context, outputRoot string, positionID
 				if canonicalNamespaceParent(claim.CanonicalKey) != parentKey {
 					continue
 				}
-				if claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && !abandonedClaims[claim.CanonicalKey] && (!exactTarget || path.Base(claim.RelativePath) == name) {
+				if currentCanonicalKey != "" && claim.CanonicalKey == currentCanonicalKey && claim.RelativePath == currentPath && candidate.RelativePath == currentPath && name == path.Base(currentPath) {
+					continue
+				}
+				if currentClaimID == nil && !comparison && claim.NodeKind == "file" && claim.OwnerPositionID != nil && *claim.OwnerPositionID == positionID && !abandonedClaims[claim.CanonicalKey] && (!exactTarget || path.Base(claim.RelativePath) == name) {
 					continue
 				}
 				claimName := path.Base(claim.RelativePath)

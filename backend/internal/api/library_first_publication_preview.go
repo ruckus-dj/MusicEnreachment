@@ -17,6 +17,7 @@ type LibraryFirstPublicationPreviewInput struct {
 	LocationID     string `query:"location_id"`
 	MediaVariantID string `query:"media_variant_id"`
 	StreamIndex    string `query:"stream_index"`
+	Mode           string `query:"mode"`
 }
 
 type LibraryFirstPublicationPreviewOutput struct {
@@ -27,20 +28,47 @@ type LibraryFirstPublicationPreviewOutput struct {
 // intended for the API. In particular it does not expose the service's frozen
 // publication inputs or installation/path details.
 type LibraryFirstPublicationPreviewResponse struct {
-	ReleaseID              uuid.UUID                         `json:"release_id"`
-	PositionID             uuid.UUID                         `json:"position_id"`
-	Epoch                  uuid.UUID                         `json:"epoch"`
-	ContextDigest          string                            `json:"context_digest"`
-	SelectedSource         *firstPublicationPreviewSource    `json:"selected_source,omitempty"`
-	SourceCandidates       []firstPublicationPreviewSource   `json:"source_candidates"`
-	Transform              *firstPublicationPreviewTransform `json:"transform,omitempty"`
-	PathComponents         []string                          `json:"path_components,omitempty"`
-	ResolvedPathComponents []string                          `json:"resolved_path_components,omitempty"`
-	DesiredTags            map[string][]string               `json:"desired_tags"`
-	MetadataRevisions      map[string]int64                  `json:"metadata_revisions"`
-	Warnings               []string                          `json:"warnings"`
-	Blockers               []string                          `json:"blockers"`
-	NativeStatus           string                            `json:"native_status"`
+	ReleaseID              uuid.UUID                          `json:"release_id"`
+	PositionID             uuid.UUID                          `json:"position_id"`
+	Epoch                  uuid.UUID                          `json:"epoch"`
+	ContextDigest          string                             `json:"context_digest"`
+	SelectedSource         *firstPublicationPreviewSource     `json:"selected_source,omitempty"`
+	SourceCandidates       []firstPublicationPreviewSource    `json:"source_candidates"`
+	Transform              *firstPublicationPreviewTransform  `json:"transform,omitempty"`
+	PathComponents         []string                           `json:"path_components,omitempty"`
+	ResolvedPathComponents []string                           `json:"resolved_path_components,omitempty"`
+	DesiredTags            map[string][]string                `json:"desired_tags"`
+	MetadataRevisions      map[string]int64                   `json:"metadata_revisions"`
+	Warnings               []string                           `json:"warnings"`
+	Blockers               []string                           `json:"blockers"`
+	NativeStatus           string                             `json:"native_status"`
+	Mode                   string                             `json:"mode"`
+	CurrentComparison      *firstPublicationCurrentComparison `json:"current_comparison,omitempty"`
+}
+
+type libraryPublicationPreviewModeService interface {
+	PreviewFirstSelectedMode(context.Context, uuid.UUID, uuid.UUID, *service.FirstPublicationSourceChoice, string) (service.FirstPublicationPreview, error)
+}
+
+type firstPublicationCurrentComparison struct {
+	Status             string                          `json:"status"`
+	Reason             string                          `json:"reason"`
+	Generation         uuid.UUID                       `json:"generation"`
+	TagDifferences     []firstPublicationTagDifference `json:"tag_differences"`
+	RenderedComponents []string                        `json:"rendered_components"`
+	ResolvedComponents []string                        `json:"resolved_components"`
+	CurrentComponents  []string                        `json:"current_components"`
+	RenderedMatches    bool                            `json:"rendered_matches"`
+	ResolvedMatches    bool                            `json:"resolved_matches"`
+	AudioStatus        string                          `json:"audio_status"`
+}
+
+type firstPublicationTagDifference struct {
+	Key            string   `json:"key"`
+	Desired        []string `json:"desired"`
+	DesiredPresent bool     `json:"desired_present"`
+	Current        []string `json:"current"`
+	CurrentPresent bool     `json:"current_present"`
 }
 
 type firstPublicationPreviewTransform struct {
@@ -80,9 +108,20 @@ func registerLibraryFirstPublicationPreview(api huma.API, dependencies Dependenc
 		if choiceErr != nil {
 			return nil, huma.Error400BadRequest("source selection requires location_id, media_variant_id, and stream_index")
 		}
+		mode := input.Mode
+		if mode == "" {
+			mode = "ordinary"
+		}
+		if mode != "ordinary" && mode != "forced" {
+			return nil, huma.Error400BadRequest("mode must be ordinary or forced")
+		}
 		var preview service.FirstPublicationPreview
 		var err error
-		if choice != nil {
+		if modeService, ok := dependencies.LibraryPublications.(libraryPublicationPreviewModeService); ok {
+			preview, err = modeService.PreviewFirstSelectedMode(ctx, input.ReleaseID, input.PositionID, choice, mode)
+		} else if mode == "forced" {
+			return nil, huma.Error503ServiceUnavailable("CURRENT comparison preview is unavailable")
+		} else if choice != nil {
 			selectedService, ok := dependencies.LibraryPublications.(libraryPublicationSourceSelectionService)
 			if !ok {
 				return nil, huma.Error503ServiceUnavailable("explicit source selection is unavailable")
@@ -145,6 +184,25 @@ func libraryFirstPublicationPreviewResponse(preview service.FirstPublicationPrev
 		DesiredTags:            clonePreviewTags(preview.DesiredTags.Tags),
 		MetadataRevisions:      preview.MetadataRevisions, Warnings: append([]string{}, preview.Warnings...),
 		Blockers: append([]string{}, preview.Blockers...), NativeStatus: preview.NativeStatus,
+		Mode: preview.Mode,
+	}
+	if preview.CurrentComparison != nil {
+		comparison := preview.CurrentComparison
+		response.CurrentComparison = &firstPublicationCurrentComparison{
+			Status: comparison.Status, Reason: comparison.Reason, Generation: comparison.Generation,
+			RenderedComponents: append([]string(nil), comparison.RenderedComponents...),
+			ResolvedComponents: append([]string(nil), comparison.ResolvedComponents...),
+			CurrentComponents:  append([]string(nil), comparison.CurrentComponents...),
+			RenderedMatches:    comparison.RenderedMatches, ResolvedMatches: comparison.ResolvedMatches,
+			AudioStatus: comparison.AudioStatus,
+		}
+		response.CurrentComparison.TagDifferences = make([]firstPublicationTagDifference, 0, len(comparison.TagDifferences))
+		for _, difference := range comparison.TagDifferences {
+			response.CurrentComparison.TagDifferences = append(response.CurrentComparison.TagDifferences, firstPublicationTagDifference{
+				Key: difference.Key, Desired: clonePreviewTagValues(difference.Desired), DesiredPresent: difference.DesiredPresent,
+				Current: clonePreviewTagValues(difference.Current), CurrentPresent: difference.CurrentPresent,
+			})
+		}
 	}
 	response.SourceCandidates = make([]firstPublicationPreviewSource, 0, len(preview.SourceCandidates))
 	for _, candidate := range preview.SourceCandidates {
@@ -176,6 +234,13 @@ func libraryFirstPublicationPreviewResponse(preview service.FirstPublicationPrev
 		}
 	}
 	return response
+}
+
+func clonePreviewTagValues(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append(make([]string, 0, len(values)), values...)
 }
 
 func clonePreviewTags(tags map[string][]string) map[string][]string {

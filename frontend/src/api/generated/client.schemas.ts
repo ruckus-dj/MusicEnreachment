@@ -201,6 +201,33 @@ export interface ErrorModel {
   type?: string;
 }
 
+export interface FirstPublicationTagDifference {
+  /** @nullable */
+  current: string[] | null;
+  current_present: boolean;
+  /** @nullable */
+  desired: string[] | null;
+  desired_present: boolean;
+  key: string;
+}
+
+export interface FirstPublicationCurrentComparison {
+  audio_status: string;
+  /** @nullable */
+  current_components: string[] | null;
+  generation: string;
+  reason: string;
+  /** @nullable */
+  rendered_components: string[] | null;
+  rendered_matches: boolean;
+  /** @nullable */
+  resolved_components: string[] | null;
+  resolved_matches: boolean;
+  status: string;
+  /** @nullable */
+  tag_differences: FirstPublicationTagDifference[] | null;
+}
+
 export interface FirstPublicationPreviewSource {
   audio_stream_count: number;
   channels?: number;
@@ -505,9 +532,11 @@ export interface LibraryFirstPublicationPreviewResponse {
   /** @nullable */
   blockers: string[] | null;
   context_digest: string;
+  current_comparison?: FirstPublicationCurrentComparison;
   desired_tags: LibraryFirstPublicationPreviewResponseDesiredTags;
   epoch: string;
   metadata_revisions: LibraryFirstPublicationPreviewResponseMetadataRevisions;
+  mode: string;
   native_status: string;
   /** @nullable */
   path_components?: string[] | null;
@@ -2096,6 +2125,7 @@ export type GetLibraryFirstPublicationPreviewParams = {
 location_id?: string;
 media_variant_id?: string;
 stream_index?: string;
+mode?: string;
 };
 
 export type ListLibrarySourceVariantsParams = {

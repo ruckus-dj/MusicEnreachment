@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -43,7 +45,35 @@ type FirstPublicationPreview struct {
 	Warnings               []string                                 `json:"warnings"`
 	Blockers               []string                                 `json:"blockers"`
 	NativeStatus           string                                   `json:"native_status"`
+	Mode                   string                                   `json:"mode"`
+	CurrentComparison      *FirstPublicationCurrentComparison       `json:"current_comparison,omitempty"`
 }
+
+type FirstPublicationCurrentComparison struct {
+	Status             string                          `json:"status"`
+	Reason             string                          `json:"reason"`
+	Generation         uuid.UUID                       `json:"generation"`
+	TagDifferences     []FirstPublicationTagDifference `json:"tag_differences"`
+	RenderedComponents []string                        `json:"rendered_components"`
+	ResolvedComponents []string                        `json:"resolved_components"`
+	CurrentComponents  []string                        `json:"current_components"`
+	RenderedMatches    bool                            `json:"rendered_matches"`
+	ResolvedMatches    bool                            `json:"resolved_matches"`
+	AudioStatus        string                          `json:"audio_status"`
+}
+
+type FirstPublicationTagDifference struct {
+	Key            string   `json:"key"`
+	Desired        []string `json:"desired"`
+	DesiredPresent bool     `json:"desired_present"`
+	Current        []string `json:"current"`
+	CurrentPresent bool     `json:"current_present"`
+}
+
+const (
+	firstPublicationPreviewModeOrdinary = "ordinary"
+	firstPublicationPreviewModeForced   = "forced"
+)
 
 type FirstPublicationPreviewSource struct {
 	RootID                          uuid.UUID                       `json:"root_id"`
@@ -77,6 +107,13 @@ func (service *LibraryPublications) PreviewFirst(ctx context.Context, releaseID,
 }
 
 func (service *LibraryPublications) PreviewFirstSelected(ctx context.Context, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice) (FirstPublicationPreview, error) {
+	return service.PreviewFirstSelectedMode(ctx, releaseID, positionID, choice, firstPublicationPreviewModeOrdinary)
+}
+
+func (service *LibraryPublications) PreviewFirstSelectedMode(ctx context.Context, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string) (FirstPublicationPreview, error) {
+	if mode != firstPublicationPreviewModeOrdinary && mode != firstPublicationPreviewModeForced {
+		return FirstPublicationPreview{}, errors.New("first publication preview mode is invalid")
+	}
 	if service == nil || service.repository == nil || releaseID == uuid.Nil || positionID == uuid.Nil {
 		return FirstPublicationPreview{}, errors.New("first publication preview is unavailable")
 	}
@@ -100,19 +137,31 @@ func (service *LibraryPublications) PreviewFirstSelected(ctx context.Context, re
 		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
 	}
 	selectedTools, _ := service.selectedFFmpegPairForSettings(ctx, runtimeSettings)
-	preview, err := buildFirstPublicationPreviewSelected(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice)
-	if err != nil || len(preview.Blockers) != 0 {
+	preview, err := buildFirstPublicationPreviewSelectedMode(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode)
+	if err != nil {
 		return preview, err
 	}
-	if service.resolveNamespace == nil {
-		return preview, nil
-	}
-	if _, err := service.resolveNamespace(ctx, contextSnapshot, runtimeSettings.OutputDirectory, runtimeSettings.PublicationPathTemplate, &preview); err != nil {
-		if ctx.Err() != nil {
-			return FirstPublicationPreview{}, ctx.Err()
+	current := contextSnapshot.Library.Current
+	canResolveNamespace := len(preview.Blockers) == 0 || current != nil && len(preview.PathComponents) != 0
+	if canResolveNamespace && service.resolveNamespace != nil && current != nil {
+		if _, err := finalizeFirstPublicationCurrentComparisonNamespace(ctx, contextSnapshot, runtimeSettings.OutputDirectory, runtimeSettings.PublicationPathTemplate, &preview); err != nil {
+			if ctx.Err() != nil {
+				return FirstPublicationPreview{}, ctx.Err()
+			}
+			preview.Blockers = append(preview.Blockers, "native CURRENT comparison namespace could not be resolved: "+err.Error())
+			preview.NativeStatus = "native namespace unavailable"
 		}
-		preview.Blockers = append(preview.Blockers, "native publication namespace could not be resolved: "+err.Error())
-		preview.NativeStatus = "native namespace unavailable"
+	} else if canResolveNamespace && service.resolveNamespace != nil {
+		if _, err := service.resolveNamespace(ctx, contextSnapshot, runtimeSettings.OutputDirectory, runtimeSettings.PublicationPathTemplate, &preview); err != nil {
+			if ctx.Err() != nil {
+				return FirstPublicationPreview{}, ctx.Err()
+			}
+			preview.Blockers = append(preview.Blockers, "native publication namespace could not be resolved: "+err.Error())
+			preview.NativeStatus = "native namespace unavailable"
+		}
+	}
+	if current != nil {
+		preview.CurrentComparison = compareFirstPublicationCurrent(preview, current)
 	}
 	return preview, nil
 }
@@ -125,6 +174,10 @@ func buildFirstPublicationPreview(contextSnapshot *persistence.LibraryFirstPubli
 }
 
 func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice) (FirstPublicationPreview, error) {
+	return buildFirstPublicationPreviewSelectedMode(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, firstPublicationPreviewModeOrdinary)
+}
+
+func buildFirstPublicationPreviewSelectedMode(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string) (FirstPublicationPreview, error) {
 	format, pathTemplate := runtimeSettings.PublicationFormat, runtimeSettings.PublicationPathTemplate
 	if contextSnapshot == nil || contextSnapshot.Library == nil {
 		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
@@ -151,6 +204,7 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 		},
 		Warnings: []string{}, Blockers: append([]string(nil), contextSnapshot.Blockers...),
 		NativeStatus: "native verification required",
+		Mode:         mode,
 	}
 	if automaticChoice && choice == nil {
 		preview.Blockers = append(preview.Blockers, contextSnapshot.DefaultSourceBlockers...)
@@ -161,7 +215,7 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 			preview.Blockers = append(preview.Blockers, "automatic source quality is ambiguous")
 		}
 	}
-	if library.Current != nil {
+	if library.Current != nil && mode != firstPublicationPreviewModeForced {
 		preview.Blockers = append(preview.Blockers, "a current publication exists; this preview is only for first publication")
 	}
 	if library.ActiveAttempt != nil {
@@ -268,8 +322,9 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 		FPCalc                     string                                      `json:"fpcalc_installation"`
 		SelectedTools              []persistence.SourceAnalysisToolSelection   `json:"selected_tools"`
 		Choice                     *FirstPublicationSourceChoice               `json:"selected_source_choice"`
+		Mode                       string                                      `json:"mode"`
 	}{contextSnapshot, contextSnapshot.Library.AbandonedNamespaceClaims, format, pathTemplate, runtimeSettings.OutputDirectory, runtimeSettings.OutputCaseSensitive,
-		runtimeSettings.OutputUnicodeNormalization, runtimeSettings.ActiveFFmpegInstallation, runtimeSettings.ActiveFPCalcInstallation, selectedTools, boundChoice}
+		runtimeSettings.OutputUnicodeNormalization, runtimeSettings.ActiveFFmpegInstallation, runtimeSettings.ActiveFPCalcInstallation, selectedTools, boundChoice, mode}
 	encoded, err := json.Marshal(digestInput)
 	if err != nil {
 		return FirstPublicationPreview{}, fmt.Errorf("encode first publication context digest: %w", err)
@@ -277,6 +332,52 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 	digest := sha256.Sum256(encoded)
 	preview.ContextDigest = hex.EncodeToString(digest[:])
 	return preview, nil
+}
+
+func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *persistence.LibraryPublicationCurrent) *FirstPublicationCurrentComparison {
+	comparison := &FirstPublicationCurrentComparison{
+		Status: "blocked", Reason: "asset comparison is incomplete; exact lyrics and cover comparison and typed replacement contract are not available",
+		Generation: current.Record.Generation, RenderedComponents: append([]string(nil), preview.PathComponents...),
+		ResolvedComponents: append([]string(nil), preview.ResolvedPathComponents...),
+		CurrentComponents:  strings.Split(current.Record.RelativePath, "/"), AudioStatus: "factual_only",
+	}
+	comparison.RenderedMatches = strings.Join(comparison.RenderedComponents, "/") == current.Record.RelativePath
+	comparison.ResolvedMatches = strings.Join(comparison.ResolvedComponents, "/") == current.Record.RelativePath
+	desired := preview.DesiredTags.Tags
+	actual := current.Metadata.Tags
+	keys := make(map[string]struct{}, len(desired)+len(actual))
+	for key := range desired {
+		keys[key] = struct{}{}
+	}
+	for key := range actual {
+		keys[key] = struct{}{}
+	}
+	sorted := make([]string, 0, len(keys))
+	for key := range keys {
+		sorted = append(sorted, key)
+	}
+	sort.Strings(sorted)
+	for _, key := range sorted {
+		desiredValues, desiredPresent := desired[key]
+		currentValues, currentPresent := actual[key]
+		if desiredPresent != currentPresent || !reflect.DeepEqual(desiredValues, currentValues) {
+			comparison.TagDifferences = append(comparison.TagDifferences, FirstPublicationTagDifference{
+				Key: key, Desired: cloneTagValues(desiredValues), DesiredPresent: desiredPresent,
+				Current: cloneTagValues(currentValues), CurrentPresent: currentPresent,
+			})
+		}
+	}
+	if comparison.TagDifferences == nil {
+		comparison.TagDifferences = []FirstPublicationTagDifference{}
+	}
+	return comparison
+}
+
+func cloneTagValues(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append(make([]string, 0, len(values)), values...)
 }
 
 func firstPublicationPrimaryArtistToken(snapshot *persistence.LibraryFirstPublicationContext, token string) (publication.TokenValue, bool) {

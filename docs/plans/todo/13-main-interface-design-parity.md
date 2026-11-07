@@ -132,7 +132,13 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    По решению от 2026-11-04 republish применяет текущие format/path settings и
    эффективные metadata/cover/lyrics через preview; recovery сохраняет фактический
    прочитанный текст, но не выдумывает неизвестные источник/предупреждения его
-   получения и не пересоздаёт подходящий файл ради этой справки.
+    получения и не пересоздаёт подходящий файл ради этой справки.
+    - [x] В `98d21f1b` ordinary first-audio interrupted delivery может принять
+      подходящий frozen target без доступа к source; known-error retry продолжает
+      полную подготовку. Полный hook и вся
+      [CI 42415924806](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42415924806)
+      прошли. Requested cover и специализированные intents пока не включены;
+      [границы среза](../../reports/2026-11-07-interrupted-publication-recovery.md).
 4. [ ] **Metadata ownership и provider edges.** Привести ownership, provider
    relationships и границы влияния metadata к документации; Local create/update
    не создаёт library entries. **Приёмка:** самостоятельный recording и позиция

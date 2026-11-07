@@ -7,6 +7,8 @@ import type {
   FirstPublicationPreviewSource,
   LibraryFirstPublicationPreviewResponse,
 } from "../../api/generated/client.schemas";
+import { useI18n } from "../../i18n/I18nProvider";
+import { firstPublicationPreviewMessages } from "./firstPublicationPreviewMessages";
 
 type SourceChoice = Pick<
   FirstPublicationPreviewSource,
@@ -30,28 +32,37 @@ function sameChoice(
   );
 }
 
-function responseError(data: { detail?: string }, status: number) {
-  return data.detail || `Запрос не выполнен (HTTP ${status}).`;
+function responseError(
+  data: { detail?: string },
+  status: number,
+  fallback: (status: number) => string,
+) {
+  return data.detail || fallback(status);
 }
 
 export function FirstPublicationPreview({
   releaseId,
   positionId,
   refreshToken,
+  comparisonOnly = false,
   onAdmitted,
   onRefresh,
 }: {
   releaseId: string;
   positionId: string;
   refreshToken?: number | string;
+  comparisonOnly?: boolean;
   onAdmitted: (operationID: string) => void;
   onRefresh: () => void;
 }) {
+  const { locale } = useI18n();
+  const copy = firstPublicationPreviewMessages[locale];
   const [preview, setPreview] =
     useState<LibraryFirstPublicationPreviewResponse>();
   const [selectedChoice, setSelectedChoice] = useState<SourceChoice | null>(
     null,
   );
+  const [mode, setMode] = useState<"ordinary" | "forced">("ordinary");
   const [sourceCandidates, setSourceCandidates] = useState<
     FirstPublicationPreviewSource[]
   >([]);
@@ -70,15 +81,20 @@ export function FirstPublicationPreview({
     releaseId,
     positionId,
     choiceKey: "unresolved",
+    mode: "ordinary",
+    refreshToken,
   });
   currentIdentity.current = {
     releaseId,
     positionId,
     choiceKey: choiceKey(selectedChoice),
+    mode,
+    refreshToken,
   };
 
   useEffect(() => {
     currentIdentity.current = {
+      ...currentIdentity.current,
       releaseId,
       positionId,
       choiceKey: "unresolved",
@@ -108,26 +124,37 @@ export function FirstPublicationPreview({
         releaseId: string;
         positionId: string;
         choiceKey: string;
+        mode: string;
+        refreshToken?: number | string;
       },
+      requireToken = false,
     ) => {
       return (
         mounted.current &&
         requestSequence.current === request &&
         currentIdentity.current.releaseId === requestIdentity.releaseId &&
         currentIdentity.current.positionId === requestIdentity.positionId &&
-        currentIdentity.current.choiceKey === requestIdentity.choiceKey
+        currentIdentity.current.choiceKey === requestIdentity.choiceKey &&
+        currentIdentity.current.mode === requestIdentity.mode &&
+        (!requireToken ||
+          Object.is(
+            currentIdentity.current.refreshToken,
+            requestIdentity.refreshToken,
+          ))
       );
     },
     [],
   );
 
   const loadPreview = useCallback(
-    async (choice: SourceChoice | null) => {
+    async (choice: SourceChoice | null, requestMode = mode) => {
       const request = ++requestSequence.current;
       const requestIdentity = {
         releaseId,
         positionId,
         choiceKey: choiceKey(choice),
+        mode: requestMode,
+        refreshToken,
       };
       currentIdentity.current = requestIdentity;
       setLoading(true);
@@ -143,18 +170,23 @@ export function FirstPublicationPreview({
                 location_id: choice.location_id,
                 media_variant_id: choice.media_variant_id,
                 stream_index: String(choice.stream_index),
+                mode: requestMode,
               }
-            : undefined,
+            : { mode: requestMode },
           { cache: "no-store" },
         );
-        if (!isCurrentRequest(request, requestIdentity)) return;
+        if (!isCurrentRequest(request, requestIdentity, true)) return;
         if (response.status !== 200) {
           setError(
             response.status === 409 && choice
-              ? "Выбранный источник больше недоступен. Выберите источник заново и запросите новый предпросмотр."
+              ? copy.sourceUnavailable
               : response.status === 409
-                ? "Снимок устарел. Обновите данные релиза и запросите новый предпросмотр."
-                : responseError(response.data, response.status),
+                ? copy.stalePreview
+                : responseError(
+                    response.data,
+                    response.status,
+                    copy.requestFailed,
+                  ),
           );
           return;
         }
@@ -162,17 +194,17 @@ export function FirstPublicationPreview({
         setSourceCandidates(response.data.source_candidates ?? []);
         setPreviewChoiceKey(requestIdentity.choiceKey);
       } catch (reason) {
-        if (!isCurrentRequest(request, requestIdentity)) return;
+        if (!isCurrentRequest(request, requestIdentity, true)) return;
         setError(
           reason instanceof Error && reason.message
             ? reason.message
-            : "Не удалось загрузить предпросмотр. Проверьте соединение и повторите запрос.",
+            : copy.previewFailed,
         );
       } finally {
-        if (isCurrentRequest(request, requestIdentity)) setLoading(false);
+        if (isCurrentRequest(request, requestIdentity, true)) setLoading(false);
       }
     },
-    [releaseId, positionId, isCurrentRequest],
+    [copy, releaseId, positionId, mode, refreshToken, isCurrentRequest],
   );
 
   useEffect(() => {
@@ -219,7 +251,13 @@ export function FirstPublicationPreview({
       return;
     const nextKey = choiceKey(choice);
     ++requestSequence.current;
-    currentIdentity.current = { releaseId, positionId, choiceKey: nextKey };
+    currentIdentity.current = {
+      releaseId,
+      positionId,
+      choiceKey: nextKey,
+      mode,
+      refreshToken,
+    };
     setSelectedChoice(choice);
     setPreview(undefined);
     setPreviewChoiceKey("");
@@ -228,6 +266,31 @@ export function FirstPublicationPreview({
     setAdmissionUncertain(false);
     setAdmittedOperationID("");
     void loadPreview(choice);
+  }
+
+  function changeMode(nextMode: "ordinary" | "forced") {
+    if (
+      nextMode === mode ||
+      confirmationPending.current ||
+      admissionLocked.current ||
+      confirming ||
+      admissionUncertain ||
+      admittedOperationID
+    )
+      return;
+    ++requestSequence.current;
+    currentIdentity.current = {
+      releaseId,
+      positionId,
+      choiceKey: choiceKey(selectedChoice),
+      mode: nextMode,
+      refreshToken,
+    };
+    setMode(nextMode);
+    setPreview(undefined);
+    setPreviewChoiceKey("");
+    setError("");
+    void loadPreview(selectedChoice, nextMode);
   }
 
   async function confirmPreview() {
@@ -246,6 +309,7 @@ export function FirstPublicationPreview({
       releaseId,
       positionId,
       choiceKey: choiceKey(confirmedChoice),
+      mode,
     };
     const confirmedPreview = preview;
     if (previewChoiceKey !== requestIdentity.choiceKey) return;
@@ -280,25 +344,21 @@ export function FirstPublicationPreview({
       if (response.status === 409) {
         admissionLocked.current = false;
         setPreview(undefined);
-        setError(
-          confirmedChoice
-            ? "Выбранный источник больше недоступен. Выберите источник заново и запросите новый предпросмотр."
-            : "Предпросмотр устарел. Обновите состояние и запросите новый предпросмотр; подтверждение не повторено.",
-        );
+        setError(confirmedChoice ? copy.sourceUnavailable : copy.staleConfirm);
         onRefresh();
         return;
       }
       admissionLocked.current = true;
       setAdmissionUncertain(true);
       setError(
-        `${responseError(response.data, response.status)} Результат запуска неизвестен. Обновите состояние; повторное подтверждение отключено.`,
+        `${responseError(response.data, response.status, copy.requestFailed)} ${copy.unknownStart}`,
       );
     } catch (reason) {
       if (!isCurrentRequest(request, requestIdentity)) return;
       admissionLocked.current = true;
       setAdmissionUncertain(true);
       setError(
-        `${reason instanceof Error && reason.message ? reason.message : "Не удалось подтвердить предпросмотр."} Результат запуска неизвестен. Обновите состояние; повторное подтверждение отключено.`,
+        `${reason instanceof Error && reason.message ? reason.message : copy.confirmFailed} ${copy.unknownStart}`,
       );
     } finally {
       confirmationPending.current = false;
@@ -321,7 +381,8 @@ export function FirstPublicationPreview({
       sameChoice(preview.selected_source, selectedChoice),
   );
   const canConfirm = Boolean(
-    preview &&
+    !comparisonOnly &&
+      preview &&
       previewChoiceKey === choiceKey(selectedChoice) &&
       preview.blockers?.length === 0 &&
       preview.selected_source &&
@@ -333,8 +394,34 @@ export function FirstPublicationPreview({
   return (
     <section
       className="space-y-3 rounded border border-stone-300 p-4"
-      aria-label="Предпросмотр первой публикации"
+      aria-label={copy.section}
     >
+      {comparisonOnly && (
+        <>
+          <p role="note">{copy.comparisonReadOnly}</p>
+          <fieldset className="space-y-2" disabled={loading}>
+            <legend className="font-medium">{copy.mode}</legend>
+            <label className="block">
+              <input
+                type="radio"
+                name={`comparison-mode-${releaseId}-${positionId}`}
+                checked={mode === "ordinary"}
+                onChange={() => changeMode("ordinary")}
+              />{" "}
+              {copy.ordinary}
+            </label>
+            <label className="block">
+              <input
+                type="radio"
+                name={`comparison-mode-${releaseId}-${positionId}`}
+                checked={mode === "forced"}
+                onChange={() => changeMode("forced")}
+              />{" "}
+              {copy.forced}
+            </label>
+          </fieldset>
+        </>
+      )}
       <button
         type="button"
         disabled={
@@ -347,7 +434,7 @@ export function FirstPublicationPreview({
         }
         onClick={() => void loadPreview(selectedChoice)}
       >
-        {loading ? "Загрузка предпросмотра…" : "Предпросмотр публикации"}
+        {loading ? copy.loading : copy.preview}
       </button>
       {error && <p role="alert">{error}</p>}
       {needsExplicitChoice && (
@@ -361,9 +448,7 @@ export function FirstPublicationPreview({
             admissionLocked.current
           }
         >
-          <legend className="font-medium">
-            Выберите аудиопоток для публикации
-          </legend>
+          <legend className="font-medium">{copy.sourceChoice}</legend>
           <label className="block">
             <input
               type="radio"
@@ -371,7 +456,7 @@ export function FirstPublicationPreview({
               checked={selectedChoice === null}
               onChange={() => changeChoice(null)}
             />{" "}
-            Источник не выбран
+            {copy.noSource}
           </label>
           {candidates.map((candidate) => {
             const candidateChoice: SourceChoice = {
@@ -389,14 +474,16 @@ export function FirstPublicationPreview({
                   }
                   onChange={() => changeChoice(candidateChoice)}
                 />{" "}
-                {candidate.title || candidate.codec} · {candidate.codec}, поток{" "}
-                {candidate.stream_index}
+                {candidate.title || candidate.codec} · {candidate.codec},{" "}
+                {copy.stream} {candidate.stream_index}
                 {candidate.language ? ` · ${candidate.language}` : ""}
-                {candidate.channels ? ` · ${candidate.channels} канал(а)` : ""}
-                {candidate.unsupported_audio_stream_count > 0
-                  ? ` · неподдерживаемых аудиопотоков: ${candidate.unsupported_audio_stream_count}`
+                {candidate.channels
+                  ? ` · ${candidate.channels} ${copy.channels}`
                   : ""}
-                {` · корень ${candidate.root_id}, расположение ${candidate.location_id}, вариант ${candidate.media_variant_id}`}
+                {candidate.unsupported_audio_stream_count > 0
+                  ? ` · ${copy.unsupportedStreams}: ${candidate.unsupported_audio_stream_count}`
+                  : ""}
+                {` · ${copy.root} ${candidate.root_id}, ${copy.location} ${candidate.location_id}, ${copy.variant} ${candidate.media_variant_id}`}
               </label>
             );
           })}
@@ -404,29 +491,29 @@ export function FirstPublicationPreview({
       )}
       {preview && (
         <div className="space-y-2">
-          <h3 className="font-semibold">План первой публикации</h3>
+          <h3 className="font-semibold">
+            {comparisonOnly ? copy.currentComparison : copy.firstPlan}
+          </h3>
           <p>
-            Источник:{" "}
+            {copy.source}:{" "}
             {preview.selected_source
-              ? `${preview.selected_source.codec}, поток ${preview.selected_source.stream_index} · вариант ${preview.selected_source.media_variant_id}`
-              : "не выбран"}
+              ? `${preview.selected_source.codec}, ${copy.stream} ${preview.selected_source.stream_index} · ${copy.variant} ${preview.selected_source.media_variant_id}`
+              : copy.unselected}
           </p>
           <p>
-            Преобразование:{" "}
+            {copy.transform}:{" "}
             {preview.transform
-              ? `${preview.transform.action} → ${preview.transform.output_container}${preview.transform.extension ? ` (.${preview.transform.extension})` : ""}${preview.transform.bitrate ? `, ${preview.transform.bitrate} бит/с` : ""}`
-              : "не определено"}
+              ? `${preview.transform.action} → ${preview.transform.output_container}${preview.transform.extension ? ` (.${preview.transform.extension})` : ""}${preview.transform.bitrate ? `, ${preview.transform.bitrate} ${copy.bitrate}` : ""}`
+              : copy.undefined}
           </p>
           <p>
-            Планируемый относительный путь:{" "}
+            {copy.plannedPath}:{" "}
             {preview.resolved_path_components?.length
               ? preview.resolved_path_components.join("/")
-              : "не определён; namespace не подтверждён"}
+              : copy.namespaceUnconfirmed}
           </p>
           <div className="rounded bg-amber-50 p-3">
-            <h4 className="font-medium">
-              Планируемые теги (не фактическое чтение файла)
-            </h4>
+            <h4 className="font-medium">{copy.plannedTags}</h4>
             {Object.entries(preview.desired_tags ?? {}).map(
               ([name, values]) => (
                 <p key={name}>
@@ -436,23 +523,23 @@ export function FirstPublicationPreview({
             )}
           </div>
           <div>
-            <h4 className="font-medium">Проекции метаданных (ревизии)</h4>
+            <h4 className="font-medium">{copy.metadataRevisions}</h4>
             {Object.keys(preview.metadata_revisions ?? {}).length ? (
               <ul>
                 {Object.entries(preview.metadata_revisions).map(
                   ([field, revision]) => (
                     <li key={field}>
-                      {field}: ревизия {revision}
+                      {field}: {copy.revision} {revision}
                     </li>
                   ),
                 )}
               </ul>
             ) : (
-              <p>Нет проекций метаданных.</p>
+              <p>{copy.noProjections}</p>
             )}
           </div>
           <div>
-            <h4 className="font-medium">Предупреждения</h4>
+            <h4 className="font-medium">{copy.warnings}</h4>
             {preview.warnings?.length ? (
               <ul>
                 {Array.from(new Set(preview.warnings ?? [])).map((item) => (
@@ -460,11 +547,11 @@ export function FirstPublicationPreview({
                 ))}
               </ul>
             ) : (
-              <p>Нет.</p>
+              <p>{copy.none}</p>
             )}
           </div>
           <div>
-            <h4 className="font-medium">Блокирующие условия</h4>
+            <h4 className="font-medium">{copy.blockers}</h4>
             {preview.blockers?.length ? (
               <ul>
                 {Array.from(new Set(preview.blockers ?? [])).map((item) => (
@@ -472,41 +559,104 @@ export function FirstPublicationPreview({
                 ))}
               </ul>
             ) : (
-              <p>Нет.</p>
+              <p>{copy.none}</p>
             )}
           </div>
           <p role="status">
-            Проверка namespace перед запуском: {preview.native_status}.
-            Предпросмотр не проверяет возможность публикации.
+            {copy.namespaceCheck}: {preview.native_status}.{" "}
+            {copy.previewNotPublicationCheck}
           </p>
-          <button
-            type="button"
-            disabled={
-              !canConfirm ||
-              confirming ||
-              admissionUncertain ||
-              confirmationPending.current ||
-              admissionLocked.current
-            }
-            onClick={() => void confirmPreview()}
-          >
-            {confirming ? "Проверка и запуск…" : "Опубликовать"}
-          </button>
+          {comparisonOnly && preview.current_comparison && (
+            <section
+              className="space-y-2"
+              aria-label={copy.currentComparisonAria}
+            >
+              <p>
+                {copy.comparisonStatus}: {preview.current_comparison.status}
+              </p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {[
+                  [
+                    copy.currentPath,
+                    preview.current_comparison.current_components,
+                  ],
+                  [
+                    copy.renderedPath,
+                    preview.current_comparison.rendered_components,
+                  ],
+                  [
+                    copy.resolvedPath,
+                    preview.current_comparison.resolved_components,
+                  ],
+                ].map(([label, components]) => (
+                  <p key={label as string}>
+                    {label}:{" "}
+                    {Array.isArray(components) && components.length
+                      ? components.join("/")
+                      : copy.pathUnknown}
+                  </p>
+                ))}
+              </div>
+              <p>
+                {copy.audioFacts.replace(
+                  "{status}",
+                  preview.current_comparison.audio_status,
+                )}
+              </p>
+              <h4 className="font-medium">{copy.tagDifferences}</h4>
+              {preview.current_comparison.tag_differences?.length ? (
+                <ol className="list-decimal pl-5">
+                  {preview.current_comparison.tag_differences.map(
+                    (difference) => (
+                      <li key={difference.key}>
+                        <strong>{difference.key}</strong>: {copy.currentValue}{" "}
+                        {difference.current_present
+                          ? JSON.stringify(difference.current)
+                          : copy.absent}
+                        ; {copy.calculatedValue}{" "}
+                        {difference.desired_present
+                          ? JSON.stringify(difference.desired)
+                          : copy.absent}
+                      </li>
+                    ),
+                  )}
+                </ol>
+              ) : (
+                <p>{copy.noTagDifferences}</p>
+              )}
+              <p>{copy.unresolvedAssets}</p>
+            </section>
+          )}
+          {!comparisonOnly && (
+            <button
+              type="button"
+              disabled={
+                !canConfirm ||
+                confirming ||
+                admissionUncertain ||
+                confirmationPending.current ||
+                admissionLocked.current
+              }
+              onClick={() => void confirmPreview()}
+            >
+              {confirming ? copy.publicationStart : copy.publish}
+            </button>
+          )}
         </div>
       )}
       {admittedOperationID && (
         <div>
           <p role="status">
-            Операция публикации поставлена в очередь: {admittedOperationID}.
+            {copy.queued}: {admittedOperationID}.
           </p>
           <button type="button" onClick={onRefresh}>
-            Обновить состояние публикации
+            {copy.refreshPublication}
           </button>
         </div>
       )}
       {admissionUncertain && (
         <button type="button" onClick={onRefresh}>
-          Обновить состояние публикации
+          {copy.refreshPublication}
         </button>
       )}
     </section>

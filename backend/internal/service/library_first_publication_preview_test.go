@@ -16,6 +16,62 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
+func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testing.T) {
+	generation := uuid.New()
+	emptyValues := []string{}
+	desired := map[string][]string{"ARTIST": {"Artist "}, "TITLE": {"One", "Two"}, "NIL_VALUE": nil, "EMPTY_VALUE": emptyValues}
+	current := &persistence.LibraryPublicationCurrent{
+		Record:   persistence.TrackPublication{Generation: generation, RelativePath: "Artist/Album.m4a"},
+		Metadata: persistence.PublicationCommitMetadata{Tags: map[string][]string{"ARTIST": {"Artist"}, "TITLE": {"Two", "One"}, "EMPTY_VALUE": nil}},
+	}
+	releaseID, positionID := uuid.New(), uuid.New()
+	snapshot := &persistence.LibraryFirstPublicationContext{
+		Library:        &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, Current: current},
+		TemplateTokens: map[string]string{"TRACK_NAME": "New Album"},
+		Tags: publication.TagProjectionInput{
+			Release:  publication.ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+			Position: publication.PositionTags{Title: "Track", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+		},
+	}
+	for _, mode := range []string{firstPublicationPreviewModeOrdinary, firstPublicationPreviewModeForced} {
+		t.Run(mode, func(t *testing.T) {
+			service := newLibraryPublications(firstPreviewRepository{snapshot: snapshot}, firstPreviewSettings{format: "source", template: "{TRACK_NAME}"}, nil, tools.Platform{})
+			servicePreview, err := service.PreviewFirstSelectedMode(context.Background(), releaseID, positionID, nil, mode)
+			if err != nil || servicePreview.CurrentComparison == nil {
+				t.Fatalf("service preview = %#v, error %v", servicePreview, err)
+			}
+			if mode == firstPublicationPreviewModeOrdinary && !containsString(servicePreview.Blockers, "a current publication exists; this preview is only for first publication") {
+				t.Fatalf("ordinary mode lost its first-publication blocker: %#v", servicePreview.Blockers)
+			}
+			if mode == firstPublicationPreviewModeForced && containsString(servicePreview.Blockers, "a current publication exists; this preview is only for first publication") {
+				t.Fatalf("forced mode retained the first-publication-only blocker: %#v", servicePreview.Blockers)
+			}
+			preview := FirstPublicationPreview{
+				Mode: mode, PathComponents: []string{"Artist", "New Album.m4a"},
+				ResolvedPathComponents: []string{"Artist", "New Album.m4a"},
+				DesiredTags:            publication.TagProjection{Tags: desired},
+			}
+			preview.CurrentComparison = compareFirstPublicationCurrent(preview, current)
+			comparison := preview.CurrentComparison
+			if comparison.Status != "blocked" || comparison.Generation != generation {
+				t.Fatalf("comparison status or CURRENT generation = %#v", comparison)
+			}
+			if comparison.RenderedMatches || comparison.ResolvedMatches || strings.Join(comparison.RenderedComponents, "/") == current.Record.RelativePath {
+				t.Fatalf("changed rendered basename matched CURRENT: %#v", comparison)
+			}
+			if len(comparison.TagDifferences) != 4 || comparison.TagDifferences[0].Key != "ARTIST" || comparison.TagDifferences[1].Key != "EMPTY_VALUE" || comparison.TagDifferences[2].Key != "NIL_VALUE" || comparison.TagDifferences[3].Key != "TITLE" {
+				t.Fatalf("exact tag differences = %#v", comparison.TagDifferences)
+			}
+			if comparison.TagDifferences[2].DesiredPresent != true || comparison.TagDifferences[2].CurrentPresent != false || comparison.TagDifferences[1].DesiredPresent != true || comparison.TagDifferences[1].CurrentPresent != true || comparison.TagDifferences[1].Desired == nil || comparison.TagDifferences[1].Current != nil {
+				t.Fatalf("nil/absent/empty tag distinctions lost: %#v", comparison.TagDifferences)
+			}
+			if comparison.AudioStatus != "factual_only" || !strings.Contains(comparison.Reason, "asset comparison is incomplete") {
+				t.Fatalf("comparison safety status = %#v", comparison)
+			}
+		})
+	}
+}
+
 type firstPreviewRepository struct {
 	snapshot *persistence.LibraryFirstPublicationContext
 	version  string

@@ -26,4 +26,7 @@ Forced republish и специализированные recovery flows ещё �
 
 Добавлена одна DB-регрессия с prior-boot executing claim, отсутствующим source
 и фактическими lyrics target; существующая регрессия known-error retry остаётся.
-Новый срез ожидает полный gate и CI; это ещё не приёмка.
+Срез `98d21f1b` прошёл обычный полный commit hook и всю
+[CI 42415924806](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42415924806),
+включая платформенную матрицу, Compose smoke и публикацию контейнера.
+Это проверка ограниченного first-audio recovery, а не закрытие пункта 3.

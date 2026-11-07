@@ -316,6 +316,11 @@ it("updates generation and path after a manual position refresh", async () => {
     name: "Текущая публикация",
   });
   expect(summary).toHaveTextContent("Artist/Album/01 - Position One.flac");
+  expect(
+    screen
+      .getByTestId("publication-preview")
+      .getAttribute("data-refresh-token"),
+  ).not.toContain("generation-2");
   fireEvent.click(
     await screen.findByRole("button", { name: "Обновить данные" }),
   );
@@ -323,4 +328,11 @@ it("updates generation and path after a manual position refresh", async () => {
     expect(summary).toHaveTextContent("Artist/Album/rewritten.flac"),
   );
   expect(summary).not.toHaveTextContent("Artist/Album/01 - Position One.flac");
+  await waitFor(() =>
+    expect(
+      screen
+        .getByTestId("publication-preview")
+        .getAttribute("data-refresh-token"),
+    ).toContain("generation-2"),
+  );
 });

@@ -6,8 +6,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { LibraryFirstPublicationPreviewResponse } from "../../api/generated/client.schemas";
+import { I18nProvider } from "../../i18n/I18nProvider";
+import { createMemoryStorage } from "../../test/memoryStorage";
 
 const api = vi.hoisted(() => ({
   getLibraryFirstPublicationPreview: vi.fn(),
@@ -40,19 +42,35 @@ const preview = {
   transform: { action: "copy", output_container: "flac" },
 } as unknown as LibraryFirstPublicationPreviewResponse;
 
-function component(refreshToken: number, onAdmitted = vi.fn()) {
+function component(
+  refreshToken: number,
+  onAdmitted = vi.fn(),
+  comparisonOnly = false,
+) {
   return (
-    <FirstPublicationPreview
-      releaseId="release-1"
-      positionId="position-1"
-      refreshToken={refreshToken}
-      onAdmitted={onAdmitted}
-      onRefresh={vi.fn()}
-    />
+    <I18nProvider>
+      <FirstPublicationPreview
+        releaseId="release-1"
+        positionId="position-1"
+        refreshToken={refreshToken}
+        comparisonOnly={comparisonOnly}
+        onAdmitted={onAdmitted}
+        onRefresh={vi.fn()}
+      />
+    </I18nProvider>
   );
 }
 
-afterEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "ru");
+  vi.stubGlobal("localStorage", storage);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
 
 it("keeps a pending admission fenced across a metadata refresh and delivers its admitted operation", async () => {
   api.getLibraryFirstPublicationPreview.mockResolvedValue({
@@ -148,5 +166,54 @@ it("invalidates an unsubmitted preview and reloads its digest when metadata refr
       "position-1",
       expect.objectContaining({ preview_digest: "new-digest" }),
     ),
+  );
+});
+
+it("requests the forced comparison without offering confirmation", async () => {
+  api.getLibraryFirstPublicationPreview.mockResolvedValue({
+    status: 200,
+    data: {
+      ...preview,
+      current_comparison: {
+        audio_status: "unavailable",
+        current_components: null,
+        generation: "generation-1",
+        reason: "not published",
+        rendered_components: [],
+        rendered_matches: false,
+        resolved_components: null,
+        resolved_matches: false,
+        status: "absent",
+        tag_differences: [],
+      },
+    },
+  });
+
+  render(component(0, vi.fn(), true));
+  fireEvent.click(screen.getByRole("radio", { name: "Принудительный" }));
+
+  expect(
+    await screen.findByText("Сравнение с текущей публикацией"),
+  ).toBeInTheDocument();
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(1);
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledWith(
+    "release-1",
+    "position-1",
+    { mode: "forced" },
+    { cache: "no-store" },
+  );
+  for (const label of [
+    "Путь текущей публикации",
+    "Отображённый путь",
+    "Разрешённый путь",
+  ]) {
+    expect(screen.getByText(`${label}: не определён`)).toBeInTheDocument();
+  }
+  expect(screen.getByText("Различий тегов нет.")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Опубликовать" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("note")).toHaveTextContent(
+    "Сравнение доступно только для чтения",
   );
 });

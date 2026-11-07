@@ -1737,14 +1737,16 @@ export function LibraryReleaseScreen({
                   ) && <p role="status">Повторная очистка выполняется.</p>}
               </div>
             ))}
-            {!publication?.current_path &&
-              !publication?.current_generation &&
-              !publication?.active_attempt &&
+            {!publication?.active_attempt &&
               !position?.firstPublicationOperationID && (
                 <FirstPublicationPreview
                   releaseId={releaseId}
                   positionId={track.id}
-                  refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                  comparisonOnly={Boolean(
+                    publication?.current_path ||
+                      publication?.current_generation,
+                  )}
+                  refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}:${publication?.current_generation ?? ""}`}
                   onAdmitted={(operationID) => {
                     if (!isPositionScopeCurrent()) return;
                     setPositions((current) => {
