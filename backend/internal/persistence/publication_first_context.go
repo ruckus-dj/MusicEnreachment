@@ -48,6 +48,7 @@ type LibraryFirstPublicationContext struct {
 	Metadata                        FirstPublicationMetadata
 	GenreArtists                    []FirstPublicationGenreArtist `json:"-"`
 	EffectiveCover                  EffectiveReleaseCoverSummary
+	EffectiveCoverInput             PublicationAttemptCoverInput `json:"-"`
 	Blockers                        []string
 	DefaultSourceBlockers           []string
 	ReleasePrimaryCredits           []librarymetadata.ArtistCredit
@@ -124,6 +125,11 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 		return fmt.Errorf("read first publication effective cover: %w", err)
 	}
 	result.EffectiveCover = cover
+	coverInput, err := readEffectiveReleaseCoverInput(ctx, tx, releaseID, cover)
+	if err != nil {
+		return fmt.Errorf("read first publication effective cover input: %w", err)
+	}
+	result.EffectiveCoverInput = coverInput
 	if err := tx.NewRaw(`SELECT id,primary_artist_id,title,metadata,metadata_revision FROM local_release WHERE id=?`, releaseID).Scan(ctx, &release); err != nil {
 		return fmt.Errorf("read first publication release metadata: %w", err)
 	}

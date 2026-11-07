@@ -40,6 +40,16 @@ function responseError(
   return data.detail || fallback(status);
 }
 
+type PreviewCopy =
+  (typeof firstPublicationPreviewMessages)[keyof typeof firstPublicationPreviewMessages];
+
+function coverFactsText(
+  facts: { mime: string; size: number; sha256: string },
+  copy: PreviewCopy,
+) {
+  return `${facts.mime} · ${facts.size} ${copy.coverBytes} · ${copy.coverSHA256} ${facts.sha256}`;
+}
+
 export function FirstPublicationPreview({
   releaseId,
   positionId,
@@ -566,6 +576,72 @@ export function FirstPublicationPreview({
             {copy.namespaceCheck}: {preview.native_status}.{" "}
             {copy.previewNotPublicationCheck}
           </p>
+          {preview.cover_plan && (
+            <section
+              className="space-y-2 rounded border border-stone-200 p-3"
+              aria-label={copy.coverPlanAria}
+            >
+              <h4 className="font-medium">{copy.coverPlan}</h4>
+              <p>
+                {copy.coverAuthority}:{" "}
+                {preview.cover_plan.authority_mode === "automatic"
+                  ? copy.coverModeAutomatic
+                  : preview.cover_plan.authority_mode === "manual"
+                    ? copy.coverModeManual
+                    : preview.cover_plan.authority_mode}
+                , {copy.revision} {preview.cover_plan.authority_revision}
+              </p>
+              {preview.cover_plan.authority_generation && (
+                <p>
+                  {copy.coverGeneration}:{" "}
+                  {preview.cover_plan.authority_generation}
+                </p>
+              )}
+              <p>
+                {copy.coverRelease}: {preview.cover_plan.release_id}
+              </p>
+              {preview.cover_plan.original ? (
+                <div>
+                  <p className="font-medium">{copy.coverOriginal}</p>
+                  <p className="break-all">
+                    {coverFactsText(preview.cover_plan.original, copy)}
+                  </p>
+                </div>
+              ) : (
+                <p>{copy.coverDerivationAbsent}</p>
+              )}
+              {preview.cover_plan.derivative ? (
+                <div>
+                  <p className="font-medium">{copy.coverDerivative}</p>
+                  <p className="break-all">
+                    {coverFactsText(preview.cover_plan.derivative, copy)}
+                  </p>
+                </div>
+              ) : (
+                preview.cover_plan.derivation === "optional_failure" && (
+                  <div>
+                    <p className="font-medium">{copy.coverDerivative}</p>
+                    <p>{copy.coverDerivativeUnavailable}</p>
+                    {preview.cover_plan.failure_reason && (
+                      <p>
+                        {copy.coverFailureReason}:{" "}
+                        {preview.cover_plan.failure_reason}
+                      </p>
+                    )}
+                  </div>
+                )
+              )}
+              {preview.cover_plan.derivation !== "absent" && (
+                <p>
+                  {copy.coverDerivation}:{" "}
+                  {preview.cover_plan.derivation === "ready"
+                    ? copy.coverDerivationReady
+                    : copy.coverDerivationOptionalFailure}
+                </p>
+              )}
+              <p>{copy.coverPlanNotGuarantee}</p>
+            </section>
+          )}
           {comparisonOnly && preview.current_comparison && (
             <section
               className="space-y-2"
@@ -602,6 +678,14 @@ export function FirstPublicationPreview({
                   "{status}",
                   preview.current_comparison.audio_status,
                 )}
+              </p>
+              <p>
+                {copy.coverComparison}:{" "}
+                {preview.current_comparison.cover_status === "matches"
+                  ? copy.coverStatusMatches
+                  : preview.current_comparison.cover_status === "differs"
+                    ? copy.coverStatusDiffers
+                    : copy.coverStatusUnavailable}
               </p>
               <h4 className="font-medium">{copy.tagDifferences}</h4>
               {preview.current_comparison.tag_differences?.length ? (

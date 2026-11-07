@@ -26,8 +26,9 @@ func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testi
 	}
 	releaseID, positionID := uuid.New(), uuid.New()
 	snapshot := &persistence.LibraryFirstPublicationContext{
-		Library:        &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, Current: current},
-		TemplateTokens: map[string]string{"TRACK_NAME": "New Album"},
+		Library:             &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, Current: current},
+		EffectiveCoverInput: persistence.PublicationAttemptCoverInput{ReleaseID: releaseID, Revision: 1, Mode: "automatic", State: "absent"},
+		TemplateTokens:      map[string]string{"TRACK_NAME": "New Album"},
 		Tags: publication.TagProjectionInput{
 			Release:  publication.ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
 			Position: publication.PositionTags{Title: "Track", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
@@ -189,7 +190,8 @@ func TestPreviewFirstBlocksAmbiguousQualityAndExistingCurrent(t *testing.T) {
 	releaseID, positionID, epoch := uuid.New(), uuid.New(), uuid.New()
 	known := true
 	snapshot := &persistence.LibraryFirstPublicationContext{
-		Library: &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: epoch, Current: &persistence.LibraryPublicationCurrent{}},
+		Library:             &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: epoch, Current: &persistence.LibraryPublicationCurrent{}},
+		EffectiveCoverInput: persistence.PublicationAttemptCoverInput{ReleaseID: releaseID, Revision: 1, Mode: "automatic", State: "absent"},
 		Sources: []persistence.FirstPublicationSource{
 			{Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()}, Selected: true, Quality: persistence.PersistedAudioFacts{Codec: "flac", StreamIndex: 0, Lossless: &known}},
 			{Selection: persistence.PublicationSourceSelection{LocationID: uuid.New(), MediaVariantID: uuid.New()}, Selected: true, Quality: persistence.PersistedAudioFacts{Codec: "flac", StreamIndex: 0, Lossless: &known}},

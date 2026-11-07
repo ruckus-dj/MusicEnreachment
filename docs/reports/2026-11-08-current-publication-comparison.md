@@ -33,3 +33,13 @@ source и CURRENT generation инвалидируют неподтверждён
 раздельные пути, порядок/пробелы tags и null/[]; overflow отсутствовал.
 Единственная кнопка — preview; POST/admission не выполнялись.
 Это component-level проверка, не real-backend E2E. Полный gate/CI ещё ожидаются.
+
+## Полный gate и CI
+
+`525a1c50` прошёл обычный полный commit hook. В первом запуске
+[CI 42419169960](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42419169960)
+Windows migration suite сообщил PASS, но cleanup завершился ошибкой supervisor:
+`force-terminated without confirming PostgreSQL cleanup`. Остальные platform jobs,
+verify и Compose smoke прошли; container job не запускался из-за Windows failure.
+Failed jobs перезапущены без изменения gates или таймаутов. Полный CI результат
+пока не получен.

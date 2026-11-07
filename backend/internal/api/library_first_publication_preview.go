@@ -44,6 +44,7 @@ type LibraryFirstPublicationPreviewResponse struct {
 	NativeStatus           string                             `json:"native_status"`
 	Mode                   string                             `json:"mode"`
 	CurrentComparison      *firstPublicationCurrentComparison `json:"current_comparison,omitempty"`
+	CoverPlan              *firstPublicationCoverPlan         `json:"cover_plan,omitempty"`
 }
 
 type libraryPublicationPreviewModeService interface {
@@ -61,6 +62,18 @@ type firstPublicationCurrentComparison struct {
 	RenderedMatches    bool                            `json:"rendered_matches"`
 	ResolvedMatches    bool                            `json:"resolved_matches"`
 	AudioStatus        string                          `json:"audio_status"`
+	CoverStatus        string                          `json:"cover_status"`
+}
+
+type firstPublicationCoverPlan struct {
+	AuthorityRevision   int64                               `json:"authority_revision"`
+	AuthorityMode       string                              `json:"authority_mode"`
+	AuthorityGeneration string                              `json:"authority_generation,omitempty"`
+	ReleaseID           string                              `json:"release_id"`
+	Original            *service.FirstPublicationCoverFacts `json:"original,omitempty"`
+	Derivative          *service.FirstPublicationCoverFacts `json:"derivative,omitempty"`
+	Derivation          string                              `json:"derivation"`
+	FailureReason       string                              `json:"failure_reason,omitempty"`
 }
 
 type firstPublicationTagDifference struct {
@@ -186,6 +199,11 @@ func libraryFirstPublicationPreviewResponse(preview service.FirstPublicationPrev
 		Blockers: append([]string{}, preview.Blockers...), NativeStatus: preview.NativeStatus,
 		Mode: preview.Mode,
 	}
+	if preview.CoverPlan != nil {
+		plan := preview.CoverPlan
+		response.CoverPlan = &firstPublicationCoverPlan{AuthorityRevision: plan.AuthorityRevision, AuthorityMode: plan.AuthorityMode, AuthorityGeneration: plan.AuthorityGeneration,
+			ReleaseID: plan.ReleaseID, Original: plan.Original, Derivative: plan.Derivative, Derivation: plan.Derivation, FailureReason: plan.FailureReason}
+	}
 	if preview.CurrentComparison != nil {
 		comparison := preview.CurrentComparison
 		response.CurrentComparison = &firstPublicationCurrentComparison{
@@ -194,7 +212,7 @@ func libraryFirstPublicationPreviewResponse(preview service.FirstPublicationPrev
 			ResolvedComponents: append([]string(nil), comparison.ResolvedComponents...),
 			CurrentComponents:  append([]string(nil), comparison.CurrentComponents...),
 			RenderedMatches:    comparison.RenderedMatches, ResolvedMatches: comparison.ResolvedMatches,
-			AudioStatus: comparison.AudioStatus,
+			AudioStatus: comparison.AudioStatus, CoverStatus: comparison.CoverStatus,
 		}
 		response.CurrentComparison.TagDifferences = make([]firstPublicationTagDifference, 0, len(comparison.TagDifferences))
 		for _, difference := range comparison.TagDifferences {

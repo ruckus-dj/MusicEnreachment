@@ -201,6 +201,23 @@ export interface ErrorModel {
   type?: string;
 }
 
+export interface FirstPublicationCoverFacts {
+  mime: string;
+  sha256: string;
+  size: number;
+}
+
+export interface FirstPublicationCoverPlan {
+  authority_generation?: string;
+  authority_mode: string;
+  authority_revision: number;
+  derivation: string;
+  derivative?: FirstPublicationCoverFacts;
+  failure_reason?: string;
+  original?: FirstPublicationCoverFacts;
+  release_id: string;
+}
+
 export interface FirstPublicationTagDifference {
   /** @nullable */
   current: string[] | null;
@@ -213,6 +230,7 @@ export interface FirstPublicationTagDifference {
 
 export interface FirstPublicationCurrentComparison {
   audio_status: string;
+  cover_status: string;
   /** @nullable */
   current_components: string[] | null;
   generation: string;
@@ -532,6 +550,7 @@ export interface LibraryFirstPublicationPreviewResponse {
   /** @nullable */
   blockers: string[] | null;
   context_digest: string;
+  cover_plan?: FirstPublicationCoverPlan;
   current_comparison?: FirstPublicationCurrentComparison;
   desired_tags: LibraryFirstPublicationPreviewResponseDesiredTags;
   epoch: string;

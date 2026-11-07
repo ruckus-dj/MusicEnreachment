@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -68,7 +69,8 @@ func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) 
 	imageB := simpleCoverPNG(t, color.RGBA{B: 255, A: 255})
 	mime := "image/png"
 	coverDigest := sha256.Sum256(imageB)
-	coverInput := &persistence.PublicationAttemptCoverInput{State: "value", ReleaseID: releaseID, Revision: 4, Mode: "manual", Generation: &generation, Bytes: imageB, MIME: &mime, SHA256: coverDigest[:]}
+	coverSize := int64(len(imageB))
+	coverInput := &persistence.PublicationAttemptCoverInput{State: "value", ReleaseID: releaseID, Revision: 4, Mode: "manual", Generation: &generation, Bytes: imageB, MIME: &mime, SHA256: coverDigest[:], Size: &coverSize}
 	stale := input.Clone()
 	stale.DesiredTags["TITLE"] = []string{"Changed after freeze"}
 	guardWriter := &manualCoverOnlyWriter{}
@@ -103,6 +105,50 @@ func TestPublicationSimplePreparationManualCoverSourceFreeRewrite(t *testing.T) 
 	convertedDigest := sha256.Sum256(thumbnail.Data)
 	if assets.Cover.State != persistence.PublicationAssetEmbedded || assets.Cover.SHA256 != hex.EncodeToString(convertedDigest[:]) {
 		t.Fatalf("cover = %+v", assets.Cover)
+	}
+	plan, err := planFirstPublicationCover(ctx, t.TempDir(), *coverInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Derivation != "ready" || plan.Original == nil || plan.Derivative == nil ||
+		plan.Original.SHA256 != hex.EncodeToString(coverDigest[:]) ||
+		plan.Derivative.SHA256 != assets.Cover.SHA256 || plan.Derivative.SHA256 == plan.Original.SHA256 ||
+		plan.Derivative.MIME != assets.Cover.MIME || plan.Derivative.Size != *assets.Cover.SizeBytes {
+		t.Fatalf("cover plan facts do not describe original authority and embedded CURRENT derivative: plan=%+v current=%+v", plan, assets.Cover)
+	}
+	failedReceipt := *coverInput
+	failedReceipt.Bytes = []byte("not an image")
+	failedSize := int64(len(failedReceipt.Bytes))
+	failedReceipt.Size = &failedSize
+	failedDigest := sha256.Sum256(failedReceipt.Bytes)
+	failedReceipt.SHA256 = failedDigest[:]
+	failedPlan, err := planFirstPublicationCover(ctx, t.TempDir(), failedReceipt)
+	if err != nil || failedPlan.Derivation != "optional_failure" || failedPlan.Original == nil || failedPlan.Original.SHA256 != hex.EncodeToString(failedDigest[:]) || failedPlan.FailureReason == "" {
+		t.Fatalf("conversion failure lost selected original or appeared absent: plan=%+v err=%v", failedPlan, err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := planFirstPublicationCover(cancelled, t.TempDir(), *coverInput); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled cover planning error = %v, want context cancellation", err)
+	}
+	basePreview := FirstPublicationPreview{ContextDigest: "base"}
+	if err := foldFirstPublicationCoverPlanDigest(&basePreview, plan); err != nil {
+		t.Fatal(err)
+	}
+	authorityChanged := plan
+	authorityChanged.AuthorityRevision++
+	authorityPreview := FirstPublicationPreview{ContextDigest: "base"}
+	if err := foldFirstPublicationCoverPlanDigest(&authorityPreview, authorityChanged); err != nil {
+		t.Fatal(err)
+	}
+	derivativeChanged := plan
+	derivativeChanged.Derivative = &FirstPublicationCoverFacts{SHA256: "different", MIME: plan.Derivative.MIME, Size: plan.Derivative.Size}
+	derivativePreview := FirstPublicationPreview{ContextDigest: "base"}
+	if err := foldFirstPublicationCoverPlanDigest(&derivativePreview, derivativeChanged); err != nil {
+		t.Fatal(err)
+	}
+	if basePreview.ContextDigest == authorityPreview.ContextDigest || basePreview.ContextDigest == derivativePreview.ContextDigest {
+		t.Fatal("cover plan digest did not bind authority and derivative facts")
 	}
 	if prepared.CoverEmbedding == nil || prepared.CoverEmbedding.Outcome != "verified" || prepared.CoverEmbedding.RequestedGeneration != generation {
 		t.Fatalf("cover projection = %+v", prepared.CoverEmbedding)

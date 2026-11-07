@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -47,6 +48,7 @@ type FirstPublicationPreview struct {
 	NativeStatus           string                                   `json:"native_status"`
 	Mode                   string                                   `json:"mode"`
 	CurrentComparison      *FirstPublicationCurrentComparison       `json:"current_comparison,omitempty"`
+	CoverPlan              *FirstPublicationCoverPlan               `json:"cover_plan,omitempty"`
 }
 
 type FirstPublicationCurrentComparison struct {
@@ -60,6 +62,7 @@ type FirstPublicationCurrentComparison struct {
 	RenderedMatches    bool                            `json:"rendered_matches"`
 	ResolvedMatches    bool                            `json:"resolved_matches"`
 	AudioStatus        string                          `json:"audio_status"`
+	CoverStatus        string                          `json:"cover_status"`
 }
 
 type FirstPublicationTagDifference struct {
@@ -140,6 +143,16 @@ func (service *LibraryPublications) PreviewFirstSelectedMode(ctx context.Context
 	preview, err := buildFirstPublicationPreviewSelectedMode(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode)
 	if err != nil {
 		return preview, err
+	}
+	if contextSnapshot.Library.Current != nil {
+		coverPlan, err := planFirstPublicationCover(ctx, os.TempDir(), contextSnapshot.EffectiveCoverInput)
+		if err != nil {
+			return FirstPublicationPreview{}, fmt.Errorf("plan first publication cover: %w", err)
+		}
+		preview.CoverPlan = &coverPlan
+		if err := foldFirstPublicationCoverPlanDigest(&preview, coverPlan); err != nil {
+			return FirstPublicationPreview{}, err
+		}
 	}
 	current := contextSnapshot.Library.Current
 	canResolveNamespace := len(preview.Blockers) == 0 || current != nil && len(preview.PathComponents) != 0
@@ -339,10 +352,33 @@ func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *pe
 		Status: "blocked", Reason: "asset comparison is incomplete; exact lyrics and cover comparison and typed replacement contract are not available",
 		Generation: current.Record.Generation, RenderedComponents: append([]string(nil), preview.PathComponents...),
 		ResolvedComponents: append([]string(nil), preview.ResolvedPathComponents...),
-		CurrentComponents:  strings.Split(current.Record.RelativePath, "/"), AudioStatus: "factual_only",
+		CurrentComponents:  strings.Split(current.Record.RelativePath, "/"), AudioStatus: "factual_only", CoverStatus: "unavailable",
 	}
 	comparison.RenderedMatches = strings.Join(comparison.RenderedComponents, "/") == current.Record.RelativePath
 	comparison.ResolvedMatches = strings.Join(comparison.ResolvedComponents, "/") == current.Record.RelativePath
+	if preview.CoverPlan != nil {
+		plan := preview.CoverPlan
+		asset := current.Assets.Cover
+		switch plan.Derivation {
+		case "absent":
+			if asset.State == persistence.PublicationAssetAbsent {
+				comparison.CoverStatus = "matches"
+			} else {
+				comparison.CoverStatus = "differs"
+			}
+		case "ready":
+			facts := plan.Derivative
+			if asset.State == persistence.PublicationAssetEmbedded && facts != nil && asset.SHA256 == facts.SHA256 && asset.MIME == facts.MIME && asset.SizeBytes != nil && *asset.SizeBytes == facts.Size {
+				comparison.CoverStatus = "matches"
+			} else if asset.State == persistence.PublicationAssetEmbedded {
+				comparison.CoverStatus = "differs"
+			} else {
+				comparison.CoverStatus = "differs"
+			}
+		case "optional_failure":
+			comparison.CoverStatus = "unavailable"
+		}
+	}
 	desired := preview.DesiredTags.Tags
 	actual := current.Metadata.Tags
 	keys := make(map[string]struct{}, len(desired)+len(actual))
@@ -371,6 +407,16 @@ func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *pe
 		comparison.TagDifferences = []FirstPublicationTagDifference{}
 	}
 	return comparison
+}
+
+func foldFirstPublicationCoverPlanDigest(preview *FirstPublicationPreview, plan FirstPublicationCoverPlan) error {
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return fmt.Errorf("encode first publication cover plan digest: %w", err)
+	}
+	digest := sha256.Sum256(append(append([]byte("melo:first-publication-cover-plan:v1:"+preview.ContextDigest+":"), encoded...), []byte(":relative-namespace:v1")...))
+	preview.ContextDigest = hex.EncodeToString(digest[:])
+	return nil
 }
 
 func cloneTagValues(values []string) []string {
