@@ -28,23 +28,24 @@ type LibraryFirstPublicationPreviewOutput struct {
 // intended for the API. In particular it does not expose the service's frozen
 // publication inputs or installation/path details.
 type LibraryFirstPublicationPreviewResponse struct {
-	ReleaseID              uuid.UUID                          `json:"release_id"`
-	PositionID             uuid.UUID                          `json:"position_id"`
-	Epoch                  uuid.UUID                          `json:"epoch"`
-	ContextDigest          string                             `json:"context_digest"`
-	SelectedSource         *firstPublicationPreviewSource     `json:"selected_source,omitempty"`
-	SourceCandidates       []firstPublicationPreviewSource    `json:"source_candidates"`
-	Transform              *firstPublicationPreviewTransform  `json:"transform,omitempty"`
-	PathComponents         []string                           `json:"path_components,omitempty"`
-	ResolvedPathComponents []string                           `json:"resolved_path_components,omitempty"`
-	DesiredTags            map[string][]string                `json:"desired_tags"`
-	MetadataRevisions      map[string]int64                   `json:"metadata_revisions"`
-	Warnings               []string                           `json:"warnings"`
-	Blockers               []string                           `json:"blockers"`
-	NativeStatus           string                             `json:"native_status"`
-	Mode                   string                             `json:"mode"`
-	CurrentComparison      *firstPublicationCurrentComparison `json:"current_comparison,omitempty"`
-	CoverPlan              *firstPublicationCoverPlan         `json:"cover_plan,omitempty"`
+	ReleaseID              uuid.UUID                           `json:"release_id"`
+	PositionID             uuid.UUID                           `json:"position_id"`
+	Epoch                  uuid.UUID                           `json:"epoch"`
+	ContextDigest          string                              `json:"context_digest"`
+	SelectedSource         *firstPublicationPreviewSource      `json:"selected_source,omitempty"`
+	SourceCandidates       []firstPublicationPreviewSource     `json:"source_candidates"`
+	Transform              *firstPublicationPreviewTransform   `json:"transform,omitempty"`
+	PathComponents         []string                            `json:"path_components,omitempty"`
+	ResolvedPathComponents []string                            `json:"resolved_path_components,omitempty"`
+	DesiredTags            map[string][]string                 `json:"desired_tags"`
+	MetadataRevisions      map[string]int64                    `json:"metadata_revisions"`
+	Warnings               []string                            `json:"warnings"`
+	Blockers               []string                            `json:"blockers"`
+	NativeStatus           string                              `json:"native_status"`
+	Mode                   string                              `json:"mode"`
+	CurrentComparison      *firstPublicationCurrentComparison  `json:"current_comparison,omitempty"`
+	CoverPlan              *firstPublicationCoverPlan          `json:"cover_plan,omitempty"`
+	LyricsPlan             *service.FirstPublicationLyricsPlan `json:"lyrics_plan,omitempty"`
 }
 
 type libraryPublicationPreviewModeService interface {
@@ -63,6 +64,7 @@ type firstPublicationCurrentComparison struct {
 	ResolvedMatches    bool                            `json:"resolved_matches"`
 	AudioStatus        string                          `json:"audio_status"`
 	CoverStatus        string                          `json:"cover_status"`
+	LyricsStatus       string                          `json:"lyrics_status"`
 }
 
 type firstPublicationCoverPlan struct {
@@ -199,6 +201,15 @@ func libraryFirstPublicationPreviewResponse(preview service.FirstPublicationPrev
 		Blockers: append([]string{}, preview.Blockers...), NativeStatus: preview.NativeStatus,
 		Mode: preview.Mode,
 	}
+	if preview.LyricsPlan != nil {
+		plan := *preview.LyricsPlan
+		plan.CurrentLyrics = clonePreviewTagValues(preview.LyricsPlan.CurrentLyrics)
+		plan.CurrentLyricsFields = make(map[string][]string, len(preview.LyricsPlan.CurrentLyricsFields))
+		for key, values := range preview.LyricsPlan.CurrentLyricsFields {
+			plan.CurrentLyricsFields[key] = clonePreviewTagValues(values)
+		}
+		response.LyricsPlan = &plan
+	}
 	if preview.CoverPlan != nil {
 		plan := preview.CoverPlan
 		response.CoverPlan = &firstPublicationCoverPlan{AuthorityRevision: plan.AuthorityRevision, AuthorityMode: plan.AuthorityMode, AuthorityGeneration: plan.AuthorityGeneration,
@@ -212,7 +223,7 @@ func libraryFirstPublicationPreviewResponse(preview service.FirstPublicationPrev
 			ResolvedComponents: append([]string(nil), comparison.ResolvedComponents...),
 			CurrentComponents:  append([]string(nil), comparison.CurrentComponents...),
 			RenderedMatches:    comparison.RenderedMatches, ResolvedMatches: comparison.ResolvedMatches,
-			AudioStatus: comparison.AudioStatus, CoverStatus: comparison.CoverStatus,
+			AudioStatus: comparison.AudioStatus, CoverStatus: comparison.CoverStatus, LyricsStatus: comparison.LyricsStatus,
 		}
 		response.CurrentComparison.TagDifferences = make([]firstPublicationTagDifference, 0, len(comparison.TagDifferences))
 		for _, difference := range comparison.TagDifferences {

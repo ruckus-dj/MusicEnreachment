@@ -76,12 +76,28 @@ func newPublicationExecutor(
 	bootUUID uuid.UUID,
 	commands PublicationCommandRunner,
 ) *PublicationExecutor {
-	client, _ := lrclib.NewClient(&http.Client{Timeout: 10 * time.Second})
 	return &PublicationExecutor{
 		repository: repository, registry: registry, platform: platform,
 		coordinator: coordinator, bootUUID: bootUUID, commands: commands,
-		lyrics: NewPublicationLyricsResolver(registry, client),
+		lyrics: newPublicationLyricsResolver(registry),
 	}
+}
+
+func newPublicationLyricsResolver(registry publicationLyricsSettings) *PublicationLyricsResolver {
+	client, _ := lrclib.NewClient(&http.Client{Timeout: 10 * time.Second})
+	return NewPublicationLyricsResolver(registry, client)
+}
+
+// NewDefaultPublicationLyricsResolver constructs the LRCLIB resolver shared by
+// first-publication planning and publication execution.
+func NewDefaultPublicationLyricsResolver(registry *settings.Registry) *PublicationLyricsResolver {
+	return newPublicationLyricsResolver(registry)
+}
+
+// WithLyricsResolver supplies the resolver shared with preview planning.
+func (executor *PublicationExecutor) WithLyricsResolver(resolver *PublicationLyricsResolver) *PublicationExecutor {
+	executor.lyrics = resolver
+	return executor
 }
 
 // ExecutePublicationDelivery reloads durable state using the operation ID in

@@ -249,9 +249,10 @@ func Run(ctx context.Context, config Config) error {
 		registry, setupManagerRepository, setupManagerRepository, riverSlot,
 		tools.Platform{GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH},
 	)
+	publicationLyricsResolver := service.NewDefaultPublicationLyricsResolver(registry)
 	libraryPublications := service.NewLibraryPublications(setupManagerRepository, registry, riverSlot, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
-	}).WithPublicationCoordinator(publicationCoordinator).WithCoverAcquisition(service.NewReleaseCoverAcquisition(libraryRepository, service.NewReleaseCoverResolver(libraryRepository, coverart.NewClient(nil))))
+	}).WithPublicationCoordinator(publicationCoordinator).WithLyricsResolver(publicationLyricsResolver).WithCoverAcquisition(service.NewReleaseCoverAcquisition(libraryRepository, service.NewReleaseCoverResolver(libraryRepository, coverart.NewClient(nil))))
 	matchingAuthority := service.NewMatchingAuthorityService(persistence.NewIncomingMatchCandidateRepository(db))
 	manualReleaseSelection := service.NewManualReleaseSelectionService(setupManagerRepository, incomingGroups, providerFetch, riverSlot)
 	manualPickerSearch := service.NewManualPickerSearchService(setupManagerRepository, providerFetch, riverSlot)
@@ -271,7 +272,7 @@ func Run(ctx context.Context, config Config) error {
 		setupManagerRepository, registry,
 		tools.Platform{GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH},
 		publicationCoordinator, publicationBootUUID, publicationCommands,
-	)
+	).WithLyricsResolver(publicationLyricsResolver)
 	publicationWorker := jobs.NewPublicationWorker(publicationExecutor, operationService)
 	obsoleteOutputCleanupRunner := service.NewObsoletePublicationOutputCleanupRunner(setupManagerRepository, registry, publicationCoordinator, nil)
 	obsoleteOutputCleanupWorker := jobs.NewObsoletePublicationOutputCleanupWorker(obsoleteOutputCleanupRunner)

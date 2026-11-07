@@ -41,5 +41,5 @@ source и CURRENT generation инвалидируют неподтверждён
 Windows migration suite сообщил PASS, но cleanup завершился ошибкой supervisor:
 `force-terminated without confirming PostgreSQL cleanup`. Остальные platform jobs,
 verify и Compose smoke прошли; container job не запускался из-за Windows failure.
-Failed jobs перезапущены без изменения gates или таймаутов. Полный CI результат
-пока не получен.
+Failed jobs перезапущены без изменения gates или таймаутов. Повторный Windows
+прогон и публикация контейнера завершились успешно; полный CI теперь зелёный.

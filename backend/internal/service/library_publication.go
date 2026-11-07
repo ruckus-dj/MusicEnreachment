@@ -117,6 +117,7 @@ type LibraryPublications struct {
 	platform         tools.Platform
 	coordinator      *publication.Coordinator
 	commands         PublicationCommandRunner
+	lyrics           *PublicationLyricsResolver
 	coverAcquisition interface {
 		Ensure(context.Context, uuid.UUID) error
 	}
@@ -133,6 +134,11 @@ func (service *LibraryPublications) WithPublicationCommands(commands Publication
 	return service
 }
 
+func (service *LibraryPublications) WithLyricsResolver(resolver *PublicationLyricsResolver) *LibraryPublications {
+	service.lyrics = resolver
+	return service
+}
+
 func (service *LibraryPublications) WithCoverAcquisition(acquisition interface {
 	Ensure(context.Context, uuid.UUID) error
 }) *LibraryPublications {
@@ -143,6 +149,7 @@ func (service *LibraryPublications) WithCoverAcquisition(acquisition interface {
 func NewLibraryPublications(repository *persistence.SetupManagerRepository, runtime *settings.Registry, client persistence.RiverInserter, platform tools.Platform) *LibraryPublications {
 	service := newLibraryPublications(repository, runtime, client, platform)
 	service.resolveNamespace = finalizeFirstPublicationNamespace
+	service.lyrics = NewDefaultPublicationLyricsResolver(runtime)
 	return service
 }
 

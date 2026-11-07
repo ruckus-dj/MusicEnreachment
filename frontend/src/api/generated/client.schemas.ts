@@ -234,6 +234,7 @@ export interface FirstPublicationCurrentComparison {
   /** @nullable */
   current_components: string[] | null;
   generation: string;
+  lyrics_status: string;
   reason: string;
   /** @nullable */
   rendered_components: string[] | null;
@@ -244,6 +245,22 @@ export interface FirstPublicationCurrentComparison {
   status: string;
   /** @nullable */
   tag_differences: FirstPublicationTagDifference[] | null;
+}
+
+export type FirstPublicationLyricsPlanCurrentLyricsFields = {[key: string]: string[] | null};
+
+export interface FirstPublicationLyricsPlan {
+  current_comparison_available: boolean;
+  /** @nullable */
+  current_lyrics: string[] | null;
+  current_lyrics_fields: FirstPublicationLyricsPlanCurrentLyricsFields;
+  current_present: boolean;
+  current_status: string;
+  lyrics?: string;
+  origin: string;
+  sha256?: string;
+  state: string;
+  warning_code?: string;
 }
 
 export interface FirstPublicationPreviewSource {
@@ -554,6 +571,7 @@ export interface LibraryFirstPublicationPreviewResponse {
   current_comparison?: FirstPublicationCurrentComparison;
   desired_tags: LibraryFirstPublicationPreviewResponseDesiredTags;
   epoch: string;
+  lyrics_plan?: FirstPublicationLyricsPlan;
   metadata_revisions: LibraryFirstPublicationPreviewResponseMetadataRevisions;
   mode: string;
   native_status: string;

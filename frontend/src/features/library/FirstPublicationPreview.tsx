@@ -50,6 +50,54 @@ function coverFactsText(
   return `${facts.mime} · ${facts.size} ${copy.coverBytes} · ${copy.coverSHA256} ${facts.sha256}`;
 }
 
+function lyricsStateText(state: string, copy: PreviewCopy) {
+  switch (state) {
+    case "absent":
+      return copy.lyricsStateAbsent;
+    case "value":
+      return copy.lyricsStateValue;
+    case "unknown":
+      return copy.lyricsStateUnknown;
+    case "unprocessable":
+      return copy.lyricsStateUnprocessable;
+    default:
+      return state;
+  }
+}
+
+function lyricsOriginText(origin: string, copy: PreviewCopy) {
+  switch (origin) {
+    case "none":
+      return copy.lyricsOriginNone;
+    case "manual":
+      return copy.lyricsOriginManual;
+    case "source":
+      return copy.lyricsOriginSource;
+    case "lrclib":
+      return copy.lyricsOriginLrclib;
+    default:
+      return origin;
+  }
+}
+
+function lyricsComparisonText(status: string, copy: PreviewCopy) {
+  switch (status) {
+    case "matches":
+      return copy.lyricsComparisonMatches;
+    case "differs":
+      return copy.lyricsComparisonDiffers;
+    case "unavailable":
+      return copy.lyricsComparisonUnavailable;
+    default:
+      return status;
+  }
+}
+
+function lyricsWarningText(code: string, copy: PreviewCopy) {
+  const warnings: Record<string, string> = copy.lyricsWarnings;
+  return warnings[code] ?? code;
+}
+
 export function FirstPublicationPreview({
   releaseId,
   positionId,
@@ -400,6 +448,13 @@ export function FirstPublicationPreview({
       preview.transform &&
       preview.resolved_path_components?.length,
   );
+  const lyricsPlan = preview?.lyrics_plan;
+  const lyricsComparisonStatus = lyricsPlan
+    ? !lyricsPlan.current_comparison_available
+      ? "unavailable"
+      : (preview?.current_comparison?.lyrics_status ??
+        lyricsPlan.current_status)
+    : "unavailable";
 
   return (
     <section
@@ -642,6 +697,80 @@ export function FirstPublicationPreview({
               <p>{copy.coverPlanNotGuarantee}</p>
             </section>
           )}
+          {lyricsPlan && (
+            <section
+              className="space-y-2 rounded border border-stone-200 p-3"
+              aria-label={copy.lyricsPlanAria}
+            >
+              <h4 className="font-medium">{copy.lyricsPlan}</h4>
+              <p>
+                {copy.lyricsState}: {lyricsStateText(lyricsPlan.state, copy)}
+              </p>
+              <p>
+                {copy.lyricsOrigin}: {lyricsOriginText(lyricsPlan.origin, copy)}
+              </p>
+              {lyricsPlan.state === "value" &&
+                lyricsPlan.lyrics !== undefined && (
+                  <div>
+                    <p className="font-medium">{copy.lyricsPlannedText}</p>
+                    <pre className="whitespace-pre-wrap break-words">
+                      {lyricsPlan.lyrics}
+                    </pre>
+                  </div>
+                )}
+              {lyricsPlan.sha256 && (
+                <p className="break-all">
+                  {copy.lyricsChecksum}: {lyricsPlan.sha256}
+                </p>
+              )}
+              {lyricsPlan.warning_code && (
+                <p>
+                  {copy.lyricsWarning}:{" "}
+                  {lyricsWarningText(lyricsPlan.warning_code, copy)}
+                </p>
+              )}
+              <div>
+                <h5 className="font-medium">{copy.lyricsCurrentFields}</h5>
+                {lyricsPlan.current_present ? (
+                  <>
+                    {lyricsPlan.current_lyrics === null ? (
+                      <p>{copy.lyricsCurrentNil}</p>
+                    ) : lyricsPlan.current_lyrics.length === 0 ? (
+                      <p>{copy.lyricsCurrentEmpty}</p>
+                    ) : null}
+                    {Object.keys(lyricsPlan.current_lyrics_fields ?? {})
+                      .length ? (
+                      <ul className="space-y-1">
+                        {Object.entries(
+                          lyricsPlan.current_lyrics_fields ?? {},
+                        ).map(([field, values]) => (
+                          <li key={field}>
+                            <p className="break-all font-medium">{field}</p>
+                            {values?.length ? (
+                              <pre className="whitespace-pre-wrap break-words">
+                                {JSON.stringify(values, null, 2)}
+                              </pre>
+                            ) : (
+                              <p>{copy.lyricsFieldEmpty}</p>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>{copy.lyricsNoFields}</p>
+                    )}
+                  </>
+                ) : (
+                  <p>{copy.lyricsCurrentAbsent}</p>
+                )}
+              </div>
+              <p>
+                {copy.lyricsComparison}:{" "}
+                {lyricsComparisonText(lyricsComparisonStatus, copy)}
+              </p>
+              <p>{copy.lyricsComparisonBasis}</p>
+            </section>
+          )}
           {comparisonOnly && preview.current_comparison && (
             <section
               className="space-y-2"
@@ -708,7 +837,7 @@ export function FirstPublicationPreview({
               ) : (
                 <p>{copy.noTagDifferences}</p>
               )}
-              <p>{copy.unresolvedAssets}</p>
+              <p>{copy.readOnlyBoundary}</p>
             </section>
           )}
           {!comparisonOnly && (

@@ -23,4 +23,8 @@ presence-presuming сообщение для absent/absent; оба исправ�
 Браузерная проверка — непосредственно production preview component с API fixture,
 не полный release shell/backend E2E: RU/EN, 1440×900 и 390×900, ready и optional
 failure, отдельные original/derivative facts, сохранённый original при ошибке,
-отсутствие confirm controls и горизонтального overflow. Полный gate/CI ожидаются.
+отсутствие confirm controls и горизонтального overflow.
+
+`7135c8ed` прошёл обычный полный commit hook и всю
+[CI 42420678807](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42420678807),
+включая матрицу платформ, Compose smoke и публикацию контейнера.

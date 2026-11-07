@@ -66,7 +66,7 @@ func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testi
 			if comparison.TagDifferences[2].DesiredPresent != true || comparison.TagDifferences[2].CurrentPresent != false || comparison.TagDifferences[1].DesiredPresent != true || comparison.TagDifferences[1].CurrentPresent != true || comparison.TagDifferences[1].Desired == nil || comparison.TagDifferences[1].Current != nil {
 				t.Fatalf("nil/absent/empty tag distinctions lost: %#v", comparison.TagDifferences)
 			}
-			if comparison.AudioStatus != "factual_only" || !strings.Contains(comparison.Reason, "asset comparison is incomplete") {
+			if comparison.AudioStatus != "factual_only" || !strings.Contains(comparison.Reason, "typed source replacement") {
 				t.Fatalf("comparison safety status = %#v", comparison)
 			}
 		})

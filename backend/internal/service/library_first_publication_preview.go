@@ -49,6 +49,7 @@ type FirstPublicationPreview struct {
 	Mode                   string                                   `json:"mode"`
 	CurrentComparison      *FirstPublicationCurrentComparison       `json:"current_comparison,omitempty"`
 	CoverPlan              *FirstPublicationCoverPlan               `json:"cover_plan,omitempty"`
+	LyricsPlan             *FirstPublicationLyricsPlan              `json:"lyrics_plan,omitempty"`
 }
 
 type FirstPublicationCurrentComparison struct {
@@ -63,6 +64,7 @@ type FirstPublicationCurrentComparison struct {
 	ResolvedMatches    bool                            `json:"resolved_matches"`
 	AudioStatus        string                          `json:"audio_status"`
 	CoverStatus        string                          `json:"cover_status"`
+	LyricsStatus       string                          `json:"lyrics_status"`
 }
 
 type FirstPublicationTagDifference struct {
@@ -143,6 +145,25 @@ func (service *LibraryPublications) PreviewFirstSelectedMode(ctx context.Context
 	preview, err := buildFirstPublicationPreviewSelectedMode(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode)
 	if err != nil {
 		return preview, err
+	}
+	if contextSnapshot.Library.Current != nil {
+		var selected *persistence.FirstPublicationSource
+		if preview.SelectedSource != nil {
+			for i := range contextSnapshot.Sources {
+				if contextSnapshot.Sources[i].AssociationID == preview.SelectedSource.AssociationID && contextSnapshot.Sources[i].Quality.StreamIndex == preview.SelectedSource.StreamIndex {
+					selected = &contextSnapshot.Sources[i]
+					break
+				}
+			}
+		}
+		plan, planErr := planFirstPublicationLyrics(ctx, service.lyrics, selected, initialLyricsAuthorityInput(contextSnapshot), runtimeSettings.LRCLIBEnabled, contextSnapshot.Library.Current)
+		if planErr != nil {
+			return FirstPublicationPreview{}, planErr
+		}
+		preview.LyricsPlan = &plan
+		if err := foldFirstPublicationLyricsPlanDigest(&preview, plan); err != nil {
+			return FirstPublicationPreview{}, err
+		}
 	}
 	if contextSnapshot.Library.Current != nil {
 		coverPlan, err := planFirstPublicationCover(ctx, os.TempDir(), contextSnapshot.EffectiveCoverInput)
@@ -349,10 +370,13 @@ func buildFirstPublicationPreviewSelectedMode(contextSnapshot *persistence.Libra
 
 func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *persistence.LibraryPublicationCurrent) *FirstPublicationCurrentComparison {
 	comparison := &FirstPublicationCurrentComparison{
-		Status: "blocked", Reason: "asset comparison is incomplete; exact lyrics and cover comparison and typed replacement contract are not available",
+		Status: "blocked", Reason: "comparison is read-only; typed source replacement and native proof of embedded assets are not available",
 		Generation: current.Record.Generation, RenderedComponents: append([]string(nil), preview.PathComponents...),
 		ResolvedComponents: append([]string(nil), preview.ResolvedPathComponents...),
-		CurrentComponents:  strings.Split(current.Record.RelativePath, "/"), AudioStatus: "factual_only", CoverStatus: "unavailable",
+		CurrentComponents:  strings.Split(current.Record.RelativePath, "/"), AudioStatus: "factual_only", CoverStatus: "unavailable", LyricsStatus: "unavailable",
+	}
+	if preview.LyricsPlan != nil {
+		comparison.LyricsStatus = preview.LyricsPlan.CurrentStatus
 	}
 	comparison.RenderedMatches = strings.Join(comparison.RenderedComponents, "/") == current.Record.RelativePath
 	comparison.ResolvedMatches = strings.Join(comparison.ResolvedComponents, "/") == current.Record.RelativePath
@@ -383,9 +407,15 @@ func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *pe
 	actual := current.Metadata.Tags
 	keys := make(map[string]struct{}, len(desired)+len(actual))
 	for key := range desired {
+		if preview.LyricsPlan != nil && strings.EqualFold(strings.TrimSpace(key), "LYRICS") {
+			continue
+		}
 		keys[key] = struct{}{}
 	}
 	for key := range actual {
+		if preview.LyricsPlan != nil && strings.EqualFold(strings.TrimSpace(key), "LYRICS") {
+			continue
+		}
 		keys[key] = struct{}{}
 	}
 	sorted := make([]string, 0, len(keys))

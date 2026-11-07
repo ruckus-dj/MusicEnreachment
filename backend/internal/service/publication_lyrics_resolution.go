@@ -48,6 +48,10 @@ func NewPublicationLyricsResolver(settings publicationLyricsSettings, lookup Pub
 }
 
 func (resolver *PublicationLyricsResolver) Resolve(ctx context.Context, request PublicationLyricsResolutionRequest) (PublicationLyricsResolution, error) {
+	return resolver.resolve(ctx, request, nil)
+}
+
+func (resolver *PublicationLyricsResolver) resolve(ctx context.Context, request PublicationLyricsResolutionRequest, capturedEnabled *bool) (PublicationLyricsResolution, error) {
 	if err := ctx.Err(); err != nil {
 		return PublicationLyricsResolution{}, err
 	}
@@ -72,18 +76,27 @@ func (resolver *PublicationLyricsResolver) Resolve(ctx context.Context, request 
 		return resolvedPublicationLyrics("source", lyrics), nil
 	}
 
-	if resolver == nil || resolver.settings == nil {
+	if capturedEnabled != nil {
+		if !*capturedEnabled {
+			return PublicationLyricsResolution{Source: "none"}, nil
+		}
+	} else if resolver == nil || resolver.settings == nil {
 		return PublicationLyricsResolution{Source: "none", WarningCode: "lyrics_settings_unavailable"}, nil
 	}
-	enabled, err := resolver.settings.GetLRCLIBEnabled(ctx)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return PublicationLyricsResolution{}, ctxErr
+	if capturedEnabled == nil {
+		enabled, err := resolver.settings.GetLRCLIBEnabled(ctx)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return PublicationLyricsResolution{}, ctxErr
+		}
+		if err != nil {
+			return PublicationLyricsResolution{Source: "none", WarningCode: "lyrics_settings_unavailable"}, nil
+		}
+		if !enabled {
+			return PublicationLyricsResolution{Source: "none"}, nil
+		}
 	}
-	if err != nil {
-		return PublicationLyricsResolution{Source: "none", WarningCode: "lyrics_settings_unavailable"}, nil
-	}
-	if !enabled {
-		return PublicationLyricsResolution{Source: "none"}, nil
+	if resolver == nil {
+		return PublicationLyricsResolution{Source: "none", WarningCode: "lyrics_provider_unavailable"}, nil
 	}
 	metadata := request.Metadata
 	if metadata.Duration <= 0 || math.IsNaN(metadata.Duration) || math.IsInf(metadata.Duration, 0) {
@@ -107,6 +120,12 @@ func (resolver *PublicationLyricsResolver) Resolve(ctx context.Context, request 
 		return PublicationLyricsResolution{Source: "none", WarningCode: "lyrics_lookup_invalid_synced_text"}, nil
 	}
 	return resolvedPublicationLyrics("lrclib", lyrics), nil
+}
+
+// ResolveWithEnabled applies the resolver policy using a setting captured by
+// the caller's planning snapshot. It intentionally does not reread settings.
+func (resolver *PublicationLyricsResolver) ResolveWithEnabled(ctx context.Context, request PublicationLyricsResolutionRequest, enabled bool) (PublicationLyricsResolution, error) {
+	return resolver.resolve(ctx, request, &enabled)
 }
 
 func resolvedPublicationLyrics(source, lyrics string) PublicationLyricsResolution {

@@ -43,7 +43,7 @@ export const firstPublicationPreviewMessages = {
     previewNotPublicationCheck:
       "The preview does not verify that publication can proceed.",
     comparisonReadOnly:
-      "Read-only comparison: publication cannot be confirmed or started because file assets have not been resolved.",
+      "Read-only comparison: republishing from this preview is not available yet.",
     mode: "Comparison mode",
     ordinary: "Ordinary",
     forced: "Forced",
@@ -60,8 +60,49 @@ export const firstPublicationPreviewMessages = {
     calculatedValue: "Calculated",
     currentComparisonAria: "Factual comparison with the current publication",
     absent: "absent",
-    unresolvedAssets:
-      "Lyrics remain unresolved in this comparison, so their equality is not established. The cover comparison uses publication plan data only and does not prove that the cover is embedded in the native file.",
+    readOnlyBoundary:
+      "This preview does not change published files. The cover comparison describes the planned content, not a guarantee that writing it will succeed.",
+    lyricsPlan: "Lyrics plan",
+    lyricsPlanAria: "Lyrics plan and raw CURRENT lyrics fields",
+    lyricsState: "Planned lyrics state",
+    lyricsStateAbsent: "absent — no lyrics are planned",
+    lyricsStateValue: "value — lyrics text is planned",
+    lyricsStateUnknown: "unknown — not established",
+    lyricsStateUnprocessable: "unprocessable — not established",
+    lyricsOrigin: "Planned lyrics origin",
+    lyricsOriginNone: "none",
+    lyricsOriginManual: "manual",
+    lyricsOriginSource: "source",
+    lyricsOriginLrclib: "LRCLIB",
+    lyricsPlannedText: "Planned lyrics text (exact)",
+    lyricsChecksum: "Planned text SHA-256",
+    lyricsWarning: "Acquisition warning",
+    lyricsWarnings: {
+      lyrics_manual_value_invalid: "the manual lyrics value is invalid",
+      lyrics_source_metadata_unavailable:
+        "source metadata is unavailable, so planned lyrics are not established",
+      lyrics_provider_unavailable: "the lyrics provider is unavailable",
+      lyrics_source_selection_required:
+        "the source has multiple synced lyrics versions; a selection is required",
+      lyrics_settings_unavailable: "lyrics lookup settings are unavailable",
+      lyrics_lookup_metadata_incomplete: "lyrics lookup metadata is incomplete",
+      lyrics_lookup_failed: "the lyrics lookup failed",
+      lyrics_lookup_invalid_synced_text:
+        "the lyrics lookup returned invalid synced text",
+    },
+    lyricsCurrentFields: "Saved CURRENT lyrics fields (raw)",
+    lyricsCurrentAbsent: "CURRENT has no LYRICS field.",
+    lyricsCurrentNil:
+      "CURRENT has a LYRICS field, but no values were captured.",
+    lyricsCurrentEmpty: "CURRENT has a LYRICS field with an empty value.",
+    lyricsFieldEmpty: "empty value",
+    lyricsNoFields: "No raw LYRICS fields are available.",
+    lyricsComparison: "CURRENT lyrics comparison",
+    lyricsComparisonMatches: "matches",
+    lyricsComparisonDiffers: "differs",
+    lyricsComparisonUnavailable: "unavailable — equality is not established",
+    lyricsComparisonBasis:
+      "The comparison uses the raw field values above only; it is separate from the planned origin and acquisition warning and does not assert native embedding.",
     coverPlan: "Cover plan",
     coverPlanAria: "Cover plan for this publication",
     coverAuthority: "Authoritative cover",
@@ -137,7 +178,7 @@ export const firstPublicationPreviewMessages = {
     previewNotPublicationCheck:
       "Предпросмотр не проверяет возможность публикации.",
     comparisonReadOnly:
-      "Сравнение доступно только для чтения: подтвердить или запустить публикацию нельзя, поскольку файловые активы ещё не разрешены.",
+      "Сравнение доступно только для чтения: повторная публикация из этого предпросмотра пока недоступна.",
     mode: "Режим сравнения",
     ordinary: "Обычный",
     forced: "Принудительный",
@@ -154,8 +195,53 @@ export const firstPublicationPreviewMessages = {
     calculatedValue: "Расчёт",
     currentComparisonAria: "Фактическое сравнение с текущей публикацией",
     absent: "отсутствует",
-    unresolvedAssets:
-      "Текст песни по-прежнему не разрешён в этом сравнении, поэтому его равенство не устанавливается. Сравнение обложки основано только на данных плана публикации и не доказывает, что обложка встроена в нативный файл.",
+    readOnlyBoundary:
+      "Этот предпросмотр не меняет опубликованные файлы. Сравнение обложки описывает планируемое содержимое, а не гарантирует успешную запись.",
+    lyricsPlan: "План текста песни",
+    lyricsPlanAria:
+      "План текста песни и необработанные поля LYRICS текущей публикации",
+    lyricsState: "Состояние планируемого текста",
+    lyricsStateAbsent: "отсутствует — текст не планируется",
+    lyricsStateValue: "значение — планируется текст песни",
+    lyricsStateUnknown: "неизвестно — не установлено",
+    lyricsStateUnprocessable: "не может быть обработан — не установлено",
+    lyricsOrigin: "Источник планируемого текста",
+    lyricsOriginNone: "нет",
+    lyricsOriginManual: "вручную",
+    lyricsOriginSource: "источник",
+    lyricsOriginLrclib: "LRCLIB",
+    lyricsPlannedText: "Планируемый текст песни (точно)",
+    lyricsChecksum: "SHA-256 планируемого текста",
+    lyricsWarning: "Предупреждение получения",
+    lyricsWarnings: {
+      lyrics_manual_value_invalid: "значение ручного текста некорректно",
+      lyrics_source_metadata_unavailable:
+        "метаданные источника недоступны, поэтому планируемый текст не установлен",
+      lyrics_provider_unavailable: "провайдер текста недоступен",
+      lyrics_source_selection_required:
+        "в источнике несколько версий синхронизированного текста; требуется выбор",
+      lyrics_settings_unavailable: "настройки поиска текста недоступны",
+      lyrics_lookup_metadata_incomplete:
+        "недостаточно метаданных для поиска текста",
+      lyrics_lookup_failed: "не удалось найти текст",
+      lyrics_lookup_invalid_synced_text:
+        "найденный синхронизированный текст не прошёл проверку",
+    },
+    lyricsCurrentFields:
+      "Сохранённые поля LYRICS текущей публикации (как есть)",
+    lyricsCurrentAbsent: "В текущей публикации нет поля LYRICS.",
+    lyricsCurrentNil:
+      "Поле LYRICS текущей публикации есть, но значения не захвачены.",
+    lyricsCurrentEmpty:
+      "Поле LYRICS текущей публикации присутствует с пустым значением.",
+    lyricsFieldEmpty: "пустое значение",
+    lyricsNoFields: "Необработанные поля LYRICS недоступны.",
+    lyricsComparison: "Сравнение текста текущей публикации",
+    lyricsComparisonMatches: "совпадает",
+    lyricsComparisonDiffers: "отличается",
+    lyricsComparisonUnavailable: "недоступно — равенство не устанавливается",
+    lyricsComparisonBasis:
+      "Сравнение использует только необработанные значения полей выше; оно отдельно от источника и предупреждения получения и не подтверждает встраивание нативным писателем.",
     coverPlan: "План обложки",
     coverPlanAria: "План обложки для этой публикации",
     coverAuthority: "Действующая обложка",
