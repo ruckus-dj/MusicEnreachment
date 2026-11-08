@@ -85,7 +85,7 @@ describe("AppShell sources routing", () => {
     const navigation = await screen.findByRole("navigation", {
       name: "Разделы приложения",
     });
-    expect(navigation.querySelectorAll("a")).toHaveLength(5);
+    expect(navigation.querySelectorAll("a")).toHaveLength(6);
     expect(
       screen.queryByRole("link", { name: "Публикации" }),
     ).not.toBeInTheDocument();

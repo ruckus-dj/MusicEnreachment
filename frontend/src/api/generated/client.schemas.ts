@@ -92,29 +92,6 @@ export interface CoverEmbeddingResponse {
   warning_code?: string;
 }
 
-export interface CreateLibraryReleaseMediaResult {
-  media_id: string;
-  media_key: string;
-}
-
-export interface CreateLibraryReleasePositionResult {
-  position_id: string;
-  position_key: string;
-  /** @nullable */
-  recording_id: string | null;
-  track_id: string;
-}
-
-export interface CreateLibraryReleaseResult {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /** @nullable */
-  media: CreateLibraryReleaseMediaResult[] | null;
-  /** @nullable */
-  positions: CreateLibraryReleasePositionResult[] | null;
-  release_id: string;
-}
-
 export type CreateSourceBodyProcessingMode = typeof CreateSourceBodyProcessingMode[keyof typeof CreateSourceBodyProcessingMode];
 
 
@@ -915,104 +892,6 @@ export interface LibraryReleaseCoverSaveBody {
   mime: string;
 }
 
-export interface LibraryReleaseCreateArtist {
-  key: string;
-  name?: string;
-}
-
-export interface LibraryReleaseCreateArtistRef {
-  /** @nullable */
-  id?: string | null;
-  key?: string;
-  kind: string;
-}
-
-/**
- * @nullable
- */
-export type LibraryReleaseCreateCover = {
-  expected_sha256: string;
-  metadata_result_id: string;
-} | null;
-
-export interface LibraryReleaseCreateCredit {
-  artist_ref: LibraryReleaseCreateArtistRef;
-  credit_name?: string;
-  join_phrase?: string;
-  role?: string;
-}
-
-/**
- * @nullable
- */
-export type LibraryReleaseCreateRecordingRef = {
-  configuration_identity?: string;
-  /** @nullable */
-  id?: string | null;
-  key?: string;
-  kind: string;
-  /** @nullable */
-  provider_id?: string | null;
-  /** @nullable */
-  provider_recording_id?: string | null;
-  /** @nullable */
-  provider_source_id?: string | null;
-} | null;
-
-export interface LibraryReleaseCreateSource {
-  media_variant_id: string;
-  /** @nullable */
-  metadata_result_id?: string | null;
-}
-
-export interface LibraryReleaseCreatePosition {
-  displayed_number?: string;
-  /** @nullable */
-  duration_ms?: number | null;
-  key: string;
-  recording_ref?: LibraryReleaseCreateRecordingRef | null;
-  /** @nullable */
-  selected_media_variant_id?: string | null;
-  /** @nullable */
-  sources?: LibraryReleaseCreateSource[] | null;
-  title?: string;
-}
-
-export interface LibraryReleaseCreateMedium {
-  format?: string;
-  key: string;
-  /** @nullable */
-  positions?: LibraryReleaseCreatePosition[] | null;
-  title?: string;
-}
-
-export interface LibraryReleaseCreateRecording {
-  key: string;
-  title?: string;
-}
-
-export interface LibraryReleaseCreateRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  catalog_number?: string;
-  country?: string;
-  cover?: LibraryReleaseCreateCover | null;
-  /** @nullable */
-  credits?: LibraryReleaseCreateCredit[] | null;
-  label?: string;
-  /** @nullable */
-  media?: LibraryReleaseCreateMedium[] | null;
-  /** @nullable */
-  new_artists?: LibraryReleaseCreateArtist[] | null;
-  /** @nullable */
-  new_recordings?: LibraryReleaseCreateRecording[] | null;
-  release_date?: string;
-  /** @nullable */
-  release_id?: string | null;
-  release_type?: string;
-  title?: string;
-}
-
 export interface LibraryReleaseMediumResponse {
   format: string;
   id: string;
@@ -1196,6 +1075,105 @@ export interface LibraryReleasePage {
   total: number;
 }
 
+export interface LocalProviderCredit {
+  artist_id: string;
+  artist_name: string;
+  credit_name: string;
+  join_phrase: string;
+  provider_code: string;
+  provider_id: string;
+}
+
+export interface LocalProviderCreditInput {
+  artist_id: string;
+  credit_name: string;
+  join_phrase: string;
+}
+
+export interface LocalProviderTrack {
+  displayed_number: string;
+  /** @nullable */
+  duration_override_ms: number | null;
+  id: string;
+  position: number;
+  provider_code: string;
+  provider_id: string;
+  /** @nullable */
+  recording_duration_ms: number | null;
+  recording_id: string;
+  recording_title: string;
+  /** @nullable */
+  title_override: string | null;
+}
+
+export interface LocalProviderItem {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  credits: LocalProviderCredit[] | null;
+  duration_ms?: number;
+  /** @nullable */
+  genres: GenreReference[] | null;
+  id: string;
+  kind: string;
+  language?: string;
+  name?: string;
+  provider_code: string;
+  provider_id: string;
+  provider_key: string;
+  release_group_primary_type?: string;
+  /** @nullable */
+  release_group_secondary_types?: string[] | null;
+  release_group_title?: string;
+  script?: string;
+  sort_name?: string;
+  /** @nullable */
+  tags?: string[] | null;
+  title?: string;
+  /** @nullable */
+  tracks: LocalProviderTrack[] | null;
+}
+
+export interface LocalProviderPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  items: LocalProviderItem[] | null;
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface LocalProviderTrackInput {
+  duration_override_ms?: number;
+  id?: string;
+  recording_id: string;
+  title_override?: string;
+}
+
+export interface LocalProviderWrite {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  credits?: LocalProviderCreditInput[] | null;
+  duration_ms?: number;
+  /** @nullable */
+  genres?: GenreCatalogItem[] | null;
+  language?: string;
+  name?: string;
+  release_group_primary_type?: string;
+  /** @nullable */
+  release_group_secondary_types?: string[] | null;
+  release_group_title?: string;
+  script?: string;
+  sort_name?: string;
+  /** @nullable */
+  tags?: string[] | null;
+  title?: string;
+  /** @nullable */
+  tracks?: LocalProviderTrackInput[] | null;
+}
+
 export type ManualPickerSearchBodyEntity = typeof ManualPickerSearchBodyEntity[keyof typeof ManualPickerSearchBodyEntity];
 
 
@@ -1257,18 +1235,24 @@ export interface MatchingLocalArtist {
   name: string;
 }
 
+export interface MatchingLocalAssignment {
+  file_member_id: string;
+  provider_track_id: string;
+}
+
 export interface MatchingLocalTrack {
   /** @nullable */
   artists: MatchingLocalArtist[] | null;
   displayed_number: string;
-  /** @nullable */
-  file_member_ids: string[] | null;
-  local_track_id?: string;
+  duration_override_ms?: number;
   medium: number;
   position: number;
-  /** @nullable */
-  source_media_ids?: string[] | null;
+  provider_track_id: string;
+  recording_duration_ms?: number;
+  recording_id: string;
+  recording_provider_id: string;
   title: string;
+  title_override?: string;
 }
 
 export interface MatchingLocalRelease {
@@ -1290,16 +1274,13 @@ export interface MatchingLocalCatalog {
 export interface MatchingLocalConfirmBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @nullable */
+  assignments: MatchingLocalAssignment[] | null;
   expected_authority_revision: number;
   expected_group_revision: string;
-  local_release_id?: string;
   preview_digest: string;
-  /** @nullable */
-  release_artists: MatchingLocalArtist[] | null;
-  release_title: string;
+  provider_release_id: string;
   request_id: string;
-  /** @nullable */
-  tracks: MatchingLocalTrack[] | null;
 }
 
 export interface MatchingLocalSource {
@@ -1323,6 +1304,7 @@ export interface MatchingLocalPreview {
   /** @nullable */
   omitted_file_member_ids: string[] | null;
   preview_digest: string;
+  provider_release_id: string;
   /** @nullable */
   release_artists: MatchingLocalArtist[] | null;
   release_title: string;
@@ -1335,14 +1317,11 @@ export interface MatchingLocalPreview {
 export interface MatchingLocalPreviewBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @nullable */
+  assignments: MatchingLocalAssignment[] | null;
   expected_authority_revision: number;
   expected_group_revision: string;
-  local_release_id?: string;
-  /** @nullable */
-  release_artists: MatchingLocalArtist[] | null;
-  release_title: string;
-  /** @nullable */
-  tracks: MatchingLocalTrack[] | null;
+  provider_release_id: string;
 }
 
 export interface MatchingManualAssignment {
@@ -2217,6 +2196,48 @@ export const ListOperationsState = {
   running: 'running',
   failed: 'failed',
 } as const;
+
+export type ListLocalProviderArtistsParams = {
+q?: string;
+provider?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListLocalProviderRecordingsParams = {
+q?: string;
+provider?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListLocalProviderReleasesParams = {
+q?: string;
+provider?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
 
 export type BrowseServerDirectoriesParams = {
 path?: string;

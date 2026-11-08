@@ -14,8 +14,9 @@ import {
   parseLibraryReleaseRoute,
   parseLibraryRoute,
 } from "../features/library/libraryRoute";
-import { NewLibraryReleaseScreen } from "../features/library/NewLibraryReleaseScreen";
 import { OperationsScreen } from "../features/operations/OperationsScreen";
+import { OwnCatalogScreen } from "../features/own-catalog/OwnCatalogScreen";
+import { useI18n } from "../i18n/I18nProvider";
 import "../features/incoming/incoming.css";
 import "./app-shell.css";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
@@ -32,7 +33,7 @@ type Route =
   | "/incoming-groups"
   | "/operations"
   | "/library"
-  | "/library/create"
+  | "/own-catalog"
   | `/library/artists/${string}`
   | `/library/releases/${string}`
   | `/library/releases/${string}/positions/${string}`;
@@ -48,8 +49,8 @@ function currentRoute(hash: string, isSourcesRoute: boolean): Route {
   if (hash === "#/incoming-groups") return "/incoming-groups";
   if (hash === "#/operations") return "/operations";
   if (pathname === "/publications") return "/library";
+  if (pathname === "/own-catalog") return "/own-catalog";
   if (parseLibraryRoute(hash)) return "/library";
-  if (pathname === "/library/create") return "/library/create";
   const libraryArtist = parseLibraryArtistRoute(hash);
   if (libraryArtist) return `/library/artists/${libraryArtist.artistId}`;
   const libraryPosition = parseLibraryPositionRoute(hash);
@@ -60,6 +61,7 @@ function currentRoute(hash: string, isSourcesRoute: boolean): Route {
   return "/";
 }
 export function AppShell() {
+  const { locale } = useI18n();
   const hash = useHashLocation();
   const sourcesRoute = parseSourcesRoute(hash);
   const route = currentRoute(hash, sourcesRoute !== undefined);
@@ -138,7 +140,7 @@ export function AppShell() {
               <strong>MeloTrove</strong>
               <span>Медиатека</span>
             </a>
-            <ShellNavigation route={route} />
+            <ShellNavigation route={route} locale={locale} />
           </aside>
           <div className="app-workspace">
             <header className="app-topbar">
@@ -146,7 +148,9 @@ export function AppShell() {
                 <strong>MeloTrove</strong>
                 <span>Медиатека</span>
               </a>
-              <span className="app-section-label">{sectionLabel(route)}</span>
+              <span className="app-section-label">
+                {sectionLabel(route, locale)}
+              </span>
               <div className="flex items-center gap-2">
                 <LanguageControl />
                 <ThemeControl />
@@ -224,8 +228,8 @@ export function AppShell() {
       <OperationsScreen />
     ) : state && route === "/library" ? (
       <LibraryScreen />
-    ) : state && route === "/library/create" ? (
-      <NewLibraryReleaseScreen />
+    ) : state && route === "/own-catalog" ? (
+      <OwnCatalogScreen />
     ) : state && route.startsWith("/library/artists/") ? (
       <LibraryArtistScreen
         artistId={parseLibraryArtistRoute(hash)?.artistId ?? ""}
@@ -293,16 +297,24 @@ function RootLanding() {
   );
 }
 
-function sectionLabel(route: Route): string {
+function sectionLabel(route: Route, locale: "en" | "ru"): string {
   if (route === "/incoming-groups") return "Входящие";
   if (route === "/library" || route.startsWith("/library/")) return "Медиатека";
+  if (route === "/own-catalog")
+    return locale === "ru" ? "Собственный каталог" : "Own catalog";
   if (route === "/sources") return "Источники";
   if (route === "/operations") return "Операции";
   if (route === "/settings") return "Настройки";
   return "Главная";
 }
 
-function ShellNavigation({ route }: { route: Route }) {
+function ShellNavigation({
+  route,
+  locale,
+}: {
+  route: Route;
+  locale: "en" | "ru";
+}) {
   const items = [
     {
       label: "Входящие",
@@ -313,6 +325,11 @@ function ShellNavigation({ route }: { route: Route }) {
       label: "Медиатека",
       href: "#/library",
       active: route === "/library" || route.startsWith("/library/"),
+    },
+    {
+      label: locale === "ru" ? "Собственный каталог" : "Own catalog",
+      href: "#/own-catalog",
+      active: route === "/own-catalog",
     },
     { label: "Источники", href: "#/sources", active: route === "/sources" },
     {

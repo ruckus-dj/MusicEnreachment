@@ -5,13 +5,15 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"testing"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"testing"
-	"time"
 )
 
 func matchingApplyEvidence(t *testing.T, fixture *incomingMatchFixture, trackID uuid.UUID) json.RawMessage {
@@ -246,7 +248,7 @@ func newIncomingMatchFixture(t *testing.T, ctx context.Context, db *bun.DB) *inc
 	}
 	const releaseKey = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	const trackKey = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-	rawRelease := json.RawMessage(`{"id":"` + releaseKey + `","title":"Fixture Album","artist-credit":[{"name":"Fixture Artist","artist":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"Fixture Artist"}}],"media":[{"position":1,"tracks":[{"id":"` + trackKey + `","number":"1","recording":{"id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","title":"Fixture Track"}}]}]}`)
+	rawRelease := json.RawMessage(`{"id":"` + releaseKey + `","title":"Fixture Album","artist-credit":[{"name":"Fixture Artist","artist":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"Fixture Artist"}}],"media":[{"position":1,"tracks":[{"id":"` + trackKey + `","number":"1","recording":{"id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","title":"Fixture Track","length":201000,"artist-credit":[{"name":"Recording Credit","joinphrase":" feat. ","artist":{"id":"ffffffff-ffff-4fff-8fff-ffffffffffff","name":"Canonical Recording Artist"}}]}}]}]}`)
 	graph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: rawRelease}})
 	if err != nil {
 		t.Fatalf("normalize real provider release fixture: %v", err)
@@ -353,5 +355,131 @@ func (f *incomingMatchFixture) candidate(member uuid.UUID, score float64) persis
 	return persistence.IncomingMatchCandidate{
 		FileMemberID: member, ProviderID: f.provider, ProviderSourceID: f.source,
 		ReleaseID: f.releaseID, Score: score, Evidence: json.RawMessage(`{"kind":"test"}`),
+	}
+}
+
+func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing.T) {
+	db := testpostgres.OpenMigratedWithRiver(t)
+	ctx := context.Background()
+	fixture := newIncomingMatchFixture(t, ctx, db)
+
+	var artistID, recordingID uuid.UUID
+	if err := db.NewRaw(`SELECT id FROM provider_artist WHERE provider_id=? ORDER BY id LIMIT 1`, fixture.provider).Scan(ctx, &artistID); err != nil {
+		t.Fatalf("read cross-provider artist: %v", err)
+	}
+	if err := db.NewRaw(`SELECT recording_id FROM provider_release_track WHERE provider_id=? AND release_id=? ORDER BY id LIMIT 1`, fixture.provider, fixture.releaseID).Scan(ctx, &recordingID); err != nil {
+		t.Fatalf("read cross-provider recording: %v", err)
+	}
+	var publicationRequestsBefore int
+	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_request`).Scan(ctx, &publicationRequestsBefore); err != nil {
+		t.Fatalf("count publication requests before local CRUD: %v", err)
+	}
+
+	titleOverride, durationOverride := "Local title", int64(123456)
+	catalog := service.NewLocalProviderCatalog(persistence.NewLocalProviderRepository(db), nil)
+	created, err := catalog.Create(ctx, "release", service.LocalProviderItem{
+		Title: "Local matching edition", ReleaseGroupTitle: "Local matching group",
+		Credits: []service.LocalProviderCredit{{ArtistID: artistID, Name: "Local artist credit", JoinPhrase: " & "}},
+		Tracks:  []service.LocalProviderTrack{{RecordingID: recordingID, TitleOverride: &titleOverride, DurationOverrideMS: &durationOverride}},
+	})
+	if err != nil {
+		t.Fatalf("create local provider release: %v", err)
+	}
+	var publicationRequestsAfterCRUD int
+	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_request`).Scan(ctx, &publicationRequestsAfterCRUD); err != nil || publicationRequestsAfterCRUD != publicationRequestsBefore {
+		t.Fatalf("local provider CRUD created publication requests: before=%d after=%d err=%v", publicationRequestsBefore, publicationRequestsAfterCRUD, err)
+	}
+	if created.ProviderCode != "local" || len(created.Tracks) != 1 || created.Tracks[0].ProviderID != fixture.provider || created.Tracks[0].Position != 0 {
+		t.Fatalf("created local provider release/track = %+v", created)
+	}
+
+	matching := service.NewMatchingLocalService(persistence.NewIncomingMatchCandidateRepository(db))
+	intent := service.MatchingLocalIntent{
+		ProviderReleaseID: created.ID, ExpectedGroupRevision: fixture.group.Revision,
+		ExpectedAuthorityRevision: 0,
+		Assignments:               []service.MatchingLocalAssignment{{FileMemberID: fixture.memberA, ProviderTrackID: created.Tracks[0].ID}},
+	}
+	preview, err := matching.Preview(ctx, fixture.group.ID, intent)
+	if err != nil {
+		t.Fatalf("preview local provider matching: %v", err)
+	}
+	if len(preview.Tracks) != 1 || preview.Tracks[0].Position != 1 || preview.Tracks[0].Medium != 1 || preview.Tracks[0].TitleOverride == nil || *preview.Tracks[0].TitleOverride != titleOverride || preview.Tracks[0].RecordingDurationMS == nil || *preview.Tracks[0].RecordingDurationMS != 201000 || preview.Tracks[0].DurationOverrideMS == nil || *preview.Tracks[0].DurationOverrideMS != durationOverride {
+		t.Fatalf("preview lost provider track coordinates or overrides: %+v", preview.Tracks)
+	}
+	requestID := uuid.New()
+	confirmed, err := matching.Confirm(ctx, fixture.group.ID, intent, preview.PreviewDigest, requestID)
+	if err != nil {
+		t.Fatalf("confirm local provider matching: %v", err)
+	}
+	if confirmed.LocalReleaseID == nil {
+		t.Fatalf("confirmation did not return materialized local release: %+v", confirmed)
+	}
+
+	var releaseLinks, recordingLinks, trackLinks, artistLinks int
+	for query, target := range map[string]*int{
+		`SELECT count(*) FROM provider_local_release WHERE provider_id=(SELECT id FROM provider WHERE code='local') AND provider_release_id=?`: &releaseLinks,
+		`SELECT count(*) FROM provider_local_recording WHERE provider_id=? AND provider_recording_id=?`:                                        &recordingLinks,
+		`SELECT count(*) FROM provider_local_track WHERE provider_id=(SELECT id FROM provider WHERE code='local') AND provider_track_id=?`:     &trackLinks,
+		`SELECT count(*) FROM provider_local_artist WHERE provider_id=? AND provider_artist_id=?`:                                              &artistLinks,
+	} {
+		var args []any
+		switch target {
+		case &releaseLinks:
+			args = []any{created.ID}
+		case &recordingLinks:
+			args = []any{fixture.provider, recordingID}
+		case &trackLinks:
+			args = []any{created.Tracks[0].ID}
+		case &artistLinks:
+			args = []any{fixture.provider, artistID}
+		}
+		if err := db.NewRaw(query, args...).Scan(ctx, target); err != nil || *target != 1 {
+			t.Fatalf("provider link count for %q = %d, err=%v; want one", query, *target, err)
+		}
+	}
+	var localMedium, localPosition int
+	var localTitle string
+	var localDuration int64
+	if err := db.NewRaw(`SELECT position.medium,position.position,track.title,position.duration_ms
+		FROM provider_local_track link JOIN release_track position ON position.track_id=link.local_track_id
+		JOIN local_track track ON track.id=position.track_id
+		WHERE link.provider_id=(SELECT id FROM provider WHERE code='local') AND link.provider_track_id=?`, created.Tracks[0].ID).Scan(ctx, &localMedium, &localPosition, &localTitle, &localDuration); err != nil {
+		t.Fatalf("read materialized local track: %v", err)
+	}
+	if localMedium != 0 || localPosition != 0 || localTitle != titleOverride || localDuration != durationOverride {
+		t.Fatalf("materialized track coordinates/title/duration = %d/%d %q %d", localMedium, localPosition, localTitle, localDuration)
+	}
+	var recordingDuration int64
+	var recordingArtistCredit, trackArtistCredit string
+	if err := db.NewRaw(`SELECT (recording.metadata->>'duration_ms')::bigint,recording_artist.name,track_artist.name
+		FROM provider_local_recording link JOIN local_recording recording ON recording.id=link.local_recording_id
+		JOIN recording_artist ON recording_artist.recording_id=recording.id
+		JOIN provider_local_track track_link ON track_link.provider_id=(SELECT id FROM provider WHERE code='local') AND track_link.provider_track_id=?
+		JOIN track_artist ON track_artist.track_id=track_link.local_track_id
+		WHERE link.provider_id=? AND link.provider_recording_id=?`, created.Tracks[0].ID, fixture.provider, recordingID).Scan(ctx, &recordingDuration, &recordingArtistCredit, &trackArtistCredit); err != nil {
+		t.Fatalf("read materialized recording credits and duration: %v", err)
+	}
+	if recordingDuration != 201000 || recordingArtistCredit != "Recording Credit" || trackArtistCredit != "Recording Credit" {
+		t.Fatalf("materialized recording duration/credits = %d/%q/%q", recordingDuration, recordingArtistCredit, trackArtistCredit)
+	}
+	var associated int
+	if err := db.NewRaw(`SELECT count(*) FROM track_source WHERE track_id=(SELECT local_track_id FROM provider_local_track WHERE provider_id=(SELECT id FROM provider WHERE code='local') AND provider_track_id=?) AND media_variant_id IN (SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=?)`, created.Tracks[0].ID, fixture.memberA).Scan(ctx, &associated); err != nil || associated == 0 {
+		t.Fatalf("confirmed source association count=%d err=%v", associated, err)
+	}
+
+	var countsBeforeReplay int
+	if err := db.NewRaw(`SELECT (SELECT count(*) FROM local_release)+(SELECT count(*) FROM local_recording)+(SELECT count(*) FROM local_track)+(SELECT count(*) FROM release_artist)+(SELECT count(*) FROM track_artist)+(SELECT count(*) FROM track_source)`).Scan(ctx, &countsBeforeReplay); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := matching.Confirm(ctx, fixture.group.ID, intent, preview.PreviewDigest, requestID)
+	if err != nil {
+		t.Fatalf("replay local matching receipt: %v", err)
+	}
+	var countsAfterReplay int
+	if err := db.NewRaw(`SELECT (SELECT count(*) FROM local_release)+(SELECT count(*) FROM local_recording)+(SELECT count(*) FROM local_track)+(SELECT count(*) FROM release_artist)+(SELECT count(*) FROM track_artist)+(SELECT count(*) FROM track_source)`).Scan(ctx, &countsAfterReplay); err != nil {
+		t.Fatal(err)
+	}
+	if replayed.LocalReleaseID == nil || *replayed.LocalReleaseID != *confirmed.LocalReleaseID || countsAfterReplay != countsBeforeReplay {
+		t.Fatalf("receipt replay changed materialization: confirmed=%+v replayed=%+v counts=%d/%d", confirmed.LocalReleaseID, replayed.LocalReleaseID, countsBeforeReplay, countsAfterReplay)
 	}
 }

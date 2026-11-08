@@ -237,8 +237,8 @@ func Run(ctx context.Context, config Config) error {
 	matchingManual := service.NewMatchingManualService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingLocal := service.NewMatchingLocalService(persistence.NewIncomingMatchCandidateRepository(db))
 	libraryRepository := persistence.NewLibraryRepository(db)
+	localProviderCatalog := service.NewLocalProviderCatalog(persistence.NewLocalProviderRepository(db), persistence.NewGenreCatalogRepository(db))
 	libraryCatalog := service.NewLibraryCatalog(libraryRepository)
-	libraryReleaseCreation := service.NewLibraryReleaseCreation(libraryRepository)
 	libraryReleaseOptions := service.NewLibraryReleaseOptions(libraryRepository)
 	libraryRecordingSearch := service.NewLibraryRecordingSearch(providerFetch, setupManagerRepository, libraryRepository)
 	libraryReleaseDetails := service.NewLibraryReleaseDetails(libraryRepository)
@@ -491,7 +491,6 @@ func Run(ctx context.Context, config Config) error {
 		ManualPickerSearch:     manualPickerSearch,
 		LibraryReleaseDetails:  libraryReleaseDetails,
 		LibraryCatalog:         libraryCatalog,
-		LibraryReleaseCreation: libraryReleaseCreation,
 		LibraryReleaseOptions:  libraryReleaseOptions,
 		LibraryRecordingSearch: libraryRecordingSearch,
 		LibraryProviderRefresh: libraryProviderRefresh,
@@ -500,6 +499,7 @@ func Run(ctx context.Context, config Config) error {
 		LibraryMetadata:        libraryMetadata,
 		LibraryReleaseCovers:   libraryReleaseCovers,
 		LibraryPublications:    libraryPublications,
+		LocalProviderCatalog:   localProviderCatalog,
 	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{

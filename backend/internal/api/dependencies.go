@@ -39,7 +39,6 @@ type Dependencies struct {
 	ManualPickerSearch     *service.ManualPickerSearchService
 	LibraryReleaseDetails  *service.LibraryReleaseDetails
 	LibraryCatalog         *service.LibraryCatalog
-	LibraryReleaseCreation *service.LibraryReleaseCreation
 	LibraryReleaseOptions  *service.LibraryReleaseOptions
 	LibraryRecordingSearch *service.LibraryRecordingSearch
 	LibraryProviderRefresh *service.LibraryProviderRefresh
@@ -47,6 +46,7 @@ type Dependencies struct {
 	LibraryMetadata        *service.LibraryMetadataService
 	LibraryReleaseCovers   *service.ReleaseCovers
 	LibraryPublications    LibraryPublicationService
+	LocalProviderCatalog   *service.LocalProviderCatalog
 }
 
 // LibraryPublicationService is the API's narrow boundary to publication state.

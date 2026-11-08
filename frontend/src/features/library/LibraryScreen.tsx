@@ -149,12 +149,6 @@ export function LibraryScreen() {
           </p>
         </div>
         <div className="catalog-header-actions">
-          <a
-            className="catalog-button catalog-button--primary"
-            href="#/library/create"
-          >
-            Создать вручную
-          </a>
           <a className="catalog-button" href="#/incoming-groups">
             Разобрать входящие
           </a>

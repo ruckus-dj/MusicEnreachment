@@ -31,7 +31,6 @@ import type {
   CheckMusicBrainzBody,
   CheckPathsBody,
   CheckPathsInputBody,
-  CreateLibraryReleaseResult,
   CreateSourceBody,
   DeleteSourceBody,
   ErrorModel,
@@ -61,7 +60,6 @@ import type {
   LibraryRecordingSearchResultOutputBody,
   LibraryReleaseCoverApplyInputBody,
   LibraryReleaseCoverSaveBody,
-  LibraryReleaseCreateRequest,
   LibraryReleaseDetailResponse,
   LibraryReleaseOptionsPageLibraryCoverCandidateOption,
   LibraryReleaseOptionsPageLibraryRecordingOption,
@@ -74,9 +72,15 @@ import type {
   ListLibraryRecordingsParams,
   ListLibraryReleasesParams,
   ListLibrarySourceVariantsParams,
+  ListLocalProviderArtistsParams,
+  ListLocalProviderRecordingsParams,
+  ListLocalProviderReleasesParams,
   ListOperationsParams,
   ListSourceLocationsParams,
   ListToolCatalogParams,
+  LocalProviderItem,
+  LocalProviderPage,
+  LocalProviderWrite,
   ManualPickerSearchBody,
   ManualPickerSearchOutputBody,
   ManualPickerSearchResultOutputBody,
@@ -3619,120 +3623,6 @@ export function useListLibraryReleases<TData = Awaited<ReturnType<typeof listLib
 
 
 
-export type createLibraryReleaseResponse201 = {
-  data: CreateLibraryReleaseResult
-  status: 201
-}
-
-export type createLibraryReleaseResponseDefault = {
-  data: ErrorModel
-  status: Exclude<HTTPStatusCodes, 201>
-}
-
-export type createLibraryReleaseResponseSuccess = (createLibraryReleaseResponse201) & {
-  headers: Headers;
-};
-export type createLibraryReleaseResponseError = (createLibraryReleaseResponseDefault) & {
-  headers: Headers;
-};
-
-export type createLibraryReleaseResponse = (createLibraryReleaseResponseSuccess | createLibraryReleaseResponseError)
-
-export const getCreateLibraryReleaseUrl = () => {
-
-
-
-
-  return `/api/library/releases`
-}
-
-/**
- * @summary Create a standalone library release
- */
-export const createLibraryRelease = async (libraryReleaseCreateRequest: NonReadonly<LibraryReleaseCreateRequest>, options?: RequestInit): Promise<createLibraryReleaseResponse> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-const res = await fetch(getCreateLibraryReleaseUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(libraryReleaseCreateRequest)
-  }
-)
-
-
-  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
-
-  const data: createLibraryReleaseResponse['data'] = body ? JSON.parse(body) : {}
-  return { data, status: res.status, headers: res.headers } as createLibraryReleaseResponse
-}
-
-
-
-
-
-export const getCreateLibraryReleaseMutationKey = () => ['createLibraryRelease'] as const;
-
-export const getCreateLibraryReleaseMutationOptions = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLibraryRelease>>, TError,CreateLibraryReleaseMutationVariables, TContext>, fetch?: RequestInit}
-): UseMutationOptions<Awaited<ReturnType<typeof createLibraryRelease>>, TError,CreateLibraryReleaseMutationVariables, TContext> => {
-
-const mutationKey = getCreateLibraryReleaseMutationKey();
-const {mutation: mutationOptions, fetch: fetchOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, fetch: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLibraryRelease>>, CreateLibraryReleaseMutationVariables> = (props) => {
-          const {data} = props ?? {};
-
-          return  createLibraryRelease(data,fetchOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateLibraryReleaseMutationResult = NonNullable<Awaited<ReturnType<typeof createLibraryRelease>>>
-    export type CreateLibraryReleaseMutationBody = NonReadonly<LibraryReleaseCreateRequest>
-    export type CreateLibraryReleaseMutationError = ErrorModel
-    export type CreateLibraryReleaseMutationVariables = {data: NonReadonly<LibraryReleaseCreateRequest>}
-
-    /**
- * @summary Create a standalone library release
- */
-export const useCreateLibraryRelease = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLibraryRelease>>, TError,CreateLibraryReleaseMutationVariables, TContext>, fetch?: RequestInit}
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createLibraryRelease>>,
-        TError,
-        CreateLibraryReleaseMutationVariables,
-        TContext
-      > => {
-      return useMutation(getCreateLibraryReleaseMutationOptions(options), queryClient);
-    }
-
 export type getLibraryReleaseResponse200 = {
   data: LibraryReleaseDetailResponse
   status: 200
@@ -6878,6 +6768,1476 @@ export const useRetryPublicationSourceCleanup = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getRetryPublicationSourceCleanupMutationOptions(options), queryClient);
+    }
+
+export type listLocalProviderArtistsResponse200 = {
+  data: LocalProviderPage
+  status: 200
+}
+
+export type listLocalProviderArtistsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listLocalProviderArtistsResponseSuccess = (listLocalProviderArtistsResponse200) & {
+  headers: Headers;
+};
+export type listLocalProviderArtistsResponseError = (listLocalProviderArtistsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listLocalProviderArtistsResponse = (listLocalProviderArtistsResponseSuccess | listLocalProviderArtistsResponseError)
+
+export const getListLocalProviderArtistsUrl = (params?: ListLocalProviderArtistsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/provider-catalog/artists?${stringifiedParams}` : `/api/provider-catalog/artists`
+}
+
+/**
+ * @summary Search provider catalog records
+ */
+export const listLocalProviderArtists = async (params?: ListLocalProviderArtistsParams, options?: RequestInit): Promise<listLocalProviderArtistsResponse> => {
+
+  const res = await fetch(getListLocalProviderArtistsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listLocalProviderArtistsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listLocalProviderArtistsResponse
+}
+
+
+
+
+
+export const getListLocalProviderArtistsQueryKey = (params?: ListLocalProviderArtistsParams,) => {
+    return [
+    `/api/provider-catalog/artists`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListLocalProviderArtistsQueryOptions = <TData = Awaited<ReturnType<typeof listLocalProviderArtists>>, TError = ErrorModel>(params?: ListLocalProviderArtistsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderArtists>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLocalProviderArtistsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLocalProviderArtists>>> = ({ signal }) => listLocalProviderArtists(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderArtists>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListLocalProviderArtistsQueryResult = NonNullable<Awaited<ReturnType<typeof listLocalProviderArtists>>>
+export type ListLocalProviderArtistsQueryError = ErrorModel
+
+
+export function useListLocalProviderArtists<TData = Awaited<ReturnType<typeof listLocalProviderArtists>>, TError = ErrorModel>(
+ params: undefined |  ListLocalProviderArtistsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderArtists>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLocalProviderArtists>>,
+          TError,
+          Awaited<ReturnType<typeof listLocalProviderArtists>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLocalProviderArtists<TData = Awaited<ReturnType<typeof listLocalProviderArtists>>, TError = ErrorModel>(
+ params?: ListLocalProviderArtistsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderArtists>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLocalProviderArtists>>,
+          TError,
+          Awaited<ReturnType<typeof listLocalProviderArtists>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLocalProviderArtists<TData = Awaited<ReturnType<typeof listLocalProviderArtists>>, TError = ErrorModel>(
+ params?: ListLocalProviderArtistsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderArtists>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Search provider catalog records
+ */
+
+export function useListLocalProviderArtists<TData = Awaited<ReturnType<typeof listLocalProviderArtists>>, TError = ErrorModel>(
+ params?: ListLocalProviderArtistsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderArtists>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListLocalProviderArtistsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type createLocalProviderArtistResponse200 = {
+  data: LocalProviderItem
+  status: 200
+}
+
+export type createLocalProviderArtistResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type createLocalProviderArtistResponseSuccess = (createLocalProviderArtistResponse200) & {
+  headers: Headers;
+};
+export type createLocalProviderArtistResponseError = (createLocalProviderArtistResponseDefault) & {
+  headers: Headers;
+};
+
+export type createLocalProviderArtistResponse = (createLocalProviderArtistResponseSuccess | createLocalProviderArtistResponseError)
+
+export const getCreateLocalProviderArtistUrl = () => {
+
+
+
+
+  return `/api/provider-catalog/artists`
+}
+
+/**
+ * @summary Create a provider catalog record
+ */
+export const createLocalProviderArtist = async (localProviderWrite: NonReadonly<LocalProviderWrite>, options?: RequestInit): Promise<createLocalProviderArtistResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getCreateLocalProviderArtistUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localProviderWrite)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createLocalProviderArtistResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createLocalProviderArtistResponse
+}
+
+
+
+
+
+export const getCreateLocalProviderArtistMutationKey = () => ['createLocalProviderArtist'] as const;
+
+export const getCreateLocalProviderArtistMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLocalProviderArtist>>, TError,CreateLocalProviderArtistMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof createLocalProviderArtist>>, TError,CreateLocalProviderArtistMutationVariables, TContext> => {
+
+const mutationKey = getCreateLocalProviderArtistMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLocalProviderArtist>>, CreateLocalProviderArtistMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createLocalProviderArtist(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateLocalProviderArtistMutationResult = NonNullable<Awaited<ReturnType<typeof createLocalProviderArtist>>>
+    export type CreateLocalProviderArtistMutationBody = NonReadonly<LocalProviderWrite>
+    export type CreateLocalProviderArtistMutationError = ErrorModel
+    export type CreateLocalProviderArtistMutationVariables = {data: NonReadonly<LocalProviderWrite>}
+
+    /**
+ * @summary Create a provider catalog record
+ */
+export const useCreateLocalProviderArtist = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLocalProviderArtist>>, TError,CreateLocalProviderArtistMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createLocalProviderArtist>>,
+        TError,
+        CreateLocalProviderArtistMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateLocalProviderArtistMutationOptions(options), queryClient);
+    }
+
+export type readLocalProviderArtistResponse200 = {
+  data: LocalProviderItem
+  status: 200
+}
+
+export type readLocalProviderArtistResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type readLocalProviderArtistResponseSuccess = (readLocalProviderArtistResponse200) & {
+  headers: Headers;
+};
+export type readLocalProviderArtistResponseError = (readLocalProviderArtistResponseDefault) & {
+  headers: Headers;
+};
+
+export type readLocalProviderArtistResponse = (readLocalProviderArtistResponseSuccess | readLocalProviderArtistResponseError)
+
+export const getReadLocalProviderArtistUrl = (id: string,) => {
+
+
+
+
+  return `/api/provider-catalog/artists/${id}`
+}
+
+/**
+ * @summary Read a provider catalog record
+ */
+export const readLocalProviderArtist = async (id: string, options?: RequestInit): Promise<readLocalProviderArtistResponse> => {
+
+  const res = await fetch(getReadLocalProviderArtistUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: readLocalProviderArtistResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as readLocalProviderArtistResponse
+}
+
+
+
+
+
+export const getReadLocalProviderArtistQueryKey = (id: string,) => {
+    return [
+    `/api/provider-catalog/artists/${id}`
+    ] as const;
+    }
+
+
+export const getReadLocalProviderArtistQueryOptions = <TData = Awaited<ReturnType<typeof readLocalProviderArtist>>, TError = ErrorModel>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderArtist>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getReadLocalProviderArtistQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof readLocalProviderArtist>>> = ({ signal }) => readLocalProviderArtist(id, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderArtist>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ReadLocalProviderArtistQueryResult = NonNullable<Awaited<ReturnType<typeof readLocalProviderArtist>>>
+export type ReadLocalProviderArtistQueryError = ErrorModel
+
+
+export function useReadLocalProviderArtist<TData = Awaited<ReturnType<typeof readLocalProviderArtist>>, TError = ErrorModel>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderArtist>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof readLocalProviderArtist>>,
+          TError,
+          Awaited<ReturnType<typeof readLocalProviderArtist>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useReadLocalProviderArtist<TData = Awaited<ReturnType<typeof readLocalProviderArtist>>, TError = ErrorModel>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderArtist>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof readLocalProviderArtist>>,
+          TError,
+          Awaited<ReturnType<typeof readLocalProviderArtist>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useReadLocalProviderArtist<TData = Awaited<ReturnType<typeof readLocalProviderArtist>>, TError = ErrorModel>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderArtist>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read a provider catalog record
+ */
+
+export function useReadLocalProviderArtist<TData = Awaited<ReturnType<typeof readLocalProviderArtist>>, TError = ErrorModel>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderArtist>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getReadLocalProviderArtistQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type updateLocalProviderArtistResponse200 = {
+  data: LocalProviderItem
+  status: 200
+}
+
+export type updateLocalProviderArtistResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateLocalProviderArtistResponseSuccess = (updateLocalProviderArtistResponse200) & {
+  headers: Headers;
+};
+export type updateLocalProviderArtistResponseError = (updateLocalProviderArtistResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateLocalProviderArtistResponse = (updateLocalProviderArtistResponseSuccess | updateLocalProviderArtistResponseError)
+
+export const getUpdateLocalProviderArtistUrl = (id: string,) => {
+
+
+
+
+  return `/api/provider-catalog/artists/${id}`
+}
+
+/**
+ * @summary Update a provider catalog record
+ */
+export const updateLocalProviderArtist = async (id: string,
+    localProviderWrite: NonReadonly<LocalProviderWrite>, options?: RequestInit): Promise<updateLocalProviderArtistResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUpdateLocalProviderArtistUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localProviderWrite)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateLocalProviderArtistResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as updateLocalProviderArtistResponse
+}
+
+
+
+
+
+export const getUpdateLocalProviderArtistMutationKey = () => ['updateLocalProviderArtist'] as const;
+
+export const getUpdateLocalProviderArtistMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLocalProviderArtist>>, TError,UpdateLocalProviderArtistMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof updateLocalProviderArtist>>, TError,UpdateLocalProviderArtistMutationVariables, TContext> => {
+
+const mutationKey = getUpdateLocalProviderArtistMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateLocalProviderArtist>>, UpdateLocalProviderArtistMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateLocalProviderArtist(id,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateLocalProviderArtistMutationResult = NonNullable<Awaited<ReturnType<typeof updateLocalProviderArtist>>>
+    export type UpdateLocalProviderArtistMutationBody = NonReadonly<LocalProviderWrite>
+    export type UpdateLocalProviderArtistMutationError = ErrorModel
+    export type UpdateLocalProviderArtistMutationVariables = {id: string;data: NonReadonly<LocalProviderWrite>}
+
+    /**
+ * @summary Update a provider catalog record
+ */
+export const useUpdateLocalProviderArtist = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLocalProviderArtist>>, TError,UpdateLocalProviderArtistMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateLocalProviderArtist>>,
+        TError,
+        UpdateLocalProviderArtistMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateLocalProviderArtistMutationOptions(options), queryClient);
+    }
+
+export type listLocalProviderRecordingsResponse200 = {
+  data: LocalProviderPage
+  status: 200
+}
+
+export type listLocalProviderRecordingsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listLocalProviderRecordingsResponseSuccess = (listLocalProviderRecordingsResponse200) & {
+  headers: Headers;
+};
+export type listLocalProviderRecordingsResponseError = (listLocalProviderRecordingsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listLocalProviderRecordingsResponse = (listLocalProviderRecordingsResponseSuccess | listLocalProviderRecordingsResponseError)
+
+export const getListLocalProviderRecordingsUrl = (params?: ListLocalProviderRecordingsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/provider-catalog/recordings?${stringifiedParams}` : `/api/provider-catalog/recordings`
+}
+
+/**
+ * @summary Search provider catalog records
+ */
+export const listLocalProviderRecordings = async (params?: ListLocalProviderRecordingsParams, options?: RequestInit): Promise<listLocalProviderRecordingsResponse> => {
+
+  const res = await fetch(getListLocalProviderRecordingsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listLocalProviderRecordingsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listLocalProviderRecordingsResponse
+}
+
+
+
+
+
+export const getListLocalProviderRecordingsQueryKey = (params?: ListLocalProviderRecordingsParams,) => {
+    return [
+    `/api/provider-catalog/recordings`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListLocalProviderRecordingsQueryOptions = <TData = Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError = ErrorModel>(params?: ListLocalProviderRecordingsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLocalProviderRecordingsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLocalProviderRecordings>>> = ({ signal }) => listLocalProviderRecordings(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListLocalProviderRecordingsQueryResult = NonNullable<Awaited<ReturnType<typeof listLocalProviderRecordings>>>
+export type ListLocalProviderRecordingsQueryError = ErrorModel
+
+
+export function useListLocalProviderRecordings<TData = Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError = ErrorModel>(
+ params: undefined |  ListLocalProviderRecordingsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLocalProviderRecordings>>,
+          TError,
+          Awaited<ReturnType<typeof listLocalProviderRecordings>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLocalProviderRecordings<TData = Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError = ErrorModel>(
+ params?: ListLocalProviderRecordingsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLocalProviderRecordings>>,
+          TError,
+          Awaited<ReturnType<typeof listLocalProviderRecordings>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLocalProviderRecordings<TData = Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError = ErrorModel>(
+ params?: ListLocalProviderRecordingsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Search provider catalog records
+ */
+
+export function useListLocalProviderRecordings<TData = Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError = ErrorModel>(
+ params?: ListLocalProviderRecordingsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderRecordings>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListLocalProviderRecordingsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type createLocalProviderRecordingResponse200 = {
+  data: LocalProviderItem
+  status: 200
+}
+
+export type createLocalProviderRecordingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type createLocalProviderRecordingResponseSuccess = (createLocalProviderRecordingResponse200) & {
+  headers: Headers;
+};
+export type createLocalProviderRecordingResponseError = (createLocalProviderRecordingResponseDefault) & {
+  headers: Headers;
+};
+
+export type createLocalProviderRecordingResponse = (createLocalProviderRecordingResponseSuccess | createLocalProviderRecordingResponseError)
+
+export const getCreateLocalProviderRecordingUrl = () => {
+
+
+
+
+  return `/api/provider-catalog/recordings`
+}
+
+/**
+ * @summary Create a provider catalog record
+ */
+export const createLocalProviderRecording = async (localProviderWrite: NonReadonly<LocalProviderWrite>, options?: RequestInit): Promise<createLocalProviderRecordingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getCreateLocalProviderRecordingUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localProviderWrite)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createLocalProviderRecordingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createLocalProviderRecordingResponse
+}
+
+
+
+
+
+export const getCreateLocalProviderRecordingMutationKey = () => ['createLocalProviderRecording'] as const;
+
+export const getCreateLocalProviderRecordingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLocalProviderRecording>>, TError,CreateLocalProviderRecordingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof createLocalProviderRecording>>, TError,CreateLocalProviderRecordingMutationVariables, TContext> => {
+
+const mutationKey = getCreateLocalProviderRecordingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLocalProviderRecording>>, CreateLocalProviderRecordingMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createLocalProviderRecording(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateLocalProviderRecordingMutationResult = NonNullable<Awaited<ReturnType<typeof createLocalProviderRecording>>>
+    export type CreateLocalProviderRecordingMutationBody = NonReadonly<LocalProviderWrite>
+    export type CreateLocalProviderRecordingMutationError = ErrorModel
+    export type CreateLocalProviderRecordingMutationVariables = {data: NonReadonly<LocalProviderWrite>}
+
+    /**
+ * @summary Create a provider catalog record
+ */
+export const useCreateLocalProviderRecording = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLocalProviderRecording>>, TError,CreateLocalProviderRecordingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createLocalProviderRecording>>,
+        TError,
+        CreateLocalProviderRecordingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateLocalProviderRecordingMutationOptions(options), queryClient);
+    }
+
+export type readLocalProviderRecordingResponse200 = {
+  data: LocalProviderItem
+  status: 200
+}
+
+export type readLocalProviderRecordingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type readLocalProviderRecordingResponseSuccess = (readLocalProviderRecordingResponse200) & {
+  headers: Headers;
+};
+export type readLocalProviderRecordingResponseError = (readLocalProviderRecordingResponseDefault) & {
+  headers: Headers;
+};
+
+export type readLocalProviderRecordingResponse = (readLocalProviderRecordingResponseSuccess | readLocalProviderRecordingResponseError)
+
+export const getReadLocalProviderRecordingUrl = (id: string,) => {
+
+
+
+
+  return `/api/provider-catalog/recordings/${id}`
+}
+
+/**
+ * @summary Read a provider catalog record
+ */
+export const readLocalProviderRecording = async (id: string, options?: RequestInit): Promise<readLocalProviderRecordingResponse> => {
+
+  const res = await fetch(getReadLocalProviderRecordingUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: readLocalProviderRecordingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as readLocalProviderRecordingResponse
+}
+
+
+
+
+
+export const getReadLocalProviderRecordingQueryKey = (id: string,) => {
+    return [
+    `/api/provider-catalog/recordings/${id}`
+    ] as const;
+    }
+
+
+export const getReadLocalProviderRecordingQueryOptions = <TData = Awaited<ReturnType<typeof readLocalProviderRecording>>, TError = ErrorModel>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRecording>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getReadLocalProviderRecordingQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof readLocalProviderRecording>>> = ({ signal }) => readLocalProviderRecording(id, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRecording>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ReadLocalProviderRecordingQueryResult = NonNullable<Awaited<ReturnType<typeof readLocalProviderRecording>>>
+export type ReadLocalProviderRecordingQueryError = ErrorModel
+
+
+export function useReadLocalProviderRecording<TData = Awaited<ReturnType<typeof readLocalProviderRecording>>, TError = ErrorModel>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRecording>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof readLocalProviderRecording>>,
+          TError,
+          Awaited<ReturnType<typeof readLocalProviderRecording>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useReadLocalProviderRecording<TData = Awaited<ReturnType<typeof readLocalProviderRecording>>, TError = ErrorModel>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRecording>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof readLocalProviderRecording>>,
+          TError,
+          Awaited<ReturnType<typeof readLocalProviderRecording>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useReadLocalProviderRecording<TData = Awaited<ReturnType<typeof readLocalProviderRecording>>, TError = ErrorModel>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRecording>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read a provider catalog record
+ */
+
+export function useReadLocalProviderRecording<TData = Awaited<ReturnType<typeof readLocalProviderRecording>>, TError = ErrorModel>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRecording>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getReadLocalProviderRecordingQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type updateLocalProviderRecordingResponse200 = {
+  data: LocalProviderItem
+  status: 200
+}
+
+export type updateLocalProviderRecordingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateLocalProviderRecordingResponseSuccess = (updateLocalProviderRecordingResponse200) & {
+  headers: Headers;
+};
+export type updateLocalProviderRecordingResponseError = (updateLocalProviderRecordingResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateLocalProviderRecordingResponse = (updateLocalProviderRecordingResponseSuccess | updateLocalProviderRecordingResponseError)
+
+export const getUpdateLocalProviderRecordingUrl = (id: string,) => {
+
+
+
+
+  return `/api/provider-catalog/recordings/${id}`
+}
+
+/**
+ * @summary Update a provider catalog record
+ */
+export const updateLocalProviderRecording = async (id: string,
+    localProviderWrite: NonReadonly<LocalProviderWrite>, options?: RequestInit): Promise<updateLocalProviderRecordingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUpdateLocalProviderRecordingUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localProviderWrite)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateLocalProviderRecordingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as updateLocalProviderRecordingResponse
+}
+
+
+
+
+
+export const getUpdateLocalProviderRecordingMutationKey = () => ['updateLocalProviderRecording'] as const;
+
+export const getUpdateLocalProviderRecordingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLocalProviderRecording>>, TError,UpdateLocalProviderRecordingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof updateLocalProviderRecording>>, TError,UpdateLocalProviderRecordingMutationVariables, TContext> => {
+
+const mutationKey = getUpdateLocalProviderRecordingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateLocalProviderRecording>>, UpdateLocalProviderRecordingMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateLocalProviderRecording(id,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateLocalProviderRecordingMutationResult = NonNullable<Awaited<ReturnType<typeof updateLocalProviderRecording>>>
+    export type UpdateLocalProviderRecordingMutationBody = NonReadonly<LocalProviderWrite>
+    export type UpdateLocalProviderRecordingMutationError = ErrorModel
+    export type UpdateLocalProviderRecordingMutationVariables = {id: string;data: NonReadonly<LocalProviderWrite>}
+
+    /**
+ * @summary Update a provider catalog record
+ */
+export const useUpdateLocalProviderRecording = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLocalProviderRecording>>, TError,UpdateLocalProviderRecordingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateLocalProviderRecording>>,
+        TError,
+        UpdateLocalProviderRecordingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateLocalProviderRecordingMutationOptions(options), queryClient);
+    }
+
+export type listLocalProviderReleasesResponse200 = {
+  data: LocalProviderPage
+  status: 200
+}
+
+export type listLocalProviderReleasesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listLocalProviderReleasesResponseSuccess = (listLocalProviderReleasesResponse200) & {
+  headers: Headers;
+};
+export type listLocalProviderReleasesResponseError = (listLocalProviderReleasesResponseDefault) & {
+  headers: Headers;
+};
+
+export type listLocalProviderReleasesResponse = (listLocalProviderReleasesResponseSuccess | listLocalProviderReleasesResponseError)
+
+export const getListLocalProviderReleasesUrl = (params?: ListLocalProviderReleasesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/provider-catalog/releases?${stringifiedParams}` : `/api/provider-catalog/releases`
+}
+
+/**
+ * @summary Search provider catalog records
+ */
+export const listLocalProviderReleases = async (params?: ListLocalProviderReleasesParams, options?: RequestInit): Promise<listLocalProviderReleasesResponse> => {
+
+  const res = await fetch(getListLocalProviderReleasesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listLocalProviderReleasesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listLocalProviderReleasesResponse
+}
+
+
+
+
+
+export const getListLocalProviderReleasesQueryKey = (params?: ListLocalProviderReleasesParams,) => {
+    return [
+    `/api/provider-catalog/releases`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListLocalProviderReleasesQueryOptions = <TData = Awaited<ReturnType<typeof listLocalProviderReleases>>, TError = ErrorModel>(params?: ListLocalProviderReleasesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderReleases>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLocalProviderReleasesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLocalProviderReleases>>> = ({ signal }) => listLocalProviderReleases(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderReleases>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListLocalProviderReleasesQueryResult = NonNullable<Awaited<ReturnType<typeof listLocalProviderReleases>>>
+export type ListLocalProviderReleasesQueryError = ErrorModel
+
+
+export function useListLocalProviderReleases<TData = Awaited<ReturnType<typeof listLocalProviderReleases>>, TError = ErrorModel>(
+ params: undefined |  ListLocalProviderReleasesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderReleases>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLocalProviderReleases>>,
+          TError,
+          Awaited<ReturnType<typeof listLocalProviderReleases>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLocalProviderReleases<TData = Awaited<ReturnType<typeof listLocalProviderReleases>>, TError = ErrorModel>(
+ params?: ListLocalProviderReleasesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderReleases>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLocalProviderReleases>>,
+          TError,
+          Awaited<ReturnType<typeof listLocalProviderReleases>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLocalProviderReleases<TData = Awaited<ReturnType<typeof listLocalProviderReleases>>, TError = ErrorModel>(
+ params?: ListLocalProviderReleasesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderReleases>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Search provider catalog records
+ */
+
+export function useListLocalProviderReleases<TData = Awaited<ReturnType<typeof listLocalProviderReleases>>, TError = ErrorModel>(
+ params?: ListLocalProviderReleasesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalProviderReleases>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListLocalProviderReleasesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type createLocalProviderReleaseResponse200 = {
+  data: LocalProviderItem
+  status: 200
+}
+
+export type createLocalProviderReleaseResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type createLocalProviderReleaseResponseSuccess = (createLocalProviderReleaseResponse200) & {
+  headers: Headers;
+};
+export type createLocalProviderReleaseResponseError = (createLocalProviderReleaseResponseDefault) & {
+  headers: Headers;
+};
+
+export type createLocalProviderReleaseResponse = (createLocalProviderReleaseResponseSuccess | createLocalProviderReleaseResponseError)
+
+export const getCreateLocalProviderReleaseUrl = () => {
+
+
+
+
+  return `/api/provider-catalog/releases`
+}
+
+/**
+ * @summary Create a provider catalog record
+ */
+export const createLocalProviderRelease = async (localProviderWrite: NonReadonly<LocalProviderWrite>, options?: RequestInit): Promise<createLocalProviderReleaseResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getCreateLocalProviderReleaseUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localProviderWrite)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createLocalProviderReleaseResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createLocalProviderReleaseResponse
+}
+
+
+
+
+
+export const getCreateLocalProviderReleaseMutationKey = () => ['createLocalProviderRelease'] as const;
+
+export const getCreateLocalProviderReleaseMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLocalProviderRelease>>, TError,CreateLocalProviderReleaseMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof createLocalProviderRelease>>, TError,CreateLocalProviderReleaseMutationVariables, TContext> => {
+
+const mutationKey = getCreateLocalProviderReleaseMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLocalProviderRelease>>, CreateLocalProviderReleaseMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createLocalProviderRelease(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateLocalProviderReleaseMutationResult = NonNullable<Awaited<ReturnType<typeof createLocalProviderRelease>>>
+    export type CreateLocalProviderReleaseMutationBody = NonReadonly<LocalProviderWrite>
+    export type CreateLocalProviderReleaseMutationError = ErrorModel
+    export type CreateLocalProviderReleaseMutationVariables = {data: NonReadonly<LocalProviderWrite>}
+
+    /**
+ * @summary Create a provider catalog record
+ */
+export const useCreateLocalProviderRelease = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLocalProviderRelease>>, TError,CreateLocalProviderReleaseMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createLocalProviderRelease>>,
+        TError,
+        CreateLocalProviderReleaseMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateLocalProviderReleaseMutationOptions(options), queryClient);
+    }
+
+export type readLocalProviderReleaseResponse200 = {
+  data: LocalProviderItem
+  status: 200
+}
+
+export type readLocalProviderReleaseResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type readLocalProviderReleaseResponseSuccess = (readLocalProviderReleaseResponse200) & {
+  headers: Headers;
+};
+export type readLocalProviderReleaseResponseError = (readLocalProviderReleaseResponseDefault) & {
+  headers: Headers;
+};
+
+export type readLocalProviderReleaseResponse = (readLocalProviderReleaseResponseSuccess | readLocalProviderReleaseResponseError)
+
+export const getReadLocalProviderReleaseUrl = (id: string,) => {
+
+
+
+
+  return `/api/provider-catalog/releases/${id}`
+}
+
+/**
+ * @summary Read a provider catalog record
+ */
+export const readLocalProviderRelease = async (id: string, options?: RequestInit): Promise<readLocalProviderReleaseResponse> => {
+
+  const res = await fetch(getReadLocalProviderReleaseUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: readLocalProviderReleaseResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as readLocalProviderReleaseResponse
+}
+
+
+
+
+
+export const getReadLocalProviderReleaseQueryKey = (id: string,) => {
+    return [
+    `/api/provider-catalog/releases/${id}`
+    ] as const;
+    }
+
+
+export const getReadLocalProviderReleaseQueryOptions = <TData = Awaited<ReturnType<typeof readLocalProviderRelease>>, TError = ErrorModel>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRelease>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getReadLocalProviderReleaseQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof readLocalProviderRelease>>> = ({ signal }) => readLocalProviderRelease(id, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRelease>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ReadLocalProviderReleaseQueryResult = NonNullable<Awaited<ReturnType<typeof readLocalProviderRelease>>>
+export type ReadLocalProviderReleaseQueryError = ErrorModel
+
+
+export function useReadLocalProviderRelease<TData = Awaited<ReturnType<typeof readLocalProviderRelease>>, TError = ErrorModel>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRelease>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof readLocalProviderRelease>>,
+          TError,
+          Awaited<ReturnType<typeof readLocalProviderRelease>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useReadLocalProviderRelease<TData = Awaited<ReturnType<typeof readLocalProviderRelease>>, TError = ErrorModel>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRelease>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof readLocalProviderRelease>>,
+          TError,
+          Awaited<ReturnType<typeof readLocalProviderRelease>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useReadLocalProviderRelease<TData = Awaited<ReturnType<typeof readLocalProviderRelease>>, TError = ErrorModel>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRelease>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read a provider catalog record
+ */
+
+export function useReadLocalProviderRelease<TData = Awaited<ReturnType<typeof readLocalProviderRelease>>, TError = ErrorModel>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof readLocalProviderRelease>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getReadLocalProviderReleaseQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type updateLocalProviderReleaseResponse200 = {
+  data: LocalProviderItem
+  status: 200
+}
+
+export type updateLocalProviderReleaseResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateLocalProviderReleaseResponseSuccess = (updateLocalProviderReleaseResponse200) & {
+  headers: Headers;
+};
+export type updateLocalProviderReleaseResponseError = (updateLocalProviderReleaseResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateLocalProviderReleaseResponse = (updateLocalProviderReleaseResponseSuccess | updateLocalProviderReleaseResponseError)
+
+export const getUpdateLocalProviderReleaseUrl = (id: string,) => {
+
+
+
+
+  return `/api/provider-catalog/releases/${id}`
+}
+
+/**
+ * @summary Update a provider catalog record
+ */
+export const updateLocalProviderRelease = async (id: string,
+    localProviderWrite: NonReadonly<LocalProviderWrite>, options?: RequestInit): Promise<updateLocalProviderReleaseResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUpdateLocalProviderReleaseUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localProviderWrite)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateLocalProviderReleaseResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as updateLocalProviderReleaseResponse
+}
+
+
+
+
+
+export const getUpdateLocalProviderReleaseMutationKey = () => ['updateLocalProviderRelease'] as const;
+
+export const getUpdateLocalProviderReleaseMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLocalProviderRelease>>, TError,UpdateLocalProviderReleaseMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof updateLocalProviderRelease>>, TError,UpdateLocalProviderReleaseMutationVariables, TContext> => {
+
+const mutationKey = getUpdateLocalProviderReleaseMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateLocalProviderRelease>>, UpdateLocalProviderReleaseMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateLocalProviderRelease(id,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateLocalProviderReleaseMutationResult = NonNullable<Awaited<ReturnType<typeof updateLocalProviderRelease>>>
+    export type UpdateLocalProviderReleaseMutationBody = NonReadonly<LocalProviderWrite>
+    export type UpdateLocalProviderReleaseMutationError = ErrorModel
+    export type UpdateLocalProviderReleaseMutationVariables = {id: string;data: NonReadonly<LocalProviderWrite>}
+
+    /**
+ * @summary Update a provider catalog record
+ */
+export const useUpdateLocalProviderRelease = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLocalProviderRelease>>, TError,UpdateLocalProviderReleaseMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateLocalProviderRelease>>,
+        TError,
+        UpdateLocalProviderReleaseMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateLocalProviderReleaseMutationOptions(options), queryClient);
     }
 
 export type getSettingsResponse200 = {

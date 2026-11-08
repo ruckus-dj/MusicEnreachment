@@ -11,23 +11,19 @@ import (
 )
 
 type matchingLocalPreviewBody struct {
-	LocalReleaseID            *uuid.UUID                    `json:"local_release_id,omitempty"`
-	ExpectedGroupRevision     string                        `json:"expected_group_revision"`
-	ExpectedAuthorityRevision int64                         `json:"expected_authority_revision"`
-	ReleaseTitle              string                        `json:"release_title"`
-	ReleaseArtists            []service.MatchingLocalArtist `json:"release_artists"`
-	Tracks                    []service.MatchingLocalTrack  `json:"tracks"`
+	ProviderReleaseID         uuid.UUID                         `json:"provider_release_id"`
+	ExpectedGroupRevision     string                            `json:"expected_group_revision"`
+	ExpectedAuthorityRevision int64                             `json:"expected_authority_revision"`
+	Assignments               []service.MatchingLocalAssignment `json:"assignments"`
 }
 
 type matchingLocalConfirmBody struct {
-	LocalReleaseID            *uuid.UUID                    `json:"local_release_id,omitempty"`
-	ExpectedGroupRevision     string                        `json:"expected_group_revision"`
-	ExpectedAuthorityRevision int64                         `json:"expected_authority_revision"`
-	ReleaseTitle              string                        `json:"release_title"`
-	ReleaseArtists            []service.MatchingLocalArtist `json:"release_artists"`
-	Tracks                    []service.MatchingLocalTrack  `json:"tracks"`
-	PreviewDigest             string                        `json:"preview_digest"`
-	RequestID                 uuid.UUID                     `json:"request_id"`
+	ProviderReleaseID         uuid.UUID                         `json:"provider_release_id"`
+	ExpectedGroupRevision     string                            `json:"expected_group_revision"`
+	ExpectedAuthorityRevision int64                             `json:"expected_authority_revision"`
+	Assignments               []service.MatchingLocalAssignment `json:"assignments"`
+	PreviewDigest             string                            `json:"preview_digest"`
+	RequestID                 uuid.UUID                         `json:"request_id"`
 }
 
 type matchingLocalPreviewInput struct {
@@ -76,7 +72,7 @@ func registerMatchingLocal(api huma.API, local *service.MatchingLocalService) {
 			}
 			result, err := local.Confirm(ctx, input.GroupID, localMatchingIntent(matchingLocalPreviewBody{
 				ExpectedGroupRevision: input.Body.ExpectedGroupRevision, ExpectedAuthorityRevision: input.Body.ExpectedAuthorityRevision,
-				LocalReleaseID: input.Body.LocalReleaseID, ReleaseTitle: input.Body.ReleaseTitle, ReleaseArtists: input.Body.ReleaseArtists, Tracks: input.Body.Tracks,
+				ProviderReleaseID: input.Body.ProviderReleaseID, Assignments: input.Body.Assignments,
 			}), input.Body.PreviewDigest, input.Body.RequestID)
 			if err != nil {
 				return nil, matchingLocalHTTPError(err)
@@ -87,7 +83,7 @@ func registerMatchingLocal(api huma.API, local *service.MatchingLocalService) {
 
 func localMatchingIntent(body matchingLocalPreviewBody) service.MatchingLocalIntent {
 	return service.MatchingLocalIntent{ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedAuthorityRevision: body.ExpectedAuthorityRevision,
-		LocalReleaseID: body.LocalReleaseID, ReleaseTitle: body.ReleaseTitle, ReleaseArtists: body.ReleaseArtists, Tracks: body.Tracks}
+		ProviderReleaseID: body.ProviderReleaseID, Assignments: body.Assignments}
 }
 
 func matchingLocalHTTPError(err error) error {

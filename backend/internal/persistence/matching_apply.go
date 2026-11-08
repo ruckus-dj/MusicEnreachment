@@ -725,6 +725,39 @@ func ensureLocalTrack(ctx context.Context, tx bun.Tx, providerID, providerTrackI
 	return localID, recordingID, recordingCreated, true, nil
 }
 
+// ensureLocalTrackForRecording links a provider track to a local recording that
+// may belong to a different provider namespace. The recording mapping is
+// resolved by the caller using that recording's actual provider ownership.
+func ensureLocalTrackForRecording(ctx context.Context, tx bun.Tx, providerID, providerTrackID, localRecordingID, releaseID uuid.UUID, medium, position int, title string, durationMS *int64, authority materializationAuthority) (uuid.UUID, bool, error) {
+	var localID uuid.UUID
+	var method string
+	err := tx.NewRaw(`SELECT local_track_id,method FROM provider_local_track WHERE provider_id=? AND provider_track_id=? FOR UPDATE`, providerID, providerTrackID).Scan(ctx, &localID, &method)
+	if err == nil {
+		if method == "automatic" && authority.method == "manual" {
+			if _, err := tx.NewRaw(`UPDATE provider_local_track SET method='manual',policy_version=NULL WHERE provider_id=? AND provider_track_id=?`, providerID, providerTrackID).Exec(ctx); err != nil {
+				return uuid.Nil, false, fmt.Errorf("apply matching evaluation: promote local track mapping: %w", err)
+			}
+		} else if method != authority.method {
+			return uuid.Nil, false, ErrMatchingManualProtection
+		}
+		return localID, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, false, err
+	}
+	localID = uuid.New()
+	if _, err := tx.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, localID, title).Exec(ctx); err != nil {
+		return uuid.Nil, false, fmt.Errorf("apply matching evaluation: create local track: %w", err)
+	}
+	if _, err := tx.NewRaw(`INSERT INTO provider_local_track(provider_id,provider_track_id,local_track_id,method,policy_version) VALUES (?,?,?,?,?)`, providerID, providerTrackID, localID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
+		return uuid.Nil, false, fmt.Errorf("apply matching evaluation: map provider track: %w", err)
+	}
+	if _, err := tx.NewRaw(`INSERT INTO release_track(release_id,medium,position,track_id,recording_id,duration_ms) VALUES (?,?,?,?,?,?)`, releaseID, medium, position, localID, localRecordingID, durationMS).Exec(ctx); err != nil {
+		return uuid.Nil, false, fmt.Errorf("apply matching evaluation: add local release track: %w", err)
+	}
+	return localID, true, nil
+}
+
 // Manual mapping a track also promotes its shared recording mapping, whether
 // the provider track mapping already existed or is being created now.
 func ensureManualRecordingAuthority(ctx context.Context, tx bun.Tx, providerID, providerRecordingID uuid.UUID, authority materializationAuthority) error {
@@ -776,7 +809,7 @@ func acceptedReleaseArtistCredits(ctx context.Context, tx bun.Tx, providerID, so
 	return credits, nil
 }
 
-func acceptedRecordingArtistCredits(ctx context.Context, tx bun.Tx, providerID, sourceID, recordingID uuid.UUID) ([]acceptedArtistCredit, error) {
+func acceptedRecordingArtistCredits(ctx context.Context, tx bun.IDB, providerID, sourceID, recordingID uuid.UUID) ([]acceptedArtistCredit, error) {
 	var fields, evidence, recordingKey string
 	err := tx.NewRaw(`SELECT e.fields, e.field_evidence, r.provider_key FROM provider_recording r
 		JOIN provider_source_entity e ON e.provider_id=r.provider_id AND e.provider_key=r.provider_key AND e.entity_kind='recording'

@@ -19,23 +19,28 @@ var (
 type MatchingLocalArtist struct {
 	Name string `json:"name"`
 }
+type MatchingLocalAssignment struct {
+	FileMemberID    uuid.UUID `json:"file_member_id"`
+	ProviderTrackID uuid.UUID `json:"provider_track_id"`
+}
 type MatchingLocalTrack struct {
-	LocalTrackID    *uuid.UUID            `json:"local_track_id,omitempty"`
-	SourceMediaIDs  []uuid.UUID           `json:"source_media_ids,omitempty"`
-	Medium          int                   `json:"medium"`
-	Position        int                   `json:"position"`
-	DisplayedNumber string                `json:"displayed_number"`
-	Title           string                `json:"title"`
-	Artists         []MatchingLocalArtist `json:"artists"`
-	FileMemberIDs   []uuid.UUID           `json:"file_member_ids"`
+	ProviderTrackID     uuid.UUID             `json:"provider_track_id"`
+	RecordingID         uuid.UUID             `json:"recording_id"`
+	RecordingProviderID uuid.UUID             `json:"recording_provider_id"`
+	Medium              int                   `json:"medium"`
+	Position            int                   `json:"position"`
+	DisplayedNumber     string                `json:"displayed_number"`
+	Title               string                `json:"title"`
+	TitleOverride       *string               `json:"title_override,omitempty"`
+	RecordingDurationMS *int64                `json:"recording_duration_ms,omitempty"`
+	DurationOverrideMS  *int64                `json:"duration_override_ms,omitempty"`
+	Artists             []MatchingLocalArtist `json:"artists"`
 }
 type MatchingLocalIntent struct {
-	LocalReleaseID            *uuid.UUID            `json:"local_release_id,omitempty"`
-	ExpectedGroupRevision     string                `json:"expected_group_revision"`
-	ExpectedAuthorityRevision int64                 `json:"expected_authority_revision"`
-	ReleaseTitle              string                `json:"release_title"`
-	ReleaseArtists            []MatchingLocalArtist `json:"release_artists"`
-	Tracks                    []MatchingLocalTrack  `json:"tracks"`
+	ProviderReleaseID         uuid.UUID                 `json:"provider_release_id"`
+	ExpectedGroupRevision     string                    `json:"expected_group_revision"`
+	ExpectedAuthorityRevision int64                     `json:"expected_authority_revision"`
+	Assignments               []MatchingLocalAssignment `json:"assignments"`
 }
 type MatchingLocalSource struct {
 	FileMemberID         uuid.UUID   `json:"file_member_id"`
@@ -47,13 +52,14 @@ type MatchingLocalPreview struct {
 	GroupID              uuid.UUID             `json:"group_id"`
 	GroupRevision        string                `json:"group_revision"`
 	AuthorityRevision    int64                 `json:"authority_revision"`
+	ProviderReleaseID    uuid.UUID             `json:"provider_release_id"`
+	LocalReleaseID       *uuid.UUID            `json:"local_release_id,omitempty"`
 	ReleaseTitle         string                `json:"release_title"`
 	ReleaseArtists       []MatchingLocalArtist `json:"release_artists"`
 	Tracks               []MatchingLocalTrack  `json:"tracks"`
 	Sources              []MatchingLocalSource `json:"sources"`
 	OmittedFileMemberIDs []uuid.UUID           `json:"omitted_file_member_ids"`
 	PreviewDigest        string                `json:"preview_digest"`
-	LocalReleaseID       *uuid.UUID            `json:"local_release_id,omitempty"`
 	LocalCatalog         *MatchingLocalRelease `json:"local_catalog,omitempty"`
 }
 
@@ -127,96 +133,39 @@ func (s *MatchingLocalService) Confirm(ctx context.Context, groupID uuid.UUID, i
 }
 
 func validateMatchingLocalIntent(groupID uuid.UUID, intent MatchingLocalIntent) (MatchingLocalIntent, error) {
-	intent.ReleaseArtists = append([]MatchingLocalArtist(nil), intent.ReleaseArtists...)
-	intent.Tracks = append([]MatchingLocalTrack(nil), intent.Tracks...)
-	if intent.LocalReleaseID != nil {
-		id := *intent.LocalReleaseID
-		intent.LocalReleaseID = &id
-	}
-	if intent.LocalReleaseID != nil && *intent.LocalReleaseID == uuid.Nil {
+	intent.Assignments = append([]MatchingLocalAssignment(nil), intent.Assignments...)
+	if intent.ProviderReleaseID == uuid.Nil {
 		return intent, ErrMatchingLocalInvalid
 	}
-	for i := range intent.Tracks {
-		intent.Tracks[i].Artists = append([]MatchingLocalArtist(nil), intent.Tracks[i].Artists...)
-		intent.Tracks[i].FileMemberIDs = append([]uuid.UUID(nil), intent.Tracks[i].FileMemberIDs...)
-		intent.Tracks[i].SourceMediaIDs = nil
-		if intent.Tracks[i].LocalTrackID != nil {
-			if *intent.Tracks[i].LocalTrackID == uuid.Nil {
-				return intent, ErrMatchingLocalInvalid
-			}
-			id := *intent.Tracks[i].LocalTrackID
-			intent.Tracks[i].LocalTrackID = &id
-		}
-	}
-	if groupID == uuid.Nil || strings.TrimSpace(intent.ExpectedGroupRevision) == "" || intent.ExpectedAuthorityRevision < 0 || len(intent.Tracks) == 0 {
+	if groupID == uuid.Nil || strings.TrimSpace(intent.ExpectedGroupRevision) == "" || intent.ExpectedAuthorityRevision < 0 || len(intent.Assignments) == 0 {
 		return intent, ErrMatchingLocalInvalid
 	}
-	if intent.LocalReleaseID == nil {
-		for _, track := range intent.Tracks {
-			if track.LocalTrackID != nil {
-				return intent, ErrMatchingLocalInvalid
-			}
-		}
-	}
-	coordinates := map[string]bool{}
-	localTrackIDs := map[uuid.UUID]bool{}
-	for i := range intent.Tracks {
-		track := &intent.Tracks[i]
-		if track.Medium < 1 || track.Position < 1 || len(track.FileMemberIDs) == 0 {
+	seenMembers := map[uuid.UUID]bool{}
+	for i := range intent.Assignments {
+		assignment := &intent.Assignments[i]
+		if assignment.FileMemberID == uuid.Nil || assignment.ProviderTrackID == uuid.Nil || seenMembers[assignment.FileMemberID] {
 			return intent, ErrMatchingLocalInvalid
 		}
-		coordinate := fmt.Sprintf("%d/%d", track.Medium, track.Position)
-		if coordinates[coordinate] {
-			return intent, ErrMatchingLocalInvalid
-		}
-		coordinates[coordinate] = true
-		seen := map[uuid.UUID]bool{}
-		for _, id := range track.FileMemberIDs {
-			if id == uuid.Nil || seen[id] {
-				return intent, ErrMatchingLocalInvalid
-			}
-			seen[id] = true
-		}
-		if track.LocalTrackID != nil {
-			if localTrackIDs[*track.LocalTrackID] {
-				return intent, ErrMatchingLocalInvalid
-			}
-			localTrackIDs[*track.LocalTrackID] = true
-		}
-		sort.Slice(track.FileMemberIDs, func(a, b int) bool { return track.FileMemberIDs[a].String() < track.FileMemberIDs[b].String() })
+		seenMembers[assignment.FileMemberID] = true
 	}
+	sort.Slice(intent.Assignments, func(i, j int) bool {
+		return intent.Assignments[i].FileMemberID.String() < intent.Assignments[j].FileMemberID.String()
+	})
 	return intent, nil
 }
 
 func toPersistenceMatchingLocalIntent(intent MatchingLocalIntent) persistence.MatchingLocalIntent {
-	var releaseID *uuid.UUID
-	if intent.LocalReleaseID != nil {
-		id := *intent.LocalReleaseID
-		releaseID = &id
-	}
-	result := persistence.MatchingLocalIntent{LocalReleaseID: releaseID, ExpectedGroupRevision: intent.ExpectedGroupRevision, ExpectedAuthorityRevision: intent.ExpectedAuthorityRevision,
-		ReleaseTitle: intent.ReleaseTitle, ReleaseArtists: make([]persistence.MatchingLocalArtist, 0, len(intent.ReleaseArtists)), Tracks: make([]persistence.MatchingLocalTrack, 0, len(intent.Tracks))}
-	for _, artist := range intent.ReleaseArtists {
-		result.ReleaseArtists = append(result.ReleaseArtists, persistence.MatchingLocalArtist{Name: artist.Name})
-	}
-	for _, track := range intent.Tracks {
-		var localTrackID *uuid.UUID
-		if track.LocalTrackID != nil {
-			id := *track.LocalTrackID
-			localTrackID = &id
-		}
-		item := persistence.MatchingLocalTrack{LocalTrackID: localTrackID, Medium: track.Medium, Position: track.Position, DisplayedNumber: track.DisplayedNumber, Title: track.Title, FileMemberIDs: append([]uuid.UUID(nil), track.FileMemberIDs...)}
-		for _, artist := range track.Artists {
-			item.Artists = append(item.Artists, persistence.MatchingLocalArtist{Name: artist.Name})
-		}
-		result.Tracks = append(result.Tracks, item)
+	result := persistence.MatchingLocalIntent{ProviderReleaseID: intent.ProviderReleaseID, ExpectedGroupRevision: intent.ExpectedGroupRevision, ExpectedAuthorityRevision: intent.ExpectedAuthorityRevision,
+		Assignments: make([]persistence.MatchingLocalAssignment, 0, len(intent.Assignments))}
+	for _, assignment := range intent.Assignments {
+		result.Assignments = append(result.Assignments, persistence.MatchingLocalAssignment{FileMemberID: assignment.FileMemberID, ProviderTrackID: assignment.ProviderTrackID})
 	}
 	return result
 }
 
 func matchingLocalResult(value persistence.MatchingLocalPreview) MatchingLocalPreview {
 	result := MatchingLocalPreview{GroupID: value.GroupID, GroupRevision: value.GroupRevision, AuthorityRevision: value.AuthorityRevision,
-		ReleaseTitle: value.ReleaseTitle, PreviewDigest: value.PreviewDigest, LocalReleaseID: value.LocalReleaseID,
+		ProviderReleaseID: value.ProviderReleaseID, ReleaseTitle: value.ReleaseTitle, PreviewDigest: value.PreviewDigest, LocalReleaseID: value.LocalReleaseID,
 		OmittedFileMemberIDs: append([]uuid.UUID(nil), value.OmittedFileMemberIDs...), Sources: make([]MatchingLocalSource, 0, len(value.Sources)),
 		ReleaseArtists: make([]MatchingLocalArtist, 0, len(value.ReleaseArtists)), Tracks: make([]MatchingLocalTrack, 0, len(value.Tracks))}
 	for _, artist := range value.ReleaseArtists {
@@ -241,8 +190,8 @@ func matchingLocalResult(value persistence.MatchingLocalPreview) MatchingLocalPr
 }
 
 func localTrack(track persistence.MatchingLocalTrack) MatchingLocalTrack {
-	item := MatchingLocalTrack{LocalTrackID: track.LocalTrackID, SourceMediaIDs: append([]uuid.UUID(nil), track.SourceMediaIDs...), Medium: track.Medium, Position: track.Position,
-		DisplayedNumber: track.DisplayedNumber, Title: track.Title, FileMemberIDs: append([]uuid.UUID(nil), track.FileMemberIDs...)}
+	item := MatchingLocalTrack{ProviderTrackID: track.ProviderTrackID, RecordingID: track.RecordingID, RecordingProviderID: track.RecordingProviderID, Medium: track.Medium, Position: track.Position,
+		DisplayedNumber: track.DisplayedNumber, Title: track.Title, TitleOverride: track.TitleOverride, RecordingDurationMS: track.RecordingDurationMS, DurationOverrideMS: track.DurationOverrideMS}
 	item.Artists = localArtists(track.Artists)
 	return item
 }

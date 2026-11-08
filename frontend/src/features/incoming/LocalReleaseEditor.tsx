@@ -6,53 +6,39 @@ import {
 import { createUUID } from "../../api/client/uuid";
 import {
   confirmIncomingGroupLocalMatching,
-  listLocalReleases,
+  listLocalProviderReleases,
   previewIncomingGroupLocalMatching,
+  readLocalProviderRelease,
 } from "../../api/generated/client";
 import type {
   IncomingFileResponse,
   IncomingGroupResponse,
-  MatchingLocalConfirmBody,
+  LocalProviderItem,
   MatchingLocalPreview,
-  MatchingLocalPreviewBody,
-  MatchingLocalRelease,
-  MatchingLocalTrack,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 
-type DraftTrack = {
-  id: string;
-  medium: string;
-  position: string;
-  displayedNumber: string;
-  title: string;
-  artists: DraftArtist[];
-  fileMemberIds: string[];
-  localTrackID?: string;
-  sourceMediaIDs: string[];
+type Assignment = { file_member_id: string; provider_track_id: string };
+type PreviewBody = {
+  provider_release_id: string;
+  expected_group_revision: string;
+  expected_authority_revision: number;
+  assignments: Assignment[];
 };
-
-type DraftArtist = { id: string; name: string };
-
-type LocalDraft = {
-  releaseTitle: string;
-  releaseArtists: DraftArtist[];
-  tracks: DraftTrack[];
+type ConfirmBody = PreviewBody & {
+  preview_digest: string;
+  request_id: string;
 };
-
 type PreviewState = {
   scope: string;
-  body: MatchingLocalPreviewBody;
+  body: PreviewBody;
   response: MatchingLocalPreview;
 };
-
-type PendingConfirmation = {
-  scope: string;
-  body: MatchingLocalConfirmBody;
-};
-
-type GroupState = {
-  draft: LocalDraft;
+type PendingConfirmation = { scope: string; body: ConfirmBody };
+type EditorState = {
+  selectedReleaseID: string;
+  release?: LocalProviderItem;
+  assignments: Record<string, string>;
   preview?: PreviewState;
   pending?: PendingConfirmation;
   receipt?: MatchingLocalPreview;
@@ -62,34 +48,16 @@ type GroupState = {
   notice?: string;
   stale?: boolean;
 };
-
-type SourceSelection = {
-  sourceID: string;
-  album?: string;
-  title?: string;
-};
-
-type LocalReleaseCatalogState = {
-  releases?: MatchingLocalRelease[];
+type CatalogState = {
+  items?: LocalProviderItem[];
   busy?: boolean;
   error?: string;
-  request?: number;
 };
 
-export interface LocalReleaseEditorProps {
-  group: IncomingGroupResponse;
-  files: IncomingFileResponse[];
-  authorityRevision: number | undefined;
-  onConfirmed?: (receipt: MatchingLocalPreview) => void | Promise<void>;
-}
-
-const emptyDraft = (): LocalDraft => ({
-  releaseTitle: "",
-  releaseArtists: [],
-  tracks: [],
+const emptyEditorState = (): EditorState => ({
+  selectedReleaseID: "",
+  assignments: {},
 });
-
-const emptyGroupState = (): GroupState => ({ draft: emptyDraft() });
 
 function message(reason: unknown, fallback: string) {
   return sharedErrorMessage(reason, fallback) || fallback;
@@ -103,30 +71,19 @@ function responseMessage(
     .message;
 }
 
-function tagValues(file: IncomingFileResponse | undefined, name: string) {
-  if (!file) return [];
-  const key = Object.keys(file.tags).find(
-    (tag) => tag.toUpperCase().replace(/[ _-]/g, "") === name,
-  );
-  return key ? (file.tags[key] ?? []) : [];
-}
-
 function fileLabel(file: IncomingFileResponse) {
   return file.locations?.[0]?.relative_path || file.variant_id;
 }
 
-function toPayload(draft: LocalDraft): MatchingLocalTrack[] {
-  return draft.tracks
-    .filter((track) => track.fileMemberIds.length > 0)
-    .map((track) => ({
-      ...(track.localTrackID ? { local_track_id: track.localTrackID } : {}),
-      medium: Number(track.medium),
-      position: Number(track.position),
-      displayed_number: track.displayedNumber,
-      title: track.title,
-      artists: track.artists.map(({ name }) => ({ name })),
-      file_member_ids: track.fileMemberIds,
-    }));
+function trackLabel(track: NonNullable<LocalProviderItem["tracks"]>[number]) {
+  return `${track.position}. ${track.title_override || track.recording_title}`;
+}
+
+export interface LocalReleaseEditorProps {
+  group: IncomingGroupResponse;
+  files: IncomingFileResponse[];
+  authorityRevision: number | undefined;
+  onConfirmed?: (receipt: MatchingLocalPreview) => void | Promise<void>;
 }
 
 export function LocalReleaseEditor({
@@ -135,236 +92,158 @@ export function LocalReleaseEditor({
   authorityRevision,
   onConfirmed,
 }: LocalReleaseEditorProps) {
-  const [states, setStates] = useState<Record<string, GroupState>>({});
-  const [activeTargets, setActiveTargets] = useState<Record<string, string>>(
-    {},
-  );
-  const [selectedCatalogIDs, setSelectedCatalogIDs] = useState<
-    Record<string, string>
-  >({});
-  const [catalogs, setCatalogs] = useState<
-    Record<string, LocalReleaseCatalogState>
-  >({});
-  const [sourceSelections, setSourceSelections] = useState<
-    Record<string, SourceSelection>
-  >({});
+  const [states, setStates] = useState<Record<string, EditorState>>({});
+  const [catalogs, setCatalogs] = useState<Record<string, CatalogState>>({});
   const sequence = useRef(0);
-  const catalogRequest = useRef(0);
+  const catalogRequests = useRef<Record<string, number>>({});
+  const detailRequest = useRef(0);
+  const previousScopes = useRef<Record<string, string>>({});
+  const selectedReleaseRef = useRef("");
   const currentScope = `${group.id}:${group.revision}:${authorityRevision === undefined ? "unknown" : authorityRevision}`;
   const currentScopeRef = useRef(currentScope);
   currentScopeRef.current = currentScope;
-  const activeTarget = activeTargets[group.id] ?? "";
-  const stateKey = `${group.id}:${activeTarget || "new"}`;
-  const groupScopes = useRef<Record<string, string>>({});
+  const state = states[group.id] ?? emptyEditorState();
+  selectedReleaseRef.current = state.selectedReleaseID;
   const scopedFiles = files.filter((file) =>
     group.members?.includes(file.variant_id),
   );
-  const state = states[stateKey] ?? emptyGroupState();
-  const draft = state.draft;
-  const sourceSelection = sourceSelections[group.id] ?? { sourceID: "" };
-  const {
-    sourceID,
-    album: selectedAlbum,
-    title: selectedTitle,
-  } = sourceSelection;
-  const selectedSource = scopedFiles.find(
-    (file) => file.variant_id === sourceID,
-  );
+  const tracks = state.release?.tracks ?? [];
+  const confirmationInFlight = state.busy === "confirm";
 
-  function updateSourceSelection(
-    update: (current: SourceSelection) => SourceSelection,
-  ) {
-    setSourceSelections((current) => ({
+  function update(updateState: (current: EditorState) => EditorState) {
+    setStates((current) => ({
       ...current,
-      [group.id]: update(current[group.id] ?? { sourceID: "" }),
+      [group.id]: updateState(current[group.id] ?? emptyEditorState()),
     }));
   }
 
   useEffect(() => {
-    const previous = groupScopes.current[group.id];
-    groupScopes.current[group.id] = currentScope;
+    const previous = previousScopes.current[group.id];
+    previousScopes.current[group.id] = currentScope;
     if (previous === undefined || previous === currentScope) return;
     sequence.current += 1;
     setStates((current) => {
-      const existing = current[stateKey] ?? emptyGroupState();
-      const confirmationOutstanding =
-        existing.busy === "confirm" || existing.pending !== undefined;
+      const existing = current[group.id] ?? emptyEditorState();
       return {
         ...current,
-        [stateKey]: {
-          draft: existing.draft,
-          receipt: existing.receipt,
-          ...(confirmationOutstanding
-            ? {
-                pending: existing.pending,
-                busy: existing.busy,
-                busyRequest: existing.busyRequest,
-                error: existing.error,
-              }
-            : {}),
+        [group.id]: {
+          ...existing,
+          preview: undefined,
+          stale: true,
           notice: existing.receipt
-            ? "Локальный релиз подтверждён; данные группы обновлены."
-            : "Снимок группы или полномочий изменился. Черновик сохранён; создайте новый предпросмотр.",
+            ? "Локальное сопоставление подтверждено; данные группы обновлены."
+            : "Снимок группы или полномочий изменился. Выберите релиз и создайте новый предпросмотр.",
         },
       };
     });
-  }, [currentScope, stateKey, group.id]);
+  }, [currentScope, group.id]);
 
-  function update(update: (current: GroupState) => GroupState) {
-    updateState(stateKey, update);
+  async function loadCatalog() {
+    const request = (catalogRequests.current[group.id] ?? 0) + 1;
+    catalogRequests.current[group.id] = request;
+    setCatalogs((current) => ({
+      ...current,
+      [group.id]: { ...current[group.id], busy: true, error: undefined },
+    }));
+    try {
+      const items: LocalProviderItem[] = [];
+      let offset = 0;
+      let total = Number.POSITIVE_INFINITY;
+      while (offset < total) {
+        const response = await listLocalProviderReleases(
+          { provider: "local", limit: 100, offset },
+          { cache: "no-store" },
+        );
+        if (request !== catalogRequests.current[group.id]) return;
+        if (response.status !== 200) {
+          setCatalogs((current) => ({
+            ...current,
+            [group.id]: {
+              ...current[group.id],
+              error: responseMessage(response, "Не удалось загрузить релизы"),
+            },
+          }));
+          return;
+        }
+        const page = response.data.items ?? [];
+        items.push(...page);
+        total = response.data.total;
+        offset += page.length;
+        if (page.length === 0) break;
+      }
+      if (request !== catalogRequests.current[group.id]) return;
+      setCatalogs((current) => ({
+        ...current,
+        [group.id]: { items },
+      }));
+    } catch (reason) {
+      if (request === catalogRequests.current[group.id]) {
+        setCatalogs((current) => ({
+          ...current,
+          [group.id]: {
+            ...current[group.id],
+            error: message(reason, "Не удалось загрузить релизы."),
+          },
+        }));
+      }
+    } finally {
+      if (request === catalogRequests.current[group.id]) {
+        setCatalogs((current) => ({
+          ...current,
+          [group.id]: { ...current[group.id], busy: false },
+        }));
+      }
+    }
   }
 
-  function updateState(
-    key: string,
-    update: (current: GroupState) => GroupState,
-  ) {
-    setStates((current) => {
-      const existing = current[key] ?? emptyGroupState();
-      return { ...current, [key]: update(existing) };
-    });
-  }
-
-  function editDraft(next: LocalDraft) {
+  async function selectRelease(releaseID: string) {
+    if (state.pending) return;
+    const request = ++detailRequest.current;
+    selectedReleaseRef.current = releaseID;
     sequence.current += 1;
-    update((_current) => ({
-      draft: next,
-      notice: undefined,
+    update((current) => ({
+      ...current,
+      selectedReleaseID: releaseID,
+      release: undefined,
+      assignments: {},
+      preview: undefined,
+      receipt: undefined,
       error: undefined,
+      notice: undefined,
       stale: false,
     }));
-  }
-
-  function setDraftField<K extends keyof LocalDraft>(
-    key: K,
-    value: LocalDraft[K],
-  ) {
-    editDraft({ ...draft, [key]: value });
-  }
-
-  function addArtist(
-    artists: DraftArtist[],
-    set: (next: DraftArtist[]) => void,
-  ) {
-    set([...artists, { id: createUUID(), name: "" }]);
-  }
-
-  function tagChoice(
-    file: IncomingFileResponse | undefined,
-    name: string,
-    value: string,
-  ) {
-    if (!file) return;
-    updateSourceSelection((current) => {
-      const selection =
-        current.sourceID === file.variant_id
-          ? current
-          : { sourceID: file.variant_id };
-      if (name === "ALBUM") return { ...selection, album: value };
-      if (name === "TITLE") return { ...selection, title: value };
-      return selection;
-    });
-  }
-
-  function copyReleaseTitle() {
-    if (!selectedSource || selectedAlbum === undefined) {
-      update((current) => ({
-        ...current,
-        notice: "Выберите значение ALBUM перед копированием.",
-      }));
-      return;
-    }
-    setDraftField("releaseTitle", selectedAlbum);
-  }
-
-  function copyReleaseArtists() {
-    if (!selectedSource) return;
-    const values = tagValues(selectedSource, "ALBUMARTIST");
-    const artists = values.length
-      ? values
-      : tagValues(selectedSource, "ARTIST");
-    if (!artists.length) {
-      update((current) => ({
-        ...current,
-        notice: "В выбранном файле нет ALBUMARTIST или ARTIST.",
-      }));
-      return;
-    }
-    setDraftField(
-      "releaseArtists",
-      artists.map((name) => ({ id: createUUID(), name })),
-    );
-  }
-
-  function addTrack() {
-    editDraft({
-      ...draft,
-      tracks: [
-        ...draft.tracks,
-        {
-          id: createUUID(),
-          medium: "",
-          position: "",
-          displayedNumber: "",
-          title: "",
-          artists: [],
-          fileMemberIds: [],
-          sourceMediaIDs: [],
-        },
-      ],
-    });
-  }
-
-  function editTrack(
-    index: number,
-    updateTrack: (track: DraftTrack) => DraftTrack,
-  ) {
-    const tracks = [...draft.tracks];
-    tracks[index] = updateTrack(tracks[index]);
-    editDraft({ ...draft, tracks });
-  }
-
-  function copyTrackSource(index: number) {
-    if (!selectedSource) return;
-    const titles = tagValues(selectedSource, "TITLE");
-    const numbers = tagValues(selectedSource, "TRACKNUMBER");
-    const discs = tagValues(selectedSource, "DISCNUMBER");
-    const title =
-      selectedTitle === undefined
-        ? titles.length === 1
-          ? titles[0]
-          : undefined
-        : selectedTitle;
-    if (title === undefined) {
-      update((current) => ({
-        ...current,
-        notice: titles.length
-          ? "У источника несколько значений TITLE: выберите или введите название вручную."
-          : "В источнике нет TITLE; введите название вручную.",
-      }));
-      return;
-    }
-    const validNumber = numbers.length === 1 && /^[1-9]\d*$/.test(numbers[0]);
-    const validDisc = discs.length === 1 && /^[1-9]\d*$/.test(discs[0]);
-    editTrack(index, (current) => ({
-      ...current,
-      title,
-      ...(validNumber
-        ? {
-            ...(!current.localTrackID ? { position: numbers[0] } : {}),
-            displayedNumber: numbers[0],
-          }
-        : {}),
-      ...(validDisc && !current.localTrackID ? { medium: discs[0] } : {}),
-    }));
-    if (!validNumber || !validDisc) {
-      update((current) => ({
-        ...current,
-        notice: `Название скопировано${selectedTitle !== undefined ? " из выбранного значения" : ""}. Номер дорожки и/или носителя не однозначен — укажите их вручную.`,
-      }));
+    if (!releaseID) return;
+    try {
+      const response = await readLocalProviderRelease(releaseID, {
+        cache: "no-store",
+      });
+      if (
+        request !== detailRequest.current ||
+        selectedReleaseRef.current !== releaseID
+      )
+        return;
+      if (response.status !== 200) {
+        update((current) => ({
+          ...current,
+          error: responseMessage(response, "Не удалось прочитать релиз"),
+        }));
+        return;
+      }
+      update((current) => ({ ...current, release: response.data }));
+    } catch (reason) {
+      if (
+        request === detailRequest.current &&
+        selectedReleaseRef.current === releaseID
+      ) {
+        update((current) => ({
+          ...current,
+          error: message(reason, "Не удалось прочитать релиз."),
+        }));
+      }
     }
   }
 
-  function makePreviewBody(): MatchingLocalPreviewBody | undefined {
+  function makePreviewBody(): PreviewBody | undefined {
     if (authorityRevision === undefined) {
       update((current) => ({
         ...current,
@@ -373,148 +252,45 @@ export function LocalReleaseEditor({
       }));
       return undefined;
     }
-    if (
-      !draft.tracks.some((track) => track.fileMemberIds.length > 0) ||
-      draft.tracks
-        .filter((track) => track.fileMemberIds.length > 0)
-        .some(
-          (track) =>
-            !/^[1-9]\d*$/.test(track.medium) ||
-            !/^[1-9]\d*$/.test(track.position),
-        )
-    ) {
+    if (!state.release || !state.selectedReleaseID) {
       update((current) => ({
         ...current,
-        error:
-          "Для каждой назначенной дорожки укажите носитель, позицию и хотя бы один файл. Текстовые теги могут быть пустыми.",
+        error: "Выберите локальный релиз и дождитесь загрузки его дорожек.",
+      }));
+      return undefined;
+    }
+    const allowedMembers = new Set(scopedFiles.map((file) => file.variant_id));
+    const allowedTracks = new Set(tracks.map((track) => track.id));
+    const assignments = Object.entries(state.assignments)
+      .filter(
+        ([fileID, trackID]) =>
+          allowedMembers.has(fileID) && allowedTracks.has(trackID),
+      )
+      .map(([file_member_id, provider_track_id]) => ({
+        file_member_id,
+        provider_track_id,
+      }));
+    if (assignments.length === 0) {
+      update((current) => ({
+        ...current,
+        error: "Назначьте хотя бы один файл дорожке выбранного релиза.",
       }));
       return undefined;
     }
     return {
+      provider_release_id: state.selectedReleaseID,
       expected_group_revision: group.revision,
       expected_authority_revision: authorityRevision,
-      ...(activeTarget ? { local_release_id: activeTarget } : {}),
-      release_title: draft.releaseTitle,
-      release_artists: draft.releaseArtists.map(({ name }) => ({ name })),
-      tracks: toPayload(draft),
+      assignments,
     };
   }
 
-  async function loadLocalReleases() {
-    const request = ++catalogRequest.current;
-    const requestedScope = currentScope;
-    setCatalogs((current) => ({
-      ...current,
-      [group.id]: {
-        ...current[group.id],
-        busy: true,
-        error: undefined,
-        request,
-      },
-    }));
-    try {
-      const response = await listLocalReleases({ cache: "no-store" });
-      if (
-        request !== catalogRequest.current ||
-        currentScopeRef.current !== requestedScope
-      )
-        return;
-      if (response.status !== 200) {
-        setCatalogs((current) => ({
-          ...current,
-          [group.id]: {
-            ...current[group.id],
-            busy: false,
-            error: responseMessage(
-              response,
-              "Не удалось загрузить локальные релизы",
-            ),
-          },
-        }));
-        return;
-      }
-      setCatalogs((current) => ({
-        ...current,
-        [group.id]: {
-          ...current[group.id],
-          releases: response.data.releases ?? [],
-        },
-      }));
-    } catch (reason) {
-      if (
-        request === catalogRequest.current &&
-        currentScopeRef.current === requestedScope
-      ) {
-        setCatalogs((current) => ({
-          ...current,
-          [group.id]: {
-            ...current[group.id],
-            busy: false,
-            error: message(reason, "Не удалось загрузить локальные релизы."),
-          },
-        }));
-      }
-    } finally {
-      setCatalogs((current) => {
-        const catalog = current[group.id];
-        if (catalog?.request !== request) return current;
-        return {
-          ...current,
-          [group.id]: { ...catalog, busy: false, request: undefined },
-        };
-      });
-    }
-  }
-
-  function useSelectedLocalRelease() {
-    const selected = catalogs[group.id]?.releases?.find(
-      (release) => release.id === selectedCatalogIDs[group.id],
-    );
-    if (!selected) return;
-    const targetKey = `${group.id}:${selected.id}`;
-    setStates((current) => {
-      if (current[targetKey]) return current;
-      const tracks = (selected.tracks ?? []).map((track) => ({
-        id: createUUID(),
-        medium: String(track.medium),
-        position: String(track.position),
-        displayedNumber: track.displayed_number,
-        title: track.title,
-        artists: (track.artists ?? []).map(({ name }) => ({
-          id: createUUID(),
-          name,
-        })),
-        fileMemberIds: [],
-        localTrackID: track.local_track_id,
-        sourceMediaIDs: track.source_media_ids ?? [],
-      }));
-      return {
-        ...current,
-        [targetKey]: {
-          draft: {
-            releaseTitle: selected.title,
-            releaseArtists: (selected.artists ?? []).map(({ name }) => ({
-              id: createUUID(),
-              name,
-            })),
-            tracks,
-          },
-        },
-      };
-    });
-    setActiveTargets((current) => ({ ...current, [group.id]: selected.id }));
-  }
-
-  function useNewLocalRelease() {
-    setActiveTargets((current) => ({ ...current, [group.id]: "" }));
-  }
-
   async function preview() {
+    if (state.pending) return;
     const body = makePreviewBody();
     if (!body) return;
     const request = ++sequence.current;
-    const originKey = stateKey;
-    const originScope = currentScope;
+    const requestedScope = currentScope;
     update((current) => ({
       ...current,
       busy: "preview",
@@ -525,37 +301,45 @@ export function LocalReleaseEditor({
     }));
     try {
       const response = await previewIncomingGroupLocalMatching(group.id, body);
-      if (request !== sequence.current) return;
+      if (
+        request !== sequence.current ||
+        currentScopeRef.current !== requestedScope
+      )
+        return;
       if (response.status !== 200) {
-        updateState(originKey, (current) => ({
+        update((current) => ({
           ...current,
           busy: undefined,
+          busyRequest: undefined,
           preview: undefined,
           pending: response.status === 409 ? undefined : current.pending,
           stale: response.status === 409,
           error:
             response.status === 409
-              ? "Снимок устарел. Черновик сохранён; обновите данные группы и создайте новый предпросмотр."
+              ? "Снимок устарел. Обновите данные группы и создайте новый предпросмотр."
               : responseMessage(response, "Предпросмотр не выполнен"),
         }));
         return;
       }
-      updateState(originKey, (current) => ({
+      update((current) => ({
         ...current,
         busy: undefined,
-        preview: { scope: originScope, body, response: response.data },
+        busyRequest: undefined,
+        preview: { scope: requestedScope, body, response: response.data },
         pending: undefined,
         receipt: undefined,
       }));
     } catch (reason) {
-      if (request === sequence.current)
-        updateState(originKey, (current) => ({
+      if (request === sequence.current) {
+        update((current) => ({
           ...current,
           busy: undefined,
+          busyRequest: undefined,
           error: message(reason, "Предпросмотр не выполнен."),
         }));
+      }
     } finally {
-      updateState(originKey, (current) =>
+      update((current) =>
         current.busyRequest === request
           ? { ...current, busy: undefined, busyRequest: undefined }
           : current,
@@ -566,34 +350,26 @@ export function LocalReleaseEditor({
   async function confirm() {
     const pending =
       state.pending ??
-      (state.preview && state.preview.scope === currentScope
+      (state.preview?.scope === currentScope
         ? {
             scope: currentScope,
             body: {
               ...state.preview.body,
               preview_digest: state.preview.response.preview_digest,
               request_id: createUUID(),
-            } as MatchingLocalConfirmBody,
+            },
           }
         : undefined);
     if (!pending || state.busy) return;
     if (!state.pending) update((current) => ({ ...current, pending }));
-    const request = ++sequence.current;
-    const originKey = stateKey;
-    update((current) => ({
-      ...current,
-      busy: "confirm",
-      busyRequest: request,
-      error: undefined,
-      notice: undefined,
-    }));
+    update((current) => ({ ...current, busy: "confirm", error: undefined }));
     try {
       const response = await confirmIncomingGroupLocalMatching(
         group.id,
         pending.body,
       );
       if (response.status !== 200) {
-        updateState(originKey, (current) => ({
+        update((current) => ({
           ...current,
           busy: undefined,
           stale: response.status === 409,
@@ -601,52 +377,43 @@ export function LocalReleaseEditor({
           pending: response.status === 409 ? undefined : current.pending,
           error:
             response.status === 409
-              ? "Снимок устарел. Черновик сохранён; получите новый предпросмотр перед подтверждением."
+              ? "Снимок устарел. Получите новый предпросмотр перед подтверждением."
               : responseMessage(response, "Подтверждение не выполнено"),
         }));
         return;
       }
-      updateState(originKey, (current) => ({
+      update((current) => ({
         ...current,
         busy: undefined,
         receipt: response.data,
         pending: undefined,
         preview: undefined,
-        notice: "Локальный релиз подтверждён.",
+        notice: "Локальное сопоставление подтверждено.",
       }));
       try {
         await onConfirmed?.(response.data);
       } catch (reason) {
-        updateState(originKey, (current) => ({
+        update((current) => ({
           ...current,
-          notice: `Локальный релиз подтверждён, но обновить экран не удалось: ${message(reason, "ошибка обновления")}`,
+          notice: `Сопоставление подтверждено, но обновить экран не удалось: ${message(reason, "ошибка обновления")}`,
         }));
       }
     } catch (reason) {
-      updateState(originKey, (current) => ({
+      update((current) => ({
         ...current,
         busy: undefined,
         error: `${message(reason, "Подтверждение не выполнено.")} Повторите запрос, чтобы безопасно проверить тот же результат.`,
       }));
-    } finally {
-      updateState(originKey, (current) =>
-        current.busyRequest === request
-          ? { ...current, busy: undefined, busyRequest: undefined }
-          : current,
-      );
     }
   }
 
   const previewCurrent =
     state.preview?.scope === currentScope ? state.preview : undefined;
-  const confirmationPending = Object.entries(states).some(
-    ([key, value]) =>
-      key.startsWith(`${group.id}:`) && value.busy === "confirm",
-  );
   const canPreview =
     authorityRevision !== undefined &&
     state.busy === undefined &&
-    !confirmationPending;
+    !confirmationInFlight &&
+    state.pending === undefined;
 
   return (
     <section
@@ -654,437 +421,130 @@ export function LocalReleaseEditor({
       className="space-y-4 rounded border border-stone-300 p-4"
     >
       <h2 id={`local-release-${group.id}`} className="text-lg font-semibold">
-        {activeTarget ? "Изменить локальный релиз" : "Создать локальный релиз"}
+        Сопоставить с локальным релизом
       </h2>
       <p>
-        {activeTarget
-          ? "Будет изменён только локальный релиз."
-          : "Будет создан только локальный релиз."}{" "}
-        Подключения к музыкальным провайдерам не используются.
+        Выберите существующий локальный релиз и явно назначьте файлы его
+        дорожкам. Создание и редактирование каталога выполняется в{" "}
+        {state.pending ? (
+          "собственном каталоге"
+        ) : (
+          <a className="underline" href="#/own-catalog">
+            собственном каталоге
+          </a>
+        )}
+        .
       </p>
 
       <fieldset
-        disabled={confirmationPending}
+        disabled={state.pending !== undefined || confirmationInFlight}
         className="space-y-3 rounded border border-stone-300 p-3"
       >
-        <legend className="font-medium">Целевой локальный релиз</legend>
-        <div className="flex flex-wrap gap-2">
-          <AppButton
-            type="button"
-            isDisabled={catalogs[group.id]?.busy}
-            onPress={loadLocalReleases}
-          >
-            {catalogs[group.id]?.busy
-              ? "Загрузка локальных релизов…"
-              : "Загрузить локальные релизы"}
-          </AppButton>
-          <AppButton type="button" onPress={useNewLocalRelease}>
-            Новый локальный релиз
-          </AppButton>
-        </div>
+        <legend className="font-medium">Локальный релиз</legend>
+        <AppButton
+          type="button"
+          isDisabled={catalogs[group.id]?.busy}
+          onPress={loadCatalog}
+        >
+          {catalogs[group.id]?.busy
+            ? "Загрузка локальных релизов…"
+            : "Загрузить локальные релизы"}
+        </AppButton>
         {catalogs[group.id]?.error && (
           <p role="alert">{catalogs[group.id].error}</p>
         )}
-        {catalogs[group.id]?.releases && (
-          <>
-            <label className="block">
-              Локальный релиз
+        {catalogs[group.id]?.items && (
+          <label className="block">
+            Локальный релиз
+            <select
+              className="block w-full rounded border p-2"
+              value={state.selectedReleaseID}
+              onChange={(event) => void selectRelease(event.target.value)}
+            >
+              <option value="">Выберите локальный релиз</option>
+              {catalogs[group.id]?.items?.map((release) => (
+                <option key={release.id} value={release.id}>
+                  {release.title || release.id}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {state.selectedReleaseID && !state.release && !state.error && (
+          <p role="status">Загрузка дорожек локального релиза…</p>
+        )}
+        {state.release && (
+          <p role="status">
+            {state.release.title} · {tracks.length} дорожек
+          </p>
+        )}
+      </fieldset>
+
+      {state.release && (
+        <fieldset
+          disabled={state.pending !== undefined || confirmationInFlight}
+          className="space-y-3 rounded border border-stone-300 p-3"
+        >
+          <legend className="font-medium">Назначение файлов дорожкам</legend>
+          {scopedFiles.map((file) => (
+            <label className="block" key={file.variant_id}>
+              {fileLabel(file)}
               <select
                 className="block w-full rounded border p-2"
-                value={selectedCatalogIDs[group.id] ?? ""}
-                onChange={(event) =>
-                  setSelectedCatalogIDs((current) => ({
-                    ...current,
-                    [group.id]: event.target.value,
-                  }))
-                }
+                aria-label={`Дорожка для файла ${fileLabel(file)}`}
+                value={state.assignments[file.variant_id] ?? ""}
+                onChange={(event) => {
+                  if (state.pending) return;
+                  sequence.current += 1;
+                  const trackID = event.target.value;
+                  update((current) => {
+                    if (current.pending) return current;
+                    const assignments = trackID
+                      ? {
+                          ...current.assignments,
+                          [file.variant_id]: trackID,
+                        }
+                      : Object.fromEntries(
+                          Object.entries(current.assignments).filter(
+                            ([memberID]) => memberID !== file.variant_id,
+                          ),
+                        );
+                    return {
+                      ...current,
+                      assignments,
+                      preview: undefined,
+                      receipt: undefined,
+                      error: undefined,
+                      notice: undefined,
+                      stale: false,
+                    };
+                  });
+                }}
               >
-                <option value="">Выберите локальный релиз</option>
-                {catalogs[group.id].releases?.map((release) => (
-                  <option key={release.id} value={release.id}>
-                    {release.title}
+                <option value="">Не назначен</option>
+                {tracks.map((track) => (
+                  <option key={track.id} value={track.id}>
+                    {trackLabel(track)}
                   </option>
                 ))}
               </select>
             </label>
-            <AppButton
-              type="button"
-              isDisabled={!selectedCatalogIDs[group.id]}
-              onPress={useSelectedLocalRelease}
-            >
-              Использовать выбранный релиз
-            </AppButton>
-          </>
-        )}
-        <p>
-          {activeTarget
-            ? `Изменения будут применены к существующему локальному релизу ${activeTarget}.`
-            : "Будет создан новый локальный релиз; выбор из каталога не применяется автоматически."}
-        </p>
-      </fieldset>
-
-      <fieldset disabled={confirmationPending} className="space-y-3">
-        <legend className="font-medium">Данные релиза</legend>
-        <label className="block">
-          Название релиза
-          <input
-            className="block w-full rounded border p-2"
-            value={draft.releaseTitle}
-            onChange={(event) =>
-              setDraftField("releaseTitle", event.target.value)
-            }
-          />
-        </label>
-        <div className="space-y-2">
-          <span>Исполнители релиза (в порядке отображения)</span>
-          {draft.releaseArtists.map((artist, index) => (
-            <div className="flex gap-2" key={artist.id}>
-              <label
-                className="sr-only"
-                htmlFor={`release-artist-${group.id}-${index}`}
-              >
-                Исполнитель релиза {index + 1}
-              </label>
-              <input
-                id={`release-artist-${group.id}-${index}`}
-                className="min-w-0 flex-1 rounded border p-2"
-                value={artist.name}
-                onChange={(event) =>
-                  setDraftField(
-                    "releaseArtists",
-                    draft.releaseArtists.map((value, item) =>
-                      item === index
-                        ? { ...value, name: event.target.value }
-                        : value,
-                    ),
-                  )
-                }
-              />
-              <AppButton
-                type="button"
-                onPress={() =>
-                  setDraftField(
-                    "releaseArtists",
-                    draft.releaseArtists.filter((_, item) => item !== index),
-                  )
-                }
-              >
-                Удалить
-              </AppButton>
-            </div>
           ))}
-          <AppButton
-            type="button"
-            onPress={() =>
-              addArtist(draft.releaseArtists, (artists) =>
-                setDraftField("releaseArtists", artists),
-              )
-            }
-          >
-            Добавить исполнителя
-          </AppButton>
-        </div>
-      </fieldset>
-
-      <fieldset disabled={confirmationPending} className="space-y-3">
-        <legend className="font-medium">
-          Явное копирование метаданных из исходного файла
-        </legend>
-        <label className="block">
-          Исходный файл
-          <select
-            className="block w-full rounded border p-2"
-            value={sourceID}
-            onChange={(event) => {
-              updateSourceSelection(() => ({ sourceID: event.target.value }));
-            }}
-          >
-            <option value="">Не выбран</option>
-            {scopedFiles.map((file) => (
-              <option key={file.variant_id} value={file.variant_id}>
-                {fileLabel(file)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="flex flex-wrap items-end gap-2">
-          <label>
-            Значение ALBUM
-            <select
-              className="block max-w-full rounded border p-2"
-              value={
-                selectedAlbum === undefined
-                  ? ""
-                  : String(
-                      tagValues(selectedSource, "ALBUM").indexOf(
-                        selectedAlbum,
-                      ) + 1,
-                    )
-              }
-              onChange={(event) => {
-                const values = [...new Set(tagValues(selectedSource, "ALBUM"))];
-                const index = Number(event.target.value) - 1;
-                tagChoice(selectedSource, "ALBUM", values[index]);
-              }}
-            >
-              <option value="">Выберите значение</option>
-              {[...new Set(tagValues(selectedSource, "ALBUM"))].map(
-                (value, index) => (
-                  <option key={value} value={String(index + 1)}>
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-          <AppButton type="button" onPress={copyReleaseTitle}>
-            Скопировать в название релиза
-          </AppButton>
-          <AppButton
-            type="button"
-            onPress={copyReleaseArtists}
-            isDisabled={!selectedSource}
-          >
-            Скопировать ALBUMARTIST / ARTIST
-          </AppButton>
-        </div>
-        <label>
-          Значение TITLE для явного копирования в дорожку
-          <select
-            className="block max-w-full rounded border p-2"
-            value={
-              selectedTitle === undefined
-                ? ""
-                : String(
-                    [...new Set(tagValues(selectedSource, "TITLE"))].indexOf(
-                      selectedTitle,
-                    ) + 1,
-                  )
-            }
-            onChange={(event) => {
-              const values = [...new Set(tagValues(selectedSource, "TITLE"))];
-              tagChoice(
-                selectedSource,
-                "TITLE",
-                values[Number(event.target.value) - 1],
-              );
-            }}
-          >
-            <option value="">
-              Не выбрано (копирование разрешено только при одном значении)
-            </option>
-            {[...new Set(tagValues(selectedSource, "TITLE"))].map(
-              (value, index) => (
-                <option key={value} value={String(index + 1)}>
-                  {value}
-                </option>
-              ),
-            )}
-          </select>
-        </label>
-        <p>
-          Список исполнителей копируется целиком и по порядку; разделители не
-          разбираются.
-        </p>
-      </fieldset>
-
-      <div className="space-y-3">
-        <h3 className="font-medium">Дорожки и членство файлов</h3>
-        {draft.tracks.map((track, index) => (
-          <fieldset
-            disabled={confirmationPending}
-            className="grid gap-3 rounded border border-stone-300 p-3 sm:grid-cols-2"
-            key={track.id}
-          >
-            <legend>Дорожка {index + 1}</legend>
-            <label>
-              Носитель (с 1)
-              <input
-                inputMode="numeric"
-                className="block w-full rounded border p-2"
-                value={track.medium}
-                readOnly={Boolean(track.localTrackID)}
-                onChange={(event) =>
-                  editTrack(index, (current) => ({
-                    ...current,
-                    medium: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label>
-              Позиция (с 1)
-              <input
-                inputMode="numeric"
-                className="block w-full rounded border p-2"
-                value={track.position}
-                readOnly={Boolean(track.localTrackID)}
-                onChange={(event) =>
-                  editTrack(index, (current) => ({
-                    ...current,
-                    position: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label>
-              Отображаемый номер
-              <input
-                className="block w-full rounded border p-2"
-                value={track.displayedNumber}
-                onChange={(event) =>
-                  editTrack(index, (current) => ({
-                    ...current,
-                    displayedNumber: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label>
-              Название дорожки
-              <input
-                className="block w-full rounded border p-2"
-                value={track.title}
-                onChange={(event) =>
-                  editTrack(index, (current) => ({
-                    ...current,
-                    title: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <div className="space-y-2 sm:col-span-2">
-              <span>Исполнители дорожки (по порядку)</span>
-              {track.artists.map((artist, artistIndex) => (
-                <label className="block" key={artist.id}>
-                  Исполнитель {artistIndex + 1}
-                  <span className="flex gap-2">
-                    <input
-                      className="min-w-0 flex-1 rounded border p-2"
-                      value={artist.name}
-                      onChange={(event) =>
-                        editTrack(index, (current) => ({
-                          ...current,
-                          artists: current.artists.map((value, item) =>
-                            item === artistIndex
-                              ? { ...value, name: event.target.value }
-                              : value,
-                          ),
-                        }))
-                      }
-                    />
-                    <AppButton
-                      type="button"
-                      onPress={() =>
-                        editTrack(index, (current) => ({
-                          ...current,
-                          artists: current.artists.filter(
-                            (_, item) => item !== artistIndex,
-                          ),
-                        }))
-                      }
-                    >
-                      Удалить
-                    </AppButton>
-                  </span>
-                </label>
-              ))}
-              <AppButton
-                type="button"
-                onPress={() =>
-                  editTrack(index, (current) => ({
-                    ...current,
-                    artists: [
-                      ...current.artists,
-                      { id: createUUID(), name: "" },
-                    ],
-                  }))
-                }
-              >
-                Добавить исполнителя дорожки
-              </AppButton>
-            </div>
-            <div className="space-y-1 sm:col-span-2">
-              <span>
-                Файлы, относящиеся к этой позиции (можно выбрать несколько)
-              </span>
-              {track.sourceMediaIDs.length > 0 && (
-                <p role="note">
-                  Существующие источники (только просмотр):{" "}
-                  {track.sourceMediaIDs.join(", ")}
-                </p>
-              )}
-              {scopedFiles.map((file) => (
-                <label
-                  className="flex items-center gap-2"
-                  key={file.variant_id}
-                >
-                  <input
-                    type="checkbox"
-                    checked={track.fileMemberIds.includes(file.variant_id)}
-                    onChange={() =>
-                      editTrack(index, (current) => ({
-                        ...current,
-                        fileMemberIds: current.fileMemberIds.includes(
-                          file.variant_id,
-                        )
-                          ? current.fileMemberIds.filter(
-                              (id) => id !== file.variant_id,
-                            )
-                          : [...current.fileMemberIds, file.variant_id],
-                      }))
-                    }
-                  />
-                  {fileLabel(file)}
-                </label>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2 sm:col-span-2">
-              <AppButton
-                type="button"
-                isDisabled={!selectedSource}
-                onPress={() => copyTrackSource(index)}
-              >
-                Скопировать TITLE и однозначный номер из выбранного файла
-              </AppButton>
-              {!track.localTrackID && (
-                <AppButton
-                  type="button"
-                  onPress={() =>
-                    editDraft({
-                      ...draft,
-                      tracks: draft.tracks.filter((_, item) => item !== index),
-                    })
-                  }
-                >
-                  Удалить дорожку
-                </AppButton>
-              )}
-            </div>
-          </fieldset>
-        ))}
-        <AppButton
-          type="button"
-          isDisabled={confirmationPending}
-          onPress={addTrack}
-        >
-          Добавить дорожку
-        </AppButton>
-      </div>
+        </fieldset>
+      )}
 
       {state.error && <p role="alert">{state.error}</p>}
       {state.notice && <p role="status">{state.notice}</p>}
       {state.stale && (
         <p role="status">
-          Изменения группы не сбросили введённый черновик. После обновления
-          снимка проверьте его и запросите новый предпросмотр.
+          Снимок изменился. После обновления данных создайте новый предпросмотр.
         </p>
       )}
       <div className="flex flex-wrap gap-2">
         <AppButton type="button" isDisabled={!canPreview} onPress={preview}>
           {state.busy === "preview"
             ? "Предпросмотр…"
-            : "Предпросмотр локального релиза"}
+            : "Предпросмотр назначения"}
         </AppButton>
         {previewCurrent && (
           <AppButton
@@ -1093,8 +553,8 @@ export function LocalReleaseEditor({
             onPress={confirm}
           >
             {state.pending
-              ? "Повторить подтверждение"
-              : "Подтвердить локальный релиз"}
+              ? "Повторить тот же запрос подтверждения"
+              : "Подтвердить сопоставление"}
           </AppButton>
         )}
         {state.pending && !previewCurrent && (
@@ -1109,7 +569,7 @@ export function LocalReleaseEditor({
       </div>
       {previewCurrent && (
         <section
-          aria-label="Предпросмотр локального релиза"
+          aria-label="Предпросмотр локального сопоставления"
           className="space-y-2 rounded bg-stone-100 p-3"
         >
           <h3 className="font-medium">Предпросмотр — только чтение</h3>
@@ -1121,31 +581,13 @@ export function LocalReleaseEditor({
             Не включённые файлы:{" "}
             {previewCurrent.response.omitted_file_member_ids?.length ?? 0}
           </p>
-          <ol>
-            {previewCurrent.response.tracks?.map((track) => (
-              <li key={`${track.medium}-${track.position}`}>
-                {track.medium}.{track.position} · {track.displayed_number} ·{" "}
-                {track.title} · файлов: {track.file_member_ids?.length ?? 0}
-              </li>
-            ))}
-          </ol>
         </section>
       )}
-      {state.receipt && (
-        <div role="status">
-          <p>
-            Подтверждён локальный релиз {state.receipt.local_release_id ?? ""}.
-          </p>
-          {state.receipt.local_release_id && (
-            <AppButton
-              onPress={() => {
-                window.location.hash = `/library/releases/${encodeURIComponent(state.receipt?.local_release_id ?? "")}`;
-              }}
-            >
-              Открыть в медиатеке
-            </AppButton>
-          )}
-        </div>
+      {state.receipt?.local_release_id && (
+        <p role="status">
+          Сопоставление подтверждено для релиза {state.receipt.local_release_id}
+          .
+        </p>
       )}
     </section>
   );
