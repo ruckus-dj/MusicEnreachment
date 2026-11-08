@@ -61,7 +61,22 @@ func (repository *SetupManagerRepository) CheckPublicationResultCurrent(ctx cont
 				}
 				return fmt.Errorf("check publication result freshness: read source-republish authority: %w", err)
 			}
-			current = sourceRepublishCurrent(publication, authority, input, attempt.Epoch)
+			if !sourceRepublishCurrent(publication, authority, input, attempt.Epoch) {
+				return nil
+			}
+			lyricsCurrent, err := validatePublicationLyricsCurrentAuthority(ctx, tx, attempt.PositionID,
+				input.SourceRepublish.LyricsAuthority.ExpectedMetadataRevision, input.SourceRepublish.LyricsAuthority.Desired)
+			if err != nil {
+				return fmt.Errorf("check publication result freshness: validate source-republish lyrics authority: %w", err)
+			}
+			if !lyricsCurrent {
+				return nil
+			}
+			coverCurrent, err := validateSourceRepublishCoverAuthorityTx(ctx, tx, attempt.PositionID, input.SourceRepublish.Cover, false)
+			if err != nil {
+				return fmt.Errorf("check publication result freshness: validate source-republish cover authority: %w", err)
+			}
+			current = coverCurrent
 			return nil
 		}
 		if validAutomaticAudioUpgrade(input) {
@@ -129,6 +144,67 @@ func sourceRepublishCurrent(current TrackPublication, authority PositionSourceAu
 		authority.PublicationEpoch == frozen.PublicationEpoch && authority.PublicationGeneration == frozen.PublicationGeneration &&
 		authority.SourceLocationID == frozen.SourceLocationID && authority.MediaVariantID == frozen.MediaVariantID &&
 		authority.PublicationEpoch == epoch && authority.PublicationGeneration == current.Generation
+}
+
+// validateSourceRepublishCoverAuthorityTx compares frozen selected-cover
+// authority in the caller's guarded transaction. Result commits materialize
+// implicit defaults and lock the row; freshness readers instead hold a SHARE
+// table lock so an implicit default cannot race a concurrent insertion.
+func validateSourceRepublishCoverAuthorityTx(
+	ctx context.Context,
+	tx bun.Tx,
+	positionID uuid.UUID,
+	frozen PublicationRepublishCover,
+	materialize bool,
+) (bool, error) {
+	var releaseID uuid.UUID
+	if err := tx.NewRaw(`SELECT release_id FROM release_track WHERE id=? FOR UPDATE`, positionID).Scan(ctx, &releaseID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("lock source-republish cover position: %w", err)
+	}
+	if releaseID != frozen.ReleaseID {
+		return false, nil
+	}
+	if materialize {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO release_publication_cover(release_id) VALUES (?) ON CONFLICT (release_id) DO NOTHING`, frozen.ReleaseID); err != nil {
+			return false, fmt.Errorf("materialize source-republish cover baseline: %w", err)
+		}
+		var locked uuid.UUID
+		if err := tx.NewRaw(`SELECT release_id FROM release_publication_cover WHERE release_id=? FOR UPDATE`, frozen.ReleaseID).Scan(ctx, &locked); err != nil {
+			return false, fmt.Errorf("lock source-republish cover authority: %w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx, `LOCK TABLE release_publication_cover IN SHARE MODE`); err != nil {
+		return false, fmt.Errorf("serialize source-republish cover freshness: %w", err)
+	}
+	cover, err := readReleaseCover(ctx, tx, frozen.ReleaseID)
+	if errors.Is(err, sql.ErrNoRows) {
+		cover = ReleaseCover{ReleaseID: frozen.ReleaseID, Revision: 1, Mode: "automatic"}
+	} else if err != nil {
+		return false, fmt.Errorf("read source-republish cover authority: %w", err)
+	}
+	return sourceRepublishCoverAuthorityMatches(frozen, cover), nil
+}
+
+func sourceRepublishCoverAuthorityMatches(frozen PublicationRepublishCover, cover ReleaseCover) bool {
+	if cover.ReleaseID != frozen.ReleaseID || cover.Revision != frozen.AuthorityRevision || cover.Mode != frozen.AuthorityMode ||
+		cover.PendingGeneration != nil || cover.AcquisitionOwner != nil {
+		return false
+	}
+	switch frozen.Derivation {
+	case "absent":
+		return cover.SelectedGeneration == nil
+	case "ready", "optional_failure":
+		// Frozen source-republish inputs bind the selected tuple only. Pending
+		// promotions are conservatively rejected above; they are never applied here.
+		return cover.SelectedGeneration != nil && *cover.SelectedGeneration == frozen.SelectedGeneration &&
+			cover.SelectedMIME != nil && *cover.SelectedMIME == frozen.OriginalMIME &&
+			cover.SelectedSize != nil && frozen.OriginalSizeBytes != nil && *cover.SelectedSize == *frozen.OriginalSizeBytes &&
+			fmt.Sprintf("%x", cover.SelectedSHA256) == frozen.OriginalSHA256
+	default:
+		return false
+	}
 }
 
 func providerTagCurrent(current TrackPublication, input PublicationInputs, epoch uuid.UUID) bool {

@@ -54,7 +54,8 @@ func TestSourceRepublishGuardedReadersRequireCurrentAndAuthorityPostgreSQL(t *te
 	}
 	var releaseID uuid.UUID
 	var metadataRevision int64
-	if err := f.db.NewRaw(`SELECT release_id,metadata_revision FROM release_track WHERE id=?`, f.guard.ExpectedPositionID).Scan(ctx, &releaseID, &metadataRevision); err != nil {
+	var rawMetadata string
+	if err := f.db.NewRaw(`SELECT release_id,metadata_revision,metadata::text FROM release_track WHERE id=?`, f.guard.ExpectedPositionID).Scan(ctx, &releaseID, &metadataRevision, &rawMetadata); err != nil {
 		t.Fatalf("read fixture lyrics and cover authority owners: %v", err)
 	}
 	if _, err := f.db.ExecContext(ctx, `INSERT INTO release_publication_cover(release_id,revision,mode) VALUES (?,1,'manual')`, releaseID); err != nil {
@@ -64,6 +65,22 @@ func TestSourceRepublishGuardedReadersRequireCurrentAndAuthorityPostgreSQL(t *te
 	var coverMode string
 	if err := f.db.NewRaw(`SELECT revision,mode FROM release_publication_cover WHERE release_id=?`, releaseID).Scan(ctx, &coverRevision, &coverMode); err != nil {
 		t.Fatalf("read seeded cover authority: %v", err)
+	}
+	var metadataRoot map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rawMetadata), &metadataRoot); err != nil {
+		t.Fatalf("decode fixture raw lyrics metadata: %v", err)
+	}
+	lyricsEnvelope, err := librarymetadata.DecodeEnvelope(metadataRoot["local_metadata"])
+	if err != nil {
+		t.Fatalf("decode fixture raw lyrics authority: %v", err)
+	}
+	manualField, exists := lyricsEnvelope.Desired["synced_lyrics"]
+	if !exists || manualField.Authority != librarymetadata.AuthorityManual || manualField.State != librarymetadata.StateValue {
+		t.Fatalf("fixture does not contain the expected saved manual lyrics value: %+v", manualField)
+	}
+	manualLyrics, ok := manualField.Value.(string)
+	if !ok {
+		t.Fatalf("fixture manual lyrics value has type %T", manualField.Value)
 	}
 
 	input := publicationInputsFixture(t, "audio")
@@ -81,8 +98,8 @@ func TestSourceRepublishGuardedReadersRequireCurrentAndAuthorityPostgreSQL(t *te
 			SourceLocationID: authority.SourceLocationID, MediaVariantID: authority.MediaVariantID,
 		},
 		Association:     PublicationRepublishAssociation{ID: uuid.New(), LocationID: input.Audio.LocationID, MediaVariantID: input.Audio.MediaVariantID},
-		Lyrics:          PublicationRepublishLyrics{State: "absent", Origin: "none"},
-		LyricsAuthority: PublicationInitialLyricsInput{ExpectedMetadataRevision: metadataRevision},
+		Lyrics:          PublicationRepublishLyrics{State: "value", Origin: "manual", Text: manualLyrics, SHA256: testAssetDigest(manualLyrics)},
+		LyricsAuthority: PublicationInitialLyricsInput{ExpectedMetadataRevision: metadataRevision, Desired: &manualField},
 		Cover:           PublicationRepublishCover{ReleaseID: releaseID, AuthorityRevision: coverRevision, AuthorityMode: coverMode, Derivation: "absent"},
 	}
 	if err := input.Validate(); err != nil {
@@ -104,6 +121,60 @@ func TestSourceRepublishGuardedReadersRequireCurrentAndAuthorityPostgreSQL(t *te
 	currentResult, err := repository.CheckPublicationResultCurrent(ctx, f.guard)
 	if err != nil || !currentResult {
 		t.Fatalf("valid guarded result freshness = %v, %v", currentResult, err)
+	}
+
+	changedLyrics := map[string]any{"local_metadata": map[string]any{
+		"version": 1, "scope": "position", "desired": map[string]any{
+			"synced_lyrics": librarymetadata.FieldValue{
+				State: librarymetadata.StateExplicitEmpty, Authority: librarymetadata.AuthorityManual,
+				Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual},
+			},
+		},
+	}}
+	if _, err := f.db.ExecContext(ctx, `UPDATE release_track SET metadata=?::jsonb WHERE id=?`, string(mustJSON(changedLyrics)), f.guard.ExpectedPositionID); err != nil {
+		t.Fatalf("change raw lyrics authority without changing its revision: %v", err)
+	}
+	_, valid, err = repository.PublicationPreparationInputs(ctx, f.guard)
+	if err != nil || valid {
+		t.Fatalf("preparation accepted changed raw lyrics authority: valid=%v err=%v", valid, err)
+	}
+	currentResult, err = repository.CheckPublicationResultCurrent(ctx, f.guard)
+	if err != nil || currentResult {
+		t.Fatalf("result freshness accepted changed raw lyrics authority: current=%v err=%v", currentResult, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE release_track SET metadata=?::jsonb WHERE id=?`, rawMetadata, f.guard.ExpectedPositionID); err != nil {
+		t.Fatalf("restore raw lyrics authority: %v", err)
+	}
+	prepared, valid, err = repository.PublicationPreparationInputs(ctx, f.guard)
+	if err != nil || !valid {
+		t.Fatalf("preparation rejected restored lyrics authority: valid=%v err=%v", valid, err)
+	}
+	currentResult, err = repository.CheckPublicationResultCurrent(ctx, f.guard)
+	if err != nil || !currentResult {
+		t.Fatalf("result freshness rejected restored lyrics authority: current=%v err=%v", currentResult, err)
+	}
+
+	if _, err := f.db.ExecContext(ctx, `UPDATE release_publication_cover SET revision=revision+1 WHERE release_id=?`, releaseID); err != nil {
+		t.Fatalf("change selected cover authority revision: %v", err)
+	}
+	_, valid, err = repository.PublicationPreparationInputs(ctx, f.guard)
+	if err != nil || valid {
+		t.Fatalf("preparation accepted changed cover authority: valid=%v err=%v", valid, err)
+	}
+	currentResult, err = repository.CheckPublicationResultCurrent(ctx, f.guard)
+	if err != nil || currentResult {
+		t.Fatalf("result freshness accepted changed cover authority: current=%v err=%v", currentResult, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE release_publication_cover SET revision=? WHERE release_id=?`, coverRevision, releaseID); err != nil {
+		t.Fatalf("restore frozen cover authority revision: %v", err)
+	}
+	prepared, valid, err = repository.PublicationPreparationInputs(ctx, f.guard)
+	if err != nil || !valid {
+		t.Fatalf("preparation rejected restored cover authority: valid=%v err=%v", valid, err)
+	}
+	currentResult, err = repository.CheckPublicationResultCurrent(ctx, f.guard)
+	if err != nil || !currentResult {
+		t.Fatalf("result freshness rejected restored cover authority: current=%v err=%v", currentResult, err)
 	}
 
 	if _, err := f.db.ExecContext(ctx, `UPDATE position_source_authority SET revision=? WHERE position_id=?`, uuid.New(), f.guard.ExpectedPositionID); err != nil {

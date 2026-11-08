@@ -232,40 +232,22 @@ func sourceRepublishCoverProjectionTx(
 	actual PublicationCoverOutcome,
 	outcome PublicationSourceRepublishCoverOutcome,
 ) (*PublicationCoverEmbeddingProjection, error) {
-	var attemptReleaseID uuid.UUID
-	if err := tx.NewRaw(`SELECT release_id FROM release_track WHERE id=? FOR UPDATE`, attempt.PositionID).Scan(ctx, &attemptReleaseID); err != nil {
-		return nil, fmt.Errorf("lock source-republish release identity: %w", err)
-	}
-	if attemptReleaseID != frozen.ReleaseID {
-		return nil, fmt.Errorf("source-republish cover release differs from attempt position: %w", ErrPublicationAdmissionConflict)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO release_publication_cover(release_id) VALUES (?) ON CONFLICT (release_id) DO NOTHING`, frozen.ReleaseID); err != nil {
-		return nil, fmt.Errorf("materialize source-republish cover authority baseline: %w", err)
-	}
-	var lockedRelease uuid.UUID
-	if err := tx.NewRaw(`SELECT release_id FROM release_publication_cover WHERE release_id=? FOR UPDATE`, frozen.ReleaseID).Scan(ctx, &lockedRelease); err != nil {
-		return nil, fmt.Errorf("lock source-republish cover authority: %w", err)
-	}
-	cover, err := readReleaseCover(ctx, tx, frozen.ReleaseID)
+	coverCurrent, err := validateSourceRepublishCoverAuthorityTx(ctx, tx, attempt.PositionID, frozen, true)
 	if err != nil {
-		return nil, fmt.Errorf("read source-republish cover authority: %w", err)
+		return nil, fmt.Errorf("validate source-republish cover authority: %w", err)
 	}
-	if cover.PendingGeneration != nil || cover.AcquisitionOwner != nil || cover.Revision != frozen.AuthorityRevision || cover.Mode != frozen.AuthorityMode {
+	if !coverCurrent {
 		return nil, fmt.Errorf("source-republish cover authority changed or is pending: %w", ErrPublicationAdmissionConflict)
 	}
 	if frozen.Derivation == "absent" {
-		if cover.SelectedGeneration != nil || actual.State != PublicationAssetAbsent || outcome != PublicationSourceRepublishCoverNotRequested {
+		if actual.State != PublicationAssetAbsent || outcome != PublicationSourceRepublishCoverNotRequested {
 			return nil, errors.New("source-republish absent cover does not match selected authority or installed assets")
 		}
 		return nil, nil
 	}
 	if frozen.Derivation == "optional_failure" {
-		if cover.SelectedGeneration == nil || *cover.SelectedGeneration != frozen.SelectedGeneration ||
-			cover.SelectedMIME == nil || *cover.SelectedMIME != frozen.OriginalMIME ||
-			cover.SelectedSize == nil || frozen.OriginalSizeBytes == nil || *cover.SelectedSize != *frozen.OriginalSizeBytes ||
-			hex.EncodeToString(cover.SelectedSHA256) != frozen.OriginalSHA256 ||
-			actual.State != PublicationAssetAbsent || outcome != PublicationSourceRepublishCoverPreparationFailed {
-			return nil, fmt.Errorf("source-republish preparation failure does not match selected cover authority: %w", ErrPublicationAdmissionConflict)
+		if actual.State != PublicationAssetAbsent || outcome != PublicationSourceRepublishCoverPreparationFailed {
+			return nil, errors.New("source-republish preparation failure does not match selected cover result")
 		}
 		projection := &PublicationCoverEmbeddingProjection{
 			Version: PublicationCoverEmbeddingDerivativeProjectionVersion, Generation: attempt.CandidateGeneration,
@@ -277,11 +259,6 @@ func sourceRepublishCoverProjectionTx(
 			return nil, fmt.Errorf("validate source-republish preparation failure projection: %w", err)
 		}
 		return projection, nil
-	}
-	if frozen.Derivation != "ready" || cover.SelectedGeneration == nil || *cover.SelectedGeneration != frozen.SelectedGeneration ||
-		cover.SelectedMIME == nil || *cover.SelectedMIME != frozen.OriginalMIME || cover.SelectedSize == nil || *cover.SelectedSize != *frozen.OriginalSizeBytes ||
-		hex.EncodeToString(cover.SelectedSHA256) != frozen.OriginalSHA256 {
-		return nil, fmt.Errorf("source-republish selected cover authority changed: %w", ErrPublicationAdmissionConflict)
 	}
 	if outcome != PublicationSourceRepublishCoverVerified {
 		if actual.State != PublicationAssetAbsent || outcome != PublicationSourceRepublishCoverWriteFailed && outcome != PublicationSourceRepublishCoverReadFailed && outcome != PublicationSourceRepublishCoverMismatch {

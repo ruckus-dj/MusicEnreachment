@@ -63,6 +63,21 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 			if !sourceRepublishCurrent(current, authority, decoded, guard.Epoch) {
 				return nil
 			}
+			lyricsCurrent, err := validatePublicationLyricsCurrentAuthority(ctx, tx, attempt.PositionID,
+				decoded.SourceRepublish.LyricsAuthority.ExpectedMetadataRevision, decoded.SourceRepublish.LyricsAuthority.Desired)
+			if err != nil {
+				return fmt.Errorf("read source-republish preparation lyrics authority: %w", err)
+			}
+			if !lyricsCurrent {
+				return nil
+			}
+			coverCurrent, err := validateSourceRepublishCoverAuthorityTx(ctx, tx, attempt.PositionID, decoded.SourceRepublish.Cover, false)
+			if err != nil {
+				return fmt.Errorf("read source-republish preparation cover authority: %w", err)
+			}
+			if !coverCurrent {
+				return nil
+			}
 		}
 		if decoded.ProviderTags != nil {
 			var current TrackPublication
