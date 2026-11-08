@@ -339,4 +339,10 @@ cache, but retains downloaded modules. Go's build cache does not track changes
 to pkg-config-derived flags: a restored package archive can retain old SDK and
 MINGW64 library paths even when the current environment uses UCRT64.
 
+**Windows toolchain identity**: runners can expose several UCRT64 `bin`
+directories; do not stage DLLs and licenses from the first PATH match. Export
+the validated active prefix (`NATIVE_WINDOWS_TOOLCHAIN_BIN`) from the native SDK
+step and let packaging prefer it over PATH selection, so the staged closure and
+notices belong to the toolchain that actually built them.
+
 **Domain map freshness**: symbol reference counts, file sizes, and hotspot estimates are omitted because they drift quickly; consult the source tree and domain-specific AGENTS.md files.

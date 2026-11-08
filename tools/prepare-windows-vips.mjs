@@ -293,6 +293,7 @@ pkgconfig="$prefix/lib/pkgconfig"
 windows_prefix="$(cygpath -m "$prefix")"
 windows_pkgconfig="$(cygpath -w "$pkgconfig")"
 windows_bin="$(cygpath -w "$prefix/bin")"
+toolchain_bin="$(cygpath -w "$MINGW_PREFIX/bin")"
 version="$(PKG_CONFIG_PATH="$pkgconfig" pkg-config --modversion vips)"
 test "$version" = "8.18.7"
 packages="$(pacman -Q | sort)"
@@ -304,6 +305,7 @@ fi
 printf '%s\n' "$windows_bin" >> "$GITHUB_PATH"
 printf 'PKG_CONFIG_PATH=%s\n' "$windows_pkgconfig" >> "$GITHUB_ENV"
 printf 'VIPSHOME=%s\n' "$windows_prefix" >> "$GITHUB_ENV"
+printf 'NATIVE_WINDOWS_TOOLCHAIN_BIN=%s\n' "$toolchain_bin" >> "$GITHUB_ENV"
 `);
 }
 
