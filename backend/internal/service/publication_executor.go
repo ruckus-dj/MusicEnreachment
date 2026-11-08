@@ -186,7 +186,8 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	}
 	releaseResources = release
 	claim, err := executor.repository.ClaimPublicationDelivery(ctx, guard)
-	if err != nil || claim != persistence.PublicationDeliveryAcquired && claim != persistence.PublicationDeliveryInterrupted {
+	if err != nil || claim != persistence.PublicationDeliveryAcquired && claim != persistence.PublicationDeliveryInterrupted &&
+		claim != persistence.PublicationDeliverySourceRepublishRecovery {
 		return errors.Join(err, errors.New("publication delivery claim was not acquired"))
 	}
 	defer func() {
@@ -202,6 +203,12 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 			resultErr = fmt.Errorf("publication execution panicked: %v", recovered)
 		}
 	}()
+	if claim == persistence.PublicationDeliverySourceRepublishRecovery {
+		attempt, err = executor.repository.ReadPublicationAttempt(ctx, operationID)
+		if err != nil || attempt == nil || attempt.ResumeMode != persistence.PublicationResumeModeInspectSourceRepublishTarget {
+			return errors.Join(err, errors.New("source-republish recovery attempt is unavailable"))
+		}
+	}
 	var guarded persistence.PublicationInputs
 	var live bool
 	if input.ManualLyrics != nil {
@@ -213,7 +220,20 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		return errors.Join(errors.New("publication frozen inputs are unavailable for this delivery"), err)
 	}
 	input = guarded
-	if claim == persistence.PublicationDeliveryInterrupted {
+	switch claim {
+	case persistence.PublicationDeliverySourceRepublishRecovery:
+		recovered, resume, err := executor.recoverInterruptedSourceRepublish(ctx, attempt, input, guard, outputPath, root, commands)
+		if err != nil {
+			return err
+		}
+		if recovered {
+			return nil
+		}
+		if !resume {
+			return errors.New("source-republish recovery did not authorize preparation")
+		}
+		attempt.ResumeMode = persistence.PublicationResumeModePrepare
+	case persistence.PublicationDeliveryInterrupted:
 		recovered, err := executor.recoverInterruptedFirstAudio(ctx, attempt, input, guard, outputPath, root, commands)
 		if err != nil {
 			return err

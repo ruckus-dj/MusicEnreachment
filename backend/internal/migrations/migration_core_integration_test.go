@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -23,6 +24,8 @@ var baselineMigrationNames = []string{
 	"20261015000004",
 	"20261015000005",
 	"20261108000001",
+	"20261108000002",
+	"20261108000003",
 }
 
 var currentMigrationNames = append([]string(nil), baselineMigrationNames...)
@@ -200,6 +203,90 @@ func TestSourceRepublishCoverPreparationRollbackRetainsOutcome(t *testing.T) {
 	}
 }
 
+func TestRecoveredCoverProjectionConstraintAndRollback(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.Open(t)
+	testpostgres.Reset(t, db)
+	ctx := context.Background()
+	collection := loadMigrations(t)
+	prior, target := migrate.NewMigrations(), migrate.NewMigrations()
+	for _, migration := range collection.Sorted() {
+		if migration.Name < "20261108000003" {
+			prior.Add(migration)
+		} else if migration.Name == "20261108000003" {
+			target.Add(migration)
+		}
+	}
+	if len(target.Sorted()) != 1 {
+		t.Fatalf("recovered optional projection migrations = %d, want one", len(target.Sorted()))
+	}
+	priorMigrator := migrate.NewMigrator(db, prior, migrate.WithMarkAppliedOnSuccess(true))
+	if err := priorMigrator.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := priorMigrator.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	targetMigrator := migrate.NewMigrator(db, target, migrate.WithMarkAppliedOnSuccess(true))
+	if err := targetMigrator.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetMigrator.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	insertProjection := func(positionID, releaseID uuid.UUID, projection string) error {
+		trackID := uuid.New()
+		if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'recovered cover')`, releaseID); err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'recovered cover')`, trackID); err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
+			return err
+		}
+		_, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,cover_embedding,quality_policy_version,validated_at)
+			VALUES (?,?,?,'Track.flac','{}','{}','{}','{}',?::jsonb,1,now())`, positionID, uuid.New(), uuid.New(), projection)
+		return err
+	}
+
+	// Version 1 keeps its pre-recovery contract.
+	v1Position := uuid.New()
+	v1Projection := fmt.Sprintf(`{"version":1,"generation":%q,"receipt_operation_id":%q,"receipt_release_id":%q,"receipt_revision":1,"receipt_mode":"automatic","requested_generation":%q,"requested_sha256":"%s","outcome":"mismatch","warning_code":"cover_mismatch"}`,
+		uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), strings.Repeat("a", 64))
+	if err := insertProjection(v1Position, uuid.New(), v1Projection); err != nil {
+		t.Fatalf("insert legacy v1 cover projection: %v", err)
+	}
+
+	// The new v2 outcome requires all projection keys and its exact diagnostic.
+	recoveredPosition, recoveredRelease := uuid.New(), uuid.New()
+	recoveredProjection := fmt.Sprintf(`{"version":2,"generation":%q,"receipt_operation_id":%q,"receipt_release_id":%q,"receipt_revision":1,"receipt_mode":"automatic","requested_generation":%q,"requested_sha256":"%s","outcome":"absent_after_interruption","warning_code":"cover_absent_after_interruption"}`,
+		uuid.NewString(), uuid.NewString(), recoveredRelease.String(), uuid.NewString(), strings.Repeat("b", 64))
+	if err := insertProjection(recoveredPosition, recoveredRelease, recoveredProjection); err != nil {
+		t.Fatalf("insert recovered cover absence projection: %v", err)
+	}
+
+	malformedPosition := uuid.New()
+	malformed := fmt.Sprintf(`{"version":2,"generation":%q,"receipt_operation_id":%q,"receipt_release_id":%q,"receipt_revision":1,"receipt_mode":"automatic","requested_generation":%q,"requested_sha256":"%s","outcome":"absent_after_interruption"}`,
+		uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), strings.Repeat("c", 64))
+	if err := insertProjection(malformedPosition, uuid.New(), malformed); err == nil {
+		t.Fatal("cover projection with missing required warning_code was accepted")
+	}
+
+	if _, err := targetMigrator.Rollback(ctx); err == nil {
+		t.Fatal("rollback discarded retained recovered cover outcome")
+	}
+	var retained bool
+	if err := db.NewRaw(`SELECT cover_embedding->>'warning_code'='cover_absent_after_interruption' FROM track_publication WHERE position_id=?`, recoveredPosition).Scan(ctx, &retained); err != nil || !retained {
+		t.Fatalf("recovered cover outcome retained after rollback refusal = %t, %v", retained, err)
+	}
+	var legacyRetained bool
+	if err := db.NewRaw(`SELECT cover_embedding->>'outcome'='mismatch' FROM track_publication WHERE position_id=?`, v1Position).Scan(ctx, &legacyRetained); err != nil || !legacyRetained {
+		t.Fatalf("legacy v1 cover outcome retained = %t, %v", legacyRetained, err)
+	}
+}
+
 func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.T) {
 	for name, update := range map[string]string{
 		"successful refresh": `UPDATE genre_catalog SET items='["retained"]'::jsonb, updated_at=now(), last_attempt_at=now(), configuration_identity='config-A', refresh_request='{"status":"finished"}'::jsonb WHERE singleton=true`,
@@ -286,7 +373,7 @@ func assertMigrationGroup(t *testing.T, group *migrate.MigrationGroup, want []st
 
 func assertCurrentSchema(t *testing.T, database *bun.DB) {
 	t.Helper()
-	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns, artistMetadataRevision, artistMetadataConstraint, coverObserved, coverConstraint, sourceMetadataReference, coverPreparationDiagnostic int
+	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns, artistMetadataRevision, artistMetadataConstraint, coverObserved, coverConstraint, sourceMetadataReference, coverPreparationDiagnostic, publicationResumeMode, publicationResumeModeConstraint int
 	ctx := context.Background()
 	checks := []struct {
 		query  string
@@ -304,6 +391,8 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.media_metadata_result'::regclass AND conname='media_metadata_result_cover_facts_check'`, &coverConstraint, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.track_source'::regclass AND conname='track_source_source_metadata_result_fk' AND confdeltype='r'`, &sourceMetadataReference, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.track_publication'::regclass AND conname='track_publication_cover_embedding_projection_check' AND pg_get_constraintdef(oid) LIKE '%unsupported_source%' AND pg_get_constraintdef(oid) LIKE '%decode_failed%' AND pg_get_constraintdef(oid) LIKE '%derivative_failed%' AND pg_get_constraintdef(oid) LIKE '%source_unavailable%'`, &coverPreparationDiagnostic, 1},
+		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='track_publication_attempt' AND column_name='resume_mode' AND data_type='text' AND is_nullable='NO' AND column_default LIKE '%prepare%'`, &publicationResumeMode, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.track_publication_attempt'::regclass AND conname='track_publication_attempt_resume_mode_check' AND contype='c'`, &publicationResumeModeConstraint, 1},
 	}
 	for _, check := range checks {
 		if err := database.NewRaw(check.query).Scan(ctx, check.result); err != nil {

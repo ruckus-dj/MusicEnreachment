@@ -5,14 +5,16 @@ import "github.com/google/uuid"
 const PublicationInitialLyricsVersion = 1
 
 const (
-	PublicationInitialLyricsNotRequested          = "not_requested"
-	PublicationAutomaticLyricsRetryNoResult       = "automatic_retry_no_result"
-	PublicationOptionalLyricsExactRoundTrip       = "exact_roundtrip"
-	PublicationOptionalLyricsRebuiltWithoutLyrics = "rebuilt_without_lyrics"
+	PublicationInitialLyricsNotRequested              = "not_requested"
+	PublicationAutomaticLyricsRetryNoResult           = "automatic_retry_no_result"
+	PublicationOptionalLyricsExactRoundTrip           = "exact_roundtrip"
+	PublicationOptionalLyricsRebuiltWithoutLyrics     = "rebuilt_without_lyrics"
+	PublicationInitialLyricsObservedAfterInterruption = "observed_after_interruption"
 )
 
-// PublicationInitialLyricsProjection is the current-row summary of optional
-// automatic lyrics resolution. It contains no lyric text or source paths.
+// PublicationInitialLyricsProjection is a bounded summary of optional lyrics.
+// Recovery observations use unknown provenance and contain only the digest of
+// embedded lyrics, when present; absence does not invent a selected digest.
 type PublicationInitialLyricsProjection struct {
 	Version                    int       `json:"version"`
 	Generation                 uuid.UUID `json:"generation"`
@@ -39,9 +41,11 @@ type PublicationInitialLyricsAcquisitionRecord struct {
 }
 
 func validPublicationInitialLyricsProjection(projection PublicationInitialLyricsProjection, generation uuid.UUID) bool {
-	return projection.Version == PublicationInitialLyricsVersion && projection.Generation == generation &&
-		(projection.Source == "none" && projection.SHA256 == "" || (projection.Source == "source" || projection.Source == "lrclib" || projection.Source == "manual") && validSHA256(projection.SHA256)) &&
-		(projection.Outcome == PublicationInitialLyricsNotRequested || projection.Outcome == PublicationAutomaticLyricsRetryNoResult || projection.Outcome == PublicationOptionalLyricsExactRoundTrip || projection.Outcome == PublicationOptionalLyricsRebuiltWithoutLyrics) &&
+	validSource := projection.Source == "none" && projection.SHA256 == "" ||
+		(projection.Source == "source" || projection.Source == "lrclib" || projection.Source == "manual") && validSHA256(projection.SHA256) ||
+		projection.Outcome == PublicationInitialLyricsObservedAfterInterruption && projection.Source == "unknown" && (projection.SHA256 == "" || validSHA256(projection.SHA256))
+	return projection.Version == PublicationInitialLyricsVersion && projection.Generation == generation && validSource &&
+		(projection.Outcome == PublicationInitialLyricsNotRequested || projection.Outcome == PublicationAutomaticLyricsRetryNoResult || projection.Outcome == PublicationOptionalLyricsExactRoundTrip || projection.Outcome == PublicationOptionalLyricsRebuiltWithoutLyrics || projection.Outcome == PublicationInitialLyricsObservedAfterInterruption) &&
 		projection.AuthorityMetadataRevision >= 0 && validInitialLyricsWarning(projection.ResolutionWarningCode) &&
 		(projection.OutcomeWarningCode == "" || projection.Outcome == PublicationOptionalLyricsRebuiltWithoutLyrics && projection.OutcomeWarningCode == "readback_mismatch")
 }

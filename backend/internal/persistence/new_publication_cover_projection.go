@@ -52,6 +52,8 @@ func (projection PublicationCoverEmbeddingProjection) Validate() error {
 		wantWarning = "cover_read_failed"
 	case "mismatch":
 		wantWarning = "cover_mismatch"
+	case "absent_after_interruption":
+		wantWarning = "cover_absent_after_interruption"
 	default:
 		return fmt.Errorf("unsupported publication cover embedding outcome %q", projection.Outcome)
 	}
@@ -59,8 +61,8 @@ func (projection PublicationCoverEmbeddingProjection) Validate() error {
 		return errors.New("publication cover embedding warning does not match outcome")
 	}
 	if projection.Version == PublicationCoverEmbeddingProjectionVersion {
-		if projection.Outcome == "preparation_failed" {
-			return errors.New("preparation-failed cover projection requires derivative version")
+		if projection.Outcome == "preparation_failed" || projection.Outcome == "absent_after_interruption" {
+			return errors.New("cover outcome requires derivative projection version")
 		}
 		if projection.EmbeddedSHA256 != "" || projection.EmbeddedMIME != "" || projection.EmbeddedSize != nil {
 			return errors.New("legacy publication cover embedding projection contains derivative facts")

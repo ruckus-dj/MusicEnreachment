@@ -50,6 +50,11 @@ type PositionSourceAuthority struct {
 
 // TrackPublicationAttempt is the single unfinished publication attempt for a
 // position. Frozen inputs and journals are durable recovery state, not history.
+const (
+	PublicationResumeModePrepare                      = "prepare"
+	PublicationResumeModeInspectSourceRepublishTarget = "inspect_source_republish_target"
+)
+
 type TrackPublicationAttempt struct {
 	bun.BaseModel       `bun:"table:track_publication_attempt"`
 	OperationID         uuid.UUID       `bun:"operation_id,pk,type:uuid"`
@@ -59,6 +64,7 @@ type TrackPublicationAttempt struct {
 	CandidateGeneration uuid.UUID       `bun:"candidate_generation,type:uuid"`
 	IntentKind          string          `bun:"intent_kind"`
 	Phase               string          `bun:"phase"`
+	ResumeMode          string          `bun:"resume_mode,default:'prepare'"`
 	FrozenInputs        json.RawMessage `bun:"frozen_inputs,type:jsonb,nullzero"`
 	NamespaceManifest   json.RawMessage `bun:"namespace_manifest,type:jsonb"`
 }

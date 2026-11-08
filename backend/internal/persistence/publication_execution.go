@@ -30,10 +30,11 @@ type PublicationDeliveryGuard struct {
 type PublicationDeliveryClaimOutcome string
 
 const (
-	PublicationDeliveryAcquired     PublicationDeliveryClaimOutcome = "acquired"
-	PublicationDeliveryInterrupted  PublicationDeliveryClaimOutcome = "interrupted"
-	PublicationDeliveryAlreadyOwned PublicationDeliveryClaimOutcome = "already_owned"
-	PublicationDeliveryBlocked      PublicationDeliveryClaimOutcome = "blocked"
+	PublicationDeliveryAcquired                PublicationDeliveryClaimOutcome = "acquired"
+	PublicationDeliveryInterrupted             PublicationDeliveryClaimOutcome = "interrupted"
+	PublicationDeliverySourceRepublishRecovery PublicationDeliveryClaimOutcome = "source_republish_recovery"
+	PublicationDeliveryAlreadyOwned            PublicationDeliveryClaimOutcome = "already_owned"
+	PublicationDeliveryBlocked                 PublicationDeliveryClaimOutcome = "blocked"
 )
 
 var errInvalidPublicationDeliveryGuard = errors.New("invalid publication delivery guard")
@@ -120,6 +121,14 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 			claim := existing[0]
 			if publicationClaimMatches(claim, guard) && claim.State == "executing" {
 				outcome = PublicationDeliveryAlreadyOwned
+				if attempt.ResumeMode == PublicationResumeModeInspectSourceRepublishTarget {
+					if version, err := frozenPublicationInputVersion(attempt.FrozenInputs); err != nil {
+						return fmt.Errorf("claim publication delivery: read recovery input version: %w", err)
+					} else if version != PublicationSourceRepublishInputsVersion {
+						return errors.New("claim publication delivery: recovery mode requires v4 frozen inputs")
+					}
+					outcome = PublicationDeliverySourceRepublishRecovery
+				}
 				return nil
 			}
 			// A running delivery of this exact operation and application attempt may
@@ -133,31 +142,35 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 				len(attempt.FrozenInputs) == 0 {
 				return nil
 			}
-			if claim.State == "executing" && claim.BootUUID != guard.BootUUID {
-				version, err := frozenPublicationInputVersion(attempt.FrozenInputs)
-				if err != nil {
-					return fmt.Errorf("claim publication delivery: read interrupted input version: %w", err)
+			version, err := frozenPublicationInputVersion(attempt.FrozenInputs)
+			if err != nil {
+				return fmt.Errorf("claim publication delivery: read frozen input version: %w", err)
+			}
+			if attempt.ResumeMode == PublicationResumeModeInspectSourceRepublishTarget {
+				if version != PublicationSourceRepublishInputsVersion || (claim.State != "executing" && claim.State != "quiescent") {
+					return nil
 				}
+				if err := replacePublicationExecutionClaim(ctx, tx, claim, guard); err != nil {
+					return err
+				}
+				outcome = PublicationDeliverySourceRepublishRecovery
+				return nil
+			}
+			if claim.State == "executing" && claim.BootUUID != guard.BootUUID {
 				if version == PublicationSourceRepublishInputsVersion {
-					const safeError = "source-republish execution was interrupted; automatic recovery is unavailable"
-					claimResult, err := tx.NewRaw(`UPDATE publication_execution_claim SET state='recovery_required'
-						WHERE operation_id=? AND application_attempt=? AND river_job_id=? AND river_attempt=? AND claim_uuid=? AND boot_uuid=? AND state='executing'`,
-						claim.OperationID, claim.ApplicationAttempt, claim.RiverJobID, claim.RiverAttempt, claim.ClaimUUID, claim.BootUUID).Exec(ctx)
+					result, err := tx.NewRaw(`UPDATE track_publication_attempt SET resume_mode=?
+						WHERE operation_id=? AND resume_mode=?`, PublicationResumeModeInspectSourceRepublishTarget,
+						guard.OperationID, PublicationResumeModePrepare).Exec(ctx)
 					if err != nil {
-						return fmt.Errorf("claim publication delivery: mark source republish recovery required: %w", err)
+						return fmt.Errorf("claim publication delivery: persist source-republish recovery mode: %w", err)
 					}
-					if affected, err := claimResult.RowsAffected(); err != nil || affected != 1 {
-						return fmt.Errorf("claim publication delivery: mark source republish claim recovery required: rows=%d err=%v", affected, err)
+					if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+						return fmt.Errorf("claim publication delivery: persist source-republish recovery mode: rows=%d err=%v", affected, err)
 					}
-					operationResult, err := tx.NewRaw(`UPDATE operation SET state='failed',stage='source_republish_recovery_required',finished_at=now(),updated_at=now(),safe_error=?
-						WHERE id=? AND kind='publish_track_v1' AND state='running'`, safeError, guard.OperationID).Exec(ctx)
-					if err != nil {
-						return fmt.Errorf("claim publication delivery: fail interrupted source republish: %w", err)
+					if err := replacePublicationExecutionClaim(ctx, tx, claim, guard); err != nil {
+						return err
 					}
-					if affected, err := operationResult.RowsAffected(); err != nil || affected != 1 {
-						return fmt.Errorf("claim publication delivery: fail interrupted source republish: rows=%d err=%v", affected, err)
-					}
-					outcome = PublicationDeliveryBlocked
+					outcome = PublicationDeliverySourceRepublishRecovery
 					return nil
 				}
 			}
@@ -173,10 +186,6 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 			if _, err := tx.NewRaw(`UPDATE track_publication_attempt SET phase='preparing' WHERE operation_id=?`, guard.OperationID).Exec(ctx); err != nil {
 				return fmt.Errorf("claim publication delivery: restart attempt preparation: %w", err)
 			}
-			// A previous executing owner from another process boot is an
-			// interrupted delivery. Quiescent claims (and other claim states)
-			// remain ordinary acquisitions; River attempt equality alone is not
-			// evidence of interruption.
 			outcome = PublicationDeliveryAcquired
 			if claim.State == "executing" && claim.BootUUID != guard.BootUUID {
 				outcome = PublicationDeliveryInterrupted
@@ -187,6 +196,15 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 		if op.State != "queued" || attempt.Phase != "queued" {
 			return nil
 		}
+		if attempt.ResumeMode == PublicationResumeModeInspectSourceRepublishTarget {
+			version, err := frozenPublicationInputVersion(attempt.FrozenInputs)
+			if err != nil {
+				return fmt.Errorf("claim publication delivery: read recovery input version: %w", err)
+			}
+			if version != PublicationSourceRepublishInputsVersion {
+				return nil
+			}
+		}
 		claim := PublicationExecutionClaim{
 			OperationID: guard.OperationID, ApplicationAttempt: guard.ApplicationAttempt,
 			RiverJobID: guard.RiverJobID, RiverAttempt: guard.RiverAttempt,
@@ -195,6 +213,16 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 		}
 		if _, err := tx.NewInsert().Model(&claim).Exec(ctx); err != nil {
 			return fmt.Errorf("claim publication delivery: insert claim: %w", err)
+		}
+		if attempt.ResumeMode == PublicationResumeModeInspectSourceRepublishTarget {
+			if _, err := tx.NewRaw(`UPDATE operation SET state='running', started_at=COALESCE(started_at, now()), updated_at=now() WHERE id=? AND state='queued'`, guard.OperationID).Exec(ctx); err != nil {
+				return fmt.Errorf("claim publication delivery: start recovery operation: %w", err)
+			}
+			if _, err := tx.NewRaw(`UPDATE track_publication_attempt SET phase='preparing' WHERE operation_id=? AND phase='queued'`, guard.OperationID).Exec(ctx); err != nil {
+				return fmt.Errorf("claim publication delivery: prepare recovery attempt: %w", err)
+			}
+			outcome = PublicationDeliverySourceRepublishRecovery
+			return nil
 		}
 		if _, err := tx.NewRaw(`UPDATE operation SET state='running', stage='preparing', started_at=COALESCE(started_at, now()), updated_at=now() WHERE id=? AND state='queued'`, guard.OperationID).Exec(ctx); err != nil {
 			return fmt.Errorf("claim publication delivery: start operation: %w", err)
@@ -209,6 +237,23 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 		return PublicationDeliveryBlocked, err
 	}
 	return outcome, nil
+}
+
+func replacePublicationExecutionClaim(ctx context.Context, tx bun.Tx, old PublicationExecutionClaim, guard PublicationDeliveryGuard) error {
+	result, err := tx.NewRaw(`UPDATE publication_execution_claim
+		SET river_job_id=?, river_attempt=?, claim_uuid=?, boot_uuid=?, delivery_token=?, epoch=?, state='executing'
+		WHERE operation_id=? AND application_attempt=? AND river_job_id=? AND river_attempt=? AND claim_uuid=?
+		AND boot_uuid=? AND delivery_token=? AND epoch=? AND state IN ('executing','quiescent')`,
+		guard.RiverJobID, guard.RiverAttempt, guard.ClaimUUID, guard.BootUUID, guard.DeliveryToken, guard.Epoch,
+		old.OperationID, old.ApplicationAttempt, old.RiverJobID, old.RiverAttempt, old.ClaimUUID,
+		old.BootUUID, old.DeliveryToken, old.Epoch).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("claim publication delivery: acquire successor claim: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return fmt.Errorf("claim publication delivery: acquire successor claim: rows=%d err=%v", affected, err)
+	}
+	return nil
 }
 
 func frozenPublicationInputVersion(raw json.RawMessage) (int, error) {

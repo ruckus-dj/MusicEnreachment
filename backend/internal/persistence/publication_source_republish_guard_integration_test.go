@@ -522,6 +522,120 @@ func TestCommitSourceRepublishOptionalResultBridgesPostgreSQL(t *testing.T) {
 		t.Fatalf("contradictory receipt changed CURRENT or authority: current=%+v authority=%+v", unchanged, unchangedAuthority)
 	}
 	assertManualLyricsReceiptCount(t, ctx, db, contradiction.guard.ExpectedPositionID, 0)
+
+	// Interruption receipts are accepted only with the persisted recovery mode.
+	noRecovery, noRecoveryRepository, noRecoveryInput, noRecoveryObservation, _ :=
+		prepareSourceRepublishResultFixture(t, db, "source-republish-observed-without-mode-"+uuid.NewString())
+	updateSourceRepublishLyricsAuthority(t, db, noRecovery, &noRecoveryInput, librarymetadata.StateValue, manualText)
+	noRecoveryResult := sourceRepublishResult(noRecoveryInput, noRecoveryObservation)
+	noRecoveryResult.SourceRepublishOptionalResult.LyricsOutcome = PublicationSourceRepublishLyricsObservedAfterInterruption
+	if committed, err := noRecoveryRepository.CommitPublicationResult(ctx, noRecovery.guard, noRecoveryResult); err == nil || committed {
+		t.Fatalf("observed lyrics without recovery mode committed = %v, %v", committed, err)
+	}
+
+	// Recovery exactness is derived from actual tags/assets and records the
+	// applied manual value without claiming where the lyrics were acquired.
+	recoveredExact, recoveredExactRepository, recoveredExactInput, recoveredExactObservation, _ :=
+		prepareSourceRepublishResultFixture(t, db, "source-republish-observed-exact-"+uuid.NewString())
+	updateSourceRepublishLyricsAuthority(t, db, recoveredExact, &recoveredExactInput, librarymetadata.StateValue, manualText)
+	setSourceRepublishResumeMode(t, db, recoveredExact, PublicationResumeModeInspectSourceRepublishTarget)
+	exactTags := cloneProviderTagMap(recoveredExactInput.DesiredTags)
+	exactTags["LYRICS"] = []string{manualText}
+	recoveredExactObservation.ActualMetadata = mustJSON(PublicationCommitMetadata{
+		Version: 1, Tags: exactTags,
+	})
+	recoveredExactObservation.ActualAssets = mustJSON(PublicationAssetOutcomes{
+		Version: PublicationAssetOutcomesVersion, Cover: PublicationCoverOutcome{State: PublicationAssetAbsent},
+		Lyrics: PublicationLyricsOutcome{State: PublicationAssetEmbedded, SHA256: recoveredExactInput.SourceRepublish.Lyrics.SHA256, Format: "lrc"},
+	})
+	recoveredExactResult := sourceRepublishResult(recoveredExactInput, recoveredExactObservation)
+	recoveredExactResult.SourceRepublishOptionalResult.LyricsOutcome = PublicationSourceRepublishLyricsObservedAfterInterruption
+	if committed, err := recoveredExactRepository.CommitPublicationResult(ctx, recoveredExact.guard, recoveredExactResult); err != nil || !committed {
+		t.Fatalf("commit observed exact lyrics after interruption = %v, %v", committed, err)
+	}
+	var recoveredExactCurrent TrackPublication
+	if err := db.NewSelect().Model(&recoveredExactCurrent).Where("position_id=?", recoveredExact.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var recoveredExactProjection PublicationInitialLyricsProjection
+	if err := json.Unmarshal(recoveredExactCurrent.InitialLyrics, &recoveredExactProjection); err != nil {
+		t.Fatalf("decode observed exact lyrics projection: %v", err)
+	}
+	if recoveredExactProjection.Source != "unknown" || recoveredExactProjection.Outcome != PublicationInitialLyricsObservedAfterInterruption ||
+		recoveredExactProjection.SHA256 != recoveredExactInput.SourceRepublish.Lyrics.SHA256 {
+		t.Fatalf("recovered exact projection claimed acquisition provenance or lost actual digest: %+v", recoveredExactProjection)
+	}
+	assertManualLyricsReceiptCount(t, ctx, db, recoveredExact.guard.ExpectedPositionID, 1)
+
+	// Observed absence does not carry the selected manual value's digest or
+	// settle its receipt; explicit-empty remains an applicable manual choice.
+	recoveredAbsent, recoveredAbsentRepository, recoveredAbsentInput, recoveredAbsentObservation, _ :=
+		prepareSourceRepublishResultFixture(t, db, "source-republish-observed-absent-"+uuid.NewString())
+	updateSourceRepublishLyricsAuthority(t, db, recoveredAbsent, &recoveredAbsentInput, librarymetadata.StateValue, manualText)
+	setSourceRepublishResumeMode(t, db, recoveredAbsent, PublicationResumeModeInspectSourceRepublishTarget)
+	configureSourceRepublishCoverPreparationFailure(t, db, recoveredAbsent, &recoveredAbsentInput)
+	originalCover := releaseCoverPNG(t)
+	originalCoverDigest := sha256.Sum256(originalCover)
+	originalCoverSize := int64(len(originalCover))
+	recoveredAbsentInput.SourceRepublish.Cover = PublicationRepublishCover{
+		ReleaseID:          recoveredAbsentInput.SourceRepublish.Cover.ReleaseID,
+		AuthorityRevision:  recoveredAbsentInput.SourceRepublish.Cover.AuthorityRevision,
+		AuthorityMode:      recoveredAbsentInput.SourceRepublish.Cover.AuthorityMode,
+		SelectedGeneration: recoveredAbsentInput.SourceRepublish.Cover.SelectedGeneration,
+		OriginalSHA256:     hex.EncodeToString(originalCoverDigest[:]), OriginalMIME: "image/png",
+		OriginalSizeBytes: &originalCoverSize, Derivation: "ready", PNG: originalCover,
+		SHA256: hex.EncodeToString(originalCoverDigest[:]), MIME: "image/png", SizeBytes: originalCoverSize,
+	}
+	if err := recoveredAbsentInput.Validate(); err != nil {
+		t.Fatalf("validate recovered ready cover authority: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE track_publication_attempt SET frozen_inputs=?::jsonb WHERE operation_id=?`, string(mustJSON(recoveredAbsentInput)), recoveredAbsent.guard.OperationID); err != nil {
+		t.Fatalf("freeze recovered ready cover authority: %v", err)
+	}
+	recoveredAbsentResult := sourceRepublishResult(recoveredAbsentInput, recoveredAbsentObservation)
+	recoveredAbsentResult.SourceRepublishOptionalResult.LyricsOutcome = PublicationSourceRepublishLyricsObservedAfterInterruption
+	recoveredAbsentResult.SourceRepublishOptionalResult.CoverOutcome = PublicationSourceRepublishCoverAbsentAfterInterruption
+	if committed, err := recoveredAbsentRepository.CommitPublicationResult(ctx, recoveredAbsent.guard, recoveredAbsentResult); err != nil || !committed {
+		t.Fatalf("commit observed absent lyrics after interruption = %v, %v", committed, err)
+	}
+	var recoveredAbsentCurrent TrackPublication
+	if err := db.NewSelect().Model(&recoveredAbsentCurrent).Where("position_id=?", recoveredAbsent.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var recoveredAbsentProjection PublicationInitialLyricsProjection
+	if err := json.Unmarshal(recoveredAbsentCurrent.InitialLyrics, &recoveredAbsentProjection); err != nil {
+		t.Fatalf("decode observed absent lyrics projection: %v", err)
+	}
+	if recoveredAbsentProjection.Source != "unknown" || recoveredAbsentProjection.Outcome != PublicationInitialLyricsObservedAfterInterruption || recoveredAbsentProjection.SHA256 != "" {
+		t.Fatalf("recovered absence fabricated selected provenance or digest: %+v", recoveredAbsentProjection)
+	}
+	coverProjection, err = decodePublicationCoverEmbeddingProjection(recoveredAbsentCurrent.CoverEmbedding)
+	if err != nil || coverProjection.Outcome != string(PublicationSourceRepublishCoverAbsentAfterInterruption) || coverProjection.WarningCode != "cover_absent_after_interruption" {
+		t.Fatalf("recovered cover absence projection = %+v, %v", coverProjection, err)
+	}
+	assertManualLyricsReceiptCount(t, ctx, db, recoveredAbsent.guard.ExpectedPositionID, 0)
+
+	recoveredEmpty, recoveredEmptyRepository, recoveredEmptyInput, recoveredEmptyObservation, _ :=
+		prepareSourceRepublishResultFixture(t, db, "source-republish-observed-explicit-empty-"+uuid.NewString())
+	updateSourceRepublishLyricsAuthority(t, db, recoveredEmpty, &recoveredEmptyInput, librarymetadata.StateExplicitEmpty, "")
+	setSourceRepublishResumeMode(t, db, recoveredEmpty, PublicationResumeModeInspectSourceRepublishTarget)
+	recoveredEmptyResult := sourceRepublishResult(recoveredEmptyInput, recoveredEmptyObservation)
+	recoveredEmptyResult.SourceRepublishOptionalResult.LyricsOutcome = PublicationSourceRepublishLyricsObservedAfterInterruption
+	if committed, err := recoveredEmptyRepository.CommitPublicationResult(ctx, recoveredEmpty.guard, recoveredEmptyResult); err != nil || !committed {
+		t.Fatalf("commit observed explicit-empty lyrics after interruption = %v, %v", committed, err)
+	}
+	assertManualLyricsReceiptCount(t, ctx, db, recoveredEmpty.guard.ExpectedPositionID, 1)
+}
+
+func setSourceRepublishResumeMode(t *testing.T, db *bun.DB, fixture publicationExecutionFixture, mode string) {
+	t.Helper()
+	result, err := db.ExecContext(context.Background(), `UPDATE track_publication_attempt SET resume_mode=? WHERE operation_id=?`, mode, fixture.guard.OperationID)
+	if err != nil {
+		t.Fatalf("set source-republish resume mode: %v", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		t.Fatalf("set source-republish resume mode rows=%d err=%v", affected, err)
+	}
 }
 
 func updateSourceRepublishLyricsAuthority(

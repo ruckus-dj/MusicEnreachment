@@ -68,18 +68,37 @@ func (repository *SetupManagerRepository) RetryPublicationOperationAndEnqueue(ct
 		if err != nil {
 			return fmt.Errorf("retry publication: read frozen input version: %w", err)
 		}
+		var recoveryClaim *PublicationExecutionClaim
 		if version == PublicationSourceRepublishInputsVersion {
 			if operation.Stage == "source_republish_recovery_required" {
 				return errors.New("retry publication: interrupted source republish requires recovery and cannot be retried")
 			}
-			var claimState string
-			claimErr := tx.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=? FOR UPDATE`, id).Scan(ctx, &claimState)
+			claim := new(PublicationExecutionClaim)
+			claimErr := tx.NewSelect().Model(claim).Where("operation_id=?", id).For("UPDATE").Scan(ctx)
 			if claimErr != nil && !errors.Is(claimErr, sql.ErrNoRows) {
 				return fmt.Errorf("retry publication: read execution recovery state: %w", claimErr)
 			}
-			if claimState == "recovery_required" {
+			if claimErr == nil && claim.State == "recovery_required" {
 				return errors.New("retry publication: interrupted source republish requires recovery and cannot be retried")
 			}
+			if attempt.ResumeMode == PublicationResumeModeInspectSourceRepublishTarget {
+				input, err := DecodePublicationInputs(attempt.FrozenInputs)
+				if err != nil || !validSourceRepublishPreparation(input) || attempt.ExpectedGeneration == nil ||
+					input.SourceRepublish.Current.Generation != *attempt.ExpectedGeneration ||
+					input.SourceRepublish.SourceAuthority.PositionID != attempt.PositionID ||
+					input.SourceRepublish.SourceAuthority.PublicationGeneration != *attempt.ExpectedGeneration ||
+					input.SourceRepublish.SourceAuthority.PublicationEpoch != attempt.Epoch || claimErr != nil ||
+					(claim.State != "executing" && claim.State != "quiescent") || claim.ApplicationAttempt != operation.Attempt ||
+					operation.RiverJobID == nil || claim.RiverJobID != *operation.RiverJobID || claim.Epoch != attempt.Epoch ||
+					claim.RiverAttempt <= 0 || claim.ClaimUUID == uuid.Nil || claim.BootUUID == uuid.Nil || claim.DeliveryToken == "" {
+					return errors.New("retry publication: source-republish recovery claim is not eligible for guarded retry")
+				}
+				recoveryClaim = claim
+			} else if attempt.ResumeMode != PublicationResumeModePrepare {
+				return errors.New("retry publication: unsupported publication resume mode")
+			}
+		} else if attempt.ResumeMode != PublicationResumeModePrepare {
+			return errors.New("retry publication: source-republish resume mode requires v4 frozen inputs")
 		}
 		var currentGeneration *uuid.UUID
 		readErr := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, positionID).Scan(ctx, &currentGeneration)
@@ -92,15 +111,24 @@ func (repository *SetupManagerRepository) RetryPublicationOperationAndEnqueue(ct
 
 		var held *PublicationSourceHold
 		if operation.RiverJobID != nil {
-			var riverState string
-			err = tx.NewRaw(`SELECT state FROM river_job WHERE id=? FOR UPDATE`, *operation.RiverJobID).Scan(ctx, &riverState)
+			var riverJob struct {
+				ID      int64  `bun:"id"`
+				Kind    string `bun:"kind"`
+				State   string `bun:"state"`
+				Attempt int    `bun:"attempt"`
+			}
+			err = tx.NewRaw(`SELECT id,kind,state,attempt FROM river_job WHERE id=? FOR UPDATE`, *operation.RiverJobID).Scan(ctx, &riverJob)
 			if errors.Is(err, sql.ErrNoRows) {
-				riverState = "missing"
+				riverJob.State = "missing"
 			} else if err != nil {
 				return fmt.Errorf("retry publication: lock previous River job: %w", err)
 			}
-			if riverState != "missing" && riverState != "completed" && riverState != "cancelled" && riverState != "discarded" {
+			if riverJob.State != "missing" && riverJob.State != "completed" && riverJob.State != "cancelled" && riverJob.State != "discarded" {
 				return errors.New("retry publication: previous River job is not terminal")
+			}
+			if recoveryClaim != nil && (riverJob.State == "missing" || riverJob.ID != recoveryClaim.RiverJobID ||
+				riverJob.Kind != "publish_track_v1" || riverJob.Attempt != recoveryClaim.RiverAttempt) {
+				return errors.New("retry publication: terminal source-republish delivery does not match recovery claim")
 			}
 			var hold PublicationSourceHold
 			err = tx.NewSelect().Model(&hold).Where("operation_id=?", id).For("UPDATE").Scan(ctx)

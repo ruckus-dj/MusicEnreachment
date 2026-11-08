@@ -67,6 +67,9 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
 		v4Inputs := err == nil && input.Version == PublicationSourceRepublishInputsVersion
 		providerTags := err == nil && validProviderTagRewrite(input)
+		if attempt.ResumeMode == PublicationResumeModeInspectSourceRepublishTarget && !v4Inputs {
+			return errors.New("commit publication result: interruption recovery requires v4 frozen inputs")
+		}
 		if err != nil {
 			return nil
 		}
@@ -74,6 +77,9 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			return errors.New("commit publication result: source-republish contract is not eligible for typed result settlement")
 		}
 		sourceRepublish := v4Inputs && validSourceRepublishPreparation(input)
+		if attempt.ResumeMode == PublicationResumeModeInspectSourceRepublishTarget && !sourceRepublish {
+			return errors.New("commit publication result: interruption recovery requires a valid source-republish contract")
+		}
 		if sourceRepublish && input.IntentKind != attempt.IntentKind {
 			return errors.New("commit publication result: source-republish intent differs from attempt")
 		}

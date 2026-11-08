@@ -426,7 +426,7 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 		Version int                        `json:"version"`
 		Nodes   []PublicationNamespaceNode `json:"nodes"`
 	}{Version: 1, Nodes: request.NamespaceManifest})
-	attempt := &TrackPublicationAttempt{OperationID: operationID, PositionID: request.PositionID, Epoch: epoch, ExpectedGeneration: request.ExpectedGeneration, CandidateGeneration: request.CandidateGeneration, IntentKind: request.IntentKind, Phase: "queued", FrozenInputs: frozenInputs, NamespaceManifest: manifest}
+	attempt := &TrackPublicationAttempt{OperationID: operationID, PositionID: request.PositionID, Epoch: epoch, ExpectedGeneration: request.ExpectedGeneration, CandidateGeneration: request.CandidateGeneration, IntentKind: request.IntentKind, Phase: "queued", ResumeMode: PublicationResumeModePrepare, FrozenInputs: frozenInputs, NamespaceManifest: manifest}
 	if _, err := tx.NewInsert().Model(attempt).Exec(ctx); err != nil {
 		return uuid.Nil, fmt.Errorf("admit publication: create attempt: %w", err)
 	}

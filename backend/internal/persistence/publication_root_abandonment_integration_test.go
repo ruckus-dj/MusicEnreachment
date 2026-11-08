@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/uptrace/bun"
 )
 
@@ -158,7 +159,7 @@ func TestDeleteSourceRootArchivesFailedPublicationWithRetainedHold(t *testing.T)
 	}
 }
 
-func TestInterruptedSourceRepublishRequiresFinalizedReturnBeforeRootAbandonment(t *testing.T) {
+func TestInterruptedSourceRepublishAcquiresStickyRecoveryClaimAndPreservesLegacyAbandonment(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f, _, _, _ := prepareManualLyricsCommitFixture(t)
@@ -192,13 +193,26 @@ func TestInterruptedSourceRepublishRequiresFinalizedReturnBeforeRootAbandonment(
 		t.Fatal(err)
 	}
 	var releaseID uuid.UUID
+	var positionMetadata []byte
 	var metadataRevision int64
-	if err := f.db.NewRaw(`SELECT release_id,metadata_revision FROM release_track WHERE id=?`, f.guard.ExpectedPositionID).Scan(ctx, &releaseID, &metadataRevision); err != nil {
+	if err := f.db.NewRaw(`SELECT release_id,metadata,metadata_revision FROM release_track WHERE id=?`, f.guard.ExpectedPositionID).
+		Scan(ctx, &releaseID, &positionMetadata, &metadataRevision); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.ExecContext(ctx, `INSERT INTO release_publication_cover(release_id,revision,mode) VALUES (?,1,'manual')`, releaseID); err != nil {
-		t.Fatal(err)
+	var positionMetadataRoot map[string]json.RawMessage
+	if err := json.Unmarshal(positionMetadata, &positionMetadataRoot); err != nil {
+		t.Fatalf("decode saved position metadata: %v", err)
 	}
+	lyricsEnvelope, err := librarymetadata.DecodeEnvelope(positionMetadataRoot["local_metadata"])
+	if err != nil || lyricsEnvelope.Scope != librarymetadata.ScopePosition {
+		t.Fatalf("decode saved lyrics authority: %+v, %v", lyricsEnvelope, err)
+	}
+	lyricsAuthority, ok := lyricsEnvelope.Desired["synced_lyrics"]
+	lyricsText, textOK := lyricsAuthority.Value.(string)
+	if !ok || !textOK || lyricsAuthority.State != librarymetadata.StateValue || lyricsAuthority.Authority != librarymetadata.AuthorityManual {
+		t.Fatalf("saved lyrics authority = %+v", lyricsAuthority)
+	}
+	lyricsAuthorityCopy := lyricsAuthority
 	input := publicationInputsFixture(t, "audio")
 	input.Version = PublicationSourceRepublishInputsVersion
 	input.SourceAuthorityMode = ""
@@ -215,9 +229,9 @@ func TestInterruptedSourceRepublishRequiresFinalizedReturnBeforeRootAbandonment(
 			SourceLocationID: input.Audio.LocationID, MediaVariantID: input.Audio.MediaVariantID,
 		},
 		Association:     PublicationRepublishAssociation{ID: uuid.New(), LocationID: input.Audio.LocationID, MediaVariantID: input.Audio.MediaVariantID},
-		Lyrics:          PublicationRepublishLyrics{State: "absent", Origin: "none"},
-		LyricsAuthority: PublicationInitialLyricsInput{ExpectedMetadataRevision: metadataRevision},
-		Cover:           PublicationRepublishCover{ReleaseID: releaseID, AuthorityRevision: 1, AuthorityMode: "manual", Derivation: "absent"},
+		Lyrics:          PublicationRepublishLyrics{State: "value", Origin: "manual", Text: lyricsText, SHA256: testAssetDigest(lyricsText)},
+		LyricsAuthority: PublicationInitialLyricsInput{ExpectedMetadataRevision: metadataRevision, Desired: &lyricsAuthorityCopy},
+		Cover:           PublicationRepublishCover{ReleaseID: releaseID, AuthorityRevision: 1, AuthorityMode: "automatic", Derivation: "absent"},
 	}
 	if err := input.Validate(); err != nil {
 		t.Fatalf("validate v4 frozen inputs: %v", err)
@@ -261,37 +275,126 @@ func TestInterruptedSourceRepublishRequiresFinalizedReturnBeforeRootAbandonment(
 		rootPath, input.Audio.InventoryRootPath, input.Audio.RelativePath, input.Audio.SizeBytes, input.Audio.MTime); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET attempt=attempt+1 WHERE id=?`, f.guard.RiverJobID); err != nil {
-		t.Fatal(err)
-	}
 	redelivery := f.guard
 	redelivery.RiverAttempt++
 	redelivery.ClaimUUID, redelivery.BootUUID, redelivery.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
-	if outcome, err := repo.ClaimPublicationDelivery(ctx, redelivery); err != nil || outcome != PublicationDeliveryBlocked {
-		t.Fatalf("interrupted v4 delivery = %q, %v; want blocked", outcome, err)
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET attempt=? WHERE id=?`, redelivery.RiverAttempt, f.guard.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, redelivery); err != nil || outcome != PublicationDeliverySourceRepublishRecovery {
+		t.Fatalf("interrupted v4 delivery = %q, %v; want source-republish recovery", outcome, err)
 	}
 	var claim PublicationExecutionClaim
 	if err := f.db.NewSelect().Model(&claim).Where("operation_id=?", f.guard.OperationID).Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var phase string
-	if err := f.db.NewRaw(`SELECT phase FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &phase); err != nil {
+	attempt, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if claim.State != "recovery_required" || claim.ClaimUUID != f.guard.ClaimUUID || phase != "preparing" {
-		t.Fatalf("recovery fence = claim:%+v phase:%s", claim, phase)
+	if claim.State != "executing" || claim.ClaimUUID != redelivery.ClaimUUID || claim.BootUUID != redelivery.BootUUID ||
+		claim.DeliveryToken != redelivery.DeliveryToken || claim.RiverAttempt != redelivery.RiverAttempt ||
+		attempt.ResumeMode != "inspect_source_republish_target" {
+		t.Fatalf("recovery successor = claim:%+v resume mode:%q", claim, attempt.ResumeMode)
 	}
-	var operationState, operationStage, safeError string
-	var finished bool
-	if err := f.db.NewRaw(`SELECT state,stage,safe_error,finished_at IS NOT NULL FROM operation WHERE id=?`, f.guard.OperationID).
-		Scan(ctx, &operationState, &operationStage, &safeError, &finished); err != nil {
+	recoveryInputs, live, err := repo.PublicationPreparationInputs(ctx, redelivery)
+	if err != nil || !live || recoveryInputs.SourceRepublish == nil {
+		t.Fatalf("read guarded source-republish recovery inputs = live:%t inputs:%+v err:%v", live, recoveryInputs, err)
+	}
+	if ok, err := repo.CheckPublicationDelivery(ctx, f.guard); err != nil || ok {
+		t.Fatalf("old delivery guard is still live = %t, %v", ok, err)
+	}
+	if ok, err := repo.CheckPublicationDelivery(ctx, redelivery); err != nil || !ok {
+		t.Fatalf("successor recovery guard is not live = %t, %v", ok, err)
+	}
+	if err := repo.MarkPublicationDeliveryReturned(ctx, redelivery); err != nil {
+		t.Fatalf("return first recovery successor: %v", err)
+	}
+	secondRecovery := redelivery
+	secondRecovery.ClaimUUID, secondRecovery.BootUUID, secondRecovery.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, secondRecovery); err != nil || outcome != PublicationDeliverySourceRepublishRecovery {
+		t.Fatalf("sticky source-republish recovery claim = %q, %v", outcome, err)
+	}
+	if ok, err := repo.CheckPublicationDelivery(ctx, redelivery); err != nil || ok {
+		t.Fatalf("superseded recovery guard is still live = %t, %v", ok, err)
+	}
+	if ok, err := repo.CheckPublicationDelivery(ctx, secondRecovery); err != nil || !ok {
+		t.Fatalf("second recovery successor guard is not live = %t, %v", ok, err)
+	}
+	if err := repo.MarkPublicationDeliveryReturned(ctx, secondRecovery); err != nil {
+		t.Fatalf("return current recovery successor: %v", err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='cancelled',finalized_at=now() WHERE id=?`, f.guard.RiverJobID); err != nil {
 		t.Fatal(err)
 	}
-	if operationState != "failed" || operationStage != "source_republish_recovery_required" || safeError == "" || !finished {
-		t.Fatalf("interrupted operation = %s/%s (%q, finished:%t)", operationState, operationStage, safeError, finished)
+	if _, err := f.db.ExecContext(ctx, `UPDATE operation SET state='failed',stage='source_republish_execution_failed',safe_error='recovery delivery stopped',finished_at=now(),updated_at=now() WHERE id=?`, f.guard.OperationID); err != nil {
+		t.Fatal(err)
 	}
-	if err := f.db.NewSelect().Model(&claim).Where("operation_id=?", f.guard.OperationID).Scan(ctx); err != nil || claim.State != "recovery_required" {
-		t.Fatalf("running delivery was accepted as returned: claim:%+v err:%v", claim, err)
+	var jobsBefore int
+	if err := f.db.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &jobsBefore); err != nil {
+		t.Fatal(err)
+	}
+	client := openPublicationRetryRiver(t, ctx, f.db)
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET attempt=? WHERE id=?`, secondRecovery.RiverAttempt+1, secondRecovery.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RetryPublicationOperationAndEnqueue(ctx, f.guard.OperationID, client); err == nil {
+		t.Fatal("retry accepted terminal River attempt that differs from the recovery claim")
+	}
+	var jobsAfterMismatch int
+	if err := f.db.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &jobsAfterMismatch); err != nil || jobsAfterMismatch != jobsBefore {
+		t.Fatalf("mismatched terminal retry changed River jobs: before=%d after=%d err=%v", jobsBefore, jobsAfterMismatch, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET attempt=? WHERE id=?`, secondRecovery.RiverAttempt, secondRecovery.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := repo.RetryPublicationOperationAndEnqueue(ctx, f.guard.OperationID, client)
+	if err != nil {
+		t.Fatalf("retry guarded source-republish inspection: %v", err)
+	}
+	var jobsAfter int
+	if err := f.db.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &jobsAfter); err != nil || jobsAfter != jobsBefore+1 {
+		t.Fatalf("guarded retry jobs = before:%d after:%d err:%v", jobsBefore, jobsAfter, err)
+	}
+	attempt, err = repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil || attempt.ResumeMode != PublicationResumeModeInspectSourceRepublishTarget {
+		t.Fatalf("retry cleared recovery resume mode: attempt:%+v err:%v", attempt, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='cancelled',finalized_at=now() WHERE id=?`, *retried.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE operation SET state='failed',stage='source_republish_execution_failed',safe_error='recovery delivery stopped',finished_at=now(),updated_at=now() WHERE id=?`, f.guard.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	// This explicitly seeds the pre-resume-mode parked-v4 shape so the legacy
+	// root-abandonment path remains covered independently of inspection retries.
+	if _, err := f.db.ExecContext(ctx, `UPDATE track_publication_attempt SET resume_mode=? WHERE operation_id=?`, PublicationResumeModePrepare, f.guard.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	legacyClaim := PublicationExecutionClaim{
+		OperationID: f.guard.OperationID, ApplicationAttempt: retried.Attempt, RiverJobID: *retried.RiverJobID,
+		RiverAttempt: 1, ClaimUUID: uuid.New(), BootUUID: uuid.New(), DeliveryToken: uuid.NewString(),
+		Epoch: f.guard.Epoch, State: "recovery_required",
+	}
+	if _, err := f.db.NewInsert().Model(&legacyClaim).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET attempt=1,state='cancelled',finalized_at=now() WHERE id=?`, *retried.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE operation SET stage='source_republish_recovery_required' WHERE id=?`, f.guard.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	var legacyJobsBefore int
+	if err := f.db.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &legacyJobsBefore); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RetryPublicationOperationAndEnqueue(ctx, f.guard.OperationID, client); err == nil {
+		t.Fatal("retry accepted a legacy parked source republish")
+	}
+	var legacyJobsAfter int
+	if err := f.db.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &legacyJobsAfter); err != nil || legacyJobsAfter != legacyJobsBefore {
+		t.Fatalf("legacy parked retry changed River jobs: before=%d after=%d err=%v", legacyJobsBefore, legacyJobsAfter, err)
 	}
 	root, err := NewSourceInventoryRepository(f.db).GetSourceRoot(ctx, rootID)
 	if err != nil {
@@ -301,7 +404,7 @@ func TestInterruptedSourceRepublishRequiresFinalizedReturnBeforeRootAbandonment(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='running' WHERE id=?`, f.guard.RiverJobID); err != nil {
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='running',finalized_at=NULL WHERE id=?`, *retried.RiverJobID); err != nil {
 		t.Fatal(err)
 	}
 	if err := NewSourceInventoryRepository(f.db).DeleteSourceRootWithCleanup(ctx, rootID, root.ConfiguredPath, locations,
@@ -312,20 +415,8 @@ func TestInterruptedSourceRepublishRequiresFinalizedReturnBeforeRootAbandonment(
 	if err := f.db.NewRaw(`SELECT count(*) FROM source_root WHERE id=?`, rootID).Scan(ctx, &stillPresent); err != nil || stillPresent != 1 {
 		t.Fatalf("running-delivery rejection changed source root: count=%d err=%v", stillPresent, err)
 	}
-	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='cancelled',finalized_at=now() WHERE id=?`, f.guard.RiverJobID); err != nil {
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='cancelled',finalized_at=now() WHERE id=?`, *retried.RiverJobID); err != nil {
 		t.Fatal(err)
-	}
-	var jobsBefore int
-	if err := f.db.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &jobsBefore); err != nil {
-		t.Fatal(err)
-	}
-	client := openPublicationRetryRiver(t, ctx, f.db)
-	if _, err := repo.RetryPublicationOperationAndEnqueue(ctx, f.guard.OperationID, client); err == nil {
-		t.Fatal("manual retry accepted a recovery-required source republish")
-	}
-	var jobsAfter int
-	if err := f.db.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &jobsAfter); err != nil || jobsAfter != jobsBefore {
-		t.Fatalf("manual retry inserted a River job: before=%d after=%d err=%v", jobsBefore, jobsAfter, err)
 	}
 	if err := NewSourceInventoryRepository(f.db).DeleteSourceRootWithCleanup(ctx, rootID, root.ConfiguredPath, locations,
 		func(context.Context, string, []SourceAnalysisArtifact) error { return nil }); err != nil {
@@ -348,18 +439,18 @@ func TestInterruptedSourceRepublishRequiresFinalizedReturnBeforeRootAbandonment(
 	if archiveCount != 1 || holdCount != 0 {
 		t.Fatalf("abandonment evidence/hold = %d/%d; want 1/0", archiveCount, holdCount)
 	}
-	var originalClaimAttempt, terminalAttempt int
-	var originalClaimID, terminalJobID int64
-	if err := f.db.NewRaw(`SELECT (evidence->'source_republish_return'->'original_claim'->>'river_attempt')::int,
-		(evidence->'source_republish_return'->'original_claim'->>'river_job_id')::bigint,
-		(evidence->'source_republish_return'->'terminal_job'->>'attempt')::int,
-		(evidence->'source_republish_return'->'terminal_job'->>'id')::bigint
-		FROM publication_root_abandonment WHERE operation_id=? AND root_id=?`, f.guard.OperationID, rootID).
-		Scan(ctx, &originalClaimAttempt, &originalClaimID, &terminalAttempt, &terminalJobID); err != nil {
+	var archivedResumeMode string
+	if err := f.db.NewRaw(`SELECT evidence->'attempt'->>'resume_mode' FROM publication_root_abandonment WHERE operation_id=? AND root_id=?`, f.guard.OperationID, rootID).
+		Scan(ctx, &archivedResumeMode); err != nil {
 		t.Fatal(err)
 	}
-	if originalClaimAttempt != f.guard.RiverAttempt || terminalAttempt != redelivery.RiverAttempt || originalClaimID != f.guard.RiverJobID || terminalJobID != f.guard.RiverJobID {
-		t.Fatalf("archived delivery identities = old %d/%d terminal %d/%d", originalClaimID, originalClaimAttempt, terminalJobID, terminalAttempt)
+	if archivedResumeMode != PublicationResumeModePrepare {
+		t.Fatalf("archived resume mode = %q", archivedResumeMode)
+	}
+	var archivedLegacyClaimState string
+	if err := f.db.NewRaw(`SELECT evidence->'source_republish_return'->'original_claim'->>'state' FROM publication_root_abandonment WHERE operation_id=? AND root_id=?`, f.guard.OperationID, rootID).
+		Scan(ctx, &archivedLegacyClaimState); err != nil || archivedLegacyClaimState != "recovery_required" {
+		t.Fatalf("legacy recovery claim evidence = %q, %v", archivedLegacyClaimState, err)
 	}
 	if _, err := repo.RetryPublicationOperationAndEnqueue(ctx, f.guard.OperationID, client); err == nil {
 		t.Fatal("retry accepted root-abandoned source republish")
