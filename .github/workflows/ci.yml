@@ -169,6 +169,9 @@ jobs:
         with:
           path: ${{ runner.temp }}\native-vips-ucrt64
           key: ${{ steps.native-vips-key.outputs.key }}
+      - name: Clear stale Windows cgo build cache
+        if: runner.os == 'Windows'
+        run: go clean -cache
       - name: Install macOS libvips
         if: runner.os == 'macOS'
         run: brew install vips pkg-config

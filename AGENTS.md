@@ -334,4 +334,9 @@ cd backend && golangci-lint run ./...
 
 **Windows arm64 unsupported**: Explicitly documented limitation.
 
+**Windows cgo cache**: After preparing the native SDK, CI clears the Go build
+cache, but retains downloaded modules. Go's build cache does not track changes
+to pkg-config-derived flags: a restored package archive can retain old SDK and
+MINGW64 library paths even when the current environment uses UCRT64.
+
 **Domain map freshness**: symbol reference counts, file sizes, and hotspot estimates are omitted because they drift quickly; consult the source tree and domain-specific AGENTS.md files.
