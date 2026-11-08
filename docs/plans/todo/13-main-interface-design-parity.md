@@ -60,7 +60,7 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    [CI-матрицу](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42273104143).
    Свидетельства и ограничения первоначальной проверки —
    [отчёт](../../reports/2026-11-04-publication-metadata-policy.md).
-2. [ ] **Staged/reset/source deletion lifecycle.** Сверить staged execution,
+2. [x] **Staged/reset/source deletion lifecycle.** Сверить staged execution,
    reset и удаление roots с актуальным контрактом. Добавить отдельный общий
    `work_directory` в Settings/UI/БД без default и env; Setup и регистрация root
    не требуют его, staged processing требует. При копиях или использующей каталог
@@ -90,8 +90,9 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      переноса нет. Reset отменяет jobs, но сохраняет копии и записи. Полный hook
      и завершённый CI:
      [42253784784](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42253784784).
-   - [ ] Остаётся приёмка удаления root и reset lifecycle, поэтому пункт целиком
-     не закрыт.
+    - [x] Итоговая сверка удаления root и reset lifecycle завершена на `331eea29`:
+      существующие DB/native-сценарии покрывают критерии пункта; новых механизмов
+      и тестовых матриц для закрытия не потребовалось.
    - [x] В `91d8e281` удаление последней location при удалении root очищает
      все `track_source`-связи без fallback и изменения CURRENT. В `9b5725de`
      добавлены приватная publication source copy с size/mtime-проверками и
@@ -115,7 +116,14 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       Оба среза прошли обычный полный hook и всю CI, включая контейнер:
       [42369569762](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42369569762),
       [42408036183](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42408036183).
-      Ограничения приёмки — [отчёт](../../reports/2026-11-07-root-publication-abandonment.md).
+       Ограничения приёмки — [отчёт](../../reports/2026-11-07-root-publication-abandonment.md).
+    - [x] Итоговые доказательства: `runDeletingRootCleansArtifactsAndAnalysisState`
+      покрывает canonical staged path, отсутствующую копию, сохранение output и
+      удаление failed task/job; root abandonment tests — ошибку callback и rollback;
+      output reset tests — transactional cancellation, сохранение независимых
+      analysis results и старых файлов. Полный gate и вся CI `331eea29`, включая
+      публикацию контейнера, прошли. Это service/DB/native-приёмка; общий browser
+      E2E и визуальная приёмка остаются в пункте 11.
 3. [ ] **Recovery и явная republish.** Устранить расхождения восстановления и
    повторной публикации с утверждёнными правилами. **Приёмка:** interrupted,
    frozen target при актуальной authority регистрируется по соответствующим
