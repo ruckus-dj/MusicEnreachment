@@ -29,7 +29,7 @@ func (repository *SetupManagerRepository) CheckPublicationResultCurrent(ctx cont
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
-		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input) && !validProviderTagRewrite(input)) || input.IntentKind != attempt.IntentKind {
+		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input) && !validProviderTagRewrite(input) && !validSourceRepublishPreparation(input)) || input.IntentKind != attempt.IntentKind {
 			return nil
 		}
 		if validProviderTagRewrite(input) {
@@ -41,6 +41,27 @@ func (repository *SetupManagerRepository) CheckPublicationResultCurrent(ctx cont
 				return fmt.Errorf("check publication result freshness: read current publication: %w", err)
 			}
 			current = providerTagCurrent(publication, input, attempt.Epoch)
+			return nil
+		}
+		if validSourceRepublishPreparation(input) {
+			if attempt.ExpectedGeneration == nil || *attempt.ExpectedGeneration != input.SourceRepublish.Current.Generation {
+				return nil
+			}
+			var publication TrackPublication
+			if err := tx.NewSelect().Model(&publication).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("check publication result freshness: read source-republish CURRENT: %w", err)
+			}
+			var authority PositionSourceAuthority
+			if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("check publication result freshness: read source-republish authority: %w", err)
+			}
+			current = sourceRepublishCurrent(publication, authority, input, attempt.Epoch)
 			return nil
 		}
 		if validAutomaticAudioUpgrade(input) {
@@ -92,19 +113,48 @@ func validProviderTagRewrite(input PublicationInputs) bool {
 	return input.Version == PublicationProviderTagInputsVersion && input.IntentKind == "rewrite" && input.Rewrite != nil && input.ProviderTags != nil && input.Validate() == nil
 }
 
-func providerTagCurrent(current TrackPublication, input PublicationInputs, epoch uuid.UUID) bool {
-	provider := input.ProviderTags
-	var ownership PublicationCurrentOwnership
-	if provider == nil || current.Epoch != epoch || current.Generation != provider.Current.Generation || current.RelativePath != provider.Current.RelativePath ||
-		decodePublicationCurrentContract(current.Ownership, &ownership) != nil || !sameJSONValue(mustPublicationJSON(ownership.Identity), mustPublicationJSON(provider.Current.Ownership)) || !sameJSONValue(current.ActualAssets, mustPublicationJSON(provider.Current.Assets)) {
+func validSourceRepublishPreparation(input PublicationInputs) bool {
+	return input.Version == PublicationSourceRepublishInputsVersion && input.IntentKind == "audio" &&
+		input.SourceRepublish != nil && input.SourceRepublish.SourceAuthority.Present && input.Validate() == nil
+}
+
+func sourceRepublishCurrent(current TrackPublication, authority PositionSourceAuthority, input PublicationInputs, epoch uuid.UUID) bool {
+	if !validSourceRepublishPreparation(input) || input.SourceRepublish.SourceAuthority.PositionID != current.PositionID ||
+		!publicationCurrentMatchesWitness(current, input.SourceRepublish.Current, epoch) {
 		return false
 	}
-	var metadata PublicationCommitMetadata
-	if strictMetadata(current.ActualMetadata, &metadata) != nil || !sameJSONValue(mustPublicationJSON(metadata.Tags), mustPublicationJSON(provider.Current.Tags)) {
+	frozen := input.SourceRepublish.SourceAuthority
+	return frozen.Validate(input.SourceRepublish.Current.Generation) == nil &&
+		authority.PositionID == frozen.PositionID && authority.Mode == frozen.Mode && authority.Revision == frozen.Revision &&
+		authority.PublicationEpoch == frozen.PublicationEpoch && authority.PublicationGeneration == frozen.PublicationGeneration &&
+		authority.SourceLocationID == frozen.SourceLocationID && authority.MediaVariantID == frozen.MediaVariantID &&
+		authority.PublicationEpoch == epoch && authority.PublicationGeneration == current.Generation
+}
+
+func providerTagCurrent(current TrackPublication, input PublicationInputs, epoch uuid.UUID) bool {
+	provider := input.ProviderTags
+	return provider != nil && publicationCurrentMatchesWitness(current, provider.Current, epoch)
+}
+
+// publicationCurrentMatchesWitness compares every database-backed CURRENT
+// projection field against a frozen witness. Filesystem identity is checked by
+// the caller's existing delivery path; this helper covers epoch, generation,
+// path, ownership, audio, metadata tags, and assets.
+func publicationCurrentMatchesWitness(current TrackPublication, witness PublicationCurrentWitness, epoch uuid.UUID) bool {
+	var ownership PublicationCurrentOwnership
+	if current.Epoch != epoch || current.Generation != witness.Generation || current.RelativePath != witness.RelativePath ||
+		decodePublicationCurrentContract(current.Ownership, &ownership) != nil ||
+		!sameJSONValue(mustPublicationJSON(ownership.Identity), mustPublicationJSON(witness.Ownership)) ||
+		!sameJSONValue(current.ActualAssets, mustPublicationJSON(witness.Assets)) {
+		return false
+	}
+	var currentMetadata PublicationCommitMetadata
+	if strictMetadata(current.ActualMetadata, &currentMetadata) != nil ||
+		!sameJSONValue(mustPublicationJSON(currentMetadata.Tags), mustPublicationJSON(witness.Tags)) {
 		return false
 	}
 	facts, ok := publicationAudioFactsFromObservation(current.ActualAudio)
-	return ok && sameJSONValue(mustPublicationJSON(facts), mustPublicationJSON(provider.Current.AudioFacts))
+	return ok && sameJSONValue(mustPublicationJSON(facts), mustPublicationJSON(witness.AudioFacts))
 }
 
 func providerTagResultCurrent(current TrackPublication, observation PublicationStageObservation, input PublicationInputs) bool {

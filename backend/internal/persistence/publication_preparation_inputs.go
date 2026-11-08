@@ -39,8 +39,30 @@ func (repository *SetupManagerRepository) publicationPreparationInputs(ctx conte
 		if err != nil {
 			return fmt.Errorf("read publication preparation inputs: decode frozen inputs: %w", err)
 		}
-		if !decoded.SupportsExecution() && !validProviderTagRewrite(decoded) && (!manualLyricsFLAC || !validManualLyricsRewrite(decoded)) {
+		if !decoded.SupportsExecution() && !validProviderTagRewrite(decoded) && !validSourceRepublishPreparation(decoded) && (!manualLyricsFLAC || !validManualLyricsRewrite(decoded)) {
 			return fmt.Errorf("read publication preparation inputs: frozen publication contract is admitted but not executable")
+		}
+		if validSourceRepublishPreparation(decoded) {
+			if attempt.ExpectedGeneration == nil || *attempt.ExpectedGeneration != decoded.SourceRepublish.Current.Generation {
+				return nil
+			}
+			var current TrackPublication
+			if err := tx.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("read source-republish preparation CURRENT: %w", err)
+			}
+			var authority PositionSourceAuthority
+			if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				return fmt.Errorf("read source-republish preparation authority: %w", err)
+			}
+			if !sourceRepublishCurrent(current, authority, decoded, guard.Epoch) {
+				return nil
+			}
 		}
 		if decoded.ProviderTags != nil {
 			var current TrackPublication
