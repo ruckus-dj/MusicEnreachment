@@ -199,10 +199,14 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 		}
 		admitRepublish := func() (*persistence.TrackPublicationAttempt, int64) {
 			prepared, err := publications.prepareRetainedSourceRepublish(ctx, releaseID, before.PositionID, firstPublicationPreviewModeOrdinary)
-			if err != nil || len(prepared.Preview.Blockers) != 0 || prepared.Selected == nil {
+			if err != nil || len(prepared.Preview.Blockers) != 0 || prepared.Selected == nil ||
+				prepared.Preview.ConfirmationCapability == nil || prepared.Preview.ConfirmationCapability.CurrentGeneration == uuid.Nil || prepared.Preview.Epoch == uuid.Nil {
 				t.Fatalf("prepare ordinary selected-source republish: %+v, %v", prepared, err)
 			}
-			operationID, err := publications.AdmitSourceRepublishRetainingSelection(ctx, releaseID, before.PositionID, SourceRepublishConfirmation{PreviewDigest: prepared.Preview.ContextDigest, ExpectedEpoch: before.Epoch, Mode: firstPublicationPreviewModeOrdinary})
+			operationID, err := publications.AdmitSourceRepublishRetainingSelection(ctx, releaseID, before.PositionID, SourceRepublishConfirmation{
+				PreviewDigest: prepared.Preview.ContextDigest, ExpectedEpoch: prepared.Preview.Epoch,
+				ExpectedGeneration: prepared.Preview.ConfirmationCapability.CurrentGeneration, Mode: firstPublicationPreviewModeOrdinary,
+			})
 			if err != nil {
 				t.Fatalf("admit selected-source republish: %v", err)
 			}
@@ -304,6 +308,92 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 		if err != nil || len(installed.Tags["COMMENT"]) != 1 || installed.Tags["COMMENT"][0] != "after-move recovery" {
 			t.Fatalf("installed after-move candidate before recovery = %#v, %v", installed.Tags, err)
 		}
+		// Ordinary redelivery after the result transaction rolls back leaves the
+		// claim quiescent. It must freshly prepare from the still-present source,
+		// even though the candidate had already replaced CURRENT.
+		if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=2 WHERE id=?`, afterMoveJobID); err != nil {
+			t.Fatal(err)
+		}
+		if err := executor.ExecutePublicationDelivery(ctx, afterMoveAttempt.OperationID, afterMoveJobID, 2); err != nil {
+			t.Fatalf("ordinary quiescent after-move redelivery: %v", err)
+		}
+		if writer.calls != 3 {
+			t.Fatalf("writer calls after ordinary after-move redelivery = %d, want full fresh preparation (3)", writer.calls)
+		}
+		var ordinarilySettled persistence.TrackPublication
+		if err := db.NewSelect().Model(&ordinarilySettled).Where("position_id=?", before.PositionID).Scan(ctx); err != nil || ordinarilySettled.Generation != afterMoveAttempt.CandidateGeneration {
+			t.Fatalf("CURRENT after ordinary after-move redelivery = %+v, %v", ordinarilySettled, err)
+		}
+		attempt, err = manager.ReadPublicationAttempt(ctx, afterMoveAttempt.OperationID)
+		if err != nil || attempt != nil {
+			t.Fatalf("attempt after ordinary after-move redelivery = %+v, %v; want settled", attempt, err)
+		}
+
+		// A second valid operation proves the missing-final-target path. Fail
+		// settlement after the native replacement, remove that installed final
+		// using the fixture's real output path, then redeliver with source intact.
+		updateComment("missing-final retry")
+		afterMoveAttempt, afterMoveJobID = admitRepublish()
+		if _, err := db.ExecContext(ctx, `CREATE FUNCTION reject_test_source_republish_current_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected source-republish CURRENT update failure'; END $$`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `CREATE TRIGGER reject_test_source_republish_current_update BEFORE UPDATE ON track_publication FOR EACH ROW EXECUTE FUNCTION reject_test_source_republish_current_update()`); err != nil {
+			t.Fatal(err)
+		}
+		if err := executor.ExecutePublicationDelivery(ctx, afterMoveAttempt.OperationID, afterMoveJobID, 1); err == nil || !strings.Contains(err.Error(), "injected source-republish CURRENT update failure") {
+			t.Fatalf("missing-final setup settlement error = %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `DROP TRIGGER reject_test_source_republish_current_update ON track_publication`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `DROP FUNCTION reject_test_source_republish_current_update()`); err != nil {
+			t.Fatal(err)
+		}
+		finalPath := filepath.Join(output, filepath.FromSlash(target))
+		if err := os.Remove(finalPath); err != nil {
+			t.Fatalf("remove installed final target before retry: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=2 WHERE id=?`, afterMoveJobID); err != nil {
+			t.Fatal(err)
+		}
+		if err := executor.ExecutePublicationDelivery(ctx, afterMoveAttempt.OperationID, afterMoveJobID, 2); err != nil {
+			t.Fatalf("missing-final source-backed retry: %v", err)
+		}
+		if writer.calls != 5 {
+			t.Fatalf("writer calls after missing-final retry = %d, want full source preparation (5)", writer.calls)
+		}
+		missingFinalOutput, err := (metadata.Reader{}).Read(ctx, finalPath, metadata.ReadRequest{})
+		if err != nil || len(missingFinalOutput.Tags["COMMENT"]) != 1 || missingFinalOutput.Tags["COMMENT"][0] != "missing-final retry" {
+			t.Fatalf("missing-final retry output = %#v, %v", missingFinalOutput.Tags, err)
+		}
+		var missingFinalCurrent persistence.TrackPublication
+		if err := db.NewSelect().Model(&missingFinalCurrent).Where("position_id=?", before.PositionID).Scan(ctx); err != nil || missingFinalCurrent.Generation != afterMoveAttempt.CandidateGeneration {
+			t.Fatalf("CURRENT after missing-final retry = %+v, %v", missingFinalCurrent, err)
+		}
+		attempt, err = manager.ReadPublicationAttempt(ctx, afterMoveAttempt.OperationID)
+		if err != nil || attempt != nil {
+			t.Fatalf("attempt after missing-final retry = %+v, %v; want settled", attempt, err)
+		}
+
+		// Keep source-gone interrupted adoption independent: create a fresh
+		// attempt, fail after replacement again, then model process interruption.
+		updateComment("after-move source-gone recovery")
+		afterMoveAttempt, afterMoveJobID = admitRepublish()
+		if _, err := db.ExecContext(ctx, `CREATE FUNCTION reject_test_source_republish_current_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected source-republish CURRENT update failure'; END $$`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `CREATE TRIGGER reject_test_source_republish_current_update BEFORE UPDATE ON track_publication FOR EACH ROW EXECUTE FUNCTION reject_test_source_republish_current_update()`); err != nil {
+			t.Fatal(err)
+		}
+		if err := executor.ExecutePublicationDelivery(ctx, afterMoveAttempt.OperationID, afterMoveJobID, 1); err == nil || !strings.Contains(err.Error(), "injected source-republish CURRENT update failure") {
+			t.Fatalf("source-gone setup settlement error = %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `DROP TRIGGER reject_test_source_republish_current_update ON track_publication`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `DROP FUNCTION reject_test_source_republish_current_update()`); err != nil {
+			t.Fatal(err)
+		}
 		oldBoot := uuid.New()
 		if oldBoot == executor.bootUUID {
 			t.Fatal("simulated prior boot identity matches current executor")
@@ -337,7 +427,7 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 		if !inspectedStickyMode {
 			t.Fatal("source-free recovery did not observe sticky inspection mode")
 		}
-		if writer.calls != 2 {
+		if writer.calls != 6 {
 			t.Fatalf("writer calls after source-free inspection recovery = %d, want no re-preparation", writer.calls)
 		}
 		var recovered persistence.TrackPublication
@@ -351,8 +441,8 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 		if err := executor.ExecutePublicationDelivery(ctx, afterMoveAttempt.OperationID, afterMoveJobID, 1); err != nil {
 			t.Fatalf("completed source-free redelivery: %v", err)
 		}
-		if writer.calls != 2 {
-			t.Fatalf("writer calls after completed redelivery = %d, want 2", writer.calls)
+		if writer.calls != 6 {
+			t.Fatalf("writer calls after completed redelivery = %d, want 6", writer.calls)
 		}
 	}})
 }

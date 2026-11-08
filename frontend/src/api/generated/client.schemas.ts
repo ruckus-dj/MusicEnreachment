@@ -559,8 +559,10 @@ export interface LibraryFirstPublicationAdmissionInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   expected_epoch: string;
+  expected_generation?: string;
   location_id?: string;
   media_variant_id?: string;
+  mode?: string;
   /**
      * @minLength 64
      * @maxLength 64
@@ -569,17 +571,27 @@ export interface LibraryFirstPublicationAdmissionInputBody {
   preview_digest: string;
   /** @minimum 0 */
   stream_index?: number;
+  workflow?: string;
 }
 
 export type LibraryFirstPublicationPreviewResponseDesiredTags = {[key: string]: string[] | null};
 
 export type LibraryFirstPublicationPreviewResponseMetadataRevisions = {[key: string]: number};
 
+export interface SourceRepublishConfirmationCapability {
+  current_generation: string;
+  kind: string;
+  /** @nullable */
+  reason_codes: string[] | null;
+  status: string;
+}
+
 export interface LibraryFirstPublicationPreviewResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** @nullable */
   blockers: string[] | null;
+  confirmation_capability?: SourceRepublishConfirmationCapability;
   context_digest: string;
   cover_plan?: FirstPublicationCoverPlan;
   current_comparison?: FirstPublicationCurrentComparison;
@@ -2173,6 +2185,7 @@ export const ListLibraryReleasesAvailability = {
 } as const;
 
 export type GetLibraryFirstPublicationPreviewParams = {
+workflow?: string;
 location_id?: string;
 media_variant_id?: string;
 stream_index?: string;

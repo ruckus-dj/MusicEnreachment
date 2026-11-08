@@ -301,6 +301,20 @@ func TestInterruptedSourceRepublishAcquiresStickyRecoveryClaimAndPreservesLegacy
 	if err != nil || !live || recoveryInputs.SourceRepublish == nil {
 		t.Fatalf("read guarded source-republish recovery inputs = live:%t inputs:%+v err:%v", live, recoveryInputs, err)
 	}
+	if resumed, err := repo.ResumeMissingSourceRepublishPreparation(ctx, f.guard); err != nil || resumed {
+		t.Fatalf("stale guard resumed missing-target recovery = %t, %v", resumed, err)
+	}
+	attempt, err = repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil || attempt.ResumeMode != PublicationResumeModeInspectSourceRepublishTarget {
+		t.Fatalf("stale missing-target guard changed resume mode: attempt:%+v err:%v", attempt, err)
+	}
+	if resumed, err := repo.ResumeMissingSourceRepublishPreparation(ctx, redelivery); err != nil || !resumed {
+		t.Fatalf("live guard did not resume after missing-target proof = %t, %v", resumed, err)
+	}
+	attempt, err = repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil || attempt.ResumeMode != PublicationResumeModePrepare {
+		t.Fatalf("missing-target resume did not restore preparation mode: attempt:%+v err:%v", attempt, err)
+	}
 	if ok, err := repo.CheckPublicationDelivery(ctx, f.guard); err != nil || ok {
 		t.Fatalf("old delivery guard is still live = %t, %v", ok, err)
 	}
@@ -309,6 +323,44 @@ func TestInterruptedSourceRepublishAcquiresStickyRecoveryClaimAndPreservesLegacy
 	}
 	if err := repo.MarkPublicationDeliveryReturned(ctx, redelivery); err != nil {
 		t.Fatalf("return first recovery successor: %v", err)
+	}
+	reprepare := redelivery
+	reprepare.ClaimUUID, reprepare.BootUUID, reprepare.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, reprepare); err != nil || outcome != PublicationDeliveryReprepare {
+		t.Fatalf("quiescent v4 preparation retry = %q, %v; want reprepare", outcome, err)
+	}
+	if ok, err := repo.CheckPublicationDelivery(ctx, redelivery); err != nil || ok {
+		t.Fatalf("superseded recovery guard is still live = %t, %v", ok, err)
+	}
+	if ok, err := repo.CheckPublicationDelivery(ctx, reprepare); err != nil || !ok {
+		t.Fatalf("reprepare successor guard is not live = %t, %v", ok, err)
+	}
+	preparationInputs, valid, err := repo.PublicationPreparationInputs(ctx, reprepare)
+	if err != nil || !valid || preparationInputs.SourceRepublish == nil {
+		t.Fatalf("reprepare did not restore normal preparation inputs = live:%t inputs:%+v err:%v", valid, preparationInputs, err)
+	}
+	oldBoot := uuid.New()
+	if oldBoot == reprepare.BootUUID {
+		t.Fatal("simulated previous boot matches the reprepare delivery")
+	}
+	nextRecovery := reprepare
+	nextRecovery.RiverAttempt++
+	nextRecovery.ClaimUUID, nextRecovery.BootUUID, nextRecovery.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	if nextRecovery.BootUUID == oldBoot {
+		nextRecovery.BootUUID = uuid.New()
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE publication_execution_claim SET boot_uuid=? WHERE operation_id=? AND state='executing'`, oldBoot, f.guard.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET attempt=? WHERE id=?`, nextRecovery.RiverAttempt, f.guard.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, nextRecovery); err != nil || outcome != PublicationDeliverySourceRepublishRecovery {
+		t.Fatalf("cross-boot interruption after reprepare = %q, %v; want source-republish recovery", outcome, err)
+	}
+	redelivery = nextRecovery
+	if err := repo.MarkPublicationDeliveryReturned(ctx, redelivery); err != nil {
+		t.Fatalf("return current recovery successor: %v", err)
 	}
 	secondRecovery := redelivery
 	secondRecovery.ClaimUUID, secondRecovery.BootUUID, secondRecovery.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
@@ -322,7 +374,7 @@ func TestInterruptedSourceRepublishAcquiresStickyRecoveryClaimAndPreservesLegacy
 		t.Fatalf("second recovery successor guard is not live = %t, %v", ok, err)
 	}
 	if err := repo.MarkPublicationDeliveryReturned(ctx, secondRecovery); err != nil {
-		t.Fatalf("return current recovery successor: %v", err)
+		t.Fatalf("return sticky recovery successor: %v", err)
 	}
 	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='cancelled',finalized_at=now() WHERE id=?`, f.guard.RiverJobID); err != nil {
 		t.Fatal(err)

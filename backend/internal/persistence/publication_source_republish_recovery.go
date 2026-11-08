@@ -9,6 +9,18 @@ import (
 	"github.com/uptrace/bun"
 )
 
+type sourceRepublishTargetEvidenceKind uint8
+
+const (
+	sourceRepublishTargetObserved sourceRepublishTargetEvidenceKind = iota + 1
+	sourceRepublishTargetMissing
+)
+
+type sourceRepublishTargetEvidence struct {
+	kind     sourceRepublishTargetEvidenceKind
+	identity PublicationFileIdentity
+}
+
 // ResumeSourceRepublishPreparation consumes inspection mode only after the
 // guarded delivery has validated that CURRENT and its frozen source, lyrics,
 // and cover authorities are still current. observed is the service's typed
@@ -17,6 +29,29 @@ func (repository *SetupManagerRepository) ResumeSourceRepublishPreparation(
 	ctx context.Context,
 	guard PublicationDeliveryGuard,
 	observed PublicationFileIdentity,
+) (bool, error) {
+	return repository.resumeSourceRepublishPreparation(ctx, guard, sourceRepublishTargetEvidence{
+		kind: sourceRepublishTargetObserved, identity: observed,
+	})
+}
+
+// ResumeMissingSourceRepublishPreparation consumes inspection mode after the
+// caller has established that the CURRENT target is genuinely absent using a
+// no-follow filesystem lookup. The database validates all retained authority;
+// it does not infer filesystem absence from an empty identity.
+func (repository *SetupManagerRepository) ResumeMissingSourceRepublishPreparation(
+	ctx context.Context,
+	guard PublicationDeliveryGuard,
+) (bool, error) {
+	return repository.resumeSourceRepublishPreparation(ctx, guard, sourceRepublishTargetEvidence{
+		kind: sourceRepublishTargetMissing,
+	})
+}
+
+func (repository *SetupManagerRepository) resumeSourceRepublishPreparation(
+	ctx context.Context,
+	guard PublicationDeliveryGuard,
+	evidence sourceRepublishTargetEvidence,
 ) (bool, error) {
 	if err := validatePublicationDeliveryGuard(guard); err != nil {
 		return false, err
@@ -42,9 +77,17 @@ func (repository *SetupManagerRepository) ResumeSourceRepublishPreparation(
 		}
 		if !validSourceRepublishPreparation(input) || input.SourceRepublish == nil ||
 			attempt.IntentKind != input.IntentKind || attempt.ExpectedGeneration == nil ||
-			*attempt.ExpectedGeneration != input.SourceRepublish.Current.Generation ||
-			!sameJSONValue(mustPublicationJSON(observed), mustPublicationJSON(input.SourceRepublish.Current.Ownership)) {
+			*attempt.ExpectedGeneration != input.SourceRepublish.Current.Generation {
 			return nil
+		}
+		switch evidence.kind {
+		case sourceRepublishTargetObserved:
+			if !sameJSONValue(mustPublicationJSON(evidence.identity), mustPublicationJSON(input.SourceRepublish.Current.Ownership)) {
+				return nil
+			}
+		case sourceRepublishTargetMissing:
+		default:
+			return errors.New("resume source-republish preparation: target evidence is invalid")
 		}
 
 		var current TrackPublication
@@ -78,6 +121,12 @@ func (repository *SetupManagerRepository) ResumeSourceRepublishPreparation(
 		}
 		if !coverCurrent {
 			return nil
+		}
+		if _, err := validateSourceRepublishAttemptNamespace(ctx, tx, attempt, input); err != nil {
+			if errors.Is(err, ErrPublicationAdmissionConflict) || errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("resume source-republish preparation: validate CURRENT namespace: %w", err)
 		}
 
 		result, err := tx.NewRaw(`UPDATE track_publication_attempt SET resume_mode=?,phase='preparing'

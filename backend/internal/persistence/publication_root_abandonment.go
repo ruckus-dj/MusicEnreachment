@@ -412,6 +412,24 @@ func (repository *SetupManagerRepository) CheckPublicationTargetReplacement(ctx 
 		if !live || attempt == nil || claim == nil || claim.State != "executing" {
 			return fmt.Errorf("check publication target replacement: stale delivery guard")
 		}
+		version, err := frozenPublicationInputVersion(attempt.FrozenInputs)
+		if err != nil {
+			return fmt.Errorf("check publication target replacement: read frozen input version: %w", err)
+		}
+		if version == PublicationSourceRepublishInputsVersion {
+			input, err := DecodePublicationInputs(attempt.FrozenInputs)
+			if err != nil {
+				return fmt.Errorf("check publication target replacement: decode source-republish inputs: %w", err)
+			}
+			if !validSourceRepublishPreparation(input) || input.SourceRepublish == nil || attempt.ExpectedGeneration == nil ||
+				*attempt.ExpectedGeneration != input.SourceRepublish.Current.Generation ||
+				relativePath != input.SourceRepublish.Current.RelativePath {
+				return fmt.Errorf("check publication target replacement: source-republish target differs from frozen CURRENT")
+			}
+			if _, err := validateSourceRepublishAttemptNamespace(ctx, tx, attempt, input); err != nil {
+				return fmt.Errorf("check publication target replacement: validate source-republish CURRENT namespace: %w", err)
+			}
+		}
 		var pathMatches bool
 		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM publication_namespace_reservation r
 			JOIN publication_namespace_claim c ON c.id=r.namespace_claim_id

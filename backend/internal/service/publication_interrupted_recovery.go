@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -280,6 +281,13 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 	}
 	parent, chain, err := openExistingPublicationParent(ctx, root, target.RelativePath)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			resumed, resumeErr := executor.resumeMissingSourceRepublishPreparation(ctx, guard)
+			if resumeErr != nil || !resumed {
+				return false, false, errors.Join(resumeErr, errors.New("missing source-republish target parent did not authorize preparation"))
+			}
+			return false, true, nil
+		}
 		return false, false, fmt.Errorf("open interrupted source-republish target parent: %w", err)
 	}
 	defer closeOutputChain(chain)
@@ -290,6 +298,13 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 	name := path.Base(target.RelativePath)
 	file, err := mutation.OpenExistingRegular(ctx, name)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			resumed, resumeErr := executor.resumeMissingSourceRepublishPreparation(ctx, guard)
+			if resumeErr != nil || !resumed {
+				return false, false, errors.Join(resumeErr, errors.New("missing source-republish target did not authorize preparation"))
+			}
+			return false, true, nil
+		}
 		return false, false, fmt.Errorf("open interrupted source-republish target: %w", err)
 	}
 	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
@@ -466,6 +481,8 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 		return false, false, errors.New("interrupted source-republish frozen cover derivation is invalid")
 	}
 	size, mtime = finalInfo.Size(), finalInfo.ModTime().UnixMicro()
+	observedIdentity.SizeBytes = &size
+	observedIdentity.MTime = &mtime
 	actual := persistence.PublicationStageObservation{
 		Version: 1, RelativePath: target.RelativePath,
 		Ownership:     persistence.ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime},
@@ -491,6 +508,205 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 func samePublicationFileIdentity(actual, expected persistence.PublicationFileIdentity) bool {
 	return actual.SizeBytes != nil && expected.SizeBytes != nil && *actual.SizeBytes == *expected.SizeBytes &&
 		actual.MTime != nil && expected.MTime != nil && *actual.MTime == *expected.MTime && actual.SHA256 != "" && actual.SHA256 == expected.SHA256
+}
+
+func (executor *PublicationExecutor) resumeMissingSourceRepublishPreparation(
+	ctx context.Context,
+	guard persistence.PublicationDeliveryGuard,
+) (bool, error) {
+	resumer, ok := executor.repository.(interface {
+		ResumeMissingSourceRepublishPreparation(context.Context, persistence.PublicationDeliveryGuard) (bool, error)
+	})
+	if !ok {
+		return false, errors.New("source-republish missing-target resume capability is unavailable")
+	}
+	return resumer.ResumeMissingSourceRepublishPreparation(ctx, guard)
+}
+
+type inspectedSourceRepublishTarget struct {
+	info        os.FileInfo
+	identity    persistence.PublicationFileIdentity
+	observation PublicationStageObservation
+	optional    persistence.PublicationSourceRepublishOptionalResult
+}
+
+// inspectSourceRepublishTargetForReprepare validates a changed target against
+// the frozen source-republish result without adopting it. The returned live
+// identity is the expected-existing identity for the subsequent native replace.
+func (executor *PublicationExecutor) inspectSourceRepublishTargetForReprepare(
+	ctx context.Context,
+	input persistence.PublicationInputs,
+	guard persistence.PublicationDeliveryGuard,
+	mutation sourcefs.OutputMutation,
+	name string,
+	file sourcefs.RegularFile,
+	before os.FileInfo,
+	commands *simplePublicationTrackingRunner,
+) (inspectedSourceRepublishTarget, error) {
+	if input.SourceRepublish == nil || before == nil || !before.Mode().IsRegular() || before.Size() < 0 || commands.QuiescenceUnknown() {
+		return inspectedSourceRepublishTarget{}, errors.New("source-republish target inspection is unavailable")
+	}
+	inspectionDir, err := os.MkdirTemp("", "source-republish-retry-inspection-")
+	if err != nil {
+		return inspectedSourceRepublishTarget{}, fmt.Errorf("create private source-republish retry inspection directory: %w", err)
+	}
+	defer func() {
+		if !commands.QuiescenceUnknown() {
+			_ = os.RemoveAll(inspectionDir)
+		}
+	}()
+	inspectionPath := filepath.Join(inspectionDir, "inspection"+filepath.Ext(input.SourceRepublish.Current.RelativePath))
+	inspection, err := os.OpenFile(inspectionPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return inspectedSourceRepublishTarget{}, fmt.Errorf("create source-republish retry inspection snapshot: %w", err)
+	}
+	hash := sha256.New()
+	copyErr := file.Borrow(ctx, func(native *os.File) error {
+		if _, err := native.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		written, err := io.CopyN(io.MultiWriter(inspection, hash), inspectionContextReader{ctx: ctx, reader: native}, before.Size())
+		if err != nil {
+			return err
+		}
+		if written != before.Size() {
+			return io.ErrUnexpectedEOF
+		}
+		var extra [1]byte
+		n, err := native.Read(extra[:])
+		if n != 0 {
+			return errors.New("source-republish target grew during retry inspection")
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		return ctx.Err()
+	})
+	if copyErr == nil {
+		copyErr = inspection.Sync()
+	}
+	copyErr = errors.Join(copyErr, inspection.Close())
+	if copyErr != nil {
+		return inspectedSourceRepublishTarget{}, fmt.Errorf("snapshot source-republish retry target: %w", copyErr)
+	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	size, mtime := before.Size(), before.ModTime().UnixMicro()
+	observed := persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest}
+	if _, err := verifySimpleSourceRepublishTarget(ctx, mutation, name, file, before); err != nil {
+		return inspectedSourceRepublishTarget{}, err
+	}
+	resolver := NewPublicationPinnedToolsResolver(executor.repository, simplePublicationToolCommands{runner: commands}, executor.platform)
+	_, validTools, err := resolver.Resolve(ctx, guard, input.Tools)
+	if err != nil || !validTools {
+		return inspectedSourceRepublishTarget{}, errors.Join(err, errors.New("pinned source-republish tools are unavailable"))
+	}
+	validator := executor.stageValidator
+	if validator == nil {
+		real := RealPublicationStageValidator{MetadataReader: metadata.Reader{}, Tools: NewGuardedPublicationPinnedTools(resolver, guard)}
+		if runner, ok := commands.PublicationCommandRunner().(PublicationFileCommandRunner); ok {
+			real.Probe = func(ctx context.Context, executable string, input sourcefs.RegularFile, container publication.AudioContainer) ([]byte, error) {
+				demuxer, _ := publication.InputDemuxer(container)
+				request, err := tools.BuildPublicationFileCommandRequest(executable, demuxer, nil)
+				if err != nil {
+					return nil, err
+				}
+				var output []byte
+				err = input.Borrow(ctx, func(file *os.File) error {
+					request.Input = file
+					result, err := runner.RunFile(ctx, request)
+					output = result.Output
+					return err
+				})
+				return output, err
+			}
+		}
+		validator = real
+	}
+	sourceValidator, ok := validator.(interface {
+		ValidateSourceRepublish(context.Context, string, persistence.PublicationInputs, persistence.PublicationCoverOutcome) (PublicationStageObservation, error)
+	})
+	if !ok {
+		return inspectedSourceRepublishTarget{}, errors.New("source-republish retry validator is unavailable")
+	}
+	capture, err := (metadata.Reader{}).Read(ctx, inspectionPath, metadata.ReadRequest{CoverInspection: true})
+	if err != nil {
+		return inspectedSourceRepublishTarget{}, fmt.Errorf("read source-republish retry metadata: %w", err)
+	}
+	assets, err := ObservePublicationAssets(capture)
+	if err != nil {
+		return inspectedSourceRepublishTarget{}, fmt.Errorf("observe source-republish retry assets: %w", err)
+	}
+	expectedCover, coverOutcome, err := sourceRepublishRecoveryCoverResult(input.SourceRepublish.Cover, assets.Cover)
+	if err != nil {
+		return inspectedSourceRepublishTarget{}, err
+	}
+	observation, err := sourceValidator.ValidateSourceRepublish(ctx, inspectionPath, input, expectedCover)
+	if err != nil || observation.SHA256 != digest {
+		return inspectedSourceRepublishTarget{}, errors.Join(err, errors.New("source-republish target differs from the frozen result"))
+	}
+	if commands.QuiescenceUnknown() {
+		return inspectedSourceRepublishTarget{}, errors.New("publication command quiescence is unknown")
+	}
+	finalInfo, err := verifySimpleSourceRepublishTarget(ctx, mutation, name, file, before)
+	if err != nil {
+		return inspectedSourceRepublishTarget{}, err
+	}
+	size, mtime = finalInfo.Size(), finalInfo.ModTime().UnixMicro()
+	observed.SizeBytes = &size
+	observed.MTime = &mtime
+	actualAssets, err := persistence.DecodePublicationAssetOutcomes(observation.Assets)
+	if err != nil {
+		return inspectedSourceRepublishTarget{}, fmt.Errorf("decode source-republish retry assets: %w", err)
+	}
+	if input.SourceRepublish.Cover.Derivation == "ready" {
+		switch actualAssets.Cover.State {
+		case persistence.PublicationAssetEmbedded:
+			coverOutcome = persistence.PublicationSourceRepublishCoverVerified
+		case persistence.PublicationAssetAbsent:
+			coverOutcome = persistence.PublicationSourceRepublishCoverAbsentAfterInterruption
+		default:
+			return inspectedSourceRepublishTarget{}, errors.New("source-republish retry cover outcome is invalid")
+		}
+	}
+	switch input.SourceRepublish.Cover.Derivation {
+	case "absent":
+		coverOutcome = persistence.PublicationSourceRepublishCoverNotRequested
+	case "optional_failure":
+		coverOutcome = persistence.PublicationSourceRepublishCoverPreparationFailed
+	case "ready":
+	default:
+		return inspectedSourceRepublishTarget{}, errors.New("source-republish frozen cover derivation is invalid")
+	}
+	return inspectedSourceRepublishTarget{
+		info: finalInfo, identity: observed, observation: observation,
+		optional: persistence.PublicationSourceRepublishOptionalResult{
+			LyricsOutcome: persistence.PublicationSourceRepublishLyricsObservedAfterInterruption,
+			CoverOutcome:  coverOutcome,
+		},
+	}, nil
+}
+
+func verifySimpleSourceRepublishTarget(
+	ctx context.Context,
+	mutation sourcefs.OutputMutation,
+	name string,
+	file sourcefs.RegularFile,
+	before os.FileInfo,
+) (os.FileInfo, error) {
+	after, err := file.Stat(ctx)
+	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return nil, errors.Join(err, errors.New("source-republish target changed during retry inspection"))
+	}
+	reopened, err := mutation.OpenExistingRegular(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("reopen source-republish retry target: %w", err)
+	}
+	reopenedInfo, statErr := reopened.Stat(ctx)
+	closeErr := reopened.Close()
+	if err := errors.Join(statErr, closeErr); err != nil || !os.SameFile(before, reopenedInfo) || before.Size() != reopenedInfo.Size() || !before.ModTime().Equal(reopenedInfo.ModTime()) {
+		return nil, errors.Join(err, errors.New("source-republish target was replaced during retry inspection"))
+	}
+	return after, nil
 }
 
 func verifyInterruptedSourceRepublishTarget(

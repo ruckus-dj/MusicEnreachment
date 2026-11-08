@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -145,8 +146,11 @@ func readSourceRepublishCurrentNamespaceClaim(ctx context.Context, tx bun.Tx, re
 			AND NOT EXISTS (SELECT 1 FROM publication_root_abandonment a WHERE a.epoch=c.epoch AND c.id=ANY(a.namespace_claim_ids))`,
 		request.ExpectedEpoch, request.PositionID, input.SourceRepublish.Current.RelativePath,
 		request.PositionID, input.SourceRepublish.Current.Generation).Scan(ctx, &claims)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		return PublicationNamespaceClaim{}, fmt.Errorf("admit source republish: read exact CURRENT namespace claim: %w", ErrPublicationAdmissionConflict)
+	}
+	if err != nil {
+		return PublicationNamespaceClaim{}, fmt.Errorf("admit source republish: read exact CURRENT namespace claim: %w", err)
 	}
 	if len(claims) != 1 {
 		return PublicationNamespaceClaim{}, fmt.Errorf("admit source republish: CURRENT namespace identity is missing or ambiguous: %w", ErrPublicationAdmissionConflict)
@@ -198,6 +202,47 @@ func validateSourceRepublishNamespacePlan(ctx context.Context, tx bun.Tx, reques
 		}
 	}
 	return nil
+}
+
+func validateSourceRepublishAttemptNamespace(
+	ctx context.Context,
+	tx bun.Tx,
+	attempt *TrackPublicationAttempt,
+	input PublicationInputs,
+) (PublicationNamespaceClaim, error) {
+	if attempt == nil || !validSourceRepublishPreparation(input) || input.SourceRepublish == nil || attempt.ExpectedGeneration == nil ||
+		*attempt.ExpectedGeneration != input.SourceRepublish.Current.Generation || attempt.Epoch == uuid.Nil {
+		return PublicationNamespaceClaim{}, fmt.Errorf("validate source republish namespace: invalid attempt baseline: %w", ErrPublicationAdmissionConflict)
+	}
+	var manifest struct {
+		Version int                        `json:"version"`
+		Nodes   []PublicationNamespaceNode `json:"nodes"`
+	}
+	if decodeStrictJSON(attempt.NamespaceManifest, &manifest) != nil || manifest.Version != 1 || validatePublicationManifest(manifest.Nodes) != nil {
+		return PublicationNamespaceClaim{}, fmt.Errorf("validate source republish namespace: invalid candidate manifest: %w", ErrPublicationAdmissionConflict)
+	}
+	request := PublicationAdmission{
+		PositionID: attempt.PositionID, ExpectedEpoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration,
+	}
+	currentClaim, err := readSourceRepublishCurrentNamespaceClaim(ctx, tx, request, input)
+	if err != nil {
+		return PublicationNamespaceClaim{}, err
+	}
+	if err := validateSourceRepublishNamespacePlan(ctx, tx, request, input, manifest.Nodes, currentClaim); err != nil {
+		return PublicationNamespaceClaim{}, err
+	}
+	if err := validatePublicationTargetNamespace(ctx, tx, attempt, currentClaim.CanonicalKey, input.SourceRepublish.Current.RelativePath); err != nil {
+		return PublicationNamespaceClaim{}, fmt.Errorf("validate source republish namespace: candidate does not reserve exact CURRENT path: %w", err)
+	}
+	var reservationCount int
+	if err := tx.NewRaw(`SELECT count(*) FROM publication_namespace_reservation WHERE position_id=? AND generation=?`,
+		attempt.PositionID, attempt.CandidateGeneration).Scan(ctx, &reservationCount); err != nil {
+		return PublicationNamespaceClaim{}, fmt.Errorf("validate source republish namespace: count candidate reservations: %w", err)
+	}
+	if reservationCount != len(manifest.Nodes) {
+		return PublicationNamespaceClaim{}, fmt.Errorf("validate source republish namespace: candidate reservations differ from manifest: %w", ErrPublicationAdmissionConflict)
+	}
+	return currentClaim, nil
 }
 
 func validateSourceRepublishAdmissionTx(ctx context.Context, tx bun.Tx, request PublicationAdmission, input PublicationInputs, epoch uuid.UUID) error {

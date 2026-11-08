@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -23,9 +25,10 @@ var errSourceRepublishUnchanged = errors.New("source republish has no content ch
 // SourceRepublishConfirmation is an internal confirmation contract. It is not
 // generated from or exposed by an HTTP request.
 type SourceRepublishConfirmation struct {
-	PreviewDigest string
-	ExpectedEpoch uuid.UUID
-	Mode          string
+	PreviewDigest      string
+	ExpectedEpoch      uuid.UUID
+	ExpectedGeneration uuid.UUID
+	Mode               string
 }
 
 type sourceRepublishAdmissionRepository interface {
@@ -35,18 +38,107 @@ type sourceRepublishAdmissionRepository interface {
 }
 
 type retainedSourceRepublishPreparation struct {
-	Repository      sourceRepublishAdmissionRepository
-	Snapshot        *persistence.LibraryFirstPublicationContext
-	RuntimeSettings settings.RuntimeSettings
-	Authority       *persistence.PositionSourceAuthority
-	SelectedTools   []persistence.SourceAnalysisToolSelection
-	Selected        *persistence.FirstPublicationSource
-	Choice          FirstPublicationSourceChoice
-	Preview         FirstPublicationPreview
-	Manifest        []persistence.PublicationNamespaceNode
-	LyricsAuthority *persistence.PublicationInitialLyricsInput
-	LyricsPlan      FirstPublicationLyricsPlan
-	CoverPlan       FirstPublicationCoverPlan
+	Repository         sourceRepublishAdmissionRepository
+	Snapshot           *persistence.LibraryFirstPublicationContext
+	RuntimeSettings    settings.RuntimeSettings
+	Authority          *persistence.PositionSourceAuthority
+	SelectedTools      []persistence.SourceAnalysisToolSelection
+	Selected           *persistence.FirstPublicationSource
+	Choice             FirstPublicationSourceChoice
+	Preview            FirstPublicationPreview
+	Manifest           []persistence.PublicationNamespaceNode
+	LyricsAuthority    *persistence.PublicationInitialLyricsInput
+	LyricsPlan         FirstPublicationLyricsPlan
+	CoverPlan          FirstPublicationCoverPlan
+	Input              persistence.PublicationInputs
+	FrozenInputs       []byte
+	BasePlanningDigest string
+}
+
+func (service *LibraryPublications) PreviewSourceRepublishRetainingSelection(
+	ctx context.Context,
+	releaseID, positionID uuid.UUID,
+	mode string,
+) (FirstPublicationPreview, error) {
+	if service == nil || service.repository == nil || service.settings == nil || releaseID == uuid.Nil || positionID == uuid.Nil ||
+		(mode != firstPublicationPreviewModeOrdinary && mode != firstPublicationPreviewModeForced) {
+		return blockedSourceRepublishPreview(FirstPublicationPreview{}, releaseID, positionID, mode, "source_republish_not_eligible"), nil
+	}
+	prepared, err := service.prepareRetainedSourceRepublish(ctx, releaseID, positionID, mode)
+	if err != nil {
+		if errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+			return blockedSourceRepublishPreview(prepared.Preview, releaseID, positionID, mode, "source_republish_not_eligible"), nil
+		}
+		return FirstPublicationPreview{}, err
+	}
+	return prepared.Preview, nil
+}
+
+func blockedSourceRepublishPreview(preview FirstPublicationPreview, releaseID, positionID uuid.UUID, mode, reason string) FirstPublicationPreview {
+	if preview.ReleaseID == uuid.Nil {
+		preview.ReleaseID = releaseID
+	}
+	if preview.PositionID == uuid.Nil {
+		preview.PositionID = positionID
+	}
+	if preview.Mode == "" {
+		preview.Mode = mode
+	}
+	if preview.Blockers == nil {
+		preview.Blockers = []string{}
+	}
+	if preview.Warnings == nil {
+		preview.Warnings = []string{}
+	}
+	if preview.SourceCandidates == nil {
+		preview.SourceCandidates = []FirstPublicationPreviewSource{}
+	}
+	preview.ConfirmationCapability = &SourceRepublishConfirmationCapability{
+		Kind: "retained_same_path", Status: "blocked", ReasonCodes: []string{reason},
+		CurrentGeneration: currentRepublishGeneration(preview.Current),
+	}
+	return preview
+}
+
+func currentRepublishGeneration(current *persistence.LibraryPublicationCurrent) uuid.UUID {
+	if current == nil {
+		return uuid.Nil
+	}
+	return current.Record.Generation
+}
+
+func sourceRepublishEvidencePreview(
+	snapshot *persistence.LibraryFirstPublicationContext,
+	releaseID, positionID uuid.UUID,
+	mode string,
+) FirstPublicationPreview {
+	preview := FirstPublicationPreview{
+		ReleaseID: releaseID, PositionID: positionID, Mode: mode,
+		MetadataRevisions: map[string]int64{}, Warnings: []string{}, Blockers: []string{}, SourceCandidates: []FirstPublicationPreviewSource{},
+	}
+	if snapshot == nil || snapshot.Library == nil {
+		return preview
+	}
+	preview.Epoch = snapshot.Library.ActiveEpoch
+	preview.Current = snapshot.Library.Current
+	preview.ActiveAttempt = snapshot.Library.ActiveAttempt
+	preview.MetadataRevisions = map[string]int64{
+		"release": snapshot.Metadata.Release.Revision, "track": snapshot.Metadata.Track.Revision,
+		"recording": snapshot.Metadata.Recording.Revision, "position": snapshot.Metadata.Position.Revision,
+	}
+	preview.Blockers = append(preview.Blockers, snapshot.Blockers...)
+	preview.SourceCandidates = make([]FirstPublicationPreviewSource, 0, len(snapshot.Sources))
+	for _, source := range snapshot.Sources {
+		preview.SourceCandidates = append(preview.SourceCandidates, FirstPublicationPreviewSource{
+			RootID: source.Selection.RootID, LocationID: source.Selection.LocationID, WorkID: source.Selection.WorkID,
+			AssociationID: source.AssociationID, Selected: source.Selected,
+			MediaVariantID: source.Selection.MediaVariantID, StreamIndex: source.Quality.StreamIndex,
+			Codec: source.Quality.Codec, Quality: source.Quality, Title: source.StreamTitle, Language: source.StreamLanguage,
+			RequiresExplicitStreamSelection: source.RequiresExplicitStreamSelection,
+			AudioStreamCount:                source.AudioStreamCount, UnsupportedAudioStreamCount: source.UnsupportedAudioStreamCount,
+		})
+	}
+	return preview
 }
 
 // AdmitSourceRepublishRetainingSelection freezes a same-path CURRENT republish
@@ -59,7 +151,7 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 	confirmation SourceRepublishConfirmation,
 ) (uuid.UUID, error) {
 	if service == nil || service.repository == nil || service.settings == nil || service.river == nil ||
-		releaseID == uuid.Nil || positionID == uuid.Nil || confirmation.ExpectedEpoch == uuid.Nil ||
+		releaseID == uuid.Nil || positionID == uuid.Nil || confirmation.ExpectedEpoch == uuid.Nil || confirmation.ExpectedGeneration == uuid.Nil ||
 		!validFirstPublicationPreviewDigest(confirmation.PreviewDigest) ||
 		(confirmation.Mode != firstPublicationPreviewModeOrdinary && confirmation.Mode != firstPublicationPreviewModeForced) {
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
@@ -68,7 +160,18 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if prepared.Snapshot.Library.ActiveEpoch != confirmation.ExpectedEpoch || prepared.Preview.ContextDigest != confirmation.PreviewDigest {
+	if prepared.Preview.ConfirmationCapability == nil || prepared.Preview.ConfirmationCapability.Status != "ready" {
+		if prepared.Preview.ConfirmationCapability != nil && prepared.Preview.ConfirmationCapability.Status == "unchanged" {
+			return uuid.Nil, fmt.Errorf("admit unchanged source republish: %w", errors.Join(persistence.ErrPublicationAdmissionConflict, errSourceRepublishUnchanged))
+		}
+		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+	}
+	if prepared.Snapshot == nil || prepared.Snapshot.Library == nil || prepared.Snapshot.Library.Current == nil {
+		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
+	}
+	if prepared.Snapshot.Library.ActiveEpoch != confirmation.ExpectedEpoch ||
+		prepared.Snapshot.Library.Current.Record.Generation != confirmation.ExpectedGeneration ||
+		prepared.Preview.ContextDigest != confirmation.PreviewDigest {
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
 	}
 	repository := prepared.Repository
@@ -82,85 +185,15 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 	lyricsAuthority := prepared.LyricsAuthority
 	lyricsPlan := prepared.LyricsPlan
 	coverPlan := prepared.CoverPlan
-	current := snapshot.Library.Current
-
-	claimID := currentPublicationNamespaceClaim(snapshot.Library, current.Record.RelativePath)
-	if claimID == uuid.Nil {
-		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
-	}
-	outputRoot, err := sourcefs.NewOutputOpener().OpenRoot(ctx, runtimeSettings.OutputDirectory)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("open source-republish output root: %w", err)
-	}
-	defer func() { _ = outputRoot.Close() }()
-	before, err := captureObsoletePublicationOutput(ctx, outputRoot, runtimeSettings.OutputDirectory, current.Record, claimID)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("capture source-republish CURRENT: %w", err)
-	}
-	capture, err := (metadata.Reader{}).Read(ctx, before.NativePath, metadata.ReadRequest{CoverInspection: true, LimitSourceCover: false})
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("read source-republish CURRENT metadata: %w", err)
-	}
-	artwork, err := metadata.ReadArtworkSnapshot(ctx, before.NativePath)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("read source-republish CURRENT artwork: %w", err)
-	}
-	assets, err := ObservePublicationAssets(capture)
-	if err != nil || !reflect.DeepEqual(capture.Tags, current.Metadata.Tags) || !reflect.DeepEqual(assets, current.Assets) {
-		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
-	}
-	after, err := captureObsoletePublicationOutput(ctx, outputRoot, runtimeSettings.OutputDirectory, current.Record, claimID)
-	if err != nil || before.FileSize != after.FileSize || before.ModifiedAt != after.ModifiedAt ||
-		!reflect.DeepEqual(before.SHA256, after.SHA256) || before.NativePath != after.NativePath {
-		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
-	}
-	if sourceRepublishIsUnchanged(preview, selected, current, publication.AudioPublicationFormat(runtimeSettings.PublicationFormat)) {
-		return uuid.Nil, errSourceRepublishUnchanged
-	}
-
-	lyrics := persistence.PublicationRepublishLyrics{State: "absent", Origin: "none"}
-	if lyricsPlan.State == "value" {
-		lyrics = persistence.PublicationRepublishLyrics{State: "value", Origin: lyricsPlan.Origin, Text: lyricsPlan.Lyrics, SHA256: lyricsPlan.SHA256}
-	}
+	input := prepared.Input
 	lyricsAuthorityValue := persistence.PublicationInitialLyricsInput{}
 	if lyricsAuthority != nil {
 		lyricsAuthorityValue = *lyricsAuthority
 	}
 	lookup := publicationRepublishLyricsLookup(selected.Input.AnalysedMetadata, runtimeSettings.LRCLIBEnabled)
-	cover, err := publicationRepublishCoverInput(snapshot.EffectiveCoverInput, coverPlan)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	currentWitness := persistence.PublicationCurrentWitness{
-		Generation: current.Record.Generation, RelativePath: current.Record.RelativePath,
-		Ownership:  persistence.PublicationFileIdentity{SizeBytes: sourceRepublishInt64Pointer(before.FileSize), MTime: sourceRepublishInt64Pointer(before.ModifiedAt.UnixMicro()), SHA256: hex.EncodeToString(before.SHA256)},
-		AudioFacts: current.Audio.Facts,
-		Assets:     assets.Clone(), Tags: cloneDesiredPublicationTags(capture.Tags),
-		ArtworkInventory: audioUpgradeArtworkWitnesses(artwork.ArtworkInventory()),
-	}
-	sourceAuthority := persistence.PublicationSourceAuthority{
-		Present: true, PositionID: positionID, Mode: authority.Mode, Revision: authority.Revision,
-		PublicationEpoch: authority.PublicationEpoch, PublicationGeneration: authority.PublicationGeneration,
-		SourceLocationID: authority.SourceLocationID, MediaVariantID: authority.MediaVariantID,
-	}
-	input := persistence.PublicationInputs{
-		Version: persistence.PublicationSourceRepublishInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
-		IntentKind: "audio", Format: publication.AudioPublicationFormat(runtimeSettings.PublicationFormat),
-		Audio: audioInputCopy(&selected.Input), DesiredTags: cloneDesiredPublicationTags(preview.DesiredTags.Tags),
-		Tools: append([]persistence.SourceAnalysisToolSelection(nil), selectedTools...),
-		SourceRepublish: &persistence.PublicationSourceRepublishInput{
-			Current: currentWitness, Mode: confirmation.Mode, SourceAuthority: sourceAuthority,
-			Association: persistence.PublicationRepublishAssociation{ID: selected.AssociationID, LocationID: selected.Selection.LocationID, MediaVariantID: selected.Selection.MediaVariantID},
-			Lyrics:      lyrics, LyricsAuthority: lyricsAuthorityValue, LyricsLookup: lookup, Cover: cover,
-		},
-	}
-	if err := input.Validate(); err != nil {
-		return uuid.Nil, fmt.Errorf("validate source-republish frozen inputs: %w", err)
-	}
-	frozenInputs, err := json.Marshal(input)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("encode source-republish frozen inputs: %w", err)
-	}
+	current := snapshot.Library.Current
+	frozenInputs := prepared.FrozenInputs
+	basePlanningDigest := prepared.BasePlanningDigest
 	holdID := uuid.New()
 	selection := selected.Selection
 	selection.HoldUUID = holdID
@@ -174,12 +207,27 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 	prepare := func(ctx context.Context, authoritative persistence.FirstPublicationAdmissionSnapshot, actual persistence.PublicationAdmission) ([]persistence.PublicationNamespaceNode, error) {
 		if authoritative.Context == nil || authoritative.Context.Library == nil || authoritative.Context.Library.Current == nil ||
 			authoritative.Context.Library.ActiveEpoch != prepared.Snapshot.Library.ActiveEpoch || actual.PositionID != positionID ||
-			actual.ExpectedReleaseID != releaseID || actual.ExpectedGeneration == nil || *actual.ExpectedGeneration != generation ||
+			actual.ExpectedReleaseID != releaseID || actual.ExpectedEpoch != confirmation.ExpectedEpoch ||
+			actual.ExpectedGeneration == nil || *actual.ExpectedGeneration != generation ||
+			*actual.ExpectedGeneration != confirmation.ExpectedGeneration ||
 			actual.Source == nil || actual.CandidateGeneration == uuid.Nil {
 			return nil, persistence.ErrPublicationAdmissionConflict
 		}
-		transactionSettings, err := settings.ParsePublicationPlanningValues(authoritative.Settings)
+		if !bytes.Equal(actual.FrozenInputs, frozenInputs) {
+			return nil, persistence.ErrPublicationAdmissionConflict
+		}
+		var admittedInputs persistence.PublicationInputs
+		if err := json.Unmarshal(actual.FrozenInputs, &admittedInputs); err != nil {
+			return nil, fmt.Errorf("decode admitted source-republish inputs: %w", err)
+		}
+		if admittedInputs.SourceRepublish == nil || admittedInputs.SourceRepublish.Mode != confirmation.Mode {
+			return nil, persistence.ErrPublicationAdmissionConflict
+		}
+		transactionSettings, settingsMatch, err := matchSourceRepublishPlanningSettings(runtimeSettings, authoritative.Settings)
 		if err != nil {
+			return nil, fmt.Errorf("parse authoritative source-republish settings: %w", err)
+		}
+		if !settingsMatch {
 			return nil, persistence.ErrPublicationAdmissionConflict
 		}
 		var installation *persistence.ToolInstallation
@@ -190,10 +238,7 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 			}
 		}
 		transactionTools, err := selectedFFmpegPairFromInstallation(installation, service.platform)
-		if err != nil || !reflect.DeepEqual(transactionTools, selectedTools) ||
-			publication.AudioPublicationFormat(transactionSettings.PublicationFormat) != input.Format ||
-			transactionSettings.OutputDirectory != runtimeSettings.OutputDirectory || transactionSettings.PublicationPathTemplate != runtimeSettings.PublicationPathTemplate ||
-			transactionSettings.LRCLIBEnabled != runtimeSettings.LRCLIBEnabled {
+		if err != nil || !reflect.DeepEqual(transactionTools, selectedTools) {
 			return nil, persistence.ErrPublicationAdmissionConflict
 		}
 		transactionContext := authoritative.Context
@@ -229,9 +274,14 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 			return nil, persistence.ErrPublicationAdmissionConflict
 		}
 		purePreview, err := buildFirstPublicationRepublishPreviewSelectedMode(transactionContext, transactionSettings, transactionTools, releaseID, positionID, &choice, confirmation.Mode)
-		if err != nil || len(purePreview.Blockers) != 0 || purePreview.SelectedSource == nil || purePreview.Transform == nil ||
+		if err != nil || purePreview.ContextDigest != basePlanningDigest || len(purePreview.Blockers) != 0 || purePreview.SelectedSource == nil || purePreview.Transform == nil ||
 			purePreview.SelectedSource.LocationID != choice.LocationID || purePreview.SelectedSource.MediaVariantID != choice.MediaVariantID ||
-			purePreview.SelectedSource.StreamIndex != choice.StreamIndex || !reflect.DeepEqual(purePreview.DesiredTags.Tags, input.DesiredTags) {
+			purePreview.SelectedSource.StreamIndex != choice.StreamIndex || !reflect.DeepEqual(purePreview.Transform, preview.Transform) ||
+			!reflect.DeepEqual(purePreview.DesiredTags.Tags, input.DesiredTags) {
+			return nil, persistence.ErrPublicationAdmissionConflict
+		}
+		if sourceRepublishQualityReasonCode(sourceRepublishOutputQualityComparison(purePreview.Transform, transactionSource, transactionContext.Library.Current,
+			publication.AudioPublicationFormat(transactionSettings.PublicationFormat))) != "" {
 			return nil, persistence.ErrPublicationAdmissionConflict
 		}
 		purePreview.ResolvedPathComponents = append([]string(nil), preview.ResolvedPathComponents...)
@@ -239,8 +289,15 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 		purePreview.CoverPlan = &coverPlan
 		pureComparison := compareFirstPublicationCurrent(purePreview, transactionContext.Library.Current, transactionContext)
 		purePreview.CurrentComparison = pureComparison
+		confirmationDigest, err := retainedSourceRepublishDigest(preview, basePlanningDigest, actual.FrozenInputs, prepared.Manifest, runtimeSettings, selectedTools)
+		if err != nil {
+			return nil, fmt.Errorf("digest admitted source-republish confirmation: %w", err)
+		}
+		if confirmationDigest != confirmation.PreviewDigest {
+			return nil, persistence.ErrPublicationAdmissionConflict
+		}
 		if sourceRepublishIsUnchanged(purePreview, transactionSource, transactionContext.Library.Current, publication.AudioPublicationFormat(transactionSettings.PublicationFormat)) {
-			return nil, errSourceRepublishUnchanged
+			return nil, fmt.Errorf("admit unchanged source republish: %w", errors.Join(persistence.ErrPublicationAdmissionConflict, errSourceRepublishUnchanged))
 		}
 		return append([]persistence.PublicationNamespaceNode(nil), prepared.Manifest...), nil
 	}
@@ -270,6 +327,114 @@ func sourceRepublishIsUnchanged(
 		len(comparison.RenderedComponents) > 0 && len(comparison.ResolvedComponents) > 0 && len(comparison.CurrentComponents) > 0
 }
 
+func sourceRepublishOutputQualityComparison(
+	transform *publication.AudioTransformPlan,
+	selected *persistence.FirstPublicationSource,
+	current *persistence.LibraryPublicationCurrent,
+	format publication.AudioPublicationFormat,
+) publication.QualityComparison {
+	if transform == nil || selected == nil || current == nil {
+		return publication.QualityUnknown
+	}
+	planned, err := publication.PlanAudioTransform(format, selected.Quality.AudioSourceFacts())
+	if err != nil || !reflect.DeepEqual(planned, *transform) {
+		return publication.QualityUnknown
+	}
+	output := selected.Quality
+	switch transform.Action {
+	case publication.AudioCodecCopy:
+	case publication.AudioCodecALAC:
+		lossless := true
+		output.Codec, output.Lossless = "alac", &lossless
+	case publication.AudioCodecAAC:
+		lossless, bitrate := false, transform.Bitrate
+		output.Codec, output.Lossless, output.Bitrate = "aac", &lossless, &bitrate
+	default:
+		return publication.QualityUnknown
+	}
+	return publication.CompareQuality(audioUpgradeQualityCandidate(output), audioUpgradeQualityCandidate(current.Audio.Facts))
+}
+
+func sourceRepublishQualityReasonCode(comparison publication.QualityComparison) string {
+	switch comparison {
+	case publication.QualityEqual, publication.QualityBetter:
+		return ""
+	case publication.QualityWorse:
+		return "output_quality_would_downgrade"
+	case publication.QualityUnknown, publication.QualityIncomparable:
+		return "output_quality_not_proven"
+	default:
+		return "output_quality_not_proven"
+	}
+}
+
+func validateSourceRepublishPreparedAudioQuality(input persistence.PublicationInputs, raw json.RawMessage) error {
+	if input.SourceRepublish == nil {
+		return errors.New("source-republish quality baseline is unavailable")
+	}
+	var observed struct {
+		Version int                             `json:"version"`
+		Facts   persistence.PersistedAudioFacts `json:"facts"`
+	}
+	if err := json.Unmarshal(raw, &observed); err != nil {
+		return fmt.Errorf("decode source-republish prepared audio facts: %w", err)
+	}
+	if observed.Version != 1 {
+		return errors.New("source-republish prepared audio facts version is invalid")
+	}
+	if err := observed.Facts.Validate(); err != nil {
+		return fmt.Errorf("validate source-republish prepared audio facts: %w", err)
+	}
+	comparison := publication.CompareQuality(
+		audioUpgradeQualityCandidate(observed.Facts),
+		audioUpgradeQualityCandidate(input.SourceRepublish.Current.AudioFacts),
+	)
+	if comparison != publication.QualityEqual && comparison != publication.QualityBetter {
+		return errors.New("source-republish prepared output does not prove non-downgrade quality")
+	}
+	return nil
+}
+
+func retainedSourceRepublishDigest(
+	preview FirstPublicationPreview,
+	planningDigest string,
+	frozenInputs []byte,
+	manifest []persistence.PublicationNamespaceNode,
+	runtimeSettings settings.RuntimeSettings,
+	tools []persistence.SourceAnalysisToolSelection,
+) (string, error) {
+	payload, err := json.Marshal(struct {
+		Domain         string
+		Mode           string
+		PlanningDigest string
+		FrozenInputs   json.RawMessage
+		Namespace      []persistence.PublicationNamespaceNode
+		Settings       settings.RuntimeSettings
+		Tools          []persistence.SourceAnalysisToolSelection
+		Transform      *publication.AudioTransformPlan
+		Comparison     *FirstPublicationCurrentComparison
+		Capability     *SourceRepublishConfirmationCapability
+	}{
+		Domain: "melo:source-republish:retained-same-path:confirmation:v1", Mode: preview.Mode,
+		PlanningDigest: planningDigest, FrozenInputs: frozenInputs, Namespace: manifest,
+		Settings: runtimeSettings, Tools: tools, Transform: preview.Transform,
+		Comparison: preview.CurrentComparison, Capability: preview.ConfirmationCapability,
+	})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func matchSourceRepublishPlanningSettings(expected settings.RuntimeSettings, values map[string]string) (settings.RuntimeSettings, bool, error) {
+	actual, err := settings.ParsePublicationPlanningValues(values)
+	if err != nil {
+		return settings.RuntimeSettings{}, false, err
+	}
+	return actual, reflect.DeepEqual(actual, expected), nil
+}
+
 func sourceRepublishCopyAudioMatches(
 	transform *publication.AudioTransformPlan,
 	selected *persistence.FirstPublicationSource,
@@ -289,7 +454,7 @@ func sourceRepublishCopyAudioMatches(
 		source.Channels != nil && actual.Channels != nil && *source.Channels == *actual.Channels &&
 		source.SampleRate != nil && actual.SampleRate != nil && *source.SampleRate == *actual.SampleRate &&
 		source.BitDepth != nil && actual.BitDepth != nil && *source.BitDepth == *actual.BitDepth &&
-		selected.ChannelLayout != "" && selected.ChannelLayout == actual.ChannelLayout &&
+		source.ChannelLayout != "" && source.ChannelLayout == actual.ChannelLayout &&
 		source.Bitrate != nil && actual.Bitrate != nil && *source.Bitrate == *actual.Bitrate
 }
 
@@ -317,11 +482,12 @@ func (service *LibraryPublications) prepareRetainedSourceRepublish(
 	if snapshot == nil || snapshot.Library == nil || snapshot.Library.Current == nil ||
 		snapshot.Library.ReleaseID != releaseID || snapshot.Library.PositionID != positionID ||
 		snapshot.Library.ActiveEpoch == uuid.Nil || snapshot.Library.ActiveAttempt != nil {
-		return retainedSourceRepublishPreparation{}, fmt.Errorf("validate retained source-republish library context: %w", persistence.ErrPublicationAdmissionConflict)
+		return retainedSourceRepublishPreparation{Preview: sourceRepublishEvidencePreview(snapshot, releaseID, positionID, mode)}, fmt.Errorf("validate retained source-republish library context: %w", persistence.ErrPublicationAdmissionConflict)
 	}
+	evidencePreview := sourceRepublishEvidencePreview(snapshot, releaseID, positionID, mode)
 	current := snapshot.Library.Current
 	if current.Record.Epoch != snapshot.Library.ActiveEpoch || current.Record.Generation == uuid.Nil {
-		return retainedSourceRepublishPreparation{}, fmt.Errorf("validate retained source-republish CURRENT identity: %w", persistence.ErrPublicationAdmissionConflict)
+		return retainedSourceRepublishPreparation{Preview: evidencePreview}, fmt.Errorf("validate retained source-republish CURRENT identity: %w", persistence.ErrPublicationAdmissionConflict)
 	}
 	authority, err := repository.ReadPositionSourceAuthority(ctx, positionID)
 	if err != nil {
@@ -333,7 +499,7 @@ func (service *LibraryPublications) prepareRetainedSourceRepublish(
 		current.SourceAuthority.Revision != authority.Revision || current.SourceAuthority.PublicationEpoch != authority.PublicationEpoch ||
 		current.SourceAuthority.PublicationGeneration != authority.PublicationGeneration ||
 		current.SourceAuthority.SourceLocationID != authority.SourceLocationID || current.SourceAuthority.MediaVariantID != authority.MediaVariantID {
-		return retainedSourceRepublishPreparation{}, fmt.Errorf("validate retained source-republish CURRENT authority: %w", persistence.ErrPublicationAdmissionConflict)
+		return retainedSourceRepublishPreparation{Preview: evidencePreview}, fmt.Errorf("validate retained source-republish CURRENT authority: %w", persistence.ErrPublicationAdmissionConflict)
 	}
 	selectedTools, err := service.selectedFFmpegPairForSettings(ctx, runtimeSettings)
 	if err != nil {
@@ -345,23 +511,24 @@ func (service *LibraryPublications) prepareRetainedSourceRepublish(
 		source := &snapshot.Sources[i]
 		if source.Selected && source.AssociationID != uuid.Nil && source.Selection.LocationID == choice.LocationID && source.Selection.MediaVariantID == choice.MediaVariantID {
 			if selected != nil {
-				return retainedSourceRepublishPreparation{}, fmt.Errorf("resolve retained source-republish selection: multiple selected associations match the authoritative source: %w", persistence.ErrPublicationAdmissionConflict)
+				return retainedSourceRepublishPreparation{Preview: evidencePreview}, fmt.Errorf("resolve retained source-republish selection: multiple selected associations match the authoritative source: %w", persistence.ErrPublicationAdmissionConflict)
 			}
 			selected = source
 		}
 	}
 	if selected == nil || selected.AssociationID == uuid.Nil || selected.Quality.StreamIndex < 0 {
-		return retainedSourceRepublishPreparation{}, fmt.Errorf("resolve retained source-republish selection: authoritative source association is unavailable: %w", persistence.ErrPublicationAdmissionConflict)
+		return retainedSourceRepublishPreparation{Preview: evidencePreview}, fmt.Errorf("resolve retained source-republish selection: authoritative source association is unavailable: %w", persistence.ErrPublicationAdmissionConflict)
 	}
 	choice.StreamIndex = selected.Quality.StreamIndex
 	preview, err := buildFirstPublicationRepublishPreviewSelectedMode(snapshot, runtimeSettings, selectedTools, releaseID, positionID, &choice, mode)
 	if err != nil {
-		return retainedSourceRepublishPreparation{}, fmt.Errorf("build retained source-republish preview: %w", err)
+		return retainedSourceRepublishPreparation{Preview: evidencePreview}, fmt.Errorf("build retained source-republish preview: %w", err)
 	}
 	if len(preview.Blockers) != 0 || preview.SelectedSource == nil || preview.Transform == nil {
-		return retainedSourceRepublishPreparation{}, fmt.Errorf("validate retained source-republish preview (blockers=%q, selected_source=%t, transform=%t): %w",
-			preview.Blockers, preview.SelectedSource != nil, preview.Transform != nil, persistence.ErrPublicationAdmissionConflict)
+		blocked := blockedSourceRepublishPreview(preview, releaseID, positionID, mode, "source_republish_not_eligible")
+		return retainedSourceRepublishPreparation{Preview: blocked}, nil
 	}
+	basePlanningDigest := preview.ContextDigest
 	if err := foldFirstPublicationCurrentAudioEvidenceDigest(&preview, snapshot); err != nil {
 		return retainedSourceRepublishPreparation{}, err
 	}
@@ -371,7 +538,7 @@ func (service *LibraryPublications) prepareRetainedSourceRepublish(
 		return retainedSourceRepublishPreparation{}, fmt.Errorf("plan retained source-republish lyrics: %w", err)
 	}
 	if lyricsPlan.State == "unknown" || lyricsPlan.State == "unprocessable" {
-		return retainedSourceRepublishPreparation{}, fmt.Errorf("validate retained source-republish lyrics plan state %q: %w", lyricsPlan.State, persistence.ErrPublicationAdmissionConflict)
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("validate retained source-republish lyrics plan state %q", lyricsPlan.State)
 	}
 	preview.LyricsPlan = &lyricsPlan
 	if err := foldFirstPublicationLyricsPlanDigest(&preview, lyricsPlan); err != nil {
@@ -392,17 +559,114 @@ func (service *LibraryPublications) prepareRetainedSourceRepublish(
 	preview.CurrentComparison = compareFirstPublicationCurrent(preview, current, snapshot)
 	if preview.CurrentComparison == nil || preview.CurrentComparison.Generation != current.Record.Generation ||
 		len(preview.ResolvedPathComponents) == 0 || strings.Join(preview.ResolvedPathComponents, "/") != current.Record.RelativePath {
-		return retainedSourceRepublishPreparation{}, fmt.Errorf("validate retained source-republish CURRENT comparison (comparison=%t, generation_matches=%t, resolved_components=%d, resolved_path_matches=%t): %w",
+		return retainedSourceRepublishPreparation{Preview: preview}, fmt.Errorf("validate retained source-republish CURRENT comparison (comparison=%t, generation_matches=%t, resolved_components=%d, resolved_path_matches=%t): %w",
 			preview.CurrentComparison != nil,
 			preview.CurrentComparison != nil && preview.CurrentComparison.Generation == current.Record.Generation,
 			len(preview.ResolvedPathComponents),
 			len(preview.ResolvedPathComponents) != 0 && strings.Join(preview.ResolvedPathComponents, "/") == current.Record.RelativePath,
 			persistence.ErrPublicationAdmissionConflict)
 	}
+	claimID := currentPublicationNamespaceClaim(snapshot.Library, current.Record.RelativePath)
+	if claimID == uuid.Nil {
+		return retainedSourceRepublishPreparation{Preview: preview}, fmt.Errorf("resolve retained source-republish CURRENT claim: %w", persistence.ErrPublicationAdmissionConflict)
+	}
+	outputRoot, err := sourcefs.NewOutputOpener().OpenRoot(ctx, runtimeSettings.OutputDirectory)
+	if err != nil {
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("open source-republish output root: %w", err)
+	}
+	defer func() { _ = outputRoot.Close() }()
+	before, err := captureObsoletePublicationOutput(ctx, outputRoot, runtimeSettings.OutputDirectory, current.Record, claimID)
+	if err != nil {
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("capture source-republish CURRENT: %w", err)
+	}
+	capture, err := (metadata.Reader{}).Read(ctx, before.NativePath, metadata.ReadRequest{CoverInspection: true, LimitSourceCover: false})
+	if err != nil {
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("read source-republish CURRENT metadata: %w", err)
+	}
+	artwork, err := metadata.ReadArtworkSnapshot(ctx, before.NativePath)
+	if err != nil {
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("read source-republish CURRENT artwork: %w", err)
+	}
+	assets, err := ObservePublicationAssets(capture)
+	if err != nil {
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("observe retained source-republish CURRENT assets: %w", err)
+	}
+	if !reflect.DeepEqual(capture.Tags, current.Metadata.Tags) || !reflect.DeepEqual(assets, current.Assets) {
+		return retainedSourceRepublishPreparation{Preview: preview}, fmt.Errorf("validate retained source-republish CURRENT witness: %w", persistence.ErrPublicationAdmissionConflict)
+	}
+	after, err := captureObsoletePublicationOutput(ctx, outputRoot, runtimeSettings.OutputDirectory, current.Record, claimID)
+	if err != nil {
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("recapture source-republish CURRENT: %w", err)
+	}
+	if before.FileSize != after.FileSize || before.ModifiedAt != after.ModifiedAt ||
+		!reflect.DeepEqual(before.SHA256, after.SHA256) || before.NativePath != after.NativePath {
+		return retainedSourceRepublishPreparation{Preview: preview}, fmt.Errorf("validate stable retained source-republish CURRENT witness: %w", persistence.ErrPublicationAdmissionConflict)
+	}
+	currentWitness := persistence.PublicationCurrentWitness{
+		Generation: current.Record.Generation, RelativePath: current.Record.RelativePath,
+		Ownership:  persistence.PublicationFileIdentity{SizeBytes: sourceRepublishInt64Pointer(before.FileSize), MTime: sourceRepublishInt64Pointer(before.ModifiedAt.UnixMicro()), SHA256: hex.EncodeToString(before.SHA256)},
+		AudioFacts: current.Audio.Facts, Assets: assets.Clone(), Tags: cloneDesiredPublicationTags(capture.Tags),
+		ArtworkInventory: audioUpgradeArtworkWitnesses(artwork.ArtworkInventory()),
+	}
+	lyrics := persistence.PublicationRepublishLyrics{State: "absent", Origin: "none"}
+	if lyricsPlan.State == "value" {
+		lyrics = persistence.PublicationRepublishLyrics{State: "value", Origin: lyricsPlan.Origin, Text: lyricsPlan.Lyrics, SHA256: lyricsPlan.SHA256}
+	}
+	lyricsAuthorityValue := persistence.PublicationInitialLyricsInput{}
+	if lyricsAuthority != nil {
+		lyricsAuthorityValue = *lyricsAuthority
+	}
+	lookup := publicationRepublishLyricsLookup(selected.Input.AnalysedMetadata, runtimeSettings.LRCLIBEnabled)
+	cover, err := publicationRepublishCoverInput(snapshot.EffectiveCoverInput, coverPlan)
+	if err != nil {
+		return retainedSourceRepublishPreparation{}, err
+	}
+	sourceAuthority := persistence.PublicationSourceAuthority{
+		Present: true, PositionID: positionID, Mode: authority.Mode, Revision: authority.Revision,
+		PublicationEpoch: authority.PublicationEpoch, PublicationGeneration: authority.PublicationGeneration,
+		SourceLocationID: authority.SourceLocationID, MediaVariantID: authority.MediaVariantID,
+	}
+	input := persistence.PublicationInputs{
+		Version: persistence.PublicationSourceRepublishInputsVersion, QualityPolicyVersion: publication.QualityPolicyVersion,
+		IntentKind: "audio", Format: publication.AudioPublicationFormat(runtimeSettings.PublicationFormat),
+		Audio: audioInputCopy(&selected.Input), DesiredTags: cloneDesiredPublicationTags(preview.DesiredTags.Tags),
+		Tools: append([]persistence.SourceAnalysisToolSelection(nil), selectedTools...),
+		SourceRepublish: &persistence.PublicationSourceRepublishInput{
+			Current: currentWitness, Mode: mode, SourceAuthority: sourceAuthority,
+			Association: persistence.PublicationRepublishAssociation{ID: selected.AssociationID, LocationID: selected.Selection.LocationID, MediaVariantID: selected.Selection.MediaVariantID},
+			Lyrics:      lyrics, LyricsAuthority: lyricsAuthorityValue, LyricsLookup: lookup, Cover: cover,
+		},
+	}
+	if err := input.Validate(); err != nil {
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("validate source-republish frozen inputs: %w", err)
+	}
+	frozenInputs, err := json.Marshal(input)
+	if err != nil {
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("encode source-republish frozen inputs: %w", err)
+	}
+	format := publication.AudioPublicationFormat(runtimeSettings.PublicationFormat)
+	qualityComparison := sourceRepublishOutputQualityComparison(preview.Transform, selected, current, format)
+	qualityReason := sourceRepublishQualityReasonCode(qualityComparison)
+	capability := &SourceRepublishConfirmationCapability{
+		Kind: "retained_same_path", Status: "ready", ReasonCodes: []string{}, CurrentGeneration: current.Record.Generation,
+	}
+	if qualityReason != "" {
+		capability.Status = "blocked"
+		capability.ReasonCodes = []string{qualityReason}
+		preview.Blockers = append(preview.Blockers, qualityReason)
+	} else if sourceRepublishIsUnchanged(preview, selected, current, format) {
+		capability.Status = "unchanged"
+		capability.ReasonCodes = []string{"content_unchanged"}
+	}
+	preview.ConfirmationCapability = capability
+	preview.ContextDigest, err = retainedSourceRepublishDigest(preview, basePlanningDigest, frozenInputs, manifest, runtimeSettings, selectedTools)
+	if err != nil {
+		return retainedSourceRepublishPreparation{}, fmt.Errorf("digest retained source-republish confirmation: %w", err)
+	}
 	return retainedSourceRepublishPreparation{
 		Repository: repository, Snapshot: snapshot, RuntimeSettings: runtimeSettings, Authority: authority,
 		SelectedTools: selectedTools, Selected: selected, Choice: choice, Preview: preview, Manifest: manifest,
-		LyricsAuthority: lyricsAuthority, LyricsPlan: lyricsPlan, CoverPlan: coverPlan,
+		LyricsAuthority: lyricsAuthority, LyricsPlan: lyricsPlan, CoverPlan: coverPlan, Input: input, FrozenInputs: frozenInputs, BasePlanningDigest: basePlanningDigest,
 	}, nil
 }
 

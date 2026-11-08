@@ -36,6 +36,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	outputRoot string,
 	root sourcefs.OutputDirectory,
 	commands *simplePublicationTrackingRunner,
+	allowSourceRepublishReprepare bool,
 ) (resultErr error) {
 	if input.IntentKind == "rewrite" && (input.Rewrite == nil || input.Audio != nil || input.AudioUpgrade != nil) ||
 		input.IntentKind == "audio" && (input.Audio == nil || input.Rewrite != nil) ||
@@ -221,6 +222,11 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if err != nil {
 		return err
 	}
+	if input.SourceRepublish != nil {
+		if err := validateSourceRepublishPreparedAudioQuality(input, prepared.Observation.ActualAudio); err != nil {
+			return err
+		}
+	}
 	if commands.QuiescenceUnknown() {
 		return errors.New("publication command quiescence is unknown")
 	}
@@ -286,11 +292,25 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		if input.SourceRepublish != nil {
 			identity := input.SourceRepublish.Current.Ownership
 			currentDigest, digestErr := digestRegular(ctx, currentFile)
-			if digestErr != nil || identity.SizeBytes == nil || identity.MTime == nil ||
-				!currentInfo.Mode().IsRegular() || currentInfo.Size() != *identity.SizeBytes ||
-				currentInfo.ModTime().UnixMicro() != *identity.MTime || currentDigest != identity.SHA256 {
+			oldIdentityMatches := digestErr == nil && identity.SizeBytes != nil && identity.MTime != nil &&
+				currentInfo.Mode().IsRegular() && currentInfo.Size() == *identity.SizeBytes &&
+				currentInfo.ModTime().UnixMicro() == *identity.MTime && currentDigest == identity.SHA256
+			if !oldIdentityMatches {
+				if !allowSourceRepublishReprepare {
+					_ = currentFile.Close()
+					return errors.Join(errors.New("source-republish CURRENT output changed before replacement"), digestErr)
+				}
+				inspected, inspectErr := executor.inspectSourceRepublishTargetForReprepare(ctx, input, guard, mutation, targetName, currentFile, currentInfo, commands)
+				if inspectErr != nil {
+					_ = currentFile.Close()
+					return inspectErr
+				}
+				currentInfo = inspected.info
+				digestErr = nil
+			}
+			if digestErr != nil {
 				_ = currentFile.Close()
-				return errors.Join(errors.New("source-republish CURRENT output changed before replacement"), digestErr)
+				return fmt.Errorf("inspect source-republish CURRENT output: %w", digestErr)
 			}
 		}
 		if err := currentFile.Close(); err != nil {
@@ -314,14 +334,17 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			return fmt.Errorf("atomically replace current publication: %w", err)
 		}
 	} else if errors.Is(currentErr, fs.ErrNotExist) || errors.Is(currentErr, os.ErrNotExist) {
-		if input.SourceRepublish != nil {
-			return errors.New("source-republish CURRENT output is unavailable")
-		}
 		if err := executor.checkPublicationResultCurrent(ctx, guard); err != nil {
 			return err
 		}
+		if input.SourceRepublish != nil {
+			replaceAllowed, err := executor.repository.CheckPublicationTargetReplacement(ctx, guard, manifest.RelativePath)
+			if err != nil || !replaceAllowed {
+				return errors.Join(err, errors.New("source-republish namespace replacement authority is unavailable"))
+			}
+		}
 		if err := mutation.RenameNoReplace(ctx, candidateRoot, tempName, targetParent, targetName); err != nil {
-			return fmt.Errorf("install first publication without replacement: %w", err)
+			return fmt.Errorf("install publication without replacement: %w", err)
 		}
 	} else {
 		return fmt.Errorf("inspect current publication destination: %w", currentErr)

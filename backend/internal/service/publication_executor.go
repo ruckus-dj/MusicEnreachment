@@ -187,7 +187,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	releaseResources = release
 	claim, err := executor.repository.ClaimPublicationDelivery(ctx, guard)
 	if err != nil || claim != persistence.PublicationDeliveryAcquired && claim != persistence.PublicationDeliveryInterrupted &&
-		claim != persistence.PublicationDeliverySourceRepublishRecovery {
+		claim != persistence.PublicationDeliverySourceRepublishRecovery && claim != persistence.PublicationDeliveryReprepare {
 		return errors.Join(err, errors.New("publication delivery claim was not acquired"))
 	}
 	defer func() {
@@ -242,5 +242,6 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 			return nil
 		}
 	}
-	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root, commands)
+	allowSourceRepublishReprepare := claim == persistence.PublicationDeliveryReprepare || guard.ApplicationAttempt > 1
+	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root, commands, allowSourceRepublishReprepare)
 }

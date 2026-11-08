@@ -217,3 +217,120 @@ it("requests the forced comparison without offering confirmation", async () => {
     "Сравнение доступно только для чтения",
   );
 });
+
+it("submits retained republish workflow and frozen CURRENT identity", async () => {
+  api.getLibraryFirstPublicationPreview.mockResolvedValue({
+    status: 200,
+    data: {
+      ...preview,
+      current_comparison: {
+        audio_status: "matches",
+        current_components: ["Artist", "Release", "01 - Track.flac"],
+        generation: "generation-1",
+        reason: "same path",
+        rendered_components: ["Artist", "Release", "01 - Track.flac"],
+        rendered_matches: true,
+        resolved_components: ["Artist", "Release", "01 - Track.flac"],
+        resolved_matches: true,
+        status: "matches",
+        tag_differences: [],
+      },
+      confirmation_capability: {
+        kind: "retained_same_path",
+        status: "ready",
+        reason_codes: [],
+        current_generation: "generation-1",
+      },
+      mode: "ordinary",
+      source_candidates: [],
+    },
+  });
+  api.startLibraryFirstPublication.mockResolvedValue({
+    status: 202,
+    data: { id: "retained-operation" },
+  });
+
+  render(component(0, vi.fn(), true));
+  fireEvent.click(
+    screen.getByRole("radio", {
+      name: "Повторная публикация выбранного источника",
+    }),
+  );
+  await screen.findByRole("button", {
+    name: "Повторная публикация выбранного источника",
+  });
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Повторная публикация выбранного источника",
+    }),
+  );
+
+  await waitFor(() =>
+    expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledWith(
+      "release-1",
+      "position-1",
+      { workflow: "retained_same_path", mode: "ordinary" },
+      { cache: "no-store" },
+    ),
+  );
+  await waitFor(() =>
+    expect(api.startLibraryFirstPublication).toHaveBeenCalledWith(
+      "release-1",
+      "position-1",
+      {
+        workflow: "retained_same_path",
+        mode: "ordinary",
+        preview_digest: "frozen-digest",
+        expected_epoch: "epoch-1",
+        expected_generation: "generation-1",
+      },
+    ),
+  );
+});
+
+it("does not offer confirmation when retained CURRENT content is unchanged", async () => {
+  api.getLibraryFirstPublicationPreview.mockResolvedValue({
+    status: 200,
+    data: {
+      ...preview,
+      current_comparison: {
+        audio_status: "matches",
+        current_components: [],
+        generation: "generation-1",
+        reason: "same content",
+        rendered_components: [],
+        rendered_matches: true,
+        resolved_components: [],
+        resolved_matches: true,
+        status: "matches",
+        tag_differences: [],
+      },
+      confirmation_capability: {
+        kind: "retained_same_path",
+        status: "unchanged",
+        reason_codes: ["content_unchanged"],
+        current_generation: "generation-1",
+      },
+      mode: "ordinary",
+      source_candidates: [],
+    },
+  });
+
+  render(component(0, vi.fn(), true));
+  fireEvent.click(
+    screen.getByRole("radio", {
+      name: "Повторная публикация выбранного источника",
+    }),
+  );
+
+  const confirm = await screen.findByRole("button", {
+    name: "Повторная публикация выбранного источника",
+  });
+  expect(confirm).toBeDisabled();
+  expect(
+    screen.getByText(
+      "Выбранный источник не изменит текущую публикацию; действие недоступно.",
+    ),
+  ).toBeInTheDocument();
+  expect(api.startLibraryFirstPublication).not.toHaveBeenCalled();
+});

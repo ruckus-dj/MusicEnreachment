@@ -42,8 +42,19 @@ export const firstPublicationPreviewMessages = {
     namespaceCheck: "Namespace check before start",
     previewNotPublicationCheck:
       "The preview does not verify that publication can proceed.",
-    comparisonReadOnly:
-      "Read-only comparison: republishing from this preview is not available yet.",
+    comparisonReadOnly: "This CURRENT comparison is read-only.",
+    currentWorkflow: "CURRENT action",
+    currentCompare: "Compare",
+    retainedRepublish: "Republish selected source",
+    retainedPlan: "Same-path republish plan",
+    retainedCapabilityReady:
+      "The selected source is eligible for same-path republishing. The publication is revalidated before start; final installation is not guaranteed.",
+    retainedPrestartRevalidation:
+      "A ready capability still requires revalidation before start and does not guarantee final installation.",
+    retainedUnchanged:
+      "The selected source would not change the current publication; no action is available.",
+    retainedBlocked:
+      "Republishing is unavailable for the current publication state.",
     mode: "Comparison mode",
     ordinary: "Ordinary",
     forced: "Forced",
@@ -194,8 +205,19 @@ export const firstPublicationPreviewMessages = {
     namespaceCheck: "Проверка namespace перед запуском",
     previewNotPublicationCheck:
       "Предпросмотр не проверяет возможность публикации.",
-    comparisonReadOnly:
-      "Сравнение доступно только для чтения: повторная публикация из этого предпросмотра пока недоступна.",
+    comparisonReadOnly: "Сравнение доступно только для чтения.",
+    currentWorkflow: "Действие с текущей публикацией",
+    currentCompare: "Сравнение",
+    retainedRepublish: "Повторная публикация выбранного источника",
+    retainedPlan: "План повторной публикации по тому же пути",
+    retainedCapabilityReady:
+      "Выбранный источник доступен для повторной публикации по тому же пути. Перед запуском публикация будет проверена повторно; успешная установка не гарантируется.",
+    retainedPrestartRevalidation:
+      "Даже при готовом разрешении перед запуском обязательна повторная проверка; успешная установка не гарантируется.",
+    retainedUnchanged:
+      "Выбранный источник не изменит текущую публикацию; действие недоступно.",
+    retainedBlocked:
+      "Повторная публикация недоступна для текущего состояния публикации.",
     mode: "Режим сравнения",
     ordinary: "Обычный",
     forced: "Принудительный",

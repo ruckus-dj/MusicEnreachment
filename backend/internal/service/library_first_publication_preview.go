@@ -50,6 +50,14 @@ type FirstPublicationPreview struct {
 	CurrentComparison      *FirstPublicationCurrentComparison       `json:"current_comparison,omitempty"`
 	CoverPlan              *FirstPublicationCoverPlan               `json:"cover_plan,omitempty"`
 	LyricsPlan             *FirstPublicationLyricsPlan              `json:"lyrics_plan,omitempty"`
+	ConfirmationCapability *SourceRepublishConfirmationCapability   `json:"confirmation_capability,omitempty"`
+}
+
+type SourceRepublishConfirmationCapability struct {
+	Kind              string    `json:"kind"`
+	Status            string    `json:"status"`
+	ReasonCodes       []string  `json:"reason_codes"`
+	CurrentGeneration uuid.UUID `json:"current_generation"`
 }
 
 type FirstPublicationCurrentComparison struct {

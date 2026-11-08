@@ -14,6 +14,7 @@ import (
 
 type LibraryFirstPublicationPreviewInput struct {
 	LibraryPublicationInput
+	Workflow       string `query:"workflow"`
 	LocationID     string `query:"location_id"`
 	MediaVariantID string `query:"media_variant_id"`
 	StreamIndex    string `query:"stream_index"`
@@ -28,28 +29,33 @@ type LibraryFirstPublicationPreviewOutput struct {
 // intended for the API. In particular it does not expose the service's frozen
 // publication inputs or installation/path details.
 type LibraryFirstPublicationPreviewResponse struct {
-	ReleaseID              uuid.UUID                           `json:"release_id"`
-	PositionID             uuid.UUID                           `json:"position_id"`
-	Epoch                  uuid.UUID                           `json:"epoch"`
-	ContextDigest          string                              `json:"context_digest"`
-	SelectedSource         *firstPublicationPreviewSource      `json:"selected_source,omitempty"`
-	SourceCandidates       []firstPublicationPreviewSource     `json:"source_candidates"`
-	Transform              *firstPublicationPreviewTransform   `json:"transform,omitempty"`
-	PathComponents         []string                            `json:"path_components,omitempty"`
-	ResolvedPathComponents []string                            `json:"resolved_path_components,omitempty"`
-	DesiredTags            map[string][]string                 `json:"desired_tags"`
-	MetadataRevisions      map[string]int64                    `json:"metadata_revisions"`
-	Warnings               []string                            `json:"warnings"`
-	Blockers               []string                            `json:"blockers"`
-	NativeStatus           string                              `json:"native_status"`
-	Mode                   string                              `json:"mode"`
-	CurrentComparison      *firstPublicationCurrentComparison  `json:"current_comparison,omitempty"`
-	CoverPlan              *firstPublicationCoverPlan          `json:"cover_plan,omitempty"`
-	LyricsPlan             *service.FirstPublicationLyricsPlan `json:"lyrics_plan,omitempty"`
+	ReleaseID              uuid.UUID                                      `json:"release_id"`
+	PositionID             uuid.UUID                                      `json:"position_id"`
+	Epoch                  uuid.UUID                                      `json:"epoch"`
+	ContextDigest          string                                         `json:"context_digest"`
+	SelectedSource         *firstPublicationPreviewSource                 `json:"selected_source,omitempty"`
+	SourceCandidates       []firstPublicationPreviewSource                `json:"source_candidates"`
+	Transform              *firstPublicationPreviewTransform              `json:"transform,omitempty"`
+	PathComponents         []string                                       `json:"path_components,omitempty"`
+	ResolvedPathComponents []string                                       `json:"resolved_path_components,omitempty"`
+	DesiredTags            map[string][]string                            `json:"desired_tags"`
+	MetadataRevisions      map[string]int64                               `json:"metadata_revisions"`
+	Warnings               []string                                       `json:"warnings"`
+	Blockers               []string                                       `json:"blockers"`
+	NativeStatus           string                                         `json:"native_status"`
+	Mode                   string                                         `json:"mode"`
+	CurrentComparison      *firstPublicationCurrentComparison             `json:"current_comparison,omitempty"`
+	CoverPlan              *firstPublicationCoverPlan                     `json:"cover_plan,omitempty"`
+	LyricsPlan             *service.FirstPublicationLyricsPlan            `json:"lyrics_plan,omitempty"`
+	ConfirmationCapability *service.SourceRepublishConfirmationCapability `json:"confirmation_capability,omitempty"`
 }
 
 type libraryPublicationPreviewModeService interface {
 	PreviewFirstSelectedMode(context.Context, uuid.UUID, uuid.UUID, *service.FirstPublicationSourceChoice, string) (service.FirstPublicationPreview, error)
+}
+
+type librarySourceRepublishPreviewService interface {
+	PreviewSourceRepublishRetainingSelection(context.Context, uuid.UUID, uuid.UUID, string) (service.FirstPublicationPreview, error)
 }
 
 type firstPublicationCurrentComparison struct {
@@ -133,6 +139,33 @@ func registerLibraryFirstPublicationPreview(api huma.API, dependencies Dependenc
 		if dependencies.LibraryPublications == nil {
 			return nil, huma.Error503ServiceUnavailable("library publication service is unavailable")
 		}
+		if input.Workflow != "" && input.Workflow != "first" && input.Workflow != "retained_same_path" {
+			return nil, huma.Error400BadRequest("workflow must be first or retained_same_path")
+		}
+		if input.Workflow == "first" && input.Mode == "forced" {
+			return nil, huma.Error400BadRequest("forced mode is not available for the first workflow")
+		}
+		if input.Workflow == "retained_same_path" {
+			if input.LocationID != "" || input.MediaVariantID != "" || input.StreamIndex != "" {
+				return nil, huma.Error400BadRequest("retained_same_path workflow does not accept source selection")
+			}
+			mode := input.Mode
+			if mode == "" {
+				mode = "ordinary"
+			}
+			if mode != "ordinary" && mode != "forced" {
+				return nil, huma.Error400BadRequest("mode must be ordinary or forced")
+			}
+			retainedService, ok := dependencies.LibraryPublications.(librarySourceRepublishPreviewService)
+			if !ok {
+				return nil, huma.Error503ServiceUnavailable("retained source republish preview is unavailable")
+			}
+			preview, err := retainedService.PreviewSourceRepublishRetainingSelection(ctx, input.ReleaseID, input.PositionID, mode)
+			if err != nil {
+				return nil, firstPublicationPreviewError(err)
+			}
+			return &LibraryFirstPublicationPreviewOutput{Body: libraryFirstPublicationPreviewResponse(preview)}, nil
+		}
 		choice, choiceErr := previewSourceChoiceFromQuery(input.LocationID, input.MediaVariantID, input.StreamIndex)
 		if choiceErr != nil {
 			return nil, huma.Error400BadRequest("source selection requires location_id, media_variant_id, and stream_index")
@@ -170,6 +203,16 @@ func registerLibraryFirstPublicationPreview(api huma.API, dependencies Dependenc
 		}
 		return &LibraryFirstPublicationPreviewOutput{Body: libraryFirstPublicationPreviewResponse(preview)}, nil
 	})
+}
+
+func firstPublicationPreviewError(err error) error {
+	if errors.Is(err, persistence.ErrPublicationAdmissionConflict) {
+		return huma.Error409Conflict("selected source changed; refresh preview and retry")
+	}
+	if errors.Is(err, persistence.ErrPublicationPositionNotFound) {
+		return huma.Error404NotFound("library publication position not found")
+	}
+	return huma.Error500InternalServerError("first publication preview failed")
 }
 
 func previewSourceChoiceFromQuery(locationID, variantID, streamIndex string) (*service.FirstPublicationSourceChoice, error) {
@@ -213,7 +256,7 @@ func libraryFirstPublicationPreviewResponse(preview service.FirstPublicationPrev
 		DesiredTags:            clonePreviewTags(preview.DesiredTags.Tags),
 		MetadataRevisions:      preview.MetadataRevisions, Warnings: append([]string{}, preview.Warnings...),
 		Blockers: append([]string{}, preview.Blockers...), NativeStatus: preview.NativeStatus,
-		Mode: preview.Mode,
+		Mode: preview.Mode, ConfirmationCapability: preview.ConfirmationCapability,
 	}
 	if preview.LyricsPlan != nil {
 		plan := *preview.LyricsPlan

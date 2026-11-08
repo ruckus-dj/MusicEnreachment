@@ -15,6 +15,8 @@ type SourceChoice = Pick<
   "location_id" | "media_variant_id" | "stream_index"
 >;
 
+type PreviewWorkflow = "first" | "comparison" | "retained_same_path";
+
 function choiceKey(choice: SourceChoice | null) {
   return choice
     ? `${choice.location_id}:${choice.media_variant_id}:${choice.stream_index}`
@@ -149,10 +151,14 @@ export function FirstPublicationPreview({
     null,
   );
   const [mode, setMode] = useState<"ordinary" | "forced">("ordinary");
+  const [workflow, setWorkflow] = useState<PreviewWorkflow>(
+    comparisonOnly ? "comparison" : "first",
+  );
   const [sourceCandidates, setSourceCandidates] = useState<
     FirstPublicationPreviewSource[]
   >([]);
   const [previewChoiceKey, setPreviewChoiceKey] = useState("");
+  const [previewWorkflow, setPreviewWorkflow] = useState<PreviewWorkflow>();
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
@@ -168,6 +174,7 @@ export function FirstPublicationPreview({
     positionId,
     choiceKey: "unresolved",
     mode: "ordinary",
+    workflow: comparisonOnly ? "comparison" : "first",
     refreshToken,
   });
   currentIdentity.current = {
@@ -175,6 +182,7 @@ export function FirstPublicationPreview({
     positionId,
     choiceKey: choiceKey(selectedChoice),
     mode,
+    workflow,
     refreshToken,
   };
 
@@ -184,12 +192,15 @@ export function FirstPublicationPreview({
       releaseId,
       positionId,
       choiceKey: "unresolved",
+      workflow: comparisonOnly ? "comparison" : "first",
     };
     mounted.current = true;
     setSelectedChoice(null);
+    setWorkflow(comparisonOnly ? "comparison" : "first");
     setSourceCandidates([]);
     setPreview(undefined);
     setPreviewChoiceKey("");
+    setPreviewWorkflow(undefined);
     setLoading(false);
     setConfirming(false);
     setError("");
@@ -201,7 +212,7 @@ export function FirstPublicationPreview({
       mounted.current = false;
       requestSequence.current += 1;
     };
-  }, [releaseId, positionId]);
+  }, [releaseId, positionId, comparisonOnly]);
 
   const isCurrentRequest = useCallback(
     (
@@ -211,6 +222,7 @@ export function FirstPublicationPreview({
         positionId: string;
         choiceKey: string;
         mode: string;
+        workflow: PreviewWorkflow;
         refreshToken?: number | string;
       },
       requireToken = false,
@@ -222,6 +234,7 @@ export function FirstPublicationPreview({
         currentIdentity.current.positionId === requestIdentity.positionId &&
         currentIdentity.current.choiceKey === requestIdentity.choiceKey &&
         currentIdentity.current.mode === requestIdentity.mode &&
+        currentIdentity.current.workflow === requestIdentity.workflow &&
         (!requireToken ||
           Object.is(
             currentIdentity.current.refreshToken,
@@ -233,13 +246,18 @@ export function FirstPublicationPreview({
   );
 
   const loadPreview = useCallback(
-    async (choice: SourceChoice | null, requestMode = mode) => {
+    async (
+      choice: SourceChoice | null,
+      requestMode = mode,
+      requestWorkflow = workflow,
+    ) => {
       const request = ++requestSequence.current;
       const requestIdentity = {
         releaseId,
         positionId,
         choiceKey: choiceKey(choice),
         mode: requestMode,
+        workflow: requestWorkflow,
         refreshToken,
       };
       currentIdentity.current = requestIdentity;
@@ -251,14 +269,16 @@ export function FirstPublicationPreview({
         const response = await getLibraryFirstPublicationPreview(
           releaseId,
           positionId,
-          choice
-            ? {
-                location_id: choice.location_id,
-                media_variant_id: choice.media_variant_id,
-                stream_index: String(choice.stream_index),
-                mode: requestMode,
-              }
-            : { mode: requestMode },
+          requestWorkflow === "retained_same_path"
+            ? { workflow: "retained_same_path", mode: requestMode }
+            : choice
+              ? {
+                  location_id: choice.location_id,
+                  media_variant_id: choice.media_variant_id,
+                  stream_index: String(choice.stream_index),
+                  mode: requestMode,
+                }
+              : { mode: requestMode },
           { cache: "no-store" },
         );
         if (!isCurrentRequest(request, requestIdentity, true)) return;
@@ -279,6 +299,7 @@ export function FirstPublicationPreview({
         setPreview(response.data);
         setSourceCandidates(response.data.source_candidates ?? []);
         setPreviewChoiceKey(requestIdentity.choiceKey);
+        setPreviewWorkflow(requestIdentity.workflow);
       } catch (reason) {
         if (!isCurrentRequest(request, requestIdentity, true)) return;
         setError(
@@ -290,7 +311,15 @@ export function FirstPublicationPreview({
         if (isCurrentRequest(request, requestIdentity, true)) setLoading(false);
       }
     },
-    [copy, releaseId, positionId, mode, refreshToken, isCurrentRequest],
+    [
+      copy,
+      releaseId,
+      positionId,
+      mode,
+      workflow,
+      refreshToken,
+      isCurrentRequest,
+    ],
   );
 
   useEffect(() => {
@@ -312,9 +341,10 @@ export function FirstPublicationPreview({
     setPreview(undefined);
     setSourceCandidates([]);
     setPreviewChoiceKey("");
+    setPreviewWorkflow(undefined);
     setLoading(false);
     setError("");
-    if (hadPreviewRequest) void loadPreview(choice);
+    if (hadPreviewRequest) void loadPreview(choice, mode, workflow);
   }, [
     refreshToken,
     confirming,
@@ -323,6 +353,8 @@ export function FirstPublicationPreview({
     loading,
     preview,
     selectedChoice,
+    mode,
+    workflow,
     loadPreview,
   ]);
 
@@ -342,11 +374,13 @@ export function FirstPublicationPreview({
       positionId,
       choiceKey: nextKey,
       mode,
+      workflow,
       refreshToken,
     };
     setSelectedChoice(choice);
     setPreview(undefined);
     setPreviewChoiceKey("");
+    setPreviewWorkflow(undefined);
     setLoading(false);
     setError("");
     setAdmissionUncertain(false);
@@ -370,13 +404,46 @@ export function FirstPublicationPreview({
       positionId,
       choiceKey: choiceKey(selectedChoice),
       mode: nextMode,
+      workflow,
       refreshToken,
     };
     setMode(nextMode);
     setPreview(undefined);
     setPreviewChoiceKey("");
+    setPreviewWorkflow(undefined);
     setError("");
-    void loadPreview(selectedChoice, nextMode);
+    void loadPreview(selectedChoice, nextMode, workflow);
+  }
+
+  function changeWorkflow(nextWorkflow: PreviewWorkflow) {
+    if (
+      nextWorkflow === workflow ||
+      confirmationPending.current ||
+      admissionLocked.current ||
+      confirming ||
+      admissionUncertain ||
+      admittedOperationID
+    )
+      return;
+    const nextChoice = selectedChoice;
+    ++requestSequence.current;
+    currentIdentity.current = {
+      releaseId,
+      positionId,
+      choiceKey: choiceKey(nextChoice),
+      mode,
+      workflow: nextWorkflow,
+      refreshToken,
+    };
+    setWorkflow(nextWorkflow);
+    setSelectedChoice(nextChoice);
+    setPreview(undefined);
+    setSourceCandidates([]);
+    setPreviewChoiceKey("");
+    setPreviewWorkflow(undefined);
+    setLoading(false);
+    setError("");
+    void loadPreview(nextChoice, mode, nextWorkflow);
   }
 
   async function confirmPreview() {
@@ -396,6 +463,7 @@ export function FirstPublicationPreview({
       positionId,
       choiceKey: choiceKey(confirmedChoice),
       mode,
+      workflow,
     };
     const confirmedPreview = preview;
     if (previewChoiceKey !== requestIdentity.choiceKey) return;
@@ -403,21 +471,32 @@ export function FirstPublicationPreview({
     setConfirming(true);
     setError("");
     try {
+      const retained = requestIdentity.workflow === "retained_same_path";
+      const body = retained
+        ? {
+            workflow: "retained_same_path",
+            mode,
+            preview_digest: confirmedPreview.context_digest,
+            expected_epoch: confirmedPreview.epoch,
+            expected_generation:
+              confirmedPreview.confirmation_capability?.current_generation,
+          }
+        : {
+            preview_digest: confirmedPreview.context_digest,
+            expected_epoch: confirmedPreview.epoch,
+            ...(confirmedChoice && confirmedPreview.selected_source
+              ? {
+                  location_id: confirmedPreview.selected_source.location_id,
+                  media_variant_id:
+                    confirmedPreview.selected_source.media_variant_id,
+                  stream_index: confirmedPreview.selected_source.stream_index,
+                }
+              : {}),
+          };
       const response = await startLibraryFirstPublication(
         releaseId,
         positionId,
-        {
-          preview_digest: confirmedPreview.context_digest,
-          expected_epoch: confirmedPreview.epoch,
-          ...(confirmedChoice && confirmedPreview.selected_source
-            ? {
-                location_id: confirmedPreview.selected_source.location_id,
-                media_variant_id:
-                  confirmedPreview.selected_source.media_variant_id,
-                stream_index: confirmedPreview.selected_source.stream_index,
-              }
-            : {}),
-        },
+        body,
       );
       if (!isCurrentRequest(request, requestIdentity)) return;
       if (response.status === 202) {
@@ -466,15 +545,29 @@ export function FirstPublicationPreview({
       preview?.selected_source &&
       sameChoice(preview.selected_source, selectedChoice),
   );
+  const retainedCapability = preview?.confirmation_capability;
+  const retainedReady = Boolean(
+    retainedCapability?.kind === "retained_same_path" &&
+      retainedCapability.status === "ready" &&
+      retainedCapability.current_generation !==
+        "00000000-0000-0000-0000-000000000000" &&
+      retainedCapability.current_generation ===
+        preview?.current_comparison?.generation &&
+      preview?.mode === mode,
+  );
   const canConfirm = Boolean(
-    !comparisonOnly &&
+    (workflow === "retained_same_path"
+      ? retainedReady
+      : !comparisonOnly && workflow === "first") &&
       preview &&
+      previewWorkflow === workflow &&
       previewChoiceKey === choiceKey(selectedChoice) &&
       preview.blockers?.length === 0 &&
-      preview.selected_source &&
-      (!needsExplicitChoice || choiceMatchesPreview) &&
-      preview.transform &&
-      preview.resolved_path_components?.length,
+      (workflow === "retained_same_path" ||
+        (preview.selected_source &&
+          (!needsExplicitChoice || choiceMatchesPreview) &&
+          preview.transform &&
+          preview.resolved_path_components?.length)),
   );
   const audioEvidence = preview?.current_comparison?.audio_evidence;
   const audioAuthorityPresent =
@@ -494,7 +587,30 @@ export function FirstPublicationPreview({
     >
       {comparisonOnly && (
         <>
-          <p role="note">{copy.comparisonReadOnly}</p>
+          <fieldset className="space-y-2" disabled={loading}>
+            <legend className="font-medium">{copy.currentWorkflow}</legend>
+            <label className="block">
+              <input
+                type="radio"
+                name={`current-workflow-${releaseId}-${positionId}`}
+                checked={workflow === "comparison"}
+                onChange={() => changeWorkflow("comparison")}
+              />{" "}
+              {copy.currentCompare}
+            </label>
+            <label className="block">
+              <input
+                type="radio"
+                name={`current-workflow-${releaseId}-${positionId}`}
+                checked={workflow === "retained_same_path"}
+                onChange={() => changeWorkflow("retained_same_path")}
+              />{" "}
+              {copy.retainedRepublish}
+            </label>
+          </fieldset>
+          {workflow === "comparison" && (
+            <p role="note">{copy.comparisonReadOnly}</p>
+          )}
           <fieldset className="space-y-2" disabled={loading}>
             <legend className="font-medium">{copy.mode}</legend>
             <label className="block">
@@ -533,7 +649,7 @@ export function FirstPublicationPreview({
         {loading ? copy.loading : copy.preview}
       </button>
       {error && <p role="alert">{error}</p>}
-      {needsExplicitChoice && (
+      {workflow !== "retained_same_path" && needsExplicitChoice && (
         <fieldset
           className="space-y-2"
           disabled={
@@ -588,8 +704,21 @@ export function FirstPublicationPreview({
       {preview && (
         <div className="space-y-2">
           <h3 className="font-semibold">
-            {comparisonOnly ? copy.currentComparison : copy.firstPlan}
+            {workflow === "comparison"
+              ? copy.currentComparison
+              : workflow === "retained_same_path"
+                ? copy.retainedPlan
+                : copy.firstPlan}
           </h3>
+          {workflow === "retained_same_path" && retainedCapability && (
+            <p role="status">
+              {retainedCapability.status === "ready"
+                ? copy.retainedCapabilityReady
+                : retainedCapability.status === "unchanged"
+                  ? copy.retainedUnchanged
+                  : copy.retainedBlocked}
+            </p>
+          )}
           <p>
             {copy.source}:{" "}
             {preview.selected_source
@@ -660,7 +789,9 @@ export function FirstPublicationPreview({
           </div>
           <p role="status">
             {copy.namespaceCheck}: {preview.native_status}.{" "}
-            {copy.previewNotPublicationCheck}
+            {workflow === "retained_same_path"
+              ? copy.retainedPrestartRevalidation
+              : copy.previewNotPublicationCheck}
           </p>
           {preview.cover_plan && (
             <section
@@ -802,7 +933,7 @@ export function FirstPublicationPreview({
               <p>{copy.lyricsComparisonBasis}</p>
             </section>
           )}
-          {comparisonOnly && preview.current_comparison && (
+          {workflow === "comparison" && preview.current_comparison && (
             <section
               className="space-y-2"
               aria-label={copy.currentComparisonAria}
@@ -903,7 +1034,7 @@ export function FirstPublicationPreview({
               <p>{copy.readOnlyBoundary}</p>
             </section>
           )}
-          {!comparisonOnly && (
+          {!comparisonOnly && workflow === "first" && (
             <button
               type="button"
               disabled={
@@ -916,6 +1047,21 @@ export function FirstPublicationPreview({
               onClick={() => void confirmPreview()}
             >
               {confirming ? copy.publicationStart : copy.publish}
+            </button>
+          )}
+          {workflow === "retained_same_path" && (
+            <button
+              type="button"
+              disabled={
+                !canConfirm ||
+                confirming ||
+                admissionUncertain ||
+                confirmationPending.current ||
+                admissionLocked.current
+              }
+              onClick={() => void confirmPreview()}
+            >
+              {confirming ? copy.publicationStart : copy.retainedRepublish}
             </button>
           )}
         </div>

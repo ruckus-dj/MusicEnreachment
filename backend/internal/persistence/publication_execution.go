@@ -32,6 +32,7 @@ type PublicationDeliveryClaimOutcome string
 const (
 	PublicationDeliveryAcquired                PublicationDeliveryClaimOutcome = "acquired"
 	PublicationDeliveryInterrupted             PublicationDeliveryClaimOutcome = "interrupted"
+	PublicationDeliveryReprepare               PublicationDeliveryClaimOutcome = "reprepare"
 	PublicationDeliverySourceRepublishRecovery PublicationDeliveryClaimOutcome = "source_republish_recovery"
 	PublicationDeliveryAlreadyOwned            PublicationDeliveryClaimOutcome = "already_owned"
 	PublicationDeliveryBlocked                 PublicationDeliveryClaimOutcome = "blocked"
@@ -187,7 +188,10 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 				return fmt.Errorf("claim publication delivery: restart attempt preparation: %w", err)
 			}
 			outcome = PublicationDeliveryAcquired
-			if claim.State == "executing" && claim.BootUUID != guard.BootUUID {
+			if claim.State == "quiescent" && version == PublicationSourceRepublishInputsVersion &&
+				attempt.ResumeMode == PublicationResumeModePrepare {
+				outcome = PublicationDeliveryReprepare
+			} else if claim.State == "executing" && claim.BootUUID != guard.BootUUID {
 				outcome = PublicationDeliveryInterrupted
 			}
 			return nil
