@@ -14,6 +14,10 @@ import (
 )
 
 func validateAutomaticLyricsRetryCurrentAuthority(ctx context.Context, tx bun.Tx, positionID uuid.UUID, authority PublicationAutomaticLyricsRetryInput) (bool, error) {
+	return validatePublicationLyricsCurrentAuthority(ctx, tx, positionID, authority.ExpectedMetadataRevision, authority.Desired)
+}
+
+func validatePublicationLyricsCurrentAuthority(ctx context.Context, tx bun.Tx, positionID uuid.UUID, expectedRevision int64, desired *librarymetadata.FieldValue) (bool, error) {
 	var raw []byte
 	var revision int64
 	if err := tx.NewRaw(`SELECT metadata,metadata_revision FROM release_track WHERE id=? FOR UPDATE`, positionID).Scan(ctx, &raw, &revision); err != nil {
@@ -22,7 +26,7 @@ func validateAutomaticLyricsRetryCurrentAuthority(ctx context.Context, tx bun.Tx
 		}
 		return false, fmt.Errorf("lock current automatic lyrics retry authority: %w", err)
 	}
-	if revision != authority.ExpectedMetadataRevision {
+	if revision != expectedRevision {
 		return false, nil
 	}
 	var root map[string]json.RawMessage
@@ -48,7 +52,7 @@ func validateAutomaticLyricsRetryCurrentAuthority(ctx context.Context, tx bun.Tx
 		copy.Value = clonePublicationJSONValue(field.Value)
 		current = &copy
 	}
-	return sameJSONValue(json.RawMessage(mustJSON(current)), json.RawMessage(mustJSON(authority.Desired))), nil
+	return sameJSONValue(json.RawMessage(mustJSON(current)), json.RawMessage(mustJSON(desired))), nil
 }
 
 func validateAutomaticLyricsRetryAdmission(ctx context.Context, tx bun.Tx, request PublicationAdmission, input *PublicationInputs, current TrackPublication) error {

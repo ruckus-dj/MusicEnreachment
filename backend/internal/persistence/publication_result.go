@@ -55,12 +55,32 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			return err
 		}
 		if claim.State != "executing" || attempt.Phase != "preparing" && attempt.Phase != "staged" && attempt.Phase != "validated" && attempt.Phase != "exposing" {
+			if claim.State == "executing" {
+				input, decodeErr := DecodePublicationInputs(attempt.FrozenInputs)
+				if decodeErr == nil && input.Version == PublicationSourceRepublishInputsVersion {
+					return errors.New("commit publication result: source-republish attempt is not in a committable phase")
+				}
+			}
 			return nil
 		}
 		input, err := DecodePublicationInputs(attempt.FrozenInputs)
+		v4Inputs := err == nil && input.Version == PublicationSourceRepublishInputsVersion
 		providerTags := err == nil && validProviderTagRewrite(input)
-		if err != nil || (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input) && !providerTags) || input.IntentKind != attempt.IntentKind {
+		if err != nil {
 			return nil
+		}
+		if v4Inputs && !validSourceRepublishPreparation(input) {
+			return errors.New("commit publication result: source-republish contract is not eligible for typed result settlement")
+		}
+		sourceRepublish := v4Inputs && validSourceRepublishPreparation(input)
+		if sourceRepublish && input.IntentKind != attempt.IntentKind {
+			return errors.New("commit publication result: source-republish intent differs from attempt")
+		}
+		if (!input.SupportsExecution() && !validManualLyricsRewrite(input) && !validAutomaticAudioUpgrade(input) && !providerTags && !sourceRepublish) || input.IntentKind != attempt.IntentKind {
+			return nil
+		}
+		if sourceRepublish && (result.PreservedAudioSHA256 != "" || result.InitialLyrics != nil || result.CoverEmbedding != nil) {
+			return errors.New("commit publication result: source-republish projections must be derived from frozen inputs and actual output")
 		}
 		if providerTags {
 			if result.PreservedAudioSHA256 != input.ProviderTags.AudioPayloadSHA256 || result.InitialLyrics != nil || result.CoverEmbedding != nil {
@@ -71,6 +91,9 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		}
 		observation := result.Observation.Clone()
 		if observation.QualityPolicyVersion != input.QualityPolicyVersion || !publicationResultPathMatches(attempt.NamespaceManifest, observation.RelativePath) {
+			if sourceRepublish {
+				return errors.New("commit publication result: source-republish observation does not match its frozen policy or namespace")
+			}
 			return nil
 		}
 		var previous *TrackPublication
@@ -78,12 +101,27 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			var current TrackPublication
 			if err := tx.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
+					if sourceRepublish {
+						return errors.New("commit publication result: source-republish CURRENT is missing")
+					}
 					return nil
 				}
 				return fmt.Errorf("commit publication result: lock current publication: %w", err)
 			}
 			if current.Generation != *attempt.ExpectedGeneration {
+				if sourceRepublish {
+					return fmt.Errorf("commit publication result: source-republish CURRENT generation changed: %w", ErrPublicationAdmissionConflict)
+				}
 				return nil
+			}
+			if sourceRepublish {
+				var authority PositionSourceAuthority
+				if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
+					return fmt.Errorf("commit publication result: lock source-republish authority: %w", err)
+				}
+				if !sourceRepublishCurrent(current, authority, input, attempt.Epoch) {
+					return fmt.Errorf("commit publication result: source-republish CURRENT or baseline authority changed: %w", ErrPublicationAdmissionConflict)
+				}
 			}
 			if validAutomaticAudioUpgrade(input) {
 				var authority PositionSourceAuthority
@@ -105,6 +143,9 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			}
 			previous = &current
 		} else {
+			if sourceRepublish {
+				return errors.New("commit publication result: source-republish requires an existing CURRENT generation")
+			}
 			var existing uuid.UUID
 			err := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=? FOR UPDATE`, attempt.PositionID).Scan(ctx, &existing)
 			if err == nil {
@@ -132,6 +173,14 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		assets, err := DecodePublicationAssetOutcomes(observation.ActualAssets)
 		if err != nil {
 			return fmt.Errorf("commit publication result: decode current assets: %w", err)
+		}
+		var sourceLyricsProjection *PublicationInitialLyricsProjection
+		var sourceCoverProjection *PublicationCoverEmbeddingProjection
+		if sourceRepublish {
+			sourceLyricsProjection, sourceCoverProjection, err = validateSourceRepublishResultTx(ctx, tx, attempt, input, observation, result.InstalledOwnership)
+			if err != nil {
+				return fmt.Errorf("commit publication result: validate source-republish result: %w", err)
+			}
 		}
 		if validAutomaticAudioUpgrade(input) {
 			var beforeMetadata, afterMetadata PublicationCommitMetadata
@@ -177,7 +226,11 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			ActualAudio: observation.ActualAudio, ActualMetadata: observation.ActualMetadata, ActualAssets: observation.ActualAssets,
 			QualityPolicyVersion: observation.QualityPolicyVersion, ValidatedAt: time.Now().UTC(),
 		}
-		if result.CoverEmbedding != nil {
+		if sourceRepublish {
+			if sourceCoverProjection != nil {
+				publication.CoverEmbedding = mustPublicationJSON(*sourceCoverProjection)
+			}
+		} else if result.CoverEmbedding != nil {
 			receipt, err := scanPublicationAttemptCoverInput(ctx, tx, attempt.OperationID)
 			if err != nil {
 				return fmt.Errorf("commit publication result: read frozen cover receipt: %w", err)
@@ -201,14 +254,18 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				publication.CoverEmbedding = mustPublicationJSON(previousProjection)
 			}
 		}
-		if result.InitialLyrics != nil {
+		if sourceRepublish {
+			if sourceLyricsProjection != nil {
+				publication.InitialLyrics = mustPublicationJSON(*sourceLyricsProjection)
+			}
+		} else if result.InitialLyrics != nil {
 			projection := *result.InitialLyrics
 			projection.Generation = attempt.CandidateGeneration
 			if !validPublicationInitialLyricsProjection(projection, attempt.CandidateGeneration) {
 				return errors.New("commit publication result: invalid lyrics summary")
 			}
 			publication.InitialLyrics = mustPublicationJSON(projection)
-		} else if previous != nil && input.ManualLyrics == nil && len(previous.InitialLyrics) != 0 {
+		} else if !sourceRepublish && previous != nil && input.ManualLyrics == nil && len(previous.InitialLyrics) != 0 {
 			var projection PublicationInitialLyricsProjection
 			if err := json.Unmarshal(previous.InitialLyrics, &projection); err != nil {
 				return fmt.Errorf("commit publication result: decode current lyrics summary: %w", err)
@@ -230,12 +287,29 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				return fmt.Errorf("commit publication result: count current publication update: %w", err)
 			}
 			if rows != 1 {
+				if sourceRepublish {
+					return fmt.Errorf("commit publication result: source-republish CURRENT update lost its baseline: %w", ErrPublicationAdmissionConflict)
+				}
 				return nil
 			}
 		}
 		if previous != nil {
 			next := publication
-			if validAutomaticAudioUpgrade(input) {
+			if sourceRepublish {
+				frozen := input.SourceRepublish.SourceAuthority
+				updatedAuthority := PositionSourceAuthority{
+					PositionID: attempt.PositionID, Mode: frozen.Mode, Revision: uuid.New(),
+					PublicationEpoch: next.Epoch, PublicationGeneration: next.Generation,
+					SourceLocationID: input.Audio.LocationID, MediaVariantID: input.Audio.MediaVariantID,
+				}
+				updated, err := compareAndSetPositionSourceAuthorityTx(ctx, tx, &frozen.Revision, updatedAuthority)
+				if err != nil {
+					return fmt.Errorf("commit publication result: replace source-republish authority: %w", err)
+				}
+				if !updated {
+					return fmt.Errorf("commit publication result: source-republish authority revision changed: %w", ErrPublicationAdmissionConflict)
+				}
+			} else if validAutomaticAudioUpgrade(input) {
 				var authority PositionSourceAuthority
 				if err := tx.NewSelect().Model(&authority).Where("position_id=?", attempt.PositionID).For("UPDATE").Scan(ctx); err != nil {
 					return fmt.Errorf("commit publication result: lock source authority for audio upgrade: %w", err)
@@ -283,6 +357,10 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		if input.ManualLyrics != nil {
 			if err := repository.recordPublicationResultLyricsTx(ctx, tx, attempt, observation, *input.ManualLyrics); err != nil {
 				return err
+			}
+		} else if sourceRepublish {
+			if err := recordSourceRepublishManualLyricsTx(ctx, tx, repository, attempt, input.SourceRepublish, observation); err != nil {
+				return fmt.Errorf("commit publication result: record source-republish manual lyrics receipt: %w", err)
 			}
 		}
 		if err := repository.requestSourceCleanupTx(ctx, tx, attempt.OperationID, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration); err != nil {
