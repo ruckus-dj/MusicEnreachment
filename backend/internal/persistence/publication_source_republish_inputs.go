@@ -93,7 +93,7 @@ func (input PublicationSourceRepublishInput) Validate(audio PublicationAudioInpu
 	if input.Mode != "ordinary" && input.Mode != "forced" {
 		return errors.New("source republish mode must be ordinary or forced")
 	}
-	if err := input.SourceAuthority.Validate(audio, input.Current.Generation); err != nil {
+	if err := input.SourceAuthority.Validate(input.Current.Generation); err != nil {
 		return err
 	}
 	if input.Association.ID == uuid.Nil || input.Association.LocationID == uuid.Nil || input.Association.LocationID != audio.LocationID || input.Association.MediaVariantID == uuid.Nil || input.Association.MediaVariantID != audio.MediaVariantID {
@@ -149,15 +149,15 @@ func (input PublicationSourceRepublishInput) Validate(audio PublicationAudioInpu
 	return input.Cover.Validate()
 }
 
-func (authority PublicationSourceAuthority) Validate(audio PublicationAudioInput, currentGeneration uuid.UUID) error {
+func (authority PublicationSourceAuthority) Validate(currentGeneration uuid.UUID) error {
 	if !authority.Present {
 		if authority.PositionID != uuid.Nil || authority.Mode != "" || authority.Revision != uuid.Nil || authority.PublicationEpoch != uuid.Nil || authority.PublicationGeneration != uuid.Nil || authority.SourceLocationID != uuid.Nil || authority.MediaVariantID != uuid.Nil {
 			return errors.New("absent source authority must not contain identity fields")
 		}
 		return nil
 	}
-	if authority.PositionID == uuid.Nil || authority.Revision == uuid.Nil || authority.PublicationEpoch == uuid.Nil || authority.PublicationGeneration == uuid.Nil || authority.SourceLocationID == uuid.Nil || authority.MediaVariantID == uuid.Nil || authority.PublicationGeneration != currentGeneration || authority.SourceLocationID != audio.LocationID || authority.MediaVariantID != audio.MediaVariantID || (authority.Mode != "manual" && authority.Mode != "automatic") {
-		return errors.New("present source authority does not match its frozen publication and selected source")
+	if authority.PositionID == uuid.Nil || authority.Revision == uuid.Nil || authority.PublicationEpoch == uuid.Nil || authority.PublicationGeneration == uuid.Nil || authority.SourceLocationID == uuid.Nil || authority.MediaVariantID == uuid.Nil || authority.PublicationGeneration != currentGeneration || (authority.Mode != "manual" && authority.Mode != "automatic") {
+		return errors.New("present source authority does not match its frozen publication baseline")
 	}
 	return nil
 }

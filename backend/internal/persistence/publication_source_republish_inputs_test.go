@@ -70,14 +70,28 @@ func TestPublicationSourceRepublishInputsRoundTripAndClone(t *testing.T) {
 	}
 	authority := PublicationSourceAuthority{
 		Present: true, PositionID: uuid.New(), Mode: "automatic", Revision: uuid.New(), PublicationEpoch: uuid.New(),
-		PublicationGeneration: current.Generation, SourceLocationID: input.Audio.LocationID, MediaVariantID: input.Audio.MediaVariantID,
+		PublicationGeneration: current.Generation, SourceLocationID: uuid.New(), MediaVariantID: uuid.New(),
 	}
-	if err := authority.Validate(*input.Audio, current.Generation); err != nil {
-		t.Fatalf("valid persisted source authority rejected: %v", err)
+	if err := authority.Validate(current.Generation); err != nil {
+		t.Fatalf("valid baseline source authority for a replaced source rejected: %v", err)
 	}
 	authority.Revision = uuid.Nil
-	if err := authority.Validate(*input.Audio, current.Generation); err == nil {
+	if err := authority.Validate(current.Generation); err == nil {
 		t.Fatal("present source authority without UUID revision was accepted")
+	}
+	authority.Revision = uuid.New()
+	authority.SourceLocationID = uuid.Nil
+	if err := authority.Validate(current.Generation); err == nil {
+		t.Fatal("present source authority without baseline location was accepted")
+	}
+	authority.SourceLocationID = uuid.New()
+	authority.MediaVariantID = uuid.Nil
+	if err := authority.Validate(current.Generation); err == nil {
+		t.Fatal("present source authority without baseline variant was accepted")
+	}
+	authority.Present = false
+	if err := authority.Validate(current.Generation); err == nil {
+		t.Fatal("absent source authority with identity fields was accepted")
 	}
 }
 
