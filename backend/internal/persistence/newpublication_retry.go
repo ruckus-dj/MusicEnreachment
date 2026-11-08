@@ -64,6 +64,23 @@ func (repository *SetupManagerRepository) RetryPublicationOperationAndEnqueue(ct
 			len(attempt.FrozenInputs) == 0 || len(attempt.NamespaceManifest) == 0 {
 			return errors.New("retry publication: failed attempt is not a retryable simple publication")
 		}
+		version, err := frozenPublicationInputVersion(attempt.FrozenInputs)
+		if err != nil {
+			return fmt.Errorf("retry publication: read frozen input version: %w", err)
+		}
+		if version == PublicationSourceRepublishInputsVersion {
+			if operation.Stage == "source_republish_recovery_required" {
+				return errors.New("retry publication: interrupted source republish requires recovery and cannot be retried")
+			}
+			var claimState string
+			claimErr := tx.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=? FOR UPDATE`, id).Scan(ctx, &claimState)
+			if claimErr != nil && !errors.Is(claimErr, sql.ErrNoRows) {
+				return fmt.Errorf("retry publication: read execution recovery state: %w", claimErr)
+			}
+			if claimState == "recovery_required" {
+				return errors.New("retry publication: interrupted source republish requires recovery and cannot be retried")
+			}
+		}
 		var currentGeneration *uuid.UUID
 		readErr := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=?`, positionID).Scan(ctx, &currentGeneration)
 		if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {

@@ -679,6 +679,15 @@ func TestUpdateRuntimeWritesSuppliedFieldsTogetherAndLeavesNilFields(t *testing.
 func pointer[T any](value T) *T { return &value }
 
 func TestLRCLIBEnabledDefaultsToTrue(t *testing.T) {
+	planningDefaults, err := settings.ParsePublicationPlanningValues(map[string]string{})
+	if err != nil || !planningDefaults.LRCLIBEnabled {
+		t.Fatalf("planning LRCLIB default: %v, %v; want true, nil", planningDefaults.LRCLIBEnabled, err)
+	}
+	planningDisabled, err := settings.ParsePublicationPlanningValues(map[string]string{settings.LRCLIBEnabledKey: "false"})
+	if err != nil || planningDisabled.LRCLIBEnabled {
+		t.Fatalf("planning LRCLIB disabled: %v, %v; want false, nil", planningDisabled.LRCLIBEnabled, err)
+	}
+
 	store := newMemoryStore()
 	registry := settings.New(store, nil)
 	ctx := context.Background()

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
@@ -51,6 +52,15 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if input.Rewrite != nil {
 		if manifest.RelativePath != input.Rewrite.RelativePath || attempt.ExpectedGeneration == nil || *attempt.ExpectedGeneration != input.Rewrite.CurrentGeneration {
 			return errors.New("publication rewrite target does not match the frozen current generation")
+		}
+	} else if input.SourceRepublish != nil {
+		if input.SourceRepublish.Current.Generation == uuid.Nil || attempt.ExpectedGeneration == nil ||
+			*attempt.ExpectedGeneration != input.SourceRepublish.Current.Generation ||
+			!input.SourceRepublish.SourceAuthority.Present ||
+			input.SourceRepublish.SourceAuthority.PublicationGeneration != input.SourceRepublish.Current.Generation ||
+			input.SourceRepublish.SourceAuthority.PublicationEpoch != attempt.Epoch ||
+			manifest.RelativePath != input.SourceRepublish.Current.RelativePath {
+			return errors.New("source-republish target does not match known CURRENT authority")
 		}
 	} else if input.AudioUpgrade != nil {
 		expected, err := audioUpgradeTargetRelativePath(input.AudioUpgrade.Current.RelativePath, input.Format, inputAudioFacts(input).AudioSourceFacts())
@@ -175,7 +185,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		writer = metadata.Writer{}
 	}
 	var coverInput *persistence.PublicationAttemptCoverInput
-	if (input.Audio != nil && input.AudioUpgrade == nil) || input.ManualCover != nil {
+	if (input.Audio != nil && input.AudioUpgrade == nil && input.SourceRepublish == nil) || input.ManualCover != nil {
 		receipt, found, readErr := executor.repository.PublicationAttemptCoverInputForDelivery(ctx, guard)
 		if readErr != nil {
 			return fmt.Errorf("read frozen publication cover receipt: %w", readErr)
@@ -199,7 +209,9 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		inputPath = privateInputPath
 	}
 	var prepared PublicationSimplePreparationResult
-	if input.ProviderTags != nil {
+	if input.SourceRepublish != nil {
+		prepared, err = preparation.PrepareSourceRepublish(ctx, input, inputPath, tempDir, candidatePath)
+	} else if input.ProviderTags != nil {
 		prepared, err = preparation.PrepareProviderTags(ctx, input, targetAbsolute, tempDir, candidatePath)
 	} else if input.AudioUpgrade != nil {
 		prepared, err = preparation.PrepareAudioUpgrade(ctx, input, inputPath, currentPathForPreparation, tempDir, candidatePath)
@@ -255,9 +267,12 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			return fmt.Errorf("read superseded publication output: %w", err)
 		}
 		if previous != nil {
-			obsoleteOutput, err = captureObsoletePublicationOutput(ctx, root, outputRoot, previous.Publication, previous.NamespaceClaimID)
-			if err != nil {
-				return fmt.Errorf("capture superseded publication output: %w", err)
+			captured, captureErr := captureObsoletePublicationOutput(ctx, root, outputRoot, previous.Publication, previous.NamespaceClaimID)
+			if captureErr != nil {
+				return fmt.Errorf("capture superseded publication output: %w", captureErr)
+			}
+			if previous.Publication.RelativePath != manifest.RelativePath {
+				obsoleteOutput = captured
 			}
 		}
 	}
@@ -267,6 +282,16 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		if statErr != nil {
 			_ = currentFile.Close()
 			return statErr
+		}
+		if input.SourceRepublish != nil {
+			identity := input.SourceRepublish.Current.Ownership
+			currentDigest, digestErr := digestRegular(ctx, currentFile)
+			if digestErr != nil || identity.SizeBytes == nil || identity.MTime == nil ||
+				!currentInfo.Mode().IsRegular() || currentInfo.Size() != *identity.SizeBytes ||
+				currentInfo.ModTime().UnixMicro() != *identity.MTime || currentDigest != identity.SHA256 {
+				_ = currentFile.Close()
+				return errors.Join(errors.New("source-republish CURRENT output changed before replacement"), digestErr)
+			}
 		}
 		if err := currentFile.Close(); err != nil {
 			return err
@@ -289,6 +314,9 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			return fmt.Errorf("atomically replace current publication: %w", err)
 		}
 	} else if errors.Is(currentErr, fs.ErrNotExist) || errors.Is(currentErr, os.ErrNotExist) {
+		if input.SourceRepublish != nil {
+			return errors.New("source-republish CURRENT output is unavailable")
+		}
 		if err := executor.checkPublicationResultCurrent(ctx, guard); err != nil {
 			return err
 		}

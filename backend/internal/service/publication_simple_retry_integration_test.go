@@ -5,9 +5,11 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -15,8 +17,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
+	integrationtools "github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
+	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/uptrace/bun"
+	"runtime"
 )
 
 func TestPublicationRejectsChangedSourceAfterToolResolutionPostgreSQL(t *testing.T) {
@@ -149,6 +155,113 @@ func TestPublicationSimpleDeliveryRetriesSettlementAndAcknowledgesRedeliveryPost
 	}})
 }
 
+func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgreSQL(t *testing.T) {
+	testPublicationSourceExecution(t, "Track.flac", true, false, publicationDeliveryScenario{run: func(ctx context.Context, db *bun.DB, manager *persistence.SetupManagerRepository, executor *PublicationExecutor, firstOperationID uuid.UUID, firstRiverJobID int64, sourceFile, output, target string, _ []byte) {
+		if err := executor.ExecutePublicationDelivery(ctx, firstOperationID, firstRiverJobID, 1); err != nil {
+			t.Fatalf("first publication delivery: %v", err)
+		}
+		firstOperation, err := manager.GetOperation(ctx, firstOperationID)
+		if err != nil || firstOperation.State != "succeeded" {
+			t.Fatalf("first publication operation = %+v, %v", firstOperation, err)
+		}
+		var before persistence.TrackPublication
+		if err := db.NewSelect().Model(&before).Order("generation DESC").Limit(1).Scan(ctx); err != nil {
+			t.Fatalf("read initial CURRENT: %v", err)
+		}
+		var releaseID uuid.UUID
+		if err := db.NewRaw(`SELECT release_id FROM release_track WHERE id=?`, before.PositionID).Scan(ctx, &releaseID); err != nil {
+			t.Fatalf("read release for CURRENT position: %v", err)
+		}
+		metadataService := NewLibraryMetadataService(persistence.NewLibraryRepository(db))
+		currentMetadata, err := metadataService.Read(ctx, librarymetadata.ScopeRelease, releaseID, releaseID)
+		if err != nil {
+			t.Fatalf("read release metadata: %v", err)
+		}
+		comment, _ := json.Marshal(map[string]any{"state": "value", "value": "republished comment"})
+		updated, err := metadataService.Update(ctx, librarymetadata.ScopeRelease, releaseID, releaseID, currentMetadata.Revision, map[string]json.RawMessage{
+			"comment": comment,
+		})
+		if err != nil || updated.Revision <= currentMetadata.Revision {
+			t.Fatalf("update desired comment revision %d => %d: %v", currentMetadata.Revision, updated.Revision, err)
+		}
+		positionMetadata, err := metadataService.Read(ctx, librarymetadata.ScopePosition, releaseID, before.PositionID)
+		if err != nil {
+			t.Fatalf("read position metadata for lyrics authority: %v", err)
+		}
+		lyrics, _ := json.Marshal(map[string]any{"state": "explicit_empty"})
+		if _, err := metadataService.Update(ctx, librarymetadata.ScopePosition, releaseID, before.PositionID, positionMetadata.Revision, map[string]json.RawMessage{"synced_lyrics": lyrics}); err != nil {
+			t.Fatalf("set explicit empty lyrics authority: %v", err)
+		}
+		registry := settings.New(persistence.NewSettingsRepository(db), nil)
+		if err := registry.SetLRCLIBEnabled(ctx, false); err != nil {
+			t.Fatalf("disable LRCLIB for explicit-empty lyrics fixture: %v", err)
+		}
+		publications := NewLibraryPublications(manager, registry, libraryPublicationTestInserter{}, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
+		baselineAuthority, err := manager.ReadPositionSourceAuthority(ctx, before.PositionID)
+		if err != nil || baselineAuthority == nil {
+			t.Fatalf("read baseline source authority = %+v, %v", baselineAuthority, err)
+		}
+		preparation, err := publications.prepareRetainedSourceRepublish(ctx, releaseID, before.PositionID, firstPublicationPreviewModeOrdinary)
+		if err != nil || len(preparation.Preview.Blockers) != 0 || preparation.Selected == nil || preparation.Preview.SelectedSource == nil || preparation.Preview.SelectedSource.LocationID != baselineAuthority.SourceLocationID || preparation.Preview.SelectedSource.MediaVariantID != baselineAuthority.MediaVariantID {
+			t.Fatalf("ordinary retained-source republish preparation = %+v, %v", preparation, err)
+		}
+		republishID, err := publications.AdmitSourceRepublishRetainingSelection(ctx, releaseID, before.PositionID, SourceRepublishConfirmation{PreviewDigest: preparation.Preview.ContextDigest, ExpectedEpoch: before.Epoch, Mode: firstPublicationPreviewModeOrdinary})
+		if err != nil {
+			t.Fatalf("admit selected-source republish: %v", err)
+		}
+		attempt, err := manager.ReadPublicationAttempt(ctx, republishID)
+		var frozen persistence.PublicationInputs
+		if attempt != nil {
+			err = json.Unmarshal(attempt.FrozenInputs, &frozen)
+		}
+		if err != nil || attempt == nil || frozen.SourceRepublish == nil || frozen.SourceRepublish.Association.LocationID != preparation.Selected.Selection.LocationID || frozen.SourceRepublish.Association.MediaVariantID != preparation.Selected.Selection.MediaVariantID {
+			t.Fatalf("republish frozen selected-source association = %+v, %v", attempt, err)
+		}
+		op, err := manager.GetOperation(ctx, republishID)
+		if err != nil || op.RiverJobID == nil {
+			t.Fatalf("read admitted republish operation = %+v, %v", op, err)
+		}
+		riverJobID := *op.RiverJobID
+		if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1 WHERE id=?`, riverJobID); err != nil {
+			t.Fatal(err)
+		}
+		writer := &countingSourceRepublishMetadataWriter{delegate: metadata.Writer{}}
+		executor.metadata = writer
+		if err := executor.ExecutePublicationDelivery(ctx, republishID, riverJobID, 1); err != nil {
+			t.Fatalf("source republish delivery: %v", err)
+		}
+		published, err := (metadata.Reader{}).Read(ctx, filepath.Join(output, filepath.FromSlash(target)), metadata.ReadRequest{CoverInspection: true})
+		if err != nil || len(published.Tags["COMMENT"]) != 1 || published.Tags["COMMENT"][0] != "republished comment" {
+			t.Fatalf("native republished tags = %#v, %v", published.Tags, err)
+		}
+		var after persistence.TrackPublication
+		if err := db.NewSelect().Model(&after).Where("position_id=?", before.PositionID).Scan(ctx); err != nil || after.Generation != attempt.CandidateGeneration {
+			t.Fatalf("CURRENT generation after same-path republish = %s, %v; want candidate %s", after.Generation, err, attempt.CandidateGeneration)
+		}
+		authority, err := manager.ReadPositionSourceAuthority(ctx, before.PositionID)
+		if err != nil || authority == nil || authority.Mode != baselineAuthority.Mode || authority.Revision == baselineAuthority.Revision || authority.PublicationGeneration != attempt.CandidateGeneration || authority.SourceLocationID != baselineAuthority.SourceLocationID || authority.MediaVariantID != baselineAuthority.MediaVariantID {
+			t.Fatalf("retained CURRENT source authority = %+v, %v", authority, err)
+		}
+		assets, err := persistence.DecodePublicationAssetOutcomes(after.ActualAssets)
+		if err != nil || assets.Cover.State != persistence.PublicationAssetAbsent || assets.Lyrics.State != persistence.PublicationAssetAbsent {
+			t.Fatalf("source republish actual optional-asset outcomes = %+v, %v; want absent cover and lyrics", assets, err)
+		}
+		baselineAssets, err := persistence.DecodePublicationAssetOutcomes(before.ActualAssets)
+		if err != nil || !reflect.DeepEqual(assets, baselineAssets) {
+			t.Fatalf("source republish changed actual asset outcomes: before=%+v after=%+v, %v", baselineAssets, assets, err)
+		}
+		if err := os.Remove(sourceFile); err != nil {
+			t.Fatal(err)
+		}
+		if err := executor.ExecutePublicationDelivery(ctx, republishID, riverJobID, 1); err != nil {
+			t.Fatalf("completed republish redelivery: %v", err)
+		}
+		if writer.calls != 1 {
+			t.Fatalf("metadata preparations after completed redelivery = %d, want 1", writer.calls)
+		}
+	}})
+}
+
 func TestPublicationInterruptedFirstAudioRecoversInstalledTargetPostgreSQL(t *testing.T) {
 	testPublicationSourceExecution(t, "Track.flac", true, false, publicationDeliveryScenario{run: func(ctx context.Context, db *bun.DB, manager *persistence.SetupManagerRepository, executor *PublicationExecutor, operationID uuid.UUID, riverJobID int64, sourceFile, output, target string, _ []byte) {
 		writer := &countingPublicationMetadataWriter{delegate: metadata.Writer{}}
@@ -251,6 +364,24 @@ type countingPublicationMetadataWriter struct {
 func (writer *countingPublicationMetadataWriter) Write(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.WriteResult, error) {
 	writer.calls++
 	return writer.delegate.Write(ctx, path, tags, cover)
+}
+
+// This wrapper is deliberately limited to the source-republish scenario: it
+// observes optional-asset writes without changing the capabilities advertised
+// by the first-publication retry writer used by other tests.
+type countingSourceRepublishMetadataWriter struct {
+	delegate metadata.Writer
+	calls    int
+}
+
+func (writer *countingSourceRepublishMetadataWriter) Write(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.WriteResult, error) {
+	writer.calls++
+	return writer.delegate.Write(ctx, path, tags, cover)
+}
+
+func (writer *countingSourceRepublishMetadataWriter) WriteWithOptionalAssets(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.OptionalAssetsWriteResult, error) {
+	writer.calls++
+	return writer.delegate.WriteWithOptionalAssets(ctx, path, tags, cover)
 }
 
 func (writer *countingPublicationMetadataWriter) WriteFlacTagsPreservingArtwork(ctx context.Context, path string, tags map[string][]string, before metadata.FlacArtworkSnapshot) (metadata.WriteResult, error) {

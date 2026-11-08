@@ -56,6 +56,7 @@ type PublicationAdmission struct {
 	validatedAudioUpgrade         bool
 	metadataRevision              int64
 	firstAdmission                *firstPublicationAdmissionHook
+	sourceRepublishAdmission      *sourceRepublishAdmissionHook
 	reconciliationGuard           *PublicationReconciliationDeliveryGuard
 	validatedProviderTags         bool
 }
@@ -96,7 +97,9 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		return uuid.Nil, fmt.Errorf("admit publication: %w", err)
 	}
 	if input.Version == PublicationSourceRepublishInputsVersion {
-		return uuid.Nil, fmt.Errorf("admit publication: source republish execution is not activated: %w", ErrPublicationAdmissionConflict)
+		if request.sourceRepublishAdmission == nil {
+			return uuid.Nil, fmt.Errorf("admit publication: source republish execution is not activated: %w", ErrPublicationAdmissionConflict)
+		}
 	}
 	if input.IntentKind != request.IntentKind || !samePublicationTools(request.Tools, input.Tools) {
 		return uuid.Nil, fmt.Errorf("admit publication: request conflicts with frozen publication inputs")
@@ -113,7 +116,7 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	if request.validatedAudioUpgrade && (input.Version != PublicationAudioUpgradeInputsVersion || input.AudioUpgrade == nil || request.IntentKind != "audio") {
 		return uuid.Nil, fmt.Errorf("admit publication: invalid typed audio upgrade: %w", ErrPublicationAdmissionConflict)
 	}
-	if request.firstAdmission == nil && !request.validatedAudioUpgrade && input.SourceAuthorityMode != "" {
+	if request.firstAdmission == nil && request.sourceRepublishAdmission == nil && !request.validatedAudioUpgrade && input.SourceAuthorityMode != "" {
 		return uuid.Nil, fmt.Errorf("admit publication: source authority requires first-publication intent: %w", ErrPublicationAdmissionConflict)
 	}
 	if input.ManualLyrics != nil && (!request.validatedManualLyrics || request.manualLyrics == nil) || request.validatedManualLyrics && input.ManualLyrics == nil {
@@ -143,7 +146,16 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	}
 	operationID := uuid.New()
 	var admittedOperationID uuid.UUID
-	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+	isolation := sql.LevelReadCommitted
+	if request.sourceRepublishAdmission != nil {
+		isolation = sql.LevelSerializable
+	}
+	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: isolation}, func(ctx context.Context, tx bun.Tx) error {
+		if request.sourceRepublishAdmission != nil {
+			if err := repository.prepareSourceRepublishAdmission(ctx, tx, request); err != nil {
+				return err
+			}
+		}
 		admittedOperationID, err = repository.admitPublicationTx(ctx, tx, request, input, operationID, client)
 		if err != nil || request.reconciliationGuard == nil {
 			return err
@@ -342,6 +354,12 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	}
 	if request.validatedAudioUpgrade {
 		if err := repository.validateAudioUpgradeAdmission(ctx, tx, request, input, epoch); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	if request.sourceRepublishAdmission != nil {
+		request.NamespaceManifest = append([]PublicationNamespaceNode(nil), request.sourceRepublishAdmission.manifest...)
+		if err := validateSourceRepublishAdmissionTx(ctx, tx, request, input, epoch); err != nil {
 			return uuid.Nil, err
 		}
 	}

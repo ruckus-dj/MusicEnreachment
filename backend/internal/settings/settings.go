@@ -874,10 +874,14 @@ func ParsePublicationPlanningValues(values map[string]string) (RuntimeSettings, 
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	lrclib, err := parseSnapshotSetting(values, lrclibSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	return RuntimeSettings{
 		OutputDirectory: output, PublicationFormat: format, PublicationPathTemplate: template,
 		OutputCaseSensitive: caseSensitive, OutputUnicodeNormalization: unicodeNormalization,
-		ActiveFFmpegInstallation: ffmpeg.String(), ActiveFPCalcInstallation: fpcalc.String(),
+		ActiveFFmpegInstallation: ffmpeg.String(), ActiveFPCalcInstallation: fpcalc.String(), LRCLIBEnabled: lrclib,
 	}, nil
 }
 

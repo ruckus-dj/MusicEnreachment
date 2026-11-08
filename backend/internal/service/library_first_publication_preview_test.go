@@ -101,6 +101,54 @@ func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testi
 	}
 }
 
+func TestSourceRepublishUnchangedEligibilityIsOrdinaryOnlyAndRequiresCompleteEvidence(t *testing.T) {
+	locationID, variantID, generation := uuid.New(), uuid.New(), uuid.New()
+	lossless, channels, bitrate, bitDepth, sampleRate := true, 2, 128000, 16, 44100
+	facts := persistence.PersistedAudioFacts{
+		StreamIndex: 0, Codec: "flac", Lossless: &lossless, Channels: &channels, ChannelLayout: "stereo",
+		Bitrate: &bitrate, BitDepth: &bitDepth, SampleRate: &sampleRate,
+		Container: publication.AudioContainerFLAC, SupportedSourceContainer: true,
+	}
+	current := &persistence.LibraryPublicationCurrent{Audio: persistence.PublicationCurrentAudio{Facts: facts}}
+	selected := &persistence.FirstPublicationSource{Quality: facts, ChannelLayout: facts.ChannelLayout}
+	transform, err := publication.PlanAudioTransform(publication.AudioFormatSource, facts.AudioSourceFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	comparison := &FirstPublicationCurrentComparison{
+		Generation: generation,
+		AudioEvidence: &FirstPublicationAudioEvidence{
+			SourceAuthorityStatus: "present", SourceAuthorityRevision: uuid.New(), SourceAuthorityEpoch: uuid.New(),
+			SourceAuthorityGeneration: generation, SourceLocationID: locationID, MediaVariantID: variantID,
+			SelectedSourceLocationID: locationID, SelectedMediaVariantID: variantID,
+		},
+		AudioStatus: "matches", TagDifferences: []FirstPublicationTagDifference{}, CoverStatus: "matches", LyricsStatus: "matches",
+		RenderedMatches: true, ResolvedMatches: true,
+		RenderedComponents: []string{"Artist", "Album.flac"}, ResolvedComponents: []string{"Artist", "Album.flac"}, CurrentComponents: []string{"Artist", "Album.flac"},
+	}
+	ordinary := FirstPublicationPreview{Mode: firstPublicationPreviewModeOrdinary, CurrentComparison: comparison, Transform: &transform}
+	if !sourceRepublishIsUnchanged(ordinary, selected, current, publication.AudioFormatSource) {
+		t.Fatal("complete ordinary CURRENT match was not classified as unchanged")
+	}
+	forced := ordinary
+	forced.Mode = firstPublicationPreviewModeForced
+	if sourceRepublishIsUnchanged(forced, selected, current, publication.AudioFormatSource) {
+		t.Fatal("forced source republish was suppressed as unchanged")
+	}
+	changedTransform := ordinary
+	changed := transform
+	changed.OutputContainer = publication.AudioContainerMKA
+	changed.Extension = "mka"
+	changedTransform.Transform = &changed
+	if sourceRepublishIsUnchanged(changedTransform, selected, current, publication.AudioFormatSource) {
+		t.Fatal("changed planned output transform was classified as unchanged")
+	}
+	comparison.LyricsStatus = "unavailable"
+	if sourceRepublishIsUnchanged(ordinary, selected, current, publication.AudioFormatSource) {
+		t.Fatal("incomplete CURRENT comparison evidence was classified as unchanged")
+	}
+}
+
 type firstPreviewRepository struct {
 	snapshot *persistence.LibraryFirstPublicationContext
 	version  string

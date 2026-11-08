@@ -277,6 +277,17 @@ func buildFirstPublicationPreviewSelected(contextSnapshot *persistence.LibraryFi
 }
 
 func buildFirstPublicationPreviewSelectedMode(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string) (FirstPublicationPreview, error) {
+	return buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode, false)
+}
+
+func buildFirstPublicationRepublishPreviewSelectedMode(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string) (FirstPublicationPreview, error) {
+	if contextSnapshot == nil || contextSnapshot.Library == nil || contextSnapshot.Library.Current == nil {
+		return FirstPublicationPreview{}, persistence.ErrPublicationAdmissionConflict
+	}
+	return buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot, runtimeSettings, selectedTools, releaseID, positionID, choice, mode, true)
+}
+
+func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *persistence.LibraryFirstPublicationContext, runtimeSettings settings.RuntimeSettings, selectedTools []persistence.SourceAnalysisToolSelection, releaseID, positionID uuid.UUID, choice *FirstPublicationSourceChoice, mode string, allowExistingCurrent bool) (FirstPublicationPreview, error) {
 	format, pathTemplate := runtimeSettings.PublicationFormat, runtimeSettings.PublicationPathTemplate
 	if contextSnapshot == nil || contextSnapshot.Library == nil {
 		return FirstPublicationPreview{}, errors.New("first publication context is incomplete")
@@ -314,7 +325,7 @@ func buildFirstPublicationPreviewSelectedMode(contextSnapshot *persistence.Libra
 			preview.Blockers = append(preview.Blockers, "automatic source quality is ambiguous")
 		}
 	}
-	if library.Current != nil && mode != firstPublicationPreviewModeForced {
+	if library.Current != nil && mode != firstPublicationPreviewModeForced && !allowExistingCurrent {
 		preview.Blockers = append(preview.Blockers, "a current publication exists; this preview is only for first publication")
 	}
 	if library.ActiveAttempt != nil {

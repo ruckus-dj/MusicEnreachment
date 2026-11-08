@@ -6,10 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 )
 
 // A failed publication may retain source ownership after its delivery has
@@ -153,6 +155,214 @@ func TestDeleteSourceRootArchivesFailedPublicationWithRetainedHold(t *testing.T)
 		if _, err := f.db.ExecContext(ctx, statement, args...); err == nil {
 			t.Errorf("archive mutation unexpectedly succeeded: %s", statement)
 		}
+	}
+}
+
+func TestInterruptedSourceRepublishRequiresFinalizedReturnBeforeRootAbandonment(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, _, _, _ := prepareManualLyricsCommitFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	var current TrackPublication
+	if err := f.db.NewSelect().Model(&current).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var ownership PublicationCurrentOwnership
+	if err := decodePublicationCurrentContract(current.Ownership, &ownership); err != nil {
+		t.Fatal(err)
+	}
+	audioFacts, ok := publicationAudioFactsFromObservation(current.ActualAudio)
+	if !ok {
+		t.Fatal("decode current audio facts")
+	}
+	assets, err := DecodePublicationAssetOutcomes(current.ActualAssets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata PublicationCommitMetadata
+	if err := strictMetadata(current.ActualMetadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	witness := PublicationCurrentWitness{
+		Generation: current.Generation, RelativePath: current.RelativePath, Ownership: ownership.Identity,
+		AudioFacts: audioFacts, Assets: assets, Tags: metadata.Tags, ArtworkInventory: []PublicationArtworkWitness{},
+	}
+	var authority PositionSourceAuthority
+	if err := f.db.NewSelect().Model(&authority).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var releaseID uuid.UUID
+	var metadataRevision int64
+	if err := f.db.NewRaw(`SELECT release_id,metadata_revision FROM release_track WHERE id=?`, f.guard.ExpectedPositionID).Scan(ctx, &releaseID, &metadataRevision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO release_publication_cover(release_id,revision,mode) VALUES (?,1,'manual')`, releaseID); err != nil {
+		t.Fatal(err)
+	}
+	input := publicationInputsFixture(t, "audio")
+	input.Version = PublicationSourceRepublishInputsVersion
+	input.SourceAuthorityMode = ""
+	input.InitialLyrics, input.AudioUpgrade, input.ProviderTags = nil, nil, nil
+	input.DesiredTags = metadata.Tags
+	rootPath := t.TempDir()
+	input.Audio.ConfiguredRootPath = rootPath
+	input.Audio.InventoryRootPath = filepath.Join(rootPath, "inventory")
+	input.SourceRepublish = &PublicationSourceRepublishInput{
+		Current: witness, Mode: "ordinary",
+		SourceAuthority: PublicationSourceAuthority{
+			Present: true, PositionID: authority.PositionID, Mode: authority.Mode, Revision: authority.Revision,
+			PublicationEpoch: authority.PublicationEpoch, PublicationGeneration: authority.PublicationGeneration,
+			SourceLocationID: input.Audio.LocationID, MediaVariantID: input.Audio.MediaVariantID,
+		},
+		Association:     PublicationRepublishAssociation{ID: uuid.New(), LocationID: input.Audio.LocationID, MediaVariantID: input.Audio.MediaVariantID},
+		Lyrics:          PublicationRepublishLyrics{State: "absent", Origin: "none"},
+		LyricsAuthority: PublicationInitialLyricsInput{ExpectedMetadataRevision: metadataRevision},
+		Cover:           PublicationRepublishCover{ReleaseID: releaseID, AuthorityRevision: 1, AuthorityMode: "manual", Derivation: "absent"},
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("validate v4 frozen inputs: %v", err)
+	}
+	if err := f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE track_publication_attempt SET intent_kind='audio',frozen_inputs=?::jsonb WHERE operation_id=?`,
+			string(mustJSON(input)), f.guard.OperationID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE operation SET input_snapshot=jsonb_set(input_snapshot,'{intent_kind}',?::jsonb,true) WHERE id=?`,
+			string(mustJSON("audio")), f.guard.OperationID); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rootID := input.Audio.RootID
+	locationID, workID, variantID := input.Audio.LocationID, input.Audio.WorkID, input.Audio.MediaVariantID
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO source_root(id,configured_path,display_name,scan_generation,inventory_path) VALUES (?,?, 'Republish source',1,?)`,
+		rootID, rootPath, input.Audio.InventoryRootPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes) VALUES (?,?)`, variantID, input.Audio.SizeBytes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO source_location(id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,media_variant_id) VALUES (?,?,?,?,?,1,'audio',?)`,
+		locationID, rootID, input.Audio.RelativePath, input.Audio.SizeBytes, input.Audio.MTime, variantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE position_source_authority SET source_location_id=?,media_variant_id=? WHERE position_id=?`,
+		locationID, variantID, f.guard.ExpectedPositionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO source_analysis_work(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id,current_location_id) VALUES (?,?,?,?,?,?,?,?,false,?,?)`,
+		workID, locationID, rootID, rootPath, input.Audio.InventoryRootPath, input.Audio.RelativePath, input.Audio.SizeBytes, input.Audio.MTime, f.guard.OperationID, locationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		f.guard.OperationID, f.guard.ApplicationAttempt, f.guard.RiverJobID, f.guard.Epoch, uuid.New(), rootID, locationID, workID, variantID,
+		rootPath, input.Audio.InventoryRootPath, input.Audio.RelativePath, input.Audio.SizeBytes, input.Audio.MTime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET attempt=attempt+1 WHERE id=?`, f.guard.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	redelivery := f.guard
+	redelivery.RiverAttempt++
+	redelivery.ClaimUUID, redelivery.BootUUID, redelivery.DeliveryToken = uuid.New(), uuid.New(), uuid.NewString()
+	if outcome, err := repo.ClaimPublicationDelivery(ctx, redelivery); err != nil || outcome != PublicationDeliveryBlocked {
+		t.Fatalf("interrupted v4 delivery = %q, %v; want blocked", outcome, err)
+	}
+	var claim PublicationExecutionClaim
+	if err := f.db.NewSelect().Model(&claim).Where("operation_id=?", f.guard.OperationID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var phase string
+	if err := f.db.NewRaw(`SELECT phase FROM track_publication_attempt WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &phase); err != nil {
+		t.Fatal(err)
+	}
+	if claim.State != "recovery_required" || claim.ClaimUUID != f.guard.ClaimUUID || phase != "preparing" {
+		t.Fatalf("recovery fence = claim:%+v phase:%s", claim, phase)
+	}
+	var operationState, operationStage, safeError string
+	var finished bool
+	if err := f.db.NewRaw(`SELECT state,stage,safe_error,finished_at IS NOT NULL FROM operation WHERE id=?`, f.guard.OperationID).
+		Scan(ctx, &operationState, &operationStage, &safeError, &finished); err != nil {
+		t.Fatal(err)
+	}
+	if operationState != "failed" || operationStage != "source_republish_recovery_required" || safeError == "" || !finished {
+		t.Fatalf("interrupted operation = %s/%s (%q, finished:%t)", operationState, operationStage, safeError, finished)
+	}
+	if err := f.db.NewSelect().Model(&claim).Where("operation_id=?", f.guard.OperationID).Scan(ctx); err != nil || claim.State != "recovery_required" {
+		t.Fatalf("running delivery was accepted as returned: claim:%+v err:%v", claim, err)
+	}
+	root, err := NewSourceInventoryRepository(f.db).GetSourceRoot(ctx, rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locations, err := NewSourceInventoryRepository(f.db).CountSourceLocations(ctx, rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='running' WHERE id=?`, f.guard.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSourceInventoryRepository(f.db).DeleteSourceRootWithCleanup(ctx, rootID, root.ConfiguredPath, locations,
+		func(context.Context, string, []SourceAnalysisArtifact) error { return nil }); err == nil {
+		t.Fatal("root abandonment accepted a running source-republish delivery")
+	}
+	var stillPresent int
+	if err := f.db.NewRaw(`SELECT count(*) FROM source_root WHERE id=?`, rootID).Scan(ctx, &stillPresent); err != nil || stillPresent != 1 {
+		t.Fatalf("running-delivery rejection changed source root: count=%d err=%v", stillPresent, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE river_job SET state='cancelled',finalized_at=now() WHERE id=?`, f.guard.RiverJobID); err != nil {
+		t.Fatal(err)
+	}
+	var jobsBefore int
+	if err := f.db.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &jobsBefore); err != nil {
+		t.Fatal(err)
+	}
+	client := openPublicationRetryRiver(t, ctx, f.db)
+	if _, err := repo.RetryPublicationOperationAndEnqueue(ctx, f.guard.OperationID, client); err == nil {
+		t.Fatal("manual retry accepted a recovery-required source republish")
+	}
+	var jobsAfter int
+	if err := f.db.NewRaw(`SELECT count(*) FROM river_job`).Scan(ctx, &jobsAfter); err != nil || jobsAfter != jobsBefore {
+		t.Fatalf("manual retry inserted a River job: before=%d after=%d err=%v", jobsBefore, jobsAfter, err)
+	}
+	if err := NewSourceInventoryRepository(f.db).DeleteSourceRootWithCleanup(ctx, rootID, root.ConfiguredPath, locations,
+		func(context.Context, string, []SourceAnalysisArtifact) error { return nil }); err != nil {
+		t.Fatalf("abandon returned failed v4 publication: %v", err)
+	}
+	var retained TrackPublication
+	if err := f.db.NewSelect().Model(&retained).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if retained.Generation != current.Generation || retained.RelativePath != current.RelativePath {
+		t.Fatalf("root abandonment changed CURRENT: %+v", retained)
+	}
+	var archiveCount, holdCount int
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_root_abandonment WHERE operation_id=? AND root_id=?`, f.guard.OperationID, rootID).Scan(ctx, &archiveCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.NewRaw(`SELECT count(*) FROM publication_source_hold WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &holdCount); err != nil {
+		t.Fatal(err)
+	}
+	if archiveCount != 1 || holdCount != 0 {
+		t.Fatalf("abandonment evidence/hold = %d/%d; want 1/0", archiveCount, holdCount)
+	}
+	var originalClaimAttempt, terminalAttempt int
+	var originalClaimID, terminalJobID int64
+	if err := f.db.NewRaw(`SELECT (evidence->'source_republish_return'->'original_claim'->>'river_attempt')::int,
+		(evidence->'source_republish_return'->'original_claim'->>'river_job_id')::bigint,
+		(evidence->'source_republish_return'->'terminal_job'->>'attempt')::int,
+		(evidence->'source_republish_return'->'terminal_job'->>'id')::bigint
+		FROM publication_root_abandonment WHERE operation_id=? AND root_id=?`, f.guard.OperationID, rootID).
+		Scan(ctx, &originalClaimAttempt, &originalClaimID, &terminalAttempt, &terminalJobID); err != nil {
+		t.Fatal(err)
+	}
+	if originalClaimAttempt != f.guard.RiverAttempt || terminalAttempt != redelivery.RiverAttempt || originalClaimID != f.guard.RiverJobID || terminalJobID != f.guard.RiverJobID {
+		t.Fatalf("archived delivery identities = old %d/%d terminal %d/%d", originalClaimID, originalClaimAttempt, terminalJobID, terminalAttempt)
+	}
+	if _, err := repo.RetryPublicationOperationAndEnqueue(ctx, f.guard.OperationID, client); err == nil {
+		t.Fatal("retry accepted root-abandoned source republish")
 	}
 }
 

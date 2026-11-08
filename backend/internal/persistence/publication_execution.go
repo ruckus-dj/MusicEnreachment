@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -132,6 +133,34 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 				len(attempt.FrozenInputs) == 0 {
 				return nil
 			}
+			if claim.State == "executing" && claim.BootUUID != guard.BootUUID {
+				version, err := frozenPublicationInputVersion(attempt.FrozenInputs)
+				if err != nil {
+					return fmt.Errorf("claim publication delivery: read interrupted input version: %w", err)
+				}
+				if version == PublicationSourceRepublishInputsVersion {
+					const safeError = "source-republish execution was interrupted; automatic recovery is unavailable"
+					claimResult, err := tx.NewRaw(`UPDATE publication_execution_claim SET state='recovery_required'
+						WHERE operation_id=? AND application_attempt=? AND river_job_id=? AND river_attempt=? AND claim_uuid=? AND boot_uuid=? AND state='executing'`,
+						claim.OperationID, claim.ApplicationAttempt, claim.RiverJobID, claim.RiverAttempt, claim.ClaimUUID, claim.BootUUID).Exec(ctx)
+					if err != nil {
+						return fmt.Errorf("claim publication delivery: mark source republish recovery required: %w", err)
+					}
+					if affected, err := claimResult.RowsAffected(); err != nil || affected != 1 {
+						return fmt.Errorf("claim publication delivery: mark source republish claim recovery required: rows=%d err=%v", affected, err)
+					}
+					operationResult, err := tx.NewRaw(`UPDATE operation SET state='failed',stage='source_republish_recovery_required',finished_at=now(),updated_at=now(),safe_error=?
+						WHERE id=? AND kind='publish_track_v1' AND state='running'`, safeError, guard.OperationID).Exec(ctx)
+					if err != nil {
+						return fmt.Errorf("claim publication delivery: fail interrupted source republish: %w", err)
+					}
+					if affected, err := operationResult.RowsAffected(); err != nil || affected != 1 {
+						return fmt.Errorf("claim publication delivery: fail interrupted source republish: rows=%d err=%v", affected, err)
+					}
+					outcome = PublicationDeliveryBlocked
+					return nil
+				}
+			}
 			if _, err := tx.NewRaw(`UPDATE publication_execution_claim
 					SET river_attempt=?, claim_uuid=?, boot_uuid=?, delivery_token=?, state='executing'
 					WHERE operation_id=? AND application_attempt=?`, guard.RiverAttempt, guard.ClaimUUID, guard.BootUUID,
@@ -180,6 +209,16 @@ func (repository *SetupManagerRepository) ClaimPublicationDelivery(ctx context.C
 		return PublicationDeliveryBlocked, err
 	}
 	return outcome, nil
+}
+
+func frozenPublicationInputVersion(raw json.RawMessage) (int, error) {
+	var envelope struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return 0, err
+	}
+	return envelope.Version, nil
 }
 
 // ReadPublicationAttempt returns the persisted attempt as-is. It does not

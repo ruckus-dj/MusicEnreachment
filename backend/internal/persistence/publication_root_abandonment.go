@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -87,32 +86,129 @@ func abandonFailedPublicationsForRoot(ctx context.Context, tx bun.Tx, rootID uui
 		if attempt.Epoch != epoch {
 			return fmt.Errorf("publication attempt epoch is not current")
 		}
-		var opState string
-		var startedAt *time.Time
-		var riverJobID *int64
-		if err := tx.NewRaw(`SELECT state,started_at,river_job_id FROM operation WHERE id=?`, attempt.OperationID).Scan(ctx, &opState, &startedAt, &riverJobID); err != nil {
-			return err
+		var operation *Operation
+		for i := range opRows {
+			if opRows[i].ID == attempt.OperationID {
+				operation = &opRows[i]
+				break
+			}
 		}
-		if opState != "failed" || riverJobID == nil {
+		if operation == nil || operation.State != "failed" || operation.RiverJobID == nil {
 			return fmt.Errorf("publication operation is not failed")
 		}
-		var jobState string
-		if err := tx.NewRaw(`SELECT state FROM river_job WHERE id=?`, *riverJobID).Scan(ctx, &jobState); err != nil {
+		var currentJob struct {
+			ID      int64  `bun:"id"`
+			Kind    string `bun:"kind"`
+			State   string `bun:"state"`
+			Attempt int    `bun:"attempt"`
+		}
+		if err := tx.NewRaw(`SELECT id,kind,state,attempt FROM river_job WHERE id=?`, *operation.RiverJobID).Scan(ctx, &currentJob); err != nil {
 			return err
 		}
-		var activeClaim bool
+		version, err := frozenPublicationInputVersion(attempt.FrozenInputs)
+		if err != nil {
+			return fmt.Errorf("read failed publication frozen input version: %w", err)
+		}
+		var republishReturnEvidence json.RawMessage
+		if version == PublicationSourceRepublishInputsVersion && operation.Stage == "source_republish_recovery_required" {
+			input, err := DecodePublicationInputs(attempt.FrozenInputs)
+			if err != nil || input.SourceRepublish == nil || attempt.IntentKind != "audio" ||
+				attempt.ExpectedGeneration == nil || input.SourceRepublish.Current.Generation != *attempt.ExpectedGeneration ||
+				input.SourceRepublish.SourceAuthority.PositionID != attempt.PositionID ||
+				input.SourceRepublish.SourceAuthority.PublicationEpoch != attempt.Epoch ||
+				input.SourceRepublish.SourceAuthority.PublicationGeneration != *attempt.ExpectedGeneration {
+				return fmt.Errorf("interrupted source-republish frozen identity is invalid")
+			}
+			if operation.SafeError == nil || *operation.SafeError == "" || operation.FinishedAt == nil || operation.FinishedAt.IsZero() ||
+				operation.Attempt <= 0 || currentJob.ID != *operation.RiverJobID || currentJob.Kind != "publish_track_v1" {
+				return fmt.Errorf("interrupted source-republish operation is not durably failed")
+			}
+			var operationClaims []PublicationExecutionClaim
+			for _, candidate := range claims {
+				if candidate.OperationID == attempt.OperationID {
+					operationClaims = append(operationClaims, candidate)
+				}
+			}
+			if len(operationClaims) != 1 {
+				return fmt.Errorf("interrupted source republish does not have one retained execution claim")
+			}
+			claim := operationClaims[0]
+			if (claim.State != "recovery_required" && claim.State != "quiescent") || claim.ApplicationAttempt != operation.Attempt || claim.RiverJobID != *operation.RiverJobID ||
+				claim.Epoch != attempt.Epoch || claim.RiverAttempt <= 0 || claim.ClaimUUID == uuid.Nil || claim.BootUUID == uuid.Nil || claim.DeliveryToken == "" {
+				return fmt.Errorf("interrupted source-republish claim does not match retained authority")
+			}
+			originalClaim, err := json.Marshal(struct {
+				OperationID        uuid.UUID `json:"operation_id"`
+				ApplicationAttempt int       `json:"application_attempt"`
+				RiverJobID         int64     `json:"river_job_id"`
+				RiverAttempt       int       `json:"river_attempt"`
+				ClaimUUID          uuid.UUID `json:"claim_uuid"`
+				BootUUID           uuid.UUID `json:"boot_uuid"`
+				DeliveryToken      string    `json:"delivery_token"`
+				Epoch              uuid.UUID `json:"epoch"`
+				State              string    `json:"state"`
+			}{claim.OperationID, claim.ApplicationAttempt, claim.RiverJobID, claim.RiverAttempt, claim.ClaimUUID,
+				claim.BootUUID, claim.DeliveryToken, claim.Epoch, claim.State})
+			if err != nil {
+				return fmt.Errorf("encode interrupted source-republish claim evidence: %w", err)
+			}
+			var exactJobs []struct {
+				ID      int64  `bun:"id"`
+				Kind    string `bun:"kind"`
+				State   string `bun:"state"`
+				Attempt int    `bun:"attempt"`
+			}
+			if err := tx.NewRaw(`SELECT id,kind,state,attempt FROM river_job WHERE kind='publish_track_v1'
+				AND (id=? OR args->>'operation_id'=?) ORDER BY id`, *operation.RiverJobID, attempt.OperationID).Scan(ctx, &exactJobs); err != nil {
+				return fmt.Errorf("read exact interrupted source-republish delivery: %w", err)
+			}
+			if len(exactJobs) != 1 || exactJobs[0].ID != claim.RiverJobID || exactJobs[0].Kind != "publish_track_v1" ||
+				exactJobs[0].Attempt < claim.RiverAttempt || exactJobs[0].ID != *operation.RiverJobID ||
+				(exactJobs[0].State != "completed" && exactJobs[0].State != "cancelled" && exactJobs[0].State != "discarded") {
+				return fmt.Errorf("interrupted source-republish River delivery is not exactly finalized")
+			}
+			type terminalRiverDelivery struct {
+				ID      int64  `json:"id"`
+				Kind    string `json:"kind"`
+				Attempt int    `json:"attempt"`
+				State   string `json:"state"`
+			}
+			republishReturnEvidence, err = json.Marshal(struct {
+				OriginalClaim json.RawMessage       `json:"original_claim"`
+				TerminalJob   terminalRiverDelivery `json:"terminal_job"`
+			}{
+				OriginalClaim: originalClaim,
+				TerminalJob:   terminalRiverDelivery{ID: exactJobs[0].ID, Kind: exactJobs[0].Kind, Attempt: exactJobs[0].Attempt, State: exactJobs[0].State},
+			})
+			if err != nil {
+				return fmt.Errorf("encode interrupted source-republish return evidence: %w", err)
+			}
+			if claim.State == "recovery_required" {
+				result, err := tx.NewRaw(`UPDATE publication_execution_claim SET state='quiescent'
+					WHERE operation_id=? AND application_attempt=? AND river_job_id=? AND river_attempt=? AND claim_uuid=?
+					AND boot_uuid=? AND delivery_token=? AND epoch=? AND state='recovery_required'`,
+					claim.OperationID, claim.ApplicationAttempt, claim.RiverJobID, claim.RiverAttempt, claim.ClaimUUID,
+					claim.BootUUID, claim.DeliveryToken, claim.Epoch).Exec(ctx)
+				if err != nil {
+					return fmt.Errorf("settle finalized interrupted source-republish claim: %w", err)
+				}
+				if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+					return fmt.Errorf("settle finalized interrupted source-republish claim: rows=%d err=%v", affected, err)
+				}
+				for i := range claims {
+					if claims[i].OperationID == claim.OperationID && claims[i].ApplicationAttempt == claim.ApplicationAttempt {
+						claims[i].State = "quiescent"
+					}
+				}
+			}
+		}
 		var hasClaim bool
 		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM publication_execution_claim WHERE operation_id=?)
 			AND NOT EXISTS (SELECT 1 FROM publication_execution_claim WHERE operation_id=? AND state <> 'quiescent')`,
 			attempt.OperationID, attempt.OperationID).Scan(ctx, &hasClaim); err != nil {
 			return err
 		}
-		if hasClaim {
-			activeClaim = false
-		} else {
-			activeClaim = attempt.Phase != "queued" || startedAt != nil || jobState == "running"
-		}
-		if activeClaim {
+		if !hasClaim && (attempt.Phase != "queued" || operation.StartedAt != nil || currentJob.State == "running") {
 			return fmt.Errorf("publication delivery claim has not been returned")
 		}
 		// Keep exact operation-identity blockers for dependencies not retired by
@@ -173,13 +269,17 @@ func abandonFailedPublicationsForRoot(ctx context.Context, tx bun.Tx, rootID uui
 				return err
 			}
 		}
-		evidence, err := json.Marshal(map[string]json.RawMessage{
+		evidenceFields := map[string]json.RawMessage{
 			"operation": json.RawMessage(operationEvidence), "attempt": json.RawMessage(attemptEvidence),
 			"source_holds": json.RawMessage(holdRowsText), "cover_input": json.RawMessage(coverRowsText),
 			"namespace_claims": json.RawMessage(claimRowsText), "candidate_reservations": json.RawMessage(reservationRowsText),
 			"current_reservations": json.RawMessage(currentRowsText), "current_publication": json.RawMessage(currentPublicationText),
 			"execution_claims": json.RawMessage(claimEvidence),
-		})
+		}
+		if len(republishReturnEvidence) != 0 {
+			evidenceFields["source_republish_return"] = republishReturnEvidence
+		}
+		evidence, err := json.Marshal(evidenceFields)
 		if err != nil {
 			return fmt.Errorf("encode publication abandonment evidence: %w", err)
 		}
