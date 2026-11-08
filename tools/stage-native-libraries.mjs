@@ -5,6 +5,13 @@ import { createInterface } from "node:readline";
 
 const MAX_STDERR_BYTES = 8192;
 
+// The Windows matrix builds in the MSYS2 UCRT64 environment. A mingw64 bin
+// directory would contribute the legacy CRT runtime to the staged DLL closure.
+export function selectWindowsToolchainBin(pathEntries, compiler) {
+	if (compiler && compiler !== "gcc") return path.dirname(compiler);
+	return pathEntries.find((directory) => /ucrt64[\\/]bin[\\/]?$/i.test(directory));
+}
+
 // objdump can print megabytes of unrelated PE details. Stream stdout line by
 // line and retain only import names, so the default buffer limits never apply.
 export async function inspectNativeImports(source, { spawnProcess = spawn } = {}) {

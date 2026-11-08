@@ -14,8 +14,8 @@ import {
 const baseIdentity = {
 	platform: "Windows",
 	architecture: "X64",
-	prefix: "C:/runner/_temp/native-vips",
-	packages: "mingw-w64-x86_64-gcc 14.2.0-1",
+	prefix: "C:/runner/_temp/native-vips-ucrt64",
+	packages: "mingw-w64-ucrt-x86_64-gcc 14.2.0-1",
 	toolchain: "gcc (Rev10, Built by MSYS2 project) 14.2.0",
 	recipeText: "native library recipe v1",
 	implementation: "helper v1",
@@ -26,8 +26,9 @@ test("native SDK cache key changes with each build identity input", () => {
 	for (const [name, update] of [
 		["platform", { platform: "OtherOS" }],
 		["architecture", { architecture: "ARM64" }],
-		["prefix", { prefix: "D:/runner/_temp/native-vips" }],
-		["installed MSYS2 package versions", { packages: "mingw-w64-x86_64-gcc 14.2.0-2" }],
+		["prefix", { prefix: "D:/runner/_temp/native-vips-ucrt64" }],
+		["installed MSYS2 package versions", { packages: "mingw-w64-ucrt-x86_64-gcc 14.2.0-2" }],
+		["MSYS2 toolchain family", { packages: "mingw-w64-x86_64-gcc 14.2.0-1" }],
 		["compiler identity", { toolchain: "gcc 14.2.1" }],
 		["recipe", { recipeText: "native library recipe v2" }],
 		["helper implementation", { implementation: "helper v2" }],
@@ -156,8 +157,8 @@ test("invalid native SDK cache is warned about, cleaned, rebuilt, and revalidate
 		validate: () => ++validations === 1 ? ["corrupt cached binary"] : [],
 		build: ({ prefix, workDirectory }) => {
 			builds++;
-			assert.equal(prefix, path.join(runnerTemp, "native-vips"));
-			assert.equal(workDirectory, path.join(runnerTemp, "native-vips-build"));
+			assert.equal(prefix, path.join(runnerTemp, "native-vips-ucrt64"));
+			assert.equal(workDirectory, path.join(runnerTemp, "native-vips-ucrt64-build"));
 		},
 		configure: () => configured++,
 		remove: (directory) => removed.push(directory),
@@ -169,8 +170,8 @@ test("invalid native SDK cache is warned about, cleaned, rebuilt, and revalidate
 	assert.equal(builds, 1);
 	assert.equal(configured, 1);
 	assert.deepEqual(removed, [
-		path.join(runnerTemp, "native-vips"),
-		path.join(runnerTemp, "native-vips-build"),
+		path.join(runnerTemp, "native-vips-ucrt64"),
+		path.join(runnerTemp, "native-vips-ucrt64-build"),
 	]);
 	assert.match(warnings[0], /Invalid Windows native SDK cache/);
 	assert.match(warnings[0], /rebuilding from pinned sources/);
@@ -180,7 +181,7 @@ test("missing imported library or dependent DLL rejects the cache and rebuilds i
 	for (const missingProduct of ["lib/libvips-42.dll.a", "bin/native-dependent.dll"]) {
 		const runnerTemp = mkdtempSync(path.join(os.tmpdir(), "native-vips-missing-library-"));
 		t.after(() => rmSync(runnerTemp, { recursive: true, force: true }));
-		const prefix = path.join(runnerTemp, "native-vips");
+		const prefix = path.join(runnerTemp, "native-vips-ucrt64");
 		const fixture = createValidPrefix(prefix);
 		const dependentDLL = path.join(prefix, "bin/native-dependent.dll");
 		writeFileSync(dependentDLL, "fixture dependent DLL");
@@ -232,8 +233,8 @@ test("cold native SDK build failure propagates and does not configure", (t) => {
 	}), /compile failed/);
 	assert.equal(configured, false);
 	assert.deepEqual(removed, [
-		path.join(runnerTemp, "native-vips"),
-		path.join(runnerTemp, "native-vips-build"),
+		path.join(runnerTemp, "native-vips-ucrt64"),
+		path.join(runnerTemp, "native-vips-ucrt64-build"),
 	]);
 });
 

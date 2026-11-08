@@ -155,8 +155,9 @@ archives, not the upstream all-codecs binary SDK. The pinned build recipe is
 delegates. BMP decoding uses ImageMagick; JPEG, PNG, TIFF, GIF and WebP use the
 corresponding libvips loaders. Only the recursive DLL import closure is staged.
 The adjacent `native-sources` directory carries the three source archives,
-recipe, notices, and MSYS2 package provenance. Redistribution review must also
-cover corresponding sources for every staged MSYS2 dependency, not just libvips.
+recipe, notices, and MSYS2 UCRT64 package provenance. Redistribution review
+must also cover corresponding sources for every staged MSYS2 dependency, not
+just libvips.
 
 ### ImageMagick and libtiff (Windows image adapter dependencies)
 

@@ -34,8 +34,8 @@ const requiredNotices = [
 
 const recipe = String.raw`set -euo pipefail
 
-prefix="$(cygpath -u "$RUNNER_TEMP")/native-vips"
-work="$(cygpath -u "$RUNNER_TEMP")/native-vips-build"
+prefix="$(cygpath -u "$RUNNER_TEMP")/native-vips-ucrt64"
+work="$(cygpath -u "$RUNNER_TEMP")/native-vips-ucrt64-build"
 export PKG_CONFIG_PATH="$prefix/lib/pkgconfig:$(printenv PKG_CONFIG_PATH || true)"
 export PATH="$prefix/bin:$PATH"
 mkdir -p "$prefix" "$work" "$prefix/share/native-sources"
@@ -135,7 +135,7 @@ export function createCacheKey({
 		digest.update(String(value));
 		digest.update("\0");
 	}
-	return `native-vips-${platform}-${architecture}-${digest.digest("hex")}`;
+	return `native-vips-ucrt64-${platform}-${architecture}-${digest.digest("hex")}`;
 }
 
 function isFile(file) {
@@ -240,8 +240,8 @@ export function validateNativePrefix(prefix, {
 
 function probeNativeLoad() {
 	runBash(String.raw`set -euo pipefail
-prefix="$(cygpath -u "$RUNNER_TEMP")/native-vips"
-work="$(cygpath -u "$RUNNER_TEMP")/native-vips-build/native-sdk-smoke"
+prefix="$(cygpath -u "$RUNNER_TEMP")/native-vips-ucrt64"
+work="$(cygpath -u "$RUNNER_TEMP")/native-vips-ucrt64-build/native-sdk-smoke"
 mkdir -p "$work"
 export PKG_CONFIG_PATH="$prefix/lib/pkgconfig:$(printenv PKG_CONFIG_PATH || true)"
 export PATH="$prefix/bin:$PATH"
@@ -273,7 +273,7 @@ function runBash(script, { capture = false } = {}) {
 		encoding: capture ? "utf8" : undefined,
 		stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
 		windowsHide: true,
-		env: { ...process.env, MSYSTEM: "MINGW64", CHERE_INVOKING: "1" },
+		env: { ...process.env, MSYSTEM: "UCRT64", CHERE_INVOKING: "1" },
 	});
 	if (result.error) throw result.error;
 	if (result.signal) throw new Error(`Windows native library preparation was terminated by ${result.signal}`);
@@ -288,7 +288,7 @@ export function assertValidPrefix(prefix) {
 
 function configureEnvironment() {
 	runBash(String.raw`set -euo pipefail
-prefix="$(cygpath -u "$RUNNER_TEMP")/native-vips"
+prefix="$(cygpath -u "$RUNNER_TEMP")/native-vips-ucrt64"
 pkgconfig="$prefix/lib/pkgconfig"
 windows_prefix="$(cygpath -m "$prefix")"
 windows_pkgconfig="$(cygpath -w "$pkgconfig")"
@@ -309,7 +309,7 @@ printf 'VIPSHOME=%s\n' "$windows_prefix" >> "$GITHUB_ENV"
 
 function computeCacheKey() {
 	const details = runBash(String.raw`set -euo pipefail
-prefix="$(cygpath -u "$RUNNER_TEMP")/native-vips"
+prefix="$(cygpath -u "$RUNNER_TEMP")/native-vips-ucrt64"
 packages="$(pacman -Q | sort)"
 toolchain="$(
   printf '%s\n' '--- gcc ---'
@@ -376,8 +376,8 @@ export function prepareNativeSdk({
 	warn = (message) => console.warn(message),
 }) {
 	const temp = checkedRunnerTemp(runnerTemp);
-	const prefix = path.join(temp, "native-vips");
-	const workDirectory = path.join(temp, "native-vips-build");
+	const prefix = path.join(temp, "native-vips-ucrt64");
+	const workDirectory = path.join(temp, "native-vips-ucrt64-build");
 	let cacheFailures = cacheHit ? validationFailures(prefix, validate) : [];
 
 	if (cacheHit && cacheFailures.length === 0) {

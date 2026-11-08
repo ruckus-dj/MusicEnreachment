@@ -64,14 +64,15 @@ Install these prerequisites:
 
 - [Go 1.27](https://go.dev/doc/install);
 - a C/C++17 toolchain for cgo: Xcode Command Line Tools on macOS, GCC/G++ on
-  Linux, or MinGW-w64 on Windows;
+  Linux, or the MSYS2 UCRT64 MinGW-w64 toolchain on Windows;
 - [libvips](https://www.libvips.org/install.html) 8.14 or later with `pkg-config`
   development metadata and JPEG, PNG, TIFF, GIF, WebP and BMP loading support;
   install `libvips-dev pkg-config` on Debian/Ubuntu or `vips pkg-config` with
   Homebrew on macOS. BMP loading requires the ImageMagick loader. Windows CI
   builds a pinned, delegate-minimal dependency set using
-  `task native:windows-vips`; see `tools/prepare-windows-vips.mjs` for its source
-  archives and recipe, rather than using the upstream all-codecs SDK;
+  `task native:windows-vips` under MSYS2 UCRT64; see
+  `tools/prepare-windows-vips.mjs` for its source archives and recipe, rather
+  than using the upstream all-codecs SDK;
 - [Node.js 24 LTS](https://nodejs.org/) with npm;
 - [Task 3](https://taskfile.dev/docs/installation);
 - [golangci-lint 2.14](https://golangci-lint.run/docs/welcome/install/);

@@ -128,21 +128,21 @@ jobs:
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: false
           install: >-
-            mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-meson mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-cmake mingw-w64-x86_64-glib2
-            mingw-w64-x86_64-expat mingw-w64-x86_64-libjpeg-turbo
-            mingw-w64-x86_64-libpng mingw-w64-x86_64-libwebp
-            mingw-w64-x86_64-zlib mingw-w64-x86_64-lcms2
-            mingw-w64-x86_64-libexif make
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-meson mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-libjpeg-turbo
+            mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-libwebp
+            mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-lcms2
+            mingw-w64-ucrt-x86_64-libexif make
       - name: Add Windows C++ tools to PATH
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Join-Path '${{ steps.windows-cxx.outputs.msys2-location }}' 'mingw64\bin' |
+          Join-Path '${{ steps.windows-cxx.outputs.msys2-location }}' 'ucrt64\bin' |
             Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Compute Windows native library cache key
         id: native-vips-key
@@ -155,7 +155,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/cache/restore@v6.1.0
         with:
-          path: ${{ runner.temp }}\native-vips
+          path: ${{ runner.temp }}\native-vips-ucrt64
           key: ${{ steps.native-vips-key.outputs.key }}
       - name: Build pinned native Windows image libraries
         if: runner.os == 'Windows'
@@ -167,7 +167,7 @@ jobs:
         if: runner.os == 'Windows' && success() && steps.native-vips-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0
         with:
-          path: ${{ runner.temp }}\native-vips
+          path: ${{ runner.temp }}\native-vips-ucrt64
           key: ${{ steps.native-vips-key.outputs.key }}
       - name: Install macOS libvips
         if: runner.os == 'macOS'

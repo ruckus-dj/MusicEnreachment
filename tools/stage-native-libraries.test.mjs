@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { inspectNativeImports, stageNativeLibraries } from "./stage-native-libraries.mjs";
+import { inspectNativeImports, selectWindowsToolchainBin, stageNativeLibraries } from "./stage-native-libraries.mjs";
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "stage-native-"));
@@ -21,6 +21,14 @@ async function fixture(t) {
   await writeFile(path.join(root, "toolchain/share/licenses/LICENSE"), "toolchain license");
   return { bin, toolchain, destination, dll };
 }
+
+test("selects the UCRT64 toolchain directory, never the legacy MinGW one", () => {
+	const entries = ["C:\\msys64\\mingw64\\bin", "C:\\msys64\\UCRT64\\bin\\", "C:\\msys64\\usr\\bin"];
+	assert.equal(selectWindowsToolchainBin(entries), "C:\\msys64\\UCRT64\\bin\\");
+	assert.equal(selectWindowsToolchainBin(["C:\\msys64\\mingw64\\bin"]), undefined);
+	const explicit = path.join("msys64", "ucrt64", "bin", "gcc.exe");
+	assert.equal(selectWindowsToolchainBin(entries, explicit), path.dirname(explicit));
+});
 
 test("stages only reachable DLL closure once, case-insensitively, plus notices/licenses", async (t) => {
   const f = await fixture(t);

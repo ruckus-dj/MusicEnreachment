@@ -92,8 +92,9 @@ never remove gates or mistake an incomplete platform matrix for full success.
 **Native artwork dependency**: backend builds (including OpenAPI generation) need
 libvips >= 8.14 and its `pkg-config` metadata. Use `libvips-dev pkg-config` on
 Debian/Ubuntu or `brew install vips pkg-config` on macOS. Windows CI builds the
-pinned dependency set through `task native:windows-vips`; do not replace it with
-the upstream all-codecs SDK or copy unrelated codec DLLs into build output.
+pinned dependency set through `task native:windows-vips` under MSYS2 UCRT64; do
+not replace it with the upstream all-codecs SDK or copy unrelated codec DLLs
+into build output.
 Artwork headers enforce 10000 pixels per side; publication uses a libvips
 derivative fitting 2048×2048. Native decoder buffers are explicitly permitted,
 not a promise of a hard RSS ceiling. Keep original and embedded hashes distinct.
