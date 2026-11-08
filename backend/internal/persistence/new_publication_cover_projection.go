@@ -41,6 +41,11 @@ func (projection PublicationCoverEmbeddingProjection) Validate() error {
 	wantWarning := ""
 	switch projection.Outcome {
 	case "verified":
+	case "preparation_failed":
+		if !validRepublishCoverFailure(projection.WarningCode) {
+			return errors.New("publication cover preparation failure diagnostic is invalid")
+		}
+		wantWarning = projection.WarningCode
 	case "write_failed":
 		wantWarning = "cover_write_failed"
 	case "read_failed":
@@ -54,6 +59,9 @@ func (projection PublicationCoverEmbeddingProjection) Validate() error {
 		return errors.New("publication cover embedding warning does not match outcome")
 	}
 	if projection.Version == PublicationCoverEmbeddingProjectionVersion {
+		if projection.Outcome == "preparation_failed" {
+			return errors.New("preparation-failed cover projection requires derivative version")
+		}
 		if projection.EmbeddedSHA256 != "" || projection.EmbeddedMIME != "" || projection.EmbeddedSize != nil {
 			return errors.New("legacy publication cover embedding projection contains derivative facts")
 		}

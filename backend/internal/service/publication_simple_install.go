@@ -317,10 +317,11 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	}
 	size, mtime := installedInfo.Size(), installedInfo.ModTime().UnixMicro()
 	result := persistence.PublicationResult{
-		Observation:           observation,
-		PreservedAudioSHA256:  prepared.PreservedAudioSHA256,
-		InitialLyrics:         prepared.InitialLyrics,
-		ObsoleteOutputCleanup: obsoleteOutput,
+		Observation:                   observation,
+		PreservedAudioSHA256:          prepared.PreservedAudioSHA256,
+		InitialLyrics:                 prepared.InitialLyrics,
+		SourceRepublishOptionalResult: prepared.SourceRepublishOptionalResult,
+		ObsoleteOutputCleanup:         obsoleteOutput,
 		InstalledOwnership: persistence.PublicationCurrentOwnership{
 			Version:  persistence.PublicationCurrentOwnershipVersion,
 			Identity: persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest},

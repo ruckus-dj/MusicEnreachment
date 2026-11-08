@@ -4,6 +4,10 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -343,5 +347,181 @@ func sourceRepublishResult(input PublicationInputs, observation PublicationStage
 		InstalledOwnership: PublicationCurrentOwnership{Version: PublicationCurrentOwnershipVersion, Identity: PublicationFileIdentity{
 			SizeBytes: observation.Ownership.ExpectedSize, MTime: observation.Ownership.ExpectedMTime, SHA256: observation.PayloadSHA256,
 		}},
+		SourceRepublishOptionalResult: &PublicationSourceRepublishOptionalResult{
+			LyricsOutcome: PublicationSourceRepublishLyricsNotRequested,
+			CoverOutcome:  PublicationSourceRepublishCoverNotRequested,
+		},
+	}
+}
+
+func TestCommitSourceRepublishOptionalResultBridgesPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := testpostgres.OpenMigratedWithRiver(t)
+	initializeRiver(t, ctx, db)
+
+	// A selected manual value whose read-back falls back remains pending while
+	// CURRENT receives a truthful warning summary and no applied receipt.
+	fallback, repository, input, observation, _ := prepareSourceRepublishResultFixture(t, db, "source-republish-fallback-"+uuid.NewString())
+	const manualText = "[00:01.00]saved manual lyric"
+	updateSourceRepublishLyricsAuthority(t, db, fallback, &input, librarymetadata.StateValue, manualText)
+	result := sourceRepublishResult(input, observation)
+	result.SourceRepublishOptionalResult.LyricsOutcome = PublicationSourceRepublishLyricsRebuiltWithoutLyrics
+	committed, err := repository.CommitPublicationResult(ctx, fallback.guard, result)
+	if err != nil || !committed {
+		t.Fatalf("commit fallback lyrics result = %v, %v", committed, err)
+	}
+	var current TrackPublication
+	if err := db.NewSelect().Model(&current).Where("position_id=?", fallback.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var lyricsProjection PublicationInitialLyricsProjection
+	if err := json.Unmarshal(current.InitialLyrics, &lyricsProjection); err != nil {
+		t.Fatalf("decode fallback lyrics summary: %v", err)
+	}
+	if current.ActualAssets == nil || lyricsProjection.Outcome != PublicationOptionalLyricsRebuiltWithoutLyrics ||
+		lyricsProjection.OutcomeWarningCode != "readback_mismatch" || lyricsProjection.Source != "manual" ||
+		lyricsProjection.SHA256 != testAssetDigest(manualText) {
+		t.Fatalf("fallback did not persist truthful pending summary: projection=%+v assets=%s", lyricsProjection, current.ActualAssets)
+	}
+	assertManualLyricsReceiptCount(t, ctx, db, fallback.guard.ExpectedPositionID, 0)
+
+	// Saved manual absence is a no-op, not an explicit-empty applied receipt.
+	absent, absentRepository, absentInput, absentObservation, _ := prepareSourceRepublishResultFixture(t, db, "source-republish-saved-absent-"+uuid.NewString())
+	updateSourceRepublishLyricsAuthority(t, db, absent, &absentInput, librarymetadata.StateAbsent, "")
+	committed, err = absentRepository.CommitPublicationResult(ctx, absent.guard, sourceRepublishResult(absentInput, absentObservation))
+	if err != nil || !committed {
+		t.Fatalf("commit saved-absent lyrics result = %v, %v", committed, err)
+	}
+	var absentCurrent TrackPublication
+	if err := db.NewSelect().Model(&absentCurrent).Where("position_id=?", absent.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(absentCurrent.InitialLyrics) != 0 {
+		t.Fatalf("saved-absent manual lyrics fabricated a summary: %s", absentCurrent.InitialLyrics)
+	}
+	assertManualLyricsReceiptCount(t, ctx, db, absent.guard.ExpectedPositionID, 0)
+
+	// A failed optional cover derivation still proves the frozen selected
+	// authority and stores the version-2 preparation-failed summary.
+	coverFailure, coverRepository, coverInput, coverObservation, _ := prepareSourceRepublishResultFixture(t, db, "source-republish-cover-failure-"+uuid.NewString())
+	configureSourceRepublishCoverPreparationFailure(t, db, coverFailure, &coverInput)
+	coverResult := sourceRepublishResult(coverInput, coverObservation)
+	coverResult.SourceRepublishOptionalResult.CoverOutcome = PublicationSourceRepublishCoverPreparationFailed
+	committed, err = coverRepository.CommitPublicationResult(ctx, coverFailure.guard, coverResult)
+	if err != nil || !committed {
+		t.Fatalf("commit cover-preparation-failed result = %v, %v", committed, err)
+	}
+	var coverCurrent TrackPublication
+	if err := db.NewSelect().Model(&coverCurrent).Where("position_id=?", coverFailure.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	coverProjection, err := decodePublicationCoverEmbeddingProjection(coverCurrent.CoverEmbedding)
+	if err != nil {
+		t.Fatalf("decode preparation-failed cover summary: %v", err)
+	}
+	if coverProjection.Version != PublicationCoverEmbeddingDerivativeProjectionVersion || coverProjection.Outcome != string(PublicationSourceRepublishCoverPreparationFailed) ||
+		coverProjection.WarningCode != "decode_failed" || coverProjection.RequestedGeneration != coverInput.SourceRepublish.Cover.SelectedGeneration {
+		t.Fatalf("cover preparation failure summary does not retain selected authority and safe code: %+v", coverProjection)
+	}
+	coverAssets, err := DecodePublicationAssetOutcomes(coverCurrent.ActualAssets)
+	if err != nil || coverAssets.Cover.State != PublicationAssetAbsent {
+		t.Fatalf("cover failure CURRENT asset = %+v, %v", coverAssets.Cover, err)
+	}
+
+	// A receipt that contradicts frozen absent lyrics must fail before state
+	// changes; the ordinary absent/not-requested receipt is the valid baseline.
+	contradiction, contradictionRepository, contradictionInput, contradictionObservation, contradictionAuthority :=
+		prepareSourceRepublishResultFixture(t, db, "source-republish-contradiction-"+uuid.NewString())
+	contradictory := sourceRepublishResult(contradictionInput, contradictionObservation)
+	contradictory.SourceRepublishOptionalResult.LyricsOutcome = PublicationSourceRepublishLyricsExactRoundTrip
+	committed, err = contradictionRepository.CommitPublicationResult(ctx, contradiction.guard, contradictory)
+	if err == nil || committed || !strings.Contains(err.Error(), "absent lyrics require an absent, not-requested result") {
+		t.Fatalf("contradictory optional receipt commit = %v, %v", committed, err)
+	}
+	var unchanged TrackPublication
+	if err := db.NewSelect().Model(&unchanged).Where("position_id=?", contradiction.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var unchangedAuthority PositionSourceAuthority
+	if err := db.NewSelect().Model(&unchangedAuthority).Where("position_id=?", contradiction.guard.ExpectedPositionID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Generation != contradictionInput.SourceRepublish.Current.Generation || unchangedAuthority != contradictionAuthority {
+		t.Fatalf("contradictory receipt changed CURRENT or authority: current=%+v authority=%+v", unchanged, unchangedAuthority)
+	}
+	assertManualLyricsReceiptCount(t, ctx, db, contradiction.guard.ExpectedPositionID, 0)
+}
+
+func updateSourceRepublishLyricsAuthority(
+	t *testing.T,
+	db *bun.DB,
+	f publicationExecutionFixture,
+	input *PublicationInputs,
+	state librarymetadata.ValueState,
+	text string,
+) {
+	t.Helper()
+	field := librarymetadata.FieldValue{State: state, Authority: librarymetadata.AuthorityManual, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceManual}}
+	if state == librarymetadata.StateValue {
+		field.Value = text
+		input.SourceRepublish.Lyrics = PublicationRepublishLyrics{State: "value", Origin: "manual", Text: text, SHA256: testAssetDigest(text)}
+	} else {
+		input.SourceRepublish.Lyrics = PublicationRepublishLyrics{State: "absent", Origin: "none"}
+	}
+	input.SourceRepublish.LyricsAuthority.Desired = &field
+	if err := input.Validate(); err != nil {
+		t.Fatalf("validate updated source-republish lyrics authority: %v", err)
+	}
+	metadata := map[string]any{"local_metadata": map[string]any{
+		"version": 1, "scope": "position", "desired": map[string]any{"synced_lyrics": field},
+	}}
+	if err := db.RunInTx(context.Background(), nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE release_track SET metadata=?::jsonb WHERE id=?`, string(mustJSON(metadata)), f.guard.ExpectedPositionID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE track_publication_attempt SET frozen_inputs=?::jsonb WHERE operation_id=?`, string(mustJSON(*input)), f.guard.OperationID)
+		return err
+	}); err != nil {
+		t.Fatalf("freeze changed source-republish lyrics authority: %v", err)
+	}
+}
+
+func configureSourceRepublishCoverPreparationFailure(t *testing.T, db *bun.DB, f publicationExecutionFixture, input *PublicationInputs) {
+	t.Helper()
+	original := releaseCoverPNG(t)
+	digest := sha256.Sum256(original)
+	size := int64(len(original))
+	selectedGeneration := uuid.New()
+	input.SourceRepublish.Cover = PublicationRepublishCover{
+		ReleaseID: input.SourceRepublish.Cover.ReleaseID, AuthorityRevision: input.SourceRepublish.Cover.AuthorityRevision,
+		AuthorityMode: input.SourceRepublish.Cover.AuthorityMode, SelectedGeneration: selectedGeneration,
+		OriginalSHA256: hex.EncodeToString(digest[:]), OriginalMIME: "image/png", OriginalSizeBytes: &size,
+		Derivation: "optional_failure", Failure: "decode_failed",
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("validate frozen source cover preparation failure: %v", err)
+	}
+	if err := db.RunInTx(context.Background(), nil, func(ctx context.Context, tx bun.Tx) error {
+		updated, err := tx.ExecContext(ctx, `UPDATE release_publication_cover SET selected_generation=?,selected_bytes=?,selected_mime='image/png',selected_sha256=?,selected_size=? WHERE release_id=?`,
+			selectedGeneration, original, digest[:], size, input.SourceRepublish.Cover.ReleaseID)
+		if err != nil {
+			return err
+		}
+		if rows, err := updated.RowsAffected(); err != nil || rows != 1 {
+			return fmt.Errorf("selected source cover authority rows=%d err=%v", rows, err)
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE track_publication_attempt SET frozen_inputs=?::jsonb WHERE operation_id=?`, string(mustJSON(*input)), f.guard.OperationID)
+		return err
+	}); err != nil {
+		t.Fatalf("freeze selected source cover authority: %v", err)
+	}
+}
+
+func assertManualLyricsReceiptCount(t *testing.T, ctx context.Context, db *bun.DB, positionID uuid.UUID, want int) {
+	t.Helper()
+	var count int
+	if err := db.NewRaw(`SELECT count(*) FROM publication_manual_lyrics_receipt WHERE position_id=?`, positionID).Scan(ctx, &count); err != nil || count != want {
+		t.Fatalf("manual lyrics receipt count=%d, want %d; err=%v", count, want, err)
 	}
 }

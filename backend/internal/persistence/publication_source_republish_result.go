@@ -16,6 +16,32 @@ import (
 	"github.com/uptrace/bun"
 )
 
+type PublicationSourceRepublishLyricsOutcome string
+
+const (
+	PublicationSourceRepublishLyricsNotRequested         PublicationSourceRepublishLyricsOutcome = "not_requested"
+	PublicationSourceRepublishLyricsExactRoundTrip       PublicationSourceRepublishLyricsOutcome = "exact_roundtrip"
+	PublicationSourceRepublishLyricsRebuiltWithoutLyrics PublicationSourceRepublishLyricsOutcome = "rebuilt_without_lyrics"
+)
+
+type PublicationSourceRepublishCoverOutcome string
+
+const (
+	PublicationSourceRepublishCoverNotRequested      PublicationSourceRepublishCoverOutcome = "not_requested"
+	PublicationSourceRepublishCoverVerified          PublicationSourceRepublishCoverOutcome = "verified"
+	PublicationSourceRepublishCoverPreparationFailed PublicationSourceRepublishCoverOutcome = "preparation_failed"
+	PublicationSourceRepublishCoverWriteFailed       PublicationSourceRepublishCoverOutcome = "write_failed"
+	PublicationSourceRepublishCoverReadFailed        PublicationSourceRepublishCoverOutcome = "read_failed"
+	PublicationSourceRepublishCoverMismatch          PublicationSourceRepublishCoverOutcome = "mismatch"
+)
+
+// PublicationSourceRepublishOptionalResult is the transient worker-to-persistence
+// receipt for optional outcomes; it is not stored as a durable journal.
+type PublicationSourceRepublishOptionalResult struct {
+	LyricsOutcome PublicationSourceRepublishLyricsOutcome `json:"lyrics_outcome"`
+	CoverOutcome  PublicationSourceRepublishCoverOutcome  `json:"cover_outcome"`
+}
+
 func validateSourceRepublishResultTx(
 	ctx context.Context,
 	tx bun.Tx,
@@ -23,6 +49,7 @@ func validateSourceRepublishResultTx(
 	input PublicationInputs,
 	observation PublicationStageObservation,
 	installed PublicationCurrentOwnership,
+	receipt PublicationSourceRepublishOptionalResult,
 ) (*PublicationInitialLyricsProjection, *PublicationCoverEmbeddingProjection, error) {
 	republish := input.SourceRepublish
 	if !validSourceRepublishPreparation(input) || attempt.ExpectedGeneration == nil ||
@@ -48,7 +75,7 @@ func validateSourceRepublishResultTx(
 	if err != nil {
 		return nil, nil, fmt.Errorf("decode source-republish result assets: %w", err)
 	}
-	if err := validateSourceRepublishTagsAndAssets(actualMetadata.Tags, assets, input); err != nil {
+	if err := validateSourceRepublishTagsAndAssets(actualMetadata.Tags, assets, input, receipt); err != nil {
 		return nil, nil, err
 	}
 	lyricsCurrent, err := validatePublicationLyricsCurrentAuthority(ctx, tx, attempt.PositionID,
@@ -59,11 +86,11 @@ func validateSourceRepublishResultTx(
 	if !lyricsCurrent {
 		return nil, nil, fmt.Errorf("source-republish lyrics authority changed: %w", ErrPublicationAdmissionConflict)
 	}
-	coverProjection, err := sourceRepublishCoverProjectionTx(ctx, tx, attempt, republish.Cover, assets.Cover)
+	coverProjection, err := sourceRepublishCoverProjectionTx(ctx, tx, attempt, republish.Cover, assets.Cover, receipt.CoverOutcome)
 	if err != nil {
 		return nil, nil, err
 	}
-	lyricsProjection, err := sourceRepublishLyricsProjection(republish, attempt.CandidateGeneration)
+	lyricsProjection, err := sourceRepublishLyricsProjection(republish, attempt.CandidateGeneration, receipt.LyricsOutcome)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,7 +132,7 @@ func validateSourceRepublishAudio(raw json.RawMessage, input PublicationInputs) 
 	return nil
 }
 
-func validateSourceRepublishTagsAndAssets(tags map[string][]string, assets PublicationAssetOutcomes, input PublicationInputs) error {
+func validateSourceRepublishTagsAndAssets(tags map[string][]string, assets PublicationAssetOutcomes, input PublicationInputs, receipt PublicationSourceRepublishOptionalResult) error {
 	republish := input.SourceRepublish
 	wantTags := make(map[string][]string, len(input.DesiredTags)+1)
 	for key, values := range input.DesiredTags {
@@ -114,25 +141,47 @@ func validateSourceRepublishTagsAndAssets(tags map[string][]string, assets Publi
 		}
 	}
 	if republish.Lyrics.State == "value" {
-		wantTags["LYRICS"] = []string{republish.Lyrics.Text}
-		if assets.Lyrics.State != PublicationAssetEmbedded || assets.Lyrics.SHA256 != republish.Lyrics.SHA256 || assets.Lyrics.Format != "lrc" {
-			return errors.New("source-republish selected lyrics were not embedded exactly")
+		switch receipt.LyricsOutcome {
+		case PublicationSourceRepublishLyricsExactRoundTrip:
+			wantTags["LYRICS"] = []string{republish.Lyrics.Text}
+			if assets.Lyrics.State != PublicationAssetEmbedded || assets.Lyrics.SHA256 != republish.Lyrics.SHA256 || assets.Lyrics.Format != "lrc" {
+				return errors.New("source-republish selected lyrics were not embedded exactly")
+			}
+		case PublicationSourceRepublishLyricsRebuiltWithoutLyrics:
+			if assets.Lyrics.State != PublicationAssetAbsent {
+				return errors.New("source-republish fallback lyrics result must observe absence")
+			}
+		default:
+			return errors.New("source-republish selected lyrics receipt is invalid")
 		}
-	} else if assets.Lyrics.State != PublicationAssetAbsent {
-		return errors.New("source-republish result contains unselected lyrics")
+	} else if receipt.LyricsOutcome != PublicationSourceRepublishLyricsNotRequested || assets.Lyrics.State != PublicationAssetAbsent {
+		return errors.New("source-republish absent lyrics require an absent, not-requested result")
 	}
 	if !sameJSONValue(mustPublicationJSON(tags), mustPublicationJSON(wantTags)) {
 		return errors.New("source-republish result mandatory or selected lyrics tags differ from frozen inputs")
 	}
 	switch republish.Cover.Derivation {
 	case "absent":
-		if assets.Cover.State != PublicationAssetAbsent {
-			return errors.New("source-republish result contains an unselected cover")
+		if receipt.CoverOutcome != PublicationSourceRepublishCoverNotRequested || assets.Cover.State != PublicationAssetAbsent {
+			return errors.New("source-republish absent cover requires an absent, not-requested result")
+		}
+	case "optional_failure":
+		if receipt.CoverOutcome != PublicationSourceRepublishCoverPreparationFailed || assets.Cover.State != PublicationAssetAbsent {
+			return errors.New("source-republish optional cover failure receipt does not match frozen preparation failure")
 		}
 	case "ready":
 		cover := republish.Cover
-		if assets.Cover.State != PublicationAssetEmbedded || assets.Cover.SHA256 != cover.SHA256 || assets.Cover.MIME != "image/png" || assets.Cover.SizeBytes == nil || *assets.Cover.SizeBytes != cover.SizeBytes {
-			return errors.New("source-republish selected cover derivative was not embedded exactly")
+		switch receipt.CoverOutcome {
+		case PublicationSourceRepublishCoverVerified:
+			if assets.Cover.State != PublicationAssetEmbedded || assets.Cover.SHA256 != cover.SHA256 || assets.Cover.MIME != "image/png" || assets.Cover.SizeBytes == nil || *assets.Cover.SizeBytes != cover.SizeBytes {
+				return errors.New("source-republish selected cover derivative was not embedded exactly")
+			}
+		case PublicationSourceRepublishCoverWriteFailed, PublicationSourceRepublishCoverReadFailed, PublicationSourceRepublishCoverMismatch:
+			if assets.Cover.State != PublicationAssetAbsent {
+				return errors.New("failed source-republish cover result must observe cover absence")
+			}
+		default:
+			return errors.New("source-republish selected cover receipt is invalid")
 		}
 	default:
 		return errors.New("source-republish cover outcome is not supported for result commit")
@@ -144,13 +193,19 @@ func publicationTagIsLyrics(key string) bool {
 	return strings.EqualFold(strings.TrimSpace(key), "LYRICS")
 }
 
-func sourceRepublishLyricsProjection(input *PublicationSourceRepublishInput, generation uuid.UUID) (*PublicationInitialLyricsProjection, error) {
-	if input == nil || input.Lyrics.State != "value" || input.Lyrics.Origin != "source" && input.Lyrics.Origin != "lrclib" {
+func sourceRepublishLyricsProjection(input *PublicationSourceRepublishInput, generation uuid.UUID, outcome PublicationSourceRepublishLyricsOutcome) (*PublicationInitialLyricsProjection, error) {
+	if input == nil || input.Lyrics.State != "value" || input.Lyrics.Origin == "none" {
 		return nil, nil
+	}
+	projectionOutcome := PublicationOptionalLyricsExactRoundTrip
+	warning := ""
+	if outcome == PublicationSourceRepublishLyricsRebuiltWithoutLyrics {
+		projectionOutcome = PublicationOptionalLyricsRebuiltWithoutLyrics
+		warning = "readback_mismatch"
 	}
 	projection := &PublicationInitialLyricsProjection{
 		Version: PublicationInitialLyricsVersion, Generation: generation, Source: input.Lyrics.Origin,
-		SHA256: input.Lyrics.SHA256, Outcome: PublicationOptionalLyricsExactRoundTrip,
+		SHA256: input.Lyrics.SHA256, Outcome: string(projectionOutcome), OutcomeWarningCode: warning,
 		AuthorityMetadataRevision: input.LyricsAuthority.ExpectedMetadataRevision,
 		AuthorityState:            string(librarymetadata.StateAbsent), Authority: string(librarymetadata.AuthorityAutomatic),
 		AuthorityProvenance: string(librarymetadata.ProvenanceSourceMetadata),
@@ -175,6 +230,7 @@ func sourceRepublishCoverProjectionTx(
 	attempt *TrackPublicationAttempt,
 	frozen PublicationRepublishCover,
 	actual PublicationCoverOutcome,
+	outcome PublicationSourceRepublishCoverOutcome,
 ) (*PublicationCoverEmbeddingProjection, error) {
 	var attemptReleaseID uuid.UUID
 	if err := tx.NewRaw(`SELECT release_id FROM release_track WHERE id=? FOR UPDATE`, attempt.PositionID).Scan(ctx, &attemptReleaseID); err != nil {
@@ -198,18 +254,52 @@ func sourceRepublishCoverProjectionTx(
 		return nil, fmt.Errorf("source-republish cover authority changed or is pending: %w", ErrPublicationAdmissionConflict)
 	}
 	if frozen.Derivation == "absent" {
-		if cover.SelectedGeneration != nil || actual.State != PublicationAssetAbsent {
+		if cover.SelectedGeneration != nil || actual.State != PublicationAssetAbsent || outcome != PublicationSourceRepublishCoverNotRequested {
 			return nil, errors.New("source-republish absent cover does not match selected authority or installed assets")
 		}
 		return nil, nil
+	}
+	if frozen.Derivation == "optional_failure" {
+		if cover.SelectedGeneration == nil || *cover.SelectedGeneration != frozen.SelectedGeneration ||
+			cover.SelectedMIME == nil || *cover.SelectedMIME != frozen.OriginalMIME ||
+			cover.SelectedSize == nil || frozen.OriginalSizeBytes == nil || *cover.SelectedSize != *frozen.OriginalSizeBytes ||
+			hex.EncodeToString(cover.SelectedSHA256) != frozen.OriginalSHA256 ||
+			actual.State != PublicationAssetAbsent || outcome != PublicationSourceRepublishCoverPreparationFailed {
+			return nil, fmt.Errorf("source-republish preparation failure does not match selected cover authority: %w", ErrPublicationAdmissionConflict)
+		}
+		projection := &PublicationCoverEmbeddingProjection{
+			Version: PublicationCoverEmbeddingDerivativeProjectionVersion, Generation: attempt.CandidateGeneration,
+			ReceiptOperationID: attempt.OperationID, ReceiptReleaseID: frozen.ReleaseID, ReceiptRevision: frozen.AuthorityRevision,
+			ReceiptMode: frozen.AuthorityMode, RequestedGeneration: frozen.SelectedGeneration,
+			RequestedSHA256: frozen.OriginalSHA256, Outcome: string(outcome), WarningCode: frozen.Failure,
+		}
+		if err := projection.Validate(); err != nil {
+			return nil, fmt.Errorf("validate source-republish preparation failure projection: %w", err)
+		}
+		return projection, nil
 	}
 	if frozen.Derivation != "ready" || cover.SelectedGeneration == nil || *cover.SelectedGeneration != frozen.SelectedGeneration ||
 		cover.SelectedMIME == nil || *cover.SelectedMIME != frozen.OriginalMIME || cover.SelectedSize == nil || *cover.SelectedSize != *frozen.OriginalSizeBytes ||
 		hex.EncodeToString(cover.SelectedSHA256) != frozen.OriginalSHA256 {
 		return nil, fmt.Errorf("source-republish selected cover authority changed: %w", ErrPublicationAdmissionConflict)
 	}
+	if outcome != PublicationSourceRepublishCoverVerified {
+		if actual.State != PublicationAssetAbsent || outcome != PublicationSourceRepublishCoverWriteFailed && outcome != PublicationSourceRepublishCoverReadFailed && outcome != PublicationSourceRepublishCoverMismatch {
+			return nil, errors.New("source-republish cover failure receipt does not match actual absence")
+		}
+		projection := &PublicationCoverEmbeddingProjection{
+			Version: PublicationCoverEmbeddingProjectionVersion, Generation: attempt.CandidateGeneration,
+			ReceiptOperationID: attempt.OperationID, ReceiptReleaseID: frozen.ReleaseID, ReceiptRevision: frozen.AuthorityRevision,
+			ReceiptMode: frozen.AuthorityMode, RequestedGeneration: frozen.SelectedGeneration,
+			RequestedSHA256: frozen.OriginalSHA256, Outcome: string(outcome), WarningCode: coverOutcomeWarning(string(outcome)),
+		}
+		if err := projection.Validate(); err != nil {
+			return nil, fmt.Errorf("validate source-republish failed cover projection: %w", err)
+		}
+		return projection, nil
+	}
 	if actual.State != PublicationAssetEmbedded || actual.SHA256 != frozen.SHA256 || actual.MIME != frozen.MIME || actual.SizeBytes == nil || *actual.SizeBytes != frozen.SizeBytes {
-		return nil, errors.New("source-republish cover derivative outcome is not verified")
+		return nil, errors.New("source-republish verified cover receipt does not match actual derivative")
 	}
 	projection := &PublicationCoverEmbeddingProjection{
 		Version: PublicationCoverEmbeddingDerivativeProjectionVersion, Generation: attempt.CandidateGeneration,
@@ -226,6 +316,19 @@ func sourceRepublishCoverProjectionTx(
 
 func int64Pointer(value int64) *int64 { return &value }
 
+func coverOutcomeWarning(outcome string) string {
+	switch outcome {
+	case "write_failed":
+		return "cover_write_failed"
+	case "read_failed":
+		return "cover_read_failed"
+	case "mismatch":
+		return "cover_mismatch"
+	default:
+		return ""
+	}
+}
+
 func recordSourceRepublishManualLyricsTx(
 	ctx context.Context,
 	tx bun.Tx,
@@ -233,6 +336,7 @@ func recordSourceRepublishManualLyricsTx(
 	attempt *TrackPublicationAttempt,
 	input *PublicationSourceRepublishInput,
 	observation PublicationStageObservation,
+	receipt PublicationSourceRepublishOptionalResult,
 ) error {
 	if input.LyricsAuthority.Desired == nil || input.LyricsAuthority.Desired.Authority != librarymetadata.AuthorityManual {
 		return nil
@@ -242,6 +346,20 @@ func recordSourceRepublishManualLyricsTx(
 		ConfirmedCurrentGeneration: input.Current.Generation,
 	}
 	desired := input.LyricsAuthority.Desired
+	if input.Lyrics.State == "value" && receipt.LyricsOutcome == PublicationSourceRepublishLyricsRebuiltWithoutLyrics {
+		return nil // The desired manual receipt remains pending after a read-back fallback.
+	}
+	if desired.State == librarymetadata.StateAbsent {
+		assets, err := DecodePublicationAssetOutcomes(observation.ActualAssets)
+		if err != nil {
+			return fmt.Errorf("decode source-republish manual-absent assets: %w", err)
+		}
+		if input.Lyrics.State != "absent" || input.Lyrics.Origin != "none" ||
+			receipt.LyricsOutcome != PublicationSourceRepublishLyricsNotRequested || assets.Lyrics.State != PublicationAssetAbsent {
+			return errors.New("source-republish saved-absent manual lyrics require validated actual absence")
+		}
+		return nil // A saved-absent manual choice is a no-op, not explicit-empty.
+	}
 	switch desired.State {
 	case librarymetadata.StateValue:
 		value, ok := desired.Value.(string)

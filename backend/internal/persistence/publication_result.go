@@ -19,12 +19,13 @@ import (
 // PublicationResult is the read-back of the artifact that was actually
 // installed. It is evidence for the current projection, not a journal entry.
 type PublicationResult struct {
-	Observation           PublicationStageObservation
-	InstalledOwnership    PublicationCurrentOwnership
-	PreservedAudioSHA256  string
-	InitialLyrics         *PublicationInitialLyricsProjection
-	CoverEmbedding        *PublicationCoverEmbeddingProjection
-	ObsoleteOutputCleanup *ObsoletePublicationOutputCleanupAdmission
+	Observation                   PublicationStageObservation
+	InstalledOwnership            PublicationCurrentOwnership
+	PreservedAudioSHA256          string
+	InitialLyrics                 *PublicationInitialLyricsProjection
+	CoverEmbedding                *PublicationCoverEmbeddingProjection
+	SourceRepublishOptionalResult *PublicationSourceRepublishOptionalResult
+	ObsoleteOutputCleanup         *ObsoletePublicationOutputCleanupAdmission
 }
 
 // CommitPublicationResult installs the actual output projection and consumes
@@ -81,6 +82,12 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		}
 		if sourceRepublish && (result.PreservedAudioSHA256 != "" || result.InitialLyrics != nil || result.CoverEmbedding != nil) {
 			return errors.New("commit publication result: source-republish projections must be derived from frozen inputs and actual output")
+		}
+		if sourceRepublish && result.SourceRepublishOptionalResult == nil {
+			return errors.New("commit publication result: source-republish optional result receipt is required")
+		}
+		if !sourceRepublish && result.SourceRepublishOptionalResult != nil {
+			return errors.New("commit publication result: source-republish optional result receipt is only valid for v4 inputs")
 		}
 		if providerTags {
 			if result.PreservedAudioSHA256 != input.ProviderTags.AudioPayloadSHA256 || result.InitialLyrics != nil || result.CoverEmbedding != nil {
@@ -177,7 +184,7 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		var sourceLyricsProjection *PublicationInitialLyricsProjection
 		var sourceCoverProjection *PublicationCoverEmbeddingProjection
 		if sourceRepublish {
-			sourceLyricsProjection, sourceCoverProjection, err = validateSourceRepublishResultTx(ctx, tx, attempt, input, observation, result.InstalledOwnership)
+			sourceLyricsProjection, sourceCoverProjection, err = validateSourceRepublishResultTx(ctx, tx, attempt, input, observation, result.InstalledOwnership, *result.SourceRepublishOptionalResult)
 			if err != nil {
 				return fmt.Errorf("commit publication result: validate source-republish result: %w", err)
 			}
@@ -359,7 +366,7 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				return err
 			}
 		} else if sourceRepublish {
-			if err := recordSourceRepublishManualLyricsTx(ctx, tx, repository, attempt, input.SourceRepublish, observation); err != nil {
+			if err := recordSourceRepublishManualLyricsTx(ctx, tx, repository, attempt, input.SourceRepublish, observation, *result.SourceRepublishOptionalResult); err != nil {
 				return fmt.Errorf("commit publication result: record source-republish manual lyrics receipt: %w", err)
 			}
 		}

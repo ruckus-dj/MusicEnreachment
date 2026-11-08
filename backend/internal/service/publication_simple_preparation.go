@@ -40,10 +40,11 @@ type PublicationSimplePreparation struct {
 // PublicationSimplePreparationResult carries read-back evidence and a bounded
 // lyrics projection for the committing caller to bind to its generation.
 type PublicationSimplePreparationResult struct {
-	Observation          persistence.PublicationStageObservation
-	PreservedAudioSHA256 string
-	LyricsOutcome        *persistence.PublicationLyricsOutcome
-	LyricsResolution     *PublicationLyricsResolution
+	Observation                   persistence.PublicationStageObservation
+	PreservedAudioSHA256          string
+	LyricsOutcome                 *persistence.PublicationLyricsOutcome
+	LyricsResolution              *PublicationLyricsResolution
+	SourceRepublishOptionalResult *persistence.PublicationSourceRepublishOptionalResult
 	// Generation is intentionally left unset here; the committing caller binds it.
 	InitialLyrics  *persistence.PublicationInitialLyricsProjection
 	CoverEmbedding *persistence.PublicationCoverEmbeddingProjection
@@ -98,8 +99,13 @@ func (preparation PublicationSimplePreparation) PrepareSourceRepublish(
 		cover = &metadata.Cover{Data: append([]byte(nil), republish.Cover.PNG...), MIME: republish.Cover.MIME}
 	}
 	prepared := PublicationSimplePreparationResult{}
+	receipt := persistence.PublicationSourceRepublishOptionalResult{
+		LyricsOutcome: persistence.PublicationSourceRepublishLyricsNotRequested,
+		CoverOutcome:  persistence.PublicationSourceRepublishCoverNotRequested,
+	}
 	if republish.Cover.Derivation == "optional_failure" {
 		prepared.SourceRepublishCoverWarning = republish.Cover.Failure
+		receipt.CoverOutcome = persistence.PublicationSourceRepublishCoverPreparationFailed
 	}
 
 	assetsWriter, supportsOptionalAssets := preparation.Metadata.(interface {
@@ -112,12 +118,14 @@ func (preparation PublicationSimplePreparation) PrepareSourceRepublish(
 	if err != nil {
 		return PublicationSimplePreparationResult{}, fmt.Errorf("write source republish candidate metadata and assets: %w", err)
 	}
+	rebuiltWithoutLyrics := false
 	if republish.Lyrics.State == "value" && writeResult.LyricsStatus != metadata.OptionalLyricsVerified {
 		deleteTag(tags, "LYRICS")
 		writeResult, err = preparation.rebuildSourceRepublishCandidate(ctx, input, inputPath, outputPath, tags, cover)
 		if err != nil {
 			return PublicationSimplePreparationResult{}, fmt.Errorf("rebuild source republish candidate without optional lyrics: %w", err)
 		}
+		rebuiltWithoutLyrics = true
 		prepared.LyricsOutcome = &persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetAbsent}
 	} else if republish.Lyrics.State == "value" {
 		prepared.LyricsOutcome = &persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetEmbedded, SHA256: republish.Lyrics.SHA256, Format: "lrc"}
@@ -125,7 +133,12 @@ func (preparation PublicationSimplePreparation) PrepareSourceRepublish(
 		prepared.LyricsOutcome = &persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetAbsent}
 	}
 	if cover != nil && writeResult.CoverStatus != metadata.OptionalCoverVerified {
-		prepared.SourceRepublishCoverWarning = sourceRepublishCoverWarning(writeResult.CoverStatus)
+		warning, coverOutcome, warningErr := sourceRepublishCoverWarning(writeResult.CoverStatus)
+		if warningErr != nil {
+			return PublicationSimplePreparationResult{}, warningErr
+		}
+		prepared.SourceRepublishCoverWarning = warning
+		receipt.CoverOutcome = coverOutcome
 		if _, err := preparation.rebuildSourceRepublishCandidate(ctx, input, inputPath, outputPath, tags, nil); err != nil {
 			return PublicationSimplePreparationResult{}, fmt.Errorf("rebuild source republish candidate without optional cover: %w", err)
 		}
@@ -150,6 +163,31 @@ func (preparation PublicationSimplePreparation) PrepareSourceRepublish(
 	if err != nil {
 		return PublicationSimplePreparationResult{}, fmt.Errorf("validate source republish candidate: %w", err)
 	}
+	assets, err := persistence.DecodePublicationAssetOutcomes(observed.Assets)
+	if err != nil {
+		return PublicationSimplePreparationResult{}, fmt.Errorf("decode final source-republish optional assets: %w", err)
+	}
+	if republish.Lyrics.State == "value" {
+		switch {
+		case assets.Lyrics.State == persistence.PublicationAssetEmbedded && assets.Lyrics.SHA256 == republish.Lyrics.SHA256 && assets.Lyrics.Format == "lrc":
+			receipt.LyricsOutcome = persistence.PublicationSourceRepublishLyricsExactRoundTrip
+			prepared.LyricsOutcome = &persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetEmbedded, SHA256: republish.Lyrics.SHA256, Format: "lrc"}
+		case assets.Lyrics.State == persistence.PublicationAssetAbsent && rebuiltWithoutLyrics:
+			receipt.LyricsOutcome = persistence.PublicationSourceRepublishLyricsRebuiltWithoutLyrics
+			prepared.LyricsOutcome = &persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetAbsent}
+		default:
+			return PublicationSimplePreparationResult{}, errors.New("final source-republish lyrics readback does not match its preparation receipt")
+		}
+	}
+	if republish.Cover.Derivation == "ready" {
+		if assets.Cover.State == persistence.PublicationAssetEmbedded && assets.Cover.SHA256 == republish.Cover.SHA256 && assets.Cover.MIME == republish.Cover.MIME && assets.Cover.SizeBytes != nil && *assets.Cover.SizeBytes == republish.Cover.SizeBytes {
+			receipt.CoverOutcome = persistence.PublicationSourceRepublishCoverVerified
+			prepared.SourceRepublishCoverWarning = ""
+		} else if assets.Cover.State != persistence.PublicationAssetAbsent || receipt.CoverOutcome == persistence.PublicationSourceRepublishCoverNotRequested {
+			return PublicationSimplePreparationResult{}, errors.New("final source-republish cover readback does not match its preparation receipt")
+		}
+	}
+	prepared.SourceRepublishOptionalResult = &receipt
 	prepared.Observation = persistence.PublicationStageObservation{
 		Version: 1, RelativePath: filepath.Base(outputPath), Ownership: observed.Ownership,
 		PayloadSHA256: observed.SHA256, ActualAudio: observed.Audio, ActualMetadata: observed.Metadata,
@@ -199,16 +237,16 @@ func (preparation PublicationSimplePreparation) rebuildSourceRepublishCandidate(
 	return result, nil
 }
 
-func sourceRepublishCoverWarning(status metadata.OptionalCoverWriteStatus) string {
+func sourceRepublishCoverWarning(status metadata.OptionalCoverWriteStatus) (string, persistence.PublicationSourceRepublishCoverOutcome, error) {
 	switch status {
 	case metadata.OptionalCoverWriteFailed:
-		return "cover_write_failed"
+		return "cover_write_failed", persistence.PublicationSourceRepublishCoverWriteFailed, nil
 	case metadata.OptionalCoverReadFailed:
-		return "cover_read_failed"
+		return "cover_read_failed", persistence.PublicationSourceRepublishCoverReadFailed, nil
 	case metadata.OptionalCoverMismatch:
-		return "cover_mismatch"
+		return "cover_mismatch", persistence.PublicationSourceRepublishCoverMismatch, nil
 	default:
-		return "derivative_failed"
+		return "", "", errors.New("source-republish cover writer returned an unexpected outcome")
 	}
 }
 

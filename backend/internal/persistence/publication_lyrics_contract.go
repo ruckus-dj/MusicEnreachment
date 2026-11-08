@@ -40,7 +40,7 @@ type PublicationInitialLyricsAcquisitionRecord struct {
 
 func validPublicationInitialLyricsProjection(projection PublicationInitialLyricsProjection, generation uuid.UUID) bool {
 	return projection.Version == PublicationInitialLyricsVersion && projection.Generation == generation &&
-		(projection.Source == "none" && projection.SHA256 == "" || (projection.Source == "source" || projection.Source == "lrclib") && validSHA256(projection.SHA256)) &&
+		(projection.Source == "none" && projection.SHA256 == "" || (projection.Source == "source" || projection.Source == "lrclib" || projection.Source == "manual") && validSHA256(projection.SHA256)) &&
 		(projection.Outcome == PublicationInitialLyricsNotRequested || projection.Outcome == PublicationAutomaticLyricsRetryNoResult || projection.Outcome == PublicationOptionalLyricsExactRoundTrip || projection.Outcome == PublicationOptionalLyricsRebuiltWithoutLyrics) &&
 		projection.AuthorityMetadataRevision >= 0 && validInitialLyricsWarning(projection.ResolutionWarningCode) &&
 		(projection.OutcomeWarningCode == "" || projection.Outcome == PublicationOptionalLyricsRebuiltWithoutLyrics && projection.OutcomeWarningCode == "readback_mismatch")

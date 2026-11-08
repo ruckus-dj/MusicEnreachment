@@ -15,16 +15,25 @@ import (
 	"github.com/uptrace/bun/migrate"
 )
 
-// The fresh-instance schema is represented by five ordered baseline migrations.
+// The fresh-instance schema is represented by ordered baseline migrations.
 var baselineMigrationNames = []string{
 	"20261015000001",
 	"20261015000002",
 	"20261015000003",
 	"20261015000004",
 	"20261015000005",
+	"20261108000001",
 }
 
 var currentMigrationNames = append([]string(nil), baselineMigrationNames...)
+
+var preSourceRepublishResultMigrationNames = []string{
+	"20261015000001",
+	"20261015000002",
+	"20261015000003",
+	"20261015000004",
+	"20261015000005",
+}
 
 func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 	t.Parallel()
@@ -147,6 +156,50 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	}
 }
 
+func TestSourceRepublishCoverPreparationRollbackRetainsOutcome(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.Open(t)
+	testpostgres.Reset(t, db)
+	ctx := context.Background()
+	collection := loadMigrations(t)
+	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
+	if err := migrator.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrator.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'cover rollback')`, releaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'cover rollback')`, trackID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
+		t.Fatal(err)
+	}
+	coverProjection, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,cover_embedding,quality_policy_version,validated_at)
+		VALUES (?,?,?,'Track.flac','{}','{}','{}','{}',jsonb_build_object(
+		'version',2,'generation',?::text,'receipt_operation_id',?::text,'receipt_release_id',?::text,
+		'receipt_revision',1,'receipt_mode','automatic','requested_generation',?::text,
+		'requested_sha256',repeat('a',64),'outcome','preparation_failed','warning_code','decode_failed'),1,now())`,
+		positionID, uuid.New(), uuid.New(), uuid.New(), uuid.New(), releaseID, uuid.New())
+	if err != nil {
+		t.Fatalf("insert retained preparation failure projection: %v", err)
+	}
+	if _, err := coverProjection.RowsAffected(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrator.Rollback(ctx); err == nil {
+		t.Fatal("rollback discarded a retained cover preparation failure outcome")
+	}
+	var retained bool
+	if err := db.NewRaw(`SELECT cover_embedding->>'warning_code'='decode_failed' FROM track_publication WHERE position_id=?`, positionID).Scan(ctx, &retained); err != nil || !retained {
+		t.Fatalf("retained preparation failure after rollback refusal = %t, %v", retained, err)
+	}
+}
+
 func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.T) {
 	for name, update := range map[string]string{
 		"successful refresh": `UPDATE genre_catalog SET items='["retained"]'::jsonb, updated_at=now(), last_attempt_at=now(), configuration_identity='config-A', refresh_request='{"status":"finished"}'::jsonb WHERE singleton=true`,
@@ -168,10 +221,6 @@ func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.
 			if _, err := db.ExecContext(ctx, update); err != nil {
 				t.Fatalf("seed finished catalog evidence: %v", err)
 			}
-			statusBefore, err := migrator.MigrationsWithStatus(ctx)
-			if err != nil {
-				t.Fatalf("read migration status before rollback: %v", err)
-			}
 			if _, err := migrator.Rollback(ctx); err == nil {
 				t.Fatal("rollback discarded finished genre catalog evidence")
 			}
@@ -182,19 +231,16 @@ func TestProviderBaselineRollbackRefusesFinishedGenreCatalogEvidence(t *testing.
 				}
 			}
 			var applied int
-			if err := db.NewRaw(`SELECT count(*) FROM bun_migrations`).Scan(ctx, &applied); err != nil || applied != len(baselineMigrationNames) {
-				t.Fatalf("applied migrations after refused rollback = %d, %v", applied, err)
+			if err := db.NewRaw(`SELECT count(*) FROM bun_migrations WHERE name IN ('20261015000001', '20261015000002', '20261015000003', '20261015000004', '20261015000005')`).Scan(ctx, &applied); err != nil || applied != len(preSourceRepublishResultMigrationNames) {
+				t.Fatalf("pre-source-republish migrations retained after baseline rollback refusal = %d, %v; want %d", applied, err, len(preSourceRepublishResultMigrationNames))
+			}
+			var newMigrationApplied bool
+			if err := db.NewRaw(`SELECT EXISTS (SELECT 1 FROM bun_migrations WHERE name='20261108000001')`).Scan(ctx, &newMigrationApplied); err != nil || newMigrationApplied {
+				t.Fatalf("new optional-result migration remains applied after its successful rollback = %t, %v", newMigrationApplied, err)
 			}
 			var retained bool
 			if err := db.NewRaw(`SELECT EXISTS (SELECT 1 FROM genre_catalog WHERE refresh_request->>'status'='finished')`).Scan(ctx, &retained); err != nil || !retained {
 				t.Fatalf("finished catalog evidence retained = %v, %v", retained, err)
-			}
-			statusAfter, err := migrator.MigrationsWithStatus(ctx)
-			if err != nil {
-				t.Fatalf("read migration status after rollback refusal: %v", err)
-			}
-			if fmt.Sprint(statusAfter) != fmt.Sprint(statusBefore) {
-				t.Fatalf("migration status changed after refused rollback: before=%#v after=%#v", statusBefore, statusAfter)
 			}
 		})
 	}
@@ -240,7 +286,7 @@ func assertMigrationGroup(t *testing.T, group *migrate.MigrationGroup, want []st
 
 func assertCurrentSchema(t *testing.T, database *bun.DB) {
 	t.Helper()
-	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns, artistMetadataRevision, artistMetadataConstraint, coverObserved, coverConstraint, sourceMetadataReference int
+	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns, artistMetadataRevision, artistMetadataConstraint, coverObserved, coverConstraint, sourceMetadataReference, coverPreparationDiagnostic int
 	ctx := context.Background()
 	checks := []struct {
 		query  string
@@ -257,6 +303,7 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='media_metadata_result' AND column_name='cover_observed' AND is_nullable='NO'`, &coverObserved, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.media_metadata_result'::regclass AND conname='media_metadata_result_cover_facts_check'`, &coverConstraint, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.track_source'::regclass AND conname='track_source_source_metadata_result_fk' AND confdeltype='r'`, &sourceMetadataReference, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.track_publication'::regclass AND conname='track_publication_cover_embedding_projection_check' AND pg_get_constraintdef(oid) LIKE '%unsupported_source%' AND pg_get_constraintdef(oid) LIKE '%decode_failed%' AND pg_get_constraintdef(oid) LIKE '%derivative_failed%' AND pg_get_constraintdef(oid) LIKE '%source_unavailable%'`, &coverPreparationDiagnostic, 1},
 	}
 	for _, check := range checks {
 		if err := database.NewRaw(check.query).Scan(ctx, check.result); err != nil {

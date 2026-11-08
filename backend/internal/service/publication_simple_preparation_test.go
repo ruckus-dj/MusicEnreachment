@@ -479,7 +479,11 @@ func TestPrepareSourceRepublishBuildsFromSelectedSourceAndHandlesOptionalAssets(
 	}
 	capture, artwork := readCandidate(output)
 	assertFrozenTagsAndCover(capture, artwork, true)
-	if commands.calls != 1 || prepared.LyricsOutcome == nil || prepared.LyricsOutcome.State != persistence.PublicationAssetEmbedded || prepared.SourceRepublishCoverWarning != "" {
+	if commands.calls != 1 || prepared.LyricsOutcome == nil || prepared.LyricsOutcome.State != persistence.PublicationAssetEmbedded || prepared.SourceRepublishCoverWarning != "" ||
+		prepared.SourceRepublishOptionalResult == nil || *prepared.SourceRepublishOptionalResult != (persistence.PublicationSourceRepublishOptionalResult{
+		LyricsOutcome: persistence.PublicationSourceRepublishLyricsExactRoundTrip,
+		CoverOutcome:  persistence.PublicationSourceRepublishCoverVerified,
+	}) {
 		t.Fatalf("successful preparation builds=%d lyrics=%#v cover warning=%q", commands.calls, prepared.LyricsOutcome, prepared.SourceRepublishCoverWarning)
 	}
 
@@ -497,7 +501,11 @@ func TestPrepareSourceRepublishBuildsFromSelectedSourceAndHandlesOptionalAssets(
 	}
 	actual, artwork := readCandidate(output)
 	assertFrozenTagsAndCover(actual, artwork, false)
-	if prepared.LyricsOutcome == nil || prepared.LyricsOutcome.State != persistence.PublicationAssetAbsent || prepared.SourceRepublishCoverWarning != "" {
+	if prepared.LyricsOutcome == nil || prepared.LyricsOutcome.State != persistence.PublicationAssetAbsent || prepared.SourceRepublishCoverWarning != "" ||
+		prepared.SourceRepublishOptionalResult == nil || *prepared.SourceRepublishOptionalResult != (persistence.PublicationSourceRepublishOptionalResult{
+		LyricsOutcome: persistence.PublicationSourceRepublishLyricsRebuiltWithoutLyrics,
+		CoverOutcome:  persistence.PublicationSourceRepublishCoverVerified,
+	}) {
 		t.Fatalf("optional outcomes after lyrics fallback = lyrics %#v cover warning %q", prepared.LyricsOutcome, prepared.SourceRepublishCoverWarning)
 	}
 
@@ -521,8 +529,31 @@ func TestPrepareSourceRepublishBuildsFromSelectedSourceAndHandlesOptionalAssets(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(artwork.Images) != 0 || prepared.SourceRepublishCoverWarning == "" || prepared.LyricsOutcome == nil || prepared.LyricsOutcome.State != persistence.PublicationAssetEmbedded {
+	if len(artwork.Images) != 0 || prepared.SourceRepublishCoverWarning == "" || prepared.LyricsOutcome == nil || prepared.LyricsOutcome.State != persistence.PublicationAssetEmbedded ||
+		prepared.SourceRepublishOptionalResult == nil || *prepared.SourceRepublishOptionalResult != (persistence.PublicationSourceRepublishOptionalResult{
+		LyricsOutcome: persistence.PublicationSourceRepublishLyricsExactRoundTrip,
+		CoverOutcome:  persistence.PublicationSourceRepublishCoverWriteFailed,
+	}) {
 		t.Fatalf("cover failure accepted with artwork=%d warning=%q lyrics=%#v", len(artwork.Images), prepared.SourceRepublishCoverWarning, prepared.LyricsOutcome)
+	}
+
+	// A frozen preparation failure is distinct from a writer failure for a ready derivative.
+	input.SourceRepublish.Cover.Derivation = "optional_failure"
+	input.SourceRepublish.Cover.PNG = nil
+	input.SourceRepublish.Cover.SHA256 = ""
+	input.SourceRepublish.Cover.MIME = ""
+	input.SourceRepublish.Cover.SizeBytes = 0
+	input.SourceRepublish.Cover.Failure = "derivative_failed"
+	output = filepath.Join(t.TempDir(), "preparation-failure.flac")
+	prepared, err = run(metadata.Writer{}, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.SourceRepublishOptionalResult == nil || *prepared.SourceRepublishOptionalResult != (persistence.PublicationSourceRepublishOptionalResult{
+		LyricsOutcome: persistence.PublicationSourceRepublishLyricsExactRoundTrip,
+		CoverOutcome:  persistence.PublicationSourceRepublishCoverPreparationFailed,
+	}) {
+		t.Fatalf("frozen cover preparation failure receipt = %#v", prepared.SourceRepublishOptionalResult)
 	}
 }
 
