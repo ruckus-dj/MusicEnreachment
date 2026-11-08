@@ -98,6 +98,34 @@ function lyricsWarningText(code: string, copy: PreviewCopy) {
   return warnings[code] ?? code;
 }
 
+function audioStatusText(status: string, copy: PreviewCopy) {
+  switch (status) {
+    case "matches":
+      return copy.audioStatusMatches;
+    case "differs":
+      return copy.audioStatusDiffers;
+    default:
+      return copy.audioStatusUnavailable;
+  }
+}
+
+function audioAuthorityStatusText(status: string, copy: PreviewCopy) {
+  switch (status) {
+    case "present":
+      return copy.audioAuthorityPresent;
+    case "stale":
+      return copy.audioAuthorityStale;
+    case "missing":
+      return copy.audioAuthorityMissing;
+    default:
+      return copy.audioAuthorityUnknown;
+  }
+}
+
+function isZeroUUID(value: string | undefined) {
+  return !value || value === "00000000-0000-0000-0000-000000000000";
+}
+
 export function FirstPublicationPreview({
   releaseId,
   positionId,
@@ -448,6 +476,9 @@ export function FirstPublicationPreview({
       preview.transform &&
       preview.resolved_path_components?.length,
   );
+  const audioEvidence = preview?.current_comparison?.audio_evidence;
+  const audioAuthorityPresent =
+    audioEvidence?.source_authority_status === "present";
   const lyricsPlan = preview?.lyrics_plan;
   const lyricsComparisonStatus = lyricsPlan
     ? !lyricsPlan.current_comparison_available
@@ -803,11 +834,43 @@ export function FirstPublicationPreview({
                 ))}
               </div>
               <p>
-                {copy.audioFacts.replace(
-                  "{status}",
-                  preview.current_comparison.audio_status,
-                )}
+                {copy.audioComparison}:{" "}
+                {audioStatusText(preview.current_comparison.audio_status, copy)}
               </p>
+              {audioEvidence && (
+                <div>
+                  <p>
+                    {copy.audioAuthorityStatus}:{" "}
+                    {audioAuthorityStatusText(
+                      audioEvidence.source_authority_status,
+                      copy,
+                    )}
+                  </p>
+                  {audioAuthorityPresent && (
+                    <ul>
+                      {!isZeroUUID(audioEvidence.media_variant_id) && (
+                        <li>
+                          {copy.audioCurrentVariant}:{" "}
+                          {audioEvidence.media_variant_id}
+                        </li>
+                      )}
+                      <li>
+                        {copy.audioSelectedVariant}:{" "}
+                        {isZeroUUID(audioEvidence.selected_media_variant_id)
+                          ? copy.audioNotRecorded
+                          : audioEvidence.selected_media_variant_id}
+                      </li>
+                      {audioEvidence.canonical_source_sha256 && (
+                        <li className="break-all">
+                          {copy.audioCanonicalSHA256}:{" "}
+                          {audioEvidence.canonical_source_sha256}
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                </div>
+              )}
+              <p>{copy.audioComparisonBasis}</p>
               <p>
                 {copy.coverComparison}:{" "}
                 {preview.current_comparison.cover_status === "matches"

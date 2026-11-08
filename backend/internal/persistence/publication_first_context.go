@@ -26,6 +26,7 @@ type FirstPublicationSource struct {
 	AssociationID                   uuid.UUID
 	Selected                        bool
 	Input                           PublicationAudioInput
+	CanonicalSourceSHA256           []byte `json:"-"`
 	AnalysedMetadata                *PublicationAnalysedMetadata
 	Quality                         PersistedAudioFacts
 	ChannelLayout                   string
@@ -794,6 +795,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		Size               int64              `bun:"size_bytes"`
 		MTime              time.Time          `bun:"mtime"`
 		Variant            SourceMediaVariant `bun:"embed:variant__"`
+		CanonicalSourceSHA []byte             `bun:"canonical_source_sha256"`
 	}
 	var rejected struct {
 		UnavailableRoots int `bun:"unavailable_roots"`
@@ -825,7 +827,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 		selectedBlockers = append(selectedBlockers, "one or more selected sources lack a fresh successful probe")
 	}
 	err := tx.NewRaw(`SELECT ts.id AS association_id, ts.source_metadata_result_id AS metadata_result_id, mr.observed_tags AS metadata_tags, mr.properties AS metadata_properties, mr.winning_result_id,
-		 ts.selected, p.success_probe_variant_id AS probe_result_id,
+		 ts.selected, p.success_probe_variant_id AS probe_result_id, identity_variant.source_sha256 AS canonical_source_sha256,
 		r.id AS root_id, l.id AS location_id, w.id AS work_id, i.media_variant_id AS variant_id,
 		w.configured_path, w.inventory_path, w.relative_path, l.size_bytes, l.mtime,
 		v.id AS "variant__id", v.size_bytes AS "variant__size_bytes", v.analysis_policy_version AS "variant__analysis_policy_version",
@@ -904,6 +906,7 @@ func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.U
 			streamInput.AudioFacts = facts
 			*result = append(*result, FirstPublicationSource{
 				Selection: selection, AssociationID: row.AssociationID, Selected: row.Selected, Input: streamInput, AnalysedMetadata: clonePublicationAnalysedMetadata(analysed), Quality: facts, StreamTitle: stream.Title, StreamLanguage: stream.Language,
+				CanonicalSourceSHA256:           append([]byte(nil), row.CanonicalSourceSHA...),
 				ChannelLayout:                   stream.ChannelLayout,
 				RequiresExplicitStreamSelection: len(streams) > 1, AudioStreamCount: len(streams),
 			})

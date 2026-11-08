@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -76,4 +77,38 @@ func (repository *SetupManagerRepository) ReadPositionSourceAuthority(ctx contex
 		return nil, fmt.Errorf("read position source authority: %w", err)
 	}
 	return &authority, nil
+}
+
+func readCurrentSourceAuthorityTx(ctx context.Context, tx bun.IDB, positionID, epoch, generation uuid.UUID) (*CurrentSourceAuthority, error) {
+	result := &CurrentSourceAuthority{Status: "missing"}
+	var row struct {
+		Revision              uuid.UUID `bun:"revision,type:uuid"`
+		PublicationEpoch      uuid.UUID `bun:"publication_epoch,type:uuid"`
+		PublicationGeneration uuid.UUID `bun:"publication_generation,type:uuid"`
+		SourceLocationID      uuid.UUID `bun:"source_location_id,type:uuid"`
+		MediaVariantID        uuid.UUID `bun:"media_variant_id,type:uuid"`
+		SourceSHA256          []byte    `bun:"source_sha256"`
+	}
+	err := tx.NewRaw(`SELECT authority.revision,authority.publication_epoch,authority.publication_generation,
+		authority.source_location_id,authority.media_variant_id,variant.source_sha256
+		FROM position_source_authority authority
+		LEFT JOIN media_variant variant ON variant.id=authority.media_variant_id
+		WHERE authority.position_id=?`, positionID).Scan(ctx, &row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	result.Revision = row.Revision
+	result.PublicationEpoch = row.PublicationEpoch
+	result.PublicationGeneration = row.PublicationGeneration
+	result.SourceLocationID = row.SourceLocationID
+	result.MediaVariantID = row.MediaVariantID
+	result.CanonicalSourceSHA256 = append([]byte(nil), row.SourceSHA256...)
+	result.Status = "present"
+	if row.PublicationEpoch != epoch || row.PublicationGeneration != generation {
+		result.Status = "stale"
+	}
+	return result, nil
 }

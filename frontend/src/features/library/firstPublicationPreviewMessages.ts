@@ -52,8 +52,25 @@ export const firstPublicationPreviewMessages = {
     resolvedPath: "Resolved path",
     comparisonStatus: "Comparison status",
     pathUnknown: "not available",
-    audioFacts:
-      "Audio: {status}. These are factual properties, not a conclusion that the audio contents are equal.",
+    audioComparison: "Audio comparison",
+    audioStatusMatches:
+      "same audio — the current publication was produced from this audio source",
+    audioStatusDiffers:
+      "replacement — the selected audio differs from the current publication audio",
+    audioStatusUnavailable:
+      "unknown — audio equality with the current publication is not established",
+    audioAuthorityStatus: "Source authority",
+    audioAuthorityPresent: "present",
+    audioAuthorityStale: "stale — does not describe the current publication",
+    audioAuthorityMissing:
+      "missing — no source is recorded for the current publication",
+    audioAuthorityUnknown: "unknown",
+    audioCurrentVariant: "Current publication variant",
+    audioSelectedVariant: "Selected variant",
+    audioNotRecorded: "not recorded",
+    audioCanonicalSHA256: "Canonical source SHA-256",
+    audioComparisonBasis:
+      "Equality is established only by the same media variant or equal canonical source SHA-256 values. A missing or stale source authority is not a comparison baseline.",
     tagDifferences: "Saved tag differences",
     noTagDifferences: "No tag differences.",
     currentValue: "Current publication",
@@ -187,8 +204,25 @@ export const firstPublicationPreviewMessages = {
     resolvedPath: "Разрешённый путь",
     comparisonStatus: "Состояние сравнения",
     pathUnknown: "не определён",
-    audioFacts:
-      "Аудио: {status}. Это фактические сведения, а не вывод о равенстве аудиосодержимого.",
+    audioComparison: "Сравнение аудио",
+    audioStatusMatches:
+      "то же аудио — текущая публикация создана из этого аудиоисточника",
+    audioStatusDiffers:
+      "замена — выбранное аудио отличается от аудио текущей публикации",
+    audioStatusUnavailable:
+      "неизвестно — равенство с аудио текущей публикации не установлено",
+    audioAuthorityStatus: "Сведения об источнике публикации",
+    audioAuthorityPresent: "актуальны",
+    audioAuthorityStale: "устарели — не описывают текущую публикацию",
+    audioAuthorityMissing:
+      "отсутствуют — для текущей публикации источник не записан",
+    audioAuthorityUnknown: "неизвестны",
+    audioCurrentVariant: "Вариант текущей публикации",
+    audioSelectedVariant: "Выбранный вариант",
+    audioNotRecorded: "не зафиксирован",
+    audioCanonicalSHA256: "SHA-256 канонического источника",
+    audioComparisonBasis:
+      "Равенство устанавливается только при совпадении варианта носителя или равенстве SHA-256 канонического источника. Отсутствующие или устаревшие сведения об источнике не являются основой для сравнения.",
     tagDifferences: "Различия сохранённых тегов",
     noTagDifferences: "Различий тегов нет.",
     currentValue: "Текущая публикация",

@@ -24,6 +24,8 @@ func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testi
 		Record:   persistence.TrackPublication{Generation: generation, RelativePath: "Artist/Album.m4a"},
 		Metadata: persistence.PublicationCommitMetadata{Tags: map[string][]string{"ARTIST": {"Artist"}, "TITLE": {"Two", "One"}, "EMPTY_VALUE": nil}},
 	}
+	locationID, variantID := uuid.New(), uuid.New()
+	current.SourceAuthority = &persistence.CurrentSourceAuthority{Status: "present", Revision: uuid.New(), PublicationEpoch: uuid.New(), PublicationGeneration: generation, SourceLocationID: locationID, MediaVariantID: variantID}
 	releaseID, positionID := uuid.New(), uuid.New()
 	snapshot := &persistence.LibraryFirstPublicationContext{
 		Library:             &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, Current: current},
@@ -36,6 +38,9 @@ func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testi
 	}
 	for _, mode := range []string{firstPublicationPreviewModeOrdinary, firstPublicationPreviewModeForced} {
 		t.Run(mode, func(t *testing.T) {
+			current.SourceAuthority.Status = "present"
+			current.SourceAuthority.MediaVariantID = variantID
+			current.SourceAuthority.CanonicalSourceSHA256 = nil
 			service := newLibraryPublications(firstPreviewRepository{snapshot: snapshot}, firstPreviewSettings{format: "source", template: "{TRACK_NAME}"}, nil, tools.Platform{})
 			servicePreview, err := service.PreviewFirstSelectedMode(context.Background(), releaseID, positionID, nil, mode)
 			if err != nil || servicePreview.CurrentComparison == nil {
@@ -51,8 +56,14 @@ func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testi
 				Mode: mode, PathComponents: []string{"Artist", "New Album.m4a"},
 				ResolvedPathComponents: []string{"Artist", "New Album.m4a"},
 				DesiredTags:            publication.TagProjection{Tags: desired},
+				SelectedSource:         &FirstPublicationPreviewSource{LocationID: uuid.New(), MediaVariantID: variantID},
 			}
-			preview.CurrentComparison = compareFirstPublicationCurrent(preview, current)
+			snapshot := &persistence.LibraryFirstPublicationContext{Sources: []persistence.FirstPublicationSource{{
+				Selection:             persistence.PublicationSourceSelection{LocationID: preview.SelectedSource.LocationID, MediaVariantID: variantID},
+				CanonicalSourceSHA256: []byte(strings.Repeat("a", 32)),
+			}}}
+			current.SourceAuthority.CanonicalSourceSHA256 = []byte(strings.Repeat("a", 32))
+			preview.CurrentComparison = compareFirstPublicationCurrent(preview, current, snapshot)
 			comparison := preview.CurrentComparison
 			if comparison.Status != "blocked" || comparison.Generation != generation {
 				t.Fatalf("comparison status or CURRENT generation = %#v", comparison)
@@ -66,8 +77,25 @@ func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testi
 			if comparison.TagDifferences[2].DesiredPresent != true || comparison.TagDifferences[2].CurrentPresent != false || comparison.TagDifferences[1].DesiredPresent != true || comparison.TagDifferences[1].CurrentPresent != true || comparison.TagDifferences[1].Desired == nil || comparison.TagDifferences[1].Current != nil {
 				t.Fatalf("nil/absent/empty tag distinctions lost: %#v", comparison.TagDifferences)
 			}
-			if comparison.AudioStatus != "factual_only" || !strings.Contains(comparison.Reason, "typed source replacement") {
+			if comparison.AudioStatus != "matches" || comparison.AudioEvidence == nil || comparison.AudioEvidence.SourceAuthorityStatus != "present" || !strings.Contains(comparison.Reason, "typed source replacement") {
 				t.Fatalf("comparison safety status = %#v", comparison)
+			}
+			current.SourceAuthority.MediaVariantID = uuid.New()
+			if got := compareFirstPublicationCurrent(preview, current, snapshot).AudioStatus; got != "matches" {
+				t.Fatalf("equal canonical source SHA-256 status = %q, want matches", got)
+			}
+			current.SourceAuthority.CanonicalSourceSHA256 = []byte(strings.Repeat("b", 32))
+			if got := compareFirstPublicationCurrent(preview, current, snapshot).AudioStatus; got != "differs" {
+				t.Fatalf("different canonical source SHA-256 status = %q, want differs", got)
+			}
+			current.SourceAuthority.CanonicalSourceSHA256 = nil
+			if got := compareFirstPublicationCurrent(preview, current, snapshot).AudioStatus; got != "unavailable" {
+				t.Fatalf("missing canonical source SHA-256 status = %q, want unavailable", got)
+			}
+			current.SourceAuthority.CanonicalSourceSHA256 = []byte(strings.Repeat("a", 32))
+			current.SourceAuthority.Status = "stale"
+			if got := compareFirstPublicationCurrent(preview, current, snapshot).AudioStatus; got != "unavailable" {
+				t.Fatalf("stale authority status = %q, want unavailable", got)
 			}
 		})
 	}

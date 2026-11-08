@@ -201,6 +201,19 @@ export interface ErrorModel {
   type?: string;
 }
 
+export interface FirstPublicationAudioEvidence {
+  canonical_source_sha256?: string;
+  media_variant_id: string;
+  selected_media_variant_id: string;
+  selected_source_location_id: string;
+  selected_source_sha256?: string;
+  source_authority_epoch: string;
+  source_authority_generation: string;
+  source_authority_revision: string;
+  source_authority_status: string;
+  source_location_id: string;
+}
+
 export interface FirstPublicationCoverFacts {
   mime: string;
   sha256: string;
@@ -229,6 +242,7 @@ export interface FirstPublicationTagDifference {
 }
 
 export interface FirstPublicationCurrentComparison {
+  audio_evidence?: FirstPublicationAudioEvidence;
   audio_status: string;
   cover_status: string;
   /** @nullable */

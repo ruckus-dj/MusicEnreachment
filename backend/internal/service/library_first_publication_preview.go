@@ -65,6 +65,20 @@ type FirstPublicationCurrentComparison struct {
 	AudioStatus        string                          `json:"audio_status"`
 	CoverStatus        string                          `json:"cover_status"`
 	LyricsStatus       string                          `json:"lyrics_status"`
+	AudioEvidence      *FirstPublicationAudioEvidence  `json:"audio_evidence,omitempty"`
+}
+
+type FirstPublicationAudioEvidence struct {
+	SourceAuthorityStatus     string    `json:"source_authority_status"`
+	SourceAuthorityRevision   uuid.UUID `json:"source_authority_revision"`
+	SourceAuthorityEpoch      uuid.UUID `json:"source_authority_epoch"`
+	SourceAuthorityGeneration uuid.UUID `json:"source_authority_generation"`
+	SourceLocationID          uuid.UUID `json:"source_location_id"`
+	MediaVariantID            uuid.UUID `json:"media_variant_id"`
+	CanonicalSourceSHA256     string    `json:"canonical_source_sha256,omitempty"`
+	SelectedSourceLocationID  uuid.UUID `json:"selected_source_location_id"`
+	SelectedMediaVariantID    uuid.UUID `json:"selected_media_variant_id"`
+	SelectedSourceSHA256      string    `json:"selected_source_sha256,omitempty"`
 }
 
 type FirstPublicationTagDifference struct {
@@ -147,6 +161,11 @@ func (service *LibraryPublications) PreviewFirstSelectedMode(ctx context.Context
 		return preview, err
 	}
 	if contextSnapshot.Library.Current != nil {
+		if err := foldFirstPublicationCurrentAudioEvidenceDigest(&preview, contextSnapshot); err != nil {
+			return FirstPublicationPreview{}, err
+		}
+	}
+	if contextSnapshot.Library.Current != nil {
 		var selected *persistence.FirstPublicationSource
 		if preview.SelectedSource != nil {
 			for i := range contextSnapshot.Sources {
@@ -195,9 +214,55 @@ func (service *LibraryPublications) PreviewFirstSelectedMode(ctx context.Context
 		}
 	}
 	if current != nil {
-		preview.CurrentComparison = compareFirstPublicationCurrent(preview, current)
+		preview.CurrentComparison = compareFirstPublicationCurrent(preview, current, contextSnapshot)
 	}
 	return preview, nil
+}
+
+func foldFirstPublicationCurrentAudioEvidenceDigest(preview *FirstPublicationPreview, snapshot *persistence.LibraryFirstPublicationContext) error {
+	var selected *persistence.FirstPublicationSource
+	if preview.SelectedSource != nil {
+		for i := range snapshot.Sources {
+			source := &snapshot.Sources[i]
+			if source.Selection.LocationID == preview.SelectedSource.LocationID && source.Selection.MediaVariantID == preview.SelectedSource.MediaVariantID {
+				selected = source
+				break
+			}
+		}
+	}
+	input := struct {
+		AuthorityStatus     string    `json:"authority_status"`
+		AuthorityRevision   uuid.UUID `json:"authority_revision"`
+		AuthorityEpoch      uuid.UUID `json:"authority_epoch"`
+		AuthorityGeneration uuid.UUID `json:"authority_generation"`
+		AuthorityLocation   uuid.UUID `json:"authority_location"`
+		AuthorityVariant    uuid.UUID `json:"authority_variant"`
+		AuthoritySHA256     string    `json:"authority_sha256"`
+		SelectedLocation    uuid.UUID `json:"selected_location"`
+		SelectedVariant     uuid.UUID `json:"selected_variant"`
+		SelectedSHA256      string    `json:"selected_sha256"`
+	}{}
+	if authority := snapshot.Library.Current.SourceAuthority; authority != nil {
+		input.AuthorityStatus = authority.Status
+		input.AuthorityRevision = authority.Revision
+		input.AuthorityEpoch = authority.PublicationEpoch
+		input.AuthorityGeneration = authority.PublicationGeneration
+		input.AuthorityLocation = authority.SourceLocationID
+		input.AuthorityVariant = authority.MediaVariantID
+		input.AuthoritySHA256 = digestString(authority.CanonicalSourceSHA256)
+	}
+	if selected != nil {
+		input.SelectedLocation = selected.Selection.LocationID
+		input.SelectedVariant = selected.Selection.MediaVariantID
+		input.SelectedSHA256 = digestString(selected.CanonicalSourceSHA256)
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return fmt.Errorf("encode first publication CURRENT audio evidence digest: %w", err)
+	}
+	digest := sha256.Sum256(append(append([]byte("melo:first-publication-current-audio:v1:"+preview.ContextDigest+":"), encoded...), []byte(":relative-namespace:v1")...))
+	preview.ContextDigest = hex.EncodeToString(digest[:])
+	return nil
 }
 
 // buildFirstPublicationPreview performs deterministic planning from captured
@@ -368,12 +433,50 @@ func buildFirstPublicationPreviewSelectedMode(contextSnapshot *persistence.Libra
 	return preview, nil
 }
 
-func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *persistence.LibraryPublicationCurrent) *FirstPublicationCurrentComparison {
+func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *persistence.LibraryPublicationCurrent, snapshot *persistence.LibraryFirstPublicationContext) *FirstPublicationCurrentComparison {
 	comparison := &FirstPublicationCurrentComparison{
 		Status: "blocked", Reason: "comparison is read-only; typed source replacement and native proof of embedded assets are not available",
 		Generation: current.Record.Generation, RenderedComponents: append([]string(nil), preview.PathComponents...),
 		ResolvedComponents: append([]string(nil), preview.ResolvedPathComponents...),
-		CurrentComponents:  strings.Split(current.Record.RelativePath, "/"), AudioStatus: "factual_only", CoverStatus: "unavailable", LyricsStatus: "unavailable",
+		CurrentComponents:  strings.Split(current.Record.RelativePath, "/"), AudioStatus: "unavailable", CoverStatus: "unavailable", LyricsStatus: "unavailable",
+	}
+	var selected *persistence.FirstPublicationSource
+	if preview.SelectedSource != nil && snapshot != nil {
+		for i := range snapshot.Sources {
+			source := &snapshot.Sources[i]
+			if source.Selection.LocationID == preview.SelectedSource.LocationID && source.Selection.MediaVariantID == preview.SelectedSource.MediaVariantID {
+				selected = source
+				break
+			}
+		}
+	}
+	if authority := current.SourceAuthority; authority != nil {
+		evidence := &FirstPublicationAudioEvidence{
+			SourceAuthorityStatus: authority.Status, SourceAuthorityRevision: authority.Revision,
+			SourceAuthorityEpoch: authority.PublicationEpoch, SourceAuthorityGeneration: authority.PublicationGeneration,
+			SourceLocationID: authority.SourceLocationID, MediaVariantID: authority.MediaVariantID,
+			CanonicalSourceSHA256: digestString(authority.CanonicalSourceSHA256),
+		}
+		if selected != nil {
+			evidence.SelectedSourceLocationID = selected.Selection.LocationID
+			evidence.SelectedMediaVariantID = selected.Selection.MediaVariantID
+			evidence.SelectedSourceSHA256 = digestString(selected.CanonicalSourceSHA256)
+		}
+		comparison.AudioEvidence = evidence
+		if authority.Status == "present" && selected != nil {
+			switch {
+			case authority.MediaVariantID != uuid.Nil &&
+				selected.Selection.MediaVariantID != uuid.Nil &&
+				authority.MediaVariantID == selected.Selection.MediaVariantID:
+				comparison.AudioStatus = "matches"
+			case len(authority.CanonicalSourceSHA256) == sha256.Size && len(selected.CanonicalSourceSHA256) == sha256.Size:
+				if string(authority.CanonicalSourceSHA256) == string(selected.CanonicalSourceSHA256) {
+					comparison.AudioStatus = "matches"
+				} else {
+					comparison.AudioStatus = "differs"
+				}
+			}
+		}
 	}
 	if preview.LyricsPlan != nil {
 		comparison.LyricsStatus = preview.LyricsPlan.CurrentStatus
@@ -437,6 +540,13 @@ func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *pe
 		comparison.TagDifferences = []FirstPublicationTagDifference{}
 	}
 	return comparison
+}
+
+func digestString(digest []byte) string {
+	if len(digest) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(digest)
 }
 
 func foldFirstPublicationCoverPlanDigest(preview *FirstPublicationPreview, plan FirstPublicationCoverPlan) error {

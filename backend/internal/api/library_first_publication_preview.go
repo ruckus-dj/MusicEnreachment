@@ -65,6 +65,20 @@ type firstPublicationCurrentComparison struct {
 	AudioStatus        string                          `json:"audio_status"`
 	CoverStatus        string                          `json:"cover_status"`
 	LyricsStatus       string                          `json:"lyrics_status"`
+	AudioEvidence      *firstPublicationAudioEvidence  `json:"audio_evidence,omitempty"`
+}
+
+type firstPublicationAudioEvidence struct {
+	SourceAuthorityStatus     string    `json:"source_authority_status"`
+	SourceAuthorityRevision   uuid.UUID `json:"source_authority_revision"`
+	SourceAuthorityEpoch      uuid.UUID `json:"source_authority_epoch"`
+	SourceAuthorityGeneration uuid.UUID `json:"source_authority_generation"`
+	SourceLocationID          uuid.UUID `json:"source_location_id"`
+	MediaVariantID            uuid.UUID `json:"media_variant_id"`
+	CanonicalSourceSHA256     string    `json:"canonical_source_sha256,omitempty"`
+	SelectedSourceLocationID  uuid.UUID `json:"selected_source_location_id"`
+	SelectedMediaVariantID    uuid.UUID `json:"selected_media_variant_id"`
+	SelectedSourceSHA256      string    `json:"selected_source_sha256,omitempty"`
 }
 
 type firstPublicationCoverPlan struct {
@@ -224,6 +238,15 @@ func libraryFirstPublicationPreviewResponse(preview service.FirstPublicationPrev
 			CurrentComponents:  append([]string(nil), comparison.CurrentComponents...),
 			RenderedMatches:    comparison.RenderedMatches, ResolvedMatches: comparison.ResolvedMatches,
 			AudioStatus: comparison.AudioStatus, CoverStatus: comparison.CoverStatus, LyricsStatus: comparison.LyricsStatus,
+		}
+		if evidence := comparison.AudioEvidence; evidence != nil {
+			response.CurrentComparison.AudioEvidence = &firstPublicationAudioEvidence{
+				SourceAuthorityStatus: evidence.SourceAuthorityStatus, SourceAuthorityRevision: evidence.SourceAuthorityRevision,
+				SourceAuthorityEpoch: evidence.SourceAuthorityEpoch, SourceAuthorityGeneration: evidence.SourceAuthorityGeneration,
+				SourceLocationID: evidence.SourceLocationID, MediaVariantID: evidence.MediaVariantID,
+				CanonicalSourceSHA256: evidence.CanonicalSourceSHA256, SelectedSourceLocationID: evidence.SelectedSourceLocationID,
+				SelectedMediaVariantID: evidence.SelectedMediaVariantID, SelectedSourceSHA256: evidence.SelectedSourceSHA256,
+			}
 		}
 		response.CurrentComparison.TagDifferences = make([]firstPublicationTagDifference, 0, len(comparison.TagDifferences))
 		for _, difference := range comparison.TagDifferences {

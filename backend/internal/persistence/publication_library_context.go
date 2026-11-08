@@ -21,13 +21,26 @@ type LibraryPublicationOperation struct {
 }
 
 type LibraryPublicationCurrent struct {
-	Record         TrackPublication
-	InitialLyrics  *PublicationInitialLyricsProjection
-	CoverEmbedding *PublicationCoverEmbeddingProjection
-	Ownership      PublicationCurrentOwnership
-	Audio          PublicationCurrentAudio
-	Metadata       PublicationCommitMetadata
-	Assets         PublicationAssetOutcomes
+	Record          TrackPublication
+	InitialLyrics   *PublicationInitialLyricsProjection
+	CoverEmbedding  *PublicationCoverEmbeddingProjection
+	Ownership       PublicationCurrentOwnership
+	Audio           PublicationCurrentAudio
+	Metadata        PublicationCommitMetadata
+	Assets          PublicationAssetOutcomes
+	SourceAuthority *CurrentSourceAuthority `json:"-"`
+}
+
+// CurrentSourceAuthority preserves the raw CURRENT authority row separately
+// from its freshness state. A stale row is evidence, not missing evidence.
+type CurrentSourceAuthority struct {
+	Status                string    `json:"-"`
+	Revision              uuid.UUID `json:"-"`
+	PublicationEpoch      uuid.UUID `json:"-"`
+	PublicationGeneration uuid.UUID `json:"-"`
+	SourceLocationID      uuid.UUID `json:"-"`
+	MediaVariantID        uuid.UUID `json:"-"`
+	CanonicalSourceSHA256 []byte    `json:"-"`
 }
 
 type LibraryPublicationNamespaceNode struct {
@@ -127,6 +140,11 @@ func readLibraryPublicationContextTx(ctx context.Context, tx bun.IDB, releaseUUI
 				return fmt.Errorf("decode current publication assets: %w", err)
 			}
 			decoded.Assets = assets
+			sourceAuthority, err := readCurrentSourceAuthorityTx(ctx, tx, positionUUID, current.Epoch, current.Generation)
+			if err != nil {
+				return fmt.Errorf("read current source authority: %w", err)
+			}
+			decoded.SourceAuthority = sourceAuthority
 			(*result).Current = decoded
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read current publication: %w", err)
