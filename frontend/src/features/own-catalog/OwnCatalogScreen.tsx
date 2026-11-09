@@ -41,6 +41,8 @@ type TrackDraft = {
   clientKey: string;
   id?: string;
   recording_id: string;
+  recording_title: string;
+  recording_duration_ms: number | null;
   title_override: string;
   duration: string;
   originalDurationMS?: number | null;
@@ -111,6 +113,8 @@ function draftFromItem(item: CatalogEntry): Draft {
       clientKey: crypto.randomUUID(),
       id: track.id,
       recording_id: track.recording_id,
+      recording_title: track.recording_title,
+      recording_duration_ms: track.recording_duration_ms,
       title_override: track.title_override ?? "",
       originalDurationMS: track.duration_override_ms,
       durationEdited: false,
@@ -184,6 +188,22 @@ function split(value: string): string[] {
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+function formatEffectiveDuration(
+  track: TrackDraft,
+  notSpecified: string,
+): string {
+  const override = durationForSave(
+    track.originalDurationMS,
+    track.durationEdited,
+    track.duration,
+  );
+  const duration =
+    override == null || Number.isNaN(override)
+      ? track.recording_duration_ms
+      : override;
+  return duration == null ? notSpecified : formatDuration(duration);
 }
 
 const apiFor = {
@@ -350,6 +370,7 @@ export function OwnCatalogScreen() {
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) return;
     detailReadGeneration.current += 1;
     setLoading(false);
     setQuery(searchInput.trim());
@@ -361,6 +382,7 @@ export function OwnCatalogScreen() {
   }
 
   async function select(item: CatalogEntry) {
+    if (saving) return;
     const requestKind = kind;
     const generation = ++detailReadGeneration.current;
     setError("");
@@ -401,6 +423,7 @@ export function OwnCatalogScreen() {
   }
 
   function beginCreate() {
+    if (saving) return;
     detailReadGeneration.current += 1;
     setLoading(false);
     setSelected(undefined);
@@ -420,6 +443,7 @@ export function OwnCatalogScreen() {
   }
 
   function cancel() {
+    if (saving) return;
     setEditing(false);
     setCreating(false);
     setDraft(emptyDraft());
@@ -428,6 +452,7 @@ export function OwnCatalogScreen() {
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) return;
     if (!formIsValid(kind, draft)) {
       setError(copy.invalidDuration);
       return;
@@ -493,6 +518,7 @@ export function OwnCatalogScreen() {
             key={tab}
             type="button"
             aria-pressed={kind === tab}
+            disabled={saving}
             onClick={() => {
               detailReadGeneration.current += 1;
               setLoading(false);
@@ -528,8 +554,11 @@ export function OwnCatalogScreen() {
               value={searchInput}
               onChange={(event) => setSearchInput(event.currentTarget.value)}
               placeholder={copy.searchPlaceholder}
+              disabled={saving}
             />
-            <button type="submit">{copy.search}</button>
+            <button type="submit" disabled={saving}>
+              {copy.search}
+            </button>
           </form>
           {loading && <p role="status">{copy.loading}</p>}
           {error && (
@@ -537,10 +566,12 @@ export function OwnCatalogScreen() {
               {error}
             </p>
           )}
-          {query && !loading && !error && items.length === 0 && (
+          {query && !loading && !error && (
             <div className="own-catalog-empty">
-              <p>{copy.noResults}</p>
-              <AppButton onPress={beginCreate}>{copy.create[kind]}</AppButton>
+              {items.length === 0 ? <p>{copy.noResults}</p> : null}
+              <AppButton isDisabled={saving} onPress={beginCreate}>
+                {copy.createNoMatch[kind]}
+              </AppButton>
             </div>
           )}
           <ul className="own-catalog-results">
@@ -548,6 +579,7 @@ export function OwnCatalogScreen() {
               <li key={item.id}>
                 <button
                   type="button"
+                  disabled={saving}
                   className={selected?.id === item.id ? "is-selected" : ""}
                   onClick={() => void select(item)}
                 >
@@ -602,17 +634,22 @@ export function OwnCatalogScreen() {
                     )}
                   {selected.kind === "release" && (
                     <ol className="own-catalog-positions">
-                      {(selected.tracks ?? []).map((track) => (
-                        <li key={track.id}>
-                          {track.displayed_number}.{" "}
-                          {track.title_override || track.recording_title}{" "}
-                          <small>
-                            {track.duration_override_ms == null
-                              ? ""
-                              : formatDuration(track.duration_override_ms)}
-                          </small>
-                        </li>
-                      ))}
+                      {(selected.tracks ?? []).map((track) => {
+                        const duration =
+                          track.duration_override_ms ??
+                          track.recording_duration_ms;
+                        return (
+                          <li key={track.id}>
+                            {track.displayed_number}.{" "}
+                            {track.title_override || track.recording_title}{" "}
+                            <small>
+                              {duration == null
+                                ? copy.durationNotSpecified
+                                : formatDuration(duration)}
+                            </small>
+                          </li>
+                        );
+                      })}
                     </ol>
                   )}
                   <AppButton onPress={beginEdit}>{copy.edit}</AppButton>
@@ -627,293 +664,328 @@ export function OwnCatalogScreen() {
               onSubmit={(event) => void save(event)}
             >
               <h3>{creating ? copy.create[kind] : copy.editing}</h3>
-              {kind === "artists" ? (
-                <>
-                  <Field
-                    label={copy.name}
-                    value={draft.name}
-                    required
-                    onChange={(name) => setDraft({ ...draft, name })}
-                  />
-                  <Field
-                    label={copy.sortName}
-                    value={draft.sort_name}
-                    onChange={(sort_name) => setDraft({ ...draft, sort_name })}
-                  />
-                  <GenreField
-                    kind={kind}
-                    draft={draft}
-                    setDraft={setDraft}
-                    genreCopy={genreCopy}
-                    locale={locale}
-                    genreStatus={genreStatus}
-                    genreQuery={genreQuery}
-                    setGenreQuery={setGenreQuery}
-                    genreOptions={genreOptions}
-                    genreLoading={genreLoading}
-                    genreError={genreError}
-                    genreStatusLoading={genreStatusLoading}
-                    genreStatusError={genreStatusError}
-                    genreAvailable={genreAvailable}
-                    onLoad={loadGenreStatus}
-                    onRetry={() => setGenreRetry((retry) => retry + 1)}
-                  />
-                  <Field
-                    label={copy.tags}
-                    value={draft.tags}
-                    onChange={(tags) => setDraft({ ...draft, tags })}
-                  />
-                </>
-              ) : kind === "recordings" ? (
-                <>
-                  <Field
-                    label={copy.titleField}
-                    value={draft.title}
-                    required
-                    onChange={(title) => setDraft({ ...draft, title })}
-                  />
-                  <Field
-                    label={copy.duration}
-                    value={draft.duration}
-                    placeholder="3:42"
-                    onChange={(duration) =>
-                      setDraft({ ...draft, duration, durationEdited: true })
-                    }
-                  />
-                  <ReferenceSearch
-                    label={copy.performers}
-                    query={artistQuery}
-                    onQuery={setArtistQuery}
-                    results={artists}
-                    copy={copy}
-                    onChoose={(item) => {
-                      const credit = {
-                        clientKey: crypto.randomUUID(),
-                        artist_id: item.id,
-                        credit_name: item.name ?? "",
-                        join_phrase: draft.credits.length ? ", " : "",
-                      };
-                      setDraft({
-                        ...draft,
-                        credits: [...draft.credits, credit],
-                      });
-                    }}
-                  />
-                  <CreditList
-                    credits={draft.credits}
-                    artists={artists}
-                    copy={copy}
-                    onChange={(credits) => setDraft({ ...draft, credits })}
-                  />
-                  <GenreField
-                    kind={kind}
-                    draft={draft}
-                    setDraft={setDraft}
-                    genreCopy={genreCopy}
-                    locale={locale}
-                    genreStatus={genreStatus}
-                    genreQuery={genreQuery}
-                    setGenreQuery={setGenreQuery}
-                    genreOptions={genreOptions}
-                    genreLoading={genreLoading}
-                    genreError={genreError}
-                    genreStatusLoading={genreStatusLoading}
-                    genreStatusError={genreStatusError}
-                    genreAvailable={genreAvailable}
-                    onLoad={loadGenreStatus}
-                    onRetry={() => setGenreRetry((retry) => retry + 1)}
-                  />
-                  <Field
-                    label={copy.tags}
-                    value={draft.tags}
-                    onChange={(tags) => setDraft({ ...draft, tags })}
-                  />
-                </>
-              ) : (
-                <>
-                  <Field
-                    label={copy.releaseGroupTitle}
-                    value={draft.release_group_title}
-                    required
-                    onChange={(release_group_title) =>
-                      setDraft({ ...draft, release_group_title })
-                    }
-                  />
-                  <Field
-                    label={copy.titleField}
-                    value={draft.title}
-                    required
-                    onChange={(title) => setDraft({ ...draft, title })}
-                  />
-                  <div className="own-catalog-grid">
+              <fieldset disabled={saving} className="own-catalog-edit-fields">
+                {kind === "artists" ? (
+                  <>
                     <Field
-                      label={copy.primaryType}
-                      value={draft.primary_type}
-                      onChange={(primary_type) =>
-                        setDraft({ ...draft, primary_type })
+                      label={copy.name}
+                      value={draft.name}
+                      required
+                      onChange={(name) => setDraft({ ...draft, name })}
+                    />
+                    <Field
+                      label={copy.sortName}
+                      value={draft.sort_name}
+                      onChange={(sort_name) =>
+                        setDraft({ ...draft, sort_name })
                       }
                     />
+                    <GenreField
+                      kind={kind}
+                      saving={saving}
+                      draft={draft}
+                      setDraft={setDraft}
+                      genreCopy={genreCopy}
+                      locale={locale}
+                      genreStatus={genreStatus}
+                      genreQuery={genreQuery}
+                      setGenreQuery={setGenreQuery}
+                      genreOptions={genreOptions}
+                      genreLoading={genreLoading}
+                      genreError={genreError}
+                      genreStatusLoading={genreStatusLoading}
+                      genreStatusError={genreStatusError}
+                      genreAvailable={genreAvailable}
+                      onLoad={loadGenreStatus}
+                      onRetry={() => setGenreRetry((retry) => retry + 1)}
+                    />
                     <Field
-                      label={copy.secondaryTypes}
-                      value={draft.secondary_types}
-                      onChange={(secondary_types) =>
-                        setDraft({ ...draft, secondary_types })
+                      label={copy.tags}
+                      value={draft.tags}
+                      onChange={(tags) => setDraft({ ...draft, tags })}
+                    />
+                  </>
+                ) : kind === "recordings" ? (
+                  <>
+                    <Field
+                      label={copy.titleField}
+                      value={draft.title}
+                      required
+                      onChange={(title) => setDraft({ ...draft, title })}
+                    />
+                    <Field
+                      label={copy.duration}
+                      value={draft.duration}
+                      placeholder="3:42"
+                      onChange={(duration) =>
+                        setDraft({ ...draft, duration, durationEdited: true })
                       }
                     />
-                    <Field
-                      label={copy.language}
-                      value={draft.language}
-                      onChange={(language) => setDraft({ ...draft, language })}
-                    />
-                    <Field
-                      label={copy.script}
-                      value={draft.script}
-                      onChange={(script) => setDraft({ ...draft, script })}
-                    />
-                  </div>
-                  <GenreField
-                    kind={kind}
-                    draft={draft}
-                    setDraft={setDraft}
-                    genreCopy={genreCopy}
-                    locale={locale}
-                    genreStatus={genreStatus}
-                    genreQuery={genreQuery}
-                    setGenreQuery={setGenreQuery}
-                    genreOptions={genreOptions}
-                    genreLoading={genreLoading}
-                    genreError={genreError}
-                    genreStatusLoading={genreStatusLoading}
-                    genreStatusError={genreStatusError}
-                    genreAvailable={genreAvailable}
-                    onLoad={loadGenreStatus}
-                    onRetry={() => setGenreRetry((retry) => retry + 1)}
-                  />
-                  <ReferenceSearch
-                    label={copy.performers}
-                    query={artistQuery}
-                    onQuery={setArtistQuery}
-                    results={artists}
-                    copy={copy}
-                    onChoose={(item) => {
-                      setDraft({
-                        ...draft,
-                        credits: [
-                          ...draft.credits,
-                          {
-                            clientKey: crypto.randomUUID(),
-                            artist_id: item.id,
-                            credit_name: item.name ?? "",
-                            join_phrase: draft.credits.length ? ", " : "",
-                          },
-                        ],
-                      });
-                    }}
-                  />
-                  <CreditList
-                    credits={draft.credits}
-                    artists={artists}
-                    copy={copy}
-                    onChange={(credits) => setDraft({ ...draft, credits })}
-                  />
-                  <fieldset className="own-catalog-track-editor">
-                    <legend>{copy.positions}</legend>
                     <ReferenceSearch
-                      label={copy.existingRecording}
-                      query={recordingQuery}
-                      onQuery={setRecordingQuery}
-                      results={recordings}
+                      label={copy.performers}
+                      query={artistQuery}
+                      onQuery={setArtistQuery}
+                      results={artists}
                       copy={copy}
-                      onChoose={(item) =>
+                      onChoose={(item) => {
+                        const credit = {
+                          clientKey: crypto.randomUUID(),
+                          artist_id: item.id,
+                          credit_name: item.name ?? "",
+                          join_phrase: draft.credits.length ? ", " : "",
+                        };
                         setDraft({
                           ...draft,
-                          tracks: [
-                            ...draft.tracks,
-                            {
-                              clientKey: crypto.randomUUID(),
-                              recording_id: item.id,
-                              title_override: "",
-                              duration: "",
-                              originalDurationMS: null,
-                              durationEdited: false,
-                            },
-                          ],
-                        })
+                          credits: [...draft.credits, credit],
+                        });
+                      }}
+                    />
+                    <CreditList
+                      credits={draft.credits}
+                      artists={artists}
+                      copy={copy}
+                      onChange={(credits) => setDraft({ ...draft, credits })}
+                    />
+                    <GenreField
+                      kind={kind}
+                      saving={saving}
+                      draft={draft}
+                      setDraft={setDraft}
+                      genreCopy={genreCopy}
+                      locale={locale}
+                      genreStatus={genreStatus}
+                      genreQuery={genreQuery}
+                      setGenreQuery={setGenreQuery}
+                      genreOptions={genreOptions}
+                      genreLoading={genreLoading}
+                      genreError={genreError}
+                      genreStatusLoading={genreStatusLoading}
+                      genreStatusError={genreStatusError}
+                      genreAvailable={genreAvailable}
+                      onLoad={loadGenreStatus}
+                      onRetry={() => setGenreRetry((retry) => retry + 1)}
+                    />
+                    <Field
+                      label={copy.tags}
+                      value={draft.tags}
+                      onChange={(tags) => setDraft({ ...draft, tags })}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Field
+                      label={copy.releaseGroupTitle}
+                      value={draft.release_group_title}
+                      required
+                      onChange={(release_group_title) =>
+                        setDraft({ ...draft, release_group_title })
                       }
                     />
-                    {draft.tracks.map((track, index) => (
-                      <div className="own-catalog-track" key={track.clientKey}>
-                        <span>
-                          {index + 1}.{" "}
-                          {recordings.find(
-                            (item) => item.id === track.recording_id,
-                          )?.title || copy.recordingSelected}
-                        </span>
-                        <Field
-                          label={copy.positionTitle}
-                          value={track.title_override}
-                          onChange={(title_override) =>
-                            setDraft({
-                              ...draft,
-                              tracks: draft.tracks.map((item, i) =>
-                                i === index
-                                  ? { ...item, title_override }
-                                  : item,
-                              ),
-                            })
-                          }
-                        />
-                        <Field
-                          label={copy.durationOverride}
-                          value={track.duration}
-                          placeholder="3:42"
-                          onChange={(duration) =>
-                            setDraft({
-                              ...draft,
-                              tracks: draft.tracks.map((item, i) =>
-                                i === index
-                                  ? { ...item, duration, durationEdited: true }
-                                  : item,
-                              ),
-                            })
-                          }
-                        />
-                        <div className="own-catalog-track-actions">
-                          <button
-                            type="button"
-                            disabled={index === 0}
-                            aria-label={`${copy.moveUp} ${index + 1}`}
-                            onClick={() => reorderTracks(index, -1)}
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            disabled={index === draft.tracks.length - 1}
-                            aria-label={`${copy.moveDown} ${index + 1}`}
-                            onClick={() => reorderTracks(index, 1)}
-                          >
-                            ↓
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
+                    <Field
+                      label={copy.titleField}
+                      value={draft.title}
+                      required
+                      onChange={(title) => setDraft({ ...draft, title })}
+                    />
+                    <div className="own-catalog-grid">
+                      <Field
+                        label={copy.primaryType}
+                        value={draft.primary_type}
+                        onChange={(primary_type) =>
+                          setDraft({ ...draft, primary_type })
+                        }
+                      />
+                      <Field
+                        label={copy.secondaryTypes}
+                        value={draft.secondary_types}
+                        onChange={(secondary_types) =>
+                          setDraft({ ...draft, secondary_types })
+                        }
+                      />
+                      <Field
+                        label={copy.language}
+                        value={draft.language}
+                        onChange={(language) =>
+                          setDraft({ ...draft, language })
+                        }
+                      />
+                      <Field
+                        label={copy.script}
+                        value={draft.script}
+                        onChange={(script) => setDraft({ ...draft, script })}
+                      />
+                    </div>
+                    <GenreField
+                      kind={kind}
+                      saving={saving}
+                      draft={draft}
+                      setDraft={setDraft}
+                      genreCopy={genreCopy}
+                      locale={locale}
+                      genreStatus={genreStatus}
+                      genreQuery={genreQuery}
+                      setGenreQuery={setGenreQuery}
+                      genreOptions={genreOptions}
+                      genreLoading={genreLoading}
+                      genreError={genreError}
+                      genreStatusLoading={genreStatusLoading}
+                      genreStatusError={genreStatusError}
+                      genreAvailable={genreAvailable}
+                      onLoad={loadGenreStatus}
+                      onRetry={() => setGenreRetry((retry) => retry + 1)}
+                    />
+                    <ReferenceSearch
+                      label={copy.performers}
+                      query={artistQuery}
+                      onQuery={setArtistQuery}
+                      results={artists}
+                      copy={copy}
+                      onChoose={(item) => {
+                        setDraft({
+                          ...draft,
+                          credits: [
+                            ...draft.credits,
+                            {
+                              clientKey: crypto.randomUUID(),
+                              artist_id: item.id,
+                              credit_name: item.name ?? "",
+                              join_phrase: draft.credits.length ? ", " : "",
+                            },
+                          ],
+                        });
+                      }}
+                    />
+                    <CreditList
+                      credits={draft.credits}
+                      artists={artists}
+                      copy={copy}
+                      onChange={(credits) => setDraft({ ...draft, credits })}
+                    />
+                    <fieldset className="own-catalog-track-editor">
+                      <legend>{copy.positions}</legend>
+                      <ReferenceSearch
+                        label={copy.existingRecording}
+                        query={recordingQuery}
+                        onQuery={setRecordingQuery}
+                        results={recordings}
+                        copy={copy}
+                        onChoose={(item) =>
+                          setDraft({
+                            ...draft,
+                            tracks: [
+                              ...draft.tracks,
+                              {
+                                clientKey: crypto.randomUUID(),
+                                recording_id: item.id,
+                                recording_title: item.title ?? "",
+                                recording_duration_ms: item.duration_ms ?? null,
+                                title_override: "",
+                                duration: "",
+                                originalDurationMS: null,
+                                durationEdited: false,
+                              },
+                            ],
+                          })
+                        }
+                      />
+                      {draft.tracks.map((track, index) => (
+                        <div
+                          className="own-catalog-track"
+                          key={track.clientKey}
+                        >
+                          <span>
+                            {index + 1}.{" "}
+                            {track.title_override || track.recording_title}
+                            <small className="catalog-muted">
+                              {copy.recordingDefault}:{" "}
+                              {track.recording_title || copy.recordingSelected}{" "}
+                              ·{" "}
+                              {track.recording_duration_ms == null
+                                ? copy.durationNotSpecified
+                                : formatDuration(track.recording_duration_ms)}
+                            </small>
+                            <small className="catalog-muted">
+                              {copy.effectivePosition}:{" "}
+                              {track.title_override ||
+                                track.recording_title ||
+                                copy.recordingSelected}{" "}
+                              ·{" "}
+                              {formatEffectiveDuration(
+                                track,
+                                copy.durationNotSpecified,
+                              )}
+                            </small>
+                          </span>
+                          <Field
+                            label={copy.positionTitle}
+                            value={track.title_override}
+                            onChange={(title_override) =>
                               setDraft({
                                 ...draft,
-                                tracks: draft.tracks.filter(
-                                  (_, i) => i !== index,
+                                tracks: draft.tracks.map((item, i) =>
+                                  i === index
+                                    ? { ...item, title_override }
+                                    : item,
                                 ),
                               })
                             }
-                          >
-                            {copy.remove}
-                          </button>
+                          />
+                          <Field
+                            label={copy.durationOverride}
+                            value={track.duration}
+                            placeholder="3:42"
+                            onChange={(duration) =>
+                              setDraft({
+                                ...draft,
+                                tracks: draft.tracks.map((item, i) =>
+                                  i === index
+                                    ? {
+                                        ...item,
+                                        duration,
+                                        durationEdited: true,
+                                      }
+                                    : item,
+                                ),
+                              })
+                            }
+                          />
+                          <div className="own-catalog-track-actions">
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              aria-label={`${copy.moveUp} ${index + 1}`}
+                              onClick={() => reorderTracks(index, -1)}
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index === draft.tracks.length - 1}
+                              aria-label={`${copy.moveDown} ${index + 1}`}
+                              onClick={() => reorderTracks(index, 1)}
+                            >
+                              ↓
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDraft({
+                                  ...draft,
+                                  tracks: draft.tracks.filter(
+                                    (_, i) => i !== index,
+                                  ),
+                                })
+                              }
+                            >
+                              {copy.remove}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </fieldset>
-                </>
-              )}
+                      ))}
+                    </fieldset>
+                  </>
+                )}
+              </fieldset>
               {error && (
                 <p role="alert" className="own-catalog-error">
                   {error}
@@ -927,7 +999,7 @@ export function OwnCatalogScreen() {
                       ? copy.create[kind]
                       : copy.save}
                 </button>
-                <button type="button" onClick={cancel}>
+                <button type="button" disabled={saving} onClick={cancel}>
                   {copy.cancel}
                 </button>
               </div>
@@ -1099,6 +1171,7 @@ function CreditList({
 
 function GenreField({
   kind,
+  saving,
   draft,
   setDraft,
   genreCopy,
@@ -1116,6 +1189,7 @@ function GenreField({
   onRetry,
 }: {
   kind: Kind;
+  saving: boolean;
   draft: Draft;
   setDraft: (draft: Draft) => void;
   genreCopy: GenreMessages;
@@ -1161,7 +1235,7 @@ function GenreField({
         catalogStatusError={genreStatusError}
         onOpenCatalog={onLoad}
         onRetryStatus={onLoad}
-        disabled={false}
+        disabled={saving}
       />
       {!genreAvailable && !genreStatusLoading && (
         <small>
@@ -1194,6 +1268,11 @@ const ownCatalogMessages = {
     loading: "Searching…",
     loadError: "Could not load provider records.",
     noResults: "No provider records match this search.",
+    createNoMatch: {
+      artists: "None of these — create a Local artist",
+      recordings: "None of these — create a Local recording",
+      releases: "None of these — create a Local release",
+    },
     externalCandidate:
       "Existing external provider records are shown first; select one to inspect it instead of creating a duplicate.",
     create: {
@@ -1225,6 +1304,9 @@ const ownCatalogMessages = {
     positions: "Medium 1 positions",
     existingRecording: "Existing recording",
     recordingSelected: "Recording",
+    recordingDefault: "Recording default",
+    effectivePosition: "Position values",
+    durationNotSpecified: "duration not specified",
     positionTitle: "Title override",
     durationOverride: "Duration override (seconds or M:SS)",
     moveUp: "Move up",
@@ -1262,6 +1344,11 @@ const ownCatalogMessages = {
     loading: "Поиск…",
     loadError: "Не удалось загрузить записи провайдера.",
     noResults: "По этому запросу ничего не найдено.",
+    createNoMatch: {
+      artists: "Нет подходящего — создать артиста Local",
+      recordings: "Нет подходящей — создать композицию Local",
+      releases: "Нет подходящего — создать релиз Local",
+    },
     externalCandidate:
       "Сначала показаны записи внешних провайдеров: выберите запись, чтобы проверить её и не создавать дубликат.",
     create: {
@@ -1293,6 +1380,9 @@ const ownCatalogMessages = {
     positions: "Позиции носителя 1",
     existingRecording: "Существующая композиция",
     recordingSelected: "Композиция",
+    recordingDefault: "Данные композиции",
+    effectivePosition: "Данные позиции",
+    durationNotSpecified: "длительность не указана",
     positionTitle: "Переопределение названия",
     durationOverride: "Переопределение длительности (секунды или М:СС)",
     moveUp: "Переместить выше",
