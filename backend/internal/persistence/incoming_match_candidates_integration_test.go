@@ -466,6 +466,23 @@ func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing
 	if err := db.NewRaw(`SELECT count(*) FROM track_source WHERE track_id=(SELECT local_track_id FROM provider_local_track WHERE provider_id=(SELECT id FROM provider WHERE code='local') AND provider_track_id=?) AND media_variant_id IN (SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=?)`, created.Tracks[0].ID, fixture.memberA).Scan(ctx, &associated); err != nil || associated == 0 {
 		t.Fatalf("confirmed source association count=%d err=%v", associated, err)
 	}
+	const expectedGenreID = "00000000-0000-4000-8000-000000000099"
+	const expectedGenreName = "Expected Local Genre"
+	if _, err := db.NewRaw(`UPDATE provider_release SET metadata=jsonb_set(metadata,'{genres}',?::jsonb,true) WHERE id=? AND provider_id=(SELECT id FROM provider WHERE code='local')`,
+		`[{"id":"`+expectedGenreID+`","source_name":"local","name":"`+expectedGenreName+`"}]`, created.ID).Exec(ctx); err != nil {
+		t.Fatalf("seed saved Local provider release genres: %v", err)
+	}
+	var positionID uuid.UUID
+	if err := db.NewRaw(`SELECT id FROM release_track WHERE release_id=? AND track_id=(SELECT local_track_id FROM provider_local_track WHERE provider_id=(SELECT id FROM provider WHERE code='local') AND provider_track_id=?)`, *confirmed.LocalReleaseID, created.Tracks[0].ID).Scan(ctx, &positionID); err != nil {
+		t.Fatalf("resolve materialized Local release position: %v", err)
+	}
+	firstPublication, err := persistence.NewSetupManagerRepository(db).ReadLibraryFirstPublicationContext(ctx, *confirmed.LocalReleaseID, positionID)
+	if err != nil {
+		t.Fatalf("read first-publication context for Local matching result: %v", err)
+	}
+	if len(firstPublication.ProviderGenres) != 1 || firstPublication.ProviderGenres[0].ID != expectedGenreID || firstPublication.ProviderGenres[0].Name != expectedGenreName {
+		t.Fatalf("first-publication Local provider genres = %+v, want saved genre %q without catalog lookup", firstPublication.ProviderGenres, expectedGenreName)
+	}
 
 	var countsBeforeReplay int
 	if err := db.NewRaw(`SELECT (SELECT count(*) FROM local_release)+(SELECT count(*) FROM local_recording)+(SELECT count(*) FROM local_track)+(SELECT count(*) FROM release_artist)+(SELECT count(*) FROM track_artist)+(SELECT count(*) FROM track_source)`).Scan(ctx, &countsBeforeReplay); err != nil {

@@ -17,6 +17,11 @@ import type {
   MatchingLocalPreview,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type LocalMatchingMessages,
+  localMatchingMessages,
+} from "./localMatchingMessages";
 
 type Assignment = { file_member_id: string; provider_track_id: string };
 type PreviewBody = {
@@ -66,8 +71,9 @@ function message(reason: unknown, fallback: string) {
 function responseMessage(
   response: { data: { detail?: string }; status: number },
   fallback: string,
+  copy: LocalMatchingMessages,
 ) {
-  return apiResponseError(response, `${fallback} (HTTP ${response.status}).`)
+  return apiResponseError(response, copy.httpError(fallback, response.status))
     .message;
 }
 
@@ -92,6 +98,8 @@ export function LocalReleaseEditor({
   authorityRevision,
   onConfirmed,
 }: LocalReleaseEditorProps) {
+  const { locale } = useI18n();
+  const copy = localMatchingMessages[locale];
   const [states, setStates] = useState<Record<string, EditorState>>({});
   const [catalogs, setCatalogs] = useState<Record<string, CatalogState>>({});
   const sequence = useRef(0);
@@ -131,12 +139,12 @@ export function LocalReleaseEditor({
           preview: undefined,
           stale: true,
           notice: existing.receipt
-            ? "Локальное сопоставление подтверждено; данные группы обновлены."
-            : "Снимок группы или полномочий изменился. Выберите релиз и создайте новый предпросмотр.",
+            ? copy.scopeChangedAfterConfirm
+            : copy.scopeChangedBeforeConfirm,
         },
       };
     });
-  }, [currentScope, group.id]);
+  }, [copy, currentScope, group.id]);
 
   async function loadCatalog() {
     const request = (catalogRequests.current[group.id] ?? 0) + 1;
@@ -160,7 +168,7 @@ export function LocalReleaseEditor({
             ...current,
             [group.id]: {
               ...current[group.id],
-              error: responseMessage(response, "Не удалось загрузить релизы"),
+              error: responseMessage(response, copy.loadReleasesError, copy),
             },
           }));
           return;
@@ -182,7 +190,7 @@ export function LocalReleaseEditor({
           ...current,
           [group.id]: {
             ...current[group.id],
-            error: message(reason, "Не удалось загрузить релизы."),
+            error: message(reason, copy.loadReleasesError),
           },
         }));
       }
@@ -225,7 +233,7 @@ export function LocalReleaseEditor({
       if (response.status !== 200) {
         update((current) => ({
           ...current,
-          error: responseMessage(response, "Не удалось прочитать релиз"),
+          error: responseMessage(response, copy.releaseReadError, copy),
         }));
         return;
       }
@@ -237,7 +245,7 @@ export function LocalReleaseEditor({
       ) {
         update((current) => ({
           ...current,
-          error: message(reason, "Не удалось прочитать релиз."),
+          error: message(reason, copy.releaseReadError),
         }));
       }
     }
@@ -247,15 +255,14 @@ export function LocalReleaseEditor({
     if (authorityRevision === undefined) {
       update((current) => ({
         ...current,
-        error:
-          "Полномочия ещё не загружены. Обновите экран и повторите предпросмотр.",
+        error: copy.authorityNotReady,
       }));
       return undefined;
     }
     if (!state.release || !state.selectedReleaseID) {
       update((current) => ({
         ...current,
-        error: "Выберите локальный релиз и дождитесь загрузки его дорожек.",
+        error: copy.selectReleaseFirst,
       }));
       return undefined;
     }
@@ -273,7 +280,7 @@ export function LocalReleaseEditor({
     if (assignments.length === 0) {
       update((current) => ({
         ...current,
-        error: "Назначьте хотя бы один файл дорожке выбранного релиза.",
+        error: copy.assignAtLeastOne,
       }));
       return undefined;
     }
@@ -316,8 +323,8 @@ export function LocalReleaseEditor({
           stale: response.status === 409,
           error:
             response.status === 409
-              ? "Снимок устарел. Обновите данные группы и создайте новый предпросмотр."
-              : responseMessage(response, "Предпросмотр не выполнен"),
+              ? copy.previewConflict
+              : responseMessage(response, copy.previewError, copy),
         }));
         return;
       }
@@ -335,7 +342,7 @@ export function LocalReleaseEditor({
           ...current,
           busy: undefined,
           busyRequest: undefined,
-          error: message(reason, "Предпросмотр не выполнен."),
+          error: message(reason, copy.previewError),
         }));
       }
     } finally {
@@ -377,8 +384,8 @@ export function LocalReleaseEditor({
           pending: response.status === 409 ? undefined : current.pending,
           error:
             response.status === 409
-              ? "Снимок устарел. Получите новый предпросмотр перед подтверждением."
-              : responseMessage(response, "Подтверждение не выполнено"),
+              ? copy.confirmConflict
+              : responseMessage(response, copy.confirmError, copy),
         }));
         return;
       }
@@ -388,21 +395,23 @@ export function LocalReleaseEditor({
         receipt: response.data,
         pending: undefined,
         preview: undefined,
-        notice: "Локальное сопоставление подтверждено.",
+        notice: copy.confirmed,
       }));
       try {
         await onConfirmed?.(response.data);
       } catch (reason) {
         update((current) => ({
           ...current,
-          notice: `Сопоставление подтверждено, но обновить экран не удалось: ${message(reason, "ошибка обновления")}`,
+          notice: copy.confirmedRefreshError(
+            message(reason, copy.refreshFailure),
+          ),
         }));
       }
     } catch (reason) {
       update((current) => ({
         ...current,
         busy: undefined,
-        error: `${message(reason, "Подтверждение не выполнено.")} Повторите запрос, чтобы безопасно проверить тот же результат.`,
+        error: `${message(reason, copy.confirmError)} ${copy.confirmRetryNotice}`,
       }));
     }
   }
@@ -421,16 +430,15 @@ export function LocalReleaseEditor({
       className="space-y-4 rounded border border-stone-300 p-4"
     >
       <h2 id={`local-release-${group.id}`} className="text-lg font-semibold">
-        Сопоставить с локальным релизом
+        {copy.heading}
       </h2>
       <p>
-        Выберите существующий локальный релиз и явно назначьте файлы его
-        дорожкам. Создание и редактирование каталога выполняется в{" "}
+        {copy.intro}{" "}
         {state.pending ? (
-          "собственном каталоге"
+          copy.ownCatalog
         ) : (
           <a className="underline" href="#/own-catalog">
-            собственном каталоге
+            {copy.ownCatalog}
           </a>
         )}
         .
@@ -440,28 +448,26 @@ export function LocalReleaseEditor({
         disabled={state.pending !== undefined || confirmationInFlight}
         className="space-y-3 rounded border border-stone-300 p-3"
       >
-        <legend className="font-medium">Локальный релиз</legend>
+        <legend className="font-medium">{copy.releaseLegend}</legend>
         <AppButton
           type="button"
           isDisabled={catalogs[group.id]?.busy}
           onPress={loadCatalog}
         >
-          {catalogs[group.id]?.busy
-            ? "Загрузка локальных релизов…"
-            : "Загрузить локальные релизы"}
+          {catalogs[group.id]?.busy ? copy.loadingReleases : copy.loadReleases}
         </AppButton>
         {catalogs[group.id]?.error && (
           <p role="alert">{catalogs[group.id].error}</p>
         )}
         {catalogs[group.id]?.items && (
           <label className="block">
-            Локальный релиз
+            {copy.releaseLabel}
             <select
               className="block w-full rounded border p-2"
               value={state.selectedReleaseID}
               onChange={(event) => void selectRelease(event.target.value)}
             >
-              <option value="">Выберите локальный релиз</option>
+              <option value="">{copy.chooseRelease}</option>
               {catalogs[group.id]?.items?.map((release) => (
                 <option key={release.id} value={release.id}>
                   {release.title || release.id}
@@ -471,11 +477,11 @@ export function LocalReleaseEditor({
           </label>
         )}
         {state.selectedReleaseID && !state.release && !state.error && (
-          <p role="status">Загрузка дорожек локального релиза…</p>
+          <p role="status">{copy.loadingTracks}</p>
         )}
         {state.release && (
           <p role="status">
-            {state.release.title} · {tracks.length} дорожек
+            {copy.releaseTrackCount(state.release.title, tracks.length)}
           </p>
         )}
       </fieldset>
@@ -485,13 +491,13 @@ export function LocalReleaseEditor({
           disabled={state.pending !== undefined || confirmationInFlight}
           className="space-y-3 rounded border border-stone-300 p-3"
         >
-          <legend className="font-medium">Назначение файлов дорожкам</legend>
+          <legend className="font-medium">{copy.assignmentsLegend}</legend>
           {scopedFiles.map((file) => (
             <label className="block" key={file.variant_id}>
               {fileLabel(file)}
               <select
                 className="block w-full rounded border p-2"
-                aria-label={`Дорожка для файла ${fileLabel(file)}`}
+                aria-label={copy.trackForFile(fileLabel(file))}
                 value={state.assignments[file.variant_id] ?? ""}
                 onChange={(event) => {
                   if (state.pending) return;
@@ -521,7 +527,7 @@ export function LocalReleaseEditor({
                   });
                 }}
               >
-                <option value="">Не назначен</option>
+                <option value="">{copy.unassigned}</option>
                 {tracks.map((track) => (
                   <option key={track.id} value={track.id}>
                     {trackLabel(track)}
@@ -535,16 +541,10 @@ export function LocalReleaseEditor({
 
       {state.error && <p role="alert">{state.error}</p>}
       {state.notice && <p role="status">{state.notice}</p>}
-      {state.stale && (
-        <p role="status">
-          Снимок изменился. После обновления данных создайте новый предпросмотр.
-        </p>
-      )}
+      {state.stale && <p role="status">{copy.staleNotice}</p>}
       <div className="flex flex-wrap gap-2">
         <AppButton type="button" isDisabled={!canPreview} onPress={preview}>
-          {state.busy === "preview"
-            ? "Предпросмотр…"
-            : "Предпросмотр назначения"}
+          {state.busy === "preview" ? copy.previewing : copy.previewAction}
         </AppButton>
         {previewCurrent && (
           <AppButton
@@ -552,9 +552,7 @@ export function LocalReleaseEditor({
             isDisabled={state.busy !== undefined}
             onPress={confirm}
           >
-            {state.pending
-              ? "Повторить тот же запрос подтверждения"
-              : "Подтвердить сопоставление"}
+            {state.pending ? copy.confirmRetry : copy.confirmAction}
           </AppButton>
         )}
         {state.pending && !previewCurrent && (
@@ -563,31 +561,31 @@ export function LocalReleaseEditor({
             isDisabled={state.busy !== undefined}
             onPress={confirm}
           >
-            Повторить тот же запрос подтверждения
+            {copy.confirmRetry}
           </AppButton>
         )}
       </div>
       {previewCurrent && (
         <section
-          aria-label="Предпросмотр локального сопоставления"
+          aria-label={copy.previewTitle}
           className="space-y-2 rounded bg-stone-100 p-3"
         >
-          <h3 className="font-medium">Предпросмотр — только чтение</h3>
+          <h3 className="font-medium">{copy.previewTitle}</h3>
           <p>
-            {previewCurrent.response.release_title} ·{" "}
-            {previewCurrent.response.tracks?.length ?? 0} дорожек
+            {copy.previewSummary(
+              previewCurrent.response.release_title,
+              previewCurrent.response.tracks?.length ?? 0,
+            )}
           </p>
           <p>
-            Не включённые файлы:{" "}
-            {previewCurrent.response.omitted_file_member_ids?.length ?? 0}
+            {copy.omittedFiles(
+              previewCurrent.response.omitted_file_member_ids?.length ?? 0,
+            )}
           </p>
         </section>
       )}
       {state.receipt?.local_release_id && (
-        <p role="status">
-          Сопоставление подтверждено для релиза {state.receipt.local_release_id}
-          .
-        </p>
+        <p role="status">{copy.receipt(state.receipt.local_release_id)}</p>
       )}
     </section>
   );

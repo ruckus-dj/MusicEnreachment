@@ -84,6 +84,20 @@ type FirstPublicationGenreArtist struct {
 	Metadata         librarymetadata.Envelope
 }
 
+type firstPublicationLinkedProviderGenres struct {
+	Release   []librarymetadata.GenreReference
+	Recording []librarymetadata.GenreReference
+	Artists   []firstPublicationLinkedProviderArtist
+	Digest    string
+}
+
+type firstPublicationLinkedProviderArtist struct {
+	ID            uuid.UUID
+	MBID          *string
+	LocalArtistID *uuid.UUID
+	Genres        []librarymetadata.GenreReference
+}
+
 // ReadLibraryFirstPublicationContext reads all first-publication inputs from a
 // single read-only repeatable-read snapshot.
 func (repository *SetupManagerRepository) ReadLibraryFirstPublicationContext(ctx context.Context, releaseID, positionID uuid.UUID) (*LibraryFirstPublicationContext, error) {
@@ -311,6 +325,44 @@ func resolveFirstPublicationGenres(ctx context.Context, tx bun.IDB, result *Libr
 	if err != nil || found {
 		return err
 	}
+	localProvider, err := readFirstPublicationLocalProviderGenres(ctx, tx, releaseID, positionID)
+	if err != nil {
+		return fmt.Errorf("read first publication Local provider genres: %w", err)
+	}
+	if localProvider != nil {
+		result.ProviderGenreDigest = localProvider.Digest
+		if len(localProvider.Recording) != 0 {
+			result.ProviderGenres = append([]librarymetadata.GenreReference(nil), localProvider.Recording...)
+			field := librarymetadata.FieldValue{State: librarymetadata.StateValue, Value: localProvider.Recording, Authority: librarymetadata.AuthorityAutomatic, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceProvider}}
+			return setFirstPublicationGenres(result, localProvider.Recording, librarymetadata.ScopeRecording, &field, false)
+		}
+		found, err = resolveFirstPublicationLocalGenres(result, librarymetadata.ScopeRelease)
+		if err != nil || found {
+			return err
+		}
+		if len(localProvider.Release) != 0 {
+			result.ProviderGenres = append([]librarymetadata.GenreReference(nil), localProvider.Release...)
+			field := librarymetadata.FieldValue{State: librarymetadata.StateValue, Value: localProvider.Release, Authority: librarymetadata.AuthorityAutomatic, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceProvider}}
+			return setFirstPublicationGenres(result, localProvider.Release, librarymetadata.ScopeRelease, &field, false)
+		}
+		result.GenreArtistDigest, err = firstPublicationGenreArtistDigest(result.GenreArtists)
+		if err != nil {
+			return fmt.Errorf("digest first publication recording artist genres: %w", err)
+		}
+		genres, explicitEmpty, err := firstPublicationLinkedProviderArtistGenreUnion(result.GenreArtists, localProvider.Artists)
+		if err != nil {
+			return fmt.Errorf("resolve first publication Local recording artist genres: %w", err)
+		}
+		result.ProviderGenres = append([]librarymetadata.GenreReference(nil), genres...)
+		if len(genres) == 0 && !explicitEmpty {
+			return nil
+		}
+		field := &librarymetadata.FieldValue{State: librarymetadata.StateValue, Value: genres, Authority: librarymetadata.AuthorityAutomatic, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceProvider}}
+		if explicitEmpty {
+			field.State = librarymetadata.StateExplicitEmpty
+		}
+		return setFirstPublicationGenres(result, genres, librarymetadata.ScopeArtist, field, explicitEmpty)
+	}
 	provider, err := readFirstPublicationProviderGenres(ctx, tx, releaseID, positionID)
 	if err != nil {
 		return fmt.Errorf("read first publication provider genres: %w", err)
@@ -369,6 +421,303 @@ func firstPublicationGenreArtistDigest(artists []FirstPublicationGenreArtist) (s
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func readFirstPublicationLocalProviderGenres(ctx context.Context, tx bun.IDB, releaseID, positionID uuid.UUID) (*firstPublicationLinkedProviderGenres, error) {
+	var release struct {
+		ID       uuid.UUID       `bun:"id,type:uuid"`
+		Metadata json.RawMessage `bun:"metadata,type:jsonb"`
+	}
+	err := tx.NewRaw(`SELECT provider_release.id,provider_release.metadata
+		FROM provider_local_release binding
+		JOIN provider_release ON provider_release.id=binding.provider_release_id AND provider_release.provider_id=binding.provider_id
+		WHERE binding.provider_id=? AND binding.local_release_id=?`, localProviderID, releaseID).Scan(ctx, &release)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read linked Local release: %w", err)
+	}
+	result := &firstPublicationLinkedProviderGenres{}
+	result.Release, err = firstPublicationProviderMetadataGenres(release.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("decode linked Local release genres: %w", err)
+	}
+
+	var recording struct {
+		ID          uuid.UUID       `bun:"id,type:uuid"`
+		ProviderID  uuid.UUID       `bun:"provider_id,type:uuid"`
+		ProviderKey string          `bun:"provider_key"`
+		Metadata    json.RawMessage `bun:"metadata,type:jsonb"`
+	}
+	query := `SELECT recording.id,recording.provider_id,recording.provider_key,recording.metadata
+		FROM provider_local_track track_binding
+		JOIN provider_release_track provider_track ON provider_track.id=track_binding.provider_track_id
+			AND provider_track.provider_id=track_binding.provider_id AND provider_track.release_id=? AND provider_track.present
+		JOIN release_track local_track ON local_track.track_id=track_binding.local_track_id AND local_track.id=? AND local_track.release_id=?
+		JOIN provider_recording recording ON recording.id=provider_track.recording_id
+		WHERE track_binding.provider_id=? AND track_binding.local_track_id=local_track.track_id`
+	err = tx.NewRaw(query, release.ID, positionID, releaseID, localProviderID).Scan(ctx, &recording)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("read linked Local recording: %w", err)
+	}
+	if err == nil {
+		result.Recording, result.Artists, err = readFirstPublicationLinkedProviderRecordingGenres(ctx, tx, recording)
+		if err != nil {
+			return nil, err
+		}
+		for index := range result.Artists {
+			var localArtistID uuid.UUID
+			if err := tx.NewRaw(`SELECT local_artist_id FROM provider_local_artist WHERE provider_id=? AND provider_artist_id=?`, localProviderID, result.Artists[index].ID).Scan(ctx, &localArtistID); err == nil {
+				result.Artists[index].LocalArtistID = &localArtistID
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("read Local provider artist binding: %w", err)
+			}
+		}
+	}
+	encoded, err := json.Marshal(struct {
+		ReleaseID uuid.UUID
+		Genres    []librarymetadata.GenreReference
+		Recording any
+	}{release.ID, result.Release, struct {
+		ID          uuid.UUID
+		ProviderID  uuid.UUID
+		ProviderKey string
+		Genres      []librarymetadata.GenreReference
+		Artists     []firstPublicationLinkedProviderArtist
+	}{recording.ID, recording.ProviderID, recording.ProviderKey, result.Recording, result.Artists}})
+	if err != nil {
+		return nil, fmt.Errorf("encode linked Local genre context: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	result.Digest = hex.EncodeToString(digest[:])
+	return result, nil
+}
+
+func readFirstPublicationLinkedProviderRecordingGenres(ctx context.Context, tx bun.IDB, recording struct {
+	ID          uuid.UUID       `bun:"id,type:uuid"`
+	ProviderID  uuid.UUID       `bun:"provider_id,type:uuid"`
+	ProviderKey string          `bun:"provider_key"`
+	Metadata    json.RawMessage `bun:"metadata,type:jsonb"`
+}) ([]librarymetadata.GenreReference, []firstPublicationLinkedProviderArtist, error) {
+	var providerCode string
+	if err := tx.NewRaw(`SELECT code FROM provider WHERE id=?`, recording.ProviderID).Scan(ctx, &providerCode); err != nil {
+		return nil, nil, fmt.Errorf("read linked recording provider: %w", err)
+	}
+	var credits []uuid.UUID
+	var genres []librarymetadata.GenreReference
+	var err error
+	switch providerCode {
+	case "local":
+		genres, err = firstPublicationProviderMetadataGenres(recording.Metadata)
+		if err != nil {
+			return nil, nil, fmt.Errorf("decode linked Local recording genres: %w", err)
+		}
+		var metadata struct {
+			Credits []struct {
+				ArtistID uuid.UUID `json:"artist_id"`
+			} `json:"credits"`
+		}
+		if err := json.Unmarshal(recording.Metadata, &metadata); err != nil {
+			return nil, nil, fmt.Errorf("decode linked Local recording credits: %w", err)
+		}
+		for _, credit := range metadata.Credits {
+			credits = append(credits, credit.ArtistID)
+		}
+	case "musicbrainz":
+		fields, evidence, found, err := firstPublicationAcceptedMBEntity(ctx, tx, recording.ProviderID, recording.ProviderKey, "recording")
+		if err != nil {
+			return nil, nil, err
+		}
+		if found && hasProviderFieldEvidence(evidence, "genres") {
+			genres, err = acceptedProviderGenreReferences(fields["genres"])
+			if err != nil {
+				return nil, nil, fmt.Errorf("decode accepted MusicBrainz recording genres: %w", err)
+			}
+		}
+		if found && hasProviderFieldEvidence(evidence, "artist-credit") {
+			acceptedCredits, _, err := decodeFrozenCredits(fields["artist-credit"])
+			if err != nil {
+				return nil, nil, fmt.Errorf("decode accepted MusicBrainz recording artist credits: %w", err)
+			}
+			for _, credit := range acceptedCredits {
+				var artistID uuid.UUID
+				if err := tx.NewRaw(`SELECT id FROM provider_artist WHERE provider_id=? AND provider_key=?`, recording.ProviderID, credit.ArtistProviderKey).Scan(ctx, &artistID); err != nil {
+					return nil, nil, fmt.Errorf("resolve accepted MusicBrainz recording artist: %w", err)
+				}
+				credits = append(credits, artistID)
+			}
+		}
+	}
+	artists := make([]firstPublicationLinkedProviderArtist, 0, len(credits))
+	for _, artistID := range credits {
+		var artist struct {
+			ID          uuid.UUID       `bun:"id,type:uuid"`
+			ProviderID  uuid.UUID       `bun:"provider_id,type:uuid"`
+			ProviderKey string          `bun:"provider_key"`
+			Metadata    json.RawMessage `bun:"metadata,type:jsonb"`
+		}
+		if err := tx.NewRaw(`SELECT id,provider_id,provider_key,metadata FROM provider_artist WHERE id=?`, artistID).Scan(ctx, &artist); err != nil {
+			return nil, nil, fmt.Errorf("read linked recording artist: %w", err)
+		}
+		var artistGenres []librarymetadata.GenreReference
+		var artistProviderCode string
+		if err := tx.NewRaw(`SELECT code FROM provider WHERE id=?`, artist.ProviderID).Scan(ctx, &artistProviderCode); err != nil {
+			return nil, nil, fmt.Errorf("read linked artist provider: %w", err)
+		}
+		switch artistProviderCode {
+		case "local":
+			artistGenres, err = firstPublicationProviderMetadataGenres(artist.Metadata)
+		case "musicbrainz":
+			fields, evidence, found, readErr := firstPublicationAcceptedMBEntity(ctx, tx, artist.ProviderID, artist.ProviderKey, "artist")
+			if readErr != nil {
+				return nil, nil, readErr
+			}
+			if found && hasProviderFieldEvidence(evidence, "genres") {
+				artistGenres, err = acceptedProviderGenreReferences(fields["genres"])
+			}
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("read linked recording artist genres: %w", err)
+		}
+		linkedArtist := firstPublicationLinkedProviderArtist{ID: artist.ID, Genres: artistGenres}
+		if artistProviderCode == "musicbrainz" {
+			if mbid, parseErr := uuid.Parse(artist.ProviderKey); parseErr == nil && mbid != uuid.Nil {
+				value := mbid.String()
+				linkedArtist.MBID = &value
+			}
+		}
+		artists = append(artists, linkedArtist)
+	}
+	return genres, artists, nil
+}
+
+func firstPublicationAcceptedMBEntity(ctx context.Context, tx bun.IDB, providerID uuid.UUID, providerKey, kind string) (map[string]json.RawMessage, map[string]ProviderFieldEvidence, bool, error) {
+	if providerKey == "" {
+		return nil, nil, false, nil
+	}
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+		return nil, nil, false, fmt.Errorf("lock MusicBrainz configuration for linked genres: %w", err)
+	}
+	txValue, ok := tx.(bun.Tx)
+	if !ok {
+		return nil, nil, false, errors.New("linked MusicBrainz genre context requires a transaction")
+	}
+	source, found, err := catalogMusicBrainzSource(ctx, txValue)
+	if err != nil || !found {
+		return nil, nil, false, err
+	}
+	var fieldsRaw, evidenceRaw json.RawMessage
+	err = tx.NewRaw(`SELECT fields,field_evidence FROM provider_source_entity WHERE provider_source_id=? AND provider_id=? AND entity_kind=? AND provider_key=?`, source.ID, providerID, kind, providerKey).Scan(ctx, &fieldsRaw, &evidenceRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, false, nil
+	}
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("read accepted MusicBrainz linked %s: %w", kind, err)
+	}
+	fields, err := decodeFrozenObject(fieldsRaw)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("decode accepted MusicBrainz linked %s fields: %w", kind, err)
+	}
+	var evidence map[string]ProviderFieldEvidence
+	if err := json.Unmarshal(evidenceRaw, &evidence); err != nil {
+		return nil, nil, false, fmt.Errorf("decode accepted MusicBrainz linked %s evidence: %w", kind, err)
+	}
+	return fields, evidence, true, nil
+}
+
+func firstPublicationProviderMetadataGenres(metadata json.RawMessage) ([]librarymetadata.GenreReference, error) {
+	var fields struct {
+		Genres []librarymetadata.GenreReference `json:"genres"`
+	}
+	if err := json.Unmarshal(metadata, &fields); err != nil {
+		return nil, err
+	}
+	for _, genre := range fields.Genres {
+		id, err := uuid.Parse(genre.ID)
+		if err != nil || id == uuid.Nil || strings.TrimSpace(genre.SourceName) == "" || strings.TrimSpace(genre.Name) == "" {
+			return nil, errors.New("local provider genre reference is incomplete")
+		}
+	}
+	return append([]librarymetadata.GenreReference(nil), fields.Genres...), nil
+}
+
+func firstPublicationLinkedProviderArtistGenreUnion(artists []FirstPublicationGenreArtist, providerArtists []firstPublicationLinkedProviderArtist) ([]librarymetadata.GenreReference, bool, error) {
+	genresByLocalArtistID := make(map[uuid.UUID][]librarymetadata.GenreReference, len(providerArtists))
+	genresByMBID := make(map[string][]librarymetadata.GenreReference, len(providerArtists))
+	for _, artist := range providerArtists {
+		if artist.LocalArtistID != nil {
+			genresByLocalArtistID[*artist.LocalArtistID] = artist.Genres
+		}
+		if artist.MBID != nil {
+			genresByMBID[strings.ToLower(*artist.MBID)] = artist.Genres
+		}
+	}
+	var genres []librarymetadata.GenreReference
+	seenGenres := make(map[string]struct{})
+	seenProviderArtists := make(map[uuid.UUID]struct{})
+	appendGenres := func(values []librarymetadata.GenreReference) {
+		for _, genre := range values {
+			id, err := uuid.Parse(genre.ID)
+			if err != nil || id == uuid.Nil {
+				continue
+			}
+			key := strings.ToLower(id.String())
+			if _, exists := seenGenres[key]; exists {
+				continue
+			}
+			seenGenres[key] = struct{}{}
+			genres = append(genres, genre)
+		}
+	}
+	explicitEmpty := false
+	for _, artist := range artists {
+		var providerGenres []librarymetadata.GenreReference
+		matched := false
+		if values, exists := genresByLocalArtistID[artist.ArtistID]; exists {
+			providerGenres = values
+			matched = true
+			for _, providerArtist := range providerArtists {
+				if providerArtist.LocalArtistID != nil && *providerArtist.LocalArtistID == artist.ArtistID {
+					seenProviderArtists[providerArtist.ID] = struct{}{}
+				}
+			}
+		}
+		if !matched && artist.MBID != nil {
+			key := strings.ToLower(*artist.MBID)
+			if values, exists := genresByMBID[key]; exists {
+				providerGenres = values
+				matched = true
+				for _, providerArtist := range providerArtists {
+					if providerArtist.MBID != nil && strings.EqualFold(*providerArtist.MBID, key) {
+						seenProviderArtists[providerArtist.ID] = struct{}{}
+					}
+				}
+			}
+		}
+		field, exists := artist.Metadata.Desired["genre"]
+		if exists && field.State == librarymetadata.StateExplicitEmpty {
+			explicitEmpty = true
+			continue
+		}
+		if exists && field.State == librarymetadata.StateValue {
+			localGenres, err := genreReferencesFromField(field)
+			if err != nil {
+				return nil, false, err
+			}
+			if len(localGenres) != 0 {
+				appendGenres(localGenres)
+				continue
+			}
+		}
+		appendGenres(providerGenres)
+	}
+	for _, artist := range providerArtists {
+		if _, seen := seenProviderArtists[artist.ID]; !seen {
+			appendGenres(artist.Genres)
+		}
+	}
+	return genres, explicitEmpty && len(genres) == 0, nil
 }
 
 func resolveFirstPublicationLocalGenres(result *LibraryFirstPublicationContext, scopes ...librarymetadata.Scope) (bool, error) {

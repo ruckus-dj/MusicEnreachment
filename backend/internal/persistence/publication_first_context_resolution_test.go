@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
@@ -264,6 +265,29 @@ func TestFirstPublicationGenreArtistDigestIncludesCreditOrderAndMetadataRevision
 	}
 	if initial == changedOrder {
 		t.Fatal("recording artist credit order did not affect the genre snapshot digest")
+	}
+}
+
+func TestFirstPublicationLinkedProviderArtistGenresUseLocalMetadataBinding(t *testing.T) {
+	providerArtistID := uuid.MustParse("00000000-0000-4000-8000-000000000010")
+	localArtistID := uuid.MustParse("00000000-0000-4000-8000-000000000011")
+	providerGenre := librarymetadata.GenreReference{ID: "00000000-0000-4000-8000-000000000001", SourceName: "provider", Name: "Provider"}
+	localGenre := librarymetadata.GenreReference{ID: "00000000-0000-4000-8000-000000000002", SourceName: "local", Name: "Local"}
+	artists := []FirstPublicationGenreArtist{{
+		ArtistID: localArtistID,
+		Metadata: resolutionEnvelope(librarymetadata.ScopeArtist, nil),
+	}}
+	providerArtists := []firstPublicationLinkedProviderArtist{{ID: providerArtistID, LocalArtistID: &localArtistID, Genres: []librarymetadata.GenreReference{providerGenre}}}
+
+	got, explicitEmpty, err := firstPublicationLinkedProviderArtistGenreUnion(artists, providerArtists)
+	if err != nil || explicitEmpty || !reflect.DeepEqual(got, []librarymetadata.GenreReference{providerGenre}) {
+		t.Fatalf("linked provider genres = %#v, explicit empty %v, error %v; want provider genre", got, explicitEmpty, err)
+	}
+
+	artists[0].Metadata.Desired["genre"] = resolutionGenreReferences(localGenre)
+	got, explicitEmpty, err = firstPublicationLinkedProviderArtistGenreUnion(artists, providerArtists)
+	if err != nil || explicitEmpty || !reflect.DeepEqual(got, []librarymetadata.GenreReference{localGenre}) {
+		t.Fatalf("local artist metadata genres = %#v, explicit empty %v, error %v; want local genre", got, explicitEmpty, err)
 	}
 }
 

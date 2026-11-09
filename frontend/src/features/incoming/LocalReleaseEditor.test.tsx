@@ -1,12 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
   IncomingFileResponse,
   IncomingGroupResponse,
   LocalProviderItem,
   MatchingLocalPreview,
 } from "../../api/generated/client.schemas";
+import { I18nProvider } from "../../i18n/I18nProvider";
+import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { LocalReleaseEditor } from "./LocalReleaseEditor";
 
@@ -81,6 +83,18 @@ const matchingPreview: MatchingLocalPreview = {
   tracks: [],
 };
 
+let storage: Storage;
+
+beforeEach(() => {
+  storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "ru");
+  vi.stubGlobal("localStorage", storage);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 it("selects a local provider release, assigns an incoming file, and confirms the frozen preview", async () => {
   let previewBody: Record<string, unknown> | undefined;
   const confirmBodies: Record<string, unknown>[] = [];
@@ -122,8 +136,10 @@ it("selects a local provider release, assigns an incoming file, and confirms the
     ),
   );
 
-  render(
-    <LocalReleaseEditor group={group} files={[file]} authorityRevision={2} />,
+  const view = render(
+    <I18nProvider>
+      <LocalReleaseEditor group={group} files={[file]} authorityRevision={2} />
+    </I18nProvider>,
   );
 
   fireEvent.click(
@@ -177,4 +193,15 @@ it("selects a local provider release, assigns an incoming file, and confirms the
     preview_digest: matchingPreview.preview_digest,
   });
   expect(confirmBodies[0]?.request_id).toEqual(expect.any(String));
+
+  view.unmount();
+  storage.setItem("melotrove-language", "en");
+  render(
+    <I18nProvider>
+      <LocalReleaseEditor group={group} files={[file]} authorityRevision={2} />
+    </I18nProvider>,
+  );
+  expect(
+    screen.getByRole("heading", { name: "Match with a Local release" }),
+  ).toBeInTheDocument();
 });

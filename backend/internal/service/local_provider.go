@@ -243,7 +243,10 @@ func (catalog *LocalProviderCatalog) validate(ctx context.Context, item LocalPro
 				return item, fmt.Errorf("read MusicBrainz genre catalog: %w", err)
 			}
 			for _, genre := range available {
-				byID[strings.ToLower(genre.ID)] = genre
+				key := strings.ToLower(genre.ID)
+				if _, exists := byID[key]; !exists {
+					byID[key] = genre
+				}
 			}
 		}
 		for i := range requested {

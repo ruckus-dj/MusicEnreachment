@@ -250,8 +250,12 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      без файлового fallback, копирования в draft или PATCH. Полный hook и вся CI
      прошли; populated baseline проверен в восьми свежих browser contexts.
      Границы — [отчёт](../../reports/2026-11-07-provider-genre-baseline.md).
-   - [ ] Остаются подключение picker к Local CRUD и сквозная приёмка общего explicit
-     repeat/aggregate workflow вместе с пунктами 3/6/8. Пункт целиком не закрыт.
+    - [x] В `fbd020dc` picker подключён к отдельному Local provider CRUD;
+      provider-mediated incoming matching заменяет прямое создание library из API/UI.
+      Полный hook прошёл. Сохранение пустых genres при недоступном каталоге проверено
+      в браузере; CRUD и matching проверены PostgreSQL-сценариями.
+    - [ ] Остаётся сквозная приёмка общего explicit repeat/aggregate workflow
+      вместе с пунктами 3/6. Local CRUD больше не является блокером пункта 7.
 8. [ ] **Local create/update.** Использовать переиспользуемые формы для provider Local по
    `docs/design/local-provider.md`, с каталогом жанров из пункта 7.
    **Приёмка:** явное создание после поиска и редактирование только provider records,

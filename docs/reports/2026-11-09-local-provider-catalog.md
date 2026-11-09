@@ -26,3 +26,18 @@ stale detail responses, сохранение millisecond durations и uncertain-
 Добавлены минимальные CRUD/matching transaction и UI-регрессии. `task generate`
 выполнен; полный hook, browser-проверка и CI этого среза ещё ожидаются.
 Общая aggregate/repeat приёмка пунктов 3/6/7 остаётся отдельным незавершённым scope.
+
+Срез `fbd020dc` прошёл полный обычный hook. Browser component checks с fixtures
+подтвердили RU/EN, отсутствие overflow на 1440/390 и создание с `genres: []` при
+недоступном каталоге; это не real-backend E2E. CI 42537649217 остановилась только
+на Windows testpostgres supervisor shutdown; failed jobs перезапущены без
+ослабления gate. Нельзя считать эту матрицу завершённой до результата rerun.
+
+Итоговая сверка жанров выявила недостающий Local read projection для publication:
+добавлен reader через существующие provider bindings без копирования в overrides,
+изменения MusicBrainz-only display baseline или обращения к каталогу жанров.
+Файловый fallback и preview freshness используют существующий механизм.
+Сохранённые имена выбранных жанров не заменяются при добавлении жанра после
+обновления каталога. Incoming Local editor переведён на RU/EN. Проверка реального
+DB reader добавлена в тот же matching fixture; независимое review блокеров не нашло.
+Полный hook дополнения ещё ожидается.
