@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getLibraryFirstPublicationPreview,
   startLibraryFirstPublication,
@@ -16,6 +16,35 @@ type SourceChoice = Pick<
 >;
 
 type PreviewWorkflow = "first" | "comparison" | "retained_same_path";
+type PublicationMode = "ordinary" | "forced";
+
+export type PublicationPreviewIdentity = {
+  digest: string;
+  epoch: string;
+  generation?: string;
+  workflow: "first" | "retained_same_path";
+  mode: PublicationMode;
+  sourceChoice: string;
+  refreshToken?: number | string;
+};
+
+export type PublicationPreviewState = {
+  identity?: PublicationPreviewIdentity;
+  canConfirm: boolean;
+  loading: boolean;
+  confirming: boolean;
+  error: string;
+  admittedOperationID: string;
+  admissionUncertain: boolean;
+  blockers: string[];
+  confirmationCapabilityStatus?: string;
+  confirmationCapabilityReasonCodes: string[];
+};
+
+export type PublicationPreviewController = {
+  prepare: (mode: PublicationMode) => void;
+  confirm: (expected: PublicationPreviewIdentity) => void;
+};
 
 function choiceKey(choice: SourceChoice | null) {
   return choice
@@ -133,15 +162,21 @@ export function FirstPublicationPreview({
   positionId,
   refreshToken,
   comparisonOnly = false,
+  aggregateManaged = false,
   onAdmitted,
   onRefresh,
+  onController,
+  onStateChange,
 }: {
   releaseId: string;
   positionId: string;
   refreshToken?: number | string;
   comparisonOnly?: boolean;
+  aggregateManaged?: boolean;
   onAdmitted: (operationID: string) => void;
   onRefresh: () => void;
+  onController?: (controller: PublicationPreviewController | null) => void;
+  onStateChange?: (state: PublicationPreviewState) => void;
 }) {
   const { locale } = useI18n();
   const copy = firstPublicationPreviewMessages[locale];
@@ -150,7 +185,7 @@ export function FirstPublicationPreview({
   const [selectedChoice, setSelectedChoice] = useState<SourceChoice | null>(
     null,
   );
-  const [mode, setMode] = useState<"ordinary" | "forced">("ordinary");
+  const [mode, setMode] = useState<PublicationMode>("ordinary");
   const [workflow, setWorkflow] = useState<PreviewWorkflow>(
     comparisonOnly ? "comparison" : "first",
   );
@@ -164,6 +199,19 @@ export function FirstPublicationPreview({
   const [error, setError] = useState("");
   const [admittedOperationID, setAdmittedOperationID] = useState("");
   const [admissionUncertain, setAdmissionUncertain] = useState(false);
+  const aggregateStateRef = useRef<PublicationPreviewState>({
+    canConfirm: false,
+    loading: false,
+    confirming: false,
+    error: "",
+    admittedOperationID: "",
+    admissionUncertain: false,
+    blockers: [],
+    confirmationCapabilityReasonCodes: [],
+  });
+  const aggregateConfirmRef = useRef<
+    (expected: PublicationPreviewIdentity) => void
+  >(() => {});
   const confirmationPending = useRef(false);
   const admissionLocked = useRef(false);
   const previousRefreshToken = useRef(refreshToken);
@@ -319,6 +367,54 @@ export function FirstPublicationPreview({
       workflow,
       refreshToken,
       isCurrentRequest,
+    ],
+  );
+
+  const prepare = useCallback(
+    (requestedMode: PublicationMode) => {
+      if (
+        confirmationPending.current ||
+        admissionLocked.current ||
+        confirming ||
+        admissionUncertain ||
+        admittedOperationID
+      )
+        return;
+      const nextWorkflow: PreviewWorkflow = comparisonOnly
+        ? "retained_same_path"
+        : "first";
+      const nextMode = nextWorkflow === "first" ? "ordinary" : requestedMode;
+      const nextChoice = nextWorkflow === "first" ? selectedChoice : null;
+      ++requestSequence.current;
+      currentIdentity.current = {
+        releaseId,
+        positionId,
+        choiceKey: choiceKey(nextChoice),
+        mode: nextMode,
+        workflow: nextWorkflow,
+        refreshToken,
+      };
+      setMode(nextMode);
+      setWorkflow(nextWorkflow);
+      setSelectedChoice(nextChoice);
+      setPreview(undefined);
+      setSourceCandidates([]);
+      setPreviewChoiceKey("");
+      setPreviewWorkflow(undefined);
+      setLoading(false);
+      setError("");
+      void loadPreview(nextChoice, nextMode, nextWorkflow);
+    },
+    [
+      admittedOperationID,
+      admissionUncertain,
+      comparisonOnly,
+      confirming,
+      loadPreview,
+      positionId,
+      refreshToken,
+      releaseId,
+      selectedChoice,
     ],
   );
 
@@ -531,6 +627,52 @@ export function FirstPublicationPreview({
     }
   }
 
+  aggregateConfirmRef.current = (expected) => {
+    const current = aggregateStateRef.current;
+    if (
+      !current.canConfirm ||
+      !current.identity ||
+      JSON.stringify(current.identity) !== JSON.stringify(expected)
+    )
+      return;
+    void confirmPreview();
+  };
+
+  const aggregateIdentity = useMemo<
+    PublicationPreviewIdentity | undefined
+  >(() => {
+    if (!preview || previewWorkflow !== workflow || workflow === "comparison")
+      return undefined;
+    return {
+      digest: preview.context_digest,
+      epoch: preview.epoch,
+      ...(workflow === "retained_same_path"
+        ? { generation: preview.confirmation_capability?.current_generation }
+        : {}),
+      workflow,
+      mode,
+      sourceChoice: previewChoiceKey,
+      refreshToken,
+    };
+  }, [
+    preview,
+    previewWorkflow,
+    workflow,
+    mode,
+    previewChoiceKey,
+    refreshToken,
+  ]);
+
+  const prepareRef = useRef(prepare);
+  prepareRef.current = prepare;
+  const controller = useMemo<PublicationPreviewController>(
+    () => ({
+      prepare: (requestedMode) => prepareRef.current(requestedMode),
+      confirm: (expected) => aggregateConfirmRef.current(expected),
+    }),
+    [],
+  );
+
   const candidates = sourceCandidates;
   const needsExplicitChoice =
     (candidates.length > 0 && !preview?.selected_source) ||
@@ -569,6 +711,44 @@ export function FirstPublicationPreview({
           preview.transform &&
           preview.resolved_path_components?.length)),
   );
+  const aggregateState = useMemo<PublicationPreviewState>(
+    () => ({
+      identity: aggregateIdentity,
+      canConfirm,
+      loading,
+      confirming,
+      error,
+      admittedOperationID,
+      admissionUncertain,
+      blockers: preview?.blockers ?? [],
+      confirmationCapabilityStatus: preview?.confirmation_capability?.status,
+      confirmationCapabilityReasonCodes:
+        preview?.confirmation_capability?.reason_codes ?? [],
+    }),
+    [
+      aggregateIdentity,
+      canConfirm,
+      loading,
+      confirming,
+      error,
+      admittedOperationID,
+      admissionUncertain,
+      preview?.blockers,
+      preview?.confirmation_capability?.status,
+      preview?.confirmation_capability?.reason_codes,
+    ],
+  );
+  aggregateStateRef.current = aggregateState;
+
+  useEffect(() => {
+    onStateChange?.(aggregateState);
+  }, [onStateChange, aggregateState]);
+
+  useEffect(() => {
+    onController?.(controller);
+    return () => onController?.(null);
+  }, [onController, controller]);
+
   const audioEvidence = preview?.current_comparison?.audio_evidence;
   const audioAuthorityPresent =
     audioEvidence?.source_authority_status === "present";
@@ -587,7 +767,10 @@ export function FirstPublicationPreview({
     >
       {comparisonOnly && (
         <>
-          <fieldset className="space-y-2" disabled={loading}>
+          <fieldset
+            className="space-y-2"
+            disabled={loading || aggregateManaged}
+          >
             <legend className="font-medium">{copy.currentWorkflow}</legend>
             <label className="block">
               <input
@@ -611,7 +794,10 @@ export function FirstPublicationPreview({
           {workflow === "comparison" && (
             <p role="note">{copy.comparisonReadOnly}</p>
           )}
-          <fieldset className="space-y-2" disabled={loading}>
+          <fieldset
+            className="space-y-2"
+            disabled={loading || aggregateManaged}
+          >
             <legend className="font-medium">{copy.mode}</legend>
             <label className="block">
               <input
@@ -637,6 +823,7 @@ export function FirstPublicationPreview({
       <button
         type="button"
         disabled={
+          aggregateManaged ||
           loading ||
           confirming ||
           Boolean(admittedOperationID) ||
@@ -933,7 +1120,7 @@ export function FirstPublicationPreview({
               <p>{copy.lyricsComparisonBasis}</p>
             </section>
           )}
-          {workflow === "comparison" && preview.current_comparison && (
+          {workflow !== "first" && preview.current_comparison && (
             <section
               className="space-y-2"
               aria-label={copy.currentComparisonAria}
@@ -1034,7 +1221,7 @@ export function FirstPublicationPreview({
               <p>{copy.readOnlyBoundary}</p>
             </section>
           )}
-          {!comparisonOnly && workflow === "first" && (
+          {!aggregateManaged && !comparisonOnly && workflow === "first" && (
             <button
               type="button"
               disabled={
@@ -1049,7 +1236,7 @@ export function FirstPublicationPreview({
               {confirming ? copy.publicationStart : copy.publish}
             </button>
           )}
-          {workflow === "retained_same_path" && (
+          {!aggregateManaged && workflow === "retained_same_path" && (
             <button
               type="button"
               disabled={

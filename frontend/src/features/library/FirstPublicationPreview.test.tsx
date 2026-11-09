@@ -5,11 +5,14 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
+import { useCallback, useRef, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { LibraryFirstPublicationPreviewResponse } from "../../api/generated/client.schemas";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
+import { AggregatePublicationPreview } from "./AggregatePublicationPreview";
 
 const api = vi.hoisted(() => ({
   getLibraryFirstPublicationPreview: vi.fn(),
@@ -18,7 +21,11 @@ const api = vi.hoisted(() => ({
 
 vi.mock("../../api/generated/client", () => api);
 
-import { FirstPublicationPreview } from "./FirstPublicationPreview";
+import {
+  FirstPublicationPreview,
+  type PublicationPreviewController,
+  type PublicationPreviewState,
+} from "./FirstPublicationPreview";
 
 const preview = {
   blockers: [],
@@ -58,6 +65,78 @@ function component(
         onRefresh={vi.fn()}
       />
     </I18nProvider>
+  );
+}
+
+function AggregatePreviewFixture() {
+  const [states, setStates] = useState<
+    Record<string, PublicationPreviewState | undefined>
+  >({});
+  const controllers = useRef(new Map<string, PublicationPreviewController>());
+  const [, setControllerVersion] = useState(0);
+  const register = useCallback(
+    (positionID: string, controller: PublicationPreviewController | null) => {
+      if (controller) controllers.current.set(positionID, controller);
+      else controllers.current.delete(positionID);
+      setControllerVersion((version) => version + 1);
+    },
+    [],
+  );
+  const update = useCallback(
+    (positionID: string, state: PublicationPreviewState) => {
+      setStates((current) => ({ ...current, [positionID]: state }));
+    },
+    [],
+  );
+  const firstController = useCallback(
+    (controller: PublicationPreviewController | null) =>
+      register("first", controller),
+    [register],
+  );
+  const currentController = useCallback(
+    (controller: PublicationPreviewController | null) =>
+      register("current", controller),
+    [register],
+  );
+  const firstState = useCallback(
+    (state: PublicationPreviewState) => update("first", state),
+    [update],
+  );
+  const currentState = useCallback(
+    (state: PublicationPreviewState) => update("current", state),
+    [update],
+  );
+
+  return (
+    <>
+      <AggregatePublicationPreview
+        positions={[
+          { id: "first", label: "First position", current: false },
+          { id: "current", label: "Current position", current: true },
+        ]}
+        controllers={controllers.current}
+        states={states}
+      />
+      <FirstPublicationPreview
+        releaseId="release-1"
+        positionId="first"
+        aggregateManaged
+        onAdmitted={vi.fn()}
+        onRefresh={vi.fn()}
+        onController={firstController}
+        onStateChange={firstState}
+      />
+      <FirstPublicationPreview
+        releaseId="release-1"
+        positionId="current"
+        comparisonOnly
+        aggregateManaged
+        onAdmitted={vi.fn()}
+        onRefresh={vi.fn()}
+        onController={currentController}
+        onStateChange={currentState}
+      />
+    </>
   );
 }
 
@@ -109,6 +188,183 @@ it("keeps a pending admission fenced across a metadata refresh and delivers its 
     screen.getByRole("button", { name: "Предпросмотр публикации" }),
   ).toBeDisabled();
   expect(api.startLibraryFirstPublication).toHaveBeenCalledTimes(1);
+});
+
+it("prepares and confirms through the aggregate controller using its frozen identity", async () => {
+  api.getLibraryFirstPublicationPreview.mockResolvedValue({
+    status: 200,
+    data: preview,
+  });
+  api.startLibraryFirstPublication.mockResolvedValue({
+    status: 202,
+    data: { id: "aggregate-operation" },
+  });
+  const controller: { current: PublicationPreviewController | null } = {
+    current: null,
+  };
+  const state: { current: PublicationPreviewState | undefined } = {
+    current: undefined,
+  };
+  render(
+    <I18nProvider>
+      <FirstPublicationPreview
+        releaseId="release-1"
+        positionId="position-1"
+        refreshToken={3}
+        aggregateManaged
+        onAdmitted={vi.fn()}
+        onRefresh={vi.fn()}
+        onController={(value) => {
+          controller.current = value;
+        }}
+        onStateChange={(value) => {
+          state.current = value;
+        }}
+      />
+    </I18nProvider>,
+  );
+
+  await waitFor(() => expect(controller.current).not.toBeNull());
+  controller.current?.prepare("forced");
+  await waitFor(() => expect(state.current?.canConfirm).toBe(true));
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledWith(
+    "release-1",
+    "position-1",
+    { mode: "ordinary" },
+    { cache: "no-store" },
+  );
+  expect(state.current?.identity).toMatchObject({
+    digest: "frozen-digest",
+    epoch: "epoch-1",
+    mode: "ordinary",
+    workflow: "first",
+    refreshToken: 3,
+  });
+
+  const identity = state.current?.identity;
+  if (identity) controller.current?.confirm(identity);
+  await waitFor(() =>
+    expect(api.startLibraryFirstPublication).toHaveBeenCalledWith(
+      "release-1",
+      "position-1",
+      expect.objectContaining({
+        preview_digest: "frozen-digest",
+        expected_epoch: "epoch-1",
+      }),
+    ),
+  );
+});
+
+it("requires a fresh aggregate prepare after mode changes and allows explicit exclusion of unchanged CURRENT", async () => {
+  api.getLibraryFirstPublicationPreview.mockImplementation(
+    async (
+      _releaseId: string,
+      positionID: string,
+      params: { mode?: string },
+    ) =>
+      positionID === "first"
+        ? { status: 200, data: preview }
+        : {
+            status: 200,
+            data: {
+              ...preview,
+              current_comparison: {
+                audio_status: "matches",
+                current_components: [],
+                generation: "generation-1",
+                reason: "same content",
+                rendered_components: [],
+                rendered_matches: true,
+                resolved_components: [],
+                resolved_matches: true,
+                status: "matches",
+                tag_differences: [],
+              },
+              confirmation_capability: {
+                kind: "retained_same_path",
+                status: "unchanged",
+                reason_codes: ["content_unchanged"],
+                current_generation: "generation-1",
+              },
+              mode: params.mode ?? "ordinary",
+              source_candidates: [],
+            },
+          },
+  );
+  api.startLibraryFirstPublication.mockResolvedValue({
+    status: 202,
+    data: { id: "aggregate-first-operation" },
+  });
+  render(
+    <I18nProvider>
+      <AggregatePreviewFixture />
+    </I18nProvider>,
+  );
+
+  const confirm = screen.getByRole("button", {
+    name: "Подтвердить готовые публикации",
+  });
+  fireEvent.click(screen.getByRole("radio", { name: "Принудительная" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Подготовить предпросмотр" }),
+  );
+  await waitFor(() =>
+    expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(2),
+  );
+  await waitFor(() => expect(confirm).toBeEnabled());
+  const aggregate = screen.getByRole("region", {
+    name: "Общий предпросмотр публикации",
+  });
+  expect(aggregate).toHaveTextContent(/Создать\s*1/);
+  expect(aggregate).toHaveTextContent(/Без изменений\s*1/);
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenNthCalledWith(
+    1,
+    "release-1",
+    "first",
+    { mode: "ordinary" },
+    { cache: "no-store" },
+  );
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenNthCalledWith(
+    2,
+    "release-1",
+    "current",
+    { workflow: "retained_same_path", mode: "forced" },
+    { cache: "no-store" },
+  );
+
+  fireEvent.click(screen.getByRole("radio", { name: "Обычная" }));
+  expect(confirm).toBeDisabled();
+  fireEvent.click(screen.getByRole("radio", { name: "Принудительная" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Подготовить предпросмотр" }),
+  );
+  await waitFor(() =>
+    expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(4),
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Включить позицию: Current position",
+    }),
+  );
+  await waitFor(() => expect(aggregate).toHaveTextContent(/Пропущено\s*1/));
+  expect(confirm).toBeEnabled();
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Включить позицию: Current position",
+    }),
+  );
+  expect(confirm).toBeEnabled();
+  expect(within(aggregate).getByText("Без изменений")).toBeInTheDocument();
+  fireEvent.click(confirm);
+  await waitFor(() =>
+    expect(api.startLibraryFirstPublication).toHaveBeenCalledTimes(1),
+  );
+  await waitFor(() => expect(confirm).toBeDisabled());
+  expect(api.startLibraryFirstPublication).toHaveBeenCalledWith(
+    "release-1",
+    "first",
+    expect.objectContaining({ preview_digest: "frozen-digest" }),
+  );
 });
 
 it("retains the disabled fence after an uncertain admission when metadata refreshes", async () => {

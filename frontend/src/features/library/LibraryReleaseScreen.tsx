@@ -22,7 +22,12 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import "./library.css";
-import { FirstPublicationPreview } from "./FirstPublicationPreview";
+import { AggregatePublicationPreview } from "./AggregatePublicationPreview";
+import {
+  FirstPublicationPreview,
+  type PublicationPreviewController,
+  type PublicationPreviewState,
+} from "./FirstPublicationPreview";
 import { GenreMetadataEditor, type GenreOwner } from "./GenreMetadataEditor";
 import {
   PositionIdentity,
@@ -99,6 +104,22 @@ export function LibraryReleaseScreen({
   const [release, setRelease] = useState<LibraryReleaseDetailResponse>();
   const [loadedReleaseID, setLoadedReleaseID] = useState("");
   const [positions, setPositions] = useState<Record<string, PositionData>>({});
+  const aggregateControllers = useRef(
+    new Map<string, PublicationPreviewController>(),
+  );
+  const [aggregateStates, setAggregateStates] = useState<
+    Record<string, PublicationPreviewState>
+  >({});
+  const [, setAggregateControllerVersion] = useState(0);
+  const aggregateCallbacks = useRef(
+    new Map<
+      string,
+      {
+        onController: (controller: PublicationPreviewController | null) => void;
+        onStateChange: (state: PublicationPreviewState) => void;
+      }
+    >(),
+  );
   const [error, setError] = useState("");
   const [genreContextGeneration, setGenreContextGeneration] = useState(0);
   const [genreRefreshError, setGenreRefreshError] = useState("");
@@ -154,6 +175,28 @@ export function LibraryReleaseScreen({
   const cleanupRetryLocks = useRef(
     new Map<string, { scope: typeof scope.current; token: number }>(),
   );
+
+  function aggregateCallbacksFor(positionID: string) {
+    let callbacks = aggregateCallbacks.current.get(positionID);
+    if (!callbacks) {
+      callbacks = {
+        onController: (controller) => {
+          if (controller)
+            aggregateControllers.current.set(positionID, controller);
+          else aggregateControllers.current.delete(positionID);
+          setAggregateControllerVersion((version) => version + 1);
+        },
+        onStateChange: (state) => {
+          setAggregateStates((current) => ({
+            ...current,
+            [positionID]: state,
+          }));
+        },
+      };
+      aggregateCallbacks.current.set(positionID, callbacks);
+    }
+    return callbacks;
+  }
 
   function acquirePositionWrite(positionId: string) {
     if (positionWriteLocks.current.get(positionId)?.scope === scope.current)
@@ -1433,6 +1476,21 @@ export function LibraryReleaseScreen({
       {genreRefreshError ? <p role="alert">{genreRefreshError}</p> : null}
       <ReleaseMetadataFacts metadata={release.metadata} />
       <ReleaseMediaSummary release={release} />
+      {!positionId && (
+        <AggregatePublicationPreview
+          key={releaseId}
+          positions={visibleTracks.map((track) => ({
+            id: track.id,
+            label: `${track.displayed_number.trim() || track.position}. ${track.title}`,
+            current: Boolean(
+              positions[track.id]?.publication?.current_path ||
+                positions[track.id]?.publication?.current_generation,
+            ),
+          }))}
+          controllers={aggregateControllers.current}
+          states={aggregateStates}
+        />
+      )}
       {positionId && (
         <a className="underline" href={`#/library/releases/${releaseId}`}>
           ← Полный релиз
@@ -1742,6 +1800,7 @@ export function LibraryReleaseScreen({
                 <FirstPublicationPreview
                   releaseId={releaseId}
                   positionId={track.id}
+                  aggregateManaged={!positionId}
                   comparisonOnly={Boolean(
                     publication?.current_path ||
                       publication?.current_generation,
@@ -1762,6 +1821,7 @@ export function LibraryReleaseScreen({
                     refreshReadState();
                   }}
                   onRefresh={refreshReadState}
+                  {...(!positionId ? aggregateCallbacksFor(track.id) : {})}
                 />
               )}
             <p>
