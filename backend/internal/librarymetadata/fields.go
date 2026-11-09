@@ -47,6 +47,7 @@ type FieldDefinition struct {
 }
 
 var fieldDefinitions = []FieldDefinition{
+	{Name: "sort_name", Type: TypeString, Scopes: []Scope{ScopeArtist}},
 	{Name: "title", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}, Canonical: true},
 	{Name: "sort_title", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "artist_credit", Type: TypeArtistCredit, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}, Canonical: true},

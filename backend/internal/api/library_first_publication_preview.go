@@ -341,7 +341,12 @@ func clonePreviewTagValues(values []string) []string {
 func clonePreviewTags(tags map[string][]string) map[string][]string {
 	clone := make(map[string][]string, len(tags))
 	for key, values := range tags {
-		clone[key] = append([]string(nil), values...)
+		if values == nil {
+			clone[key] = nil
+			continue
+		}
+		clone[key] = make([]string, len(values))
+		copy(clone[key], values)
 	}
 	return clone
 }

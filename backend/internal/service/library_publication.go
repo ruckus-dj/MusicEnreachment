@@ -266,7 +266,12 @@ func libraryPublicationView(projection *persistence.LibraryPublicationContext) (
 		view.CurrentAudio = &facts
 		metadata := persistence.PublicationCommitMetadata{Version: current.Metadata.Version, Tags: make(map[string][]string, len(current.Metadata.Tags))}
 		for key, values := range current.Metadata.Tags {
-			metadata.Tags[key] = append([]string(nil), values...)
+			if values == nil {
+				metadata.Tags[key] = nil
+				continue
+			}
+			metadata.Tags[key] = make([]string, len(values))
+			copy(metadata.Tags[key], values)
 		}
 		view.CurrentMetadata = &metadata
 		assets := current.Assets.Clone()

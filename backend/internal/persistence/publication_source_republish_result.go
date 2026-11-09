@@ -146,7 +146,8 @@ func validateSourceRepublishTagsAndAssets(tags map[string][]string, assets Publi
 	republish := input.SourceRepublish
 	wantTags := make(map[string][]string, len(input.DesiredTags)+1)
 	for key, values := range input.DesiredTags {
-		if !publicationTagIsLyrics(key) {
+		// Frozen empty lists are clear directives; native readback omits cleared tags.
+		if !publicationTagIsLyrics(key) && len(values) != 0 {
 			wantTags[key] = slices.Clone(values)
 		}
 	}

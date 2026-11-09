@@ -324,6 +324,7 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 		NativeStatus: "native verification required",
 		Mode:         mode,
 	}
+	addArtistMetadataRevisions(preview.MetadataRevisions, contextSnapshot.ArtistMetadataRevisions)
 	if automaticChoice && choice == nil {
 		preview.Blockers = append(preview.Blockers, contextSnapshot.DefaultSourceBlockers...)
 		switch automaticReason {
@@ -400,6 +401,7 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 		preview.Blockers = append(preview.Blockers, "desired tags are incomplete: "+projectionErr.Error())
 	} else {
 		preview.DesiredTags = projection
+		preview.Warnings = append(preview.Warnings, projection.Notices...)
 	}
 	parsed, parseErr := publication.ParseTemplate(pathTemplate)
 	if parseErr != nil {
@@ -450,6 +452,12 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 	digest := sha256.Sum256(encoded)
 	preview.ContextDigest = hex.EncodeToString(digest[:])
 	return preview, nil
+}
+
+func addArtistMetadataRevisions(revisions map[string]int64, artists map[string]int64) {
+	for artistID, revision := range artists {
+		revisions["artist:"+artistID] = revision
+	}
 }
 
 func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *persistence.LibraryPublicationCurrent, snapshot *persistence.LibraryFirstPublicationContext) *FirstPublicationCurrentComparison {

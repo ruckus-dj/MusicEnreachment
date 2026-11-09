@@ -24,15 +24,22 @@ func validatePublicationProviderTagAuthorityTx(ctx context.Context, tx bun.Tx, r
 	if err != nil {
 		return fmt.Errorf("validate provider-tag authority: read protection: %w", err)
 	}
-	patch, err := BuildPublicationProviderCanonicalTagPatch(*snapshot)
+	projection, err := BuildPublicationProviderCanonicalTagProjection(*snapshot)
 	if err != nil {
 		return fmt.Errorf("validate provider-tag authority: project accepted fields: %w", err)
 	}
 	if snapshot.Source.ID != provider.ProviderSourceID || snapshot.Digest != provider.AuthorityRevision ||
-		!reflect.DeepEqual(patch, provider.Patch) || !reflect.DeepEqual(protection.Keys, provider.ProtectedKeys) {
+		!reflect.DeepEqual(projection.Tags, provider.Patch) || !sameProviderNotices(projection.Notices, provider.Notices) || !reflect.DeepEqual(protection.Keys, provider.ProtectedKeys) {
 		return fmt.Errorf("validate provider-tag authority: accepted evidence or protection changed: %w", ErrPublicationAdmissionConflict)
 	}
 	return nil
+}
+
+func sameProviderNotices(left, right []string) bool {
+	if len(left) == 0 || len(right) == 0 {
+		return len(left) == len(right)
+	}
+	return reflect.DeepEqual(left, right)
 }
 
 // lockProviderTagDeliveryAuthority acquires the provider/owner lock prefix before

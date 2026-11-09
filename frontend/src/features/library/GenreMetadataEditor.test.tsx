@@ -350,8 +350,14 @@ it("deduplicates same-tick Save presses while a metadata write is pending", asyn
 
   renderEditor({ owner: "release", ownerId: "save-race" });
   await screen.findByText(/Переопределение жанров не задано/);
-  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
-  fireEvent.click(screen.getByRole("button", { name: "Очистить жанры" }));
+  const editButton = await screen.findByRole("button", { name: "Изменить" });
+  await waitFor(() => expect(editButton).toBeEnabled());
+  fireEvent.click(editButton);
+  const clearButton = await screen.findByRole("button", {
+    name: "Очистить жанры",
+  });
+  await waitFor(() => expect(clearButton).toBeEnabled());
+  fireEvent.click(clearButton);
   const save = screen.getByRole("button", { name: "Сохранить" });
   fireEvent.click(save);
   fireEvent.click(save);

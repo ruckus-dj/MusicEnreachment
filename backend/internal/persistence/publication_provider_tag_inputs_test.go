@@ -24,7 +24,7 @@ func publicationProviderTagFixture(t *testing.T) PublicationInputs {
 		Current: current, AudioPayloadSHA256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 		ProviderSourceID: uuid.New(), Endpoint: "https://musicbrainz.org/ws/2",
 		ConfigurationIdentity: "musicbrainz-public", AuthorityRevision: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-		Patch: map[string][]string{"TITLE": {"Provider title"}}, ProtectedKeys: []string{},
+		Patch: map[string][]string{"TITLE": {"Provider title"}}, Notices: []string{}, ProtectedKeys: []string{},
 	}
 	input.DesiredTags = map[string][]string{"TITLE": {"Provider title"}, "LYRICS": {"[00:01.00]current lyrics"}}
 	return input

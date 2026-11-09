@@ -24,6 +24,11 @@ func ResolveOptionalField(fieldName string, position, track, recording, release 
 	if definition.Canonical || definition.Type == TypeUUID || definition.Type == TypeUUIDList || definition.Type == TypeInteger {
 		return ResolvedField{}, fmt.Errorf("metadata field %q is not optional inheritable metadata", fieldName)
 	}
+	// Legacy independent artist sort lists are not inheritable authority; the
+	// publication sort tags are derived from artist credits instead.
+	if fieldName == "artist_sort_names" || fieldName == "album_artist_sort_names" {
+		return ResolvedField{}, nil
+	}
 
 	owners := []struct {
 		envelope *Envelope

@@ -137,7 +137,9 @@ func TestLibraryMetadataUpdateRejectsInvalidChanges(t *testing.T) {
 		name, scope, changes string
 	}{
 		{name: "unknown field", changes: `{"unknown":{"state":"value","value":"x"}}`},
-		{name: "canonical title", changes: `{"title":{"state":"value","value":"x"}}`},
+		{name: "artist sort name outside artist scope", changes: `{"sort_name":{"state":"value","value":"x"}}`},
+		{name: "legacy release artist sort list", scope: "release", changes: `{"album_artist_sort_names":{"state":"value","value":["Artist, A"]}}`},
+		{name: "legacy position artist sort list", scope: "position", changes: `{"artist_sort_names":{"state":"value","value":["Artist, A"]}}`},
 		{name: "wrong scope", scope: "recording", changes: `{"release_date":{"state":"value","value":"2020"}}`},
 		{name: "forged authority", changes: `{"genre":{"state":"value","value":[{"id":"11111111-1111-4111-8111-111111111111","source_name":"rock","name":"Rock"}],"authority":"automatic"}}`},
 		{name: "forged provenance", changes: `{"genre":{"state":"value","value":[{"id":"11111111-1111-4111-8111-111111111111","source_name":"rock","name":"Rock"}],"provenance":{"kind":"provider"}}}`},
@@ -163,6 +165,38 @@ func TestLibraryMetadataUpdateRejectsInvalidChanges(t *testing.T) {
 			}
 			if len(repository.updates) != 0 {
 				t.Fatalf("repository updates = %d, want 0", len(repository.updates))
+			}
+		})
+	}
+}
+
+func TestLibraryMetadataUpdateAllowsApprovedCanonicalOverridesAndArtistSortName(t *testing.T) {
+	for _, test := range []struct {
+		name, scope, changes, field string
+	}{
+		{name: "title", scope: string(librarymetadata.ScopeRelease), changes: `{"title":{"state":"value","value":"Local title"}}`, field: "title"},
+		{name: "artist credit", scope: string(librarymetadata.ScopeRelease), changes: `{"artist_credit":{"state":"value","value":[{"artist_id":"123e4567-e89b-12d3-a456-426614174000","artist_name":"Artist","credit_name":"Artist","join_phrase":""}]}}`, field: "artist_credit"},
+		{name: "artists", scope: string(librarymetadata.ScopeRelease), changes: `{"artists":{"state":"value","value":["Artist"]}}`, field: "artists"},
+		{name: "artist sort name", scope: string(librarymetadata.ScopeArtist), changes: `{"sort_name":{"state":"value","value":"Artist, The"}}`, field: "sort_name"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scope := librarymetadata.Scope(test.scope)
+			repository := &fakeLibraryMetadataRepository{current: persistence.LibraryMetadata{Revision: 1, Envelope: librarymetadata.Envelope{
+				Version: librarymetadata.EnvelopeVersion, Scope: scope, Desired: map[string]librarymetadata.FieldValue{},
+			}}}
+			result, err := NewLibraryMetadataService(repository).Update(context.Background(), scope, uuid.New(), uuid.New(), 1, libraryMetadataChanges(t, test.changes))
+			if err != nil {
+				t.Fatalf("update: %v", err)
+			}
+			field, ok := result.Envelope.Desired[test.field]
+			if !ok {
+				t.Fatalf("updated field %q missing from desired metadata", test.field)
+			}
+			if field.State != librarymetadata.StateValue || field.Authority != librarymetadata.AuthorityManual || field.Provenance.Kind != librarymetadata.ProvenanceManual {
+				t.Fatalf("updated field = %#v, want manual value", field)
+			}
+			if len(repository.updates) != 1 {
+				t.Fatalf("repository updates = %d, want 1", len(repository.updates))
 			}
 		})
 	}

@@ -48,25 +48,26 @@ type TagFieldResult struct {
 // TagProjection reports per-field capability independently of tag intent.
 // A projected value is not evidence that a writer/readback supports it.
 type TagProjection struct {
-	Tags   map[string][]string
-	Fields map[string]TagFieldResult
+	Tags    map[string][]string
+	Fields  map[string]TagFieldResult
+	Notices []string
 }
 
 // ProjectTags projects the approved core normalized tag mapping. Unsupported
 // registered fields remain visible in Fields instead of being silently lost.
 func ProjectTags(input TagProjectionInput) (TagProjection, error) {
-	if !hasMeaningfulCredit(input.Release.Artist) || !hasMeaningfulCredit(input.Position.Artist) || strings.TrimSpace(input.Release.Title) == "" || strings.TrimSpace(input.Position.Title) == "" {
-		return TagProjection{}, fmt.Errorf("publication tags require release artist, release title, and track artist and title")
-	}
 	if err := validateDesiredEnvelope(input.Release.Desired, librarymetadata.ScopeRelease); err != nil {
 		return TagProjection{}, err
 	}
 	if err := validateDesiredEnvelope(input.Position.Desired, librarymetadata.ScopePosition); err != nil {
 		return TagProjection{}, err
 	}
+	if !hasMeaningfulCredit(input.Release.Artist) || !hasMeaningfulCredit(input.Position.Artist) || strings.TrimSpace(input.Release.Title) == "" || strings.TrimSpace(input.Position.Title) == "" {
+		return TagProjection{}, fmt.Errorf("publication tags require release artist, release title, and track artist and title")
+	}
 	projection := TagProjection{Tags: make(map[string][]string), Fields: make(map[string]TagFieldResult)}
-	setCredits(projection.Tags, projection.Fields, "artist_credit", "ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", input.Position.Artist)
-	setCredits(projection.Tags, projection.Fields, "album_artist_credit", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", input.Release.Artist)
+	projection.Notices = append(projection.Notices, setCredits(projection.Tags, projection.Fields, "artist_credit", "ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "ARTISTSORT", "ARTISTSSORT", input.Position.Artist)...)
+	projection.Notices = append(projection.Notices, setCredits(projection.Tags, projection.Fields, "album_artist_credit", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTSORT", "ALBUMARTISTSSORT", input.Release.Artist)...)
 	projection.Tags["ALBUM"] = []string{input.Release.Title}
 	projection.Tags["TITLE"] = []string{input.Position.Title}
 	projection.Fields["release.title"] = TagFieldResult{Status: "represented"}
@@ -87,11 +88,8 @@ func ProjectTags(input TagProjectionInput) (TagProjection, error) {
 		projection.Tags["COMPILATION"] = []string{value}
 		projection.Fields["compilation"] = TagFieldResult{Status: "represented"}
 	}
-	applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopeRelease, input.Release.Desired)
-	applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopePosition, input.Position.Desired)
-	if !hasMeaningfulTag(projection.Tags["ALBUMARTIST"]) || !hasMeaningfulTag(projection.Tags["ARTIST"]) || !hasMeaningfulTag(projection.Tags["ALBUM"]) || !hasMeaningfulTag(projection.Tags["TITLE"]) {
-		return TagProjection{}, fmt.Errorf("publication tags require release artist, release title, and track artist and title")
-	}
+	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopeRelease, input.Release.Desired)...)
+	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopePosition, input.Position.Desired)...)
 	return projection, nil
 }
 
@@ -105,6 +103,64 @@ func validateDesiredEnvelope(envelope *librarymetadata.Envelope, scope libraryme
 	return envelope.Validate()
 }
 
+func setCredits(tags map[string][]string, fields map[string]TagFieldResult, name, fullKey, listKey, mbidKey, sortKey, sortListKey string, credits []librarymetadata.ArtistCredit) []string {
+	if len(credits) == 0 {
+		return nil
+	}
+	full := make([]string, 0, len(credits))
+	individual, nameCollisions := projectedArtistNames(credits)
+	ids := make([]string, 0, len(credits))
+	sortNames := make([]string, 0, len(credits))
+	completeIDs := true
+	for _, credit := range credits {
+		creditedName := strings.TrimSpace(credit.CreditName)
+		if creditedName == "" {
+			creditedName = credit.ArtistName
+		}
+		full = append(full, creditedName+credit.JoinPhrase)
+		sortName := credit.SortName
+		if sortName == "" {
+			sortName = credit.ArtistName
+		}
+		sortNames = append(sortNames, sortName)
+		if credit.MBID == nil || strings.TrimSpace(*credit.MBID) == "" {
+			completeIDs = false
+		} else {
+			ids = append(ids, *credit.MBID)
+		}
+	}
+	tags[fullKey] = []string{strings.Join(full, "")}
+	fields[name] = TagFieldResult{Status: "represented"}
+	var notices []string
+	if nameCollisions {
+		tags[listKey] = []string{}
+		tags[mbidKey] = []string{}
+		fields[name] = TagFieldResult{Status: "unsupported", Reason: "artist names remain ambiguous after disambiguation; ordered artist tags were omitted"}
+		notices = append(notices, "artist names remain ambiguous after disambiguation; ordered artist tags were omitted")
+	} else if !completeIDs {
+		tags[listKey] = []string{}
+		tags[mbidKey] = []string{}
+		fields[name] = TagFieldResult{Status: "unsupported", Reason: "artist MBIDs are incomplete; ordered artist tags were omitted"}
+		fields[name+".mbids"] = TagFieldResult{Status: "unsupported", Reason: "artist MBIDs are incomplete; ordered per-artist alignment cannot be represented"}
+		notices = append(notices, "artist MBIDs are incomplete; ordered artist tags were omitted")
+	} else {
+		tags[listKey] = individual
+		tags[mbidKey] = ids
+		fields[name+".mbids"] = TagFieldResult{Status: "represented"}
+	}
+	if hasDuplicateValuesAcrossArtists(sortNames, credits) {
+		tags[sortKey] = []string{}
+		tags[sortListKey] = []string{}
+		fields[name+".sort_names"] = TagFieldResult{Status: "unsupported", Reason: "artist sort names collide; ordered sort tags were omitted"}
+		notices = append(notices, "artist sort names collide; ordered sort tags were omitted")
+	} else {
+		tags[sortKey] = append([]string(nil), sortNames...)
+		tags[sortListKey] = append([]string(nil), sortNames...)
+		fields[name+".sort_names"] = TagFieldResult{Status: "represented"}
+	}
+	return notices
+}
+
 func hasMeaningfulCredit(credits []librarymetadata.ArtistCredit) bool {
 	for _, credit := range credits {
 		if strings.TrimSpace(credit.ArtistName) != "" || strings.TrimSpace(credit.CreditName) != "" {
@@ -114,45 +170,46 @@ func hasMeaningfulCredit(credits []librarymetadata.ArtistCredit) bool {
 	return false
 }
 
-func hasMeaningfulTag(values []string) bool {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return true
+func projectedArtistNames(credits []librarymetadata.ArtistCredit) ([]string, bool) {
+	names := make([]string, len(credits))
+	for i, credit := range credits {
+		names[i] = credit.ArtistName
+	}
+	for i, credit := range credits {
+		for j := 0; j < i; j++ {
+			if credits[j].ArtistName != credit.ArtistName || sameArtist(credits[i], credits[j]) {
+				continue
+			}
+			names[i] = disambiguatedArtistName(credit)
+			names[j] = disambiguatedArtistName(credits[j])
+		}
+	}
+	return names, hasDuplicateValuesAcrossArtists(names, credits)
+}
+
+func disambiguatedArtistName(credit librarymetadata.ArtistCredit) string {
+	if credit.Disambiguation == "" {
+		return credit.ArtistName
+	}
+	return credit.ArtistName + " (" + credit.Disambiguation + ")"
+}
+
+func sameArtist(left, right librarymetadata.ArtistCredit) bool {
+	if left.MBID != nil && right.MBID != nil {
+		return *left.MBID == *right.MBID
+	}
+	return left.ArtistID != "" && left.ArtistID == right.ArtistID
+}
+
+func hasDuplicateValuesAcrossArtists(values []string, credits []librarymetadata.ArtistCredit) bool {
+	for i, value := range values {
+		for j := 0; j < i; j++ {
+			if values[j] == value && !sameArtist(credits[i], credits[j]) {
+				return true
+			}
 		}
 	}
 	return false
-}
-
-func setCredits(tags map[string][]string, fields map[string]TagFieldResult, name, fullKey, listKey, mbidKey string, credits []librarymetadata.ArtistCredit) {
-	if len(credits) == 0 {
-		return
-	}
-	full := make([]string, 0, len(credits))
-	individual := make([]string, 0, len(credits))
-	ids := make([]string, 0, len(credits))
-	completeIDs := true
-	for _, credit := range credits {
-		creditedName := strings.TrimSpace(credit.CreditName)
-		if creditedName == "" {
-			creditedName = credit.ArtistName
-		}
-		full = append(full, creditedName+credit.JoinPhrase)
-		individual = append(individual, credit.ArtistName)
-		if credit.MBID == nil || strings.TrimSpace(*credit.MBID) == "" {
-			completeIDs = false
-		} else {
-			ids = append(ids, *credit.MBID)
-		}
-	}
-	tags[fullKey] = []string{strings.Join(full, "")}
-	tags[listKey] = individual
-	fields[name] = TagFieldResult{Status: "represented"}
-	if completeIDs {
-		tags[mbidKey] = ids
-		fields[name+".mbids"] = TagFieldResult{Status: "represented"}
-	} else {
-		fields[name+".mbids"] = TagFieldResult{Status: "unsupported", Reason: "artist MBIDs are incomplete; ordered per-artist alignment cannot be represented"}
-	}
 }
 
 func setID(tags map[string][]string, fields map[string]TagFieldResult, field, key string, id *uuid.UUID) {
@@ -171,10 +228,11 @@ func setNumber(tags map[string][]string, fields map[string]TagFieldResult, field
 	fields[field] = TagFieldResult{Status: "represented"}
 }
 
-func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, envelope *librarymetadata.Envelope) {
+func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, envelope *librarymetadata.Envelope) []string {
 	if envelope == nil {
-		return
+		return nil
 	}
+	var notices []string
 	names := make([]string, 0, len(envelope.Desired))
 	for name := range envelope.Desired {
 		names = append(names, name)
@@ -183,6 +241,12 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 	for _, name := range names {
 		value := envelope.Desired[name]
 		if value.State == librarymetadata.StateAbsent {
+			continue
+		}
+		// Artist sort tags are derived from artist credits. Stored legacy
+		// independent sort lists remain decodable but must not override the
+		// credit-derived values.
+		if name == "artist_sort_names" || name == "album_artist_sort_names" {
 			continue
 		}
 		keys, supported := normalizedTagKeys(scope, name)
@@ -195,11 +259,37 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 				tags[key] = []string{}
 			}
 			delete(fields, string(scope)+"."+name+".mbids")
+			delete(fields, string(scope)+"."+name+".sort_names")
 			fields[string(scope)+"."+name] = TagFieldResult{Status: "explicit_empty"}
 			continue
 		}
 		if name == "movement" || name == "works" || name == "contributors" || name == "content_advisory" {
 			projectStructuredDesired(tags, fields, scope, name, value.Value)
+			continue
+		}
+		if name == "artist_credit" {
+			encoded, err := json.Marshal(value.Value)
+			if err != nil {
+				fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+				continue
+			}
+			var credits []librarymetadata.ArtistCredit
+			if err := json.Unmarshal(encoded, &credits); err != nil {
+				fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+				continue
+			}
+			prefix := "artist"
+			full, list, mbids, sortOne, sortList := "ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "ARTISTSORT", "ARTISTSSORT"
+			if scope == librarymetadata.ScopeRelease {
+				prefix, full, list, mbids, sortOne, sortList = "album_artist_credit", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTSORT", "ALBUMARTISTSSORT"
+			}
+			notices = append(notices, setCredits(tags, fields, prefix, full, list, mbids, sortOne, sortList, credits)...)
+			if len(credits) == 0 {
+				for _, key := range []string{full, list, mbids, sortOne, sortList} {
+					tags[key] = []string{}
+				}
+				fields[string(scope)+"."+name] = TagFieldResult{Status: "represented"}
+			}
 			continue
 		}
 		if name == "genre" {
@@ -224,6 +314,7 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 		}
 		fields[string(scope)+"."+name] = TagFieldResult{Status: "represented"}
 	}
+	return notices
 }
 
 func genreTagValues(value any) ([]string, bool) {
@@ -384,6 +475,14 @@ func projectContributors(tags map[string][]string, fields map[string]TagFieldRes
 }
 
 func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, bool) {
+	if field == "artist_credit" {
+		if scope == librarymetadata.ScopeRelease {
+			return []string{"ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTSORT", "ALBUMARTISTSSORT"}, true
+		}
+		if scope == librarymetadata.ScopePosition {
+			return []string{"ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "ARTISTSORT", "ARTISTSSORT"}, true
+		}
+	}
 	switch field {
 	case "sort_title":
 		if scope == librarymetadata.ScopeRelease {
@@ -391,10 +490,6 @@ func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, boo
 		}
 		if scope == librarymetadata.ScopePosition {
 			return []string{"TITLESORT"}, true
-		}
-	case "album_artist_sort_names":
-		if scope == librarymetadata.ScopeRelease {
-			return []string{"ALBUMARTISTSORT"}, true
 		}
 	case "barcode":
 		if scope == librarymetadata.ScopeRelease {
@@ -407,10 +502,6 @@ func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, boo
 	case "release_status":
 		if scope == librarymetadata.ScopeRelease {
 			return []string{"RELEASESTATUS"}, true
-		}
-	case "artist_sort_names":
-		if scope == librarymetadata.ScopePosition || scope == librarymetadata.ScopeRelease {
-			return []string{"ARTISTSORT"}, true
 		}
 	case "movement":
 		if scope == librarymetadata.ScopePosition {
@@ -474,7 +565,9 @@ func normalizedTagValues(field string, value any) ([]string, bool) {
 	case string:
 		return []string{typed}, true
 	case []string:
-		return append([]string(nil), typed...), true
+		values := make([]string, len(typed))
+		copy(values, typed)
+		return values, true
 	case []any:
 		values := make([]string, 0, len(typed))
 		for _, item := range typed {

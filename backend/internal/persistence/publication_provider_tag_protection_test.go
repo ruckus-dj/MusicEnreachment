@@ -53,12 +53,12 @@ func TestCurrentPublicationProviderTagProtection(t *testing.T) {
 		{
 			name:     "position manual credit protects credit footprint",
 			position: `{"local_metadata":{"version":1,"scope":"position","desired":{"artist_credit":{"state":"value","value":[],"authority":"manual","provenance":{"kind":"manual"}}}}}`,
-			wantKeys: []string{"ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID"},
+			wantKeys: []string{"ARTIST", "ARTISTS", "ARTISTSORT", "ARTISTSSORT", "MUSICBRAINZ_ARTISTID"},
 		},
 		{
 			name:     "empty title override protected by presence and artists fan out",
 			override: `{"title_override":"","artist_overrides":[]}`,
-			wantKeys: []string{"ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "TITLE"},
+			wantKeys: []string{"ARTIST", "ARTISTS", "ARTISTSORT", "ARTISTSSORT", "MUSICBRAINZ_ARTISTID", "TITLE"},
 		},
 		{
 			name:       "manual absent returned and protects matching provider key",
@@ -111,7 +111,7 @@ func TestCurrentPublicationProviderTagProtectionAliasesAndMissingEnvelope(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID"}
+	want := []string{"ARTIST", "ARTISTS", "ARTISTSORT", "ARTISTSSORT", "MUSICBRAINZ_ARTISTID"}
 	if !reflect.DeepEqual(got.Keys, want) || len(got.ManualAbsentFields) != 0 {
 		t.Fatalf("protection = %+v, want keys %v and no absent fields", got, want)
 	}

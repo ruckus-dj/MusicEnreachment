@@ -48,6 +48,8 @@ type LibraryFirstPublicationContext struct {
 	TemplateTokens                  map[string]string
 	Metadata                        FirstPublicationMetadata
 	GenreArtists                    []FirstPublicationGenreArtist `json:"-"`
+	ArtistMetadataRevisions         map[string]int64              `json:"artist_metadata_revisions"`
+	ArtistDisambiguationDigest      string                        `json:"artist_disambiguation_digest"`
 	EffectiveCover                  EffectiveReleaseCoverSummary
 	EffectiveCoverInput             PublicationAttemptCoverInput `json:"-"`
 	Blockers                        []string
@@ -204,7 +206,7 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 	result.TemplateTokens["TRACK_NUMBER"] = position.Number
 	result.TemplateTokens["DISC_NUMBER"] = strconv.Itoa(position.Medium + 1)
 	result.Tags = publication.TagProjectionInput{
-		Release:  publication.ReleaseTags{Title: releaseTitle, Desired: releaseEnv},
+		Release:  publication.ReleaseTags{Title: release.Title, Desired: releaseEnv},
 		Position: publication.PositionTags{Title: track.Title, Desired: positionTagsEnvelope, DiscNumber: firstPublicationIntPointer(position.Medium + 1)},
 	}
 	result.Tags.Release.Artist, err = firstPublicationCredits(ctx, tx, "release_artist", "release_id", releaseID)
@@ -215,8 +217,18 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 	if err != nil {
 		return err
 	}
+	result.ArtistDisambiguationDigest, err = firstPublicationArtistDisambiguationDigest(result.Tags.Release.Artist, result.Tags.Position.Artist)
+	if err != nil {
+		return fmt.Errorf("digest first publication artist disambiguation: %w", err)
+	}
 	result.ReleasePrimaryCredits = append([]librarymetadata.ArtistCredit(nil), result.Tags.Release.Artist...)
 	result.PositionPrimaryCredits = append([]librarymetadata.ArtistCredit(nil), result.Tags.Position.Artist...)
+	result.ArtistMetadataRevisions = make(map[string]int64)
+	for _, credit := range append(append([]librarymetadata.ArtistCredit{}, result.Tags.Release.Artist...), result.Tags.Position.Artist...) {
+		if credit.MetadataRevision > 0 {
+			result.ArtistMetadataRevisions[credit.ArtistID] = credit.MetadataRevision
+		}
+	}
 	result.SelectedReleasePrimaryArtistID = release.PrimaryArtistID
 	result.SelectedPositionPrimaryArtistID = position.PrimaryArtistID
 	if err := setPrimaryArtistTemplateTokens(result.TemplateTokens, "ALBUM", result.ReleasePrimaryCredits, release.PrimaryArtistID); err != nil {
@@ -256,6 +268,11 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 		result.GenreArtists, err = readFirstPublicationGenreArtists(ctx, tx, *position.RecordingID)
 		if err != nil {
 			return err
+		}
+		for _, artist := range result.GenreArtists {
+			if artist.MetadataRevision > 0 {
+				result.ArtistMetadataRevisions[artist.ArtistID.String()] = artist.MetadataRevision
+			}
 		}
 		if result.Tags.Position.RecordingID == nil {
 			result.Tags.Position.RecordingID = firstPublicationUUID(&result.Metadata.Recording.Envelope, "recording_mbid")
@@ -1081,12 +1098,14 @@ func firstPublicationCredits(ctx context.Context, tx bun.IDB, relation, parentCo
 		return nil, errors.New("invalid first publication artist relation")
 	}
 	var rows []struct {
-		ID     uuid.UUID `bun:"artist_id,type:uuid"`
-		Name   string    `bun:"name"`
-		Credit string    `bun:"credit_name"`
-		Join   string    `bun:"name_join_phrase"`
+		ID               uuid.UUID       `bun:"artist_id,type:uuid"`
+		Name             string          `bun:"name"`
+		Credit           string          `bun:"credit_name"`
+		Join             string          `bun:"name_join_phrase"`
+		Metadata         json.RawMessage `bun:"metadata,type:jsonb"`
+		MetadataRevision int64           `bun:"metadata_revision"`
 	}
-	query := `SELECT credit.artist_id,artist.name,credit.name AS credit_name,credit.name_join_phrase
+	query := `SELECT credit.artist_id,artist.name,credit.name AS credit_name,credit.name_join_phrase,artist.metadata,artist.metadata_revision
 		FROM ` + relation + ` credit JOIN local_artist artist ON artist.id=credit.artist_id WHERE credit.` + parentColumn + `=? ORDER BY credit.position`
 	if err := tx.NewRaw(query, parent).Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("read first publication artist credits: %w", err)
@@ -1103,9 +1122,32 @@ func firstPublicationCredits(ctx context.Context, tx bun.IDB, relation, parentCo
 	if err != nil {
 		return nil, fmt.Errorf("read first publication artist MBIDs: %w", err)
 	}
+	providerDisambiguations, err := firstPublicationProviderArtistDisambiguations(ctx, tx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("read first publication provider artist disambiguations: %w", err)
+	}
 	credits := make([]librarymetadata.ArtistCredit, 0, len(rows))
 	for _, row := range rows {
 		credit := librarymetadata.ArtistCredit{ArtistID: row.ID.String(), ArtistName: row.Name, CreditName: row.Credit, JoinPhrase: row.Join}
+		credit.MetadataRevision = row.MetadataRevision
+		artistMetadata, decodeErr := decodeFirstPublicationEnvelopeValue(row.Metadata, librarymetadata.ScopeArtist)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decode first publication artist metadata: %w", decodeErr)
+		}
+		if sortName, exists := artistMetadata.Desired["sort_name"]; exists && sortName.State == librarymetadata.StateValue {
+			credit.SortName, _ = sortName.Value.(string)
+		}
+		credit.Disambiguation = providerDisambiguations[row.ID]
+		if credit.Disambiguation == "" {
+			localFields, decodeErr := decodeFrozenObject(row.Metadata)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("decode first publication local artist identity: %w", decodeErr)
+			}
+			credit.Disambiguation, _, decodeErr = acceptedProviderString(localFields, "disambiguation")
+			if decodeErr != nil {
+				return nil, fmt.Errorf("decode first publication local artist disambiguation: %w", decodeErr)
+			}
+		}
 		if mbid := mbids[row.ID]; mbid != nil {
 			value := mbid.String()
 			credit.MBID = &value
@@ -1113,6 +1155,67 @@ func firstPublicationCredits(ctx context.Context, tx bun.IDB, relation, parentCo
 		credits = append(credits, credit)
 	}
 	return credits, nil
+}
+
+func firstPublicationProviderArtistDisambiguations(ctx context.Context, tx bun.IDB, artistIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	result := make(map[uuid.UUID]string)
+	if len(artistIDs) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		ArtistID       uuid.UUID `bun:"local_artist_id,type:uuid"`
+		ProviderKey    string    `bun:"provider_key"`
+		Disambiguation *string   `bun:"disambiguation"`
+	}
+	if err := tx.NewRaw(`SELECT binding.local_artist_id,artist.provider_key,NULLIF(artist.metadata->>'disambiguation','') AS disambiguation
+		FROM provider_local_artist binding
+		JOIN provider ON provider.id=binding.provider_id AND provider.code='musicbrainz'
+		JOIN provider_artist artist ON artist.id=binding.provider_artist_id AND artist.provider_id=binding.provider_id
+		WHERE binding.local_artist_id IN (?)
+		ORDER BY binding.local_artist_id,artist.provider_key`, bun.List(artistIDs)).Scan(ctx, &rows); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	keysByArtist := make(map[uuid.UUID]map[string]struct{}, len(rows))
+	for _, row := range rows {
+		keys := keysByArtist[row.ArtistID]
+		if keys == nil {
+			keys = make(map[string]struct{})
+			keysByArtist[row.ArtistID] = keys
+		}
+		keys[row.ProviderKey] = struct{}{}
+		if row.Disambiguation != nil {
+			result[row.ArtistID] = *row.Disambiguation
+		}
+	}
+	for artistID, keys := range keysByArtist {
+		if len(keys) != 1 {
+			delete(result, artistID)
+		}
+	}
+	return result, nil
+}
+
+func firstPublicationArtistDisambiguationDigest(groups ...[]librarymetadata.ArtistCredit) (string, error) {
+	type artistIdentity struct {
+		ID             string  `json:"id"`
+		MBID           *string `json:"mbid,omitempty"`
+		Disambiguation string  `json:"disambiguation"`
+	}
+	identityGroups := make([][]artistIdentity, len(groups))
+	for groupIndex, credits := range groups {
+		identityGroups[groupIndex] = make([]artistIdentity, 0, len(credits))
+		for _, credit := range credits {
+			identityGroups[groupIndex] = append(identityGroups[groupIndex], artistIdentity{
+				ID: credit.ArtistID, MBID: credit.MBID, Disambiguation: credit.Disambiguation,
+			})
+		}
+	}
+	encoded, err := json.Marshal(identityGroups)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func readFirstPublicationSources(ctx context.Context, tx bun.IDB, trackID uuid.UUID, result *[]FirstPublicationSource, resultAssociations *[]PublicationSourceAssociation, blockers *[]string) error {

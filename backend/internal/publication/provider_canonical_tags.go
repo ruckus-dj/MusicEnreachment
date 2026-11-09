@@ -29,11 +29,21 @@ type ProviderCanonicalTagValues struct {
 	ISRCs            []string
 }
 
+type ProviderCanonicalTagProjection struct {
+	Tags    map[string][]string
+	Notices []string
+}
+
 // RenderProviderCanonicalTagValues renders supplied canonical values through
 // the same credit formatter used by ordinary publication tag projection.
 func RenderProviderCanonicalTagValues(values ProviderCanonicalTagValues) map[string][]string {
+	return ProjectProviderCanonicalTagValues(values).Tags
+}
+
+func ProjectProviderCanonicalTagValues(values ProviderCanonicalTagValues) ProviderCanonicalTagProjection {
 	tags := make(map[string][]string)
 	fields := make(map[string]TagFieldResult)
+	result := ProviderCanonicalTagProjection{Tags: tags, Notices: []string{}}
 	if values.ReleaseTitle != nil && *values.ReleaseTitle != "" {
 		tags["ALBUM"] = []string{*values.ReleaseTitle}
 	}
@@ -55,12 +65,12 @@ func RenderProviderCanonicalTagValues(values ProviderCanonicalTagValues) map[str
 	setProviderListTag(tags, "GENRE", values.Genres)
 	setProviderListTag(tags, "ISRC", values.ISRCs)
 	if len(values.ReleaseCredits) != 0 {
-		setCredits(tags, fields, "album_artist_credit", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", values.ReleaseCredits)
+		result.Notices = append(result.Notices, setCredits(tags, fields, "album_artist_credit", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTSORT", "ALBUMARTISTSSORT", values.ReleaseCredits)...)
 	}
 	if len(values.PositionCredits) != 0 {
-		setCredits(tags, fields, "artist_credit", "ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", values.PositionCredits)
+		result.Notices = append(result.Notices, setCredits(tags, fields, "artist_credit", "ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "ARTISTSORT", "ARTISTSSORT", values.PositionCredits)...)
 	}
-	return tags
+	return result
 }
 
 func setProviderStringTag(tags map[string][]string, key, value string) {

@@ -521,6 +521,7 @@ func (input PublicationInputs) Clone() PublicationInputs {
 		providerTags := *input.ProviderTags
 		providerTags.Current = clonePublicationCurrentWitness(providerTags.Current)
 		providerTags.Patch = cloneProviderTagMap(providerTags.Patch)
+		providerTags.Notices = append([]string{}, providerTags.Notices...)
 		if providerTags.ProtectedKeys != nil {
 			providerTags.ProtectedKeys = append([]string{}, providerTags.ProtectedKeys...)
 		}

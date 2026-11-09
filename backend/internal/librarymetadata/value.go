@@ -109,12 +109,15 @@ type Envelope struct {
 }
 
 type ArtistCredit struct {
-	ArtistID   string  `json:"artist_id"`
-	ArtistName string  `json:"artist_name"`
-	CreditName string  `json:"credit_name"`
-	JoinPhrase string  `json:"join_phrase"`
-	Role       string  `json:"role,omitempty"`
-	MBID       *string `json:"mbid,omitempty"`
+	ArtistID         string  `json:"artist_id"`
+	ArtistName       string  `json:"artist_name"`
+	CreditName       string  `json:"credit_name"`
+	JoinPhrase       string  `json:"join_phrase"`
+	Role             string  `json:"role,omitempty"`
+	MBID             *string `json:"mbid,omitempty"`
+	SortName         string  `json:"-"`
+	Disambiguation   string  `json:"-"`
+	MetadataRevision int64   `json:"-"`
 }
 
 type Contributor struct {

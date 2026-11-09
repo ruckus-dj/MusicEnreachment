@@ -99,9 +99,15 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
-		values.ReleaseCredits = canonicalCredits(credits, context.ArtistEntities)
+		values.ReleaseCredits, err = canonicalCredits(credits, context.ArtistEntities, context.ArtistFacts)
+		if err != nil {
+			return nil, err
+		}
 	} else if hasProviderFieldEvidence(context.Release.FieldEvidence, "__credits") {
-		values.ReleaseCredits = canonicalRelationalCredits(context.Release.Credits, context.ArtistEntities)
+		values.ReleaseCredits, err = canonicalRelationalCredits(context.Release.Credits, context.ArtistEntities, context.ArtistFacts)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	positionTitleAccepted := false
@@ -131,7 +137,10 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 		}
 		if present {
 			positionCreditsAccepted = true
-			values.PositionCredits = canonicalCredits(credits, context.ArtistEntities)
+			values.PositionCredits, err = canonicalCredits(credits, context.ArtistEntities, context.ArtistFacts)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if !positionCreditsAccepted && context.RecordingBound && context.Recording != nil {
@@ -144,7 +153,10 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 			if decodeErr != nil {
 				return nil, decodeErr
 			}
-			values.PositionCredits = canonicalCredits(credits, context.ArtistEntities)
+			values.PositionCredits, err = canonicalCredits(credits, context.ArtistEntities, context.ArtistFacts)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if context.RecordingBound && context.Recording != nil && context.Recording.Kind == "recording" &&
@@ -168,6 +180,30 @@ func BuildPublicationProviderCanonicalTagPatch(context PublicationProviderTagCon
 		patch["GENRE"] = []string{}
 	}
 	return patch, nil
+}
+
+// BuildPublicationProviderCanonicalTagProjection also returns the notices
+// associated with intentionally cleared artist tag groups.
+func BuildPublicationProviderCanonicalTagProjection(context PublicationProviderTagContext) (publication.ProviderCanonicalTagProjection, error) {
+	patch, err := BuildPublicationProviderCanonicalTagPatch(context)
+	if err != nil {
+		return publication.ProviderCanonicalTagProjection{}, err
+	}
+	projection := publication.ProviderCanonicalTagProjection{Tags: patch, Notices: []string{}}
+	for _, group := range []struct {
+		key    string
+		notice string
+	}{
+		{key: "ARTISTS", notice: "recording artist names or MBIDs could not be represented without ambiguity; existing artist tags were cleared"},
+		{key: "ALBUMARTISTS", notice: "release artist names or MBIDs could not be represented without ambiguity; existing artist tags were cleared"},
+		{key: "ARTISTSORT", notice: "recording artist sort names collide; existing sort tags were cleared"},
+		{key: "ALBUMARTISTSORT", notice: "release artist sort names collide; existing sort tags were cleared"},
+	} {
+		if values, exists := patch[group.key]; exists && len(values) == 0 {
+			projection.Notices = append(projection.Notices, group.notice)
+		}
+	}
+	return projection, nil
 }
 
 func resolvePublicationTagGenres(context PublicationProviderTagContext, releaseFields map[string]json.RawMessage) ([]librarymetadata.GenreReference, bool, error) {
@@ -461,15 +497,15 @@ func hasProviderFieldEvidence(evidence map[string]ProviderFieldEvidence, field s
 	return ok
 }
 
-func canonicalRelationalCredits(source []MatchingReleaseCredit, artists []MatchingProjectionEntity) []librarymetadata.ArtistCredit {
+func canonicalRelationalCredits(source []MatchingReleaseCredit, artists []MatchingProjectionEntity, facts []PublicationProviderTagArtist) ([]librarymetadata.ArtistCredit, error) {
 	credits := make([]FrozenArtistCredit, 0, len(source))
 	for _, credit := range source {
 		credits = append(credits, FrozenArtistCredit{Position: credit.Position, ArtistProviderKey: credit.ArtistProviderKey, Name: credit.Name, JoinPhrase: credit.NameJoinPhrase})
 	}
-	return canonicalCredits(credits, artists)
+	return canonicalCredits(credits, artists, facts)
 }
 
-func canonicalCredits(source []FrozenArtistCredit, artists []MatchingProjectionEntity) []librarymetadata.ArtistCredit {
+func canonicalCredits(source []FrozenArtistCredit, artists []MatchingProjectionEntity, facts []PublicationProviderTagArtist) ([]librarymetadata.ArtistCredit, error) {
 	credits := make([]librarymetadata.ArtistCredit, 0, len(source))
 	for _, credit := range source {
 		artistName := credit.Name
@@ -490,9 +526,76 @@ func canonicalCredits(source []FrozenArtistCredit, artists []MatchingProjectionE
 			parsed := mbid.String()
 			artistMBID = &parsed
 		}
+		disambiguation := localArtistDisambiguation(facts, credit.ArtistProviderKey)
+		if entity, ok := findProjectionEntity(artists, "artist", credit.ArtistProviderKey); ok && entity != nil && hasProviderFieldEvidence(decodeEvidence(entity.FieldEvidence), "disambiguation") {
+			fields, decodeErr := decodeFrozenObject(entity.Fields)
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			disambiguation, _, decodeErr = acceptedProviderString(fields, "disambiguation")
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+		} else if providerDisambiguation, present, decodeErr := providerArtistMetadataString(facts, credit.ArtistProviderKey, "disambiguation"); decodeErr != nil {
+			return nil, decodeErr
+		} else if present {
+			disambiguation = providerDisambiguation
+		}
 		credits = append(credits, librarymetadata.ArtistCredit{
 			ArtistName: artistName, CreditName: credit.Name, JoinPhrase: credit.JoinPhrase, MBID: artistMBID,
+			SortName: localArtistSortName(facts, credit.ArtistProviderKey), Disambiguation: disambiguation,
 		})
 	}
-	return credits
+	return credits, nil
+}
+
+func localArtistSortName(facts []PublicationProviderTagArtist, providerKey string) string {
+	for _, artist := range facts {
+		if !strings.EqualFold(artist.ProviderKey, providerKey) {
+			continue
+		}
+		envelope, err := decodeFirstPublicationEnvelopeValue(artist.Metadata, librarymetadata.ScopeArtist)
+		if err != nil {
+			return ""
+		}
+		field, exists := envelope.Desired["sort_name"]
+		if !exists || field.State != librarymetadata.StateValue {
+			return ""
+		}
+		name, _ := field.Value.(string)
+		return name
+	}
+	return ""
+}
+
+func localArtistDisambiguation(facts []PublicationProviderTagArtist, providerKey string) string {
+	for _, artist := range facts {
+		if !strings.EqualFold(artist.ProviderKey, providerKey) {
+			continue
+		}
+		fields, err := decodeFrozenObject(artist.Metadata)
+		if err != nil {
+			return ""
+		}
+		value, _, err := acceptedProviderString(fields, "disambiguation")
+		if err != nil {
+			return ""
+		}
+		return value
+	}
+	return ""
+}
+
+func providerArtistMetadataString(facts []PublicationProviderTagArtist, providerKey, field string) (string, bool, error) {
+	for _, artist := range facts {
+		if !strings.EqualFold(artist.ProviderKey, providerKey) {
+			continue
+		}
+		fields, err := decodeFrozenObject(artist.ProviderMetadata)
+		if err != nil {
+			return "", false, err
+		}
+		return acceptedProviderString(fields, field)
+	}
+	return "", false, nil
 }

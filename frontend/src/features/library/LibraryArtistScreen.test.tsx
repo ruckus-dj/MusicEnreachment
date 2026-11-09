@@ -1,5 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, expect, it, vi } from "vitest";
 import { server } from "../../test/server";
@@ -29,6 +36,41 @@ it("keeps the artist release filter but loads every position in an expanded rele
         available_position_count: 1,
         published_position_count: 1,
       }),
+    ),
+    http.get(`*/api/library/artists/${artistId}/metadata`, () =>
+      HttpResponse.json({
+        revision: 1,
+        envelope: {
+          version: 1,
+          scope: "artist",
+          desired: { sort_name: { state: "absent" } },
+        },
+        publication_applied: false,
+        provider_genre_baseline: null,
+      }),
+    ),
+    http.patch(
+      `*/api/library/artists/${artistId}/metadata`,
+      async ({ request }) => {
+        const body = (await request.json()) as {
+          expected_revision: number;
+          changes: { sort_name: { state: string; value?: string } };
+        };
+        expect(body.expected_revision).toBe(1);
+        expect(body.changes.sort_name).toEqual({
+          state: "value",
+          value: "Artist, Sort",
+        });
+        return HttpResponse.json({
+          revision: 2,
+          envelope: {
+            version: 1,
+            scope: "artist",
+            desired: { sort_name: { state: "value", value: "Artist, Sort" } },
+          },
+          publication_applied: false,
+        });
+      },
     ),
     http.get("*/api/library/releases", ({ request }) => {
       const url = new URL(request.url);
@@ -114,6 +156,24 @@ it("keeps the artist release filter but loads every position in an expanded rele
       <LibraryArtistScreen artistId={artistId} />
     </QueryClientProvider>,
   );
+
+  const sortNameEditor = await screen.findByRole("region", {
+    name: "Artist sort name",
+  });
+  const editButton = await within(sortNameEditor).findByRole("button", {
+    name: "Edit",
+  });
+  await waitFor(() => expect(editButton).toBeEnabled());
+  fireEvent.click(editButton);
+  const sortNameInput = await screen.findByRole("textbox", {
+    name: "Artist sort name",
+  });
+  fireEvent.change(sortNameInput, { target: { value: "Artist, Sort" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByText("Artist, Sort")).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Artist", level: 1 }),
+  ).toBeVisible();
 
   fireEvent.click(
     await screen.findByRole("button", { name: "Показать позиции" }),

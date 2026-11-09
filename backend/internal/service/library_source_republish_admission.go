@@ -126,6 +126,7 @@ func sourceRepublishEvidencePreview(
 		"release": snapshot.Metadata.Release.Revision, "track": snapshot.Metadata.Track.Revision,
 		"recording": snapshot.Metadata.Recording.Revision, "position": snapshot.Metadata.Position.Revision,
 	}
+	addArtistMetadataRevisions(preview.MetadataRevisions, snapshot.ArtistMetadataRevisions)
 	preview.Blockers = append(preview.Blockers, snapshot.Blockers...)
 	preview.SourceCandidates = make([]FirstPublicationPreviewSource, 0, len(snapshot.Sources))
 	for _, source := range snapshot.Sources {

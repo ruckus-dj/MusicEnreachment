@@ -26,11 +26,80 @@ func TestProjectTagsPreservesCreditsAndOrderedArtistIDs(t *testing.T) {
 	}
 	want := map[string][]string{
 		"ARTIST": {"The A feat. B credited"}, "ARTISTS": {"A", "B"}, "MUSICBRAINZ_ARTISTID": {idOne, idTwo},
+		"ARTISTSORT": {"A", "B"}, "ARTISTSSORT": {"A", "B"},
 		"ALBUMARTIST": {"A & Featured B"}, "ALBUMARTISTS": {"A", "B"}, "MUSICBRAINZ_ALBUMARTISTID": {idOne, idTwo},
+		"ALBUMARTISTSORT": {"A", "B"}, "ALBUMARTISTSSORT": {"A", "B"},
 		"ALBUM": {"Album"}, "TITLE": {"Song"},
 	}
 	if !reflect.DeepEqual(result.Tags, want) {
 		t.Fatalf("tags = %#v, want %#v", result.Tags, want)
+	}
+}
+
+func TestProjectTagsArtistIdentityControlsOrderedValueCollisions(t *testing.T) {
+	id := "artist-one"
+	result, err := ProjectTags(TagProjectionInput{
+		Release: ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{
+			{ArtistID: id, ArtistName: "Artist", SortName: "Artist, A", MBID: ptrString("mbid-one")},
+			{ArtistID: id, ArtistName: "Artist", SortName: "Artist, A", MBID: ptrString("mbid-one")},
+		}},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistID: "track-artist", ArtistName: "Track Artist"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string][]string{
+		"ALBUMARTISTS": {"Artist", "Artist"}, "MUSICBRAINZ_ALBUMARTISTID": {"mbid-one", "mbid-one"},
+		"ALBUMARTISTSORT": {"Artist, A", "Artist, A"},
+	} {
+		if !reflect.DeepEqual(result.Tags[key], want) {
+			t.Errorf("%s = %#v, want %#v", key, result.Tags[key], want)
+		}
+	}
+
+	resolved, err := ProjectTags(TagProjectionInput{
+		Release: ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{
+			{ArtistID: "artist-a", ArtistName: "Same", Disambiguation: "first", MBID: ptrString("mbid-a")},
+			{ArtistID: "artist-b", ArtistName: "Same", Disambiguation: "second", MBID: ptrString("mbid-b")},
+		}},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistID: "track-artist", ArtistName: "Track Artist"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"Same (first)", "Same (second)"}; !reflect.DeepEqual(resolved.Tags["ALBUMARTISTS"], want) {
+		t.Errorf("disambiguated album artists = %#v, want %#v", resolved.Tags["ALBUMARTISTS"], want)
+	}
+
+	unresolved, err := ProjectTags(TagProjectionInput{
+		Release: ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{
+			{ArtistID: "artist-a", ArtistName: "Same", Disambiguation: "first", MBID: ptrString("mbid-a")},
+			{ArtistID: "artist-b", ArtistName: "Same", Disambiguation: "second"},
+		}},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistID: "track-artist", ArtistName: "Track Artist"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := unresolved.Tags["ALBUMARTISTS"]; got == nil || len(got) != 0 {
+		t.Errorf("incomplete artist MBIDs emitted ordered names: %#v", got)
+	}
+	if got := unresolved.Tags["MUSICBRAINZ_ALBUMARTISTID"]; got == nil || len(got) != 0 {
+		t.Errorf("incomplete artist MBIDs emitted IDs: %#v", got)
+	}
+
+	sortCollision, err := ProjectTags(TagProjectionInput{
+		Release: ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{
+			{ArtistID: "artist-a", ArtistName: "A", SortName: "Shared"},
+			{ArtistID: "artist-b", ArtistName: "B", SortName: "Shared"},
+		}},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistID: "track-artist", ArtistName: "Track Artist"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sortCollision.Tags["ALBUMARTISTSORT"]; got == nil || len(got) != 0 {
+		t.Errorf("distinct artists with colliding sort names = %#v", got)
 	}
 }
 
@@ -75,8 +144,8 @@ func TestProjectTagsExplicitEmptyFalseCompilationAndPartialArtistIDs(t *testing.
 	if got := result.Tags["COMPILATION"]; !reflect.DeepEqual(got, []string{"0"}) {
 		t.Fatalf("false compilation = %#v", got)
 	}
-	if _, exists := result.Tags["MUSICBRAINZ_ARTISTID"]; exists {
-		t.Fatalf("partial IDs emitted a misaligned ID list: %#v", result.Tags["MUSICBRAINZ_ARTISTID"])
+	if got, exists := result.Tags["MUSICBRAINZ_ARTISTID"]; !exists || got == nil || len(got) != 0 {
+		t.Fatalf("partial IDs did not explicitly clear the ID footprint: %#v", result.Tags["MUSICBRAINZ_ARTISTID"])
 	}
 	if result.Fields["artist_credit.mbids"].Status != "unsupported" {
 		t.Fatalf("missing MBID status = %#v", result.Fields["artist_credit.mbids"])
@@ -101,7 +170,7 @@ func TestProjectTagsSupportsDecodedEnvelopeValues(t *testing.T) {
 	}
 	result, err := ProjectTags(TagProjectionInput{
 		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &release},
-		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &position},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist", SortName: "Zed"}, {ArtistName: "Ångström", SortName: "Ångström"}}, Desired: &position},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,15 +205,15 @@ func TestProjectTagsProjectsOptionalSortMovementAndWorkMappings(t *testing.T) {
 		},
 	}
 	result, err := ProjectTags(TagProjectionInput{
-		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &release},
-		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &position},
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist", SortName: "Album Artist Sort"}}, Desired: &release},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist", SortName: "Track Artist Sort"}, {ArtistName: "Ångström", SortName: "Ångström"}}, Desired: &position},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string][]string{
 		"ALBUMSORT": {"Album, The"}, "TITLESORT": {"Été, Pt. 2"},
-		"ALBUMARTISTSORT": {"Artist, A", "Artist, B"}, "ARTISTSORT": {"Zed", "Ångström"},
+		"ALBUMARTISTSORT": {"Album Artist Sort"}, "ALBUMARTISTSSORT": {"Album Artist Sort"}, "ARTISTSORT": {"Track Artist Sort", "Ångström"}, "ARTISTSSORT": {"Track Artist Sort", "Ångström"},
 		"MOVEMENTNAME": {"序曲"}, "MOVEMENTNUMBER": {"2"}, "MOVEMENTCOUNT": {"7"},
 		"WORK": {"作品一", "作品二"}, "MUSICBRAINZ_WORKID": {workID, workID},
 	}
@@ -218,13 +287,13 @@ func TestProjectTagsReleaseArtistSortNameUsesArtistSortNotAlbumArtistSort(t *tes
 	release := librarymetadata.Envelope{
 		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease,
 		Desired: map[string]librarymetadata.FieldValue{
-			"artist_sort_names":       librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"The Artist"}, false),
-			"album_artist_sort_names": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"Sort Album Artist"}, false),
+			"artist_sort_names":       librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"legacy artist sort"}, false),
+			"album_artist_sort_names": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"legacy album sort"}, false),
 		},
 	}
 	result, err := ProjectTags(TagProjectionInput{
-		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &release},
-		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist", SortName: "Sort Album Artist"}}, Desired: &release},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist", SortName: "The Artist"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -232,8 +301,14 @@ func TestProjectTagsReleaseArtistSortNameUsesArtistSortNotAlbumArtistSort(t *tes
 	if got, want := result.Tags["ARTISTSORT"], []string{"The Artist"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ARTISTSORT = %#v, want %#v", got, want)
 	}
+	if got, want := result.Tags["ARTISTSSORT"], []string{"The Artist"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ARTISTSSORT = %#v, want canonical artist sort name %#v", got, want)
+	}
 	if got, want := result.Tags["ALBUMARTISTSORT"], []string{"Sort Album Artist"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("ALBUMARTISTSORT = %#v, want %#v", got, want)
+		t.Fatalf("ALBUMARTISTSORT = %#v, want canonical artist sort name %#v", got, want)
+	}
+	if got, want := result.Tags["ALBUMARTISTSSORT"], []string{"Sort Album Artist"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ALBUMARTISTSSORT = %#v, want canonical artist sort name %#v", got, want)
 	}
 }
 
@@ -447,8 +522,13 @@ func TestProjectTagsValidatesManuallyConstructedEnvelopesAndFinalRequiredTags(t 
 			"title": librarymetadata.ManualFieldValue(librarymetadata.StateValue, " \t", true),
 		},
 	}
+	if _, err := ProjectTags(base); err != nil {
+		t.Fatalf("explicitly blank final album title should be permitted with a valid baseline: %v", err)
+	}
+	base.Release.Title = " \t"
+	base.Release.Desired = nil
 	if _, err := ProjectTags(base); err == nil {
-		t.Fatal("expected an explicitly blank final album title to be rejected")
+		t.Fatal("expected an empty baseline album title to be rejected")
 	}
 	base.Release.Desired = nil
 	base.Position.Artist = []librarymetadata.ArtistCredit{{ArtistName: " \t", CreditName: " "}}

@@ -19,6 +19,41 @@ func TestPublicationProviderTagRecordingArtistGenreAuthorityPostgreSQL(t *testin
 	fixture := preparePendingGraphFixture(t)
 	assertAcceptedRefreshWakesPendingGraph(t, ctx, fixture)
 	artists, recordingID := seedProviderTagGenreAuthority(t, ctx, fixture)
+	artistMetadata := `{"disambiguation":"local identity","local_metadata":{"version":1,"scope":"artist","desired":{"sort_name":{"state":"value","value":"Artist, Local","authority":"manual","provenance":{"kind":"manual"}}}}}`
+	if _, err := fixture.f.db.NewRaw(`UPDATE local_artist SET metadata=?::jsonb,metadata_revision=metadata_revision+1 WHERE id=?`, artistMetadata, artists[0]).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.f.db.NewRaw(`UPDATE provider_artist SET metadata='{"disambiguation":"provider identity"}'::jsonb WHERE id=(SELECT provider_artist_id FROM provider_local_artist WHERE provider_id=? AND local_artist_id=?)`, fixture.source.ProviderID, artists[0]).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	providerContext := readProviderGenreAuthorityContext(t, ctx, fixture)
+	const artistKey = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	if len(providerContext.ArtistFacts) != 1 || localArtistSortName(providerContext.ArtistFacts, artistKey) != "Artist, Local" {
+		t.Fatalf("bound provider artist facts = %+v, want local sort metadata", providerContext.ArtistFacts)
+	}
+	disambiguation, present, err := providerArtistMetadataString(providerContext.ArtistFacts, artistKey, "disambiguation")
+	if err != nil || !present || disambiguation != "provider identity" {
+		t.Fatalf("bound provider artist disambiguation = %q, present %v, error %v", disambiguation, present, err)
+	}
+	var trackID uuid.UUID
+	if err := fixture.f.db.NewRaw(`SELECT track_id FROM release_track WHERE id=?`, fixture.position).Scan(ctx, &trackID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.f.db.NewRaw(`INSERT INTO track_artist(track_id,position,artist_id,name,name_join_phrase) VALUES(?,0,?,'credit','')`, trackID, artists[0]).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		credits, err := firstPublicationCredits(ctx, tx, "track_artist", "track_id", trackID)
+		if err != nil {
+			return err
+		}
+		if len(credits) != 1 || credits[0].SortName != "Artist, Local" || credits[0].MetadataRevision <= 0 || credits[0].Disambiguation != "provider identity" {
+			return errors.New("first publication credit omitted artist sort, revision, or bound provider disambiguation")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, test := range []struct {
 		name       string
@@ -101,6 +136,13 @@ func TestPublicationProviderTagRecordingArtistGenreAuthorityPostgreSQL(t *testin
 	}
 	if err := validateProviderGenreAuthorityInput(ctx, fixture, captured); !errors.Is(err, ErrPublicationAdmissionConflict) {
 		t.Fatalf("changed artist credit order authority error = %v, want admission conflict", err)
+	}
+	if _, err := fixture.f.db.NewRaw(`DELETE FROM provider_local_artist WHERE provider_id=? AND local_artist_id=?`, fixture.source.ProviderID, artists[0]).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	withoutArtistBinding := readProviderGenreAuthorityContext(t, ctx, fixture)
+	if len(withoutArtistBinding.ArtistFacts) != 0 {
+		t.Fatalf("provider artist facts without a local binding = %+v, want none", withoutArtistBinding.ArtistFacts)
 	}
 }
 

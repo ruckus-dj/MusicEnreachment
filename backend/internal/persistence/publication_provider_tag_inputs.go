@@ -21,6 +21,7 @@ type PublicationProviderTagInput struct {
 	ConfigurationIdentity string                    `json:"configuration_identity"`
 	AuthorityRevision     string                    `json:"authority_revision"`
 	Patch                 map[string][]string       `json:"patch"`
+	Notices               []string                  `json:"notices,omitempty"`
 	ProtectedKeys         []string                  `json:"protected_keys"`
 }
 
@@ -54,6 +55,11 @@ func (input PublicationProviderTagInput) Validate(rewrite PublicationRewriteInpu
 	for key, values := range input.Patch {
 		if strings.TrimSpace(key) != key || strings.EqualFold(strings.TrimSpace(key), "LYRICS") || values == nil {
 			return errors.New("provider patch must contain canonical non-lyrics keys and non-nil value lists")
+		}
+	}
+	for _, notice := range input.Notices {
+		if strings.TrimSpace(notice) == "" || notice != strings.TrimSpace(notice) {
+			return errors.New("provider notices must be non-empty canonical strings")
 		}
 	}
 	desired, err := publication.ApplyProviderTagPatch(input.Current.Tags, input.Patch, input.ProtectedKeys)

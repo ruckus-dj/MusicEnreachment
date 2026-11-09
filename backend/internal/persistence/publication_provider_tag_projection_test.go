@@ -439,12 +439,61 @@ func TestBuildPublicationProviderCanonicalTagPatchFansOutAcceptedCredits(t *test
 	}
 	want := map[string][]string{
 		"ALBUM": {"Album"}, "ALBUMARTIST": {"Credited Artist & "}, "ALBUMARTISTS": {"Canonical Album Artist"},
+		"ALBUMARTISTSORT": {"Canonical Album Artist"}, "ALBUMARTISTSSORT": {"Canonical Album Artist"},
 		"MUSICBRAINZ_ALBUMARTISTID": {"11111111-1111-4111-8111-111111111111"},
 		"ARTIST":                    {"Track Credit feat. "}, "ARTISTS": {"Canonical Track Artist"},
+		"ARTISTSORT": {"Canonical Track Artist"}, "ARTISTSSORT": {"Canonical Track Artist"},
 		"MUSICBRAINZ_ARTISTID": {"22222222-2222-4222-8222-222222222222"},
 	}
 	if !reflect.DeepEqual(patch, want) {
 		t.Fatalf("patch = %#v, want %#v", patch, want)
+	}
+}
+
+func TestCanonicalCreditsUsesBoundArtistDisambiguationWithoutOverridingAcceptedEvidence(t *testing.T) {
+	const artistKey = "11111111-1111-4111-8111-111111111111"
+	credit := FrozenArtistCredit{ArtistProviderKey: artistKey, Name: "Same Artist"}
+	facts := []PublicationProviderTagArtist{{
+		ProviderKey:      artistKey,
+		ProviderMetadata: json.RawMessage(`{"disambiguation":"provider identity"}`),
+		Metadata:         json.RawMessage(`{"disambiguation":"local identity","local_metadata":{"version":1,"scope":"artist","desired":{"sort_name":{"state":"value","value":"Artist, Same","authority":"manual","provenance":{"kind":"manual"}}}}}`),
+	}}
+
+	credits, err := canonicalCredits([]FrozenArtistCredit{credit}, nil, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credits) != 1 || credits[0].Disambiguation != "provider identity" || credits[0].SortName != "Artist, Same" {
+		t.Fatalf("bound artist credit = %#v, want provider identity and local sort name", credits)
+	}
+
+	entities := []MatchingProjectionEntity{{
+		Kind: "artist", ProviderKey: artistKey,
+		Fields:        json.RawMessage(`{"disambiguation":"accepted identity"}`),
+		FieldEvidence: json.RawMessage(`{"disambiguation":{}}`),
+	}}
+	credits, err = canonicalCredits([]FrozenArtistCredit{credit}, entities, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credits[0].Disambiguation != "accepted identity" {
+		t.Fatalf("accepted disambiguation = %q, want accepted identity", credits[0].Disambiguation)
+	}
+}
+
+func TestFirstPublicationArtistDisambiguationDigestTracksProjectionIdentity(t *testing.T) {
+	credits := []librarymetadata.ArtistCredit{{ArtistID: "artist", Disambiguation: "first"}}
+	first, err := firstPublicationArtistDisambiguationDigest(credits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credits[0].Disambiguation = "second"
+	second, err := firstPublicationArtistDisambiguationDigest(credits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("artist disambiguation did not affect first-publication context digest")
 	}
 }
 

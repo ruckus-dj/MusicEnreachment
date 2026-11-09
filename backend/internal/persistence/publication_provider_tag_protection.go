@@ -46,7 +46,9 @@ func BuildPublicationProviderTagProtection(context *PublicationProviderTagContex
 			// Genre is resolved by entity scope before building the provider
 			// patch. Treating its manual-absent state as generic tag protection
 			// would suppress accepted provider genres and fallback indefinitely.
-			if field == "genre" {
+			// Legacy independent artist sort lists are not active authority;
+			// artist-credit protection still covers the derived sort keys.
+			if field == "genre" || field == "artist_sort_names" || field == "album_artist_sort_names" {
 				continue
 			}
 			if value.State == librarymetadata.StateAbsent {

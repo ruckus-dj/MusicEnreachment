@@ -6,6 +6,7 @@ import {
   useListLibraryReleases,
 } from "../../api/generated/client";
 import { useHashLocation } from "../../navigation/hashLocation";
+import { ArtistSortNameEditor } from "./ArtistSortNameEditor";
 import { GenreMetadataEditor } from "./GenreMetadataEditor";
 import {
   libraryArtistRouteHref,
@@ -94,6 +95,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               ))}
             </div>
           </header>
+          <ArtistSortNameEditor artistId={artistId} />
           <GenreMetadataEditor
             owner="artist"
             ownerId={artistId}

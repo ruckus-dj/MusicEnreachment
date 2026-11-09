@@ -191,7 +191,12 @@ func libraryPublicationResponse(view service.LibraryPublicationView) LibraryPubl
 	if metadata := view.CurrentMetadata; metadata != nil {
 		tags := make(map[string][]string, len(metadata.Tags))
 		for key, values := range metadata.Tags {
-			tags[key] = append([]string(nil), values...)
+			if values == nil {
+				tags[key] = nil
+				continue
+			}
+			tags[key] = make([]string, len(values))
+			copy(tags[key], values)
 		}
 		response.CurrentMetadata = &publicationMetadataResponse{Version: metadata.Version, Tags: tags}
 	}
