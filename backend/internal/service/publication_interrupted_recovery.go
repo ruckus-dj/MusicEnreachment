@@ -39,15 +39,21 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 		(input.Rewrite.AudioFacts.Container == publication.AudioContainerFLAC && input.Rewrite.AudioFacts.Codec == "flac" ||
 			input.Rewrite.AudioFacts.Container == publication.AudioContainerMKA && input.Rewrite.AudioFacts.Codec == "mp3") &&
 		input.Rewrite.AudioFacts.SupportedSourceContainer && input.Rewrite.Ownership.SHA256 != ""
+	automaticLyricsRetry := input.AutomaticLyricsRetry != nil
 	if attempt == nil || attempt.ResumeMode != persistence.PublicationResumeModePrepare ||
 		input.Version != persistence.PublicationInputsVersion || input.IntentKind != "rewrite" ||
 		input.Format != publication.AudioFormatSource || input.Rewrite == nil || input.Audio != nil ||
 		input.AudioUpgrade != nil || input.ProviderTags != nil || input.ManualLyrics != nil && !manualLyricsRewrite ||
-		input.ManualCover != nil && !isManualCoverOnlyRewriteInput(input) || input.AutomaticLyricsRetry != nil || input.SourceRepublish != nil ||
+		input.ManualCover != nil && !isManualCoverOnlyRewriteInput(input) ||
+		automaticLyricsRetry && (input.ManualLyrics != nil || input.ManualCover != nil) || input.SourceRepublish != nil ||
 		input.InitialLyrics != nil || attempt.ExpectedGeneration == nil ||
 		*attempt.ExpectedGeneration != input.Rewrite.CurrentGeneration ||
 		attempt.PositionID != guard.ExpectedPositionID || attempt.Epoch != guard.Epoch ||
 		attempt.CandidateGeneration != guard.CandidateGeneration || input.Validate() != nil {
+		return false, nil
+	}
+	if automaticLyricsRetry && (input.ManualLyrics != nil || input.ManualCover != nil || input.AudioUpgrade != nil ||
+		input.ProviderTags != nil || input.SourceRepublish != nil || input.InitialLyrics != nil) {
 		return false, nil
 	}
 	var coverReceipt *persistence.PublicationAttemptCoverInput
@@ -149,21 +155,85 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 		inspectionInput.DesiredTags = tags
 		inspectionInput.ManualLyrics = nil
 	}
-	observation, err := validator.Validate(ctx, inspectionPath, inspectionInput)
-	if err != nil {
-		if ctx.Err() != nil {
-			return false, ctx.Err()
+	var observation PublicationStageObservation
+	if !automaticLyricsRetry {
+		observation, err = validator.Validate(ctx, inspectionPath, inspectionInput)
+		if err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if commands.QuiescenceUnknown() {
+				return false, errors.Join(err, errors.New("publication command quiescence is unknown"))
+			}
+			if isDefinitePublicationStageMismatch(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("validate interrupted tag-rewrite target: %w", err)
 		}
-		if commands.QuiescenceUnknown() {
-			return false, errors.Join(err, errors.New("publication command quiescence is unknown"))
-		}
-		if isDefinitePublicationStageMismatch(err) {
+		if observation.SHA256 != digest || !rewriteObservationPreservesAudio(observation.Audio, input.Rewrite.AudioFacts) {
 			return false, nil
 		}
-		return false, fmt.Errorf("validate interrupted tag-rewrite target: %w", err)
 	}
-	if observation.SHA256 != digest || !rewriteObservationPreservesAudio(observation.Audio, input.Rewrite.AudioFacts) {
-		return false, nil
+	var initialLyrics *persistence.PublicationInitialLyricsProjection
+	if automaticLyricsRetry {
+		capture, err := (metadata.Reader{}).Read(ctx, inspectionPath, metadata.ReadRequest{CoverInspection: true})
+		if err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			return false, fmt.Errorf("read interrupted automatic lyrics metadata: %w", err)
+		}
+		if capture.Tags == nil || capture.CoverInspection == nil || !capture.CoverInspection.Observed ||
+			!equalTags(withoutLyrics(capture.Tags), withoutLyrics(input.DesiredTags)) {
+			return false, nil
+		}
+		actualAssets, err := ObservePublicationAssets(capture)
+		if err != nil {
+			return false, nil
+		}
+		if !sameInterruptedCoverOutcome(actualAssets.Cover, input.AutomaticLyricsRetry.CurrentAssets.Cover) {
+			return false, nil
+		}
+		inspectionInput := input.Clone()
+		inspectionInput.AutomaticLyricsRetry = nil
+		inspectionInput.DesiredTags = cloneTagMap(capture.Tags)
+		if err := inspectionInput.Validate(); err != nil || !inspectionInput.SupportsExecution() {
+			return false, nil
+		}
+		observation, err = validator.Validate(ctx, inspectionPath, inspectionInput)
+		if err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if commands.QuiescenceUnknown() {
+				return false, errors.Join(err, errors.New("publication command quiescence is unknown"))
+			}
+			if isDefinitePublicationStageMismatch(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("validate interrupted automatic lyrics target: %w", err)
+		}
+		if observation.SHA256 != digest || !rewriteObservationPreservesAudio(observation.Audio, input.Rewrite.AudioFacts) {
+			return false, nil
+		}
+		assets, err := persistence.DecodePublicationAssetOutcomes(observation.Assets)
+		if err != nil || assets.ValidateAgainstMetadata(capture.Tags, nil) != nil ||
+			!sameInterruptedCoverOutcome(assets.Cover, actualAssets.Cover) || !sameInterruptedLyricsOutcome(assets.Lyrics, actualAssets.Lyrics) ||
+			!sameInterruptedCoverOutcome(assets.Cover, input.AutomaticLyricsRetry.CurrentAssets.Cover) {
+			return false, nil
+		}
+		lyricsDigest := ""
+		if assets.Lyrics.State == persistence.PublicationAssetEmbedded {
+			lyricsDigest = assets.Lyrics.SHA256
+		}
+		initialLyrics, err = simpleInitialLyricsProjection(
+			input.AutomaticLyricsRetry.ExpectedMetadataRevision, input.AutomaticLyricsRetry.Desired,
+			"unknown", lyricsDigest, "", persistence.PublicationInitialLyricsObservedAfterInterruption, "",
+		)
+		if err != nil {
+			return false, fmt.Errorf("project interrupted automatic lyrics observation: %w", err)
+		}
+		initialLyrics.Generation = attempt.CandidateGeneration
 	}
 	var coverEmbedding *persistence.PublicationCoverEmbeddingProjection
 	if coverReceipt != nil {
@@ -208,7 +278,7 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 		Observation: actual,
 		InstalledOwnership: persistence.PublicationCurrentOwnership{Version: persistence.PublicationCurrentOwnershipVersion,
 			Identity: persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest}},
-		CoverEmbedding: coverEmbedding,
+		CoverEmbedding: coverEmbedding, InitialLyrics: initialLyrics,
 	}
 	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -217,6 +287,15 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 		return false, errors.Join(err, errors.New("recovered tag-rewrite result was not committed"))
 	}
 	return true, nil
+}
+
+func sameInterruptedCoverOutcome(left, right persistence.PublicationCoverOutcome) bool {
+	return left.State == right.State && left.SHA256 == right.SHA256 && left.MIME == right.MIME &&
+		(left.SizeBytes == nil && right.SizeBytes == nil || left.SizeBytes != nil && right.SizeBytes != nil && *left.SizeBytes == *right.SizeBytes)
+}
+
+func sameInterruptedLyricsOutcome(left, right persistence.PublicationLyricsOutcome) bool {
+	return left.State == right.State && left.SHA256 == right.SHA256 && left.Format == right.Format
 }
 
 func interruptedCoverEmbedding(

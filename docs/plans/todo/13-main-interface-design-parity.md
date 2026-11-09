@@ -185,6 +185,13 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       stage observation scripted. Полный hook, независимое ревью и вся
       [CI 42697118829](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42697118829)
       прошли. Другие специализированные intents остаются открытыми.
+    - [x] `f9d77154`: manual-lyrics interrupted rewrite проверяет frozen value/
+      explicit-empty через detached validation input, сохраняя original authority
+      для settlement. Existing native fixture покрывает оба состояния без записи;
+      stage observation scripted, DB receipt transaction не заменяется этим тестом.
+      Полный hook, независимое ревью и вся
+      [CI 42701265242](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42701265242)
+      прошли после повтора infrastructure-only failures (PostgreSQL DNS/cleanup).
     - [x] Ordinary first-audio recovery поддерживает requested cover: точный PNG
       derivative проверяется по frozen bytes, фактическое отсутствие сохраняется
       как существующий `absent_after_interruption`, без выдуманного write failure.

@@ -11,6 +11,7 @@ import (
 	"image/jpeg"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -189,11 +190,13 @@ func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 		name              string
 		cover             bool
 		manualLyricsState string
+		automaticLyrics   bool
 	}{
 		{name: "plain tags"},
 		{name: "manual cover", cover: true},
 		{name: "manual lyrics value", manualLyricsState: "value"},
 		{name: "manual lyrics explicit empty", manualLyricsState: "explicit_empty"},
+		{name: "automatic lyrics retry", automaticLyrics: true},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -249,6 +252,7 @@ func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 				}
 			}
 			var frozenInput persistence.PublicationInputs
+			var frozenAutomaticRetry persistence.PublicationInputs
 			if testCase.manualLyricsState != "" {
 				lyrics := &persistence.PublicationManualLyricsInput{
 					ExpectedMetadataRevision: 2, ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration,
@@ -268,6 +272,26 @@ func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 					return input, guard.OperationID == fixture.operationID && guard.ExpectedPositionID == fixture.positionID, nil
 				}
 			}
+			if testCase.automaticLyrics {
+				currentCapture, err := (metadata.Reader{}).Read(ctx, filepath.Join(fixture.outputPath, filepath.FromSlash(input.Rewrite.RelativePath)), metadata.ReadRequest{CoverInspection: true})
+				if err != nil {
+					t.Fatalf("read frozen current publication assets: %v", err)
+				}
+				currentAssets, err := ObservePublicationAssets(currentCapture)
+				if err != nil {
+					t.Fatalf("observe frozen current publication assets: %v", err)
+				}
+				input.AutomaticLyricsRetry = &persistence.PublicationAutomaticLyricsRetryInput{
+					ExpectedMetadataRevision: 2, ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration,
+					CurrentAssets: currentAssets,
+				}
+				frozenAutomaticRetry = input.Clone()
+				inputBytes, err := json.Marshal(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				attempt.FrozenInputs = inputBytes
+			}
 			// Model the exact same-path FLAC left after the native tag rewrite completed
 			// but before its result transaction. Establish effective tags before recovery.
 			target := filepath.Join(fixture.outputPath, filepath.FromSlash(input.Rewrite.RelativePath))
@@ -277,6 +301,10 @@ func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 				if err != nil {
 					t.Fatalf("derive frozen effective lyrics tags: %v", err)
 				}
+			}
+			if testCase.automaticLyrics {
+				effectiveTags = cloneTagMap(input.DesiredTags)
+				effectiveTags["LYRICS"] = []string{"[00:02.00]Acquired after interruption\n"}
 			}
 			tagWrite, err := (metadata.Writer{}).Write(ctx, target, effectiveTags, thumbnail)
 			if err != nil {
@@ -359,6 +387,19 @@ func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 				} else if result.CoverEmbedding != nil {
 					t.Fatalf("plain recovery produced cover embedding %+v", result.CoverEmbedding)
 				}
+				if testCase.automaticLyrics {
+					projection := result.InitialLyrics
+					actualLyricsDigest := sha256.Sum256([]byte(effectiveTags["LYRICS"][0]))
+					if projection == nil || projection.Generation != attempt.CandidateGeneration || projection.Source != "unknown" ||
+						projection.Outcome != persistence.PublicationInitialLyricsObservedAfterInterruption || projection.SHA256 != hex.EncodeToString(actualLyricsDigest[:]) ||
+						projection.ResolutionWarningCode != "" || projection.OutcomeWarningCode != "" ||
+						projection.AuthorityMetadataRevision != frozenAutomaticRetry.AutomaticLyricsRetry.ExpectedMetadataRevision ||
+						projection.AuthorityState != "absent" || projection.Authority != "automatic" || projection.AuthorityProvenance != "source_metadata" {
+						t.Fatalf("initial lyrics projection=%+v, want observed acquired lyrics with frozen authority", projection)
+					}
+				} else if result.InitialLyrics != nil {
+					t.Fatalf("non-lyrics recovery produced initial lyrics projection %+v", result.InitialLyrics)
+				}
 				if !bytes.Equal(result.Observation.ActualMetadata, actualMetadata) {
 					t.Fatalf("committed metadata=%s, want %s", result.Observation.ActualMetadata, actualMetadata)
 				}
@@ -386,6 +427,20 @@ func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 				}
 				if input.ManualLyrics == nil || input.ManualLyrics.State != frozenInput.ManualLyrics.State || input.ManualLyrics.Value != frozenInput.ManualLyrics.Value || !equalTags(input.DesiredTags, frozenInput.DesiredTags) {
 					t.Fatal("inspection preparation mutated frozen manual-lyrics inputs")
+				}
+			}
+			if testCase.automaticLyrics {
+				if validator.input.AutomaticLyricsRetry != nil || !validator.input.SupportsExecution() || validator.input.Validate() != nil ||
+					!equalTags(validator.input.DesiredTags, effectiveTags) {
+					t.Fatalf("automatic lyrics validator input=%+v, want detached generic input using actual readback tags", validator.input)
+				}
+				if validator.input.Rewrite == input.Rewrite || !equalTags(input.DesiredTags, frozenAutomaticRetry.DesiredTags) ||
+					input.AutomaticLyricsRetry == nil || input.AutomaticLyricsRetry.ExpectedMetadataRevision != frozenAutomaticRetry.AutomaticLyricsRetry.ExpectedMetadataRevision ||
+					!equalTags(input.DesiredTags, map[string][]string{"TITLE": {"Track"}, "ARTIST": {"Artist"}}) {
+					t.Fatal("automatic lyrics recovery mutated the frozen retry inputs")
+				}
+				if !reflect.DeepEqual(input.AutomaticLyricsRetry, frozenAutomaticRetry.AutomaticLyricsRetry) {
+					t.Fatal("automatic lyrics recovery changed frozen retry authority")
 				}
 			}
 			if commands.calls != 2 {
