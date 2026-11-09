@@ -147,7 +147,7 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       [CI 42415924806](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42415924806)
       прошли. Requested cover и специализированные intents пока не включены;
       [границы среза](../../reports/2026-11-07-interrupted-publication-recovery.md).
-4. [ ] **Metadata ownership и provider edges.** Привести ownership, provider
+4. [x] **Metadata ownership и provider edges.** Привести ownership, provider
    relationships и границы влияния metadata к документации; Local create/update
    не создаёт library entries. **Приёмка:** самостоятельный recording и позиция
    трека со своими утверждёнными overrides по `data-model.md`; отдельная сущность
@@ -161,7 +161,16 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    Удалить прямое создание library из API/UI, не запрещая внутреннее создание
    сущностей matching-процессом. Не выбирать незаданные правила распространения
    provider metadata или наследования tags/explicit/ISRC. Файловый `GENRE`
-   разрешать по текущему контракту без изменения genres сущностей.
+    разрешать по текущему контракту без изменения genres сущностей.
+    - [x] Итоговая сверка на `b4500bef`: Local CRUD/matching сохраняет namespace
+      ссылок и самостоятельные recording/position overrides; прямой create library
+      удалён. Artist-only `sort_name`, projection-only fallback/disambiguation,
+      collision clearing и explicit-empty overrides проверены существующими
+      projector/service/DB/native/UI сценариями. Полный hook и вся
+      [CI 42558342610](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42558342610)
+      прошли, включая контейнер. Независимая сверка не нашла остатка критериев
+      этого пункта. Полный metadata editor/визуальный паритет остаётся в пункте 6,
+      общий real-backend E2E — в пункте 11.
 5. [ ] **Фактический каталог.** Довести отображение/агрегацию до factual
    данных, разделив source/audio availability, provider entries, library и
    publications. **Приёмка:** unknown не показывается как ноль, edition и

@@ -21,4 +21,14 @@ Artist `sort_name` сохраняется как самостоятельный 
 disambiguation в first/retained context и ошибочное ослабление baseline guard.
 Добавлены минимальные проверки к существующим projector/service/DB fixtures и
 artist-screen test; новая тестовая матрица не вводилась. `task generate` выполнен.
-Полный hook и CI среза ещё ожидаются; пункт 4 целиком пока не закрывается.
+Ревизия `b4500bef` прошла полный обычный hook и всю CI 42558342610, включая
+Windows/macOS/Linux, Docker smoke и публикацию контейнера. Native readback
+представляет очищенные теги отсутствием ключей; сравнение результата учитывает
+это без удаления clear directives из frozen inputs. UI-тесты явно ожидают
+готовности редакторов перед взаимодействием.
+
+Итоговая независимая сверка не нашла оставшегося критерия пункта 4; его bounded
+ownership/provider-edge scope закрыт вместе с ранее проверенными Local flows.
+Это не приёмка полного metadata UI: release-level редактор и остальной prototype
+port остаются в пункте 6. Browser artist-sort проверка использовала API fixtures:
+подтверждены пустое исходное поле и value PATCH, но не общий real-backend E2E.
