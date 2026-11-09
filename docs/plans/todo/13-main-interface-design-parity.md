@@ -223,7 +223,14 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    filesystem drift; порядок multi-values значим, поисковая нормализация не
    применяется. Новую bulk atomicity/cancel policy не выбирать. Полноту Navidrome
    проверять по всей цепочке editor/storage/preview/writer/readback, а не JSON.
-   - [x] Текущее исполнение `68c3d56a`: отдельного раздела и API «Публикации»
+    - [x] `8bdb1207` и `2235177e`: in-place редактор девяти release fields и
+      независимые title/sort_title overrides recording/позиции через существующие
+      metadata API. Сохранены revision fences, draft при конфликте, retry чтения
+      и немедленное инвалидирование preview. Полные hooks и CI 42561160523 /
+      42563854883 прошли, включая контейнеры. Browser component fixtures проверили
+      RU/EN, 390/1440, типизированные PATCH, exact strings, ordered lists и
+      absent/explicit_empty; это не real-backend E2E и не полный metadata port.
+    - [x] Текущее исполнение `68c3d56a`: отдельного раздела и API «Публикации»
      нет — CURRENT показывается в контексте позиции, независимо от source, через
      обновлённый controller; preview, SSE, cleanup и retry сохранены. Полный hook
      и завершённый CI:
