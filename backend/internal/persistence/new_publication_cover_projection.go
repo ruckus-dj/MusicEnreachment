@@ -114,5 +114,8 @@ func validPublicationCoverEmbeddingForReceipt(projection PublicationCoverEmbeddi
 		}
 		return assets.Cover.SHA256 == projection.EmbeddedSHA256 && assets.Cover.MIME == projection.EmbeddedMIME && assets.Cover.SizeBytes != nil && *assets.Cover.SizeBytes == *projection.EmbeddedSize
 	}
+	if projection.Outcome == "absent_after_interruption" {
+		return assets.Cover.State == PublicationAssetAbsent
+	}
 	return true
 }

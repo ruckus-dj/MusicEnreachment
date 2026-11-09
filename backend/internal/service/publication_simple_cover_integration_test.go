@@ -26,7 +26,8 @@ func (simpleCoverDeliveryCommands) RunFile(ctx context.Context, request integrat
 	if err != nil {
 		return PublicationCommandResult{QuiescenceEstablished: true}, err
 	}
-	streams := `{"index":0,"codec_type":"audio","codec_name":"flac","channels":2}`
+	// Keep the base delivery fixture's audio facts; only artwork topology differs.
+	streams := `{"index":0,"codec_type":"audio","codec_name":"flac","channels":2,"channel_layout":"stereo","sample_rate":"48000","bits_per_raw_sample":"24"}`
 	if assets.Cover.State == persistence.PublicationAssetEmbedded {
 		streams += `,{"index":1,"codec_type":"video","codec_name":"png","disposition":{"attached_pic":1}}`
 	}

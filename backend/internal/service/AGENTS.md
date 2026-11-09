@@ -61,6 +61,9 @@ images (for example tiny JPEG/PNG fixtures), not opaque placeholder bytes: asset
 observation derives MIME from content. Probe case equivalence on the actual test
 filesystem rather than inferring it from GOOS. Extension-only path tests must use
 a supported transform; do not request ALAC without verified capability evidence.
+Counting cover writers must forward `WriteWithOptionalAssets`; synthetic cover
+probes must retain the base fixture's audio facts. Assert no additional recovery
+writes against the initial count, not a fixed count for multi-pass preparation.
 Initial-lyrics lookup uses frozen analysis metadata, never a source/copy read.
 Preserve fractional duration from saved ffprobe JSON, not TagLib's millisecond
 properties. Admission rechecks metadata freshness; delivery must not invalidate

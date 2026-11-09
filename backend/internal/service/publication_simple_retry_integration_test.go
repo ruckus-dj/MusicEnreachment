@@ -4,9 +4,12 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"image/color"
 	"os"
 	"path/filepath"
 	"strings"
@@ -537,107 +540,154 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 }
 
 func TestPublicationInterruptedFirstAudioRecoversInstalledTargetPostgreSQL(t *testing.T) {
-	testPublicationSourceExecution(t, "Track.flac", true, false, publicationDeliveryScenario{run: func(ctx context.Context, db *bun.DB, manager *persistence.SetupManagerRepository, executor *PublicationExecutor, operationID uuid.UUID, riverJobID int64, sourceFile, output, target string, _ []byte) {
-		writer := &countingPublicationMetadataWriter{delegate: metadata.Writer{}}
-		executor.metadata = writer
-		if _, err := db.ExecContext(ctx, `CREATE FUNCTION reject_test_publication_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected publication settlement failure'; END $$`); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.ExecContext(ctx, `CREATE TRIGGER reject_test_publication_insert BEFORE INSERT ON track_publication FOR EACH ROW EXECUTE FUNCTION reject_test_publication_insert()`); err != nil {
-			t.Fatal(err)
-		}
-		err := executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
-		if err == nil || !strings.Contains(err.Error(), "injected publication settlement failure") {
-			t.Fatalf("interrupted delivery error = %v, want injected settlement failure", err)
-		}
-		attempt, err := manager.ReadPublicationAttempt(ctx, operationID)
-		if err != nil || attempt == nil {
-			t.Fatalf("attempt after interrupted settlement = %+v, %v", attempt, err)
-		}
-		destination := filepath.Join(output, filepath.FromSlash(target))
-		capture, err := (metadata.Reader{}).Read(ctx, destination, metadata.ReadRequest{})
-		if err != nil {
-			t.Fatalf("read installed audio before interruption: %v", err)
-		}
-		capture.Tags["LYRICS"] = []string{"[00:01.00]Observed lyrics"}
-		if _, err := (metadata.Writer{}).Write(ctx, destination, capture.Tags, nil); err != nil {
-			t.Fatalf("write observed lyrics to installed audio: %v", err)
-		}
-		if _, err := db.ExecContext(ctx, `DROP TRIGGER reject_test_publication_insert ON track_publication`); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.ExecContext(ctx, `DROP FUNCTION reject_test_publication_insert()`); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Remove(sourceFile); err != nil {
-			t.Fatal(err)
-		}
-		// Model a process restart while the old delivery still owns an executing
-		// claim. The failed settlement deferred this claim to quiescent, so restore
-		// the old executing state and boot identity explicitly to model interruption.
-		var priorState string
-		var priorBoot uuid.UUID
-		if err := db.NewRaw(`SELECT state, boot_uuid FROM publication_execution_claim WHERE operation_id=?`, operationID).Scan(ctx, &priorState, &priorBoot); err != nil {
-			t.Fatalf("read quiescent execution claim: %v", err)
-		}
-		if priorState != "quiescent" || priorBoot == uuid.Nil {
-			t.Fatalf("claim after settlement error = state %q, boot %s; want quiescent claim with prior boot identity", priorState, priorBoot)
-		}
-		priorBoot = uuid.New()
-		if priorBoot == executor.bootUUID {
-			t.Fatal("simulated prior boot identity matches the current executor")
-		}
-		result, err := db.ExecContext(ctx, `UPDATE publication_execution_claim SET state='executing', boot_uuid=? WHERE operation_id=? AND state='quiescent'`, priorBoot, operationID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
-			t.Fatalf("restore interrupted execution claim rows=%d, err=%v; want exactly one", affected, err)
-		}
-		var restoredState string
-		var restoredBoot uuid.UUID
-		if err := db.NewRaw(`SELECT state, boot_uuid FROM publication_execution_claim WHERE operation_id=?`, operationID).Scan(ctx, &restoredState, &restoredBoot); err != nil || restoredState != "executing" || restoredBoot != priorBoot {
-			t.Fatalf("restored execution claim = state %q, boot %s, err=%v", restoredState, restoredBoot, err)
-		}
-		if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=2 WHERE id=?`, riverJobID); err != nil {
-			t.Fatal(err)
-		}
-		if err := executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 2); err != nil {
-			t.Fatalf("recover installed first-audio output: %v", err)
-		}
-		if writer.calls != 1 {
-			t.Fatalf("metadata preparation calls = %d, want only original interrupted preparation", writer.calls)
-		}
-		capture, err = (metadata.Reader{}).Read(ctx, destination, metadata.ReadRequest{CoverInspection: true})
-		if err != nil || capture.Tags["TITLE"][0] != "Published track" || len(capture.Tags["LYRICS"]) != 1 || capture.Tags["LYRICS"][0] != "[00:01.00]Observed lyrics" {
-			t.Fatalf("recovered installed metadata/lyrics = %#v, %v", capture.Tags, err)
-		}
-		var current persistence.TrackPublication
-		if err := db.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).Scan(ctx); err != nil {
-			t.Fatalf("read persisted publication after recovery: %v", err)
-		}
-		if len(current.InitialLyrics) != 0 && string(current.InitialLyrics) != "null" {
-			t.Fatalf("persisted initial lyrics projection = %s; want unknown (nil)", current.InitialLyrics)
-		}
-		attempt, err = manager.ReadPublicationAttempt(ctx, operationID)
-		if err != nil || attempt != nil {
-			t.Fatalf("attempt after recovery = %+v, %v; want consumed", attempt, err)
-		}
-		var claims int
-		if err := db.NewRaw(`SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`, operationID).Scan(ctx, &claims); err != nil || claims != 0 {
-			t.Fatalf("execution claims after recovery = %d, %v; want consumed", claims, err)
-		}
-	}})
+	run := func(t *testing.T, selectedCover []byte) {
+		testPublicationSourceExecution(t, "Track.flac", true, false, publicationDeliveryScenario{
+			beforeAdmission: func(ctx context.Context, db *bun.DB, _ *persistence.SetupManagerRepository, releaseID uuid.UUID) {
+				if len(selectedCover) == 0 {
+					return
+				}
+				library := persistence.NewLibraryRepository(db)
+				coverService := NewReleaseCovers(library)
+				saved, err := coverService.Save(ctx, releaseID, 1, selectedCover, "image/png")
+				if err != nil || saved.PendingGeneration == nil {
+					t.Fatalf("save selected cover = %+v, %v", saved, err)
+				}
+				if _, err := library.ApplyPendingReleaseCover(ctx, releaseID, saved.Revision, *saved.PendingGeneration); err != nil {
+					t.Fatalf("apply selected cover: %v", err)
+				}
+			},
+			run: func(ctx context.Context, db *bun.DB, manager *persistence.SetupManagerRepository, executor *PublicationExecutor, operationID uuid.UUID, riverJobID int64, sourceFile, output, target string, _ []byte) {
+				if len(selectedCover) != 0 {
+					executor.commands = simpleCoverDeliveryCommands{}
+				}
+				writer := &countingPublicationMetadataWriter{delegate: metadata.Writer{}}
+				executor.metadata = writer
+				if _, err := db.ExecContext(ctx, `CREATE FUNCTION reject_test_publication_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected publication settlement failure'; END $$`); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.ExecContext(ctx, `CREATE TRIGGER reject_test_publication_insert BEFORE INSERT ON track_publication FOR EACH ROW EXECUTE FUNCTION reject_test_publication_insert()`); err != nil {
+					t.Fatal(err)
+				}
+				err := executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 1)
+				if err == nil || !strings.Contains(err.Error(), "injected publication settlement failure") {
+					t.Fatalf("interrupted delivery error = %v, want injected settlement failure", err)
+				}
+				initialPreparationCalls := writer.calls
+				attempt, err := manager.ReadPublicationAttempt(ctx, operationID)
+				if err != nil || attempt == nil {
+					t.Fatalf("attempt after interrupted settlement = %+v, %v", attempt, err)
+				}
+				destination := filepath.Join(output, filepath.FromSlash(target))
+				capture, err := (metadata.Reader{}).Read(ctx, destination, metadata.ReadRequest{})
+				if err != nil {
+					t.Fatalf("read installed audio before interruption: %v", err)
+				}
+				capture.Tags["LYRICS"] = []string{"[00:01.00]Observed lyrics"}
+				if _, err := (metadata.Writer{}).Write(ctx, destination, capture.Tags, nil); err != nil {
+					t.Fatalf("write observed lyrics to installed audio: %v", err)
+				}
+				if _, err := db.ExecContext(ctx, `DROP TRIGGER reject_test_publication_insert ON track_publication`); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.ExecContext(ctx, `DROP FUNCTION reject_test_publication_insert()`); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(sourceFile); err != nil {
+					t.Fatal(err)
+				}
+				// Model a process restart while the old delivery still owns an executing
+				// claim. The failed settlement deferred this claim to quiescent, so restore
+				// the old executing state and boot identity explicitly to model interruption.
+				var priorState string
+				var priorBoot uuid.UUID
+				if err := db.NewRaw(`SELECT state, boot_uuid FROM publication_execution_claim WHERE operation_id=?`, operationID).Scan(ctx, &priorState, &priorBoot); err != nil {
+					t.Fatalf("read quiescent execution claim: %v", err)
+				}
+				if priorState != "quiescent" || priorBoot == uuid.Nil {
+					t.Fatalf("claim after settlement error = state %q, boot %s; want quiescent claim with prior boot identity", priorState, priorBoot)
+				}
+				priorBoot = uuid.New()
+				if priorBoot == executor.bootUUID {
+					t.Fatal("simulated prior boot identity matches the current executor")
+				}
+				result, err := db.ExecContext(ctx, `UPDATE publication_execution_claim SET state='executing', boot_uuid=? WHERE operation_id=? AND state='quiescent'`, priorBoot, operationID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+					t.Fatalf("restore interrupted execution claim rows=%d, err=%v; want exactly one", affected, err)
+				}
+				var restoredState string
+				var restoredBoot uuid.UUID
+				if err := db.NewRaw(`SELECT state, boot_uuid FROM publication_execution_claim WHERE operation_id=?`, operationID).Scan(ctx, &restoredState, &restoredBoot); err != nil || restoredState != "executing" || restoredBoot != priorBoot {
+					t.Fatalf("restored execution claim = state %q, boot %s, err=%v", restoredState, restoredBoot, err)
+				}
+				if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=2 WHERE id=?`, riverJobID); err != nil {
+					t.Fatal(err)
+				}
+				if err := executor.ExecutePublicationDelivery(ctx, operationID, riverJobID, 2); err != nil {
+					t.Fatalf("recover installed first-audio output: %v", err)
+				}
+				if initialPreparationCalls == 0 || writer.calls != initialPreparationCalls {
+					t.Fatalf("metadata preparation calls = %d, want only original interrupted preparation (%d)", writer.calls, initialPreparationCalls)
+				}
+				capture, err = (metadata.Reader{}).Read(ctx, destination, metadata.ReadRequest{CoverInspection: true})
+				if err != nil || capture.Tags["TITLE"][0] != "Published track" || len(capture.Tags["LYRICS"]) != 1 || capture.Tags["LYRICS"][0] != "[00:01.00]Observed lyrics" {
+					t.Fatalf("recovered installed metadata/lyrics = %#v, %v", capture.Tags, err)
+				}
+				if len(selectedCover) != 0 && (capture.CoverInspection == nil || capture.CoverInspection.Cover == nil) {
+					t.Fatal("recovered selected cover is absent from installed audio")
+				}
+				var current persistence.TrackPublication
+				if err := db.NewSelect().Model(&current).Where("position_id=?", attempt.PositionID).Scan(ctx); err != nil {
+					t.Fatalf("read persisted publication after recovery: %v", err)
+				}
+				if len(selectedCover) != 0 {
+					var projection persistence.PublicationCoverEmbeddingProjection
+					if err := json.Unmarshal(current.CoverEmbedding, &projection); err != nil {
+						t.Fatalf("decode persisted cover embedding: %v", err)
+					}
+					requestedDigest := sha256.Sum256(selectedCover)
+					observedAssets, err := ObservePublicationAssets(capture)
+					if err != nil || projection.Version != persistence.PublicationCoverEmbeddingDerivativeProjectionVersion ||
+						projection.Outcome != "verified" || projection.RequestedSHA256 != hex.EncodeToString(requestedDigest[:]) ||
+						projection.EmbeddedSHA256 != observedAssets.Cover.SHA256 || projection.EmbeddedMIME != observedAssets.Cover.MIME {
+						t.Fatalf("persisted cover projection = %+v, observed assets = %+v, err=%v", projection, observedAssets, err)
+					}
+				}
+				if len(current.InitialLyrics) != 0 && string(current.InitialLyrics) != "null" {
+					t.Fatalf("persisted initial lyrics projection = %s; want unknown (nil)", current.InitialLyrics)
+				}
+				attempt, err = manager.ReadPublicationAttempt(ctx, operationID)
+				if err != nil || attempt != nil {
+					t.Fatalf("attempt after recovery = %+v, %v; want consumed", attempt, err)
+				}
+				var claims int
+				if err := db.NewRaw(`SELECT count(*) FROM publication_execution_claim WHERE operation_id=?`, operationID).Scan(ctx, &claims); err != nil || claims != 0 {
+					t.Fatalf("execution claims after recovery = %d, %v; want consumed", claims, err)
+				}
+			},
+		})
+	}
+	t.Run("absent receipt", func(t *testing.T) { run(t, nil) })
+	t.Run("selected cover", func(t *testing.T) {
+		run(t, simpleCoverPNG(t, color.RGBA{R: 20, G: 40, B: 60, A: 255}))
+	})
 }
 
 type countingPublicationMetadataWriter struct {
-	delegate PublicationMetadataWriter
+	delegate metadata.Writer
 	calls    int
 }
 
 func (writer *countingPublicationMetadataWriter) Write(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.WriteResult, error) {
 	writer.calls++
 	return writer.delegate.Write(ctx, path, tags, cover)
+}
+
+func (writer *countingPublicationMetadataWriter) WriteWithOptionalAssets(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.OptionalAssetsWriteResult, error) {
+	writer.calls++
+	return writer.delegate.WriteWithOptionalAssets(ctx, path, tags, cover)
 }
 
 // This wrapper is deliberately limited to the source-republish scenario: it

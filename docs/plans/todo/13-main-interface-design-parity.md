@@ -154,6 +154,13 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       без нового журнала или схемы. В `5786cfa9` полный hook, независимое ревью и вся
       [CI 42642702203](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42642702203)
       прошли. Остальные критерии пункта остаются открытыми.
+    - [x] Ordinary first-audio recovery поддерживает requested cover: точный PNG
+      derivative проверяется по frozen bytes, фактическое отсутствие сохраняется
+      как существующий `absent_after_interruption`, без выдуманного write failure.
+      Подходящий target не пересоздаётся и source не читается; ошибки derivation
+      остаются ошибками. Расширен существующий source-gone recovery-сценарий
+      выбранной обложкой, с native artwork и синтетическим topology probe.
+      Специализированные intents и changed-path republish остаются открытыми.
 4. [x] **Metadata ownership и provider edges.** Привести ownership, provider
    relationships и границы влияния metadata к документации; Local create/update
    не создаёт library entries. **Приёмка:** самостоятельный recording и позиция
@@ -207,6 +214,8 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      Счётчик синхронизирован в standalone прототипе. Проверки и границы —
      [отчёт](../../reports/2026-11-09-factual-catalog-groups.md); общий E2E остаётся
      в пункте 11.
+     `513f6432` прошёл обычный полный hook, независимое ревью и всю
+     [CI 42661047883](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42661047883).
 6. [ ] **Prototype port: оболочка, Settings, matching и publication/metadata flows.** Портировать
    необходимые утверждённые сценарии из standalone React-макета, включая
    агрегированный preview и полный metadata ownership/редактирование. Presentation

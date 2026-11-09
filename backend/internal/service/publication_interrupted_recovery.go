@@ -43,7 +43,7 @@ func (executor *PublicationExecutor) recoverInterruptedFirstAudio(
 	if err != nil {
 		return false, fmt.Errorf("read interrupted publication cover receipt: %w", err)
 	}
-	if !found || cover.State != "absent" {
+	if !found || cover.State != "absent" && cover.State != "value" {
 		return false, nil
 	}
 	target, nodes, err := publicationTarget(attempt.NamespaceManifest)
@@ -170,6 +170,52 @@ func (executor *PublicationExecutor) recoverInterruptedFirstAudio(
 	if capture.Tags == nil || !equalTags(withoutLyrics(capture.Tags), withoutLyrics(input.DesiredTags)) {
 		return false, nil
 	}
+	assets, err := ObservePublicationAssets(capture)
+	if err != nil {
+		return false, fmt.Errorf("observe interrupted publication assets: %w", err)
+	}
+	expectedCover := persistence.PublicationCoverOutcome{State: persistence.PublicationAssetAbsent}
+	var coverEmbedding *persistence.PublicationCoverEmbeddingProjection
+	if cover.State == "value" {
+		if cover.Generation == nil {
+			return false, errors.New("interrupted publication cover receipt has no generation")
+		}
+		projection := persistence.PublicationCoverEmbeddingProjection{
+			Version:             persistence.PublicationCoverEmbeddingDerivativeProjectionVersion,
+			Generation:          guard.CandidateGeneration,
+			ReceiptOperationID:  cover.OperationID,
+			ReceiptReleaseID:    cover.ReleaseID,
+			ReceiptRevision:     cover.Revision,
+			ReceiptMode:         cover.Mode,
+			RequestedGeneration: *cover.Generation,
+			RequestedSHA256:     hex.EncodeToString(cover.SHA256),
+		}
+		if assets.Cover.State == persistence.PublicationAssetEmbedded {
+			derivative, err := publicationCoverThumbnail(ctx, tempDir, &cover)
+			if err != nil {
+				return false, fmt.Errorf("derive interrupted publication cover: %w", err)
+			}
+			derivativeDigest := sha256.Sum256(derivative.Data)
+			if assets.Cover.SHA256 != hex.EncodeToString(derivativeDigest[:]) || assets.Cover.MIME != derivative.MIME ||
+				assets.Cover.SizeBytes == nil || *assets.Cover.SizeBytes != int64(len(derivative.Data)) {
+				return false, nil
+			}
+			expectedCover = persistence.PublicationCoverOutcome{
+				State: persistence.PublicationAssetEmbedded, SHA256: hex.EncodeToString(derivativeDigest[:]),
+				MIME: derivative.MIME, SizeBytes: assets.Cover.SizeBytes,
+			}
+			projection.Outcome = "verified"
+			projection.EmbeddedSHA256 = expectedCover.SHA256
+			projection.EmbeddedMIME = expectedCover.MIME
+			projection.EmbeddedSize = expectedCover.SizeBytes
+		} else {
+			projection.Outcome = "absent_after_interruption"
+			projection.WarningCode = "cover_absent_after_interruption"
+		}
+		coverEmbedding = &projection
+	} else if assets.Cover.State != persistence.PublicationAssetAbsent {
+		return false, nil
+	}
 	if lyrics := capture.Tags["LYRICS"]; len(lyrics) > 0 && input.InitialLyrics != nil && input.InitialLyrics.Desired != nil &&
 		(input.InitialLyrics.Desired.Authority == "manual" || input.InitialLyrics.Desired.State == "explicit_empty") {
 		return false, nil
@@ -178,7 +224,7 @@ func (executor *PublicationExecutor) recoverInterruptedFirstAudio(
 	// while validating a detached input; never persist this projection as frozen input.
 	inspectionInput := input.Clone()
 	inspectionInput.DesiredTags = cloneTagMap(capture.Tags)
-	observation, err := firstAudioValidator.ValidateFirstAudioCover(ctx, inspectionPath, inspectionInput, persistence.PublicationCoverOutcome{State: persistence.PublicationAssetAbsent})
+	observation, err := firstAudioValidator.ValidateFirstAudioCover(ctx, inspectionPath, inspectionInput, expectedCover)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return false, ctxErr
@@ -236,6 +282,7 @@ func (executor *PublicationExecutor) recoverInterruptedFirstAudio(
 		Observation: actual,
 		InstalledOwnership: persistence.PublicationCurrentOwnership{Version: persistence.PublicationCurrentOwnershipVersion,
 			Identity: persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest}},
+		CoverEmbedding: coverEmbedding,
 	}
 	commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancelCommit()
