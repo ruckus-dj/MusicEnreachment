@@ -3,36 +3,6 @@ import type {
   LibraryReleaseTrackResponse,
 } from "../../api/generated/client.schemas";
 
-type MetadataField = { state?: unknown; value?: unknown };
-
-function metadataFields(metadata: unknown) {
-  if (!metadata || typeof metadata !== "object") return {};
-  const local = (metadata as Record<string, unknown>).local_metadata;
-  if (!local || typeof local !== "object") return {};
-  const envelope = local as Record<string, unknown>;
-  if (envelope.scope !== "release" || !Number.isInteger(envelope.version))
-    return {};
-  const desired = envelope.desired;
-  return desired && typeof desired === "object" && !Array.isArray(desired)
-    ? (desired as Record<string, MetadataField>)
-    : {};
-}
-
-function fieldValue(field: MetadataField | undefined) {
-  if (!field || typeof field !== "object") return "Не указано";
-  if (field.state === "explicit_empty") return "Явно очищено";
-  if (field.state !== "value") return "Не указано";
-  const value = field.value;
-  if (typeof value === "string") return value || "Не указано";
-  if (Array.isArray(value)) {
-    const items = value.filter(
-      (item): item is string => typeof item === "string",
-    );
-    return items.length ? items.join(", ") : "Не указано";
-  }
-  return "Не указано";
-}
-
 function positionNumber(track: LibraryReleaseTrackResponse) {
   return track.displayed_number.trim() || String(track.position);
 }
@@ -88,30 +58,6 @@ export function ReleaseCreditList({
         );
       })}
     </ul>
-  );
-}
-
-export function ReleaseMetadataFacts({ metadata }: { metadata: unknown }) {
-  const desired = metadataFields(metadata);
-  const fields = [
-    ["Дата", "release_date"],
-    ["Страна", "release_country"],
-    ["Лейбл", "label"],
-    ["Номер каталога", "catalog_number"],
-    ["Тип релиза", "release_primary_type"],
-  ] as const;
-  return (
-    <dl
-      className="library-release-facts"
-      aria-label="Сохранённые сведения о релизе"
-    >
-      {fields.map(([label, key]) => (
-        <div key={key}>
-          <dt>{label}</dt>
-          <dd>{fieldValue(desired[key])}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }
 

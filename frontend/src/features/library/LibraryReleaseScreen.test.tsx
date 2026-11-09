@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -230,12 +231,15 @@ it("invalidates preview context immediately even if release detail refresh fails
   await screen.findByRole("region", { name: "Текущая публикация" });
   const preview = screen.getByTestId("publication-preview");
   const initialToken = preview.getAttribute("data-refresh-token");
+  const genres = await screen.findByRole("region", {
+    name: "Release genres",
+  });
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled(),
+    expect(within(genres).getByRole("button", { name: "Edit" })).toBeEnabled(),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-  fireEvent.click(screen.getByRole("button", { name: "Clear genres" }));
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  fireEvent.click(within(genres).getByRole("button", { name: "Edit" }));
+  fireEvent.click(within(genres).getByRole("button", { name: "Clear genres" }));
+  fireEvent.click(within(genres).getByRole("button", { name: "Save" }));
 
   await waitFor(() => expect(releaseReads).toBeGreaterThan(1));
   await waitFor(() =>

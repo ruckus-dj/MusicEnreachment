@@ -34,9 +34,9 @@ import {
   PositionSources,
   ReleaseCreditList,
   ReleaseMediaSummary,
-  ReleaseMetadataFacts,
 } from "./LibraryReleaseFacts";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
+import { ReleaseMetadataEditor } from "./ReleaseMetadataEditor";
 
 const initialLyricsSourceLabels: Record<string, string> = {
   none: "источник не выбран",
@@ -1474,7 +1474,11 @@ export function LibraryReleaseScreen({
         onSaved={refreshAfterGenreSave}
       />
       {genreRefreshError ? <p role="alert">{genreRefreshError}</p> : null}
-      <ReleaseMetadataFacts metadata={release.metadata} />
+      <ReleaseMetadataEditor
+        releaseId={releaseId}
+        refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+        onSaved={() => refreshAfterGenreSave("release", releaseId)}
+      />
       <ReleaseMediaSummary release={release} />
       {!positionId && (
         <AggregatePublicationPreview
