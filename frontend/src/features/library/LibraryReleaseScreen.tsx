@@ -28,7 +28,7 @@ import {
   type PublicationPreviewController,
   type PublicationPreviewState,
 } from "./FirstPublicationPreview";
-import { GenreMetadataEditor, type GenreOwner } from "./GenreMetadataEditor";
+import { GenreMetadataEditor } from "./GenreMetadataEditor";
 import {
   PositionIdentity,
   PositionSources,
@@ -36,7 +36,10 @@ import {
   ReleaseMediaSummary,
 } from "./LibraryReleaseFacts";
 import { ReleaseCoverEditor } from "./newReleaseCoverEditor";
-import { ReleaseMetadataEditor } from "./ReleaseMetadataEditor";
+import {
+  ReleaseMetadataEditor,
+  ScopedLibraryMetadataEditor,
+} from "./ReleaseMetadataEditor";
 
 const initialLyricsSourceLabels: Record<string, string> = {
   none: "источник не выбран",
@@ -310,8 +313,9 @@ export function LibraryReleaseScreen({
     [],
   );
 
-  async function refreshAfterGenreSave(_owner: GenreOwner, _ownerId: string) {
-    const requestScope = scope.current;
+  const metadataRequestScope = scope.current;
+  async function refreshAfterMetadataSave() {
+    const requestScope = metadataRequestScope;
     if (!mounted.current || scope.current !== requestScope) return;
     // The PATCH is already committed. Invalidate every preview immediately,
     // even if the follow-up release detail read fails or is superseded.
@@ -1471,13 +1475,13 @@ export function LibraryReleaseScreen({
         owner="release"
         ownerId={releaseId}
         refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-        onSaved={refreshAfterGenreSave}
+        onSaved={refreshAfterMetadataSave}
       />
       {genreRefreshError ? <p role="alert">{genreRefreshError}</p> : null}
       <ReleaseMetadataEditor
         releaseId={releaseId}
         refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-        onSaved={() => refreshAfterGenreSave("release", releaseId)}
+        onSaved={refreshAfterMetadataSave}
       />
       <ReleaseMediaSummary release={release} />
       {!positionId && (
@@ -1624,9 +1628,24 @@ export function LibraryReleaseScreen({
                 owner="recording"
                 ownerId={track.recording_id}
                 refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
-                onSaved={refreshAfterGenreSave}
+                onSaved={refreshAfterMetadataSave}
               />
             ) : null}
+            {track.recording_id ? (
+              <ScopedLibraryMetadataEditor
+                scope="recording"
+                ownerId={track.recording_id}
+                refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+                onSaved={refreshAfterMetadataSave}
+              />
+            ) : null}
+            <ScopedLibraryMetadataEditor
+              scope="position"
+              ownerId={track.id}
+              releaseId={releaseId}
+              refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
+              onSaved={refreshAfterMetadataSave}
+            />
             {credits.length > 1 && (
               <label className="block">
                 Основной исполнитель композиции

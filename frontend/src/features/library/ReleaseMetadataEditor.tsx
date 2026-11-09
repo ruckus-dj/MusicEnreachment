@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
+  getLibraryPositionMetadata,
+  getLibraryRecordingMetadata,
   getLibraryReleaseMetadata,
+  patchLibraryPositionMetadata,
+  patchLibraryRecordingMetadata,
   patchLibraryReleaseMetadata,
 } from "../../api/generated/client";
 import type { LibraryMetadataResponse } from "../../api/generated/client.schemas";
@@ -20,8 +24,9 @@ type ReleaseFieldKey =
   | "catalog_number"
   | "release_primary_type"
   | "release_secondary_types";
+type MetadataFieldKey = ReleaseFieldKey | "title" | "sort_title";
 type ReleaseField = {
-  key: ReleaseFieldKey;
+  key: MetadataFieldKey;
   kind: "text" | "date" | "list";
 };
 
@@ -37,9 +42,16 @@ const releaseFields: ReleaseField[] = [
   { key: "release_secondary_types", kind: "list" },
 ];
 
+const titleFields: ReleaseField[] = [
+  { key: "title", kind: "text" },
+  { key: "sort_title", kind: "text" },
+];
+
 const copy = {
   en: {
     title: "Release metadata",
+    recordingTitle: "Recording metadata",
+    positionTitle: "Position metadata",
     labels: {
       title: "Title",
       sort_title: "Sort title",
@@ -75,6 +87,8 @@ const copy = {
   },
   ru: {
     title: "Метаданные релиза",
+    recordingTitle: "Метаданные записи",
+    positionTitle: "Метаданные позиции",
     labels: {
       title: "Название",
       sort_title: "Сортировочное название",
@@ -112,22 +126,25 @@ const copy = {
 } as const;
 
 type EditorValues = Record<
-  ReleaseFieldKey,
+  MetadataFieldKey,
   { state: FieldState; value: MetadataValue }
 >;
 
-function emptyValues(): EditorValues {
+function emptyValues(fields: ReleaseField[]): EditorValues {
   return Object.fromEntries(
-    releaseFields.map(({ key, kind }) => [
+    fields.map(({ key, kind }) => [
       key,
       { state: "absent", value: kind === "list" ? [] : "" },
     ]),
   ) as EditorValues;
 }
 
-function readValues(metadata: LibraryMetadataResponse): EditorValues {
-  const values = emptyValues();
-  for (const { key, kind } of releaseFields) {
+function readValues(
+  metadata: LibraryMetadataResponse,
+  fields: ReleaseField[],
+): EditorValues {
+  const values = emptyValues(fields);
+  for (const { key, kind } of fields) {
     const field = metadata.envelope.desired[key];
     if (!field || !["absent", "value", "explicit_empty"].includes(field.state))
       continue;
@@ -167,35 +184,101 @@ export function ReleaseMetadataEditor({
   onSaved?: (metadata: LibraryMetadataResponse) => void | Promise<void>;
 }) {
   return (
-    <ReleaseMetadataEditorSession
+    <LibraryScopedMetadataEditorSession
       key={releaseId}
-      releaseId={releaseId}
+      scope="release"
+      fields={releaseFields}
+      ownerId={releaseId}
       refreshToken={refreshToken}
       onSaved={onSaved}
     />
   );
 }
 
-function ReleaseMetadataEditorSession({
+type ScopedLibraryMetadataEditorProps = {
+  refreshToken?: number | string;
+  onSaved?: (metadata: LibraryMetadataResponse) => void | Promise<void>;
+} & (
+  | { scope: "recording"; ownerId: string; releaseId?: never }
+  | { scope: "position"; ownerId: string; releaseId: string }
+);
+
+export function ScopedLibraryMetadataEditor(
+  props: ScopedLibraryMetadataEditorProps,
+) {
+  const ownerId = props.ownerId;
+  const refreshToken = props.refreshToken;
+  const onSaved = props.onSaved;
+  if (props.scope === "position") {
+    return (
+      <LibraryScopedMetadataEditorSession
+        key={`position:${props.releaseId}:${ownerId}`}
+        scope="position"
+        fields={titleFields}
+        ownerId={ownerId}
+        releaseId={props.releaseId}
+        refreshToken={refreshToken}
+        onSaved={onSaved}
+      />
+    );
+  }
+  return (
+    <LibraryScopedMetadataEditorSession
+      key={`recording::${ownerId}`}
+      scope="recording"
+      fields={titleFields}
+      ownerId={ownerId}
+      refreshToken={refreshToken}
+      onSaved={onSaved}
+    />
+  );
+}
+
+type LibraryScopedMetadataEditorSessionProps = {
+  fields: ReleaseField[];
+  ownerId: string;
+  refreshToken?: number | string;
+  onSaved?: (metadata: LibraryMetadataResponse) => void | Promise<void>;
+} & (
+  | { scope: "release"; releaseId?: never }
+  | { scope: "recording"; releaseId?: never }
+  | { scope: "position"; releaseId: string }
+);
+
+function LibraryScopedMetadataEditorSession({
+  scope,
+  fields,
+  ownerId,
   releaseId,
   refreshToken,
   onSaved,
-}: {
-  releaseId: string;
-  refreshToken?: number | string;
-  onSaved?: (metadata: LibraryMetadataResponse) => void | Promise<void>;
-}) {
+}: LibraryScopedMetadataEditorSessionProps) {
   const { locale } = useI18n();
   const text = copy[locale];
+  const title =
+    scope === "release"
+      ? text.title
+      : scope === "recording"
+        ? text.recordingTitle
+        : text.positionTitle;
   const [metadata, setMetadata] = useState<LibraryMetadataResponse>();
   const metadataRevision = useRef<number | undefined>(undefined);
   const readGeneration = useRef(0);
   const readController = useRef<AbortController | undefined>(undefined);
+  const sessionGeneration = useRef(0);
+  const sessionIdentity = `${scope}:${releaseId ?? ""}:${ownerId}`;
+  const sessionIdentityRef = useRef(sessionIdentity);
+  if (sessionIdentityRef.current !== sessionIdentity) {
+    sessionIdentityRef.current = sessionIdentity;
+    sessionGeneration.current += 1;
+  }
   const writePending = useRef(false);
+  const onSavedRef = useRef(onSaved);
+  onSavedRef.current = onSaved;
   const dirtyRef = useRef(false);
-  const [saved, setSaved] = useState<EditorValues>(emptyValues);
-  const [draft, setDraft] = useState<EditorValues>(emptyValues);
-  const [dirtyFields, setDirtyFields] = useState<Set<ReleaseFieldKey>>(
+  const [saved, setSaved] = useState<EditorValues>(() => emptyValues(fields));
+  const [draft, setDraft] = useState<EditorValues>(() => emptyValues(fields));
+  const [dirtyFields, setDirtyFields] = useState<Set<MetadataFieldKey>>(
     () => new Set(),
   );
   const [editing, setEditing] = useState(false);
@@ -214,10 +297,16 @@ function ReleaseMetadataEditorSession({
       readController.current = controller;
       setLoading(true);
       try {
-        const response = await getLibraryReleaseMetadata(releaseId, {
+        const options: RequestInit = {
           cache: "no-store",
           signal: controller.signal,
-        });
+        };
+        const response =
+          scope === "release"
+            ? await getLibraryReleaseMetadata(ownerId, options)
+            : scope === "recording"
+              ? await getLibraryRecordingMetadata(ownerId, options)
+              : await getLibraryPositionMetadata(releaseId, ownerId, options);
         if (controller.signal.aborted || generation !== readGeneration.current)
           return;
         if (response.status !== 200) throw apiResponseError(response);
@@ -230,7 +319,7 @@ function ReleaseMetadataEditorSession({
           setRefreshConflict(true);
           return;
         }
-        const next = readValues(response.data);
+        const next = readValues(response.data, fields);
         metadataRevision.current = response.data.revision;
         setMetadata(response.data);
         setSaved(next);
@@ -248,12 +337,15 @@ function ReleaseMetadataEditorSession({
           setLoading(false);
       }
     },
-    [releaseId],
+    [fields, ownerId, releaseId, scope],
   );
 
   useEffect(() => {
+    const generation = ++sessionGeneration.current;
     void loadMetadata(true);
     return () => {
+      if (sessionGeneration.current === generation)
+        sessionGeneration.current += 1;
       readGeneration.current += 1;
       readController.current?.abort();
     };
@@ -285,7 +377,7 @@ function ReleaseMetadataEditorSession({
   }
 
   function updateField(
-    key: ReleaseFieldKey,
+    key: MetadataFieldKey,
     next: { state: FieldState; value: MetadataValue },
   ) {
     if (writePending.current) return;
@@ -295,8 +387,21 @@ function ReleaseMetadataEditorSession({
     setSaveError("");
   }
 
+  function notifySaved(response: LibraryMetadataResponse) {
+    try {
+      const refresh = onSavedRef.current?.(response);
+      if (refresh) void Promise.resolve(refresh).catch(() => undefined);
+    } catch {
+      // A parent refresh callback cannot undo a committed metadata save.
+    }
+  }
+
   async function saveDraft() {
     if (!metadata || !dirtyFields.size || writePending.current) return;
+    const generation = sessionGeneration.current;
+    const isCurrentSession = () =>
+      sessionGeneration.current === generation &&
+      sessionIdentityRef.current === sessionIdentity;
     writePending.current = true;
     setSaving(true);
     setSaveError("");
@@ -312,10 +417,23 @@ function ReleaseMetadataEditorSession({
       }),
     );
     try {
-      const response = await patchLibraryReleaseMetadata(releaseId, {
+      const body = {
         expected_revision: metadata.revision,
         changes,
-      });
+      };
+      const response =
+        scope === "release"
+          ? await patchLibraryReleaseMetadata(ownerId, body)
+          : scope === "recording"
+            ? await patchLibraryRecordingMetadata(ownerId, body)
+            : await patchLibraryPositionMetadata(releaseId, ownerId, body);
+      if (!isCurrentSession()) {
+        // The PATCH may have committed after this editor was replaced. Notify
+        // the parent so it can invalidate previews only if this release is
+        // still active; never update the stale editor or start another read.
+        if (response.status === 200) notifySaved(response.data);
+        return;
+      }
       if (response.status !== 200) {
         if (response.status === 409) setRefreshConflict(true);
         throw apiResponseError(response);
@@ -323,7 +441,7 @@ function ReleaseMetadataEditorSession({
       readController.current?.abort();
       readGeneration.current += 1;
       setLoading(false);
-      const next = readValues(response.data);
+      const next = readValues(response.data, fields);
       metadataRevision.current = response.data.revision;
       setMetadata(response.data);
       setSaved(next);
@@ -332,26 +450,23 @@ function ReleaseMetadataEditorSession({
       setDirtyFields(new Set());
       setRefreshConflict(false);
       setEditing(false);
-      try {
-        const refresh = onSaved?.(response.data);
-        if (refresh) void Promise.resolve(refresh).catch(() => undefined);
-      } catch {
-        // A parent refresh callback cannot undo a committed metadata save.
-      }
+      notifySaved(response.data);
       // The mutation is committed. A follow-up read must not turn it into a
       // reported save failure, and must not overwrite the committed revision.
       void loadMetadata(true);
     } catch (reason) {
-      setSaveError(errorMessage(reason, ""));
+      if (isCurrentSession()) setSaveError(errorMessage(reason, ""));
     } finally {
-      writePending.current = false;
-      setSaving(false);
+      if (isCurrentSession()) {
+        writePending.current = false;
+        setSaving(false);
+      }
     }
   }
 
   return (
     <section
-      aria-label={text.title}
+      aria-label={title}
       className="grid min-w-0 gap-2 rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface)] p-3 text-[var(--ink)]"
       onKeyDown={(event) => {
         if (event.key !== "Escape" || !editing || saving) return;
@@ -361,7 +476,7 @@ function ReleaseMetadataEditorSession({
       }}
     >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <h2 className="m-0 text-sm font-semibold">{text.title}</h2>
+        <h2 className="m-0 text-sm font-semibold">{title}</h2>
         <div className="grid grid-cols-[7.5rem_7.5rem] gap-2">
           <AppButton
             type="button"
@@ -390,7 +505,7 @@ function ReleaseMetadataEditorSession({
         </div>
       </div>
       <dl className="m-0 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {releaseFields.map(({ key, kind }) => {
+        {fields.map(({ key, kind }) => {
           const field = editing ? draft[key] : saved[key];
           const label = text.labels[key];
           const rendered = Array.isArray(field.value)
