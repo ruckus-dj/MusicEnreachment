@@ -213,6 +213,92 @@ func TestCommitSourceRepublishResultSuccessAndLateRollbackPostgreSQL(t *testing.
 	if len(current.InitialLyrics) != 0 || len(current.CoverEmbedding) != 0 {
 		t.Fatalf("source-republish inherited stale optional summaries: lyrics=%s cover=%s", current.InitialLyrics, current.CoverEmbedding)
 	}
+
+	// A source republish may move the publication while proving the old output
+	// absent. The proof retires only the exact old file claim/reservation.
+	absent, absentRepository, absentInput, absentObservation, _ := prepareSourceRepublishResultFixture(t, db, "source-republish-absent-"+uuid.NewString())
+	var oldClaimID uuid.UUID
+	if err := db.NewRaw(`SELECT id FROM publication_namespace_claim WHERE epoch=? AND owner_position_id=? AND relative_path=? AND node_kind='file'`, absent.guard.Epoch, absent.guard.ExpectedPositionID, absentInput.SourceRepublish.Current.RelativePath).Scan(ctx, &oldClaimID); err != nil {
+		t.Fatalf("read old output claim: %v", err)
+	}
+	newPath := absentObservation.RelativePath + ".republished"
+	absentObservation.RelativePath = newPath
+	var attempt TrackPublicationAttempt
+	if err := db.NewSelect().Model(&attempt).Where("operation_id=?", absent.guard.OperationID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Version int                        `json:"version"`
+		Nodes   []PublicationNamespaceNode `json:"nodes"`
+	}
+	if err := json.Unmarshal(attempt.NamespaceManifest, &manifest); err != nil {
+		t.Fatalf("decode attempt namespace manifest: %v", err)
+	}
+	for i := range manifest.Nodes {
+		if manifest.Nodes[i].NodeKind == "file" {
+			manifest.Nodes[i].CanonicalKey, manifest.Nodes[i].RelativePath = newPath, newPath
+		}
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE track_publication_attempt SET namespace_manifest=?::jsonb WHERE operation_id=?`, string(mustJSON(manifest)), absent.guard.OperationID); err != nil {
+		t.Fatalf("freeze distinct candidate path: %v", err)
+	}
+	// The candidate generation must reserve the manifest's destination file, not
+	// the old path, or the absence proof would still see a live consumer.
+	newClaimID := uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO publication_namespace_claim(id,epoch,key_digest,canonical_key,relative_path,node_kind,owner_position_id) VALUES (?,?,?,?,?,'file',?)`,
+		newClaimID, absent.guard.Epoch, publicationNamespaceKeyDigest(newPath), newPath, newPath, absent.guard.ExpectedPositionID); err != nil {
+		t.Fatalf("seed candidate destination file claim: %v", err)
+	}
+	released, err := db.ExecContext(ctx, `DELETE FROM publication_namespace_reservation WHERE namespace_claim_id=? AND position_id=? AND generation=?`,
+		oldClaimID, absent.guard.ExpectedPositionID, absent.guard.CandidateGeneration)
+	if err != nil {
+		t.Fatalf("release old file claim candidate reservation: %v", err)
+	}
+	if rows, err := released.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("release old file claim candidate reservation rows=%d err=%v", rows, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO publication_namespace_reservation(namespace_claim_id,position_id,generation) VALUES (?,?,?)`,
+		newClaimID, absent.guard.ExpectedPositionID, absent.guard.CandidateGeneration); err != nil {
+		t.Fatalf("reserve candidate destination file claim: %v", err)
+	}
+	absentResult := sourceRepublishResult(absentInput, absentObservation)
+	absentResult.ObsoleteOutputAbsent = &PublicationObsoleteOutputAbsent{
+		Epoch: absent.guard.Epoch, PositionID: absent.guard.ExpectedPositionID,
+		Generation: absentInput.SourceRepublish.Current.Generation, NamespaceClaimID: oldClaimID,
+		RelativePath: absentInput.SourceRepublish.Current.RelativePath,
+	}
+	wrongClaim := absentResult
+	wrongProof := *absentResult.ObsoleteOutputAbsent
+	wrongProof.NamespaceClaimID = uuid.New()
+	wrongClaim.ObsoleteOutputAbsent = &wrongProof
+	if committed, err := absentRepository.CommitPublicationResult(ctx, absent.guard, wrongClaim); err == nil || committed {
+		t.Fatalf("wrong absence claim result = %v, %v; want rejected proof", committed, err)
+	}
+	var stillLive int
+	if err := db.NewRaw(`SELECT count(*) FROM track_publication_attempt WHERE operation_id=?`, absent.guard.OperationID).Scan(ctx, &stillLive); err != nil || stillLive != 1 {
+		t.Fatalf("wrong proof consumed attempt: count=%d err=%v", stillLive, err)
+	}
+	committed, err = absentRepository.CommitPublicationResult(ctx, absent.guard, absentResult)
+	if err != nil || !committed {
+		t.Fatalf("commit source-republish with absent old output: %v, %v", committed, err)
+	}
+	var oldReservations, oldClaims, cleanupJobs int
+	for query, target := range map[string]*int{
+		`SELECT count(*) FROM publication_namespace_reservation WHERE namespace_claim_id=?`: &oldReservations,
+		`SELECT count(*) FROM publication_namespace_claim WHERE id=?`:                       &oldClaims,
+		`SELECT count(*) FROM river_job WHERE kind=? AND args->>'operation_id'=?`:           &cleanupJobs,
+	} {
+		args := []any{oldClaimID}
+		if strings.Contains(query, "river_job") {
+			args = []any{ObsoletePublicationOutputCleanupJobKind, absent.guard.OperationID.String()}
+		}
+		if err := db.NewRaw(query, args...).Scan(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if oldReservations != 0 || oldClaims != 0 || cleanupJobs != 0 {
+		t.Fatalf("absent output cleanup state: reservations=%d claims=%d cleanup jobs=%d", oldReservations, oldClaims, cleanupJobs)
+	}
 	var authority PositionSourceAuthority
 	if err := db.NewSelect().Model(&authority).Where("position_id=?", f.guard.ExpectedPositionID).Scan(ctx); err != nil {
 		t.Fatal(err)

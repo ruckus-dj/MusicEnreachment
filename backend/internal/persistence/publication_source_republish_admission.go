@@ -25,6 +25,13 @@ type sourceRepublishAdmissionHook struct {
 	manifest []PublicationNamespaceNode
 }
 
+type admittedSourceRepublishDestination struct {
+	positionID   uuid.UUID
+	generation   uuid.UUID
+	canonicalKey string
+	relativePath string
+}
+
 // AdmitSourceRepublishRetainingSelection admits a v4 source republish only
 // through its typed capability, preserving the existing association selection.
 func (repository *SetupManagerRepository) AdmitSourceRepublishRetainingSelection(ctx context.Context, admission SourceRepublishRetainAdmission, client RiverInserter) (uuid.UUID, error) {
@@ -51,25 +58,15 @@ func (repository *SetupManagerRepository) AdmitSourceRepublishRetainingSelection
 	return repository.AdmitPublication(ctx, request, client)
 }
 
-// prepareSourceRepublishAdmission takes and plans from the transaction's early
-// serializable snapshot before publication admission acquires row locks. It
-// intentionally uses advisory/read guards rather than blanket table locks.
+// prepareSourceRepublishAdmission plans from a fresh snapshot after the epoch
+// row and the same read guards used by first-publication admission are held.
 func (repository *SetupManagerRepository) prepareSourceRepublishAdmission(ctx context.Context, tx bun.Tx, request PublicationAdmission) error {
 	hook := request.sourceRepublishAdmission
 	if hook == nil || hook.prepare == nil {
 		return fmt.Errorf("admit source republish: missing planner: %w", ErrPublicationAdmissionConflict)
 	}
-	if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
-		return fmt.Errorf("admit source republish: lock output gate: %w", err)
-	}
-	if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
-		return fmt.Errorf("admit source republish: lock source mutations: %w", err)
-	}
-	if err := lockToolsMoveReaders(ctx, tx); err != nil {
-		return fmt.Errorf("admit source republish: lock tools-root readers: %w", err)
-	}
-	if err := lockPackageSelections(ctx, tx, []string{"ffmpeg"}); err != nil {
-		return fmt.Errorf("admit source republish: lock ffmpeg selection: %w", err)
+	if err := lockFirstPublicationAdmissionReadGuards(ctx, tx, false, "admit source republish"); err != nil {
+		return err
 	}
 	var snapshot FirstPublicationAdmissionSnapshot
 	if err := readLibraryFirstPublicationContextTx(ctx, tx, request.ExpectedReleaseID, request.PositionID, &snapshot.Context); err != nil {
@@ -128,7 +125,7 @@ func (repository *SetupManagerRepository) prepareSourceRepublishAdmission(ctx co
 	if err := validatePublicationManifest(manifest); err != nil {
 		return err
 	}
-	if err := validateSourceRepublishNamespacePlan(ctx, tx, request, input, manifest, currentClaim); err != nil {
+	if err := validateSourceRepublishNamespacePlan(ctx, tx, request, input, manifest, currentClaim, nil); err != nil {
 		return err
 	}
 	hook.manifest = manifest
@@ -163,24 +160,60 @@ func readSourceRepublishCurrentNamespaceClaim(ctx context.Context, tx bun.Tx, re
 	return claim, nil
 }
 
-func validateSourceRepublishNamespacePlan(ctx context.Context, tx bun.Tx, request PublicationAdmission, input PublicationInputs, manifest []PublicationNamespaceNode, current PublicationNamespaceClaim) error {
+func validateSourceRepublishNamespacePlan(ctx context.Context, tx bun.Tx, request PublicationAdmission, input PublicationInputs, manifest []PublicationNamespaceNode, current PublicationNamespaceClaim, admittedDestination *admittedSourceRepublishDestination) error {
 	files := 0
+	var destination PublicationNamespaceNode
 	for _, node := range manifest {
 		if node.NodeKind != "file" {
 			continue
 		}
 		files++
-		if node.RelativePath != input.SourceRepublish.Current.RelativePath || node.CanonicalKey != current.CanonicalKey || node.RelativePath != current.RelativePath {
-			return fmt.Errorf("admit source republish: namespace file must retain exact CURRENT path and claim: %w", ErrPublicationAdmissionConflict)
-		}
+		destination = node
 	}
 	if files != 1 {
-		return fmt.Errorf("admit source republish: namespace manifest must contain exactly one CURRENT file: %w", ErrPublicationAdmissionConflict)
+		return fmt.Errorf("admit source republish: namespace manifest must contain exactly one destination file: %w", ErrPublicationAdmissionConflict)
 	}
-	// Every parent directory must be an active, same-epoch scope already
-	// supporting CURRENT. New/archived scopes cannot act as comparison exemptions.
+	sameCurrentPath := destination.RelativePath == input.SourceRepublish.Current.RelativePath
+	if sameCurrentPath && (destination.CanonicalKey != current.CanonicalKey || destination.RelativePath != current.RelativePath) {
+		return fmt.Errorf("admit source republish: same-path namespace must retain the exact CURRENT claim: %w", ErrPublicationAdmissionConflict)
+	}
+	if !sameCurrentPath {
+		if destination.CanonicalKey == current.CanonicalKey {
+			return fmt.Errorf("admit source republish: changed destination aliases the CURRENT claim: %w", ErrPublicationAdmissionConflict)
+		}
+		if admittedDestination != nil && (admittedDestination.positionID != request.PositionID ||
+			admittedDestination.generation != request.CandidateGeneration ||
+			admittedDestination.canonicalKey != destination.CanonicalKey ||
+			admittedDestination.relativePath != destination.RelativePath) {
+			return fmt.Errorf("admit source republish: admitted destination does not match manifest: %w", ErrPublicationAdmissionConflict)
+		}
+		var retainedDestination bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM publication_namespace_claim c
+			JOIN publication_namespace_reservation r ON r.namespace_claim_id=c.id
+			WHERE c.epoch=? AND c.owner_position_id=? AND c.node_kind='file'
+				AND (c.canonical_key=? OR c.relative_path=?)
+				AND NOT (? AND r.position_id=? AND r.generation=? AND c.canonical_key=? AND c.relative_path=?)
+				AND c.id<>? AND NOT EXISTS (
+					SELECT 1 FROM publication_root_abandonment a
+					WHERE a.epoch=c.epoch AND c.id=ANY(a.namespace_claim_ids)
+				)
+		)`, request.ExpectedEpoch, request.PositionID, destination.CanonicalKey, destination.RelativePath,
+			admittedDestination != nil, request.PositionID, request.CandidateGeneration, destination.CanonicalKey, destination.RelativePath,
+			current.ID).Scan(ctx, &retainedDestination); err != nil {
+			return fmt.Errorf("admit source republish: check retained destination claim: %w", err)
+		}
+		if retainedDestination {
+			return fmt.Errorf("admit source republish: destination conflicts with another retained position claim: %w", ErrPublicationAdmissionConflict)
+		}
+	}
+	// Reusing the old path requires its exact active directory scopes. Changed
+	// paths may use fresh/shared scopes; manifest validation checks completeness.
 	for _, node := range manifest {
 		if node.NodeKind != "dir" {
+			continue
+		}
+		if !sameCurrentPath {
 			continue
 		}
 		if !strings.HasPrefix(input.SourceRepublish.Current.RelativePath, node.RelativePath+"/") {
@@ -228,11 +261,26 @@ func validateSourceRepublishAttemptNamespace(
 	if err != nil {
 		return PublicationNamespaceClaim{}, err
 	}
-	if err := validateSourceRepublishNamespacePlan(ctx, tx, request, input, manifest.Nodes, currentClaim); err != nil {
-		return PublicationNamespaceClaim{}, err
+	var destination PublicationNamespaceNode
+	files := 0
+	for _, node := range manifest.Nodes {
+		if node.NodeKind == "file" {
+			files++
+			destination = node
+		}
 	}
-	if err := validatePublicationTargetNamespace(ctx, tx, attempt, currentClaim.CanonicalKey, input.SourceRepublish.Current.RelativePath); err != nil {
-		return PublicationNamespaceClaim{}, fmt.Errorf("validate source republish namespace: candidate does not reserve exact CURRENT path: %w", err)
+	if files != 1 {
+		return PublicationNamespaceClaim{}, fmt.Errorf("validate source republish namespace: manifest must contain exactly one destination file: %w", ErrPublicationAdmissionConflict)
+	}
+	if err := validatePublicationTargetNamespace(ctx, tx, attempt, destination.CanonicalKey, destination.RelativePath); err != nil {
+		return PublicationNamespaceClaim{}, fmt.Errorf("validate source republish namespace: candidate does not reserve exact manifest destination: %w", err)
+	}
+	admittedDestination := &admittedSourceRepublishDestination{
+		positionID: attempt.PositionID, generation: attempt.CandidateGeneration,
+		canonicalKey: destination.CanonicalKey, relativePath: destination.RelativePath,
+	}
+	if err := validateSourceRepublishNamespacePlan(ctx, tx, request, input, manifest.Nodes, currentClaim, admittedDestination); err != nil {
+		return PublicationNamespaceClaim{}, err
 	}
 	var reservationCount int
 	if err := tx.NewRaw(`SELECT count(*) FROM publication_namespace_reservation WHERE position_id=? AND generation=?`,

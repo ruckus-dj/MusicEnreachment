@@ -159,6 +159,10 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       подтверждение и технические проверки; automatic upgrade не изменён.
       Расширены существующие unit/UI assertions, без новых DB-сценариев.
       Остальные recovery/changed-path критерии пункта остаются открытыми.
+      Ручная quality-policy в `96c72921` и исправление синхронизации существующих
+      frontend-тестов в `e60a24fb` прошли полный hook; вся
+      [CI 42681046889](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42681046889)
+      зелёная.
     - [x] Ordinary first-audio recovery поддерживает requested cover: точный PNG
       derivative проверяется по frozen bytes, фактическое отсутствие сохраняется
       как существующий `absent_after_interruption`, без выдуманного write failure.

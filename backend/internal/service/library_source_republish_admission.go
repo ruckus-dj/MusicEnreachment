@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"strings"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
@@ -243,6 +243,7 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 			return nil, persistence.ErrPublicationAdmissionConflict
 		}
 		transactionContext := authoritative.Context
+		transactionContext.NamespaceClaims = append([]persistence.PublicationNamespaceClaim(nil), authoritative.Claims...)
 		if transactionContext.Library.Current.Record.Generation != current.Record.Generation ||
 			transactionContext.Library.Current.Record.RelativePath != current.Record.RelativePath ||
 			transactionContext.Library.Current.Record.Epoch != current.Record.Epoch ||
@@ -281,22 +282,61 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 			!reflect.DeepEqual(purePreview.DesiredTags.Tags, input.DesiredTags) {
 			return nil, persistence.ErrPublicationAdmissionConflict
 		}
-		purePreview.ResolvedPathComponents = append([]string(nil), preview.ResolvedPathComponents...)
+		if err := foldFirstPublicationCurrentAudioEvidenceDigest(&purePreview, transactionContext); err != nil {
+			return nil, err
+		}
+		if err := foldFirstPublicationLyricsPlanDigest(&purePreview, lyricsPlan); err != nil {
+			return nil, err
+		}
+		if err := foldFirstPublicationCoverPlanDigest(&purePreview, coverPlan); err != nil {
+			return nil, err
+		}
 		purePreview.LyricsPlan = &lyricsPlan
 		purePreview.CoverPlan = &coverPlan
+		transactionManifest, err := finalizeFirstPublicationCurrentComparisonNamespace(
+			ctx,
+			transactionContext,
+			transactionSettings.OutputDirectory,
+			transactionSettings.PublicationPathTemplate,
+			&purePreview,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("resolve admitted source-republish namespace: %w", err)
+		}
 		pureComparison := compareFirstPublicationCurrent(purePreview, transactionContext.Library.Current, transactionContext)
 		purePreview.CurrentComparison = pureComparison
-		confirmationDigest, err := retainedSourceRepublishDigest(preview, basePlanningDigest, actual.FrozenInputs, prepared.Manifest, runtimeSettings, selectedTools)
+		capability := &SourceRepublishConfirmationCapability{
+			Kind: "retained_same_path", Status: "ready", ReasonCodes: []string{}, CurrentGeneration: current.Record.Generation,
+		}
+		unchanged := sourceRepublishIsUnchanged(
+			purePreview,
+			transactionSource,
+			transactionContext.Library.Current,
+			publication.AudioPublicationFormat(transactionSettings.PublicationFormat),
+		)
+		if unchanged {
+			capability.Status = "unchanged"
+			capability.ReasonCodes = []string{"content_unchanged"}
+		}
+		purePreview.ConfirmationCapability = capability
+		confirmationDigest, err := retainedSourceRepublishDigest(
+			purePreview,
+			basePlanningDigest,
+			actual.FrozenInputs,
+			transactionManifest,
+			transactionSettings,
+			transactionTools,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("digest admitted source-republish confirmation: %w", err)
 		}
 		if confirmationDigest != confirmation.PreviewDigest {
 			return nil, persistence.ErrPublicationAdmissionConflict
 		}
-		if sourceRepublishIsUnchanged(purePreview, transactionSource, transactionContext.Library.Current, publication.AudioPublicationFormat(transactionSettings.PublicationFormat)) {
+		if unchanged {
 			return nil, fmt.Errorf("admit unchanged source republish: %w", errors.Join(persistence.ErrPublicationAdmissionConflict, errSourceRepublishUnchanged))
 		}
-		return append([]persistence.PublicationNamespaceNode(nil), prepared.Manifest...), nil
+		return append([]persistence.PublicationNamespaceNode(nil), transactionManifest...), nil
 	}
 	return repository.AdmitSourceRepublishRetainingSelection(ctx, persistence.SourceRepublishRetainAdmission{
 		PublicationAdmission: request, Prepare: prepare,
@@ -367,12 +407,31 @@ func retainedSourceRepublishDigest(
 	runtimeSettings settings.RuntimeSettings,
 	tools []persistence.SourceAnalysisToolSelection,
 ) (string, error) {
+	semanticNamespace := make([]semanticNamespaceNode, 0, len(manifest))
+	for _, node := range manifest {
+		kind := node.NodeKind
+		if kind == "dir" {
+			kind = "directory"
+		}
+		semanticNamespace = append(semanticNamespace, semanticNamespaceNode{
+			Path: node.RelativePath, Kind: kind, Scope: node.DirectoryScope,
+		})
+	}
+	sort.Slice(semanticNamespace, func(i, j int) bool {
+		if semanticNamespace[i].Path != semanticNamespace[j].Path {
+			return semanticNamespace[i].Path < semanticNamespace[j].Path
+		}
+		if semanticNamespace[i].Kind != semanticNamespace[j].Kind {
+			return semanticNamespace[i].Kind < semanticNamespace[j].Kind
+		}
+		return semanticNamespace[i].Scope < semanticNamespace[j].Scope
+	})
 	payload, err := json.Marshal(struct {
 		Domain         string
 		Mode           string
 		PlanningDigest string
 		FrozenInputs   json.RawMessage
-		Namespace      []persistence.PublicationNamespaceNode
+		Namespace      []semanticNamespaceNode
 		Settings       settings.RuntimeSettings
 		Tools          []persistence.SourceAnalysisToolSelection
 		Transform      *publication.AudioTransformPlan
@@ -380,7 +439,7 @@ func retainedSourceRepublishDigest(
 		Capability     *SourceRepublishConfirmationCapability
 	}{
 		Domain: "melo:source-republish:retained-same-path:confirmation:v1", Mode: preview.Mode,
-		PlanningDigest: planningDigest, FrozenInputs: frozenInputs, Namespace: manifest,
+		PlanningDigest: planningDigest, FrozenInputs: frozenInputs, Namespace: semanticNamespace,
 		Settings: runtimeSettings, Tools: tools, Transform: preview.Transform,
 		Comparison: preview.CurrentComparison, Capability: preview.ConfirmationCapability,
 	})
@@ -521,13 +580,11 @@ func (service *LibraryPublications) prepareRetainedSourceRepublish(
 		return retainedSourceRepublishPreparation{}, fmt.Errorf("resolve source-republish CURRENT namespace: %w", err)
 	}
 	preview.CurrentComparison = compareFirstPublicationCurrent(preview, current, snapshot)
-	if preview.CurrentComparison == nil || preview.CurrentComparison.Generation != current.Record.Generation ||
-		len(preview.ResolvedPathComponents) == 0 || strings.Join(preview.ResolvedPathComponents, "/") != current.Record.RelativePath {
-		return retainedSourceRepublishPreparation{Preview: preview}, fmt.Errorf("validate retained source-republish CURRENT comparison (comparison=%t, generation_matches=%t, resolved_components=%d, resolved_path_matches=%t): %w",
+	if preview.CurrentComparison == nil || preview.CurrentComparison.Generation != current.Record.Generation || len(preview.ResolvedPathComponents) == 0 {
+		return retainedSourceRepublishPreparation{Preview: preview}, fmt.Errorf("validate retained source-republish CURRENT comparison (comparison=%t, generation_matches=%t, resolved_components=%d): %w",
 			preview.CurrentComparison != nil,
 			preview.CurrentComparison != nil && preview.CurrentComparison.Generation == current.Record.Generation,
 			len(preview.ResolvedPathComponents),
-			len(preview.ResolvedPathComponents) != 0 && strings.Join(preview.ResolvedPathComponents, "/") == current.Record.RelativePath,
 			persistence.ErrPublicationAdmissionConflict)
 	}
 	claimID := currentPublicationNamespaceClaim(snapshot.Library, current.Record.RelativePath)

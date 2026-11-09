@@ -421,10 +421,27 @@ func (repository *SetupManagerRepository) CheckPublicationTargetReplacement(ctx 
 			if err != nil {
 				return fmt.Errorf("check publication target replacement: decode source-republish inputs: %w", err)
 			}
+			var manifest struct {
+				Version int                        `json:"version"`
+				Nodes   []PublicationNamespaceNode `json:"nodes"`
+			}
+			if decodeStrictJSON(attempt.NamespaceManifest, &manifest) != nil || manifest.Version != 1 || validatePublicationManifest(manifest.Nodes) != nil {
+				return fmt.Errorf("check publication target replacement: invalid source-republish namespace manifest: %w", ErrPublicationAdmissionConflict)
+			}
+			var targetPath string
+			for _, node := range manifest.Nodes {
+				if node.NodeKind != "file" {
+					continue
+				}
+				if targetPath != "" {
+					return fmt.Errorf("check publication target replacement: ambiguous source-republish destination: %w", ErrPublicationAdmissionConflict)
+				}
+				targetPath = node.RelativePath
+			}
 			if !validSourceRepublishPreparation(input) || input.SourceRepublish == nil || attempt.ExpectedGeneration == nil ||
 				*attempt.ExpectedGeneration != input.SourceRepublish.Current.Generation ||
-				relativePath != input.SourceRepublish.Current.RelativePath {
-				return fmt.Errorf("check publication target replacement: source-republish target differs from frozen CURRENT")
+				targetPath == "" || relativePath != targetPath {
+				return fmt.Errorf("check publication target replacement: source-republish target differs from frozen manifest destination")
 			}
 			if _, err := validateSourceRepublishAttemptNamespace(ctx, tx, attempt, input); err != nil {
 				return fmt.Errorf("check publication target replacement: validate source-republish CURRENT namespace: %w", err)

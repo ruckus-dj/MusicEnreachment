@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,6 +158,147 @@ func captureObsoletePublicationOutput(ctx context.Context, root sourcefs.OutputD
 		ParentIdentity:     persistence.PublicationDirectoryIdentity{Platform: parentID.Platform, Volume: parentID.Volume, FileID: parentID.FileID},
 		FileSize:           after.Size(), ModifiedAt: time.UnixMicro(after.ModTime().UnixMicro()).UTC(), SHA256: hash.Sum(nil),
 	}, nil
+}
+
+// captureSourceRepublishObsoleteOutput binds deletion to the registered old
+// CURRENT witness without opening its leaf. Unlike automatic-upgrade cleanup,
+// source republish must preserve the old output as cleanup authority even when
+// it has drifted or disappeared since admission.
+func captureSourceRepublishObsoleteOutput(
+	ctx context.Context,
+	root sourcefs.OutputDirectory,
+	outputRoot string,
+	previous persistence.TrackPublication,
+	namespaceClaimID uuid.UUID,
+) (_ *persistence.ObsoletePublicationOutputCleanupAdmission, _ *persistence.PublicationObsoleteOutputAbsent, resultErr error) {
+	if ctx == nil || root == nil || namespaceClaimID == uuid.Nil || previous.Epoch == uuid.Nil || previous.PositionID == uuid.Nil || previous.Generation == uuid.Nil {
+		return nil, nil, errors.New("obsolete source-republish output identity is incomplete")
+	}
+	rootPath := filepath.Clean(outputRoot)
+	if !filepath.IsAbs(rootPath) || !persistencePathPortable(previous.RelativePath) {
+		return nil, nil, errors.New("obsolete source-republish output path is invalid")
+	}
+	var ownership persistence.PublicationCurrentOwnership
+	decoder := json.NewDecoder(strings.NewReader(string(previous.Ownership)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&ownership); err != nil {
+		return nil, nil, fmt.Errorf("decode current publication ownership: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, nil, errors.New("decode current publication ownership: trailing JSON")
+	}
+	if ownership.Version != persistence.PublicationCurrentOwnershipVersion || ownership.Identity.SizeBytes == nil || *ownership.Identity.SizeBytes < 0 ||
+		ownership.Identity.MTime == nil || !validReplacementDigest(ownership.Identity.SHA256) {
+		return nil, nil, errors.New("current publication ownership is incomplete")
+	}
+	relative := filepath.FromSlash(previous.RelativePath)
+	cleanRelative := filepath.Clean(relative)
+	if filepath.IsAbs(relative) || cleanRelative == "." || cleanRelative == ".." || strings.HasPrefix(cleanRelative, ".."+string(filepath.Separator)) {
+		return nil, nil, errors.New("obsolete source-republish output path is invalid")
+	}
+	nativePath := filepath.Join(rootPath, cleanRelative)
+	relativeToRoot, err := filepath.Rel(rootPath, nativePath)
+	if err != nil || relativeToRoot == ".." || strings.HasPrefix(relativeToRoot, ".."+string(filepath.Separator)) {
+		return nil, nil, errors.New("obsolete source-republish output is outside output root")
+	}
+	if err := root.Verify(ctx); err != nil {
+		return nil, nil, fmt.Errorf("verify output root: %w", err)
+	}
+	rootID, err := root.Identity(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("identify output root: %w", err)
+	}
+	rootIdentity := persistence.PublicationDirectoryIdentity{Platform: rootID.Platform, Volume: rootID.Volume, FileID: rootID.FileID}
+	parent := root
+	opened := make([]sourcefs.OutputDirectory, 0)
+	type childIdentity struct {
+		name     string
+		identity sourcefs.DirectoryIdentity
+	}
+	chain := make([]childIdentity, 0)
+	closeOpened := func() error {
+		var closeErr error
+		for i := len(opened) - 1; i >= 0; i-- {
+			closeErr = errors.Join(closeErr, opened[i].Close())
+		}
+		opened = nil
+		return closeErr
+	}
+	defer func() { resultErr = errors.Join(resultErr, closeOpened()) }()
+	verifyChain := func() error {
+		if err := root.Verify(ctx); err != nil {
+			return err
+		}
+		ancestor := root
+		for index, item := range chain {
+			if err := ancestor.VerifyChild(ctx, item.name, item.identity); err != nil {
+				return err
+			}
+			ancestor = opened[index]
+		}
+		return ctx.Err()
+	}
+	components := strings.Split(cleanRelative, string(filepath.Separator))
+	for _, component := range components[:len(components)-1] {
+		traversal, ok := parent.(sourcefs.OutputDirectoryTraversal)
+		if !ok {
+			return nil, nil, errors.New("output filesystem does not support safe traversal")
+		}
+		child, openErr := traversal.OpenExistingDir(ctx, component)
+		if openErr != nil {
+			if errors.Is(openErr, fs.ErrNotExist) {
+				if verifyErr := verifyChain(); verifyErr != nil {
+					return nil, nil, fmt.Errorf("verify absent obsolete source-republish parent: %w", verifyErr)
+				}
+				absence := &persistence.PublicationObsoleteOutputAbsent{
+					Epoch: previous.Epoch, PositionID: previous.PositionID, Generation: previous.Generation,
+					RelativePath: previous.RelativePath, NamespaceClaimID: namespaceClaimID,
+				}
+				if closeErr := closeOpened(); closeErr != nil {
+					return nil, nil, fmt.Errorf("close absent obsolete source-republish parent chain: %w", closeErr)
+				}
+				return nil, absence, nil
+			}
+			return nil, nil, fmt.Errorf("open existing obsolete source-republish parent: %w", openErr)
+		}
+		opened = append(opened, child)
+		id, idErr := child.Identity(ctx)
+		if idErr != nil {
+			return nil, nil, idErr
+		}
+		if verifyErr := parent.VerifyChild(ctx, component, id); verifyErr != nil {
+			return nil, nil, verifyErr
+		}
+		chain = append(chain, childIdentity{name: component, identity: id})
+		parent = child
+	}
+	if err := verifyChain(); err != nil {
+		return nil, nil, err
+	}
+	parentID, err := parent.Identity(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := verifyChain(); err != nil {
+		return nil, nil, err
+	}
+	digest, err := hex.DecodeString(ownership.Identity.SHA256)
+	if err != nil {
+		return nil, nil, errors.New("current publication ownership hash is invalid")
+	}
+	if err := closeOpened(); err != nil {
+		return nil, nil, fmt.Errorf("close obsolete source-republish parent chain: %w", err)
+	}
+	return &persistence.ObsoletePublicationOutputCleanupAdmission{
+		Epoch: previous.Epoch, PositionID: previous.PositionID, Generation: previous.Generation,
+		RelativePath: previous.RelativePath, NativePath: nativePath, NamespaceClaimID: namespaceClaimID,
+		OutputRootIdentity: rootIdentity,
+		ParentIdentity:     persistence.PublicationDirectoryIdentity{Platform: parentID.Platform, Volume: parentID.Volume, FileID: parentID.FileID},
+		FileSize:           *ownership.Identity.SizeBytes,
+		ModifiedAt:         time.UnixMicro(*ownership.Identity.MTime).UTC(),
+		SHA256:             digest,
+	}, nil, nil
 }
 
 func persistencePathPortable(value string) bool {

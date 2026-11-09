@@ -26,6 +26,94 @@ type ObsoletePublicationOutputCleanupJobArgs struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
 
+// lockPublicationObsoleteOutputAbsentTx validates absence authority while
+// retaining the old claim and reservation locks through result settlement.
+func lockPublicationObsoleteOutputAbsentTx(ctx context.Context, tx bun.Tx, proof PublicationObsoleteOutputAbsent) error {
+	if proof.Epoch == uuid.Nil || proof.PositionID == uuid.Nil || proof.Generation == uuid.Nil ||
+		proof.NamespaceClaimID == uuid.Nil || proof.RelativePath == "" {
+		return errors.New("invalid output absence authority")
+	}
+	var currentGeneration uuid.UUID
+	err := tx.NewRaw(`SELECT generation FROM track_publication WHERE position_id=? FOR UPDATE`, proof.PositionID).Scan(ctx, &currentGeneration)
+	if err != nil {
+		return fmt.Errorf("lock current publication: %w", err)
+	}
+	if currentGeneration == proof.Generation {
+		return errors.New("output is still current")
+	}
+	var claim PublicationNamespaceClaim
+	if err := tx.NewSelect().Model(&claim).Where("id=? AND epoch=? AND relative_path=? AND node_kind='file' AND owner_position_id=?", proof.NamespaceClaimID, proof.Epoch, proof.RelativePath, proof.PositionID).For("UPDATE").Scan(ctx); err != nil {
+		return fmt.Errorf("lock namespace claim: %w", err)
+	}
+	var reservation PublicationNamespaceReservation
+	if err := tx.NewSelect().Model(&reservation).Where("namespace_claim_id=? AND position_id=? AND generation=?", proof.NamespaceClaimID, proof.PositionID, proof.Generation).For("UPDATE").Scan(ctx); err != nil {
+		return fmt.Errorf("lock old reservation: %w", err)
+	}
+	var cleanupExists bool
+	if err := tx.NewRaw(`SELECT EXISTS (
+		SELECT 1 FROM obsolete_publication_output_cleanup
+		WHERE namespace_claim_id=?
+	)`, proof.NamespaceClaimID).Scan(ctx, &cleanupExists); err != nil {
+		return fmt.Errorf("check existing cleanup authority: %w", err)
+	}
+	if cleanupExists {
+		return errors.New("cleanup authority already exists")
+	}
+	var protected bool
+	if err := tx.NewRaw(`SELECT EXISTS (
+		SELECT 1 FROM publication_namespace_reservation r
+		JOIN track_publication p ON p.position_id=r.position_id AND p.epoch=? AND p.generation=r.generation
+		WHERE r.namespace_claim_id=?
+		UNION ALL
+		SELECT 1 FROM publication_namespace_reservation r
+		JOIN track_publication_attempt a ON a.position_id=r.position_id AND a.epoch=? AND a.candidate_generation=r.generation
+		WHERE r.namespace_claim_id=?
+		UNION ALL
+		SELECT 1 FROM publication_root_abandonment archived
+		WHERE archived.epoch=? AND ?=ANY(archived.namespace_claim_ids)
+		UNION ALL
+		SELECT 1 FROM publication_namespace_reservation r WHERE r.namespace_claim_id=? AND NOT (r.position_id=? AND r.generation=?)
+	)`, proof.Epoch, proof.NamespaceClaimID, proof.Epoch, proof.NamespaceClaimID,
+		proof.Epoch, proof.NamespaceClaimID, proof.NamespaceClaimID, proof.PositionID, proof.Generation).Scan(ctx, &protected); err != nil {
+		return fmt.Errorf("check namespace consumers: %w", err)
+	}
+	if protected {
+		return errors.New("namespace still has a live consumer")
+	}
+	var activeEpoch uuid.UUID
+	if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &activeEpoch); err != nil {
+		return fmt.Errorf("read namespace epoch: %w", err)
+	}
+	if activeEpoch != proof.Epoch {
+		return errors.New("namespace epoch changed")
+	}
+	return nil
+}
+
+// deletePublicationObsoleteOutputAbsentClaimTx retires only the exact old file
+// claim, and only after its reservation and publication attempt were consumed.
+func deletePublicationObsoleteOutputAbsentClaimTx(ctx context.Context, tx bun.Tx, proof PublicationObsoleteOutputAbsent) error {
+	result, err := tx.NewRaw(`DELETE FROM publication_namespace_claim c
+		WHERE c.id=? AND c.epoch=? AND c.relative_path=? AND c.node_kind='file' AND c.owner_position_id=?
+		AND NOT EXISTS (SELECT 1 FROM publication_namespace_reservation r WHERE r.namespace_claim_id=c.id)
+		AND NOT EXISTS (SELECT 1 FROM obsolete_publication_output_cleanup o WHERE o.namespace_claim_id=c.id)
+		AND NOT EXISTS (
+			SELECT 1 FROM publication_root_abandonment a
+			WHERE a.epoch=c.epoch AND c.id=ANY(a.namespace_claim_ids)
+		)`, proof.NamespaceClaimID, proof.Epoch, proof.RelativePath, proof.PositionID).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("delete unreferenced file claim: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check deleted file claim: %w", err)
+	}
+	if deleted != 1 {
+		return errors.New("file claim remains referenced or no longer matches")
+	}
+	return nil
+}
+
 func (ObsoletePublicationOutputCleanupJobArgs) Kind() string {
 	return ObsoletePublicationOutputCleanupJobKind
 }

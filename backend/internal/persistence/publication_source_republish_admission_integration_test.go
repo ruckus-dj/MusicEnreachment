@@ -68,13 +68,13 @@ func TestSourceRepublishRetainingAdmissionTypedCapabilityPostgreSQL(t *testing.T
 	assertNoAdmissionArtifacts(t, ctx, db, repo, nil)
 	assertCurrentSourceRepublishNamespace(t, ctx, db, first)
 
-	changed := seedSourceRepublishAdmissionFixture(t, fixture, "source-republish-changed")
-	changed.admission.Prepare = sourceRepublishAdmissionPlanner(t, fixture.selections[0].InstallationID, new(int), true)
-	if _, err := repository.AdmitSourceRepublishRetainingSelection(ctx, changed.admission, newSourceRepublishRiverClient(t, ctx, db)); err == nil {
-		t.Fatal("typed retain admission accepted a callback path different from CURRENT")
+	alias := seedSourceRepublishAdmissionFixture(t, fixture, "source-republish-alias")
+	alias.admission.Prepare = sourceRepublishAdmissionPlanner(t, fixture.selections[0].InstallationID, new(int), true)
+	if _, err := repository.AdmitSourceRepublishRetainingSelection(ctx, alias.admission, newSourceRepublishRiverClient(t, ctx, db)); !errors.Is(err, ErrPublicationAdmissionConflict) {
+		t.Fatalf("typed retain admission of a destination aliasing the CURRENT claim = %v, want conflict", err)
 	}
-	assertNoAdmissionArtifacts(t, ctx, db, changed.request, nil)
-	assertCurrentSourceRepublishNamespace(t, ctx, db, changed)
+	assertNoAdmissionArtifacts(t, ctx, db, alias.request, nil)
+	assertCurrentSourceRepublishNamespace(t, ctx, db, alias)
 
 	callbackCalls := 0
 	first.admission.Prepare = sourceRepublishAdmissionPlanner(t, fixture.selections[0].InstallationID, &callbackCalls, false)
@@ -258,7 +258,7 @@ func repositoryReadFirstPublicationContext(ctx context.Context, repository *Setu
 	return repository.ReadLibraryFirstPublicationContext(ctx, releaseID, positionID)
 }
 
-func sourceRepublishAdmissionPlanner(t *testing.T, installationID uuid.UUID, calls *int, changePath bool) PrepareFirstPublicationAdmission {
+func sourceRepublishAdmissionPlanner(t *testing.T, installationID uuid.UUID, calls *int, aliasCurrentClaim bool) PrepareFirstPublicationAdmission {
 	t.Helper()
 	return func(_ context.Context, snapshot FirstPublicationAdmissionSnapshot, request PublicationAdmission) ([]PublicationNamespaceNode, error) {
 		*calls++
@@ -300,13 +300,15 @@ func sourceRepublishAdmissionPlanner(t *testing.T, installationID uuid.UUID, cal
 			return nil, errors.New("planner snapshot omitted the claimed CURRENT path")
 		}
 		directory := path.Dir(currentPath)
-		finalPath := currentPath
-		if changePath {
-			finalPath = path.Join(directory, "different.mka")
+		finalPath, canonicalKey := currentPath, currentPath
+		if aliasCurrentClaim {
+			// A differently rendered path that still probes to the CURRENT
+			// canonical identity is a conflicting destination claim.
+			finalPath = path.Join(directory, "Track.mka")
 		}
 		return []PublicationNamespaceNode{
 			{CanonicalKey: directory, RelativePath: directory, NodeKind: "dir", DirectoryScope: request.ExpectedReleaseID.String()},
-			{CanonicalKey: finalPath, RelativePath: finalPath, NodeKind: "file"},
+			{CanonicalKey: canonicalKey, RelativePath: finalPath, NodeKind: "file"},
 		}, nil
 	}
 }

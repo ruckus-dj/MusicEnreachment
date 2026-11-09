@@ -244,20 +244,8 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 	if hook == nil || hook.prepare == nil {
 		return nil, fmt.Errorf("admit first publication: missing planner")
 	}
-	tables := []string{
-		"app_setting", "local_artist", "local_recording", "local_release", "local_track", "media_variant", "release_publication_cover",
-		"provider", "provider_artist", "provider_local_artist", "publication_namespace_claim", "publication_namespace_reservation", "release_artist", "release_track",
-		"source_analysis_step", "source_analysis_work", "source_location", "source_root", "source_work_variant_identity",
-		"tool_installation", "track_artist", "track_source",
-	}
-	for _, table := range tables {
-		mode := "SHARE"
-		if table == "track_source" && hook.sourceSelection != nil {
-			mode = "SHARE ROW EXCLUSIVE"
-		}
-		if _, err := tx.ExecContext(ctx, "LOCK TABLE "+table+" IN "+mode+" MODE"); err != nil {
-			return nil, fmt.Errorf("admit first publication: guard %s: %w", table, err)
-		}
+	if err := lockFirstPublicationAdmissionReadGuards(ctx, tx, hook.sourceSelection != nil, "admit first publication"); err != nil {
+		return nil, err
 	}
 	var snapshot FirstPublicationAdmissionSnapshot
 	if err := readLibraryFirstPublicationContextTx(ctx, tx, request.ExpectedReleaseID, request.PositionID, &snapshot.Context); err != nil {
@@ -316,6 +304,25 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 	coverInput := authoritativeCoverInput
 	hook.coverInput = &coverInput
 	return manifest, nil
+}
+
+func lockFirstPublicationAdmissionReadGuards(ctx context.Context, tx bun.Tx, sourceSelection bool, errorContext string) error {
+	tables := []string{
+		"app_setting", "local_artist", "local_recording", "local_release", "local_track", "media_variant", "release_publication_cover",
+		"provider", "provider_artist", "provider_local_artist", "publication_namespace_claim", "publication_namespace_reservation", "release_artist", "release_track",
+		"source_analysis_step", "source_analysis_work", "source_location", "source_root", "source_work_variant_identity",
+		"tool_installation", "track_artist", "track_source",
+	}
+	for _, table := range tables {
+		mode := "SHARE"
+		if table == "track_source" && sourceSelection {
+			mode = "SHARE ROW EXCLUSIVE"
+		}
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE "+table+" IN "+mode+" MODE"); err != nil {
+			return fmt.Errorf("%s: guard %s: %w", errorContext, table, err)
+		}
+	}
+	return nil
 }
 
 func validFirstPublicationPreviewDigest(digest string) bool {

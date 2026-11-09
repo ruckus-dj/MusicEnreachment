@@ -60,8 +60,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			*attempt.ExpectedGeneration != input.SourceRepublish.Current.Generation ||
 			!input.SourceRepublish.SourceAuthority.Present ||
 			input.SourceRepublish.SourceAuthority.PublicationGeneration != input.SourceRepublish.Current.Generation ||
-			input.SourceRepublish.SourceAuthority.PublicationEpoch != attempt.Epoch ||
-			manifest.RelativePath != input.SourceRepublish.Current.RelativePath {
+			input.SourceRepublish.SourceAuthority.PublicationEpoch != attempt.Epoch {
 			return errors.New("source-republish target does not match known CURRENT authority")
 		}
 	} else if input.AudioUpgrade != nil {
@@ -263,18 +262,20 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		return err
 	}
 	var obsoleteOutput *persistence.ObsoletePublicationOutputCleanupAdmission
+	var obsoleteOutputAbsent *persistence.PublicationObsoleteOutputAbsent
 	if attempt.ExpectedGeneration != nil {
 		previous, err := executor.repository.ReadPublicationObsoleteOutputCandidate(ctx, guard, manifest.RelativePath)
 		if err != nil {
 			return fmt.Errorf("read superseded publication output: %w", err)
 		}
 		if previous != nil {
-			captured, captureErr := captureObsoletePublicationOutput(ctx, root, outputRoot, previous.Publication, previous.NamespaceClaimID)
-			if captureErr != nil {
-				return fmt.Errorf("capture superseded publication output: %w", captureErr)
+			if input.SourceRepublish != nil {
+				obsoleteOutput, obsoleteOutputAbsent, err = captureSourceRepublishObsoleteOutput(ctx, root, outputRoot, previous.Publication, previous.NamespaceClaimID)
+			} else {
+				obsoleteOutput, err = captureObsoletePublicationOutput(ctx, root, outputRoot, previous.Publication, previous.NamespaceClaimID)
 			}
-			if previous.Publication.RelativePath != manifest.RelativePath {
-				obsoleteOutput = captured
+			if err != nil {
+				return fmt.Errorf("capture superseded publication output: %w", err)
 			}
 		}
 	}
@@ -288,7 +289,8 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		if input.SourceRepublish != nil {
 			identity := input.SourceRepublish.Current.Ownership
 			currentDigest, digestErr := digestRegular(ctx, currentFile)
-			oldIdentityMatches := digestErr == nil && identity.SizeBytes != nil && identity.MTime != nil &&
+			samePathAsCurrent := manifest.RelativePath == input.SourceRepublish.Current.RelativePath
+			oldIdentityMatches := samePathAsCurrent && digestErr == nil && identity.SizeBytes != nil && identity.MTime != nil &&
 				currentInfo.Mode().IsRegular() && currentInfo.Size() == *identity.SizeBytes &&
 				currentInfo.ModTime().UnixMicro() == *identity.MTime && currentDigest == identity.SHA256
 			if !oldIdentityMatches || authorizedObservedSourceRepublishTarget.SHA256 != "" {
@@ -390,6 +392,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		InitialLyrics:                 prepared.InitialLyrics,
 		SourceRepublishOptionalResult: prepared.SourceRepublishOptionalResult,
 		ObsoleteOutputCleanup:         obsoleteOutput,
+		ObsoleteOutputAbsent:          obsoleteOutputAbsent,
 		InstalledOwnership: persistence.PublicationCurrentOwnership{
 			Version:  persistence.PublicationCurrentOwnershipVersion,
 			Identity: installedIdentity,

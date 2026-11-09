@@ -310,10 +310,30 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 			higherVariantID = uuid.New()
 			higherLocationID, higherWorkID := uuid.New(), uuid.New()
 			if err := insertRealSourceFacts(ctx, db, rootID, configured, inventory, "higher.flac", higherVariantID, higherLocationID, higherWorkID, scanOperation,
-				int64(higherInfo.Size()), higherInfo.ModTime().UTC(), string(expectedHigherProbe), ffprobeBanner, higherCapture.Tags); err != nil {
+				int64(higherInfo.Size()), higherInfo.ModTime().UTC(), string(expectedHigherProbe), ffprobeBanner, higherCapture); err != nil {
 				t.Fatalf("insert actual higher-quality source evidence: %v", err)
 			}
-			if _, err := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,metadata) VALUES (?,?,?,false,true,'automatic','policy-v1','{}'::jsonb)`, uuid.New(), fixtureTrackID, higherVariantID); err != nil {
+			metadataResultID := uuid.New()
+			metadataTags, err := json.Marshal(higherCapture.Tags)
+			if err != nil {
+				t.Fatal(err)
+			}
+			metadataProvenance, err := json.Marshal(higherCapture.Provenance)
+			if err != nil {
+				t.Fatal(err)
+			}
+			metadataProperties, err := json.Marshal(higherCapture.Properties)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO media_metadata_result(id,observed_tags,provenance,properties,observed_at,winning_result_id,applied_operation_id) VALUES (?,?::jsonb,?::jsonb,?::jsonb,?,?,?)`,
+				metadataResultID, string(metadataTags), string(metadataProvenance), string(metadataProperties), higherInfo.ModTime().UTC(), metadataResultID, scanOperation); err != nil {
+				t.Fatalf("insert actual higher-source metadata capture: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id,step,state,success_metadata_result_id,success_reuse_origin) VALUES (?,'metadata','succeeded',?,'executed')`, higherWorkID, metadataResultID); err != nil {
+				t.Fatalf("record successful higher-source metadata analysis: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version,metadata,source_metadata_result_id) VALUES (?,?,?,false,true,'automatic','policy-v1','{}'::jsonb,?)`, uuid.New(), fixtureTrackID, higherVariantID, metadataResultID); err != nil {
 				t.Fatalf("associate higher-quality source: %v", err)
 			}
 
@@ -426,6 +446,85 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 			if !reflect.DeepEqual(expectedHigherProbe, mustProbeAgain(t, ctx, binariesForDelivery.ffprobe, upgradeSource)) {
 				t.Fatal("frozen higher source probe no longer matches its file")
 			}
+
+			// Explicitly republish the already-selected higher-quality source using a
+			// changed extension/path template. Admission must retain the old CURRENT
+			// as cleanup authority until the real delivery commits the new container.
+			oldCurrent := currentContext.Current
+			if err := settingsRepo.SetMany(ctx, map[string]string{
+				settings.PublicationFormatKey:       string(publication.AudioFormatMKA),
+				settings.PublicationPathTemplateKey: "Moved/Track.{EXT}",
+			}); err != nil {
+				t.Fatalf("configure changed-path Matroska republish: %v", err)
+			}
+			republishService := NewLibraryPublications(repository, registry, inserter, tools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}).
+				WithPublicationCoordinator(publication.NewCoordinator()).WithPublicationCommands(commands)
+			republishPreview, err := republishService.PreviewSourceRepublishRetainingSelection(ctx, fixtureReleaseID, positionID, firstPublicationPreviewModeOrdinary)
+			if err != nil || republishPreview.ConfirmationCapability == nil || republishPreview.ConfirmationCapability.Status != "ready" {
+				t.Fatalf("preview changed-path selected-source republish: capability=%+v err=%v blockers=%v", republishPreview.ConfirmationCapability, err, republishPreview.Blockers)
+			}
+			if republishPreview.Current == nil || republishPreview.Current.Record.RelativePath != oldCurrent.Record.RelativePath || republishPreview.Current.Record.Generation != committedGeneration {
+				t.Fatalf("republish preview lost old CURRENT: %+v", republishPreview.Current)
+			}
+			republishOperation, err := republishService.AdmitSourceRepublishRetainingSelection(ctx, fixtureReleaseID, positionID, SourceRepublishConfirmation{
+				PreviewDigest: republishPreview.ContextDigest, ExpectedEpoch: republishPreview.Epoch,
+				ExpectedGeneration: republishPreview.ConfirmationCapability.CurrentGeneration, Mode: firstPublicationPreviewModeOrdinary,
+			})
+			if err != nil {
+				t.Fatalf("admit changed-path selected-source republish: %v", err)
+			}
+			republishAttempt, err := repository.ReadPublicationAttempt(ctx, republishOperation)
+			if err != nil || republishAttempt == nil {
+				t.Fatalf("read admitted changed-path attempt: %+v, %v", republishAttempt, err)
+			}
+			republishInputs, err := persistence.DecodePublicationInputs(republishAttempt.FrozenInputs)
+			if err != nil || republishInputs.SourceRepublish == nil || republishInputs.SourceRepublish.Current.RelativePath != oldCurrent.Record.RelativePath || republishInputs.SourceRepublish.Current.Generation != committedGeneration {
+				t.Fatalf("frozen source-republish CURRENT = %+v, err=%v", republishInputs.SourceRepublish, err)
+			}
+			republishOp, err := repository.GetOperation(ctx, republishOperation)
+			if err != nil || republishOp == nil || republishOp.RiverJobID == nil {
+				t.Fatalf("read changed-path republish operation: %+v, %v", republishOp, err)
+			}
+			republishJob := *republishOp.RiverJobID
+			if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, republishJob); err != nil {
+				t.Fatal(err)
+			}
+			if err := upgradeExecutor.ExecutePublicationDelivery(ctx, republishOperation, republishJob, 1); err != nil {
+				t.Fatalf("execute real changed-path source republish: %v", err)
+			}
+			newContext, err := repository.ReadLibraryPublicationContext(ctx, fixtureReleaseID, positionID)
+			if err != nil || newContext == nil || newContext.Current == nil {
+				t.Fatalf("read republished CURRENT: %+v, %v", newContext, err)
+			}
+			if newContext.Current.Record.RelativePath != "Moved/Track.mka" || newContext.Current.Record.Generation == committedGeneration {
+				t.Fatalf("republished CURRENT path/generation = %q/%s", newContext.Current.Record.RelativePath, newContext.Current.Record.Generation)
+			}
+			newPath := filepath.Join(output, filepath.FromSlash(newContext.Current.Record.RelativePath))
+			newProbe, err := probeRealFile(ctx, managedFFprobe, newPath)
+			if err != nil {
+				t.Fatalf("ffprobe real Matroska republish: %v", err)
+			}
+			var probeDocument struct {
+				Streams []struct {
+					CodecType        string `json:"codec_type"`
+					CodecName        string `json:"codec_name"`
+					SampleRate       string `json:"sample_rate"`
+					BitsPerRawSample string `json:"bits_per_raw_sample"`
+				} `json:"streams"`
+				Format struct {
+					Name string `json:"format_name"`
+				} `json:"format"`
+			}
+			if err := json.Unmarshal(newProbe, &probeDocument); err != nil || len(probeDocument.Streams) != 1 || probeDocument.Streams[0].CodecType != "audio" || probeDocument.Streams[0].CodecName != "flac" || probeDocument.Streams[0].SampleRate != "48000" || probeDocument.Streams[0].BitsPerRawSample != "24" || !strings.Contains(probeDocument.Format.Name, "matroska") {
+				t.Fatalf("native Matroska/FLAC stream shape = %+v err=%v", probeDocument, err)
+			}
+			if _, err := os.Stat(destination); err != nil {
+				t.Fatalf("old CURRENT disappeared before cleanup authority was consumed: %v", err)
+			}
+			var cleanupCount int
+			if err := db.NewRaw(`SELECT count(*) FROM obsolete_publication_output_cleanup WHERE position_id=? AND relative_path=? AND generation=?`, positionID, oldCurrent.Record.RelativePath, committedGeneration).Scan(ctx, &cleanupCount); err != nil || cleanupCount != 1 {
+				t.Fatalf("old CURRENT cleanup authority count=%d err=%v", cleanupCount, err)
+			}
 		},
 	}
 	testPublicationSourceExecution(t, "Track.flac", true, false, scenario)
@@ -535,9 +634,9 @@ func mustJSONText(t *testing.T, value any) string {
 	return string(data)
 }
 
-func insertRealSourceFacts(ctx context.Context, db *bun.DB, rootID uuid.UUID, configured, inventory, relative string, variantID, locationID, workID, scanOperationID uuid.UUID, size int64, mtime time.Time, probe, ffprobeVersion string, tags map[string][]string) error {
+func insertRealSourceFacts(ctx context.Context, db *bun.DB, rootID uuid.UUID, configured, inventory, relative string, variantID, locationID, workID, scanOperationID uuid.UUID, size int64, mtime time.Time, probe, ffprobeVersion string, capture metadata.Capture) error {
 	if _, err := db.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes,analysis_policy_version,ffprobe_version,ffprobe_json,observed_tags,inspected_at,applied_operation_id,audio_stream_count) VALUES (?, ?,1,?,?::jsonb,?::jsonb,?,?,1)`,
-		variantID, size, ffprobeVersion, probe, mustJSONNoFatal(tags), mtime, scanOperationID); err != nil {
+		variantID, size, ffprobeVersion, probe, mustJSONNoFatal(capture.Tags), mtime, scanOperationID); err != nil {
 		return err
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO source_location(id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,media_variant_id) SELECT ?,id,?,?,?,scan_generation,'audio',? FROM source_root WHERE id=?`,

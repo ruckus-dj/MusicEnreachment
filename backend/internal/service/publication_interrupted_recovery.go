@@ -325,7 +325,7 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 	if err != nil {
 		return false, false, err
 	}
-	if target.RelativePath != current.RelativePath || !publicationTargetIsExactlyReserved(target, nodes) {
+	if !publicationTargetIsExactlyReserved(target, nodes) {
 		return false, false, errors.New("source-republish recovery target is not exactly reserved by its frozen namespace")
 	}
 	parent, chain, err := openExistingPublicationParent(ctx, root, target.RelativePath)
@@ -418,7 +418,7 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 		*authorizedObservedReplacement = identity
 		return false, true, nil
 	}
-	if digest == current.Ownership.SHA256 {
+	if target.RelativePath == current.RelativePath && digest == current.Ownership.SHA256 {
 		if !samePublicationFileIdentity(observedIdentity, current.Ownership) {
 			if _, err := verifyInterruptedSourceRepublishTarget(ctx, root, chain, mutation, name, file, before); err != nil {
 				return false, false, err
@@ -571,6 +571,25 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 			LyricsOutcome: lyricsReceipt, CoverOutcome: coverReceipt,
 		},
 	}
+	if target.RelativePath != current.RelativePath {
+		previous, err := executor.repository.ReadPublicationObsoleteOutputCandidate(ctx, guard, target.RelativePath)
+		if err != nil {
+			return false, false, fmt.Errorf("read superseded source-republish publication: %w", err)
+		}
+		if previous != nil {
+			cleanup, absent, err := captureSourceRepublishObsoleteOutput(ctx, root, outputRoot, previous.Publication, previous.NamespaceClaimID)
+			if err != nil {
+				return false, false, fmt.Errorf("capture superseded source-republish publication: %w", err)
+			}
+			result.ObsoleteOutputCleanup = cleanup
+			result.ObsoleteOutputAbsent = absent
+		}
+		// Cleanup capture may traverse a different tree branch; fence the installed
+		// destination again immediately before committing its read-back.
+		if _, err := verifyInterruptedSourceRepublishTarget(ctx, root, chain, mutation, name, file, before); err != nil {
+			return false, false, err
+		}
+	}
 	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	committed, err := executor.repository.CommitPublicationResult(commitCtx, guard, result)
@@ -656,7 +675,7 @@ func (executor *PublicationExecutor) inspectSourceRepublishTargetForReprepare(
 			_ = os.RemoveAll(inspectionDir)
 		}
 	}()
-	inspectionPath := filepath.Join(inspectionDir, "inspection"+filepath.Ext(input.SourceRepublish.Current.RelativePath))
+	inspectionPath := filepath.Join(inspectionDir, "inspection"+filepath.Ext(name))
 	inspection, err := os.OpenFile(inspectionPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return inspectedSourceRepublishTarget{}, fmt.Errorf("create source-republish retry inspection snapshot: %w", err)

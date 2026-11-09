@@ -146,16 +146,7 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	}
 	operationID := uuid.New()
 	var admittedOperationID uuid.UUID
-	isolation := sql.LevelReadCommitted
-	if request.sourceRepublishAdmission != nil {
-		isolation = sql.LevelSerializable
-	}
-	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: isolation}, func(ctx context.Context, tx bun.Tx) error {
-		if request.sourceRepublishAdmission != nil {
-			if err := repository.prepareSourceRepublishAdmission(ctx, tx, request); err != nil {
-				return err
-			}
-		}
+	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		admittedOperationID, err = repository.admitPublicationTx(ctx, tx, request, input, operationID, client)
 		if err != nil || request.reconciliationGuard == nil {
 			return err
@@ -318,6 +309,11 @@ func (repository *SetupManagerRepository) admitPublicationTx(ctx context.Context
 	}
 	if epoch != request.ExpectedEpoch {
 		return uuid.Nil, fmt.Errorf("admit publication: output epoch changed: %w", ErrPublicationAdmissionConflict)
+	}
+	if request.sourceRepublishAdmission != nil {
+		if err := repository.prepareSourceRepublishAdmission(ctx, tx, request); err != nil {
+			return uuid.Nil, err
+		}
 	}
 	if request.firstAdmission != nil {
 		manifest, err := repository.prepareFirstPublicationAdmission(ctx, tx, request)

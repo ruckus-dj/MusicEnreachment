@@ -26,6 +26,17 @@ type PublicationResult struct {
 	CoverEmbedding                *PublicationCoverEmbeddingProjection
 	SourceRepublishOptionalResult *PublicationSourceRepublishOptionalResult
 	ObsoleteOutputCleanup         *ObsoletePublicationOutputCleanupAdmission
+	ObsoleteOutputAbsent          *PublicationObsoleteOutputAbsent
+}
+
+// PublicationObsoleteOutputAbsent is transient proof that a source-republish
+// replaced CURRENT at a different path where its old output is definitely absent.
+type PublicationObsoleteOutputAbsent struct {
+	Epoch            uuid.UUID
+	PositionID       uuid.UUID
+	Generation       uuid.UUID
+	NamespaceClaimID uuid.UUID
+	RelativePath     string
 }
 
 // CommitPublicationResult installs the actual output projection and consumes
@@ -168,8 +179,16 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				return fmt.Errorf("commit publication result: check current publication: %w", err)
 			}
 		}
-		if err := validateObsoletePublicationOutputCleanup(result.ObsoleteOutputCleanup, previous, attempt, observation.RelativePath); err != nil {
+		pathChanged := previous != nil && previous.RelativePath != observation.RelativePath
+		if result.ObsoleteOutputAbsent != nil {
+			if result.ObsoleteOutputCleanup != nil || !validAbsentObsoleteOutputProof(result.ObsoleteOutputAbsent, sourceRepublish, previous, attempt, observation.RelativePath) {
+				return errors.New("commit publication result: invalid obsolete output absence proof")
+			}
+		} else if err := validateObsoletePublicationOutputCleanup(result.ObsoleteOutputCleanup, previous, attempt, observation.RelativePath); err != nil {
 			return err
+		}
+		if pathChanged && result.ObsoleteOutputCleanup == nil && result.ObsoleteOutputAbsent == nil {
+			return errors.New("commit publication result: superseded output cleanup or absence proof is required")
 		}
 		if input.ManualCover != nil && !manualCoverResultCurrent(ctx, tx, attempt.PositionID, *input.ManualCover) {
 			return nil
@@ -379,16 +398,19 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		if err := repository.requestSourceCleanupTx(ctx, tx, attempt.OperationID, attempt.PositionID, attempt.Epoch, attempt.CandidateGeneration); err != nil {
 			return fmt.Errorf("commit publication result: request source cleanup: %w", err)
 		}
-		if previous != nil && previous.RelativePath != observation.RelativePath {
-			if result.ObsoleteOutputCleanup == nil {
-				return errors.New("commit publication result: superseded output cleanup proof is required")
-			}
-			if repository.riverInserter == nil {
-				return errors.New("commit publication result: River inserter is unavailable for obsolete output cleanup")
-			}
-			if _, err := repository.AdmitObsoletePublicationOutputCleanupTx(ctx, tx, *result.ObsoleteOutputCleanup, repository.riverInserter,
-				func(id uuid.UUID) river.JobArgs { return ObsoletePublicationOutputCleanupJobArgs{OperationID: id} }, nil); err != nil {
-				return fmt.Errorf("commit publication result: admit obsolete output cleanup: %w", err)
+		if pathChanged {
+			if result.ObsoleteOutputAbsent != nil {
+				if err := lockPublicationObsoleteOutputAbsentTx(ctx, tx, *result.ObsoleteOutputAbsent); err != nil {
+					return fmt.Errorf("commit publication result: validate obsolete output absence: %w", err)
+				}
+			} else {
+				if repository.riverInserter == nil {
+					return errors.New("commit publication result: River inserter is unavailable for obsolete output cleanup")
+				}
+				if _, err := repository.AdmitObsoletePublicationOutputCleanupTx(ctx, tx, *result.ObsoleteOutputCleanup, repository.riverInserter,
+					func(id uuid.UUID) river.JobArgs { return ObsoletePublicationOutputCleanupJobArgs{OperationID: id} }, nil); err != nil {
+					return fmt.Errorf("commit publication result: admit obsolete output cleanup: %w", err)
+				}
 			}
 		}
 		if _, err := tx.NewRaw(`DELETE FROM publication_source_hold WHERE operation_id=?`, attempt.OperationID).Exec(ctx); err != nil {
@@ -426,6 +448,11 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				)`, previous.Epoch, previous.PositionID, previous.Generation).Exec(ctx); err != nil {
 				return fmt.Errorf("commit publication result: release unreferenced superseded namespace reservations: %w", err)
 			}
+			if result.ObsoleteOutputAbsent != nil {
+				if err := deletePublicationObsoleteOutputAbsentClaimTx(ctx, tx, *result.ObsoleteOutputAbsent); err != nil {
+					return fmt.Errorf("commit publication result: retire absent obsolete output claim: %w", err)
+				}
+			}
 		}
 		requestExists, err := lockPublicationReconciliationRequest(ctx, tx, attempt.Epoch, attempt.PositionID)
 		if err != nil {
@@ -446,6 +473,16 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		return nil
 	})
 	return committed, err
+}
+
+func validAbsentObsoleteOutputProof(proof *PublicationObsoleteOutputAbsent, sourceRepublish bool, previous *TrackPublication, attempt *TrackPublicationAttempt, nextRelativePath string) bool {
+	return proof != nil && sourceRepublish && previous != nil && attempt != nil &&
+		previous.RelativePath != nextRelativePath && attempt.ExpectedGeneration != nil &&
+		*attempt.ExpectedGeneration == previous.Generation && attempt.CandidateGeneration != previous.Generation &&
+		proof.Epoch == previous.Epoch && proof.PositionID == previous.PositionID &&
+		proof.Generation == previous.Generation && proof.NamespaceClaimID != uuid.Nil &&
+		proof.RelativePath == previous.RelativePath && proof.PositionID == attempt.PositionID &&
+		proof.Epoch == attempt.Epoch
 }
 
 func manualCoverResultCurrent(ctx context.Context, tx bun.Tx, positionID uuid.UUID, frozen PublicationManualCoverInput) bool {

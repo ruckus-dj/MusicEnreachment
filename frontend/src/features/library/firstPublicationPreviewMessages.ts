@@ -48,9 +48,9 @@ export const firstPublicationPreviewMessages = {
     currentWorkflow: "CURRENT action",
     currentCompare: "Compare",
     retainedRepublish: "Republish selected source",
-    retainedPlan: "Same-path republish plan",
+    retainedPlan: "Republish plan",
     retainedCapabilityReady:
-      "The selected source is eligible for same-path republishing. The publication is revalidated before start; final installation is not guaranteed.",
+      "The selected source is eligible for republishing. The publication is revalidated before start; final installation is not guaranteed.",
     retainedPrestartRevalidation:
       "A ready capability still requires revalidation before start and does not guarantee final installation.",
     retainedUnchanged:
@@ -213,9 +213,9 @@ export const firstPublicationPreviewMessages = {
     currentWorkflow: "Действие с текущей публикацией",
     currentCompare: "Сравнение",
     retainedRepublish: "Повторная публикация выбранного источника",
-    retainedPlan: "План повторной публикации по тому же пути",
+    retainedPlan: "План повторной публикации",
     retainedCapabilityReady:
-      "Выбранный источник доступен для повторной публикации по тому же пути. Перед запуском публикация будет проверена повторно; успешная установка не гарантируется.",
+      "Выбранный источник доступен для повторной публикации. Перед запуском публикация будет проверена повторно; успешная установка не гарантируется.",
     retainedPrestartRevalidation:
       "Даже при готовом разрешении перед запуском обязательна повторная проверка; успешная установка не гарантируется.",
     retainedUnchanged:
