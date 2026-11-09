@@ -266,7 +266,7 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       [42545356498](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42545356498).
       Более широкий republish и полный визуальный паритет остаются в пунктах 3/6;
       общий real-backend/визуальный E2E — в пункте 11.
-8. [ ] **Local create/update.** Использовать переиспользуемые формы для provider Local по
+8. [x] **Local create/update.** Использовать переиспользуемые формы для provider Local по
    `docs/design/local-provider.md`, с каталогом жанров из пункта 7.
    **Приёмка:** явное создание после поиска и редактирование только provider records,
    без auto-create/merge по имени, drafts или unusable statuses. Обязательны только
@@ -278,7 +278,16 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    создание/редактирование/публикацию с пустыми genres. UI-удаление provider-записей
    сюда не входит, Local edits сами не публикуются. В медиатеку ведёт provider-
    mediated incoming matching; прямой create library путь удаляется в составе
-   законченного заменяющего workflow, внутреннее создание matching сохраняется.
+    законченного заменяющего workflow, внутреннее создание matching сохраняется.
+    - [x] `fbd020dc`, `cc3cedda` и `7da9776a`: отдельный «Собственный каталог»,
+      provider-only artist/recording/release CRUD, существующие cross-provider
+      references, жанровый picker и provider-mediated incoming matching.
+      Прямой create library удалён из API/UI вместе с заменой. Последнее review
+      исправило создание после поиска с неподходящими результатами, сохранение
+      recording defaults в позициях, save-time context fence и первое открытие
+      picker. PostgreSQL CRUD/matching и UI picker regression прошли; полный hook
+      и вся [CI 42547720179](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42547720179)
+      успешны, включая контейнер. Общий real-backend E2E остаётся в пункте 11.
 9. [ ] **Deletion.** Реализовать отдельный утверждённый workflow удаления.
    **Приёмка:** точные dependency scope, confirmations и сохранение независимых
    provider/library данных соответствуют разделу «Удаление и очистка»

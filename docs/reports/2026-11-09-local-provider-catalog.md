@@ -41,3 +41,13 @@ stale detail responses, сохранение millisecond durations и uncertain-
 обновления каталога. Incoming Local editor переведён на RU/EN. Проверка реального
 DB reader добавлена в тот же matching fixture; независимое review блокеров не нашло.
 Полный hook дополнения ещё ожидается.
+
+Дополнение `cc3cedda` прошло hook и полную CI 42539934336. Финальные Local UI
+исправления `7da9776a` также прошли hook и всю CI 42547720179, включая контейнер.
+После поиска с результатами доступно явное создание при отсутствии подходящего
+кандидата; позиции сохраняют названия и duration существующих recordings независимо
+от текущего поиска; сохранение блокирует смену контекста, ошибка сохраняет draft.
+Первое открытие genre picker разрешено до чтения его статуса. Один UI regression
+проверяет настоящий picker: initial status read → search → MBID selection → save.
+Вместе с PostgreSQL provider matching и CRUD это завершает критерии пункта 8;
+browser component fixtures не объявляются real-backend E2E.
