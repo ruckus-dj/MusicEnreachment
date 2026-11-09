@@ -178,6 +178,13 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       stage observation в ней scripted. Полный hook, независимое ревью и вся
       [CI 42693196700](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42693196700)
       прошли. Cover-only и другие специализированные intents ещё не закрыты.
+    - [x] `6c70aa17`: cover-only interrupted rewrite принимает подходящий target
+      без записи обложки. Существующие projections отражают verified original/
+      derivative, фактическое отсутствие или mismatch без выдуманной истории ошибки.
+      В общей native fixture сохранён plain case и добавлен manual-cover case;
+      stage observation scripted. Полный hook, независимое ревью и вся
+      [CI 42697118829](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42697118829)
+      прошли. Другие специализированные intents остаются открытыми.
     - [x] Ordinary first-audio recovery поддерживает requested cover: точный PNG
       derivative проверяется по frozen bytes, фактическое отсутствие сохраняется
       как существующий `absent_after_interruption`, без выдуманного write failure.

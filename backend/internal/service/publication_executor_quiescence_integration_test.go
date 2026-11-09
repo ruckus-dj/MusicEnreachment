@@ -156,11 +156,13 @@ func quiescenceIntPointer(value int) *int    { return &value }
 
 type interruptedRewriteValidator struct {
 	observation PublicationStageObservation
+	input       persistence.PublicationInputs
 	calls       int
 }
 
-func (validator *interruptedRewriteValidator) Validate(_ context.Context, _ string, _ persistence.PublicationInputs) (PublicationStageObservation, error) {
+func (validator *interruptedRewriteValidator) Validate(_ context.Context, _ string, input persistence.PublicationInputs) (PublicationStageObservation, error) {
 	validator.calls++
+	validator.input = input
 	return validator.observation, nil
 }
 
@@ -184,11 +186,14 @@ func (writer *interruptedRewriteMetadataWriter) Write(context.Context, string, m
 
 func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 	cases := []struct {
-		name  string
-		cover bool
+		name              string
+		cover             bool
+		manualLyricsState string
 	}{
 		{name: "plain tags"},
 		{name: "manual cover", cover: true},
+		{name: "manual lyrics value", manualLyricsState: "value"},
+		{name: "manual lyrics explicit empty", manualLyricsState: "explicit_empty"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -243,23 +248,42 @@ func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 					t.Fatalf("derive frozen cover thumbnail: %v", err)
 				}
 			}
+			var frozenInput persistence.PublicationInputs
+			if testCase.manualLyricsState != "" {
+				lyrics := &persistence.PublicationManualLyricsInput{
+					ExpectedMetadataRevision: 2, ConfirmedCurrentGeneration: input.Rewrite.CurrentGeneration,
+					State: testCase.manualLyricsState,
+				}
+				if testCase.manualLyricsState == "value" {
+					lyrics.Value = "[00:01.00]Interrupted lyrics\n"
+				}
+				input.ManualLyrics = lyrics
+				frozenInput = input.Clone()
+				inputBytes, err := json.Marshal(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				attempt.FrozenInputs = inputBytes
+				fixture.repository.manualLyricsInputs = func(_ context.Context, guard persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error) {
+					return input, guard.OperationID == fixture.operationID && guard.ExpectedPositionID == fixture.positionID, nil
+				}
+			}
 			// Model the exact same-path FLAC left after the native tag rewrite completed
-			// but before its result transaction. Establish desired tags before recovery.
+			// but before its result transaction. Establish effective tags before recovery.
 			target := filepath.Join(fixture.outputPath, filepath.FromSlash(input.Rewrite.RelativePath))
-			tagWrite, err := (metadata.Writer{}).Write(ctx, target, input.DesiredTags, thumbnail)
+			effectiveTags := input.DesiredTags
+			if input.ManualLyrics != nil {
+				effectiveTags, _, err = optionalLyricsTags(input.DesiredTags, input.ManualLyrics)
+				if err != nil {
+					t.Fatalf("derive frozen effective lyrics tags: %v", err)
+				}
+			}
+			tagWrite, err := (metadata.Writer{}).Write(ctx, target, effectiveTags, thumbnail)
 			if err != nil {
 				t.Fatalf("prepare interrupted target tags: %v", err)
 			}
-			actualTags, err := json.Marshal(tagWrite.Tags)
-			if err != nil {
-				t.Fatal(err)
-			}
-			desiredTags, err := json.Marshal(input.DesiredTags)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(actualTags, desiredTags) {
-				t.Fatalf("interrupted target tags=%s, want frozen tags %s", actualTags, desiredTags)
+			if !equalTags(tagWrite.Tags, effectiveTags) {
+				t.Fatalf("interrupted target tags=%v, want effective frozen tags %v", tagWrite.Tags, effectiveTags)
 			}
 			contents, err := os.ReadFile(target)
 			if err != nil {
@@ -278,24 +302,29 @@ func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			actualMetadata, err := json.Marshal(persistence.PublicationCommitMetadata{Version: 1, Tags: input.DesiredTags})
+			capture, err := (metadata.Reader{}).Read(ctx, target, metadata.ReadRequest{CoverInspection: true})
+			if err != nil {
+				t.Fatalf("read actual interrupted target metadata: %v", err)
+			}
+			actualMetadata, err := json.Marshal(persistence.PublicationCommitMetadata{Version: 1, Tags: capture.Tags})
 			if err != nil {
 				t.Fatal(err)
 			}
-			assets := json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`)
+			observedAssets, err := ObservePublicationAssets(capture)
+			if err != nil {
+				t.Fatalf("observe actual interrupted target assets: %v", err)
+			}
+			assets, err := json.Marshal(observedAssets)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var thumbnailDigest [sha256.Size]byte
 			var thumbnailSize int64
 			if testCase.cover {
 				thumbnailDigest = sha256.Sum256(thumbnail.Data)
 				thumbnailSize = int64(len(thumbnail.Data))
-				assetOutcomes := persistence.PublicationAssetOutcomes{
-					Version: persistence.PublicationAssetOutcomesVersion,
-					Cover:   persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, SHA256: hex.EncodeToString(thumbnailDigest[:]), MIME: thumbnail.MIME, SizeBytes: &thumbnailSize},
-					Lyrics:  persistence.PublicationLyricsOutcome{State: persistence.PublicationAssetAbsent},
-				}
-				assets, err = json.Marshal(assetOutcomes)
-				if err != nil {
-					t.Fatal(err)
+				if observedAssets.Cover.SHA256 != hex.EncodeToString(thumbnailDigest[:]) || observedAssets.Cover.SizeBytes == nil || *observedAssets.Cover.SizeBytes != thumbnailSize {
+					t.Fatalf("observed cover=%+v, want derivative digest and size", observedAssets.Cover)
 				}
 			}
 			validator := &interruptedRewriteValidator{observation: PublicationStageObservation{
@@ -343,6 +372,21 @@ func TestInterruptedRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
 			}
 			if validator.calls != 1 {
 				t.Fatalf("stage validation calls=%d, want 1", validator.calls)
+			}
+			if input.ManualLyrics != nil {
+				if validator.input.ManualLyrics != nil || !validator.input.SupportsExecution() || validator.input.Validate() != nil || !equalTags(validator.input.DesiredTags, effectiveTags) {
+					t.Fatalf("inspection validator input=%+v, want executable detached effective tags without manual lyrics", validator.input)
+				}
+				if validator.input.Rewrite == input.Rewrite {
+					t.Fatal("inspection validator input aliases frozen rewrite data")
+				}
+				validator.input.DesiredTags["TITLE"][0] = "inspection-only mutation"
+				if input.DesiredTags["TITLE"][0] == "inspection-only mutation" {
+					t.Fatal("inspection validator input aliases frozen desired tags")
+				}
+				if input.ManualLyrics == nil || input.ManualLyrics.State != frozenInput.ManualLyrics.State || input.ManualLyrics.Value != frozenInput.ManualLyrics.Value || !equalTags(input.DesiredTags, frozenInput.DesiredTags) {
+					t.Fatal("inspection preparation mutated frozen manual-lyrics inputs")
+				}
 			}
 			if commands.calls != 2 {
 				t.Fatalf("command calls=%d, want only pinned ffmpeg/ffprobe version checks", commands.calls)

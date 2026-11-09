@@ -35,10 +35,14 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 	root sourcefs.OutputDirectory,
 	commands *simplePublicationTrackingRunner,
 ) (bool, error) {
+	manualLyricsRewrite := input.ManualLyrics != nil && input.Rewrite != nil &&
+		(input.Rewrite.AudioFacts.Container == publication.AudioContainerFLAC && input.Rewrite.AudioFacts.Codec == "flac" ||
+			input.Rewrite.AudioFacts.Container == publication.AudioContainerMKA && input.Rewrite.AudioFacts.Codec == "mp3") &&
+		input.Rewrite.AudioFacts.SupportedSourceContainer && input.Rewrite.Ownership.SHA256 != ""
 	if attempt == nil || attempt.ResumeMode != persistence.PublicationResumeModePrepare ||
 		input.Version != persistence.PublicationInputsVersion || input.IntentKind != "rewrite" ||
 		input.Format != publication.AudioFormatSource || input.Rewrite == nil || input.Audio != nil ||
-		input.AudioUpgrade != nil || input.ProviderTags != nil || input.ManualLyrics != nil ||
+		input.AudioUpgrade != nil || input.ProviderTags != nil || input.ManualLyrics != nil && !manualLyricsRewrite ||
 		input.ManualCover != nil && !isManualCoverOnlyRewriteInput(input) || input.AutomaticLyricsRetry != nil || input.SourceRepublish != nil ||
 		input.InitialLyrics != nil || attempt.ExpectedGeneration == nil ||
 		*attempt.ExpectedGeneration != input.Rewrite.CurrentGeneration ||
@@ -135,7 +139,17 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 		}
 		validator = real
 	}
-	observation, err := validator.Validate(ctx, inspectionPath, input)
+	inspectionInput := input
+	if input.ManualLyrics != nil {
+		inspectionInput = input.Clone()
+		tags, _, err := optionalLyricsTags(input.DesiredTags, input.ManualLyrics)
+		if err != nil {
+			return false, nil
+		}
+		inspectionInput.DesiredTags = tags
+		inspectionInput.ManualLyrics = nil
+	}
+	observation, err := validator.Validate(ctx, inspectionPath, inspectionInput)
 	if err != nil {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
