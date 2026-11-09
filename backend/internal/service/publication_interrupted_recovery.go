@@ -39,12 +39,23 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 		input.Version != persistence.PublicationInputsVersion || input.IntentKind != "rewrite" ||
 		input.Format != publication.AudioFormatSource || input.Rewrite == nil || input.Audio != nil ||
 		input.AudioUpgrade != nil || input.ProviderTags != nil || input.ManualLyrics != nil ||
-		input.ManualCover != nil || input.AutomaticLyricsRetry != nil || input.SourceRepublish != nil ||
+		input.ManualCover != nil && !isManualCoverOnlyRewriteInput(input) || input.AutomaticLyricsRetry != nil || input.SourceRepublish != nil ||
 		input.InitialLyrics != nil || attempt.ExpectedGeneration == nil ||
 		*attempt.ExpectedGeneration != input.Rewrite.CurrentGeneration ||
 		attempt.PositionID != guard.ExpectedPositionID || attempt.Epoch != guard.Epoch ||
 		attempt.CandidateGeneration != guard.CandidateGeneration || input.Validate() != nil {
 		return false, nil
+	}
+	var coverReceipt *persistence.PublicationAttemptCoverInput
+	if input.ManualCover != nil {
+		receipt, valid, err := executor.repository.PublicationAttemptCoverInputForDelivery(ctx, guard)
+		if err != nil {
+			return false, fmt.Errorf("read interrupted cover-rewrite receipt: %w", err)
+		}
+		if !valid {
+			return false, nil
+		}
+		coverReceipt = &receipt
 	}
 	target, nodes, err := publicationTarget(attempt.NamespaceManifest)
 	if err != nil {
@@ -140,6 +151,17 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 	if observation.SHA256 != digest || !rewriteObservationPreservesAudio(observation.Audio, input.Rewrite.AudioFacts) {
 		return false, nil
 	}
+	var coverEmbedding *persistence.PublicationCoverEmbeddingProjection
+	if coverReceipt != nil {
+		assets, err := persistence.DecodePublicationAssetOutcomes(observation.Assets)
+		if err != nil {
+			return false, fmt.Errorf("decode interrupted cover-rewrite assets: %w", err)
+		}
+		coverEmbedding, err = interruptedCoverEmbedding(ctx, tempDir, *coverReceipt, attempt.CandidateGeneration, assets)
+		if err != nil {
+			return false, fmt.Errorf("observe interrupted cover-rewrite outcome: %w", err)
+		}
+	}
 	if commands.QuiescenceUnknown() {
 		return false, errors.New("publication command quiescence is unknown")
 	}
@@ -172,6 +194,7 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 		Observation: actual,
 		InstalledOwnership: persistence.PublicationCurrentOwnership{Version: persistence.PublicationCurrentOwnershipVersion,
 			Identity: persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest}},
+		CoverEmbedding: coverEmbedding,
 	}
 	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -180,6 +203,54 @@ func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
 		return false, errors.Join(err, errors.New("recovered tag-rewrite result was not committed"))
 	}
 	return true, nil
+}
+
+func interruptedCoverEmbedding(
+	ctx context.Context,
+	tempDir string,
+	receipt persistence.PublicationAttemptCoverInput,
+	generation uuid.UUID,
+	assets persistence.PublicationAssetOutcomes,
+) (*persistence.PublicationCoverEmbeddingProjection, error) {
+	if receipt.State != "value" || receipt.Generation == nil || receipt.MIME == nil || receipt.Size == nil || len(receipt.SHA256) == 0 {
+		return nil, errors.New("interrupted cover-rewrite receipt is incomplete")
+	}
+	projection := &persistence.PublicationCoverEmbeddingProjection{
+		Version:    persistence.PublicationCoverEmbeddingProjectionVersion,
+		Generation: generation, ReceiptOperationID: receipt.OperationID,
+		ReceiptReleaseID: receipt.ReleaseID, ReceiptRevision: receipt.Revision, ReceiptMode: receipt.Mode,
+		RequestedGeneration: *receipt.Generation, RequestedSHA256: hex.EncodeToString(receipt.SHA256),
+	}
+	switch assets.Cover.State {
+	case persistence.PublicationAssetAbsent:
+		projection.Version = persistence.PublicationCoverEmbeddingDerivativeProjectionVersion
+		projection.Outcome = "absent_after_interruption"
+		projection.WarningCode = "cover_absent_after_interruption"
+	case persistence.PublicationAssetEmbedded:
+		if assets.Cover.SHA256 == projection.RequestedSHA256 && assets.Cover.MIME == *receipt.MIME && assets.Cover.SizeBytes != nil && *assets.Cover.SizeBytes == *receipt.Size {
+			projection.Outcome = "verified"
+			return projection, nil
+		}
+		thumbnail, err := publicationCoverThumbnail(ctx, tempDir, &receipt)
+		if err != nil {
+			return nil, err
+		}
+		digest := sha256.Sum256(thumbnail.Data)
+		size := int64(len(thumbnail.Data))
+		if assets.Cover.SHA256 == hex.EncodeToString(digest[:]) && assets.Cover.MIME == thumbnail.MIME && assets.Cover.SizeBytes != nil && *assets.Cover.SizeBytes == size {
+			projection.Version = persistence.PublicationCoverEmbeddingDerivativeProjectionVersion
+			projection.Outcome = "verified"
+			projection.EmbeddedSHA256 = hex.EncodeToString(digest[:])
+			projection.EmbeddedMIME = thumbnail.MIME
+			projection.EmbeddedSize = &size
+			return projection, nil
+		}
+		projection.Outcome = "mismatch"
+		projection.WarningCode = "cover_mismatch"
+	default:
+		return nil, errors.New("interrupted cover-rewrite asset state is invalid")
+	}
+	return projection, nil
 }
 
 func snapshotInterruptedPublicationTarget(ctx context.Context, file sourcefs.RegularFile, before os.FileInfo, extension string) (string, string, string, error) {

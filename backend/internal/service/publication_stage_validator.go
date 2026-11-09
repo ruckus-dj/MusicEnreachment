@@ -270,7 +270,7 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 				return PublicationStageObservation{}, fmt.Errorf("observe publication stage assets: %w", assetErr)
 			}
 			if err := validateNativeRewriteTopology(raw, assets.Cover); err != nil {
-				if isPlainTagOnlyRewriteInput(input) {
+				if isPlainTagOnlyRewriteInput(input) || isManualCoverOnlyRewriteInput(input) {
 					return PublicationStageObservation{}, publicationStageMismatch(err.Error())
 				}
 				return PublicationStageObservation{}, err
@@ -646,6 +646,14 @@ func isPlainTagOnlyRewriteInput(input persistence.PublicationInputs) bool {
 		input.Format == publication.AudioFormatSource && input.Rewrite != nil && input.Audio == nil &&
 		input.AudioUpgrade == nil && input.ProviderTags == nil && input.ManualLyrics == nil &&
 		input.ManualCover == nil && input.AutomaticLyricsRetry == nil && input.SourceRepublish == nil &&
+		input.InitialLyrics == nil
+}
+
+func isManualCoverOnlyRewriteInput(input persistence.PublicationInputs) bool {
+	return input.Version == persistence.PublicationInputsVersion && input.IntentKind == "rewrite" &&
+		input.Format == publication.AudioFormatSource && input.Rewrite != nil && input.Audio == nil &&
+		input.AudioUpgrade == nil && input.ProviderTags == nil && input.ManualLyrics == nil &&
+		input.ManualCover != nil && input.AutomaticLyricsRetry == nil && input.SourceRepublish == nil &&
 		input.InitialLyrics == nil
 }
 

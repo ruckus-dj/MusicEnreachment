@@ -171,6 +171,13 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       Полный hook, независимое ревью и вся
       [CI 42687966540](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42687966540)
       прошли. Специализированные recovery intents остаются открытыми.
+    - [x] `77736c53`: interrupted plain tag-only rewrite принимает подходящий
+      target без повторной metadata-записи. Проверяются полные frozen tags и
+      известные технические параметры; фактические assets сохраняются без
+      переноса неподтверждённой lyrics history. Native fixture покрывает adoption,
+      stage observation в ней scripted. Полный hook, независимое ревью и вся
+      [CI 42693196700](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42693196700)
+      прошли. Cover-only и другие специализированные intents ещё не закрыты.
     - [x] Ordinary first-audio recovery поддерживает requested cover: точный PNG
       derivative проверяется по frozen bytes, фактическое отсутствие сохраняется
       как существующий `absent_after_interruption`, без выдуманного write failure.
