@@ -147,6 +147,11 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       [CI 42415924806](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42415924806)
       прошли. Requested cover и специализированные intents пока не включены;
       [границы среза](../../reports/2026-11-07-interrupted-publication-recovery.md).
+    - [x] Для interrupted same-path republish неподходящий target, включая
+      изменённый извне, запускает полную подготовку из source. Разрешение замены
+      привязано к наблюдённой identity; inspection mode сохраняется при ошибке
+      подготовки до проверенной замены. Расширен существующий retry-сценарий,
+      без нового журнала или схемы. Остальные критерии пункта остаются открытыми.
 4. [x] **Metadata ownership и provider edges.** Привести ownership, provider
    relationships и границы влияния metadata к документации; Local create/update
    не создаёт library entries. **Приёмка:** самостоятельный recording и позиция

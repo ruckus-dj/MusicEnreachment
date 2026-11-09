@@ -37,6 +37,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	root sourcefs.OutputDirectory,
 	commands *simplePublicationTrackingRunner,
 	allowSourceRepublishReprepare bool,
+	authorizedObservedSourceRepublishTarget persistence.PublicationFileIdentity,
 ) (resultErr error) {
 	if input.IntentKind == "rewrite" && (input.Rewrite == nil || input.Audio != nil || input.AudioUpgrade != nil) ||
 		input.IntentKind == "audio" && (input.Audio == nil || input.Rewrite != nil) ||
@@ -295,12 +296,12 @@ func (executor *PublicationExecutor) executeSimplePublication(
 			oldIdentityMatches := digestErr == nil && identity.SizeBytes != nil && identity.MTime != nil &&
 				currentInfo.Mode().IsRegular() && currentInfo.Size() == *identity.SizeBytes &&
 				currentInfo.ModTime().UnixMicro() == *identity.MTime && currentDigest == identity.SHA256
-			if !oldIdentityMatches {
-				if !allowSourceRepublishReprepare {
+			if !oldIdentityMatches || authorizedObservedSourceRepublishTarget.SHA256 != "" {
+				if !allowSourceRepublishReprepare && authorizedObservedSourceRepublishTarget.SHA256 == "" {
 					_ = currentFile.Close()
 					return errors.Join(errors.New("source-republish CURRENT output changed before replacement"), digestErr)
 				}
-				inspected, inspectErr := executor.inspectSourceRepublishTargetForReprepare(ctx, input, guard, mutation, targetName, currentFile, currentInfo, commands)
+				inspected, inspectErr := executor.inspectSourceRepublishTargetForReprepare(ctx, input, guard, mutation, targetName, currentFile, currentInfo, commands, authorizedObservedSourceRepublishTarget)
 				if inspectErr != nil {
 					_ = currentFile.Close()
 					return inspectErr
@@ -359,6 +360,14 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		return err
 	}
 	digest, digestErr := digestRegular(ctx, installed)
+	if digestErr == nil && authorizedObservedSourceRepublishTarget.SHA256 != "" {
+		afterInfo, statErr := installed.Stat(ctx)
+		if statErr != nil || !os.SameFile(installedInfo, afterInfo) || installedInfo.Size() != afterInfo.Size() || !installedInfo.ModTime().Equal(afterInfo.ModTime()) {
+			digestErr = errors.Join(statErr, errors.New("installed source-republish candidate changed during identity inspection"))
+		} else {
+			installedInfo = afterInfo
+		}
+	}
 	closeErr := installed.Close()
 	if err := errors.Join(digestErr, closeErr); err != nil {
 		return err
@@ -367,6 +376,19 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		return errors.New("installed publication does not match the validated candidate")
 	}
 	size, mtime := installedInfo.Size(), installedInfo.ModTime().UnixMicro()
+	installedIdentity := persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest}
+	if authorizedObservedSourceRepublishTarget.SHA256 != "" {
+		resumer, ok := executor.repository.(interface {
+			ResumeObservedSourceRepublishPreparation(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationFileIdentity) (bool, error)
+		})
+		if !ok {
+			return errors.New("source-republish observed-target resume capability is unavailable")
+		}
+		resumed, err := resumer.ResumeObservedSourceRepublishPreparation(ctx, guard, installedIdentity)
+		if err != nil || !resumed {
+			return errors.Join(err, errors.New("installed source-republish candidate did not authorize preparation settlement"))
+		}
+	}
 	result := persistence.PublicationResult{
 		Observation:                   observation,
 		PreservedAudioSHA256:          prepared.PreservedAudioSHA256,
@@ -375,7 +397,7 @@ func (executor *PublicationExecutor) executeSimplePublication(
 		ObsoleteOutputCleanup:         obsoleteOutput,
 		InstalledOwnership: persistence.PublicationCurrentOwnership{
 			Version:  persistence.PublicationCurrentOwnershipVersion,
-			Identity: persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest},
+			Identity: installedIdentity,
 		},
 	}
 	if prepared.CoverEmbedding != nil {

@@ -14,6 +14,7 @@ type sourceRepublishTargetEvidenceKind uint8
 const (
 	sourceRepublishTargetObserved sourceRepublishTargetEvidenceKind = iota + 1
 	sourceRepublishTargetMissing
+	sourceRepublishTargetInstalledAfterReplacement
 )
 
 type sourceRepublishTargetEvidence struct {
@@ -32,6 +33,20 @@ func (repository *SetupManagerRepository) ResumeSourceRepublishPreparation(
 ) (bool, error) {
 	return repository.resumeSourceRepublishPreparation(ctx, guard, sourceRepublishTargetEvidence{
 		kind: sourceRepublishTargetObserved, identity: observed,
+	})
+}
+
+// ResumeObservedSourceRepublishPreparation consumes inspection mode after the
+// caller has safely replaced the unsuitable target with a verified, source-backed
+// candidate. observed is the installed candidate identity, not the old target's
+// identity. All retained publication authorities are revalidated before mode clears.
+func (repository *SetupManagerRepository) ResumeObservedSourceRepublishPreparation(
+	ctx context.Context,
+	guard PublicationDeliveryGuard,
+	observed PublicationFileIdentity,
+) (bool, error) {
+	return repository.resumeSourceRepublishPreparation(ctx, guard, sourceRepublishTargetEvidence{
+		kind: sourceRepublishTargetInstalledAfterReplacement, identity: observed,
 	})
 }
 
@@ -84,6 +99,10 @@ func (repository *SetupManagerRepository) resumeSourceRepublishPreparation(
 		case sourceRepublishTargetObserved:
 			if !sameJSONValue(mustPublicationJSON(evidence.identity), mustPublicationJSON(input.SourceRepublish.Current.Ownership)) {
 				return nil
+			}
+		case sourceRepublishTargetInstalledAfterReplacement:
+			if evidence.identity.SizeBytes == nil || evidence.identity.MTime == nil || evidence.identity.SHA256 == "" {
+				return errors.New("resume source-republish preparation: replacement observation is incomplete")
 			}
 		case sourceRepublishTargetMissing:
 		default:

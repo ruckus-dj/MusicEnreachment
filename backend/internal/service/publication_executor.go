@@ -203,6 +203,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 			resultErr = fmt.Errorf("publication execution panicked: %v", recovered)
 		}
 	}()
+	var authorizedObservedSourceRepublishTarget persistence.PublicationFileIdentity
 	if claim == persistence.PublicationDeliverySourceRepublishRecovery {
 		attempt, err = executor.repository.ReadPublicationAttempt(ctx, operationID)
 		if err != nil || attempt == nil || attempt.ResumeMode != persistence.PublicationResumeModeInspectSourceRepublishTarget {
@@ -222,7 +223,7 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 	input = guarded
 	switch claim {
 	case persistence.PublicationDeliverySourceRepublishRecovery:
-		recovered, resume, err := executor.recoverInterruptedSourceRepublish(ctx, attempt, input, guard, outputPath, root, commands)
+		recovered, resume, err := executor.recoverInterruptedSourceRepublish(ctx, attempt, input, guard, outputPath, root, commands, &authorizedObservedSourceRepublishTarget)
 		if err != nil {
 			return err
 		}
@@ -232,7 +233,9 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		if !resume {
 			return errors.New("source-republish recovery did not authorize preparation")
 		}
-		attempt.ResumeMode = persistence.PublicationResumeModePrepare
+		if authorizedObservedSourceRepublishTarget.SHA256 == "" {
+			attempt.ResumeMode = persistence.PublicationResumeModePrepare
+		}
 	case persistence.PublicationDeliveryInterrupted:
 		recovered, err := executor.recoverInterruptedFirstAudio(ctx, attempt, input, guard, outputPath, root, commands)
 		if err != nil {
@@ -243,5 +246,5 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		}
 	}
 	allowSourceRepublishReprepare := claim == persistence.PublicationDeliveryReprepare || guard.ApplicationAttempt > 1
-	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root, commands, allowSourceRepublishReprepare)
+	return executor.executeSimplePublication(ctx, attempt, input, guard, outputPath, root, commands, allowSourceRepublishReprepare, authorizedObservedSourceRepublishTarget)
 }

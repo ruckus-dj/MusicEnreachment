@@ -248,7 +248,8 @@ func (executor *PublicationExecutor) recoverInterruptedFirstAudio(
 
 // recoverInterruptedSourceRepublish adopts only a validated same-path target
 // left by an interrupted v4 source-republish delivery. The target is copied to
-// a private inspection file; it is never used as a candidate or rewritten.
+// a private inspection file, never used as a candidate; an unsuitable target can
+// only be replaced after full source-backed preparation.
 func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 	ctx context.Context,
 	attempt *persistence.TrackPublicationAttempt,
@@ -257,6 +258,7 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 	outputRoot string,
 	root sourcefs.OutputDirectory,
 	commands *simplePublicationTrackingRunner,
+	authorizedObservedReplacement *persistence.PublicationFileIdentity,
 ) (recovered, resumePreparation bool, resultErr error) {
 	if attempt == nil || attempt.ResumeMode != persistence.PublicationResumeModeInspectSourceRepublishTarget ||
 		input.Version != persistence.PublicationSourceRepublishInputsVersion || input.IntentKind != "audio" ||
@@ -361,9 +363,20 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 	digest := hex.EncodeToString(hash.Sum(nil))
 	size, mtime := before.Size(), before.ModTime().UnixMicro()
 	observedIdentity := persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest}
+	resumeFromObservedTarget := func() (bool, bool, error) {
+		identity, err := executor.resumeObservedSourceRepublishPreparation(ctx, guard, input, target.RelativePath, observedIdentity)
+		if err != nil {
+			return false, false, err
+		}
+		*authorizedObservedReplacement = identity
+		return false, true, nil
+	}
 	if digest == current.Ownership.SHA256 {
 		if !samePublicationFileIdentity(observedIdentity, current.Ownership) {
-			return false, false, errors.New("source-republish target content matches CURRENT but its ownership identity drifted")
+			if _, err := verifyInterruptedSourceRepublishTarget(ctx, root, chain, mutation, name, file, before); err != nil {
+				return false, false, err
+			}
+			return resumeFromObservedTarget()
 		}
 		if _, err := verifyInterruptedSourceRepublishTarget(ctx, root, chain, mutation, name, file, before); err != nil {
 			return false, false, err
@@ -428,11 +441,26 @@ func (executor *PublicationExecutor) recoverInterruptedSourceRepublish(
 	}
 	expectedCover, coverReceipt, err := sourceRepublishRecoveryCoverResult(input.SourceRepublish.Cover, assets.Cover)
 	if err != nil {
+		if ctx.Err() == nil && isDefinitePublicationStageMismatch(err) && !commands.QuiescenceUnknown() {
+			if _, verifyErr := verifyInterruptedSourceRepublishTarget(ctx, root, chain, mutation, name, file, before); verifyErr != nil {
+				return false, false, errors.Join(err, verifyErr)
+			}
+			return resumeFromObservedTarget()
+		}
 		return false, false, err
 	}
 	observation, err := sourceRepublishValidator.ValidateSourceRepublish(ctx, inspectionPath, input, expectedCover)
 	if err != nil {
-		return false, false, fmt.Errorf("validate interrupted source-republish target: %w", err)
+		if ctx.Err() != nil || !isDefinitePublicationStageMismatch(err) {
+			return false, false, fmt.Errorf("validate interrupted source-republish target: %w", err)
+		}
+		if commands.QuiescenceUnknown() {
+			return false, false, errors.New("publication command quiescence is unknown")
+		}
+		if _, verifyErr := verifyInterruptedSourceRepublishTarget(ctx, root, chain, mutation, name, file, before); verifyErr != nil {
+			return false, false, errors.Join(err, verifyErr)
+		}
+		return resumeFromObservedTarget()
 	}
 	if observation.SHA256 != digest {
 		return false, false, errors.New("interrupted source-republish snapshot changed during validation")
@@ -523,6 +551,30 @@ func (executor *PublicationExecutor) resumeMissingSourceRepublishPreparation(
 	return resumer.ResumeMissingSourceRepublishPreparation(ctx, guard)
 }
 
+// resumeObservedSourceRepublishPreparation rechecks recovery authority and
+// returns the observed target identity, but leaves inspection mode durable until
+// installation has produced and verified a complete source-backed candidate.
+func (executor *PublicationExecutor) resumeObservedSourceRepublishPreparation(
+	ctx context.Context,
+	guard persistence.PublicationDeliveryGuard,
+	input persistence.PublicationInputs,
+	target string,
+	observed persistence.PublicationFileIdentity,
+) (persistence.PublicationFileIdentity, error) {
+	if err := executor.checkSimplePublicationCurrent(ctx, guard, input); err != nil {
+		return persistence.PublicationFileIdentity{}, err
+	}
+	current, err := executor.repository.CheckPublicationResultCurrent(ctx, guard)
+	if err != nil || !current {
+		return persistence.PublicationFileIdentity{}, errors.Join(err, errors.New("source-republish authority changed during interruption recovery"))
+	}
+	replaceAllowed, err := executor.repository.CheckPublicationTargetReplacement(ctx, guard, target)
+	if err != nil || !replaceAllowed {
+		return persistence.PublicationFileIdentity{}, errors.Join(err, errors.New("source-republish replacement authority changed during interruption recovery"))
+	}
+	return observed, nil
+}
+
 type inspectedSourceRepublishTarget struct {
 	info        os.FileInfo
 	identity    persistence.PublicationFileIdentity
@@ -531,8 +583,9 @@ type inspectedSourceRepublishTarget struct {
 }
 
 // inspectSourceRepublishTargetForReprepare validates a changed target against
-// the frozen source-republish result without adopting it. The returned live
-// identity is the expected-existing identity for the subsequent native replace.
+// the frozen result unless interrupted recovery explicitly authorized replacing
+// its safely observed unsuitable target. The returned live identity fences the
+// subsequent native replacement.
 func (executor *PublicationExecutor) inspectSourceRepublishTargetForReprepare(
 	ctx context.Context,
 	input persistence.PublicationInputs,
@@ -542,6 +595,7 @@ func (executor *PublicationExecutor) inspectSourceRepublishTargetForReprepare(
 	file sourcefs.RegularFile,
 	before os.FileInfo,
 	commands *simplePublicationTrackingRunner,
+	authorizedObservedReplacement persistence.PublicationFileIdentity,
 ) (inspectedSourceRepublishTarget, error) {
 	if input.SourceRepublish == nil || before == nil || !before.Mode().IsRegular() || before.Size() < 0 || commands.QuiescenceUnknown() {
 		return inspectedSourceRepublishTarget{}, errors.New("source-republish target inspection is unavailable")
@@ -594,6 +648,15 @@ func (executor *PublicationExecutor) inspectSourceRepublishTargetForReprepare(
 	observed := persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest}
 	if _, err := verifySimpleSourceRepublishTarget(ctx, mutation, name, file, before); err != nil {
 		return inspectedSourceRepublishTarget{}, err
+	}
+	if authorizedObservedReplacement.SHA256 != "" {
+		if commands.QuiescenceUnknown() {
+			return inspectedSourceRepublishTarget{}, errors.New("publication command quiescence is unknown")
+		}
+		if !samePublicationFileIdentity(observed, authorizedObservedReplacement) {
+			return inspectedSourceRepublishTarget{}, errors.New("source-republish target changed after interrupted recovery inspection")
+		}
+		return inspectedSourceRepublishTarget{info: before, identity: observed}, nil
 	}
 	resolver := NewPublicationPinnedToolsResolver(executor.repository, simplePublicationToolCommands{runner: commands}, executor.platform)
 	_, validTools, err := resolver.Resolve(ctx, guard, input.Tools)
@@ -745,7 +808,7 @@ func sourceRepublishRecoveryCoverResult(
 	switch frozen.Derivation {
 	case "absent", "optional_failure":
 		if actual.State != persistence.PublicationAssetAbsent {
-			return persistence.PublicationCoverOutcome{}, "", errors.New("interrupted source-republish target contains an unplanned cover")
+			return persistence.PublicationCoverOutcome{}, "", publicationStageMismatch("interrupted source-republish target contains an unplanned cover")
 		}
 		return absent, "", nil
 	case "ready":
@@ -754,7 +817,7 @@ func sourceRepublishRecoveryCoverResult(
 		}
 		size := frozen.SizeBytes
 		if actual.State != persistence.PublicationAssetEmbedded || actual.SHA256 != frozen.SHA256 || actual.MIME != frozen.MIME || actual.SizeBytes == nil || *actual.SizeBytes != size {
-			return persistence.PublicationCoverOutcome{}, "", errors.New("interrupted source-republish target cover differs from frozen derivative")
+			return persistence.PublicationCoverOutcome{}, "", publicationStageMismatch("interrupted source-republish target cover differs from frozen derivative")
 		}
 		return persistence.PublicationCoverOutcome{State: persistence.PublicationAssetEmbedded, SHA256: frozen.SHA256, MIME: frozen.MIME, SizeBytes: &size}, persistence.PublicationSourceRepublishCoverVerified, nil
 	default:

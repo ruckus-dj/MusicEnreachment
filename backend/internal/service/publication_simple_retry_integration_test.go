@@ -375,6 +375,95 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 			t.Fatalf("attempt after missing-final retry = %+v, %v; want settled", attempt, err)
 		}
 
+		// An interrupted republish must reprepare from its frozen source when the
+		// same-path target was externally modified and fails content validation.
+		// The observed identity must still fence the eventual atomic replacement.
+		oldCurrentBytes, err := os.ReadFile(finalPath)
+		if err != nil {
+			t.Fatalf("read CURRENT before ownership-drift scenario: %v", err)
+		}
+		updateComment("ownership drift replacement")
+		afterMoveAttempt, afterMoveJobID = admitRepublish()
+		if _, err := db.ExecContext(ctx, `CREATE FUNCTION reject_test_source_republish_current_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected source-republish CURRENT update failure'; END $$`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `CREATE TRIGGER reject_test_source_republish_current_update BEFORE UPDATE ON track_publication FOR EACH ROW EXECUTE FUNCTION reject_test_source_republish_current_update()`); err != nil {
+			t.Fatal(err)
+		}
+		if err := executor.ExecutePublicationDelivery(ctx, afterMoveAttempt.OperationID, afterMoveJobID, 1); err == nil || !strings.Contains(err.Error(), "injected source-republish CURRENT update failure") {
+			t.Fatalf("external-target setup settlement error = %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `DROP TRIGGER reject_test_source_republish_current_update ON track_publication`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `DROP FUNCTION reject_test_source_republish_current_update()`); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(finalPath, oldCurrentBytes, 0o600); err != nil {
+			t.Fatalf("restore old CURRENT bytes: %v", err)
+		}
+		externallyModified, err := (metadata.Reader{}).Read(ctx, finalPath, metadata.ReadRequest{})
+		if err != nil {
+			t.Fatalf("read target for external modification: %v", err)
+		}
+		externallyModified.Tags["COMMENT"] = []string{"external modification"}
+		if _, err := (metadata.Writer{}).Write(ctx, finalPath, externallyModified.Tags, nil); err != nil {
+			t.Fatalf("externally modify interrupted target: %v", err)
+		}
+		oldInfo, err := os.Stat(finalPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		driftedMtime := oldInfo.ModTime().Add(2 * time.Second)
+		if err := os.Chtimes(finalPath, driftedMtime, driftedMtime); err != nil {
+			t.Fatalf("drift old CURRENT mtime: %v", err)
+		}
+		oldBoot := uuid.New()
+		if oldBoot == executor.bootUUID {
+			t.Fatal("simulated prior boot identity matches current executor")
+		}
+		result, err := db.ExecContext(ctx, `UPDATE publication_execution_claim SET state='executing',boot_uuid=? WHERE operation_id=? AND state='quiescent'`, oldBoot, afterMoveAttempt.OperationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			t.Fatalf("restore external-target old claim rows=%d err=%v", affected, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1 WHERE id=?`, afterMoveJobID); err != nil {
+			t.Fatal(err)
+		}
+		executor = NewPublicationExecutor(manager, registry, integrationtools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), audioDeliveryTestCommands{})
+		executor.metadata = writer
+		writer.failNextOptionalAssets = true
+		if err := executor.ExecutePublicationDelivery(ctx, afterMoveAttempt.OperationID, afterMoveJobID, 1); err == nil || !strings.Contains(err.Error(), "injected source-republish preparation failure") {
+			t.Fatalf("interrupted source-republish preparation error = %v", err)
+		}
+		attempt, err = manager.ReadPublicationAttempt(ctx, afterMoveAttempt.OperationID)
+		if err != nil || attempt == nil || attempt.ResumeMode != persistence.PublicationResumeModeInspectSourceRepublishTarget {
+			t.Fatalf("inspection mode after failed source-backed preparation = %+v, %v", attempt, err)
+		}
+		stillExternal, err := (metadata.Reader{}).Read(ctx, finalPath, metadata.ReadRequest{})
+		if err != nil || len(stillExternal.Tags["COMMENT"]) != 1 || stillExternal.Tags["COMMENT"][0] != "external modification" {
+			t.Fatalf("target after failed source-backed preparation = %#v, %v", stillExternal.Tags, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=2 WHERE id=?`, afterMoveJobID); err != nil {
+			t.Fatal(err)
+		}
+		if err := executor.ExecutePublicationDelivery(ctx, afterMoveAttempt.OperationID, afterMoveJobID, 2); err != nil {
+			t.Fatalf("externally modified target source-backed recovery retry: %v", err)
+		}
+		if writer.calls != 8 {
+			t.Fatalf("writer calls after external-target recovery = %d, want failed and successful preparations (8)", writer.calls)
+		}
+		driftedOutput, err := (metadata.Reader{}).Read(ctx, finalPath, metadata.ReadRequest{})
+		if err != nil || len(driftedOutput.Tags["COMMENT"]) != 1 || driftedOutput.Tags["COMMENT"][0] != "ownership drift replacement" {
+			t.Fatalf("external-target replacement output = %#v, %v", driftedOutput.Tags, err)
+		}
+		var driftedCurrent persistence.TrackPublication
+		if err := db.NewSelect().Model(&driftedCurrent).Where("position_id=?", before.PositionID).Scan(ctx); err != nil || driftedCurrent.Generation != afterMoveAttempt.CandidateGeneration {
+			t.Fatalf("CURRENT after external-target recovery = %+v, %v", driftedCurrent, err)
+		}
+
 		// Keep source-gone interrupted adoption independent: create a fresh
 		// attempt, fail after replacement again, then model process interruption.
 		updateComment("after-move source-gone recovery")
@@ -394,11 +483,11 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 		if _, err := db.ExecContext(ctx, `DROP FUNCTION reject_test_source_republish_current_update()`); err != nil {
 			t.Fatal(err)
 		}
-		oldBoot := uuid.New()
+		oldBoot = uuid.New()
 		if oldBoot == executor.bootUUID {
 			t.Fatal("simulated prior boot identity matches current executor")
 		}
-		result, err := db.ExecContext(ctx, `UPDATE publication_execution_claim SET state='executing',boot_uuid=? WHERE operation_id=? AND state='quiescent'`, oldBoot, afterMoveAttempt.OperationID)
+		result, err = db.ExecContext(ctx, `UPDATE publication_execution_claim SET state='executing',boot_uuid=? WHERE operation_id=? AND state='quiescent'`, oldBoot, afterMoveAttempt.OperationID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -427,7 +516,7 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 		if !inspectedStickyMode {
 			t.Fatal("source-free recovery did not observe sticky inspection mode")
 		}
-		if writer.calls != 6 {
+		if writer.calls != 9 {
 			t.Fatalf("writer calls after source-free inspection recovery = %d, want no re-preparation", writer.calls)
 		}
 		var recovered persistence.TrackPublication
@@ -441,8 +530,8 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 		if err := executor.ExecutePublicationDelivery(ctx, afterMoveAttempt.OperationID, afterMoveJobID, 1); err != nil {
 			t.Fatalf("completed source-free redelivery: %v", err)
 		}
-		if writer.calls != 6 {
-			t.Fatalf("writer calls after completed redelivery = %d, want 6", writer.calls)
+		if writer.calls != 9 {
+			t.Fatalf("writer calls after completed redelivery = %d, want 9", writer.calls)
 		}
 	}})
 }
@@ -555,8 +644,9 @@ func (writer *countingPublicationMetadataWriter) Write(ctx context.Context, path
 // observes optional-asset writes without changing the capabilities advertised
 // by the first-publication retry writer used by other tests.
 type countingSourceRepublishMetadataWriter struct {
-	delegate metadata.Writer
-	calls    int
+	delegate               metadata.Writer
+	calls                  int
+	failNextOptionalAssets bool
 }
 
 func (writer *countingSourceRepublishMetadataWriter) Write(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.WriteResult, error) {
@@ -566,6 +656,10 @@ func (writer *countingSourceRepublishMetadataWriter) Write(ctx context.Context, 
 
 func (writer *countingSourceRepublishMetadataWriter) WriteWithOptionalAssets(ctx context.Context, path string, tags map[string][]string, cover *metadata.Cover) (metadata.OptionalAssetsWriteResult, error) {
 	writer.calls++
+	if writer.failNextOptionalAssets {
+		writer.failNextOptionalAssets = false
+		return metadata.OptionalAssetsWriteResult{}, errors.New("injected source-republish preparation failure")
+	}
 	return writer.delegate.WriteWithOptionalAssets(ctx, path, tags, cover)
 }
 
