@@ -989,6 +989,100 @@ export interface LibraryReleaseEditionResponse {
   secondary_types: string[];
 }
 
+export interface LibraryReleaseGroupEditionResponse {
+  artists: LibraryArtistCreditResponse[];
+  edition: LibraryReleaseEditionResponse;
+  provider_key: string;
+  title: string;
+  /** @nullable */
+  track_count: number | null;
+}
+
+export interface LibraryReleaseGroupTrackResponse {
+  /** @nullable */
+  duration_ms: number | null;
+  medium: number;
+  number: string;
+  position: number;
+  /** @nullable */
+  recording_title: string | null;
+  title: string;
+}
+
+export interface LibraryReleaseGroupEditionTracksResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  complete: boolean | null;
+  group_provider_key: string;
+  provider_code: string;
+  release_provider_key: string;
+  /** @nullable */
+  track_count: number | null;
+  tracks: LibraryReleaseGroupTrackResponse[];
+}
+
+export interface LibraryReleaseGroupEditionsResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  editions: LibraryReleaseGroupEditionResponse[];
+  limit: number;
+  offset: number;
+  provider_code: string;
+  provider_key: string;
+  total: number;
+}
+
+export type LibraryReleaseItemKind = typeof LibraryReleaseItemKind[keyof typeof LibraryReleaseItemKind];
+
+
+export const LibraryReleaseItemKind = {
+  library_release: 'library_release',
+  missing_release_group: 'missing_release_group',
+} as const;
+
+export interface ReleaseCoverSummary {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  mode: string;
+  pending_generation?: string;
+  pending_mime?: string;
+  pending_sha256?: string;
+  pending_size?: number;
+  release_id: string;
+  revision: number;
+  selected_generation?: string;
+  selected_mime?: string;
+  selected_sha256?: string;
+  selected_size?: number;
+  warning?: string;
+}
+
+export interface LibraryReleaseSummary {
+  artists: LibraryArtistCreditResponse[];
+  counts: LibraryReleaseCountsResponse;
+  cover: ReleaseCoverSummary;
+  edition: LibraryReleaseEditionResponse;
+  id: string;
+  provider_links: LibraryProviderLinkResponse[];
+  title: string;
+}
+
+export interface MissingReleaseGroupSummary {
+  artists: LibraryArtistCreditResponse[];
+  /** @nullable */
+  original_release_date: string | null;
+  provider_code: string;
+  provider_key: string;
+  title: string;
+}
+
+export interface LibraryReleaseItem {
+  kind: LibraryReleaseItemKind;
+  library_release?: LibraryReleaseSummary;
+  missing_release_group?: MissingReleaseGroupSummary;
+}
+
 export interface LibraryReleaseOptionsPageLibraryCoverCandidateOption {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1038,37 +1132,10 @@ export interface LibraryReleaseOptionsPageLibrarySourceVariantOption {
   total: number;
 }
 
-export interface ReleaseCoverSummary {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  mode: string;
-  pending_generation?: string;
-  pending_mime?: string;
-  pending_sha256?: string;
-  pending_size?: number;
-  release_id: string;
-  revision: number;
-  selected_generation?: string;
-  selected_mime?: string;
-  selected_sha256?: string;
-  selected_size?: number;
-  warning?: string;
-}
-
-export interface LibraryReleaseSummary {
-  artists: LibraryArtistCreditResponse[];
-  counts: LibraryReleaseCountsResponse;
-  cover: ReleaseCoverSummary;
-  edition: LibraryReleaseEditionResponse;
-  id: string;
-  provider_links: LibraryProviderLinkResponse[];
-  title: string;
-}
-
 export interface LibraryReleasePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  items: LibraryReleaseSummary[];
+  items: LibraryReleaseItem[];
   limit: number;
   offset: number;
   summary: LibraryCatalogSummary;
@@ -2127,6 +2194,18 @@ limit: number;
  * @minimum 0
  */
 offset: number;
+};
+
+export type ListLibraryReleaseGroupEditionsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
 };
 
 export type ListLibraryReleasesParams = {

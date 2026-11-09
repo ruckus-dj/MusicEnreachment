@@ -135,7 +135,11 @@ export function LibraryCatalogRows({
 											<span className={catalogueStyles.artistStats}>
 												<span>
 													<strong>
-														{m("releasesCount", { count: own.length })}
+														{m("releasesCount", {
+															count:
+																own.length +
+																(missingCounts.get(artist.id) ?? 0),
+														})}
 													</strong>
 												</span>
 												<span>

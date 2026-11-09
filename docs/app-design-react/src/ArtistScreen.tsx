@@ -133,6 +133,9 @@ export function ArtistScreen({
 		[artistId, localReleaseUpdates, releases],
 	);
 	const tracks = artistReleases.flatMap((release) => release.tracks);
+	const allReleases = releases.map(
+		(release) => localReleaseUpdates[release.id] ?? release,
+	);
 	const ids = tracks.map((track) => track.id);
 	const hasAudio = (track: OriginalTrack) =>
 		Boolean(track.published) ||
@@ -158,16 +161,16 @@ export function ArtistScreen({
 		.toLocaleLowerCase()
 		.split(/\s+/)
 		.filter(Boolean);
-	const filteredMissingGroups = missingGroups.filter((group) => {
-		if (
-			group.artistId !== artistId ||
-			artistReleases.some(
+	const unrepresentedMissingGroups = missingGroups.filter(
+		(group) =>
+			group.artistId === artistId &&
+			!allReleases.some(
 				(release) =>
 					(release as OriginalRelease & { releaseGroupId?: string })
 						.releaseGroupId === group.groupId,
-			)
-		)
-			return false;
+			),
+	);
+	const filteredMissingGroups = unrepresentedMissingGroups.filter((group) => {
 		if (filter !== "all" && filter !== "missing") return false;
 		const searchable =
 			`${group.title} ${group.editions.map((edition) => `${edition.year} ${edition.country} ${edition.format} ${edition.disambiguation} ${edition.titles.join(" ")}`).join(" ")}`
@@ -285,8 +288,8 @@ export function ArtistScreen({
 					</div>
 					<div className={catalogueStyles.heroFoot}>
 						<p className={catalogueStyles.heroStats}>
-							{artistReleases.length} {m("releasesCount")} · {tracks.length}{" "}
-							{m("positionsCount")} ·{" "}
+							{artistReleases.length + unrepresentedMissingGroups.length}{" "}
+							{m("releasesCount")} · {tracks.length} {m("positionsCount")} ·{" "}
 							{counts((track) => Boolean(track.published))}{" "}
 							{m("publishedCount")} · {filteredMissingGroups.length}{" "}
 							{m("missingReleaseCount")}

@@ -5,6 +5,7 @@ import {
   useListLibraryPositions,
   useListLibraryReleases,
 } from "../../api/generated/client";
+import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { ArtistSortNameEditor } from "./ArtistSortNameEditor";
 import { GenreMetadataEditor } from "./GenreMetadataEditor";
@@ -13,11 +14,13 @@ import {
   libraryRouteHref,
   parseLibraryArtistRoute,
 } from "./libraryRoute";
+import { MissingReleaseGroupRow } from "./MissingReleaseGroupRow";
 import "./catalog.css";
 
 const PAGE_SIZE = 50;
 
 export function LibraryArtistScreen({ artistId }: { artistId: string }) {
+  const { locale } = useI18n();
   const hash = useHashLocation();
   const route = parseLibraryArtistRoute(hash) ?? {
     artistId,
@@ -84,9 +87,15 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                 <p className="catalog-muted">{artist.disambiguation}</p>
               )}
               <p className="catalog-muted">
-                {artist.release_count} релизов · {artist.position_count} позиций
-                · С аудио: {artist.available_position_count} ·{" "}
+                {artist.release_count} {locale === "ru" ? "альбомов" : "albums"}{" "}
+                · {artist.position_count} позиций · С аудио:{" "}
+                {artist.available_position_count} ·{" "}
                 {artist.published_position_count} опубликовано
+              </p>
+              <p className="catalog-muted">
+                {locale === "ru"
+                  ? "Включая известные группы из кэша; дискография может быть неполной."
+                  : "Includes known cached groups; the discography may be incomplete."}
               </p>
             </div>
             <div className="catalog-genre-list">
@@ -126,50 +135,69 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               className="catalog-artist-releases"
               aria-label="Релизы артиста"
             >
-              {releases.items.map((release) => (
-                <article className="catalog-artist-release" key={release.id}>
-                  <div className="catalog-release-heading">
-                    <span className="catalog-initial" aria-hidden="true">
-                      {release.title.trim().charAt(0).toLocaleUpperCase() ||
-                        "M"}
-                    </span>
-                    <div>
-                      <h2>
-                        <a
-                          href={`#/library/releases/${encodeURIComponent(release.id)}`}
-                        >
-                          {release.title || "Без названия"}
-                        </a>
-                      </h2>
-                      <p>
-                        {release.edition.release_date ??
-                          release.edition.original_release_date ??
-                          "Дата не указана"}{" "}
-                        · {release.counts.position_count} позиций ·{" "}
-                        {release.counts.available_position_count} с аудио ·{" "}
-                        {release.counts.published_position_count} опубликовано
-                      </p>
+              {releases.items.map((item) => {
+                if (
+                  item.kind === "missing_release_group" &&
+                  item.missing_release_group
+                ) {
+                  return (
+                    <MissingReleaseGroupRow
+                      key={`missing_release_group:${item.missing_release_group.provider_key}`}
+                      group={item.missing_release_group}
+                      presentation="artist"
+                    />
+                  );
+                }
+                const release = item.library_release;
+                if (!release) return null;
+                return (
+                  <article
+                    className="catalog-artist-release"
+                    key={`library_release:${release.id}`}
+                  >
+                    <div className="catalog-release-heading">
+                      <span className="catalog-initial" aria-hidden="true">
+                        {release.title.trim().charAt(0).toLocaleUpperCase() ||
+                          "M"}
+                      </span>
+                      <div>
+                        <h2>
+                          <a
+                            href={`#/library/releases/${encodeURIComponent(release.id)}`}
+                          >
+                            {release.title || "Без названия"}
+                          </a>
+                        </h2>
+                        <p>
+                          {release.edition.release_date ??
+                            release.edition.original_release_date ??
+                            "Дата не указана"}{" "}
+                          · {release.counts.position_count} позиций ·{" "}
+                          {release.counts.available_position_count} с аудио ·{" "}
+                          {release.counts.published_position_count} опубликовано
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        aria-expanded={Boolean(expanded[release.id])}
+                        onClick={() =>
+                          setExpanded((value) => ({
+                            ...value,
+                            [release.id]: !value[release.id],
+                          }))
+                        }
+                      >
+                        {expanded[release.id]
+                          ? "Скрыть позиции"
+                          : "Показать позиции"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      aria-expanded={Boolean(expanded[release.id])}
-                      onClick={() =>
-                        setExpanded((value) => ({
-                          ...value,
-                          [release.id]: !value[release.id],
-                        }))
-                      }
-                    >
-                      {expanded[release.id]
-                        ? "Скрыть позиции"
-                        : "Показать позиции"}
-                    </button>
-                  </div>
-                  {expanded[release.id] && (
-                    <ReleasePositions releaseId={release.id} />
-                  )}
-                </article>
-              ))}
+                    {expanded[release.id] && (
+                      <ReleasePositions releaseId={release.id} />
+                    )}
+                  </article>
+                );
+              })}
             </section>
           ) : (
             <section className="catalog-state">

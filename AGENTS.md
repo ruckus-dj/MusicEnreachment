@@ -187,6 +187,9 @@ in frontend/.
   extending a fixture, use its existing `f.db` for all setup and assertions.
   Clone slices before mutating copied request structs so rejection scenarios do
   not silently change the baseline or omitted-member scenarios.
+- Extend catalog fixtures without changing their baseline artist/position
+  ownership. Missing provider groups change missing-row totals, not known
+  library position counts; release assertions must unwrap the tagged row.
 - A subagent does not inherit an assigned worktree as its tool working directory.
   Use absolute paths for file edits and explicit `workdir` for every shell call;
   verify the target tree before writing. Resolve command paths relative to that

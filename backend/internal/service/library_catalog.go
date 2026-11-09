@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	ErrLibraryArtistNotFound     = errors.New("library artist not found")
-	errLibraryCatalogUnavailable = errors.New("library catalog is unavailable")
+	ErrLibraryArtistNotFound              = errors.New("library artist not found")
+	ErrLibraryReleaseGroupEditionNotFound = errors.New("library release group edition not found")
+	errLibraryCatalogUnavailable          = errors.New("library catalog is unavailable")
 )
 
 type LibraryCatalogFilter struct {
@@ -88,6 +89,55 @@ type LibraryCatalogRelease struct {
 	Counts        LibraryCatalogReleaseCounts  `json:"counts"`
 }
 
+type LibraryCatalogMissingReleaseGroup struct {
+	ProviderCode        string                 `json:"provider_code"`
+	ProviderKey         string                 `json:"provider_key"`
+	Title               string                 `json:"title"`
+	Artists             []LibraryCatalogCredit `json:"artists"`
+	OriginalReleaseDate *string                `json:"original_release_date"`
+}
+
+type LibraryReleaseGroupEdition struct {
+	ProviderKey string
+	Title       string
+	Artists     []LibraryCatalogCredit
+	Edition     LibraryCatalogEdition
+	TrackCount  *int
+}
+
+type LibraryReleaseGroupEditions struct {
+	ProviderCode string
+	ProviderKey  string
+	Editions     []LibraryReleaseGroupEdition
+	Total        int
+	Limit        int
+	Offset       int
+}
+
+type LibraryReleaseGroupTrack struct {
+	Medium         int
+	Position       int
+	Number         string
+	Title          string
+	RecordingTitle *string
+	DurationMS     *int64
+}
+
+type LibraryReleaseGroupEditionTracks struct {
+	ProviderCode       string
+	GroupProviderKey   string
+	ReleaseProviderKey string
+	Complete           *bool
+	TrackCount         *int
+	Tracks             []LibraryReleaseGroupTrack
+}
+
+type LibraryCatalogReleaseItem struct {
+	Kind                string                             `json:"kind"`
+	LibraryRelease      *LibraryCatalogRelease             `json:"library_release"`
+	MissingReleaseGroup *LibraryCatalogMissingReleaseGroup `json:"missing_release_group"`
+}
+
 type LibraryCatalogPositionRelease struct {
 	ID      uuid.UUID              `json:"id"`
 	Title   string                 `json:"title"`
@@ -146,6 +196,8 @@ type libraryCatalogRepository interface {
 	ReadLibraryPositions(context.Context, persistence.LibraryCatalogRequest) (persistence.LibraryCatalogPositionPage, error)
 	ReadLibraryArtist(context.Context, uuid.UUID) (*persistence.LibraryCatalogArtist, error)
 	ReadLibraryAudioCandidates(context.Context, persistence.LibraryCatalogRequest) ([]persistence.LibraryCatalogAudioCandidate, error)
+	ReadLibraryReleaseGroupEditions(context.Context, uuid.UUID, int, int) (persistence.LibraryReleaseGroupEditions, error)
+	ReadLibraryReleaseGroupEditionTracks(context.Context, uuid.UUID, string) (persistence.LibraryReleaseGroupEditionTracks, error)
 }
 
 type LibraryCatalog struct{ repository libraryCatalogRepository }
@@ -177,27 +229,77 @@ func (catalog *LibraryCatalog) Artists(ctx context.Context, filter LibraryCatalo
 	return LibraryCatalogPage[LibraryCatalogArtist]{Items: items, Total: page.Total, Limit: filter.Limit, Offset: filter.Offset, Summary: mapLibraryCatalogSummary(page.Summary)}, nil
 }
 
-func (catalog *LibraryCatalog) Releases(ctx context.Context, filter LibraryCatalogFilter) (LibraryCatalogPage[LibraryCatalogRelease], error) {
+func (catalog *LibraryCatalog) Releases(ctx context.Context, filter LibraryCatalogFilter) (LibraryCatalogPage[LibraryCatalogReleaseItem], error) {
 	if err := validateLibraryCatalogFilter(&filter); err != nil {
-		return LibraryCatalogPage[LibraryCatalogRelease]{}, err
+		return LibraryCatalogPage[LibraryCatalogReleaseItem]{}, err
 	}
 	repository, err := catalog.repo()
 	if err != nil {
-		return LibraryCatalogPage[LibraryCatalogRelease]{}, err
+		return LibraryCatalogPage[LibraryCatalogReleaseItem]{}, err
 	}
 	request, err := catalog.observedRequest(ctx, filter)
 	if err != nil {
-		return LibraryCatalogPage[LibraryCatalogRelease]{}, err
+		return LibraryCatalogPage[LibraryCatalogReleaseItem]{}, err
 	}
 	page, err := repository.ReadLibraryReleases(ctx, request)
 	if err != nil {
-		return LibraryCatalogPage[LibraryCatalogRelease]{}, fmt.Errorf("read library releases: %w", err)
+		return LibraryCatalogPage[LibraryCatalogReleaseItem]{}, fmt.Errorf("read library releases: %w", err)
 	}
-	items := make([]LibraryCatalogRelease, 0, len(page.Items))
+	items := make([]LibraryCatalogReleaseItem, 0, len(page.Items))
 	for _, item := range page.Items {
-		items = append(items, mapLibraryCatalogRelease(item))
+		mapped := LibraryCatalogReleaseItem{Kind: item.Kind}
+		if item.LibraryRelease != nil {
+			release := mapLibraryCatalogRelease(*item.LibraryRelease)
+			mapped.LibraryRelease = &release
+		}
+		if item.MissingReleaseGroup != nil {
+			group := item.MissingReleaseGroup
+			mapped.MissingReleaseGroup = &LibraryCatalogMissingReleaseGroup{ProviderCode: group.ProviderCode, ProviderKey: group.ProviderKey, Title: group.Title, Artists: mapLibraryCatalogCredits(group.Artists), OriginalReleaseDate: group.OriginalReleaseDate}
+		}
+		items = append(items, mapped)
 	}
-	return LibraryCatalogPage[LibraryCatalogRelease]{Items: items, Total: page.Total, Limit: filter.Limit, Offset: filter.Offset, Summary: mapLibraryCatalogSummary(page.Summary)}, nil
+	return LibraryCatalogPage[LibraryCatalogReleaseItem]{Items: items, Total: page.Total, Limit: filter.Limit, Offset: filter.Offset, Summary: mapLibraryCatalogSummary(page.Summary)}, nil
+}
+
+func (catalog *LibraryCatalog) ReleaseGroupEditions(ctx context.Context, groupID uuid.UUID, limit, offset int) (LibraryReleaseGroupEditions, error) {
+	if groupID == uuid.Nil || limit < 1 || limit > 100 || offset < 0 {
+		return LibraryReleaseGroupEditions{}, errors.New("release group edition pagination is invalid")
+	}
+	repository, err := catalog.repo()
+	if err != nil {
+		return LibraryReleaseGroupEditions{}, err
+	}
+	page, err := repository.ReadLibraryReleaseGroupEditions(ctx, groupID, limit, offset)
+	if err != nil {
+		return LibraryReleaseGroupEditions{}, fmt.Errorf("read release group editions: %w", err)
+	}
+	items := make([]LibraryReleaseGroupEdition, 0, len(page.Items))
+	for _, edition := range page.Items {
+		items = append(items, LibraryReleaseGroupEdition{ProviderKey: edition.ProviderKey, Title: edition.Title, Artists: mapLibraryCatalogCredits(edition.Artists), Edition: LibraryCatalogEdition{ReleaseDate: edition.Edition.ReleaseDate, OriginalReleaseDate: edition.Edition.OriginalReleaseDate, Country: edition.Edition.Country, Labels: nonNilCatalogStrings(edition.Edition.Labels), CatalogNumbers: nonNilCatalogStrings(edition.Edition.CatalogNumbers), PrimaryType: edition.Edition.PrimaryType, SecondaryTypes: nonNilCatalogStrings(edition.Edition.SecondaryTypes), Disambiguation: edition.Edition.Disambiguation}, TrackCount: edition.TrackCount})
+	}
+	return LibraryReleaseGroupEditions{ProviderCode: page.ProviderCode, ProviderKey: page.ProviderKey, Editions: items, Total: page.Total, Limit: limit, Offset: offset}, nil
+}
+
+func (catalog *LibraryCatalog) ReleaseGroupEditionTracks(ctx context.Context, groupID uuid.UUID, releaseKey string) (LibraryReleaseGroupEditionTracks, error) {
+	if groupID == uuid.Nil || releaseKey == "" {
+		return LibraryReleaseGroupEditionTracks{}, errors.New("release group edition identity is invalid")
+	}
+	repository, err := catalog.repo()
+	if err != nil {
+		return LibraryReleaseGroupEditionTracks{}, err
+	}
+	result, err := repository.ReadLibraryReleaseGroupEditionTracks(ctx, groupID, releaseKey)
+	if err != nil {
+		if errors.Is(err, persistence.ErrLibraryReleaseGroupEditionNotFound) {
+			return LibraryReleaseGroupEditionTracks{}, ErrLibraryReleaseGroupEditionNotFound
+		}
+		return LibraryReleaseGroupEditionTracks{}, fmt.Errorf("read release group edition tracks: %w", err)
+	}
+	tracks := make([]LibraryReleaseGroupTrack, 0, len(result.Tracks))
+	for _, track := range result.Tracks {
+		tracks = append(tracks, LibraryReleaseGroupTrack{Medium: track.Medium, Position: track.Position, Number: track.Number, Title: track.Title, RecordingTitle: track.RecordingTitle, DurationMS: track.DurationMS})
+	}
+	return LibraryReleaseGroupEditionTracks{ProviderCode: result.ProviderCode, GroupProviderKey: result.GroupProviderKey, ReleaseProviderKey: result.ReleaseProviderKey, Complete: result.Complete, TrackCount: result.TrackCount, Tracks: tracks}, nil
 }
 
 func (catalog *LibraryCatalog) Positions(ctx context.Context, filter LibraryCatalogFilter) (LibraryCatalogPage[LibraryCatalogPosition], error) {
@@ -252,6 +354,9 @@ func (catalog *LibraryCatalog) repo() (libraryCatalogRepository, error) {
 
 func IsLibraryArtistNotFound(err error) bool     { return errors.Is(err, ErrLibraryArtistNotFound) }
 func IsLibraryCatalogUnavailable(err error) bool { return errors.Is(err, errLibraryCatalogUnavailable) }
+func IsLibraryReleaseGroupEditionNotFound(err error) bool {
+	return errors.Is(err, ErrLibraryReleaseGroupEditionNotFound)
+}
 
 func catalogRequest(filter LibraryCatalogFilter) persistence.LibraryCatalogRequest {
 	return persistence.LibraryCatalogRequest{Limit: filter.Limit, Offset: filter.Offset, Query: filter.Query, Publication: filter.Publication, Availability: filter.Availability, ArtistID: filter.ArtistID, ReleaseID: filter.ReleaseID}

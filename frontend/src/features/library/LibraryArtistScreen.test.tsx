@@ -80,23 +80,27 @@ it("keeps the artist release filter but loads every position in an expanded rele
       return HttpResponse.json({
         items: [
           {
-            id: releaseId,
-            title: "Filtered release",
-            artists: [],
-            edition: {
-              release_date: null,
-              original_release_date: null,
-              country: null,
-              labels: [],
-              catalog_numbers: [],
-            },
-            provider_links: [],
-            cover: null,
-            counts: {
-              position_count: 1,
-              published_position_count: 1,
-              available_position_count: 1,
-              provider_position_count: 1,
+            kind: "library_release",
+            missing_release_group: null,
+            library_release: {
+              id: releaseId,
+              title: "Filtered release",
+              artists: [],
+              edition: {
+                release_date: null,
+                original_release_date: null,
+                country: null,
+                labels: [],
+                catalog_numbers: [],
+              },
+              provider_links: [],
+              cover: null,
+              counts: {
+                position_count: 1,
+                published_position_count: 1,
+                available_position_count: 1,
+                provider_position_count: 1,
+              },
             },
           },
         ],

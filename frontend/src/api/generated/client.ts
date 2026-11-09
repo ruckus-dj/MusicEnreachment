@@ -61,6 +61,8 @@ import type {
   LibraryReleaseCoverApplyInputBody,
   LibraryReleaseCoverSaveBody,
   LibraryReleaseDetailResponse,
+  LibraryReleaseGroupEditionTracksResponse,
+  LibraryReleaseGroupEditionsResponse,
   LibraryReleaseOptionsPageLibraryCoverCandidateOption,
   LibraryReleaseOptionsPageLibraryRecordingOption,
   LibraryReleaseOptionsPageLibrarySourceVariantOption,
@@ -70,6 +72,7 @@ import type {
   ListLibraryCoverCandidatesParams,
   ListLibraryPositionsParams,
   ListLibraryRecordingsParams,
+  ListLibraryReleaseGroupEditionsParams,
   ListLibraryReleasesParams,
   ListLibrarySourceVariantsParams,
   ListLocalProviderArtistsParams,
@@ -3488,6 +3491,283 @@ export const usePatchLibraryRecordingMetadata = <TError = ErrorModel,
       > => {
       return useMutation(getPatchLibraryRecordingMetadataMutationOptions(options), queryClient);
     }
+
+export type listLibraryReleaseGroupEditionsResponse200 = {
+  data: LibraryReleaseGroupEditionsResponse
+  status: 200
+}
+
+export type listLibraryReleaseGroupEditionsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listLibraryReleaseGroupEditionsResponseSuccess = (listLibraryReleaseGroupEditionsResponse200) & {
+  headers: Headers;
+};
+export type listLibraryReleaseGroupEditionsResponseError = (listLibraryReleaseGroupEditionsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listLibraryReleaseGroupEditionsResponse = (listLibraryReleaseGroupEditionsResponseSuccess | listLibraryReleaseGroupEditionsResponseError)
+
+export const getListLibraryReleaseGroupEditionsUrl = (groupId: string,
+    params?: ListLibraryReleaseGroupEditionsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/library/release-groups/${groupId}/editions?${stringifiedParams}` : `/api/library/release-groups/${groupId}/editions`
+}
+
+/**
+ * @summary Read known editions for a MusicBrainz release group
+ */
+export const listLibraryReleaseGroupEditions = async (groupId: string,
+    params?: ListLibraryReleaseGroupEditionsParams, options?: RequestInit): Promise<listLibraryReleaseGroupEditionsResponse> => {
+
+  const res = await fetch(getListLibraryReleaseGroupEditionsUrl(groupId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listLibraryReleaseGroupEditionsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listLibraryReleaseGroupEditionsResponse
+}
+
+
+
+
+
+export const getListLibraryReleaseGroupEditionsQueryKey = (groupId: string,
+    params?: ListLibraryReleaseGroupEditionsParams,) => {
+    return [
+    `/api/library/release-groups/${groupId}/editions`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListLibraryReleaseGroupEditionsQueryOptions = <TData = Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError = ErrorModel>(groupId: string,
+    params?: ListLibraryReleaseGroupEditionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLibraryReleaseGroupEditionsQueryKey(groupId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>> = ({ signal }) => listLibraryReleaseGroupEditions(groupId,params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: groupId !== null && groupId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListLibraryReleaseGroupEditionsQueryResult = NonNullable<Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>>
+export type ListLibraryReleaseGroupEditionsQueryError = ErrorModel
+
+
+export function useListLibraryReleaseGroupEditions<TData = Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError = ErrorModel>(
+ groupId: string,
+    params: undefined |  ListLibraryReleaseGroupEditionsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>,
+          TError,
+          Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLibraryReleaseGroupEditions<TData = Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError = ErrorModel>(
+ groupId: string,
+    params?: ListLibraryReleaseGroupEditionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>,
+          TError,
+          Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLibraryReleaseGroupEditions<TData = Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError = ErrorModel>(
+ groupId: string,
+    params?: ListLibraryReleaseGroupEditionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read known editions for a MusicBrainz release group
+ */
+
+export function useListLibraryReleaseGroupEditions<TData = Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError = ErrorModel>(
+ groupId: string,
+    params?: ListLibraryReleaseGroupEditionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLibraryReleaseGroupEditions>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListLibraryReleaseGroupEditionsQueryOptions(groupId,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type getLibraryReleaseGroupEditionTracksResponse200 = {
+  data: LibraryReleaseGroupEditionTracksResponse
+  status: 200
+}
+
+export type getLibraryReleaseGroupEditionTracksResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getLibraryReleaseGroupEditionTracksResponseSuccess = (getLibraryReleaseGroupEditionTracksResponse200) & {
+  headers: Headers;
+};
+export type getLibraryReleaseGroupEditionTracksResponseError = (getLibraryReleaseGroupEditionTracksResponseDefault) & {
+  headers: Headers;
+};
+
+export type getLibraryReleaseGroupEditionTracksResponse = (getLibraryReleaseGroupEditionTracksResponseSuccess | getLibraryReleaseGroupEditionTracksResponseError)
+
+export const getGetLibraryReleaseGroupEditionTracksUrl = (groupId: string,
+    releaseId: string,) => {
+
+
+
+
+  return `/api/library/release-groups/${groupId}/editions/${releaseId}/tracks`
+}
+
+/**
+ * @summary Read known tracks for a MusicBrainz release group edition
+ */
+export const getLibraryReleaseGroupEditionTracks = async (groupId: string,
+    releaseId: string, options?: RequestInit): Promise<getLibraryReleaseGroupEditionTracksResponse> => {
+
+  const res = await fetch(getGetLibraryReleaseGroupEditionTracksUrl(groupId,releaseId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getLibraryReleaseGroupEditionTracksResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getLibraryReleaseGroupEditionTracksResponse
+}
+
+
+
+
+
+export const getGetLibraryReleaseGroupEditionTracksQueryKey = (groupId: string,
+    releaseId: string,) => {
+    return [
+    `/api/library/release-groups/${groupId}/editions/${releaseId}/tracks`
+    ] as const;
+    }
+
+
+export const getGetLibraryReleaseGroupEditionTracksQueryOptions = <TData = Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError = ErrorModel>(groupId: string,
+    releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLibraryReleaseGroupEditionTracksQueryKey(groupId,releaseId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>> = ({ signal }) => getLibraryReleaseGroupEditionTracks(groupId,releaseId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: groupId !== null && groupId !== undefined && releaseId !== null && releaseId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLibraryReleaseGroupEditionTracksQueryResult = NonNullable<Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>>
+export type GetLibraryReleaseGroupEditionTracksQueryError = ErrorModel
+
+
+export function useGetLibraryReleaseGroupEditionTracks<TData = Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError = ErrorModel>(
+ groupId: string,
+    releaseId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryReleaseGroupEditionTracks<TData = Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError = ErrorModel>(
+ groupId: string,
+    releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>,
+          TError,
+          Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLibraryReleaseGroupEditionTracks<TData = Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError = ErrorModel>(
+ groupId: string,
+    releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read known tracks for a MusicBrainz release group edition
+ */
+
+export function useGetLibraryReleaseGroupEditionTracks<TData = Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError = ErrorModel>(
+ groupId: string,
+    releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLibraryReleaseGroupEditionTracks>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLibraryReleaseGroupEditionTracksQueryOptions(groupId,releaseId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type listLibraryReleasesResponse200 = {
   data: LibraryReleasePage

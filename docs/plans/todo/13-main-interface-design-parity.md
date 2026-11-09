@@ -151,7 +151,9 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       изменённый извне, запускает полную подготовку из source. Разрешение замены
       привязано к наблюдённой identity; inspection mode сохраняется при ошибке
       подготовки до проверенной замены. Расширен существующий retry-сценарий,
-      без нового журнала или схемы. Остальные критерии пункта остаются открытыми.
+      без нового журнала или схемы. В `5786cfa9` полный hook, независимое ревью и вся
+      [CI 42642702203](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42642702203)
+      прошли. Остальные критерии пункта остаются открытыми.
 4. [x] **Metadata ownership и provider edges.** Привести ownership, provider
    relationships и границы влияния metadata к документации; Local create/update
    не создаёт library entries. **Приёмка:** самостоятельный recording и позиция
@@ -176,7 +178,7 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       прошли, включая контейнер. Независимая сверка не нашла остатка критериев
       этого пункта. Полный metadata editor/визуальный паритет остаётся в пункте 6,
       общий real-backend E2E — в пункте 11.
-5. [ ] **Фактический каталог.** Довести отображение/агрегацию до factual
+5. [x] **Фактический каталог.** Довести отображение/агрегацию до factual
    данных, разделив source/audio availability, provider entries, library и
    publications. **Приёмка:** unknown не показывается как ноль, edition и
    release-group не смешиваются, completeness основана на реальном состоянии;
@@ -188,8 +190,9 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    и не создаёт collection entities. До выбора нет track-list, число missing
    позиций неизвестно («—»); canonical/default edition не выбирается автоматически.
    Полный известный track-list не скрывается фильтром. Provider-числа отражают лишь
-   известный partial cache scope; единица provider-агрегатов, смешанный числовой
-   агрегат артиста и влияние доступности output на группировку остаются открытыми.
+   известный partial cache scope. Итог артиста — конкретные записи релизов в
+   медиатеке плюс отсутствующие в ней MusicBrainz release groups; доступность
+   аудио не меняет единицы подсчёта и группировку.
    - [x] Текущее исполнение `85cd19d6`: «В наличии» — доступный source ИЛИ
       существующий published audio; для source проверяются size/mtime inventory.
       Фильтр по умолчанию — «Все», частичный объект входит в обе выборки.
@@ -197,8 +200,13 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       полный track-list независимо от фильтра; счётчики раздельные. Полный hook и
      завершённый CI:
      [42225902383](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42225902383).
-   - [ ] Остаются provider-only entries и агрегаты, поэтому пункт целиком не
-     закрыт.
+   - [x] Provider-only missing groups и artist totals подключены к общей странице
+     каталога с paging/filtering до выдачи. Явный read-only выбор известного edition
+     не создаёт library entries; unknown track totals не подменяются нулём.
+     Расширены существующие DB/UI-сценарии, новые таблицы и фоновые fetch не нужны.
+     Счётчик синхронизирован в standalone прототипе. Проверки и границы —
+     [отчёт](../../reports/2026-11-09-factual-catalog-groups.md); общий E2E остаётся
+     в пункте 11.
 6. [ ] **Prototype port: оболочка, Settings, matching и publication/metadata flows.** Портировать
    необходимые утверждённые сценарии из standalone React-макета, включая
    агрегированный preview и полный metadata ownership/редактирование. Presentation

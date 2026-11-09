@@ -442,6 +442,13 @@ export function CatalogDemo({
 		query,
 		filter,
 	);
+	const unrepresentedMissingGroups = missingCatalogGroups(
+		fixture.absentGroups,
+		fixture.releases,
+		fixture.artists,
+		"",
+		"all",
+	);
 	const update = (ids: string[], checked: boolean) => {
 		setSelected((previous) => {
 			const next = new Set(previous);
@@ -1110,7 +1117,7 @@ export function CatalogDemo({
 									new Map(
 										fixture.artists.map((artist) => [
 											artist.id,
-											missingGroups.filter(
+											unrepresentedMissingGroups.filter(
 												(group) => group.artistId === artist.id,
 											).length,
 										]),

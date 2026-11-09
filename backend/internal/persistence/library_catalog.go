@@ -154,7 +154,7 @@ type LibraryCatalogArtistPage struct {
 	Summary LibraryCatalogSummary
 }
 type LibraryCatalogReleasePage struct {
-	Items   []LibraryCatalogRelease
+	Items   []LibraryCatalogReleaseItem
 	Total   int
 	Summary LibraryCatalogSummary
 }
@@ -171,6 +171,14 @@ func (repository *LibraryRepository) ReadLibraryArtists(ctx context.Context, req
 		if err := readLibraryCatalogSummary(ctx, tx, &page.Summary); err != nil {
 			return err
 		}
+		missingReleaseCounts, err := readLibraryMissingReleaseGroupCounts(ctx, tx)
+		if err != nil {
+			return err
+		}
+		missingArtistIDs := make([]uuid.UUID, 0, len(missingReleaseCounts))
+		for artistID := range missingReleaseCounts {
+			missingArtistIDs = append(missingArtistIDs, artistID)
+		}
 		rows := make([]LibraryCatalogArtist, 0)
 		query := `WITH artist_rows AS (
  SELECT a.id,a.name,NULLIF(a.metadata->>'disambiguation','') AS disambiguation,
@@ -184,10 +192,10 @@ func (repository *LibraryRepository) ReadLibraryArtists(ctx context.Context, req
  SELECT id,name,disambiguation,genres::text AS genres,release_count,position_count,published_position_count,available_position_count,
  count(*) OVER() AS total FROM artist_rows
 			WHERE (?='' OR strpos(lower(btrim(regexp_replace(normalize(name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE((SELECT metadata->'genres' FROM local_artist WHERE id=artist_rows.id),'[]'::jsonb)) g WHERE strpos(lower(btrim(regexp_replace(normalize(g->>'name',NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0))
-			AND (?='all' OR (?='published' AND published_position_count>0) OR (?='unpublished' AND position_count>published_position_count))
-			AND (?='all' OR (?='available' AND available_position_count>0) OR (?='missing' AND available_position_count<position_count))
-			ORDER BY lower(btrim(regexp_replace(normalize(name,NFKC),'[[:space:]]+',' ','g'))),id LIMIT ? OFFSET ?`
-		if err := tx.NewRaw(query, bun.List(availabilityPositionIDs(request)), request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, request.Availability, request.Limit, request.Offset).Scan(ctx, &rows); err != nil {
+				AND (?='all' OR (?='published' AND published_position_count>0) OR (?='unpublished' AND position_count>published_position_count) OR (?='unpublished' AND id IN (?)))
+				AND (?='all' OR (?='available' AND available_position_count>0) OR (?='missing' AND available_position_count<position_count) OR (?='missing' AND id IN (?)))
+				ORDER BY lower(btrim(regexp_replace(normalize(name,NFKC),'[[:space:]]+',' ','g'))),id LIMIT ? OFFSET ?`
+		if err := tx.NewRaw(query, bun.List(availabilityPositionIDs(request)), request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Publication, bun.List(missingArtistIDs), request.Availability, request.Availability, request.Availability, request.Availability, bun.List(missingArtistIDs), request.Limit, request.Offset).Scan(ctx, &rows); err != nil {
 			return fmt.Errorf("read library artist page: %w", err)
 		}
 		if err := tx.NewRaw(`SELECT count(*) FROM (SELECT a.id,
@@ -196,12 +204,13 @@ func (repository *LibraryRepository) ReadLibraryArtists(ctx context.Context, req
 			(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id AND rt.id IN (?)) AS available
 				FROM local_artist a WHERE (?='' OR strpos(lower(btrim(regexp_replace(normalize(a.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(a.metadata->'genres','[]'::jsonb)) g WHERE strpos(lower(btrim(regexp_replace(normalize(g->>'name',NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0))
 			AND (?='all' OR (?='published' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id)>0)
-			OR (?='unpublished' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id)>(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id)))
+			OR (?='unpublished' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id)>(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id)) OR (?='unpublished' AND a.id IN (?)))
 			AND (?='all' OR (?='available' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id AND rt.id IN (?))>0)
-			OR (?='missing' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id AND rt.id IN (?))<(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id)))) matches`, bun.List(availabilityPositionIDs(request)), request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, bun.List(availabilityPositionIDs(request)), request.Availability, bun.List(availabilityPositionIDs(request))).Scan(ctx, &page.Total); err != nil {
+				OR (?='missing' AND (SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id AND rt.id IN (?))<(SELECT count(DISTINCT rt.id) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id)) OR (?='missing' AND a.id IN (?)))) matches`, bun.List(availabilityPositionIDs(request)), request.Query, request.Query, request.Query, request.Publication, request.Publication, request.Publication, request.Publication, bun.List(missingArtistIDs), request.Availability, request.Availability, bun.List(availabilityPositionIDs(request)), request.Availability, bun.List(availabilityPositionIDs(request)), request.Availability, bun.List(missingArtistIDs)).Scan(ctx, &page.Total); err != nil {
 			return fmt.Errorf("count library artists: %w", err)
 		}
 		for i := range rows {
+			rows[i].ReleaseCount += missingReleaseCounts[rows[i].ID]
 			if err := json.Unmarshal([]byte(rows[i].GenresJSON), &rows[i].Genres); err != nil {
 				return fmt.Errorf("decode local artist genres: %w", err)
 			}
@@ -225,7 +234,7 @@ func (repository *LibraryRepository) ReadLibraryArtist(ctx context.Context, id u
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		var genres string
 		err := tx.NewRaw(`SELECT a.id,a.name,NULLIF(a.metadata->>'disambiguation',''),COALESCE((SELECT jsonb_agg(g->>'name') FROM jsonb_array_elements(COALESCE(a.metadata->'genres','[]'::jsonb)) g),'[]'::jsonb)::text,
-			(SELECT count(*) FROM release_artist ra WHERE ra.artist_id=a.id),
+			(SELECT count(DISTINCT ra.release_id) FROM release_artist ra WHERE ra.artist_id=a.id),
 			(SELECT count(*) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id WHERE ra.artist_id=a.id),
 			(SELECT count(*) FROM release_track rt JOIN release_artist ra ON ra.release_id=rt.release_id JOIN track_publication tp ON tp.position_id=rt.id WHERE ra.artist_id=a.id)
 			FROM local_artist a WHERE a.id=?`, id).Scan(ctx, &result.ID, &result.Name, &result.Disambiguation, &genres, &result.ReleaseCount, &result.PositionCount, &result.PublishedPositionCount)
@@ -239,6 +248,11 @@ func (repository *LibraryRepository) ReadLibraryArtist(ctx context.Context, id u
 			return err
 		}
 		result.Genres = nonNilStrings(result.Genres)
+		missingReleaseCounts, err := readLibraryMissingReleaseGroupCounts(ctx, tx)
+		if err != nil {
+			return err
+		}
+		result.ReleaseCount += missingReleaseCounts[result.ID]
 		result.ProviderLinks = make([]LibraryCatalogProviderLink, 0)
 		return readArtistProviderLinksBatch(ctx, tx, []LibraryCatalogArtist{result}, &result)
 	})
@@ -253,115 +267,12 @@ func (repository *LibraryRepository) ReadLibraryArtist(ctx context.Context, id u
 
 func (repository *LibraryRepository) ReadLibraryReleases(ctx context.Context, request LibraryCatalogRequest) (LibraryCatalogReleasePage, error) {
 	request = normalizeCatalogAvailability(request)
-	var page LibraryCatalogReleasePage
+	page := LibraryCatalogReleasePage{Items: []LibraryCatalogReleaseItem{}}
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		if err := readLibraryCatalogSummary(ctx, tx, &page.Summary); err != nil {
 			return err
 		}
-		source, sourceFound, err := catalogMusicBrainzSource(ctx, tx)
-		if err != nil {
-			return err
-		}
-		var sourceID, providerID *uuid.UUID
-		if sourceFound {
-			sourceID, providerID = &source.ID, &source.ProviderID
-		}
-		rows := make([]LibraryCatalogRelease, 0)
-		basePredicate := `(?::uuid IS NULL OR EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?)) AND
-			(?='' OR strpos(lower(btrim(regexp_replace(normalize(r.title,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0
-			OR EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND (strpos(lower(btrim(regexp_replace(normalize(ra.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR EXISTS(SELECT 1 FROM local_artist a WHERE a.id=ra.artist_id AND strpos(lower(btrim(regexp_replace(normalize(a.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0)))
-			OR ((r.metadata->'local_metadata'->'desired'->'catalog_number'->>'state'='value' AND strpos(lower(btrim(regexp_replace(normalize(r.metadata->'local_metadata'->'desired'->'catalog_number'->>'value',NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0)
-				OR (COALESCE(r.metadata->'local_metadata'->'desired'->'catalog_number'->>'state','') NOT IN ('value','explicit_empty') AND COALESCE(r.metadata->'local_metadata'->'desired'->'catalog_number'->>'authority','')<>'manual' AND EXISTS(SELECT 1 FROM provider_local_release pl JOIN provider_release pr ON pr.id=pl.provider_release_id AND pr.provider_id=pl.provider_id JOIN provider_source_entity pse ON pse.provider_source_id=? AND pse.provider_id=? AND pse.entity_kind='release' AND pse.provider_key=pr.provider_key AND jsonb_exists(pse.field_evidence,'label-info') CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pse.fields->'label-info','[]'::jsonb)) li WHERE pl.local_release_id=r.id AND pl.provider_id=? AND strpos(lower(btrim(regexp_replace(normalize(li->>'catalog-number',NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0))))`
-		baseArgs := []any{request.ArtistID, request.ArtistID, request.Query, request.Query, request.Query, request.Query, request.Query, sourceID, providerID, providerID, request.Query}
-		query := `WITH release_rows AS (SELECT r.id,r.title,r.metadata,
- (SELECT count(*) FROM release_track rt WHERE rt.release_id=r.id) AS position_count,
- (SELECT count(*) FROM release_track rt JOIN track_publication tp ON tp.position_id=rt.id WHERE rt.release_id=r.id) AS published_position_count,
-	 (SELECT count(DISTINCT rt.id) FROM release_track rt WHERE rt.release_id=r.id AND rt.id IN (?)) AS available_position_count
-				 FROM local_release r WHERE ` + basePredicate + `)
- SELECT id,title,metadata::text AS metadata,position_count,published_position_count,available_position_count,count(*) OVER() AS total FROM release_rows
-	 WHERE (?='all' OR (?='published' AND published_position_count>0) OR (?='unpublished' AND position_count>published_position_count))
-	 AND (?='all' OR (?='available' AND available_position_count>0) OR (?='missing' AND available_position_count<position_count)) ORDER BY lower(btrim(regexp_replace(normalize(title,NFKC),'[[:space:]]+',' ','g'))),id LIMIT ? OFFSET ?`
-		pageArgs := append([]any{bun.List(availabilityPositionIDs(request))}, baseArgs...)
-		pageArgs = append(pageArgs, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, request.Availability, request.Limit, request.Offset)
-		if err := tx.NewRaw(query, pageArgs...).Scan(ctx, &rows); err != nil {
-			return fmt.Errorf("read library release page: %w", err)
-		}
-		countQuery := `SELECT count(*) FROM (SELECT r.id,
-			(SELECT count(*) FROM release_track rt WHERE rt.release_id=r.id) positions,
-			(SELECT count(*) FROM release_track rt JOIN track_publication tp ON tp.position_id=rt.id WHERE rt.release_id=r.id) published,
-			(SELECT count(DISTINCT rt.id) FROM release_track rt WHERE rt.release_id=r.id AND rt.id IN (?)) available
-			FROM local_release r WHERE ` + basePredicate + `) q
-			WHERE (?='all' OR (?='published' AND published>0) OR (?='unpublished' AND positions>published))
-			AND (?='all' OR (?='available' AND available>0) OR (?='missing' AND available<positions))`
-		countArgs := append([]any{bun.List(availabilityPositionIDs(request))}, baseArgs...)
-		countArgs = append(countArgs, request.Publication, request.Publication, request.Publication, request.Availability, request.Availability, request.Availability)
-		if err := tx.NewRaw(countQuery, countArgs...).Scan(ctx, &page.Total); err != nil {
-			return fmt.Errorf("count library releases: %w", err)
-		}
-		ids := make([]uuid.UUID, 0, len(rows))
-		for i := range rows {
-			ids = append(ids, rows[i].ID)
-		}
-		if len(ids) > 0 {
-			type credit struct {
-				ReleaseID uuid.UUID `bun:"release_id"`
-				LibraryCatalogCredit
-			}
-			var credits []credit
-			if err := tx.NewRaw(`SELECT ra.release_id,ra.artist_id,a.name AS artist_name,ra.name AS credit_name,ra.name_join_phrase AS join_phrase FROM release_artist ra LEFT JOIN local_artist a ON a.id=ra.artist_id WHERE ra.release_id IN (?) ORDER BY ra.release_id,ra.position`, bun.List(ids)).Scan(ctx, &credits); err != nil {
-				return fmt.Errorf("read library release credits: %w", err)
-			}
-			byRelease := make(map[uuid.UUID]int, len(rows))
-			for i := range rows {
-				byRelease[rows[i].ID] = i
-				rows[i].Artists = make([]LibraryCatalogCredit, 0)
-				rows[i].ProviderLinks = make([]LibraryCatalogProviderLink, 0)
-			}
-			for _, credit := range credits {
-				i := byRelease[credit.ReleaseID]
-				rows[i].Artists = append(rows[i].Artists, credit.LibraryCatalogCredit)
-			}
-			type providerLink struct {
-				ReleaseID uuid.UUID `bun:"local_release_id"`
-				LibraryCatalogProviderLink
-			}
-			var providerLinks []providerLink
-			if err := tx.NewRaw(`SELECT plr.local_release_id,p.code AS provider_code,pr.provider_key,plr.method FROM provider_local_release plr JOIN provider_release pr ON pr.id=plr.provider_release_id AND pr.provider_id=plr.provider_id JOIN provider p ON p.id=plr.provider_id WHERE plr.local_release_id IN (?) ORDER BY plr.local_release_id,p.code,pr.provider_key`, bun.List(ids)).Scan(ctx, &providerLinks); err != nil {
-				return fmt.Errorf("read library release provider links: %w", err)
-			}
-			for _, link := range providerLinks {
-				i := byRelease[link.ReleaseID]
-				rows[i].ProviderLinks = append(rows[i].ProviderLinks, link.LibraryCatalogProviderLink)
-			}
-			covers := make([]struct {
-				ReleaseID uuid.UUID `bun:"release_id"`
-				LibraryCatalogCover
-			}, 0)
-			if err := tx.NewRaw(`SELECT release_id,mode,revision,selected_generation,selected_mime,encode(selected_sha256,'hex') AS selected_sha256,selected_size,pending_generation,pending_mime,encode(pending_sha256,'hex') AS pending_sha256,pending_size,warning FROM release_publication_cover WHERE release_id IN (?)`, bun.List(ids)).Scan(ctx, &covers); err != nil {
-				return fmt.Errorf("read library release covers: %w", err)
-			}
-			for i := range rows {
-				rows[i].Cover = LibraryCatalogCover{ReleaseID: rows[i].ID, Mode: "automatic", Revision: 1}
-			}
-			for _, cover := range covers {
-				i := byRelease[cover.ReleaseID]
-				rows[i].Cover = cover.LibraryCatalogCover
-				rows[i].Cover.ReleaseID = cover.ReleaseID
-			}
-		}
-		for i := range rows {
-			rows[i].Counts = LibraryCatalogReleaseCounts{PositionCount: rows[i].PositionCountDB, PublishedPositionCount: rows[i].PublishedPositionCountDB, AvailablePositionCount: rows[i].AvailablePositionCountDB}
-			rows[i].Counts.ProviderPositionCount = nil
-			rows[i].Edition = libraryCatalogLocalEdition(rows[i].Metadata)
-		}
-		if err := enrichLibraryCatalogReleaseProvider(ctx, tx, rows); err != nil {
-			return err
-		}
-		page.Items = rows
-		if page.Items == nil {
-			page.Items = []LibraryCatalogRelease{}
-		}
-		return nil
+		return readMixedLibraryReleasePage(ctx, tx, request, &page)
 	})
 	return page, err
 }

@@ -45,11 +45,25 @@ type LibraryArtistPage struct {
 }
 
 type LibraryReleasePage struct {
-	Items   []LibraryReleaseSummary `json:"items" nullable:"false"`
-	Total   int                     `json:"total"`
-	Limit   int                     `json:"limit"`
-	Offset  int                     `json:"offset"`
-	Summary LibraryCatalogSummary   `json:"summary"`
+	Items   []LibraryReleaseItem  `json:"items" nullable:"false"`
+	Total   int                   `json:"total"`
+	Limit   int                   `json:"limit"`
+	Offset  int                   `json:"offset"`
+	Summary LibraryCatalogSummary `json:"summary"`
+}
+
+type LibraryReleaseItem struct {
+	Kind                string                      `json:"kind" enum:"library_release,missing_release_group"`
+	LibraryRelease      *LibraryReleaseSummary      `json:"library_release,omitempty"`
+	MissingReleaseGroup *MissingReleaseGroupSummary `json:"missing_release_group,omitempty"`
+}
+
+type MissingReleaseGroupSummary struct {
+	ProviderCode        string                        `json:"provider_code"`
+	ProviderKey         string                        `json:"provider_key"`
+	Title               string                        `json:"title"`
+	Artists             []LibraryArtistCreditResponse `json:"artists" nullable:"false"`
+	OriginalReleaseDate *string                       `json:"original_release_date" nullable:"true"`
 }
 
 type LibraryPositionPage struct {
@@ -163,6 +177,60 @@ type libraryArtistInput struct {
 	ArtistID string `path:"artist_id"`
 }
 
+type libraryReleaseGroupEditionsInput struct {
+	GroupID string `path:"group_id"`
+	Limit   int    `query:"limit" minimum:"1" maximum:"100" default:"50"`
+	Offset  int    `query:"offset" minimum:"0" default:"0"`
+}
+
+type libraryReleaseGroupEditionTracksInput struct {
+	GroupID   string `path:"group_id"`
+	ReleaseID string `path:"release_id"`
+}
+
+type libraryReleaseGroupEditionsOutput struct {
+	Body LibraryReleaseGroupEditionsResponse `json:"body"`
+}
+
+type LibraryReleaseGroupEditionsResponse struct {
+	ProviderCode string                               `json:"provider_code"`
+	ProviderKey  string                               `json:"provider_key"`
+	Editions     []LibraryReleaseGroupEditionResponse `json:"editions" nullable:"false"`
+	Total        int                                  `json:"total"`
+	Limit        int                                  `json:"limit"`
+	Offset       int                                  `json:"offset"`
+}
+
+type LibraryReleaseGroupEditionResponse struct {
+	ProviderKey string                        `json:"provider_key"`
+	Title       string                        `json:"title"`
+	Artists     []LibraryArtistCreditResponse `json:"artists" nullable:"false"`
+	Edition     LibraryReleaseEditionResponse `json:"edition"`
+	TrackCount  *int                          `json:"track_count" nullable:"true"`
+}
+
+type libraryReleaseGroupEditionTracksOutput struct {
+	Body LibraryReleaseGroupEditionTracksResponse `json:"body"`
+}
+
+type LibraryReleaseGroupEditionTracksResponse struct {
+	ProviderCode       string                             `json:"provider_code"`
+	GroupProviderKey   string                             `json:"group_provider_key"`
+	ReleaseProviderKey string                             `json:"release_provider_key"`
+	Complete           *bool                              `json:"complete" nullable:"true"`
+	TrackCount         *int                               `json:"track_count" nullable:"true"`
+	Tracks             []LibraryReleaseGroupTrackResponse `json:"tracks" nullable:"false"`
+}
+
+type LibraryReleaseGroupTrackResponse struct {
+	Medium         int     `json:"medium"`
+	Position       int     `json:"position"`
+	Number         string  `json:"number"`
+	Title          string  `json:"title"`
+	RecordingTitle *string `json:"recording_title" nullable:"true"`
+	DurationMS     *int64  `json:"duration_ms" nullable:"true"`
+}
+
 func registerLibraryCatalog(api huma.API, catalog *service.LibraryCatalog) {
 	huma.Register(api, huma.Operation{OperationID: "list-library-artists", Method: http.MethodGet, Path: "/library/artists", Summary: "Read the current local library catalog", Tags: []string{"Library"}}, func(ctx context.Context, input *libraryArtistsInput) (*libraryArtistsOutput, error) {
 		if catalog == nil {
@@ -173,6 +241,37 @@ func registerLibraryCatalog(api huma.API, catalog *service.LibraryCatalog) {
 			return nil, libraryCatalogError(err)
 		}
 		return &libraryArtistsOutput{Body: libraryArtistPage(page)}, nil
+	})
+	huma.Register(api, huma.Operation{OperationID: "list-library-release-group-editions", Method: http.MethodGet, Path: "/library/release-groups/{group_id}/editions", Summary: "Read known editions for a MusicBrainz release group", Tags: []string{"Library"}}, func(ctx context.Context, input *libraryReleaseGroupEditionsInput) (*libraryReleaseGroupEditionsOutput, error) {
+		if catalog == nil {
+			return nil, huma.Error503ServiceUnavailable("library catalog service is unavailable")
+		}
+		groupID, err := uuid.Parse(input.GroupID)
+		if err != nil {
+			return nil, huma.Error400BadRequest("invalid release group ID")
+		}
+		page, err := catalog.ReleaseGroupEditions(ctx, groupID, input.Limit, input.Offset)
+		if err != nil {
+			return nil, libraryCatalogError(err)
+		}
+		return &libraryReleaseGroupEditionsOutput{Body: libraryReleaseGroupEditions(page)}, nil
+	})
+	huma.Register(api, huma.Operation{OperationID: "get-library-release-group-edition-tracks", Method: http.MethodGet, Path: "/library/release-groups/{group_id}/editions/{release_id}/tracks", Summary: "Read known tracks for a MusicBrainz release group edition", Tags: []string{"Library"}}, func(ctx context.Context, input *libraryReleaseGroupEditionTracksInput) (*libraryReleaseGroupEditionTracksOutput, error) {
+		if catalog == nil {
+			return nil, huma.Error503ServiceUnavailable("library catalog service is unavailable")
+		}
+		groupID, err := uuid.Parse(input.GroupID)
+		if err != nil {
+			return nil, huma.Error400BadRequest("invalid release group ID")
+		}
+		if _, err := uuid.Parse(input.ReleaseID); err != nil {
+			return nil, huma.Error400BadRequest("invalid release ID")
+		}
+		detail, err := catalog.ReleaseGroupEditionTracks(ctx, groupID, input.ReleaseID)
+		if err != nil {
+			return nil, libraryCatalogError(err)
+		}
+		return &libraryReleaseGroupEditionTracksOutput{Body: libraryReleaseGroupEditionTracks(detail)}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "list-library-releases", Method: http.MethodGet, Path: "/library/releases", Summary: "Read the current local library catalog", Tags: []string{"Library"}}, func(ctx context.Context, input *libraryReleasesInput) (*libraryReleasesOutput, error) {
 		if catalog == nil {
@@ -234,6 +333,9 @@ func parseOptionalLibraryID(value, kind string) (*uuid.UUID, error) {
 }
 
 func libraryCatalogError(err error) error {
+	if service.IsLibraryReleaseGroupEditionNotFound(err) {
+		return huma.Error404NotFound("library release group edition not found")
+	}
 	if service.IsLibraryArtistNotFound(err) {
 		return huma.Error404NotFound("library artist not found")
 	}
@@ -241,6 +343,22 @@ func libraryCatalogError(err error) error {
 		return huma.Error503ServiceUnavailable("library catalog service is unavailable")
 	}
 	return huma.Error500InternalServerError("failed to read library catalog")
+}
+
+func libraryReleaseGroupEditions(page service.LibraryReleaseGroupEditions) LibraryReleaseGroupEditionsResponse {
+	items := make([]LibraryReleaseGroupEditionResponse, 0, len(page.Editions))
+	for _, edition := range page.Editions {
+		items = append(items, LibraryReleaseGroupEditionResponse{ProviderKey: edition.ProviderKey, Title: edition.Title, Artists: libraryCredits(edition.Artists), Edition: LibraryReleaseEditionResponse{ReleaseDate: edition.Edition.ReleaseDate, OriginalReleaseDate: edition.Edition.OriginalReleaseDate, Country: edition.Edition.Country, Labels: nonNilAPIStrings(edition.Edition.Labels), CatalogNumbers: nonNilAPIStrings(edition.Edition.CatalogNumbers), PrimaryType: edition.Edition.PrimaryType, SecondaryTypes: nonNilAPIStrings(edition.Edition.SecondaryTypes), Disambiguation: edition.Edition.Disambiguation}, TrackCount: edition.TrackCount})
+	}
+	return LibraryReleaseGroupEditionsResponse{ProviderCode: page.ProviderCode, ProviderKey: page.ProviderKey, Editions: items, Total: page.Total, Limit: page.Limit, Offset: page.Offset}
+}
+
+func libraryReleaseGroupEditionTracks(value service.LibraryReleaseGroupEditionTracks) LibraryReleaseGroupEditionTracksResponse {
+	tracks := make([]LibraryReleaseGroupTrackResponse, 0, len(value.Tracks))
+	for _, track := range value.Tracks {
+		tracks = append(tracks, LibraryReleaseGroupTrackResponse{Medium: track.Medium, Position: track.Position, Number: track.Number, Title: track.Title, RecordingTitle: track.RecordingTitle, DurationMS: track.DurationMS})
+	}
+	return LibraryReleaseGroupEditionTracksResponse{ProviderCode: value.ProviderCode, GroupProviderKey: value.GroupProviderKey, ReleaseProviderKey: value.ReleaseProviderKey, Complete: value.Complete, TrackCount: value.TrackCount, Tracks: tracks}
 }
 
 func libraryArtistPage(page service.LibraryCatalogPage[service.LibraryCatalogArtist]) LibraryArtistPage {
@@ -251,10 +369,19 @@ func libraryArtistPage(page service.LibraryCatalogPage[service.LibraryCatalogArt
 	return LibraryArtistPage{Items: items, Total: page.Total, Limit: page.Limit, Offset: page.Offset, Summary: libraryCatalogSummary(page.Summary)}
 }
 
-func libraryReleasePage(page service.LibraryCatalogPage[service.LibraryCatalogRelease]) LibraryReleasePage {
-	items := make([]LibraryReleaseSummary, 0, len(page.Items))
+func libraryReleasePage(page service.LibraryCatalogPage[service.LibraryCatalogReleaseItem]) LibraryReleasePage {
+	items := make([]LibraryReleaseItem, 0, len(page.Items))
 	for _, item := range page.Items {
-		items = append(items, libraryRelease(item))
+		mapped := LibraryReleaseItem{Kind: item.Kind}
+		if item.LibraryRelease != nil {
+			release := libraryRelease(*item.LibraryRelease)
+			mapped.LibraryRelease = &release
+		}
+		if item.MissingReleaseGroup != nil {
+			group := item.MissingReleaseGroup
+			mapped.MissingReleaseGroup = &MissingReleaseGroupSummary{ProviderCode: group.ProviderCode, ProviderKey: group.ProviderKey, Title: group.Title, Artists: libraryCredits(group.Artists), OriginalReleaseDate: group.OriginalReleaseDate}
+		}
+		items = append(items, mapped)
 	}
 	return LibraryReleasePage{Items: items, Total: page.Total, Limit: page.Limit, Offset: page.Offset, Summary: libraryCatalogSummary(page.Summary)}
 }

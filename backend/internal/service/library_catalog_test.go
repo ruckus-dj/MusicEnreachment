@@ -48,6 +48,12 @@ func (repository *libraryCatalogRepositoryFixture) ReadLibraryAudioCandidates(_ 
 	repository.request = request
 	return repository.audio, repository.err
 }
+func (repository *libraryCatalogRepositoryFixture) ReadLibraryReleaseGroupEditions(context.Context, uuid.UUID, int, int) (persistence.LibraryReleaseGroupEditions, error) {
+	return persistence.LibraryReleaseGroupEditions{}, repository.err
+}
+func (repository *libraryCatalogRepositoryFixture) ReadLibraryReleaseGroupEditionTracks(context.Context, uuid.UUID, string) (persistence.LibraryReleaseGroupEditionTracks, error) {
+	return persistence.LibraryReleaseGroupEditionTracks{}, repository.err
+}
 
 func TestValidateLibraryCatalogFilterRequiresLimit(t *testing.T) {
 	filter := LibraryCatalogFilter{Publication: "all"}
@@ -106,13 +112,13 @@ func TestLibraryCatalogMapsPersistenceRowsToCleanServiceDTOs(t *testing.T) {
 		Counts:  persistence.LibraryCatalogReleaseCounts{PositionCount: 8, PublishedPositionCount: 3, AvailablePositionCount: 5, ProviderPositionCount: &dbOnly},
 		Edition: persistence.LibraryCatalogEdition{Labels: nil, CatalogNumbers: nil, SecondaryTypes: nil},
 	}
-	repository.releases = persistence.LibraryCatalogReleasePage{Items: []persistence.LibraryCatalogRelease{release}}
+	repository.releases = persistence.LibraryCatalogReleasePage{Items: []persistence.LibraryCatalogReleaseItem{{Kind: "library_release", LibraryRelease: &release}}}
 	releasePage, err := NewLibraryCatalog(repository).Releases(context.Background(), LibraryCatalogFilter{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if releasePage.Items[0].Counts.PositionCount != 8 || releasePage.Items[0].Counts.ProviderPositionCount != &dbOnly {
-		t.Fatalf("repo counts not retained: %#v", releasePage.Items[0].Counts)
+	if releasePage.Items[0].Kind != "library_release" || releasePage.Items[0].LibraryRelease == nil || releasePage.Items[0].LibraryRelease.Counts.PositionCount != 8 || releasePage.Items[0].LibraryRelease.Counts.ProviderPositionCount != &dbOnly {
+		t.Fatalf("repo release item not retained: %#v", releasePage.Items[0])
 	}
 	encoded, err = json.Marshal(releasePage)
 	if err != nil {

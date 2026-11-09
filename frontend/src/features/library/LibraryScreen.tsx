@@ -12,7 +12,9 @@ import type {
   LibraryArtistPage,
   LibraryPositionPage,
   LibraryReleasePage,
+  LibraryReleaseSummary,
 } from "../../api/generated/client.schemas";
+import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
 import {
   type LibraryRoute,
@@ -22,6 +24,7 @@ import {
   parseLibraryRoute,
 } from "./libraryRoute";
 import "./catalog.css";
+import { MissingReleaseGroupRow } from "./MissingReleaseGroupRow";
 
 const PAGE_SIZE = 50;
 const viewLabels: Record<LibraryView, string> = {
@@ -58,6 +61,7 @@ function useLibraryRoute(): [
 }
 
 export function LibraryScreen() {
+  const { locale } = useI18n();
   const [route, updateRoute] = useLibraryRoute();
   const [search, setSearch] = useState(route.query);
   useEffect(() => setSearch(route.query), [route.query]);
@@ -278,7 +282,11 @@ export function LibraryScreen() {
       ) : (
         <>
           {route.view === "artists" && artistsBody && (
-            <ArtistCards items={artistsBody.items} route={route} />
+            <ArtistCards
+              items={artistsBody.items}
+              route={route}
+              locale={locale}
+            />
           )}
           {route.view === "albums" && releasesBody && (
             <ReleaseTable items={releasesBody.items} />
@@ -317,9 +325,11 @@ export function LibraryScreen() {
 function ArtistCards({
   items,
   route,
+  locale,
 }: {
   items: LibraryArtistPage["items"];
   route: LibraryRoute;
+  locale: "en" | "ru";
 }) {
   return (
     <div className="catalog-artist-grid">
@@ -335,7 +345,13 @@ function ArtistCards({
           <span className="catalog-artist-copy">
             <strong>{artist.name}</strong>
             <span>
-              {artist.release_count} релизов · {artist.position_count} позиций
+              {artist.release_count} {locale === "ru" ? "альбомов" : "albums"} ·{" "}
+              {artist.position_count} позиций
+              <span className="catalog-sub">
+                {locale === "ru"
+                  ? "включая известные группы из кэша; дискография может быть неполной"
+                  : "includes known cached groups; discography may be incomplete"}
+              </span>
             </span>
             <span>
               С аудио: {artist.available_position_count} ·{" "}
@@ -377,7 +393,7 @@ function CreditNames({ credits }: { credits: LibraryArtistCreditResponse[] }) {
   );
 }
 
-function Cover({ release }: { release: LibraryReleasePage["items"][number] }) {
+function Cover({ release }: { release: LibraryReleaseSummary }) {
   const generation = release.cover?.selected_generation;
   return (
     <span className="catalog-cover">
@@ -409,48 +425,58 @@ function ReleaseTable({ items }: { items: LibraryReleasePage["items"] }) {
           </tr>
         </thead>
         <tbody>
-          {items.map((release) => (
-            <tr key={release.id}>
-              <td>
-                <span className="catalog-entity">
-                  <Cover release={release} />
-                  <a
-                    href={`#/library/releases/${encodeURIComponent(release.id)}`}
-                  >
-                    {release.title || "Без названия"}
-                  </a>
-                </span>
-              </td>
-              <td>
-                <CreditNames credits={release.artists} />
-              </td>
-              <td>
-                {release.edition.release_date ??
-                  release.edition.original_release_date ??
-                  "Дата не указана"}
-                <span className="catalog-sub">
-                  {[
-                    release.edition.country,
-                    ...release.edition.labels,
-                    ...release.edition.catalog_numbers,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ") || "Издание не указано"}
-                </span>
-              </td>
-              <td>
-                {release.counts.position_count}{" "}
-                <span className="catalog-sub">
-                  {release.counts.published_position_count} опубликовано
-                </span>
-              </td>
-              <td>
-                {release.counts.provider_position_count == null
-                  ? `${release.counts.available_position_count} с аудио · полнота неизвестна`
-                  : `${release.counts.available_position_count} / ${release.counts.provider_position_count}`}
-              </td>
-            </tr>
-          ))}
+          {items.map((item) =>
+            item.kind === "library_release" && item.library_release ? (
+              <tr key={`library_release:${item.library_release.id}`}>
+                <td>
+                  <span className="catalog-entity">
+                    <Cover release={item.library_release} />
+                    <a
+                      href={`#/library/releases/${encodeURIComponent(item.library_release.id)}`}
+                    >
+                      {item.library_release.title || "Без названия"}
+                    </a>
+                  </span>
+                </td>
+                <td>
+                  <CreditNames credits={item.library_release.artists} />
+                </td>
+                <td>
+                  {item.library_release.edition.release_date ??
+                    item.library_release.edition.original_release_date ??
+                    "Дата не указана"}
+                  <span className="catalog-sub">
+                    {[
+                      item.library_release.edition.country,
+                      ...item.library_release.edition.labels,
+                      ...item.library_release.edition.catalog_numbers,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "Издание не указано"}
+                  </span>
+                </td>
+                <td>
+                  {item.library_release.counts.position_count}{" "}
+                  <span className="catalog-sub">
+                    {item.library_release.counts.published_position_count}{" "}
+                    опубликовано
+                  </span>
+                </td>
+                <td>
+                  {item.library_release.counts.provider_position_count == null
+                    ? `${item.library_release.counts.available_position_count} с аудио · полнота неизвестна`
+                    : `${item.library_release.counts.available_position_count} / ${item.library_release.counts.provider_position_count}`}
+                </td>
+              </tr>
+            ) : item.kind === "missing_release_group" &&
+              item.missing_release_group ? (
+              <MissingReleaseGroupRow
+                key={`missing_release_group:${item.missing_release_group.provider_key}`}
+                group={item.missing_release_group}
+                presentation="table"
+              />
+            ) : null,
+          )}
         </tbody>
       </table>
     </div>

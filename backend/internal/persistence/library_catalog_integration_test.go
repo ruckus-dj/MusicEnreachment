@@ -4,7 +4,9 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
@@ -81,7 +83,7 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	if page.Total != 3 || len(page.Items) != 3 {
 		t.Fatalf("all releases page = %#v", page)
 	}
-	if page.Items[0].Title != "A Alpha" || page.Items[1].Title != "B Beta" || page.Items[2].Title != "C Gamma" {
+	if page.Items[0].LibraryRelease.Title != "A Alpha" || page.Items[1].LibraryRelease.Title != "B Beta" || page.Items[2].LibraryRelease.Title != "C Gamma" {
 		t.Fatalf("release ordering = %#v", page.Items)
 	}
 
@@ -96,7 +98,7 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if filtered.Total != 1 || len(filtered.Items) != 1 || filtered.Items[0].ID != test.wantID {
+		if filtered.Total != 1 || len(filtered.Items) != 1 || filtered.Items[0].Kind != "library_release" || filtered.Items[0].LibraryRelease.ID != test.wantID {
 			t.Fatalf("%s release page = %#v", test.publication, filtered)
 		}
 	}
@@ -105,21 +107,189 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filtered.Total != 2 || len(filtered.Items) != 1 || filtered.Items[0].ID != fixtures[0].id {
+	if filtered.Total != 2 || len(filtered.Items) != 1 || filtered.Items[0].LibraryRelease.ID != fixtures[0].id {
 		t.Fatalf("artist release page = %#v", filtered)
 	}
 	filtered, err = repository.ReadLibraryReleases(ctx, LibraryCatalogRequest{Limit: 1, Query: "gamma", Publication: "all"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filtered.Total != 1 || len(filtered.Items) != 1 || filtered.Items[0].ID != fixtures[2].id {
+	if filtered.Total != 1 || len(filtered.Items) != 1 || filtered.Items[0].LibraryRelease.ID != fixtures[2].id {
 		t.Fatalf("search release page = %#v", filtered)
+	}
+
+	// Accepted MusicBrainz projections contribute one missing-group row for a
+	// group, regardless of how many cached editions describe it. Concrete local
+	// releases remain separate rows, including Alpha without source or publication.
+	const configIdentity = "library-catalog-test-config"
+	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name,setting_value) VALUES
+		('musicbrainz_mode','public'),('musicbrainz_base_url',''),('musicbrainz_config_identity',?)
+		ON CONFLICT(setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`, configIdentity).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	providerRepo := NewProviderCacheRepository(db)
+	provider := Provider{ID: uuid.New(), Code: "musicbrainz"}
+	if err := providerRepo.CreateProvider(ctx, &provider); err != nil {
+		t.Fatal(err)
+	}
+	const endpoint = "https://musicbrainz.org/ws/2"
+	source := ProviderSource{ID: uuid.New(), ProviderID: provider.ID, Namespace: "musicbrainz", Endpoint: endpoint, ConfigurationIdentity: configIdentity}
+	if err := providerRepo.CreateProviderSource(ctx, &source); err != nil {
+		t.Fatal(err)
+	}
+	groupID := uuid.New()
+	groupKey := groupID.String()
+	groupMissingID := uuid.New()
+	missingGroupKey := groupMissingID.String()
+	providerArtistKey := uuid.New().String()
+	artistFields, err := json.Marshal([]map[string]any{{"name": "Shared Artist", "artist": map[string]string{"id": providerArtistKey, "name": "Shared Artist"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()}
+	providerReleases := make([]ProviderRelease, 0, len(keys))
+	entities := make([]ProviderSourceEntity, 0, len(keys))
+	for i, key := range keys {
+		providerReleases = append(providerReleases, ProviderRelease{ID: uuid.New(), ProviderKey: key, Title: key})
+		group := groupKey
+		if i >= 2 {
+			group = missingGroupKey
+		}
+		fields, err := json.Marshal(map[string]any{"release-group": map[string]string{"id": group, "title": "Shared Group"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i >= 2 {
+			fields, err = json.Marshal(map[string]any{"release-group": map[string]string{"id": group, "title": "Shared Group"}, "artist-credit": json.RawMessage(artistFields)})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		entities = append(entities, ProviderSourceEntity{Kind: "release", ProviderKey: key, Fields: fields, RawSource: json.RawMessage(`{}`), Authority: 1, FieldEvidence: map[string]ProviderFieldEvidence{"release-group": {Authority: 1}}, Complete: false})
+	}
+	ticket, err := providerRepo.BeginRefresh(ctx, source.ID, "release-group-catalog", configIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := providerRepo.ApplySuccessfulResponse(ctx, ProviderSuccessfulResponse{
+		Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{}`),
+		Graph: ProviderGraph{Artists: []ProviderArtist{{ID: uuid.New(), ProviderKey: providerArtistKey, Name: "Shared Artist"}}, Releases: providerReleases, Entities: entities},
+	}); err != nil {
+		t.Fatalf("accept MusicBrainz release-group projections: %v", err)
+	}
+	// The same provider's accepted projection from an unconfigured endpoint is
+	// not catalog authority, even when its fields and artist credit are valid.
+	otherSource := ProviderSource{ID: uuid.New(), ProviderID: provider.ID, Namespace: "other", Endpoint: "https://other.invalid/ws/2", ConfigurationIdentity: configIdentity}
+	if err := providerRepo.CreateProviderSource(ctx, &otherSource); err != nil {
+		t.Fatal(err)
+	}
+	otherRelease := ProviderRelease{ID: uuid.New(), ProviderKey: "foreign-source-edition", Title: "Foreign Source Edition"}
+	otherGroupID := uuid.New()
+	otherFields, err := json.Marshal(map[string]any{"release-group": map[string]string{"id": otherGroupID.String(), "title": "Foreign Group"}, "artist-credit": json.RawMessage(artistFields)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTicket, err := providerRepo.BeginRefresh(ctx, otherSource.ID, "foreign-source", configIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := providerRepo.ApplySuccessfulResponse(ctx, ProviderSuccessfulResponse{
+		Ticket: otherTicket, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{}`),
+		Graph: ProviderGraph{Releases: []ProviderRelease{otherRelease}, Entities: []ProviderSourceEntity{{Kind: "release", ProviderKey: otherRelease.ProviderKey, Fields: otherFields, RawSource: json.RawMessage(`{}`), Authority: 1, FieldEvidence: map[string]ProviderFieldEvidence{"release-group": {Authority: 1}}, Complete: false}}},
+	}); err != nil {
+		t.Fatalf("accept other-source projection: %v", err)
+	}
+	for i, release := range providerReleases[:2] {
+		if _, err := db.NewRaw(`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method) VALUES (?,?,?,'manual')`, provider.ID, release.ID, fixtures[i].id).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var providerArtistID uuid.UUID
+	if err := db.NewRaw(`SELECT id FROM provider_artist WHERE provider_id=? AND provider_key=?`, provider.ID, providerArtistKey).Scan(ctx, &providerArtistID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method) VALUES (?,?,?,'manual')`, provider.ID, providerArtistID, artistID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	artistPage, err := repository.ReadLibraryArtists(ctx, LibraryCatalogRequest{Limit: 50, Publication: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artistPage.Total != 2 {
+		t.Fatalf("artist list after accepted group projections = %#v", artistPage)
+	}
+	var listedArtist *LibraryCatalogArtist
+	for i := range artistPage.Items {
+		if artistPage.Items[i].ID == artistID {
+			listedArtist = &artistPage.Items[i]
+			break
+		}
+	}
+	if listedArtist == nil || listedArtist.ReleaseCount != 3 {
+		t.Fatalf("artist list accepted release count = %#v, want 3", artistPage.Items)
+	}
+	artistDetail, err := repository.ReadLibraryArtist(ctx, artistID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artistDetail == nil || artistDetail.ReleaseCount != 3 {
+		t.Fatalf("artist detail concrete release count = %#v, want 3", artistDetail)
+	}
+	groupPage, err := repository.ReadLibraryReleases(ctx, LibraryCatalogRequest{Limit: 1, Publication: "all", ArtistID: &artistID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if groupPage.Total != 3 || len(groupPage.Items) != 1 || groupPage.Items[0].Kind != "library_release" || groupPage.Items[0].LibraryRelease == nil {
+		t.Fatalf("artist catalog first page = %#v, want two concrete editions plus one distinct missing group", groupPage)
+	}
+	groupPage, err = repository.ReadLibraryReleases(ctx, LibraryCatalogRequest{Limit: 10, Publication: "all", ArtistID: &artistID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if groupPage.Total != 3 || len(groupPage.Items) != 3 {
+		t.Fatalf("artist catalog complete page = %#v, want total 3", groupPage)
+	}
+	var missingGroups int
+	for _, item := range groupPage.Items {
+		if item.Kind == "missing_release_group" {
+			missingGroups++
+			if item.MissingReleaseGroup == nil || item.MissingReleaseGroup.ProviderKey != missingGroupKey {
+				t.Fatalf("missing group item = %#v", item)
+			}
+		}
+	}
+	if missingGroups != 1 {
+		t.Fatalf("missing group rows = %d, want one for repeated cached editions: %#v", missingGroups, groupPage.Items)
+	}
+	editions, err := repository.ReadLibraryReleaseGroupEditions(ctx, groupMissingID, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	editionKeys := map[string]bool{}
+	for _, edition := range editions.Items {
+		editionKeys[edition.ProviderKey] = edition.TrackCount == nil
+	}
+	if editions.Total != 2 || len(editions.Items) != 2 || !editionKeys[keys[2]] || !editionKeys[keys[3]] {
+		t.Fatalf("cached missing-group editions = %#v, want both editions and unknown track counts", editions)
+	}
+	// Tracklist inspection of an accepted but incomplete edition is read-only and
+	// must preserve unknown completeness/count rather than infer either value.
+	tracks, err := repository.ReadLibraryReleaseGroupEditionTracks(ctx, groupMissingID, keys[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tracks.Complete != nil || tracks.TrackCount != nil || len(tracks.Tracks) != 0 {
+		t.Fatalf("incomplete cached edition tracklist = %#v", tracks)
+	}
+	var localReleaseCount int
+	if err := db.NewRaw(`SELECT count(*) FROM local_release`).Scan(ctx, &localReleaseCount); err != nil || localReleaseCount != len(fixtures) {
+		t.Fatalf("tracklist read created or removed local releases: count %d, err %v", localReleaseCount, err)
 	}
 	filtered, err = repository.ReadLibraryReleases(ctx, LibraryCatalogRequest{Limit: 1, Offset: 50, Publication: "all"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filtered.Total != 3 || len(filtered.Items) != 0 {
+	if filtered.Total != 4 || len(filtered.Items) != 0 {
 		t.Fatalf("out-of-range release page = %#v", filtered)
 	}
 
@@ -144,7 +314,7 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if availableReleases.Total != 1 || len(availableReleases.Items) != 1 || availableReleases.Items[0].ID != fixtures[0].id || availableReleases.Items[0].Counts.AvailablePositionCount != 1 {
+	if availableReleases.Total != 1 || len(availableReleases.Items) != 1 || availableReleases.Items[0].Kind != "library_release" || availableReleases.Items[0].LibraryRelease == nil || availableReleases.Items[0].LibraryRelease.ID != fixtures[0].id || availableReleases.Items[0].LibraryRelease.Counts.AvailablePositionCount != 1 {
 		t.Fatalf("source-only availability page = %#v", availableReleases)
 	}
 	missingRequest := availableRequest
@@ -153,7 +323,7 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missing.Total != 1 || len(missing.Items) != 1 || missing.Items[0].ID != fixtures[1].id || missing.Items[0].Counts.AvailablePositionCount != 0 {
+	if missing.Total != 2 || len(missing.Items) != 1 || missing.Items[0].Kind != "library_release" || missing.Items[0].LibraryRelease == nil || missing.Items[0].LibraryRelease.ID != fixtures[1].id || missing.Items[0].LibraryRelease.Counts.AvailablePositionCount != 0 {
 		t.Fatalf("partial release missing availability page = %#v", missing)
 	}
 	availableRequest.AvailablePositionIDs = append(observed, fixtures[1].position)
@@ -162,7 +332,7 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if availableReleases.Total != 2 || len(availableReleases.Items) != 1 || availableReleases.Items[0].ID != fixtures[1].id || availableReleases.Items[0].Counts.AvailablePositionCount != 1 {
+	if availableReleases.Total != 2 || len(availableReleases.Items) != 1 || availableReleases.Items[0].Kind != "library_release" || availableReleases.Items[0].LibraryRelease == nil || availableReleases.Items[0].LibraryRelease.ID != fixtures[1].id || availableReleases.Items[0].LibraryRelease.Counts.AvailablePositionCount != 1 {
 		t.Fatalf("both-kind availability page with offset = %#v", availableReleases)
 	}
 	availableArtists, err := repository.ReadLibraryArtists(ctx, LibraryCatalogRequest{Limit: 50, Publication: "all", Availability: "available", AvailablePositionIDs: observed})

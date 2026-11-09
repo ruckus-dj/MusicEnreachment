@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import type { ReactNode } from "react";
@@ -161,23 +162,27 @@ it("marks unknown provider completeness instead of rendering a zero denominator"
       HttpResponse.json({
         items: [
           {
-            id: "release-id",
-            title: "Incomplete provider cache",
-            artists: [],
-            edition: {
-              release_date: null,
-              original_release_date: null,
-              country: null,
-              labels: [],
-              catalog_numbers: [],
-            },
-            provider_links: [],
-            cover: null,
-            counts: {
-              position_count: 1,
-              published_position_count: 0,
-              available_position_count: 0,
-              provider_position_count: null,
+            kind: "library_release",
+            missing_release_group: null,
+            library_release: {
+              id: "release-id",
+              title: "Incomplete provider cache",
+              artists: [],
+              edition: {
+                release_date: null,
+                original_release_date: null,
+                country: null,
+                labels: [],
+                catalog_numbers: [],
+              },
+              provider_links: [],
+              cover: null,
+              counts: {
+                position_count: 1,
+                published_position_count: 0,
+                available_position_count: 0,
+                provider_position_count: null,
+              },
             },
           },
         ],
@@ -196,6 +201,118 @@ it("marks unknown provider completeness instead of rendering a zero denominator"
   });
   expect(row).toHaveTextContent("0 с аудио · полнота неизвестна");
   expect(row).not.toHaveTextContent("0 / 0");
+});
+
+it("loads a missing group’s edition and tracks only after explicit selection", async () => {
+  window.location.hash = "#/library?view=albums";
+  const groupID = "group-mbid";
+  const releaseID = "edition-mbid";
+  let editionRequests = 0;
+  let trackRequests = 0;
+  let mutationRequests = 0;
+  server.use(
+    http.get("*/api/library/releases", () =>
+      HttpResponse.json({
+        items: [
+          {
+            kind: "missing_release_group",
+            library_release: null,
+            missing_release_group: {
+              provider_code: "musicbrainz",
+              provider_key: groupID,
+              title: "Missing album",
+              artists: [],
+              original_release_date: null,
+            },
+          },
+        ],
+        total: 1,
+        limit: 50,
+        offset: 0,
+        summary,
+      }),
+    ),
+    http.get(`*/api/library/release-groups/${groupID}/editions`, () => {
+      editionRequests += 1;
+      return HttpResponse.json({
+        provider_code: "musicbrainz",
+        provider_key: groupID,
+        editions: [
+          {
+            provider_key: releaseID,
+            title: "Missing album",
+            artists: [],
+            edition: {
+              release_date: null,
+              original_release_date: null,
+              country: null,
+              labels: [],
+              catalog_numbers: [],
+              primary_type: "Album",
+              secondary_types: [],
+              disambiguation: "Digital edition",
+            },
+            track_count: null,
+          },
+        ],
+        total: 1,
+        limit: 50,
+        offset: 0,
+      });
+    }),
+    http.get(
+      `*/api/library/release-groups/${groupID}/editions/${releaseID}/tracks`,
+      () => {
+        trackRequests += 1;
+        return HttpResponse.json({
+          provider_code: "musicbrainz",
+          group_provider_key: groupID,
+          release_provider_key: releaseID,
+          complete: false,
+          track_count: 1,
+          tracks: [
+            {
+              medium: 1,
+              position: 1,
+              number: "1",
+              title: "Known track",
+              recording_title: null,
+              duration_ms: null,
+            },
+          ],
+        });
+      },
+    ),
+    http.all("*/api/library/release-groups/*", ({ request }) => {
+      if (request.method !== "GET") mutationRequests += 1;
+      return new HttpResponse(null, { status: 405 });
+    }),
+  );
+
+  renderScreen(<LibraryScreen />);
+  const row = await screen.findByRole("row", { name: /Missing album/ });
+  expect(row).toHaveTextContent("—");
+  expect(editionRequests).toBe(0);
+  expect(trackRequests).toBe(0);
+  expect(screen.queryByText("Tracks: —")).not.toBeInTheDocument();
+
+  fireEvent.click(within(row).getByRole("button", { name: "Browse editions" }));
+  const picker = await screen.findByRole("combobox", {
+    name: "Choose an edition",
+  });
+  await waitFor(() => expect(editionRequests).toBe(1));
+  expect(picker).toHaveValue("");
+  expect(trackRequests).toBe(0);
+  fireEvent.change(picker, { target: { value: releaseID } });
+
+  expect(await screen.findByText(/Known track/)).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "The cached track list is incomplete; it may not represent the full edition.",
+    ),
+  ).toBeInTheDocument();
+  expect(trackRequests).toBe(1);
+  expect(mutationRequests).toBe(0);
 });
 
 function position(title: string) {
