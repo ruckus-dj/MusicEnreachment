@@ -129,6 +129,12 @@ function lyricsWarningText(code: string, copy: PreviewCopy) {
   return warnings[code] ?? code;
 }
 
+function previewWarningText(code: string, copy: PreviewCopy) {
+  return code === "output_quality_would_downgrade"
+    ? copy.outputQualityDowngradeWarning
+    : code;
+}
+
 function audioStatusText(status: string, copy: PreviewCopy) {
   switch (status) {
     case "matches":
@@ -955,7 +961,7 @@ export function FirstPublicationPreview({
             {preview.warnings?.length ? (
               <ul>
                 {Array.from(new Set(preview.warnings ?? [])).map((item) => (
-                  <li key={item}>{item}</li>
+                  <li key={item}>{previewWarningText(item, copy)}</li>
                 ))}
               </ul>
             ) : (

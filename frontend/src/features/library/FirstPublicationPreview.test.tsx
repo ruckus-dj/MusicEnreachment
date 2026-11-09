@@ -479,6 +479,7 @@ it("submits retained republish workflow and frozen CURRENT identity", async () =
     status: 200,
     data: {
       ...preview,
+      warnings: ["output_quality_would_downgrade", "unmapped_warning_code"],
       current_comparison: {
         audio_status: "matches",
         current_components: ["Artist", "Release", "01 - Track.flac"],
@@ -515,6 +516,15 @@ it("submits retained republish workflow and frozen CURRENT identity", async () =
   await screen.findByRole("button", {
     name: "Повторная публикация выбранного источника",
   });
+
+  expect(
+    screen.getByText(
+      "Подтверждение заменит CURRENT аудио более низкого качества.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.getByText("unmapped_warning_code")).toBeInTheDocument();
+  expect(api.startLibraryFirstPublication).not.toHaveBeenCalled();
+
   fireEvent.click(
     screen.getByRole("button", {
       name: "Повторная публикация выбранного источника",

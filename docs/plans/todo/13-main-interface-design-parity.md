@@ -154,6 +154,11 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       без нового журнала или схемы. В `5786cfa9` полный hook, независимое ревью и вся
       [CI 42642702203](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42642702203)
       прошли. Остальные критерии пункта остаются открытыми.
+    - [x] Ручная republish больше не отклоняет выбранный source по quality rank
+      или измеренному битрейту. Сохранены предупреждение о вычисленном downgrade,
+      подтверждение и технические проверки; automatic upgrade не изменён.
+      Расширены существующие unit/UI assertions, без новых DB-сценариев.
+      Остальные recovery/changed-path критерии пункта остаются открытыми.
     - [x] Ordinary first-audio recovery поддерживает requested cover: точный PNG
       derivative проверяется по frozen bytes, фактическое отсутствие сохраняется
       как существующий `absent_after_interruption`, без выдуманного write failure.
@@ -161,6 +166,8 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       остаются ошибками. Расширен существующий source-gone recovery-сценарий
       выбранной обложкой, с native artwork и синтетическим topology probe.
       Специализированные intents и changed-path republish остаются открытыми.
+      `2176e764` прошёл обычный полный hook, независимое ревью и всю
+      [CI 42667650390](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42667650390).
 4. [x] **Metadata ownership и provider edges.** Привести ownership, provider
    relationships и границы влияния metadata к документации; Local create/update
    не создаёт library entries. **Приёмка:** самостоятельный recording и позиция

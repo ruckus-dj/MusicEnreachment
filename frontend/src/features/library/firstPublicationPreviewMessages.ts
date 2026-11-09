@@ -37,6 +37,8 @@ export const firstPublicationPreviewMessages = {
     revision: "revision",
     noProjections: "No metadata projections.",
     warnings: "Warnings",
+    outputQualityDowngradeWarning:
+      "Confirming will replace CURRENT with lower-quality audio.",
     blockers: "Blocking conditions",
     none: "None.",
     namespaceCheck: "Namespace check before start",
@@ -200,6 +202,8 @@ export const firstPublicationPreviewMessages = {
     revision: "ревизия",
     noProjections: "Нет проекций метаданных.",
     warnings: "Предупреждения",
+    outputQualityDowngradeWarning:
+      "Подтверждение заменит CURRENT аудио более низкого качества.",
     blockers: "Блокирующие условия",
     none: "Нет.",
     namespaceCheck: "Проверка namespace перед запуском",

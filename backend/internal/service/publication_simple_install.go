@@ -223,11 +223,6 @@ func (executor *PublicationExecutor) executeSimplePublication(
 	if err != nil {
 		return err
 	}
-	if input.SourceRepublish != nil {
-		if err := validateSourceRepublishPreparedAudioQuality(input, prepared.Observation.ActualAudio); err != nil {
-			return err
-		}
-	}
 	if commands.QuiescenceUnknown() {
 		return errors.New("publication command quiescence is unknown")
 	}

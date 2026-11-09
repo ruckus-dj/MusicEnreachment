@@ -281,10 +281,6 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 			!reflect.DeepEqual(purePreview.DesiredTags.Tags, input.DesiredTags) {
 			return nil, persistence.ErrPublicationAdmissionConflict
 		}
-		if sourceRepublishQualityReasonCode(sourceRepublishOutputQualityComparison(purePreview.Transform, transactionSource, transactionContext.Library.Current,
-			publication.AudioPublicationFormat(transactionSettings.PublicationFormat))) != "" {
-			return nil, persistence.ErrPublicationAdmissionConflict
-		}
 		purePreview.ResolvedPathComponents = append([]string(nil), preview.ResolvedPathComponents...)
 		purePreview.LyricsPlan = &lyricsPlan
 		purePreview.CoverPlan = &coverPlan
@@ -356,44 +352,11 @@ func sourceRepublishOutputQualityComparison(
 	return publication.CompareQuality(audioUpgradeQualityCandidate(output), audioUpgradeQualityCandidate(current.Audio.Facts))
 }
 
-func sourceRepublishQualityReasonCode(comparison publication.QualityComparison) string {
-	switch comparison {
-	case publication.QualityEqual, publication.QualityBetter:
-		return ""
-	case publication.QualityWorse:
+func sourceRepublishQualityWarningCode(comparison publication.QualityComparison) string {
+	if comparison == publication.QualityWorse {
 		return "output_quality_would_downgrade"
-	case publication.QualityUnknown, publication.QualityIncomparable:
-		return "output_quality_not_proven"
-	default:
-		return "output_quality_not_proven"
 	}
-}
-
-func validateSourceRepublishPreparedAudioQuality(input persistence.PublicationInputs, raw json.RawMessage) error {
-	if input.SourceRepublish == nil {
-		return errors.New("source-republish quality baseline is unavailable")
-	}
-	var observed struct {
-		Version int                             `json:"version"`
-		Facts   persistence.PersistedAudioFacts `json:"facts"`
-	}
-	if err := json.Unmarshal(raw, &observed); err != nil {
-		return fmt.Errorf("decode source-republish prepared audio facts: %w", err)
-	}
-	if observed.Version != 1 {
-		return errors.New("source-republish prepared audio facts version is invalid")
-	}
-	if err := observed.Facts.Validate(); err != nil {
-		return fmt.Errorf("validate source-republish prepared audio facts: %w", err)
-	}
-	comparison := publication.CompareQuality(
-		audioUpgradeQualityCandidate(observed.Facts),
-		audioUpgradeQualityCandidate(input.SourceRepublish.Current.AudioFacts),
-	)
-	if comparison != publication.QualityEqual && comparison != publication.QualityBetter {
-		return errors.New("source-republish prepared output does not prove non-downgrade quality")
-	}
-	return nil
+	return ""
 }
 
 func retainedSourceRepublishDigest(
@@ -647,15 +610,13 @@ func (service *LibraryPublications) prepareRetainedSourceRepublish(
 	}
 	format := publication.AudioPublicationFormat(runtimeSettings.PublicationFormat)
 	qualityComparison := sourceRepublishOutputQualityComparison(preview.Transform, selected, current, format)
-	qualityReason := sourceRepublishQualityReasonCode(qualityComparison)
 	capability := &SourceRepublishConfirmationCapability{
 		Kind: "retained_same_path", Status: "ready", ReasonCodes: []string{}, CurrentGeneration: current.Record.Generation,
 	}
-	if qualityReason != "" {
-		capability.Status = "blocked"
-		capability.ReasonCodes = []string{qualityReason}
-		preview.Blockers = append(preview.Blockers, qualityReason)
-	} else if sourceRepublishIsUnchanged(preview, selected, current, format) {
+	if warning := sourceRepublishQualityWarningCode(qualityComparison); warning != "" {
+		preview.Warnings = append(preview.Warnings, warning)
+	}
+	if sourceRepublishIsUnchanged(preview, selected, current, format) {
 		capability.Status = "unchanged"
 		capability.ReasonCodes = []string{"content_unchanged"}
 	}

@@ -3,8 +3,15 @@ package service
 import (
 	"testing"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
+
+func TestSourceRepublishDowngradeQualityIsWarning(t *testing.T) {
+	if got := sourceRepublishQualityWarningCode(publication.QualityWorse); got != "output_quality_would_downgrade" {
+		t.Fatalf("downgrade warning code = %q", got)
+	}
+}
 
 func TestMatchSourceRepublishPlanningSettingsRejectsNamespaceChanges(t *testing.T) {
 	capturedValues := map[string]string{
