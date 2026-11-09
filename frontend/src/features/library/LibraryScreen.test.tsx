@@ -38,12 +38,15 @@ afterEach(() => {
 
 it("renders server summary, artist cards and preserves search and pagination in the URL", async () => {
   window.location.hash = "#/library?view=artists";
+  let artistRequests = 0;
+  let expectedAvailability = "all";
   server.use(
     http.get("*/api/library/artists", ({ request }) => {
       const url = new URL(request.url);
+      artistRequests += 1;
       expect(url.searchParams.get("limit")).toBe("50");
       expect(url.searchParams.get("publication")).toBe("all");
-      expect(url.searchParams.get("availability")).toBe("all");
+      expect(url.searchParams.get("availability")).toBe(expectedAvailability);
       return HttpResponse.json({
         items: [
           {
@@ -87,11 +90,14 @@ it("renders server summary, artist cards and preserves search and pagination in 
   await waitFor(() => expect(window.location.hash).toContain("q=jazz"));
   fireEvent.click(await screen.findByRole("button", { name: "Далее" }));
   await waitFor(() => expect(window.location.hash).toContain("offset=50"));
+  await waitFor(() => expect(artistRequests).toBe(3));
+  expectedAvailability = "missing";
   fireEvent.click(screen.getByRole("radio", { name: "Не хватает" }));
   await waitFor(() => {
     expect(window.location.hash).toContain("availability=missing");
     expect(window.location.hash).not.toContain("offset=");
   });
+  await waitFor(() => expect(artistRequests).toBe(4));
 });
 
 it("shows audio availability separately from sources and publication", async () => {

@@ -68,6 +68,9 @@ UTC offset. CI runs in different time zones on all supported platforms.
 production query-provider composition, not rely on a test-only provider that can
 hide missing production wiring. Theme tests supply an explicit in-memory Storage
 fixture: Node 24 may not expose `window.localStorage` in the test environment.
+Deferred editor-refresh tests must await the initial editing controls, not just
+the request count, before mutating the draft. Filter-transition MSW handlers must
+model both the initial and transitioned request values explicitly.
 
 **Dev proxy**: Vite proxies /api and /health to 127.0.0.1:8080 for same-origin during dev.
 

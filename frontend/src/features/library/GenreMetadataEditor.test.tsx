@@ -403,7 +403,9 @@ it("does not silently rebase a dirty draft when a refresh read finishes", async 
   await waitFor(() =>
     expect(api.getLibraryReleaseMetadata).toHaveBeenCalledTimes(2),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Очистить жанры" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Очистить жанры" }),
+  );
   await act(async () => resolveRefresh({ status: 200, data: metadata(5) }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent(
