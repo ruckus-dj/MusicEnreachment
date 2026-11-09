@@ -220,7 +220,7 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      и завершённый CI:
      [42273104143](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42273104143).
    - [ ] Остаётся aggregate preview metadata, поэтому пункт целиком не закрыт.
-7. [ ] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
+7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через
    действующую конфигурацию/governor MusicBrainz, полная версия заменяется атомарно;
@@ -254,8 +254,18 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       provider-mediated incoming matching заменяет прямое создание library из API/UI.
       Полный hook прошёл. Сохранение пустых genres при недоступном каталоге проверено
       в браузере; CRUD и matching проверены PostgreSQL-сценариями.
-    - [ ] Остаётся сквозная приёмка общего explicit repeat/aggregate workflow
-      вместе с пунктами 3/6. Local CRUD больше не является блокером пункта 7.
+    - [x] В `cc3cedda` Local genres читаются в publication через provider bindings,
+      сохраняя scope/fallback и серверные имена; catalog lookup при публикации не нужен.
+      В `265ce9f2` общий release preview переиспользует позиционные initial/retained
+      repeat controllers с явным подтверждением и без записи unchanged/исключённых.
+      PostgreSQL readback, native GENRE writer/readback и mixed aggregate UI покрывают
+      жанровую цепочку; browser checks — production components с API fixtures,
+      не real-backend E2E. Независимое review не нашло оставшегося genre-блокера.
+      Полные hooks и CI обоих срезов прошли, включая контейнер:
+      [42539934336](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42539934336),
+      [42545356498](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42545356498).
+      Более широкий republish и полный визуальный паритет остаются в пунктах 3/6;
+      общий real-backend/визуальный E2E — в пункте 11.
 8. [ ] **Local create/update.** Использовать переиспользуемые формы для provider Local по
    `docs/design/local-provider.md`, с каталогом жанров из пункта 7.
    **Приёмка:** явное создание после поиска и редактирование только provider records,

@@ -23,6 +23,10 @@ UI regression, а не этот однопозиционный browser fixture. 
 не смонтировался из-за разных Vite React module identities; повторный использовал
 те же versioned imports, что production module.
 
-Полный hook этого дополнения ожидается. Более широкие explicit source selection,
+Полный hook `265ce9f2` и вся CI 42545356498 прошли, включая публикацию контейнера.
+Независимая итоговая сверка подтвердила выполнение жанровых критериев пункта 7:
+каталог, Local picker/CRUD, provider-mediated matching, publication resolution,
+native GENRE readback и aggregate explicit confirmation имеют проверенные пути.
+Более широкие explicit source selection,
 changed-path republish и полный визуальный паритет пунктов 3/6 не объявляются
 выполненными этим ограниченным aggregate-срезом.
