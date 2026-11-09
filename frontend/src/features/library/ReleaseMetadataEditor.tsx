@@ -13,7 +13,7 @@ import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 
 type FieldState = "absent" | "value" | "explicit_empty";
-type MetadataValue = string | string[];
+type MetadataValue = string | string[] | number | boolean;
 type ReleaseFieldKey =
   | "title"
   | "sort_title"
@@ -23,28 +23,91 @@ type ReleaseFieldKey =
   | "label"
   | "catalog_number"
   | "release_primary_type"
-  | "release_secondary_types";
+  | "release_secondary_types"
+  | "release_version"
+  | "barcode"
+  | "release_status"
+  | "compilation"
+  | "content_advisory"
+  | "mood"
+  | "grouping"
+  | "comment"
+  | "copyright"
+  | "license"
+  | "website"
+  | "media"
+  | "isrc"
+  | "bpm"
+  | "language"
+  | "disc_title"
+  | "track_number"
+  | "track_total"
+  | "disc_number"
+  | "disc_total";
 type MetadataFieldKey = ReleaseFieldKey | "title" | "sort_title";
 type ReleaseField = {
   key: MetadataFieldKey;
-  kind: "text" | "date" | "list";
+  kind:
+    | "text"
+    | "date"
+    | "list"
+    | "boolean"
+    | "integer"
+    | "number"
+    | "advisory";
+  group: string;
 };
 
 const releaseFields: ReleaseField[] = [
-  { key: "title", kind: "text" },
-  { key: "sort_title", kind: "text" },
-  { key: "release_date", kind: "date" },
-  { key: "original_release_date", kind: "date" },
-  { key: "release_country", kind: "text" },
-  { key: "label", kind: "list" },
-  { key: "catalog_number", kind: "text" },
-  { key: "release_primary_type", kind: "text" },
-  { key: "release_secondary_types", kind: "list" },
+  { key: "title", kind: "text", group: "release" },
+  { key: "sort_title", kind: "text", group: "release" },
+  { key: "release_date", kind: "date", group: "release" },
+  { key: "original_release_date", kind: "date", group: "release" },
+  { key: "release_country", kind: "text", group: "release" },
+  { key: "label", kind: "list", group: "release" },
+  { key: "catalog_number", kind: "text", group: "release" },
+  { key: "release_primary_type", kind: "text", group: "release" },
+  { key: "release_secondary_types", kind: "list", group: "release" },
+  { key: "release_version", kind: "text", group: "release" },
+  { key: "barcode", kind: "text", group: "release" },
+  { key: "release_status", kind: "text", group: "release" },
+  { key: "compilation", kind: "boolean", group: "release" },
+  { key: "content_advisory", kind: "advisory", group: "release" },
+  { key: "media", kind: "list", group: "release" },
+  { key: "mood", kind: "list", group: "additional" },
+  { key: "grouping", kind: "text", group: "additional" },
+  { key: "comment", kind: "text", group: "additional" },
+  { key: "copyright", kind: "text", group: "additional" },
+  { key: "license", kind: "text", group: "additional" },
+  { key: "website", kind: "text", group: "additional" },
 ];
 
 const titleFields: ReleaseField[] = [
-  { key: "title", kind: "text" },
-  { key: "sort_title", kind: "text" },
+  { key: "title", kind: "text", group: "main" },
+  { key: "sort_title", kind: "text", group: "main" },
+];
+
+const recordingFields: ReleaseField[] = [
+  ...titleFields,
+  { key: "isrc", kind: "list", group: "recording" },
+  { key: "bpm", kind: "number", group: "recording" },
+  { key: "language", kind: "text", group: "additional" },
+  { key: "content_advisory", kind: "advisory", group: "additional" },
+  { key: "mood", kind: "list", group: "additional" },
+  { key: "grouping", kind: "text", group: "additional" },
+  { key: "comment", kind: "text", group: "additional" },
+  { key: "copyright", kind: "text", group: "additional" },
+  { key: "license", kind: "text", group: "additional" },
+  { key: "website", kind: "text", group: "additional" },
+];
+
+const positionFields: ReleaseField[] = [
+  ...recordingFields,
+  { key: "disc_title", kind: "text", group: "position" },
+  { key: "track_number", kind: "integer", group: "position" },
+  { key: "track_total", kind: "integer", group: "position" },
+  { key: "disc_number", kind: "integer", group: "position" },
+  { key: "disc_total", kind: "integer", group: "position" },
 ];
 
 const copy = {
@@ -62,7 +125,34 @@ const copy = {
       catalog_number: "Catalog number",
       release_primary_type: "Primary release type",
       release_secondary_types: "Secondary release types",
+      release_version: "Release version",
+      barcode: "Barcode",
+      release_status: "Release status",
+      compilation: "Compilation",
+      content_advisory: "Content advisory",
+      mood: "Mood",
+      grouping: "Grouping",
+      comment: "Comment",
+      copyright: "Copyright",
+      license: "License",
+      website: "Website",
+      media: "Media",
+      isrc: "ISRCs",
+      bpm: "BPM",
+      language: "Language",
+      disc_title: "Disc title",
+      track_number: "Track number",
+      track_total: "Track total",
+      disc_number: "Disc number",
+      disc_total: "Disc total",
     } satisfies Record<ReleaseFieldKey, string>,
+    groups: {
+      release: "Release details",
+      recording: "Recording details",
+      position: "Position details",
+      additional: "Additional metadata",
+      main: "Titles",
+    },
     noOverride: "Inherited · no local override",
     explicitEmpty: "Explicitly cleared",
     emptyValue: "Empty value",
@@ -84,6 +174,11 @@ const copy = {
     mode: "Override state",
     absent: "Inherit",
     value: "Value",
+    invalidDate: "Enter a valid date as YYYY, YYYY-MM, or YYYY-MM-DD.",
+    invalidPositiveInteger: "Enter a positive whole number.",
+    invalidPositiveNumber: "Enter a positive finite number.",
+    explicit: "Explicit",
+    clean: "Clean",
   },
   ru: {
     title: "Метаданные релиза",
@@ -99,7 +194,34 @@ const copy = {
       catalog_number: "Номер каталога",
       release_primary_type: "Основной тип релиза",
       release_secondary_types: "Дополнительные типы релиза",
+      release_version: "Версия релиза",
+      barcode: "Штрихкод",
+      release_status: "Статус релиза",
+      compilation: "Сборник",
+      content_advisory: "Предупреждение о содержании",
+      mood: "Настроение",
+      grouping: "Группа",
+      comment: "Комментарий",
+      copyright: "Авторское право",
+      license: "Лицензия",
+      website: "Веб-сайт",
+      media: "Носители",
+      isrc: "Коды ISRC",
+      bpm: "Темп (BPM)",
+      language: "Язык",
+      disc_title: "Название диска",
+      track_number: "Номер дорожки",
+      track_total: "Всего дорожек",
+      disc_number: "Номер диска",
+      disc_total: "Всего дисков",
     } satisfies Record<ReleaseFieldKey, string>,
+    groups: {
+      release: "Сведения о релизе",
+      recording: "Сведения о записи",
+      position: "Сведения о позиции",
+      additional: "Дополнительные метаданные",
+      main: "Названия",
+    },
     noOverride: "Наследуется · локальное значение не задано",
     explicitEmpty: "Явно очищено",
     emptyValue: "Пустое значение",
@@ -122,6 +244,12 @@ const copy = {
     mode: "Состояние переопределения",
     absent: "Наследовать",
     value: "Значение",
+    invalidDate:
+      "Введите корректную дату в формате ГГГГ, ГГГГ-ММ или ГГГГ-ММ-ДД.",
+    invalidPositiveInteger: "Введите положительное целое число.",
+    invalidPositiveNumber: "Введите положительное конечное число.",
+    explicit: "С ненормативной лексикой",
+    clean: "Без ненормативной лексики",
   },
 } as const;
 
@@ -134,7 +262,17 @@ function emptyValues(fields: ReleaseField[]): EditorValues {
   return Object.fromEntries(
     fields.map(({ key, kind }) => [
       key,
-      { state: "absent", value: kind === "list" ? [] : "" },
+      {
+        state: "absent",
+        value:
+          kind === "list"
+            ? []
+            : kind === "boolean"
+              ? false
+              : kind === "advisory"
+                ? "explicit"
+                : "",
+      },
     ]),
   ) as EditorValues;
 }
@@ -149,12 +287,26 @@ function readValues(
     if (!field || !["absent", "value", "explicit_empty"].includes(field.state))
       continue;
     const state = field.state as FieldState;
-    let value: MetadataValue = kind === "list" ? [] : "";
+    let value: MetadataValue =
+      kind === "list"
+        ? []
+        : kind === "boolean"
+          ? false
+          : kind === "advisory"
+            ? "explicit"
+            : "";
     if (state === "value") {
       if (kind === "list" && Array.isArray(field.value))
         value = field.value.filter(
           (item): item is string => typeof item === "string",
         );
+      else if (kind === "boolean" && typeof field.value === "boolean")
+        value = field.value;
+      else if (
+        ["integer", "number"].includes(kind) &&
+        typeof field.value === "number"
+      )
+        value = String(field.value);
       else if (kind !== "list" && typeof field.value === "string")
         value = field.value;
     }
@@ -170,8 +322,22 @@ function displayValue(
 ) {
   if (state === "absent") return text.noOverride;
   if (state === "explicit_empty") return text.explicitEmpty;
-  const rendered = Array.isArray(value) ? value.join("\n") : value;
+  const rendered = Array.isArray(value) ? value.join("\n") : String(value);
   return rendered || text.emptyValue;
+}
+
+function validPartialDate(value: string) {
+  if (!/^(?!0000)\d{4}(?:-\d{2}(?:-\d{2})?)?$/.test(value)) return false;
+  if (value.length === 4) return true;
+  const date = new Date(
+    `${value.length === 7 ? `${value}-01` : value}T00:00:00Z`,
+  );
+  return (
+    !Number.isNaN(date.valueOf()) &&
+    (value.length === 7
+      ? date.toISOString().slice(0, 7) === value
+      : date.toISOString().slice(0, 10) === value)
+  );
 }
 
 export function ReleaseMetadataEditor({
@@ -214,7 +380,7 @@ export function ScopedLibraryMetadataEditor(
       <LibraryScopedMetadataEditorSession
         key={`position:${props.releaseId}:${ownerId}`}
         scope="position"
-        fields={titleFields}
+        fields={positionFields}
         ownerId={ownerId}
         releaseId={props.releaseId}
         refreshToken={refreshToken}
@@ -226,7 +392,7 @@ export function ScopedLibraryMetadataEditor(
     <LibraryScopedMetadataEditorSession
       key={`recording::${ownerId}`}
       scope="recording"
-      fields={titleFields}
+      fields={recordingFields}
       ownerId={ownerId}
       refreshToken={refreshToken}
       onSaved={onSaved}
@@ -405,18 +571,48 @@ function LibraryScopedMetadataEditorSession({
     writePending.current = true;
     setSaving(true);
     setSaveError("");
-    const changes = Object.fromEntries(
-      [...dirtyFields].map((key) => {
-        const field = draft[key];
-        return [
-          key,
-          field.state === "value"
-            ? { state: field.state, value: field.value }
-            : { state: field.state },
-        ];
-      }),
-    );
     try {
+      const changes = Object.fromEntries(
+        [...dirtyFields].map((key) => {
+          const field = draft[key];
+          const definition = fields.find((candidate) => candidate.key === key);
+          let value: MetadataValue = field.value;
+          if (field.state === "value" && definition) {
+            if (definition.kind === "integer" || definition.kind === "number") {
+              const number = Number(field.value);
+              const rawValue = String(field.value);
+              const validNumberSyntax =
+                definition.kind === "integer"
+                  ? /^\d+$/.test(rawValue)
+                  : /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(rawValue);
+              if (
+                !validNumberSyntax ||
+                !Number.isFinite(number) ||
+                number <= 0 ||
+                (definition.kind === "integer" && !Number.isSafeInteger(number))
+              ) {
+                throw new Error(
+                  definition.kind === "integer"
+                    ? text.invalidPositiveInteger
+                    : text.invalidPositiveNumber,
+                );
+              }
+              value = number;
+            } else if (
+              definition.kind === "date" &&
+              !validPartialDate(String(field.value))
+            ) {
+              throw new Error(text.invalidDate);
+            }
+          }
+          return [
+            key,
+            field.state === "value"
+              ? { state: field.state, value }
+              : { state: field.state },
+          ];
+        }),
+      );
       const body = {
         expected_revision: metadata.revision,
         changes,
@@ -504,95 +700,155 @@ function LibraryScopedMetadataEditorSession({
           </AppButton>
         </div>
       </div>
-      <dl className="m-0 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {fields.map(({ key, kind }) => {
-          const field = editing ? draft[key] : saved[key];
-          const label = text.labels[key];
-          const rendered = Array.isArray(field.value)
-            ? field.value.join("\n")
-            : field.value;
-          return (
-            <div
-              key={key}
-              className="grid min-w-0 gap-1 rounded border border-[var(--line)] p-2"
-            >
-              <dt className="text-xs text-[var(--muted)]">{label}</dt>
-              <dd className="m-0 min-w-0 text-sm">
-                {editing ? (
-                  <div className="grid min-w-0 gap-1.5">
-                    <label className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                      <span>{text.mode}</span>
-                      <select
-                        aria-label={`${label} — ${text.mode}`}
-                        className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-                        value={field.state}
-                        disabled={saving}
-                        onChange={(event) =>
-                          updateField(key, {
-                            state: event.currentTarget.value as FieldState,
-                            value: field.value,
-                          })
-                        }
-                      >
-                        <option value="absent">{text.absent}</option>
-                        <option value="value">{text.value}</option>
-                        <option value="explicit_empty">
-                          {text.explicitEmpty}
-                        </option>
-                      </select>
-                    </label>
-                    {field.state === "value" ? (
-                      kind === "list" ? (
-                        <textarea
-                          aria-label={label}
-                          className="min-h-20 w-full resize-y rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] p-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-                          value={rendered}
-                          disabled={saving}
-                          onChange={(event) =>
-                            updateField(key, {
-                              state: "value",
-                              value: event.currentTarget.value.split("\n"),
-                            })
-                          }
-                        />
-                      ) : (
-                        <input
-                          aria-label={label}
-                          className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
-                          type="text"
-                          inputMode={kind === "date" ? "text" : undefined}
-                          value={rendered}
-                          disabled={saving}
-                          onChange={(event) =>
-                            updateField(key, {
-                              state: "value",
-                              value: event.currentTarget.value,
-                            })
-                          }
-                        />
-                      )
-                    ) : null}
-                    {kind === "date" && field.state === "value" ? (
-                      <span className="text-xs text-[var(--muted)]">
-                        {text.dateHint}
-                      </span>
-                    ) : null}
-                    {kind === "list" && field.state === "value" ? (
-                      <span className="text-xs text-[var(--muted)]">
-                        {text.listHint}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : (
-                  <span className="block whitespace-pre-wrap break-words">
-                    {displayValue(field.state, field.value, text)}
-                  </span>
-                )}
-              </dd>
-            </div>
-          );
-        })}
-      </dl>
+      <div className="grid min-w-0 gap-2">
+        {[...new Set(fields.map(({ group }) => group))].map((group) => (
+          <details
+            key={group}
+            className="min-w-0 rounded border border-[var(--line)]"
+          >
+            <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+              {text.groups[group as keyof typeof text.groups]}
+            </summary>
+            <dl className="m-0 grid min-w-0 grid-cols-1 gap-2 p-2 sm:grid-cols-2 lg:grid-cols-3">
+              {fields
+                .filter((field) => field.group === group)
+                .map(({ key, kind }) => {
+                  const field = editing ? draft[key] : saved[key];
+                  const label = text.labels[key];
+                  const rendered = Array.isArray(field.value)
+                    ? field.value.join("\n")
+                    : String(field.value);
+                  return (
+                    <div
+                      key={key}
+                      className="grid min-w-0 gap-1 rounded border border-[var(--line)] p-2"
+                    >
+                      <dt className="text-xs text-[var(--muted)]">{label}</dt>
+                      <dd className="m-0 min-w-0 text-sm">
+                        {editing ? (
+                          <div className="grid min-w-0 gap-1.5">
+                            <label className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                              <span>{text.mode}</span>
+                              <select
+                                aria-label={`${label} — ${text.mode}`}
+                                className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+                                value={field.state}
+                                disabled={saving}
+                                onChange={(event) =>
+                                  updateField(key, {
+                                    state: event.currentTarget
+                                      .value as FieldState,
+                                    value: field.value,
+                                  })
+                                }
+                              >
+                                <option value="absent">{text.absent}</option>
+                                <option value="value">{text.value}</option>
+                                <option value="explicit_empty">
+                                  {text.explicitEmpty}
+                                </option>
+                              </select>
+                            </label>
+                            {field.state === "value" ? (
+                              kind === "list" ? (
+                                <textarea
+                                  aria-label={label}
+                                  className="min-h-20 w-full resize-y rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] p-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+                                  value={rendered}
+                                  disabled={saving}
+                                  onChange={(event) =>
+                                    updateField(key, {
+                                      state: "value",
+                                      value:
+                                        event.currentTarget.value.split("\n"),
+                                    })
+                                  }
+                                />
+                              ) : kind === "boolean" || kind === "advisory" ? (
+                                <select
+                                  aria-label={label}
+                                  className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+                                  value={String(field.value)}
+                                  disabled={saving}
+                                  onChange={(event) =>
+                                    updateField(key, {
+                                      state: "value",
+                                      value:
+                                        kind === "boolean"
+                                          ? event.currentTarget.value === "true"
+                                          : event.currentTarget.value,
+                                    })
+                                  }
+                                >
+                                  {kind === "boolean" ? (
+                                    <>
+                                      <option value="true">
+                                        {text.value}: true
+                                      </option>
+                                      <option value="false">
+                                        {text.value}: false
+                                      </option>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <option value="explicit">
+                                        {text.explicit}
+                                      </option>
+                                      <option value="clean">
+                                        {text.clean}
+                                      </option>
+                                    </>
+                                  )}
+                                </select>
+                              ) : (
+                                <input
+                                  aria-label={label}
+                                  className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
+                                  type="text"
+                                  inputMode={
+                                    kind === "integer"
+                                      ? "numeric"
+                                      : kind === "number"
+                                        ? "decimal"
+                                        : kind === "date"
+                                          ? "text"
+                                          : undefined
+                                  }
+                                  value={rendered}
+                                  disabled={saving}
+                                  onChange={(event) =>
+                                    updateField(key, {
+                                      state: "value",
+                                      value: event.currentTarget.value,
+                                    })
+                                  }
+                                />
+                              )
+                            ) : null}
+                            {kind === "date" && field.state === "value" ? (
+                              <span className="text-xs text-[var(--muted)]">
+                                {text.dateHint}
+                              </span>
+                            ) : null}
+                            {kind === "list" && field.state === "value" ? (
+                              <span className="text-xs text-[var(--muted)]">
+                                {text.listHint}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="block whitespace-pre-wrap break-words">
+                            {displayValue(field.state, field.value, text)}
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  );
+                })}
+            </dl>
+          </details>
+        ))}
+      </div>
       {loading ? (
         <p role="status" className="m-0 text-sm text-[var(--muted)]">
           {text.loading}

@@ -56,6 +56,10 @@ const metadata = (
   revision,
 });
 
+function openGroup(region: HTMLElement, label: string) {
+  fireEvent.click(within(region).getByText(label));
+}
+
 it("saves recording and position title overrides through their own scopes", async () => {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "ru");
@@ -115,6 +119,8 @@ it("saves recording and position title overrides through their own scopes", asyn
     expect(recordingEdit).toBeEnabled();
     expect(positionEdit).toBeEnabled();
   });
+  openGroup(recording, "Названия");
+  openGroup(position, "Названия");
   fireEvent.click(recordingEdit);
   fireEvent.change(
     within(recording).getByRole("textbox", { name: "Название" }),
@@ -192,6 +198,8 @@ it("sends exact typed states at the loaded revision and retains the draft on con
 
   const editButton = screen.getByRole("button", { name: "Изменить" });
   await waitFor(() => expect(editButton).toBeEnabled());
+  const release = screen.getByRole("region", { name: "Метаданные релиза" });
+  openGroup(release, "Сведения о релизе");
   fireEvent.click(editButton);
   fireEvent.change(screen.getByRole("textbox", { name: "Название" }), {
     target: { value: "  New title  " },
@@ -229,4 +237,217 @@ it("sends exact typed states at the loaded revision and retains the draft on con
   expect(screen.getByRole("textbox", { name: "Название" })).toHaveValue(
     "  New title  ",
   );
+});
+
+it("round-trips boolean, decimal, integer, and advisory values by scope", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "ru");
+  vi.stubGlobal("localStorage", storage);
+  const releaseId = "typed-metadata-release";
+  const recordingId = "typed-metadata-recording";
+  const positionId = "typed-metadata-position";
+  const typed = (
+    revision: number,
+    scope: string,
+    overrides: {
+      compilation?: boolean;
+      content_advisory?: string;
+      bpm?: number;
+      track_number?: number;
+    } = {},
+  ) => {
+    const result = metadata(revision, scope);
+    if (scope === "release") {
+      result.envelope.desired.compilation = {
+        authority: "local",
+        provenance: { kind: "manual" },
+        state: "value",
+        value: overrides.compilation ?? false,
+      };
+      result.envelope.desired.content_advisory = {
+        authority: "local",
+        provenance: { kind: "manual" },
+        state: "value",
+        value: overrides.content_advisory ?? "explicit",
+      };
+    } else {
+      result.envelope.desired.bpm = {
+        authority: "local",
+        provenance: { kind: "manual" },
+        state: "value",
+        value: overrides.bpm ?? 123.45,
+      };
+      result.envelope.desired.content_advisory = {
+        authority: "local",
+        provenance: { kind: "manual" },
+        state: "value",
+        value: "explicit",
+      };
+      if (scope === "position")
+        result.envelope.desired.track_number = {
+          authority: "local",
+          provenance: { kind: "manual" },
+          state: "value",
+          value: overrides.track_number ?? 2,
+        };
+    }
+    return result;
+  };
+  const patchBodies = new Map<string, unknown>();
+  let releaseResponse = typed(3, "release");
+  let recordingResponse = typed(5, "recording");
+  let positionResponse = typed(7, "position");
+  server.use(
+    http.get(`*/api/library/releases/${releaseId}/metadata`, () =>
+      HttpResponse.json(releaseResponse),
+    ),
+    http.get(`*/api/library/recordings/${recordingId}/metadata`, () =>
+      HttpResponse.json(recordingResponse),
+    ),
+    http.get(
+      `*/api/library/releases/${releaseId}/positions/${positionId}/metadata`,
+      () => HttpResponse.json(positionResponse),
+    ),
+    http.patch(
+      `*/api/library/releases/${releaseId}/metadata`,
+      async ({ request }) => {
+        patchBodies.set("release", await request.json());
+        releaseResponse = typed(4, "release", {
+          compilation: true,
+          content_advisory: "clean",
+        });
+        return HttpResponse.json(releaseResponse);
+      },
+    ),
+    http.patch(
+      `*/api/library/recordings/${recordingId}/metadata`,
+      async ({ request }) => {
+        patchBodies.set("recording", await request.json());
+        recordingResponse = typed(6, "recording", { bpm: 128.75 });
+        return HttpResponse.json(recordingResponse);
+      },
+    ),
+    http.patch(
+      `*/api/library/releases/${releaseId}/positions/${positionId}/metadata`,
+      async ({ request }) => {
+        patchBodies.set("position", await request.json());
+        positionResponse = typed(8, "position", { track_number: 3 });
+        return HttpResponse.json(positionResponse);
+      },
+    ),
+  );
+
+  render(
+    <I18nProvider>
+      <ReleaseMetadataEditor releaseId={releaseId} />
+      <ScopedLibraryMetadataEditor scope="recording" ownerId={recordingId} />
+      <ScopedLibraryMetadataEditor
+        scope="position"
+        ownerId={positionId}
+        releaseId={releaseId}
+      />
+    </I18nProvider>,
+  );
+
+  const release = screen.getByRole("region", { name: "Метаданные релиза" });
+  const recording = screen.getByRole("region", { name: "Метаданные записи" });
+  const position = screen.getByRole("region", { name: "Метаданные позиции" });
+  await waitFor(() => {
+    expect(
+      within(release).getByRole("button", { name: "Изменить" }),
+    ).toBeEnabled();
+    expect(
+      within(recording).getByRole("button", { name: "Изменить" }),
+    ).toBeEnabled();
+    expect(
+      within(position).getByRole("button", { name: "Изменить" }),
+    ).toBeEnabled();
+  });
+  openGroup(release, "Сведения о релизе");
+  openGroup(recording, "Сведения о записи");
+  openGroup(position, "Сведения о позиции");
+  fireEvent.click(within(release).getByRole("button", { name: "Изменить" }));
+  fireEvent.click(within(recording).getByRole("button", { name: "Изменить" }));
+  fireEvent.click(within(position).getByRole("button", { name: "Изменить" }));
+  fireEvent.change(within(release).getByRole("combobox", { name: "Сборник" }), {
+    target: { value: "true" },
+  });
+  fireEvent.change(
+    within(release).getByRole("combobox", {
+      name: "Предупреждение о содержании",
+    }),
+    { target: { value: "clean" } },
+  );
+  fireEvent.change(
+    within(release).getByRole("textbox", { name: "Дата выпуска" }),
+    {
+      target: { value: "2024-13" },
+    },
+  );
+  fireEvent.change(
+    within(recording).getByRole("textbox", { name: "Темп (BPM)" }),
+    {
+      target: { value: "-4" },
+    },
+  );
+  fireEvent.change(
+    within(position).getByRole("textbox", { name: "Номер дорожки" }),
+    { target: { value: "3" } },
+  );
+  fireEvent.click(within(release).getByRole("button", { name: "Сохранить" }));
+  expect(await within(release).findByRole("alert")).toHaveTextContent(
+    "Введите корректную дату",
+  );
+  expect(patchBodies.has("release")).toBe(false);
+  expect(
+    within(release).getByRole("textbox", { name: "Дата выпуска" }),
+  ).toHaveValue("2024-13");
+  fireEvent.change(
+    within(release).getByRole("textbox", { name: "Дата выпуска" }),
+    {
+      target: { value: "2024-02" },
+    },
+  );
+  fireEvent.click(within(recording).getByRole("button", { name: "Сохранить" }));
+  expect(await within(recording).findByRole("alert")).toHaveTextContent(
+    "Введите положительное конечное число",
+  );
+  expect(patchBodies.has("recording")).toBe(false);
+  expect(
+    within(recording).getByRole("textbox", { name: "Темп (BPM)" }),
+  ).toHaveValue("-4");
+  fireEvent.change(
+    within(recording).getByRole("textbox", { name: "Темп (BPM)" }),
+    {
+      target: { value: "128.75" },
+    },
+  );
+  fireEvent.click(within(release).getByRole("button", { name: "Сохранить" }));
+  fireEvent.click(within(recording).getByRole("button", { name: "Сохранить" }));
+  fireEvent.click(within(position).getByRole("button", { name: "Сохранить" }));
+
+  await waitFor(() => {
+    expect(patchBodies.get("release")).toEqual({
+      expected_revision: 3,
+      changes: {
+        compilation: { state: "value", value: true },
+        content_advisory: { state: "value", value: "clean" },
+        release_date: { state: "value", value: "2024-02" },
+      },
+    });
+    expect(patchBodies.get("recording")).toEqual({
+      expected_revision: 5,
+      changes: { bpm: { state: "value", value: 128.75 } },
+    });
+    expect(patchBodies.get("position")).toEqual({
+      expected_revision: 7,
+      changes: { track_number: { state: "value", value: 3 } },
+    });
+  });
+  await waitFor(() => {
+    expect(within(release).getByText("true")).toBeInTheDocument();
+    expect(within(release).getByText("clean")).toBeInTheDocument();
+    expect(within(recording).getByText("128.75")).toBeInTheDocument();
+    expect(within(position).getByText("3")).toBeInTheDocument();
+  });
 });
