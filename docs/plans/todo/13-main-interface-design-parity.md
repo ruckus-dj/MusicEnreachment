@@ -163,6 +163,14 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       frontend-тестов в `e60a24fb` прошли полный hook; вся
       [CI 42681046889](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42681046889)
       зелёная.
+    - [x] `efb0a940`: republish применяет изменённые format/path settings через
+      authoritative native replan и semantic confirmation digest. Старый CURRENT
+      отделён от destination; recovery сохраняет cleanup authority, а definite
+      отсутствие старого parent позволяет settlement без удаления и cleanup job.
+      Расширены существующие admission/result и real-media FLAC → MKA сценарии.
+      Полный hook, независимое ревью и вся
+      [CI 42687966540](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42687966540)
+      прошли. Специализированные recovery intents остаются открытыми.
     - [x] Ordinary first-audio recovery поддерживает requested cover: точный PNG
       derivative проверяется по frozen bytes, фактическое отсутствие сохраняется
       как существующий `absent_after_interruption`, без выдуманного write failure.

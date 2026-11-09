@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,231 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
+
+// recoverInterruptedTagRewrite adopts a validated same-path native rewrite left
+// by an interrupted delivery. The output is copied to a private inspection file
+// and never used as a candidate or transformed again.
+func (executor *PublicationExecutor) recoverInterruptedTagRewrite(
+	ctx context.Context,
+	attempt *persistence.TrackPublicationAttempt,
+	input persistence.PublicationInputs,
+	guard persistence.PublicationDeliveryGuard,
+	outputRoot string,
+	root sourcefs.OutputDirectory,
+	commands *simplePublicationTrackingRunner,
+) (bool, error) {
+	if attempt == nil || attempt.ResumeMode != persistence.PublicationResumeModePrepare ||
+		input.Version != persistence.PublicationInputsVersion || input.IntentKind != "rewrite" ||
+		input.Format != publication.AudioFormatSource || input.Rewrite == nil || input.Audio != nil ||
+		input.AudioUpgrade != nil || input.ProviderTags != nil || input.ManualLyrics != nil ||
+		input.ManualCover != nil || input.AutomaticLyricsRetry != nil || input.SourceRepublish != nil ||
+		input.InitialLyrics != nil || attempt.ExpectedGeneration == nil ||
+		*attempt.ExpectedGeneration != input.Rewrite.CurrentGeneration ||
+		attempt.PositionID != guard.ExpectedPositionID || attempt.Epoch != guard.Epoch ||
+		attempt.CandidateGeneration != guard.CandidateGeneration || input.Validate() != nil {
+		return false, nil
+	}
+	target, nodes, err := publicationTarget(attempt.NamespaceManifest)
+	if err != nil {
+		return false, err
+	}
+	if !publicationTargetIsExactlyReserved(target, nodes) || target.RelativePath != input.Rewrite.RelativePath {
+		return false, nil
+	}
+	parent, chain, err := openExistingPublicationParent(ctx, root, target.RelativePath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("open interrupted tag-rewrite target parent: %w", err)
+	}
+	defer closeOutputChain(chain)
+	mutation, ok := parent.(sourcefs.OutputMutation)
+	if !ok {
+		return false, errors.New("native interrupted tag-rewrite inspection is unavailable")
+	}
+	name := path.Base(target.RelativePath)
+	file, err := mutation.OpenExistingRegular(ctx, name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("open interrupted tag-rewrite target: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	before, err := file.Stat(ctx)
+	if err != nil {
+		return false, fmt.Errorf("stat interrupted tag-rewrite target: %w", err)
+	}
+	if !before.Mode().IsRegular() || before.Size() < 0 {
+		return false, nil
+	}
+	targetPath := filepath.Join(outputRoot, filepath.FromSlash(target.RelativePath))
+	if !filepath.IsAbs(targetPath) || filepath.Clean(targetPath) != targetPath {
+		return false, errors.New("interrupted tag-rewrite target path is invalid")
+	}
+	tempDir, inspectionPath, digest, err := snapshotInterruptedPublicationTarget(ctx, file, before, filepath.Ext(targetPath))
+	if err != nil {
+		return false, fmt.Errorf("snapshot interrupted tag-rewrite target: %w", err)
+	}
+	defer func() {
+		if !commands.QuiescenceUnknown() {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
+	if commands.QuiescenceUnknown() {
+		return false, errors.New("publication command quiescence is unknown")
+	}
+	resolver := NewPublicationPinnedToolsResolver(executor.repository, simplePublicationToolCommands{runner: commands}, executor.platform)
+	_, validTools, err := resolver.Resolve(ctx, guard, input.Tools)
+	if err != nil || !validTools {
+		return false, errors.Join(err, errors.New("pinned publication tools are unavailable"))
+	}
+	validator := executor.stageValidator
+	if validator == nil {
+		real := RealPublicationStageValidator{MetadataReader: metadata.Reader{}, Tools: NewGuardedPublicationPinnedTools(resolver, guard)}
+		if runner, ok := commands.PublicationCommandRunner().(PublicationFileCommandRunner); ok {
+			real.Probe = func(ctx context.Context, executable string, input sourcefs.RegularFile, container publication.AudioContainer) ([]byte, error) {
+				demuxer, _ := publication.InputDemuxer(container)
+				request, err := tools.BuildPublicationFileCommandRequest(executable, demuxer, nil)
+				if err != nil {
+					return nil, err
+				}
+				var output []byte
+				err = input.Borrow(ctx, func(file *os.File) error {
+					request.Input = file
+					result, err := runner.RunFile(ctx, request)
+					output = result.Output
+					return err
+				})
+				return output, err
+			}
+		}
+		validator = real
+	}
+	observation, err := validator.Validate(ctx, inspectionPath, input)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if commands.QuiescenceUnknown() {
+			return false, errors.Join(err, errors.New("publication command quiescence is unknown"))
+		}
+		if isDefinitePublicationStageMismatch(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("validate interrupted tag-rewrite target: %w", err)
+	}
+	if observation.SHA256 != digest || !rewriteObservationPreservesAudio(observation.Audio, input.Rewrite.AudioFacts) {
+		return false, nil
+	}
+	if commands.QuiescenceUnknown() {
+		return false, errors.New("publication command quiescence is unknown")
+	}
+	if _, err := verifyInterruptedSourceRepublishTarget(ctx, root, chain, mutation, name, file, before); err != nil {
+		return false, err
+	}
+	if err := executor.checkSimplePublicationCurrent(ctx, guard, input); err != nil {
+		return false, err
+	}
+	current, err := executor.repository.CheckPublicationResultCurrent(ctx, guard)
+	if err != nil || !current {
+		return false, errors.Join(err, errors.New("publication authority changed during interrupted tag-rewrite recovery"))
+	}
+	replaceAllowed, err := executor.repository.CheckPublicationTargetReplacement(ctx, guard, target.RelativePath)
+	if err != nil || !replaceAllowed {
+		return false, errors.Join(err, errors.New("publication namespace authority changed during interrupted tag-rewrite recovery"))
+	}
+	finalInfo, err := verifyInterruptedSourceRepublishTarget(ctx, root, chain, mutation, name, file, before)
+	if err != nil {
+		return false, err
+	}
+	size, mtime := finalInfo.Size(), finalInfo.ModTime().UnixMicro()
+	actual := persistence.PublicationStageObservation{
+		Version: 1, RelativePath: target.RelativePath,
+		Ownership:     persistence.ArtifactOwnership{ExpectedSize: &size, ExpectedMTime: &mtime},
+		PayloadSHA256: digest, ActualAudio: observation.Audio, ActualMetadata: observation.Metadata,
+		ActualAssets: observation.Assets, QualityPolicyVersion: observation.QualityPolicyVersion,
+	}
+	result := persistence.PublicationResult{
+		Observation: actual,
+		InstalledOwnership: persistence.PublicationCurrentOwnership{Version: persistence.PublicationCurrentOwnershipVersion,
+			Identity: persistence.PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: digest}},
+	}
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	committed, err := executor.repository.CommitPublicationResult(commitCtx, guard, result)
+	if err != nil || !committed {
+		return false, errors.Join(err, errors.New("recovered tag-rewrite result was not committed"))
+	}
+	return true, nil
+}
+
+func snapshotInterruptedPublicationTarget(ctx context.Context, file sourcefs.RegularFile, before os.FileInfo, extension string) (string, string, string, error) {
+	tempDir, err := os.MkdirTemp("", "publication-inspection-")
+	if err != nil {
+		return "", "", "", fmt.Errorf("create private publication inspection directory: %w", err)
+	}
+	success := false
+	defer func() {
+		if !success {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
+	inspectionPath := filepath.Join(tempDir, "inspection"+extension)
+	inspection, err := os.OpenFile(inspectionPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return tempDir, "", "", fmt.Errorf("create private publication inspection snapshot: %w", err)
+	}
+	hash := sha256.New()
+	copyErr := file.Borrow(ctx, func(native *os.File) error {
+		written, err := io.CopyN(io.MultiWriter(inspection, hash), inspectionContextReader{ctx: ctx, reader: native}, before.Size())
+		if err != nil {
+			return err
+		}
+		if written != before.Size() {
+			return io.ErrUnexpectedEOF
+		}
+		var extra [1]byte
+		n, err := native.Read(extra[:])
+		if n != 0 {
+			return errors.New("interrupted publication target grew during inspection copy")
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		return ctx.Err()
+	})
+	if copyErr == nil {
+		copyErr = inspection.Sync()
+	}
+	copyErr = errors.Join(copyErr, inspection.Close())
+	if copyErr != nil {
+		return tempDir, "", "", copyErr
+	}
+	success = true
+	return tempDir, inspectionPath, hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func rewriteObservationPreservesAudio(raw json.RawMessage, expected persistence.PersistedAudioFacts) bool {
+	var actual struct {
+		Version int                             `json:"version"`
+		Facts   persistence.PersistedAudioFacts `json:"facts"`
+	}
+	if json.Unmarshal(raw, &actual) != nil || actual.Version != 1 {
+		return false
+	}
+	facts := actual.Facts
+	return facts.Codec == expected.Codec && facts.Container == expected.Container &&
+		matchesFrozenAudioMeasurement(facts.Channels, expected.Channels) &&
+		matchesFrozenAudioMeasurement(facts.SampleRate, expected.SampleRate) &&
+		matchesFrozenAudioMeasurement(facts.BitDepth, expected.BitDepth) &&
+		(expected.ChannelLayout == "" || facts.ChannelLayout == expected.ChannelLayout)
+}
+
+func matchesFrozenAudioMeasurement(actual, frozen *int) bool {
+	return frozen == nil || actual != nil && *actual == *frozen
+}
 
 // recoverInterruptedFirstAudio adopts only an output left by an interrupted
 // first-audio delivery. The private snapshot is inspection input, not a stage:
@@ -85,49 +311,15 @@ func (executor *PublicationExecutor) recoverInterruptedFirstAudio(
 	if !filepath.IsAbs(absolute) || filepath.Clean(absolute) != absolute {
 		return false, errors.New("interrupted publication target path is invalid")
 	}
-	tempDir, err := os.MkdirTemp("", "publication-inspection-")
+	tempDir, inspectionPath, digest, err := snapshotInterruptedPublicationTarget(ctx, file, before, filepath.Ext(target.RelativePath))
 	if err != nil {
-		return false, fmt.Errorf("create private publication inspection directory: %w", err)
+		return false, fmt.Errorf("snapshot interrupted publication target: %w", err)
 	}
 	defer func() {
 		if !commands.QuiescenceUnknown() {
 			_ = os.RemoveAll(tempDir)
 		}
 	}()
-	inspectionPath := filepath.Join(tempDir, "inspection"+filepath.Ext(target.RelativePath))
-	inspection, err := os.OpenFile(inspectionPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return false, fmt.Errorf("create private publication inspection snapshot: %w", err)
-	}
-	hash := sha256.New()
-	copyErr := file.Borrow(ctx, func(native *os.File) error {
-		writer := io.MultiWriter(inspection, hash)
-		source := inspectionContextReader{ctx: ctx, reader: native}
-		written, err := io.CopyN(writer, source, before.Size())
-		if err != nil {
-			return err
-		}
-		if written != before.Size() {
-			return io.ErrUnexpectedEOF
-		}
-		var extra [1]byte
-		n, err := native.Read(extra[:])
-		if n != 0 {
-			return errors.New("interrupted publication target grew during inspection copy")
-		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-		return ctx.Err()
-	})
-	if copyErr == nil {
-		copyErr = inspection.Sync()
-	}
-	copyErr = errors.Join(copyErr, inspection.Close())
-	if copyErr != nil {
-		return false, fmt.Errorf("snapshot interrupted publication target: %w", copyErr)
-	}
-	digest := hex.EncodeToString(hash.Sum(nil))
 
 	resolver := NewPublicationPinnedToolsResolver(executor.repository, simplePublicationToolCommands{runner: commands}, executor.platform)
 	_, validTools, err := resolver.Resolve(ctx, guard, input.Tools)

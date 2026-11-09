@@ -69,6 +69,18 @@ func TestRealPublicationStageValidatorCapturesCurrentAssetEvidence(t *testing.T)
 	}
 }
 
+func TestMatchesFrozenAudioMeasurement(t *testing.T) {
+	actual := 2
+	different := 1
+	if !matchesFrozenAudioMeasurement(&actual, nil) {
+		t.Fatal("unknown frozen measurement constrained a known actual measurement")
+	}
+	known := 2
+	if matchesFrozenAudioMeasurement(&different, &known) {
+		t.Fatal("different known measurement matched frozen audio")
+	}
+}
+
 func TestRealPublicationStageValidatorRejectsManualLyricsBeforeOpeningStageOrDependencies(t *testing.T) {
 	fixture := makeRewriteFixture(t)
 	input := fixture.input

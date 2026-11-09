@@ -237,7 +237,14 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 			attempt.ResumeMode = persistence.PublicationResumeModePrepare
 		}
 	case persistence.PublicationDeliveryInterrupted:
-		recovered, err := executor.recoverInterruptedFirstAudio(ctx, attempt, input, guard, outputPath, root, commands)
+		recovered, err := executor.recoverInterruptedTagRewrite(ctx, attempt, input, guard, outputPath, root, commands)
+		if err != nil {
+			return err
+		}
+		if recovered {
+			return nil
+		}
+		recovered, err = executor.recoverInterruptedFirstAudio(ctx, attempt, input, guard, outputPath, root, commands)
 		if err != nil {
 			return err
 		}

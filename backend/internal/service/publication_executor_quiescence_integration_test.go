@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
@@ -95,7 +97,7 @@ func newQuiescenceExecutorFixture(t *testing.T, commands PublicationCommandRunne
 	}
 	riverJobID := int64(9001)
 	operation := &persistence.Operation{ID: operationID, Kind: "publish_track_v1", State: "queued", Attempt: 1, RiverJobID: &riverJobID}
-	attempt := &persistence.TrackPublicationAttempt{OperationID: operationID, PositionID: positionID, Epoch: epoch, ExpectedGeneration: &generation, CandidateGeneration: candidate, IntentKind: "rewrite", Phase: "queued", FrozenInputs: frozen, NamespaceManifest: manifest}
+	attempt := &persistence.TrackPublicationAttempt{OperationID: operationID, PositionID: positionID, Epoch: epoch, ExpectedGeneration: &generation, CandidateGeneration: candidate, IntentKind: "rewrite", Phase: "queued", ResumeMode: persistence.PublicationResumeModePrepare, FrozenInputs: frozen, NamespaceManifest: manifest}
 	toolDir := filepath.Join(toolsRoot, filepath.FromSlash(toolRelative))
 	if err := os.MkdirAll(toolDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -148,3 +150,132 @@ func newQuiescenceExecutorFixture(t *testing.T, commands PublicationCommandRunne
 
 func quiescenceBoolPointer(value bool) *bool { return &value }
 func quiescenceIntPointer(value int) *int    { return &value }
+
+type interruptedRewriteValidator struct {
+	observation PublicationStageObservation
+	calls       int
+}
+
+func (validator *interruptedRewriteValidator) Validate(_ context.Context, _ string, _ persistence.PublicationInputs) (PublicationStageObservation, error) {
+	validator.calls++
+	return validator.observation, nil
+}
+
+type interruptedRewriteCommandRunner struct{ calls int }
+
+func (runner *interruptedRewriteCommandRunner) Run(_ context.Context, executable string, _ ...string) (PublicationCommandResult, error) {
+	runner.calls++
+	banner := "ffmpeg version 7.0"
+	if strings.HasPrefix(filepath.Base(executable), "ffprobe") {
+		banner = "ffprobe version 7.0"
+	}
+	return PublicationCommandResult{Output: []byte(banner), QuiescenceEstablished: true}, nil
+}
+
+type interruptedRewriteMetadataWriter struct{ calls int }
+
+func (writer *interruptedRewriteMetadataWriter) Write(context.Context, string, map[string][]string, *metadata.Cover) (metadata.WriteResult, error) {
+	writer.calls++
+	return metadata.WriteResult{}, nil
+}
+
+func TestInterruptedPlainRewriteAdoptsValidatedTargetWithoutRewriting(t *testing.T) {
+	commands := &interruptedRewriteCommandRunner{}
+	fixture := newQuiescenceExecutorFixture(t, commands)
+	ctx := context.Background()
+	attempt, err := fixture.repository.ReadPublicationAttempt(ctx, fixture.operationID)
+	if err != nil || attempt == nil {
+		t.Fatalf("read fixture attempt: attempt=%v err=%v", attempt, err)
+	}
+	input, err := persistence.DecodePublicationInputs(attempt.FrozenInputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model the exact same-path FLAC left after the native tag rewrite completed
+	// but before its result transaction. Establish desired tags before recovery.
+	target := filepath.Join(fixture.outputPath, filepath.FromSlash(input.Rewrite.RelativePath))
+	tagWrite, err := (metadata.Writer{}).Write(ctx, target, input.DesiredTags, nil)
+	if err != nil {
+		t.Fatalf("prepare interrupted target tags: %v", err)
+	}
+	actualTags, err := json.Marshal(tagWrite.Tags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desiredTags, err := json.Marshal(input.DesiredTags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(actualTags, desiredTags) {
+		t.Fatalf("interrupted target tags=%s, want frozen tags %s", actualTags, desiredTags)
+	}
+	contents, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(contents)
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size, mtime := info.Size(), info.ModTime().UnixMicro()
+	audio, err := json.Marshal(struct {
+		Version int                             `json:"version"`
+		Facts   persistence.PersistedAudioFacts `json:"facts"`
+	}{Version: 1, Facts: input.Rewrite.AudioFacts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualMetadata, err := json.Marshal(persistence.PublicationCommitMetadata{Version: 1, Tags: input.DesiredTags})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets := json.RawMessage(`{"version":1,"cover":{"state":"absent"},"lyrics":{"state":"absent"}}`)
+	validator := &interruptedRewriteValidator{observation: PublicationStageObservation{
+		SHA256: hex.EncodeToString(digest[:]), Audio: audio, Metadata: actualMetadata,
+		Assets: assets, QualityPolicyVersion: publication.QualityPolicyVersion,
+	}}
+	fixture.executor.stageValidator = validator
+	metadataWriter := &interruptedRewriteMetadataWriter{}
+	fixture.executor.metadata = metadataWriter
+	fixture.repository.resultCurrent = func(context.Context, persistence.PublicationDeliveryGuard) (bool, error) { return true, nil }
+	fixture.repository.preparationInputs = func(_ context.Context, _ persistence.PublicationDeliveryGuard) (persistence.PublicationInputs, bool, error) {
+		return input, true, nil
+	}
+	fixture.repository.claim = func(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationDeliveryClaimOutcome, error) {
+		return persistence.PublicationDeliveryInterrupted, nil
+	}
+	fixture.repository.commit = func(_ context.Context, guard persistence.PublicationDeliveryGuard, result persistence.PublicationResult) (bool, error) {
+		if guard.ExpectedPositionID != fixture.positionID {
+			t.Fatalf("committed position=%s, want %s", guard.ExpectedPositionID, fixture.positionID)
+		}
+		if result.Observation.RelativePath != input.Rewrite.RelativePath {
+			t.Fatalf("committed target=%q, want frozen target %q", result.Observation.RelativePath, input.Rewrite.RelativePath)
+		}
+		if !bytes.Equal(result.Observation.ActualAssets, assets) {
+			t.Fatalf("committed assets=%s, want %s", result.Observation.ActualAssets, assets)
+		}
+		if !bytes.Equal(result.Observation.ActualMetadata, actualMetadata) {
+			t.Fatalf("committed metadata=%s, want %s", result.Observation.ActualMetadata, actualMetadata)
+		}
+		if result.InstalledOwnership.Identity.SHA256 != hex.EncodeToString(digest[:]) || result.InstalledOwnership.Identity.SizeBytes == nil || *result.InstalledOwnership.Identity.SizeBytes != size || result.InstalledOwnership.Identity.MTime == nil || *result.InstalledOwnership.Identity.MTime != mtime {
+			t.Fatalf("committed ownership does not describe interrupted target: %+v", result.InstalledOwnership.Identity)
+		}
+		return true, nil
+	}
+	if err := fixture.executor.ExecutePublicationDelivery(ctx, fixture.operationID, fixture.riverJobID, 1); err != nil {
+		t.Fatalf("execute interrupted rewrite recovery: %v", err)
+	}
+	if validator.calls != 1 {
+		t.Fatalf("stage validation calls=%d, want 1", validator.calls)
+	}
+	if commands.calls != 2 {
+		t.Fatalf("command calls=%d, want only pinned ffmpeg/ffprobe version checks", commands.calls)
+	}
+	if metadataWriter.calls != 0 {
+		t.Fatalf("recovery performed %d metadata writes", metadataWriter.calls)
+	}
+	if fixture.repository.committedResult == nil {
+		t.Fatal("recovery did not commit the actual installed result")
+	}
+}

@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/uptrace/bun"
 )
 
@@ -297,7 +299,8 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 				return errors.New("commit publication result: invalid lyrics summary")
 			}
 			publication.InitialLyrics = mustPublicationJSON(projection)
-		} else if !sourceRepublish && previous != nil && input.ManualLyrics == nil && len(previous.InitialLyrics) != 0 {
+		} else if !sourceRepublish && previous != nil && input.ManualLyrics == nil && len(previous.InitialLyrics) != 0 &&
+			(!plainTagOnlyRewrite(input) || plainRewriteLyricsUnchanged(*previous, observation, assets)) {
 			var projection PublicationInitialLyricsProjection
 			if err := json.Unmarshal(previous.InitialLyrics, &projection); err != nil {
 				return fmt.Errorf("commit publication result: decode current lyrics summary: %w", err)
@@ -365,7 +368,7 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 			} else if err := carryPositionSourceAuthorityTx(ctx, tx, *previous, next); err != nil {
 				return err
 			}
-			if (input.ManualCover != nil || validAutomaticAudioUpgrade(input) || providerTags) && previous != nil {
+			if (input.ManualCover != nil || validAutomaticAudioUpgrade(input) || providerTags || plainTagOnlyRewrite(input)) && previous != nil {
 				if err := carryManualLyricsReceiptForCoverRewriteTx(ctx, tx, attempt, *previous, publication, assets); err != nil {
 					return err
 				}
@@ -473,6 +476,23 @@ func (repository *SetupManagerRepository) CommitPublicationResult(ctx context.Co
 		return nil
 	})
 	return committed, err
+}
+
+func plainTagOnlyRewrite(input PublicationInputs) bool {
+	return input.Version == PublicationInputsVersion && input.IntentKind == "rewrite" && input.Format == publication.AudioFormatSource &&
+		input.Rewrite != nil && input.Audio == nil && input.AudioUpgrade == nil && input.ProviderTags == nil &&
+		input.ManualLyrics == nil && input.ManualCover == nil && input.AutomaticLyricsRetry == nil &&
+		input.SourceRepublish == nil && input.InitialLyrics == nil
+}
+
+func plainRewriteLyricsUnchanged(previous TrackPublication, observation PublicationStageObservation, candidateAssets PublicationAssetOutcomes) bool {
+	var previousMetadata, candidateMetadata PublicationCommitMetadata
+	if strictMetadata(previous.ActualMetadata, &previousMetadata) != nil || strictMetadata(observation.ActualMetadata, &candidateMetadata) != nil ||
+		!reflect.DeepEqual(previousMetadata.Tags["LYRICS"], candidateMetadata.Tags["LYRICS"]) {
+		return false
+	}
+	previousAssets, err := DecodePublicationAssetOutcomes(previous.ActualAssets)
+	return err == nil && samePublicationLyricsOutcome(previousAssets.Lyrics, candidateAssets.Lyrics)
 }
 
 func validAbsentObsoleteOutputProof(proof *PublicationObsoleteOutputAbsent, sourceRepublish bool, previous *TrackPublication, attempt *TrackPublicationAttempt, nextRelativePath string) bool {
