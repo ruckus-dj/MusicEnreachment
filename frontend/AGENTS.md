@@ -43,6 +43,9 @@ frontend/
 
 **Biome only**: No ESLint, no Prettier. Biome handles lint and format.
 
+When formatting changed TS/TSX files, also organize their imports. `biome format`
+alone does not apply import assists; unorganized imports still fail the normal hook.
+
 **Tests colocated**: *.test.tsx next to components. Vitest + React Testing Library + MSW.
 
 **Nested directory dialogs**: Stop picker `close`/`cancel` propagation so closing

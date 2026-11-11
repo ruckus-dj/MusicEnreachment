@@ -63,7 +63,9 @@ const sourceRoot: SourceRootResponse = {
 };
 beforeEach(() => {
   window.location.hash = "";
-  vi.stubGlobal("localStorage", createMemoryStorage());
+  const localStorage = createMemoryStorage();
+  localStorage.setItem("melotrove-language", "ru");
+  vi.stubGlobal("localStorage", localStorage);
   server.use(
     http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
     http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
@@ -75,10 +77,17 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   window.location.hash = "";
+  vi.unstubAllGlobals();
 });
 describe("AppShell sources routing", () => {
   it("provides a working skip link and one accessible current-section navigation", async () => {
-    server.use(http.get("/api/setup", () => HttpResponse.json(completedState)));
+    const setupRequests = vi.fn();
+    server.use(
+      http.get("/api/setup", () => {
+        setupRequests();
+        return HttpResponse.json(completedState);
+      }),
+    );
     window.location.hash = "/operations";
     render(<App />);
 
@@ -96,11 +105,22 @@ describe("AppShell sources routing", () => {
       screen.getByText("Операции", { selector: ".app-section-label" }),
     ).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: /Язык интерфейса/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "English" }));
+    expect(
+      await screen.findByRole("navigation", { name: "Application sections" }),
+    ).toHaveTextContent("IncomingLibraryOwn catalogSourcesOperationsSettings");
+    expect(
+      screen.getByRole("link", { name: "Operations", current: "page" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Operations", { selector: ".app-section-label" }),
+    ).toBeInTheDocument();
+    expect(setupRequests).toHaveBeenCalledTimes(1);
+
     const content = document.querySelector("#app-content");
     expect(content).toHaveAttribute("tabindex", "-1");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Перейти к содержимому" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Skip to content" }));
     expect(document.activeElement).toBe(content);
     expect(window.location.hash).toBe("#/operations");
   });

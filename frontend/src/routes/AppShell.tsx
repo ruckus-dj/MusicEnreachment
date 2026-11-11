@@ -23,7 +23,11 @@ import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
 import { SourcesScreen } from "../features/sources/SourcesScreen";
 import { parseSourcesRoute } from "../features/sources/sourcesRoute";
+import type { Locale } from "../i18n/locale";
+import { type ShellMessageKey, shellMessages } from "../i18n/shellMessages";
 import { useHashLocation } from "../navigation/hashLocation";
+
+type ShellError = { message: string } | { fallback: true };
 
 type Route =
   | "/"
@@ -62,11 +66,12 @@ function currentRoute(hash: string, isSourcesRoute: boolean): Route {
 }
 export function AppShell() {
   const { locale } = useI18n();
+  const copy = shellMessages[locale];
   const hash = useHashLocation();
   const sourcesRoute = parseSourcesRoute(hash);
   const route = currentRoute(hash, sourcesRoute !== undefined);
   const [state, setState] = useState<SetupStateBody>();
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ShellError | null>(null);
   const [loading, setLoading] = useState(true);
   const productAvailable =
     state?.completed && !state.platform.diagnostic && state.platform.supported;
@@ -75,17 +80,23 @@ export function AppShell() {
   const contentRef = useRef<HTMLElement>(null);
   const load = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setError(null);
     try {
       const response = await getSetupState({ cache: "no-store" });
-      if (response.status !== 200)
-        throw new Error(response.data.detail || "Не удалось загрузить Setup.");
+      if (response.status !== 200) {
+        setError(
+          response.data.detail
+            ? { message: response.data.detail }
+            : { fallback: true },
+        );
+        return;
+      }
       setState(response.data);
     } catch (reason) {
       setError(
-        reason instanceof Error
-          ? reason.message
-          : "Не удалось загрузить Setup.",
+        reason instanceof Error && reason.message
+          ? { message: reason.message }
+          : { fallback: true },
       );
     } finally {
       setLoading(false);
@@ -131,14 +142,14 @@ export function AppShell() {
           contentRef.current?.focus();
         }}
       >
-        Перейти к содержимому
+        {copy.skip}
       </button>
       {productAvailable ? (
         <>
-          <aside className="app-sidebar" aria-label="Основная навигация">
-            <a className="app-brand" href="#/" aria-label="MeloTrove — главная">
+          <aside className="app-sidebar" aria-label={copy.navigation}>
+            <a className="app-brand" href="#/" aria-label={copy.brandHome}>
               <strong>MeloTrove</strong>
-              <span>Медиатека</span>
+              <span>{copy.library}</span>
             </a>
             <ShellNavigation route={route} locale={locale} />
           </aside>
@@ -146,10 +157,10 @@ export function AppShell() {
             <header className="app-topbar">
               <a className="app-brand app-brand--compact" href="#/">
                 <strong>MeloTrove</strong>
-                <span>Медиатека</span>
+                <span>{copy.library}</span>
               </a>
               <span className="app-section-label">
-                {sectionLabel(route, locale)}
+                {sectionLabel(route, copy)}
               </span>
               <div className="flex items-center gap-2">
                 <LanguageControl />
@@ -171,7 +182,7 @@ export function AppShell() {
           <header className="app-setup-header">
             <div className="app-brand">
               <strong>MeloTrove</strong>
-              <span>Медиатека</span>
+              <span>{copy.library}</span>
             </div>
             <div className="flex items-center gap-2">
               <LanguageControl />
@@ -193,23 +204,22 @@ export function AppShell() {
 
   function renderRouteContent() {
     return loading ? (
-      <p role="status">Загрузка состояния сервера…</p>
+      <p role="status">{copy.loadingServer}</p>
     ) : error ? (
       <div ref={errorRef} tabIndex={-1} role="alert">
-        {error} <AppButton onPress={load}>Повторить загрузку</AppButton>
+        {"fallback" in error ? copy.loadError : error.message}{" "}
+        <AppButton onPress={load}>{copy.retry}</AppButton>
       </div>
     ) : state && (state.platform.diagnostic || !state.platform.supported) ? (
       <section aria-labelledby="diagnostic-title">
         <h1 ref={diagnosticRef} tabIndex={-1} id="diagnostic-title">
-          Диагностика платформы
+          {copy.diagnose}
         </h1>
-        <p role="alert">
-          {state.platform.reason || "Платформа не поддерживается."}
-        </p>
+        <p role="alert">{state.platform.reason || copy.unsupportedPlatform}</p>
         <p>
           {state.platform.goos}/{state.platform.goarch}
         </p>
-        <AppButton onPress={load}>Обновить диагностику</AppButton>
+        <AppButton onPress={load}>{copy.refreshDiagnostics}</AppButton>
       </section>
     ) : state && !state.completed ? (
       <SetupManager
@@ -246,6 +256,8 @@ export function AppShell() {
 }
 
 function RootLanding() {
+  const { locale } = useI18n();
+  const copy = shellMessages[locale];
   const sourcesQuery = useListSources({
     fetch: { cache: "no-store" },
     query: { retry: false, refetchOnMount: "always" },
@@ -253,11 +265,11 @@ function RootLanding() {
   const response = sourcesQuery.data;
   const sources = response?.status === 200 ? response.data.sources || [] : null;
   const errorMessage =
-    sourcesQuery.error instanceof Error
+    sourcesQuery.error instanceof Error && sourcesQuery.error.message
       ? sourcesQuery.error.message
       : response && response.status !== 200
-        ? response.data.detail || "Не удалось загрузить список источников."
-        : "Не удалось загрузить список источников.";
+        ? response.data.detail || null
+        : null;
   const sourceCount = sources?.length ?? 0;
   const currentFetchSettled =
     sourcesQuery.isFetchedAfterMount && !sourcesQuery.isFetching;
@@ -268,79 +280,74 @@ function RootLanding() {
   }, [currentFetchSettled, sourceCount, sourcesQuery.isError]);
 
   if (sourcesQuery.isPending || !currentFetchSettled)
-    return <p role="status">Загрузка источников…</p>;
+    return <p role="status">{copy.loadingSources}</p>;
 
   if (sourcesQuery.isError || sources === null)
     return (
       <section aria-labelledby="home-title">
-        <h1 id="home-title">Главная</h1>
-        <p role="alert">{errorMessage}</p>
+        <h1 id="home-title">{copy.homeTitle}</h1>
+        <p role="alert">{errorMessage ?? copy.sourcesLoadError}</p>
         <AppButton onPress={() => void sourcesQuery.refetch()}>
-          Повторить загрузку
+          {copy.retry}
         </AppButton>
       </section>
     );
 
-  if (sources.length > 0) return <p role="status">Переход к входящим…</p>;
+  if (sources.length > 0) return <p role="status">{copy.loadingIncoming}</p>;
 
   return (
     <section aria-labelledby="home-title">
-      <h1 id="home-title">Для начала работы необходимо добавить источник</h1>
-      <p>
-        Зарегистрируйте каталог с музыкой в разделе «Источники», чтобы начать
-        работу с медиатекой. Это можно сделать сейчас или позже.
-      </p>
+      <h1 id="home-title">{copy.addSourceTitle}</h1>
+      <p>{copy.addSourceDescription}</p>
       <a className="root-landing-action" href="#/sources">
-        Добавить источник
+        {copy.addSource}
       </a>
     </section>
   );
 }
 
-function sectionLabel(route: Route, locale: "en" | "ru"): string {
-  if (route === "/incoming-groups") return "Входящие";
-  if (route === "/library" || route.startsWith("/library/")) return "Медиатека";
-  if (route === "/own-catalog")
-    return locale === "ru" ? "Собственный каталог" : "Own catalog";
-  if (route === "/sources") return "Источники";
-  if (route === "/operations") return "Операции";
-  if (route === "/settings") return "Настройки";
-  return "Главная";
+function sectionLabel(
+  route: Route,
+  copy: Record<ShellMessageKey, string>,
+): string {
+  if (route === "/incoming-groups") return copy.incoming;
+  if (route === "/library" || route.startsWith("/library/"))
+    return copy.library;
+  if (route === "/own-catalog") return copy.ownCatalog;
+  if (route === "/sources") return copy.sources;
+  if (route === "/operations") return copy.operations;
+  if (route === "/settings") return copy.settings;
+  return copy.home;
 }
 
-function ShellNavigation({
-  route,
-  locale,
-}: {
-  route: Route;
-  locale: "en" | "ru";
-}) {
+function ShellNavigation({ route, locale }: { route: Route; locale: Locale }) {
+  const copy = shellMessages[locale];
   const items = [
     {
-      label: "Входящие",
+      label: copy.incoming,
       href: "#/incoming-groups",
       active: route === "/incoming-groups",
     },
     {
-      label: "Медиатека",
+      label: copy.library,
       href: "#/library",
       active: route === "/library" || route.startsWith("/library/"),
     },
     {
-      label: locale === "ru" ? "Собственный каталог" : "Own catalog",
+      label: copy.ownCatalog,
       href: "#/own-catalog",
       active: route === "/own-catalog",
     },
-    { label: "Источники", href: "#/sources", active: route === "/sources" },
+    { label: copy.sources, href: "#/sources", active: route === "/sources" },
     {
-      label: "Операции",
+      label: copy.operations,
       href: "#/operations",
       active: route === "/operations",
     },
-    { label: "Настройки", href: "#/settings", active: route === "/settings" },
+    { label: copy.settings, href: "#/settings", active: route === "/settings" },
   ];
   return (
-    <nav className="app-navigation" aria-label="Разделы приложения">
+    <nav className="app-navigation" aria-label={copy.sections}>
       {items.map((item) => (
         <a
           key={item.href}
