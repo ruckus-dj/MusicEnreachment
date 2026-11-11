@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import { retryOperation, useListOperations } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
@@ -29,50 +29,116 @@ const GENERIC_RETRY_KINDS = new Set([
   "scan_source",
 ]);
 
+const messages = {
+  en: {
+    title: "Current operations",
+    description:
+      "Work in progress and errors that need attention. History is not retained.",
+    refresh: "Refresh",
+    refreshing: "Refreshing…",
+    loading: "Loading operations…",
+    loadError: "Could not load operations.",
+    retryLoad: "Retry loading",
+    emptyTitle: "No current operations",
+    emptyDescription:
+      "Work in progress and failed operations will appear here.",
+    target: "Target",
+    operation: "Operation",
+    stateStage: "Status / stage",
+    progress: "Progress",
+    created: "Created",
+    error: "Error",
+    actions: "Actions",
+    retrying: "Retrying…",
+    retry: "Retry",
+    footnote:
+      "Queued, running, and failed operations are shown. Completed operations are hidden.",
+    retryError: "Could not retry operation.",
+    retryHttpError: (status: number) =>
+      `Could not retry operation (HTTP ${status}).`,
+    loadHttpError: (status: number) =>
+      `Could not load operations (HTTP ${status}).`,
+  },
+  ru: {
+    title: "Текущие операции",
+    description:
+      "Незавершённая работа и ошибки, требующие внимания. История не хранится.",
+    refresh: "Обновить",
+    refreshing: "Обновление…",
+    loading: "Загрузка операций…",
+    loadError: "Не удалось загрузить операции.",
+    retryLoad: "Повторить загрузку",
+    emptyTitle: "Нет текущих операций",
+    emptyDescription:
+      "Незавершённая работа и операции с ошибкой появятся здесь.",
+    target: "Объект",
+    operation: "Операция",
+    stateStage: "Состояние / этап",
+    progress: "Прогресс",
+    created: "Создана",
+    error: "Ошибка",
+    actions: "Действия",
+    retrying: "Повтор…",
+    retry: "Повторить",
+    footnote:
+      "Показаны операции в очереди, выполняющиеся и требующие внимания. Завершённые операции скрыты.",
+    retryError: "Не удалось повторить операцию.",
+    retryHttpError: (status: number) =>
+      `Не удалось повторить операцию (HTTP ${status}).`,
+    loadHttpError: (status: number) =>
+      `Не удалось загрузить операции (HTTP ${status}).`,
+  },
+} as const;
+
 function currentOperations(operations: OperationResponse[]) {
   return operations
     .filter((operation) => CURRENT_STATES.has(operation.state))
     .sort((left, right) => right.created_at.localeCompare(left.created_at));
 }
 
-function formatDate(value?: string) {
+function formatDate(value: string | undefined, locale: string) {
   if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale);
 }
 
 export function OperationsScreen() {
   const { locale } = useI18n();
+  const copy = messages[locale];
+  const copyRef = useRef(copy);
+  copyRef.current = copy;
   const operationsQuery = useListOperations();
-  const [actionError, setActionError] = useState("");
+  const [actionError, setActionError] = useState<
+    | { reason: unknown }
+    | { response: { status: number; data?: unknown } }
+    | null
+  >(null);
   const [retryingID, setRetryingID] = useState("");
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     await operationsQuery.refetch();
-  }
+  }, [operationsQuery.refetch]);
 
-  async function retry(operation: OperationResponse) {
-    if (retryingID) return;
-    setRetryingID(operation.id);
-    setActionError("");
-    try {
-      const response = await retryOperation(operation.id);
-      if (response.status !== 200) {
-        setActionError(
-          apiResponseError(
-            response,
-            `Не удалось повторить операцию (HTTP ${response.status}).`,
-          ).message,
-        );
-        return;
+  const retry = useCallback(
+    async (operation: OperationResponse) => {
+      if (retryingID) return;
+      setRetryingID(operation.id);
+      setActionError(null);
+      try {
+        const response = await retryOperation(operation.id);
+        if (response.status !== 200) {
+          setActionError({ response });
+          return;
+        }
+        await operationsQuery.refetch();
+      } catch (reason) {
+        setActionError({ reason });
+      } finally {
+        setRetryingID("");
       }
-      await operationsQuery.refetch();
-    } catch (reason) {
-      setActionError(errorMessage(reason, "Не удалось повторить операцию."));
-    } finally {
-      setRetryingID("");
-    }
-  }
+    },
+    [operationsQuery.refetch, retryingID],
+  );
 
   const allOperations =
     operationsQuery.data?.status === 200
@@ -84,41 +150,33 @@ export function OperationsScreen() {
     <section className="operations-screen" aria-labelledby="operations-title">
       <header className="operations-header">
         <div>
-          <h1 id="operations-title">Текущие операции</h1>
-          <p>
-            Незавершённая работа и ошибки, требующие внимания. История не
-            хранится.
-          </p>
+          <h1 id="operations-title">{copy.title}</h1>
+          <p>{copy.description}</p>
         </div>
         <button
           type="button"
           onClick={() => void refresh()}
           disabled={operationsQuery.isFetching}
         >
-          {operationsQuery.isFetching ? "Обновление…" : "Обновить"}
+          {operationsQuery.isFetching ? copy.refreshing : copy.refresh}
         </button>
       </header>
 
       {operationsQuery.isPending && (
         <p className="operations-state" role="status">
-          Загрузка операций…
+          {copy.loading}
         </p>
       )}
 
       {operationsQuery.isError && (
         <section className="operations-state operations-error" role="alert">
-          <p>
-            {errorMessage(
-              operationsQuery.error,
-              "Не удалось загрузить операции.",
-            )}
-          </p>
+          <p>{errorMessage(operationsQuery.error, copy.loadError)}</p>
           <button
             type="button"
             onClick={() => void refresh()}
             disabled={operationsQuery.isFetching}
           >
-            Повторить загрузку
+            {copy.retryLoad}
           </button>
         </section>
       )}
@@ -129,7 +187,7 @@ export function OperationsScreen() {
             {
               apiResponseError(
                 operationsQuery.data,
-                `Не удалось загрузить операции (HTTP ${operationsQuery.data.status}).`,
+                copy.loadHttpError(operationsQuery.data.status),
               ).message
             }
           </p>
@@ -138,21 +196,26 @@ export function OperationsScreen() {
             onClick={() => void refresh()}
             disabled={operationsQuery.isFetching}
           >
-            Повторить загрузку
+            {copy.retryLoad}
           </button>
         </section>
       )}
 
       {actionError && (
         <p className="operations-error" role="alert">
-          {actionError}
+          {"response" in actionError
+            ? apiResponseError(
+                actionError.response,
+                copy.retryHttpError(actionError.response.status),
+              ).message
+            : errorMessage(actionError.reason, copy.retryError)}
         </p>
       )}
 
       {operationsQuery.data?.status === 200 && operations.length === 0 && (
         <section className="operations-empty">
-          <h2>Нет текущих операций</h2>
-          <p>Незавершённая работа и операции с ошибкой появятся здесь.</p>
+          <h2>{copy.emptyTitle}</h2>
+          <p>{copy.emptyDescription}</p>
         </section>
       )}
 
@@ -161,14 +224,16 @@ export function OperationsScreen() {
           <table className="operations-table">
             <thead>
               <tr>
-                <th scope="col">Объект</th>
-                <th scope="col">Операция</th>
-                <th scope="col">Состояние / этап</th>
-                <th scope="col">Прогресс</th>
-                <th scope="col">Создана</th>
-                <th scope="col">Ошибка</th>
+                <th scope="col">{copy.target}</th>
+                <th scope="col">{copy.operation}</th>
+                <th scope="col">{copy.stateStage}</th>
+                <th scope="col">{copy.progress}</th>
+                <th scope="col">{copy.created}</th>
+                <th scope="col">{copy.error}</th>
                 <th scope="col">
-                  <span className="operations-visually-hidden">Действия</span>
+                  <span className="operations-visually-hidden">
+                    {copy.actions}
+                  </span>
                 </th>
               </tr>
             </thead>
@@ -194,7 +259,7 @@ export function OperationsScreen() {
                     )}
                   </td>
                   <td>{operationProgressLabel(operation, locale)}</td>
-                  <td>{formatDate(operation.created_at)}</td>
+                  <td>{formatDate(operation.created_at, locale)}</td>
                   <td className="operations-diagnostic">
                     {operation.safe_error || "—"}
                   </td>
@@ -207,8 +272,8 @@ export function OperationsScreen() {
                           disabled={Boolean(retryingID)}
                         >
                           {retryingID === operation.id
-                            ? "Повтор…"
-                            : "Повторить"}
+                            ? copy.retrying
+                            : copy.retry}
                         </button>
                       )}
                   </td>
@@ -218,10 +283,7 @@ export function OperationsScreen() {
           </table>
         </div>
       )}
-      <p className="operations-footnote">
-        Показаны операции в очереди, выполняющиеся и требующие внимания.
-        Завершённые операции скрыты.
-      </p>
+      <p className="operations-footnote">{copy.footnote}</p>
     </section>
   );
 }
