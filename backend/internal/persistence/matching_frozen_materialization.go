@@ -41,6 +41,7 @@ type FrozenRecordingTrack struct {
 	TitleSource           *FrozenFieldSource   `json:"title_source,omitempty"`
 	Credits               []FrozenArtistCredit `json:"credits"`
 	CreditSource          *FrozenFieldSource   `json:"credit_source,omitempty"`
+	TrackCreditOverride   bool                 `json:"track_credit_override"`
 }
 
 type FrozenArtistCredit struct {
@@ -241,7 +242,7 @@ func acceptedProjectionToMaterialization(snapshot ProviderMatchingSnapshot, sele
 			}
 			applyFrozenArtistName(snapshot.ProjectionEntities, &credits[index])
 		}
-		result.Tracks = append(result.Tracks, FrozenRecordingTrack{ProviderTrackID: assignment.ProviderTrackID, ProviderReleaseID: selected.ID, RecordingProviderKey: track.RecordingProviderKey, Medium: assignment.Medium, Position: assignment.Position, DisplayedNumber: track.DisplayedNumber, RecordingTitle: recordingTitle, RecordingTitleSource: recordingTitleSource, RecordingCredits: recordingCredits, RecordingCreditSource: recordingCreditSource, Title: title, TitleSource: titleSource, Credits: credits, CreditSource: creditSource})
+		result.Tracks = append(result.Tracks, FrozenRecordingTrack{ProviderTrackID: assignment.ProviderTrackID, ProviderReleaseID: selected.ID, RecordingProviderKey: track.RecordingProviderKey, Medium: assignment.Medium, Position: assignment.Position, DisplayedNumber: track.DisplayedNumber, RecordingTitle: recordingTitle, RecordingTitleSource: recordingTitleSource, RecordingCredits: recordingCredits, RecordingCreditSource: recordingCreditSource, Title: title, TitleSource: titleSource, Credits: credits, CreditSource: creditSource, TrackCreditOverride: trackCreditOverride})
 	}
 	return result, nil
 }

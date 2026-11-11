@@ -28,12 +28,12 @@ func TestPublicationProviderTagRecordingArtistGenreAuthorityPostgreSQL(t *testin
 	}
 	providerContext := readProviderGenreAuthorityContext(t, ctx, fixture)
 	const artistKey = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-	if len(providerContext.ArtistFacts) != 1 || localArtistSortName(providerContext.ArtistFacts, artistKey) != "Artist, Local" {
-		t.Fatalf("bound provider artist facts = %+v, want local sort metadata", providerContext.ArtistFacts)
+	if len(providerContext.ArtistFacts) != 1 || providerContext.ArtistFacts[0].Name != "local artist" || localArtistSortName(providerContext.ArtistFacts, artistKey) != "Artist, Local" {
+		t.Fatalf("bound provider artist facts = %+v, want local artist name and sort metadata", providerContext.ArtistFacts)
 	}
 	disambiguation, present, err := providerArtistMetadataString(providerContext.ArtistFacts, artistKey, "disambiguation")
 	if err != nil || !present || disambiguation != "provider identity" {
-		t.Fatalf("bound provider artist disambiguation = %q, present %v, error %v", disambiguation, present, err)
+		t.Fatalf("provider artist metadata fallback = %q, present %v, error %v", disambiguation, present, err)
 	}
 	var trackID uuid.UUID
 	if err := fixture.f.db.NewRaw(`SELECT track_id FROM release_track WHERE id=?`, fixture.position).Scan(ctx, &trackID); err != nil {
@@ -47,8 +47,8 @@ func TestPublicationProviderTagRecordingArtistGenreAuthorityPostgreSQL(t *testin
 		if err != nil {
 			return err
 		}
-		if len(credits) != 1 || credits[0].SortName != "Artist, Local" || credits[0].MetadataRevision <= 0 || credits[0].Disambiguation != "provider identity" {
-			return errors.New("first publication credit omitted artist sort, revision, or bound provider disambiguation")
+		if len(credits) != 1 || credits[0].ArtistName != "local artist" || credits[0].SortName != "Artist, Local" || credits[0].MetadataRevision <= 0 || credits[0].Disambiguation != "local identity" {
+			return errors.New("first publication credit omitted bound local name, sort, revision, or disambiguation")
 		}
 		return nil
 	}); err != nil {

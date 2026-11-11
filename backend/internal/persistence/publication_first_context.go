@@ -278,6 +278,9 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 			result.Tags.Position.RecordingID = firstPublicationUUID(&result.Metadata.Recording.Envelope, "recording_mbid")
 		}
 	}
+	if err := resolveFirstPublicationArtistCredits(ctx, tx, result, releaseEnv, positionEnv, track.Metadata, position.RecordingID); err != nil {
+		return err
+	}
 	if err := resolveFirstPublicationOptionalFields(result); err != nil {
 		return err
 	}
@@ -288,6 +291,79 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 		return err
 	}
 	*out = result
+	return nil
+}
+
+func resolveFirstPublicationArtistCredits(ctx context.Context, tx bun.IDB, result *LibraryFirstPublicationContext, release, position *librarymetadata.Envelope, trackMetadata json.RawMessage, recordingID *uuid.UUID) error {
+	releaseCredits, err := librarymetadata.ResolveReleaseArtistCredits(release, result.ReleasePrimaryCredits)
+	if err != nil {
+		return fmt.Errorf("resolve first publication release artist credits: %w", err)
+	}
+	releaseCredits.Credits, err = hydrateArtistCredits(ctx, tx, releaseCredits.Credits)
+	if err != nil {
+		return err
+	}
+	result.Tags.Release.Artist = releaseCredits.Credits
+	result.Tags.Release.ArtistCreditsResolved = true
+	result.Tags.Release.ArtistCreditTerminal = hasDesiredCredit(*release)
+	for _, credit := range releaseCredits.Credits {
+		if credit.MetadataRevision > 0 {
+			result.ArtistMetadataRevisions[credit.ArtistID] = credit.MetadataRevision
+		}
+	}
+	delete(result.Tags.Release.Desired.Desired, "artist_credit")
+
+	manualPresent := manualCreditOverridePresent(trackMetadata)
+	var manualCandidate, providerCandidate librarymetadata.CreditCandidate
+	if manualPresent {
+		manualCandidate = librarymetadata.CreditCandidate{Present: true, Credits: result.PositionPrimaryCredits, Origin: librarymetadata.CreditOriginManualMatching}
+	} else if !hasDesiredCredit(*position) {
+		marker, present, err := artistCreditOrigin(trackMetadata)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return ErrIncomingMatchConflict
+		}
+		if marker.Kind == artistCreditOriginProviderPosition {
+			providerCandidate = librarymetadata.CreditCandidate{Present: true, Credits: result.PositionPrimaryCredits, Origin: librarymetadata.CreditOriginProviderPosition}
+		} else if marker.Kind == artistCreditOriginRecordingFallback && recordingID == nil {
+			return ErrIncomingMatchConflict
+		}
+	}
+	var recordingEnvelope *librarymetadata.Envelope
+	var recordingCandidate librarymetadata.CreditCandidate
+	if recordingID != nil {
+		recordingCredits, err := firstPublicationCredits(ctx, tx, "recording_artist", "recording_id", *recordingID)
+		if err != nil {
+			return err
+		}
+		recordingCandidate = librarymetadata.CreditCandidate{Present: true, Credits: recordingCredits, Origin: librarymetadata.CreditOriginRecording}
+		if result.Metadata.Recording.Envelope.Scope == librarymetadata.ScopeRecording {
+			recordingEnvelope = &result.Metadata.Recording.Envelope
+		}
+	}
+	effective, err := librarymetadata.ResolveArtistCredits(position, manualCandidate, providerCandidate, recordingEnvelope, recordingCandidate)
+	if err != nil {
+		return fmt.Errorf("resolve first publication position artist credits: %w", err)
+	}
+	effective.Credits, err = hydrateArtistCredits(ctx, tx, effective.Credits)
+	if err != nil {
+		return err
+	}
+	result.Tags.Position.Artist = effective.Credits
+	result.Tags.Position.ArtistCreditsResolved = true
+	result.Tags.Position.ArtistCreditTerminal = hasDesiredCredit(*position) || manualPresent || providerCandidate.Present || recordingEnvelope != nil && hasDesiredCredit(*recordingEnvelope)
+	for _, credit := range effective.Credits {
+		if credit.MetadataRevision > 0 {
+			result.ArtistMetadataRevisions[credit.ArtistID] = credit.MetadataRevision
+		}
+	}
+	result.ArtistDisambiguationDigest, err = firstPublicationArtistDisambiguationDigest(result.Tags.Release.Artist, result.Tags.Position.Artist)
+	if err != nil {
+		return fmt.Errorf("digest effective first publication artist disambiguation: %w", err)
+	}
+	delete(result.Tags.Position.Desired.Desired, "artist_credit")
 	return nil
 }
 
@@ -1094,67 +1170,16 @@ func decodeFirstPublicationEnvelopeValue(raw json.RawMessage, scope librarymetad
 }
 
 func firstPublicationCredits(ctx context.Context, tx bun.IDB, relation, parentColumn string, parent uuid.UUID) ([]librarymetadata.ArtistCredit, error) {
-	if (relation != "release_artist" && relation != "track_artist") || (parentColumn != "release_id" && parentColumn != "track_id") {
+	if (relation != "release_artist" && relation != "recording_artist" && relation != "track_artist") || (parentColumn != "release_id" && parentColumn != "recording_id" && parentColumn != "track_id") {
 		return nil, errors.New("invalid first publication artist relation")
 	}
-	var rows []struct {
-		ID               uuid.UUID       `bun:"artist_id,type:uuid"`
-		Name             string          `bun:"name"`
-		Credit           string          `bun:"credit_name"`
-		Join             string          `bun:"name_join_phrase"`
-		Metadata         json.RawMessage `bun:"metadata,type:jsonb"`
-		MetadataRevision int64           `bun:"metadata_revision"`
-	}
-	query := `SELECT credit.artist_id,artist.name,credit.name AS credit_name,credit.name_join_phrase,artist.metadata,artist.metadata_revision
-		FROM ` + relation + ` credit JOIN local_artist artist ON artist.id=credit.artist_id WHERE credit.` + parentColumn + `=? ORDER BY credit.position`
-	if err := tx.NewRaw(query, parent).Scan(ctx, &rows); err != nil {
+	var credits []librarymetadata.ArtistCredit
+	query := `SELECT credit.artist_id::text AS artist_id,credit.name AS credit_name,credit.name_join_phrase AS join_phrase
+		FROM ` + relation + ` credit WHERE credit.` + parentColumn + `=? ORDER BY credit.position`
+	if err := tx.NewRaw(query, parent).Scan(ctx, &credits); err != nil {
 		return nil, fmt.Errorf("read first publication artist credits: %w", err)
 	}
-	ids := make([]uuid.UUID, 0, len(rows))
-	seen := map[uuid.UUID]bool{}
-	for _, row := range rows {
-		if !seen[row.ID] {
-			seen[row.ID] = true
-			ids = append(ids, row.ID)
-		}
-	}
-	mbids, err := loadMusicBrainzArtistMBIDs(ctx, tx, ids)
-	if err != nil {
-		return nil, fmt.Errorf("read first publication artist MBIDs: %w", err)
-	}
-	providerDisambiguations, err := firstPublicationProviderArtistDisambiguations(ctx, tx, ids)
-	if err != nil {
-		return nil, fmt.Errorf("read first publication provider artist disambiguations: %w", err)
-	}
-	credits := make([]librarymetadata.ArtistCredit, 0, len(rows))
-	for _, row := range rows {
-		credit := librarymetadata.ArtistCredit{ArtistID: row.ID.String(), ArtistName: row.Name, CreditName: row.Credit, JoinPhrase: row.Join}
-		credit.MetadataRevision = row.MetadataRevision
-		artistMetadata, decodeErr := decodeFirstPublicationEnvelopeValue(row.Metadata, librarymetadata.ScopeArtist)
-		if decodeErr != nil {
-			return nil, fmt.Errorf("decode first publication artist metadata: %w", decodeErr)
-		}
-		if sortName, exists := artistMetadata.Desired["sort_name"]; exists && sortName.State == librarymetadata.StateValue {
-			credit.SortName, _ = sortName.Value.(string)
-		}
-		credit.Disambiguation = providerDisambiguations[row.ID]
-		if credit.Disambiguation == "" {
-			localFields, decodeErr := decodeFrozenObject(row.Metadata)
-			if decodeErr != nil {
-				return nil, fmt.Errorf("decode first publication local artist identity: %w", decodeErr)
-			}
-			credit.Disambiguation, _, decodeErr = acceptedProviderString(localFields, "disambiguation")
-			if decodeErr != nil {
-				return nil, fmt.Errorf("decode first publication local artist disambiguation: %w", decodeErr)
-			}
-		}
-		if mbid := mbids[row.ID]; mbid != nil {
-			value := mbid.String()
-			credit.MBID = &value
-		}
-		credits = append(credits, credit)
-	}
-	return credits, nil
+	return hydrateArtistCredits(ctx, tx, credits)
 }
 
 func firstPublicationProviderArtistDisambiguations(ctx context.Context, tx bun.IDB, artistIDs []uuid.UUID) (map[uuid.UUID]string, error) {

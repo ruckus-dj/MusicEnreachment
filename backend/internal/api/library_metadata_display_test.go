@@ -148,7 +148,7 @@ func TestLibraryMetadataOpenAPIDisplaySchemaIsGETOnly(t *testing.T) {
 		{"recording PATCH stays desired only", "patch-library-recording-metadata", http.MethodPatch, "/library/recordings/{recording_id}/metadata", desiredRef},
 		{"track GET stays desired only", "get-library-track-metadata", http.MethodGet, "/library/tracks/{track_id}/metadata", desiredRef},
 		{"track PATCH stays desired only", "patch-library-track-metadata", http.MethodPatch, "/library/tracks/{track_id}/metadata", desiredRef},
-		{"position GET stays desired only", "get-library-position-metadata", http.MethodGet, "/library/releases/{release_id}/positions/{position_id}/metadata", desiredRef},
+		{"position GET includes display credits", "get-library-position-metadata", http.MethodGet, "/library/releases/{release_id}/positions/{position_id}/metadata", displayRef},
 		{"position PATCH stays desired only", "patch-library-position-metadata", http.MethodPatch, "/library/releases/{release_id}/positions/{position_id}/metadata", desiredRef},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -182,6 +182,12 @@ func TestLibraryMetadataOpenAPIDisplaySchemaIsGETOnly(t *testing.T) {
 	}
 	if display.requires("provider_genre_baseline") {
 		t.Error("provider_genre_baseline must remain optional for owners without a provider binding")
+	}
+	if _, present := display.Properties["artist_credit_baseline"]; !present {
+		t.Error("display response must expose artist_credit_baseline")
+	}
+	if _, present := display.Properties["effective_artist_credit"]; !present {
+		t.Error("display response must expose effective_artist_credit")
 	}
 
 	desired := document.component(t, "LibraryMetadataResponse")

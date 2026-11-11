@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 // This exercises the actual first-admission callback while its SHARE table
@@ -26,17 +27,22 @@ func TestFirstPublicationAdmissionGuardsPhantomTrackSourcePostgreSQL(t *testing.
 	initializeRiver(t, ctx, db)
 	repo := NewSetupManagerRepository(db)
 	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
-	for _, stmt := range []struct {
-		query string
-		args  []any
-	}{
-		{`INSERT INTO local_release(id,title) VALUES (?,'first admission concurrency')`, []any{releaseID}},
-		{`INSERT INTO local_track(id,title) VALUES (?,'first admission concurrency')`, []any{trackID}},
-		{`INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, []any{positionID, releaseID, trackID}},
-	} {
-		if _, err := db.ExecContext(ctx, stmt.query, stmt.args...); err != nil {
-			t.Fatal(err)
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, stmt := range []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO local_release(id,title) VALUES (?,'first admission concurrency')`, []any{releaseID}},
+			{`INSERT INTO local_track(id,title) VALUES (?,'first admission concurrency')`, []any{trackID}},
+			{`INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, []any{positionID, releaseID, trackID}},
+		} {
+			if _, err := tx.ExecContext(ctx, stmt.query, stmt.args...); err != nil {
+				return err
+			}
 		}
+		return seedRecordingCreditBaselineTx(ctx, tx, positionID, trackID, "first admission concurrency", "Concurrency artist")
+	}); err != nil {
+		t.Fatal(err)
 	}
 	var epoch uuid.UUID
 	if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {

@@ -46,6 +46,7 @@ import type {
   InstallationActionInputBody,
   InstallationsBody,
   LibraryArtistPage,
+  LibraryArtistReferencesPage,
   LibraryArtistSummary,
   LibraryFirstPublicationAdmissionInputBody,
   LibraryFirstPublicationPreviewResponse,
@@ -108,6 +109,7 @@ import type {
   RetrySourceAnalysisStepBody,
   SaveRuntimeBody,
   SearchGenreCatalogParams,
+  SearchLibraryArtistReferencesParams,
   SetGitHubTokenBody,
   SetupStateBody,
   SourceArtifactCleanupBody,
@@ -1962,6 +1964,140 @@ export const useReturnIncomingGroupMatchingToAutomatic = <TError = ErrorModel,
       > => {
       return useMutation(getReturnIncomingGroupMatchingToAutomaticMutationOptions(options), queryClient);
     }
+
+export type searchLibraryArtistReferencesResponse200 = {
+  data: LibraryArtistReferencesPage
+  status: 200
+}
+
+export type searchLibraryArtistReferencesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type searchLibraryArtistReferencesResponseSuccess = (searchLibraryArtistReferencesResponse200) & {
+  headers: Headers;
+};
+export type searchLibraryArtistReferencesResponseError = (searchLibraryArtistReferencesResponseDefault) & {
+  headers: Headers;
+};
+
+export type searchLibraryArtistReferencesResponse = (searchLibraryArtistReferencesResponseSuccess | searchLibraryArtistReferencesResponseError)
+
+export const getSearchLibraryArtistReferencesUrl = (params?: SearchLibraryArtistReferencesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/library/artist-references?${stringifiedParams}` : `/api/library/artist-references`
+}
+
+/**
+ * @summary Search local artists for metadata credits
+ */
+export const searchLibraryArtistReferences = async (params?: SearchLibraryArtistReferencesParams, options?: RequestInit): Promise<searchLibraryArtistReferencesResponse> => {
+
+  const res = await fetch(getSearchLibraryArtistReferencesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: searchLibraryArtistReferencesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as searchLibraryArtistReferencesResponse
+}
+
+
+
+
+
+export const getSearchLibraryArtistReferencesQueryKey = (params?: SearchLibraryArtistReferencesParams,) => {
+    return [
+    `/api/library/artist-references`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getSearchLibraryArtistReferencesQueryOptions = <TData = Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError = ErrorModel>(params?: SearchLibraryArtistReferencesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSearchLibraryArtistReferencesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof searchLibraryArtistReferences>>> = ({ signal }) => searchLibraryArtistReferences(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SearchLibraryArtistReferencesQueryResult = NonNullable<Awaited<ReturnType<typeof searchLibraryArtistReferences>>>
+export type SearchLibraryArtistReferencesQueryError = ErrorModel
+
+
+export function useSearchLibraryArtistReferences<TData = Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError = ErrorModel>(
+ params: undefined |  SearchLibraryArtistReferencesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof searchLibraryArtistReferences>>,
+          TError,
+          Awaited<ReturnType<typeof searchLibraryArtistReferences>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSearchLibraryArtistReferences<TData = Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError = ErrorModel>(
+ params?: SearchLibraryArtistReferencesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof searchLibraryArtistReferences>>,
+          TError,
+          Awaited<ReturnType<typeof searchLibraryArtistReferences>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSearchLibraryArtistReferences<TData = Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError = ErrorModel>(
+ params?: SearchLibraryArtistReferencesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Search local artists for metadata credits
+ */
+
+export function useSearchLibraryArtistReferences<TData = Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError = ErrorModel>(
+ params?: SearchLibraryArtistReferencesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof searchLibraryArtistReferences>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSearchLibraryArtistReferencesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type listLibraryArtistsResponse200 = {
   data: LibraryArtistPage
@@ -4984,7 +5120,7 @@ export const useRefreshLibraryReleaseMusicbrainz = <TError = ErrorModel,
     }
 
 export type getLibraryPositionMetadataResponse200 = {
-  data: LibraryMetadataResponse
+  data: LibraryMetadataGetResponse
   status: 200
 }
 

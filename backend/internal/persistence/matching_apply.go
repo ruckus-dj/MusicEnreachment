@@ -516,6 +516,7 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 				return nil, err
 			}
 			credits, err := acceptedTrackArtistCredits(json.RawMessage(releaseFields), json.RawMessage(releaseEvidence), medium, position, recordingKey, releaseKey)
+			trackCreditOverride := credits != nil
 			if credits == nil {
 				credits, err = acceptedRecordingArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, providerRecording)
 			}
@@ -523,6 +524,13 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 				return nil, err
 			}
 			if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localTrackID, "track_artist", credits, policy, fence.AcceptedProjectionRevision); err != nil {
+				return nil, err
+			}
+			origin := artistCreditOriginRecordingFallback
+			if trackCreditOverride {
+				origin = artistCreditOriginProviderPosition
+			}
+			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, origin); err != nil {
 				return nil, err
 			}
 		}
@@ -1465,6 +1473,13 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 				return err
 			}
 			if err := materializeFrozenArtistCredits(ctx, tx, snapshot.Source, localTrackID, "track_artist", track.Credits, policy, snapshot.Authority.EvaluationRevision); err != nil {
+				return err
+			}
+			origin := artistCreditOriginRecordingFallback
+			if track.TrackCreditOverride {
+				origin = artistCreditOriginProviderPosition
+			}
+			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, origin); err != nil {
 				return err
 			}
 		}

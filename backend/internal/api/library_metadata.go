@@ -26,10 +26,12 @@ type libraryMetadataOutput struct {
 	Body libraryMetadataResponse `json:"body"`
 }
 type libraryMetadataGetResponse struct {
-	Envelope              librarymetadata.Envelope       `json:"envelope"`
-	Revision              int64                          `json:"revision"`
-	PublicationApplied    bool                           `json:"publication_applied"`
-	ProviderGenreBaseline *service.ProviderGenreBaseline `json:"provider_genre_baseline,omitempty"`
+	Envelope              librarymetadata.Envelope              `json:"envelope"`
+	Revision              int64                                 `json:"revision"`
+	PublicationApplied    bool                                  `json:"publication_applied"`
+	ProviderGenreBaseline *service.ProviderGenreBaseline        `json:"provider_genre_baseline,omitempty"`
+	ArtistCreditBaseline  []service.LibraryMetadataArtistCredit `json:"artist_credit_baseline"`
+	EffectiveArtistCredit *service.EffectiveArtistCredit        `json:"effective_artist_credit,omitempty"`
 }
 type libraryMetadataGetOutput struct {
 	Body libraryMetadataGetResponse `json:"body"`
@@ -104,7 +106,7 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 		case err != nil:
 			return nil, huma.Error503ServiceUnavailable("library metadata is unavailable")
 		default:
-			return &libraryMetadataGetOutput{Body: libraryMetadataGetResponse{Envelope: result.Metadata.Envelope, Revision: result.Metadata.Revision, PublicationApplied: false, ProviderGenreBaseline: result.ProviderGenreBaseline}}, nil
+			return &libraryMetadataGetOutput{Body: libraryMetadataGetResponse{Envelope: result.Metadata.Envelope, Revision: result.Metadata.Revision, PublicationApplied: false, ProviderGenreBaseline: result.ProviderGenreBaseline, ArtistCreditBaseline: result.ArtistCreditBaseline, EffectiveArtistCredit: result.EffectiveArtistCredit}}, nil
 		}
 	}
 	readDesired := func(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID) (*libraryMetadataOutput, error) {
@@ -199,7 +201,7 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 				return register(ctx, s.scope, uuid.Nil, id, &in.Body)
 			})
 		case librarymetadata.ScopePosition:
-			huma.Register(api, huma.Operation{OperationID: "get-" + s.operation, Method: http.MethodGet, Path: s.path, Summary: "Read desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataPositionGetInput) (*libraryMetadataOutput, error) {
+			huma.Register(api, huma.Operation{OperationID: "get-" + s.operation, Method: http.MethodGet, Path: s.path, Summary: "Read desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataPositionGetInput) (*libraryMetadataGetOutput, error) {
 				r, e := parse(in.ReleaseID)
 				if e != nil {
 					return nil, huma.Error400BadRequest("library release ID is invalid")
@@ -208,7 +210,7 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 				if e != nil {
 					return nil, huma.Error400BadRequest("library position ID is invalid")
 				}
-				return readDesired(ctx, s.scope, r, p)
+				return read(ctx, s.scope, r, p)
 			})
 			huma.Register(api, huma.Operation{OperationID: "patch-" + s.operation, Method: http.MethodPatch, Path: s.path, Summary: "Update desired local metadata", Tags: []string{"Library"}}, func(ctx context.Context, in *libraryMetadataPositionInput) (*libraryMetadataOutput, error) {
 				r, e := parse(in.ReleaseID)

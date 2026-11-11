@@ -218,6 +218,13 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	if _, err := db.NewRaw(`INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method) VALUES (?,?,?,'manual')`, provider.ID, providerArtistID, artistID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
+	referencePage, err := repository.ReadLibraryArtistReferences(ctx, LibraryArtistReferenceRequest{Limit: 1, Offset: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if referencePage.Total != 3 || len(referencePage.Items) != 1 || referencePage.Items[0].ID != guestArtistID || referencePage.Items[0].Name != "AAA Guest Artist" || len(referencePage.Items[0].ProviderLinks) != 0 {
+		t.Fatalf("paginated artist references = %#v, want the guest local artist and full local total", referencePage)
+	}
 	artistPage, err := repository.ReadLibraryArtists(ctx, LibraryCatalogRequest{Limit: 50, Publication: "all"})
 	if err != nil {
 		t.Fatal(err)

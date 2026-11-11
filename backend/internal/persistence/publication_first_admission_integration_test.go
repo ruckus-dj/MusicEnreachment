@@ -101,6 +101,7 @@ func runFirstAdmissionScenario(t *testing.T, fixture *firstAdmissionFixture, sce
 	if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
 		t.Fatal(err)
 	}
+	seedRecordingCreditBaseline(t, ctx, db, positionID, trackID, "first admission fixture", "First admission artist")
 	if _, err := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, uuid.New(), trackID, fixture.variantID); err != nil {
 		t.Fatal(err)
 	}
@@ -281,6 +282,36 @@ func runFirstAdmissionScenario(t *testing.T, fixture *firstAdmissionFixture, sce
 	if err := db.NewRaw(`SELECT count(*) FROM publication_source_hold WHERE operation_id=?`, op).Scan(ctx, &count); err != nil || count != 1 {
 		t.Fatalf("source holds %d (%v)", count, err)
 	}
+}
+
+func seedRecordingCreditBaseline(t *testing.T, ctx context.Context, db *bun.DB, positionID, trackID uuid.UUID, recordingTitle, artistName string) {
+	t.Helper()
+	if err := seedRecordingCreditBaselineTx(ctx, db, positionID, trackID, recordingTitle, artistName); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedRecordingCreditBaselineTx(ctx context.Context, db bun.IDB, positionID, trackID uuid.UUID, recordingTitle, artistName string) error {
+	artistID, recordingID := uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO local_artist(id,name) VALUES (?,?)`, artistID, artistName); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO local_recording(id,title) VALUES (?,?)`, recordingID, recordingTitle); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO recording_artist(recording_id,position,artist_id,name,name_join_phrase) VALUES (?,?,?,?,'')`, recordingID, 0, artistID, artistName); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE release_track SET recording_id=? WHERE id=?`, recordingID, positionID); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO track_artist(track_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,?,'')`, trackID, artistID, artistName); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE local_track SET metadata=jsonb_set(metadata,'{artist_credit_origin}','{"version":1,"kind":"recording_fallback"}'::jsonb,true) WHERE id=?`, trackID); err != nil {
+		return err
+	}
+	return nil
 }
 
 func scenarioName(scenario string) string {

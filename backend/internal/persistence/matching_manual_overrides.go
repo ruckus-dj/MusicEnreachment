@@ -53,6 +53,9 @@ func applyManualTrackOverrides(ctx context.Context, tx bun.Tx, trackID uuid.UUID
 		if err := insertLocalCredits(ctx, tx, trackID, "track_artist", values); err != nil {
 			return fmt.Errorf("manual matching: insert track artist overrides: %w", err)
 		}
+		if err := writeArtistCreditOrigin(ctx, tx, trackID, artistCreditOriginManualMatching); err != nil {
+			return err
+		}
 	}
 	provenance := map[string]any{"authority": "manual", "method": "manual_matching"}
 	if title != nil {

@@ -37,6 +37,7 @@ const metadata = (
   genre?: unknown,
   providerGenreBaseline?: ProviderGenreBaseline,
 ): LibraryMetadataGetResponse => ({
+  artist_credit_baseline: [],
   envelope: {
     desired: genre ? { genre: genre as never } : {},
     scope: "release",

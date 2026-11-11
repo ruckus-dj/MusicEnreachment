@@ -310,10 +310,23 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 			if _, err := db.ExecContext(ctx, `INSERT INTO local_artist(id,name) VALUES (?,'Artist')`, artistID); err != nil {
 				t.Fatal(err)
 			}
+			recordingID := uuid.New()
+			if _, err := db.ExecContext(ctx, `INSERT INTO local_recording(id,title) VALUES (?,'Published track')`, recordingID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO recording_artist(recording_id,position,artist_id,name,name_join_phrase) VALUES (?,?,?,'Artist','')`, recordingID, 0, artistID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `UPDATE release_track SET recording_id=? WHERE id=?`, recordingID, positionID); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO release_artist(release_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,'Artist','')`, releaseID, artistID); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO track_artist(track_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,'Artist','')`, trackID, artistID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `UPDATE local_track SET metadata=jsonb_set(metadata,'{artist_credit_origin}','{"version":1,"kind":"recording_fallback"}'::jsonb,true) WHERE id=?`, trackID); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := db.ExecContext(ctx, `UPDATE local_track SET title='Published track' WHERE id=?`, trackID); err != nil {

@@ -38,6 +38,27 @@ type ProviderGenreEvidence struct {
 type LibraryMetadataDisplayResult struct {
 	Metadata              LibraryMetadataResult
 	ProviderGenreBaseline *ProviderGenreBaseline
+	ArtistCreditBaseline  []LibraryMetadataArtistCredit
+	EffectiveArtistCredit *EffectiveArtistCredit
+}
+
+type LibraryMetadataArtistCredit struct {
+	ArtistID         string  `json:"artist_id"`
+	ArtistName       string  `json:"artist_name"`
+	CreditName       string  `json:"credit_name"`
+	JoinPhrase       string  `json:"join_phrase"`
+	Role             string  `json:"role,omitempty"`
+	MBID             *string `json:"mbid,omitempty"`
+	SortName         string  `json:"sort_name,omitempty"`
+	Disambiguation   string  `json:"disambiguation,omitempty"`
+	MetadataRevision int64   `json:"metadata_revision"`
+}
+
+type EffectiveArtistCredit struct {
+	Credits []LibraryMetadataArtistCredit          `json:"credits"`
+	Origin  librarymetadata.CreditOrigin           `json:"origin"`
+	State   librarymetadata.ValueState             `json:"state"`
+	Status  librarymetadata.CreditResolutionStatus `json:"status"`
 }
 
 var (
@@ -108,11 +129,34 @@ func (service *LibraryMetadataService) ReadDisplay(ctx context.Context, scope li
 	if err != nil {
 		return LibraryMetadataDisplayResult{}, fmt.Errorf("read library metadata display: %w", err)
 	}
-	result := LibraryMetadataDisplayResult{Metadata: LibraryMetadataResult{Envelope: display.Metadata.Envelope, Revision: display.Metadata.Revision}}
+	result := LibraryMetadataDisplayResult{
+		Metadata:             LibraryMetadataResult{Envelope: display.Metadata.Envelope, Revision: display.Metadata.Revision},
+		ArtistCreditBaseline: mapLibraryArtistCredits(display.ArtistCreditBaseline),
+	}
+	if display.EffectiveArtistCredit != nil {
+		result.EffectiveArtistCredit = &EffectiveArtistCredit{
+			Credits: mapLibraryArtistCredits(display.EffectiveArtistCredit.Credits),
+			Origin:  display.EffectiveArtistCredit.Origin,
+			State:   display.EffectiveArtistCredit.State,
+			Status:  display.EffectiveArtistCredit.Status,
+		}
+	}
 	if baseline := display.ProviderGenreBaseline; baseline != nil {
 		result.ProviderGenreBaseline = &ProviderGenreBaseline{ProviderCode: baseline.ProviderCode, ProviderSourceID: baseline.SourceID, ProviderKey: baseline.ProviderKey, Evidence: ProviderGenreEvidence{Authority: baseline.Authority, FetchOrder: baseline.FetchOrder}, Genres: append([]librarymetadata.GenreReference{}, baseline.Genres...), Digest: baseline.Digest}
 	}
 	return result, nil
+}
+
+func mapLibraryArtistCredits(credits []librarymetadata.ArtistCredit) []LibraryMetadataArtistCredit {
+	result := make([]LibraryMetadataArtistCredit, len(credits))
+	for index, credit := range credits {
+		result[index] = LibraryMetadataArtistCredit{
+			ArtistID: credit.ArtistID, ArtistName: credit.ArtistName, CreditName: credit.CreditName,
+			JoinPhrase: credit.JoinPhrase, Role: credit.Role, MBID: credit.MBID, SortName: credit.SortName,
+			Disambiguation: credit.Disambiguation, MetadataRevision: credit.MetadataRevision,
+		}
+	}
+	return result
 }
 
 func (service *LibraryMetadataService) Update(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, changes map[string]json.RawMessage) (LibraryMetadataResult, error) {
@@ -194,6 +238,9 @@ func (service *LibraryMetadataService) Update(ctx context.Context, scope library
 		current.Envelope.Desired[name] = field
 	}
 	result, err := service.repository.UpdateMetadata(ctx, scope, releaseID, ownerID, expected, current.Envelope)
+	if errors.Is(err, persistence.ErrLibraryMetadataArtistNotFound) {
+		return LibraryMetadataResult{}, fmt.Errorf("%w: artist_credit references an unknown local artist", ErrLibraryMetadataInvalidRequest)
+	}
 	if errors.Is(err, persistence.ErrLibraryMetadataConflict) {
 		return LibraryMetadataResult{}, fmt.Errorf("update library metadata: %w", ErrLibraryMetadataConflict)
 	}

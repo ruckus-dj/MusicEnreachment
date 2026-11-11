@@ -450,11 +450,12 @@ func TestBuildPublicationProviderCanonicalTagPatchFansOutAcceptedCredits(t *test
 	}
 }
 
-func TestCanonicalCreditsUsesBoundArtistDisambiguationWithoutOverridingAcceptedEvidence(t *testing.T) {
+func TestCanonicalCreditsPrefersPresentBoundLocalIdentityOverProviderFallback(t *testing.T) {
 	const artistKey = "11111111-1111-4111-8111-111111111111"
 	credit := FrozenArtistCredit{ArtistProviderKey: artistKey, Name: "Same Artist"}
 	facts := []PublicationProviderTagArtist{{
 		ProviderKey:      artistKey,
+		Name:             "Local Artist",
 		ProviderMetadata: json.RawMessage(`{"disambiguation":"provider identity"}`),
 		Metadata:         json.RawMessage(`{"disambiguation":"local identity","local_metadata":{"version":1,"scope":"artist","desired":{"sort_name":{"state":"value","value":"Artist, Same","authority":"manual","provenance":{"kind":"manual"}}}}}`),
 	}}
@@ -463,8 +464,8 @@ func TestCanonicalCreditsUsesBoundArtistDisambiguationWithoutOverridingAcceptedE
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(credits) != 1 || credits[0].Disambiguation != "provider identity" || credits[0].SortName != "Artist, Same" {
-		t.Fatalf("bound artist credit = %#v, want provider identity and local sort name", credits)
+	if len(credits) != 1 || credits[0].ArtistName != "Local Artist" || credits[0].Disambiguation != "local identity" || credits[0].SortName != "Artist, Same" {
+		t.Fatalf("bound artist credit = %#v, want local name, disambiguation, and sort name", credits)
 	}
 
 	entities := []MatchingProjectionEntity{{
@@ -476,8 +477,31 @@ func TestCanonicalCreditsUsesBoundArtistDisambiguationWithoutOverridingAcceptedE
 	if err != nil {
 		t.Fatal(err)
 	}
+	if credits[0].ArtistName != "Local Artist" || credits[0].Disambiguation != "local identity" {
+		t.Fatalf("accepted projection identity = %#v, want bound local identity", credits[0])
+	}
+
+	facts[0].Metadata = json.RawMessage(`{"disambiguation":"","local_metadata":{"version":1,"scope":"artist","desired":{}}}`)
+	credits, err = canonicalCredits([]FrozenArtistCredit{credit}, entities, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credits[0].Disambiguation != "" {
+		t.Fatalf("explicit local empty disambiguation = %q, want empty over provider value", credits[0].Disambiguation)
+	}
+
+	facts[0].Metadata = json.RawMessage(`{"disambiguation":null,"local_metadata":{"version":1,"scope":"artist","desired":{}}}`)
+	credits, err = canonicalCredits([]FrozenArtistCredit{credit}, entities, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if credits[0].Disambiguation != "accepted identity" {
-		t.Fatalf("accepted disambiguation = %q, want accepted identity", credits[0].Disambiguation)
+		t.Fatalf("legacy-null local disambiguation = %q, want accepted provider fallback", credits[0].Disambiguation)
+	}
+
+	facts[0].Metadata = json.RawMessage(`{"disambiguation":7}`)
+	if _, err := canonicalCredits([]FrozenArtistCredit{credit}, entities, facts); err == nil {
+		t.Fatal("malformed local disambiguation was silently ignored")
 	}
 }
 

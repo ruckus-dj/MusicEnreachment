@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	ErrLibraryMetadataNotFound = errors.New("library metadata owner not found")
-	ErrLibraryMetadataConflict = errors.New("library metadata revision conflict")
+	ErrLibraryMetadataNotFound       = errors.New("library metadata owner not found")
+	ErrLibraryMetadataConflict       = errors.New("library metadata revision conflict")
+	ErrLibraryMetadataArtistNotFound = errors.New("library metadata artist reference not found")
 )
 
 type LibraryMetadata struct {
@@ -35,6 +36,8 @@ type ProviderGenreBaseline struct {
 type LibraryMetadataDisplay struct {
 	Metadata              LibraryMetadata
 	ProviderGenreBaseline *ProviderGenreBaseline
+	ArtistCreditBaseline  []librarymetadata.ArtistCredit
+	EffectiveArtistCredit *librarymetadata.ResolvedArtistCredits
 }
 
 // GenreCatalogItems returns the persisted MusicBrainz catalog used to validate
@@ -126,6 +129,10 @@ func (repository *LibraryRepository) ReadMetadataDisplay(ctx context.Context, sc
 			return err
 		}
 		result.Metadata = metadata
+		result.ArtistCreditBaseline, result.EffectiveArtistCredit, err = readArtistCreditDisplay(ctx, tx, scope, releaseID, ownerID, metadata.Envelope)
+		if err != nil {
+			return err
+		}
 		baseline, err := readProviderGenreBaseline(ctx, tx, scope, ownerID)
 		if err != nil {
 			return err
@@ -178,6 +185,9 @@ func (repository *LibraryRepository) UpdateMetadata(ctx context.Context, scope l
 		if current != expected {
 			return ErrLibraryMetadataConflict
 		}
+		if err := validateMetadataArtistReferences(ctx, tx, envelope); err != nil {
+			return err
+		}
 		owner, ok := metadataOwnerForScope(scope)
 		if !ok {
 			return fmt.Errorf("update library metadata: unknown scope %q", scope)
@@ -200,4 +210,49 @@ func (repository *LibraryRepository) UpdateMetadata(ctx context.Context, scope l
 		return LibraryMetadata{}, fmt.Errorf("update library metadata: %w", err)
 	}
 	return result, nil
+}
+
+func validateMetadataArtistReferences(ctx context.Context, tx bun.Tx, envelope librarymetadata.Envelope) error {
+	ids := make(map[uuid.UUID]struct{})
+	for name, field := range envelope.Desired {
+		if name != "artist_credit" {
+			continue
+		}
+		if field.State != librarymetadata.StateValue {
+			continue
+		}
+		if field.Value == nil {
+			continue
+		}
+		encoded, err := json.Marshal(field.Value)
+		if err != nil {
+			return fmt.Errorf("encode metadata artist references: %w", err)
+		}
+		var credits []librarymetadata.ArtistCredit
+		if err := json.Unmarshal(encoded, &credits); err != nil {
+			return fmt.Errorf("decode metadata artist references: %w", err)
+		}
+		for _, credit := range credits {
+			id, err := uuid.Parse(credit.ArtistID)
+			if err != nil || id == uuid.Nil {
+				return ErrLibraryMetadataArtistNotFound
+			}
+			ids[id] = struct{}{}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	requested := make([]uuid.UUID, 0, len(ids))
+	for id := range ids {
+		requested = append(requested, id)
+	}
+	var found []uuid.UUID
+	if err := tx.NewRaw(`SELECT id FROM local_artist WHERE id IN (?) ORDER BY id`, bun.List(requested)).Scan(ctx, &found); err != nil {
+		return fmt.Errorf("validate metadata artist references: %w", err)
+	}
+	if len(found) != len(requested) {
+		return ErrLibraryMetadataArtistNotFound
+	}
+	return nil
 }

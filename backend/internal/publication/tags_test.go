@@ -536,3 +536,73 @@ func TestProjectTagsValidatesManuallyConstructedEnvelopesAndFinalRequiredTags(t 
 		t.Fatal("expected blank artist credits to be rejected")
 	}
 }
+
+func TestProjectTagsClearsTerminalArtistCreditGroups(t *testing.T) {
+	release := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease,
+		Desired: map[string]librarymetadata.FieldValue{
+			"artist_credit": librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false),
+		},
+	}
+	position := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
+		Desired: map[string]librarymetadata.FieldValue{
+			"artist_credit": librarymetadata.ManualFieldValue(librarymetadata.StateAbsent, nil, false),
+		},
+	}
+	result, err := ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Desired: &release, ArtistCreditsResolved: true, ArtistCreditTerminal: true},
+		Position: PositionTags{Title: "Song", Desired: &position, ArtistCreditsResolved: true, ArtistCreditTerminal: true},
+	})
+	if err != nil {
+		t.Fatalf("ProjectTags() error = %v", err)
+	}
+	for _, key := range []string{"ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "ARTISTSORT", "ARTISTSSORT", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTSORT", "ALBUMARTISTSSORT"} {
+		values, exists := result.Tags[key]
+		if !exists || values == nil || len(values) != 0 {
+			t.Errorf("terminal artist credit %s = %#v, exists=%t", key, values, exists)
+		}
+	}
+}
+
+func TestProjectTagsResolvedCreditsCannotBeOverwrittenByLegacyArtistFields(t *testing.T) {
+	for _, scope := range []librarymetadata.Scope{librarymetadata.ScopePosition, librarymetadata.ScopeRelease} {
+		t.Run(string(scope), func(t *testing.T) {
+			envelope := librarymetadata.Envelope{Version: librarymetadata.EnvelopeVersion, Scope: scope, Desired: map[string]librarymetadata.FieldValue{
+				"artist_mbid": librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"11111111-1111-4111-8111-111111111111"}, true),
+				"artists":     librarymetadata.ManualFieldValue(librarymetadata.StateValue, []string{"Stale Artist"}, true),
+			}}
+			mbidA, mbidB := "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+			resolvedCollision := []librarymetadata.ArtistCredit{
+				{ArtistID: "artist-a", ArtistName: "Same Name", CreditName: "Same Name", MBID: &mbidA},
+				{ArtistID: "artist-b", ArtistName: "Same Name", CreditName: "Same Name", MBID: &mbidB},
+			}
+			input := TagProjectionInput{
+				Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Album Artist", CreditName: "Album Artist"}}},
+				Position: PositionTags{Title: "Song", Artist: resolvedCollision, ArtistCreditsResolved: true},
+			}
+			if scope == librarymetadata.ScopePosition {
+				input.Position.Desired = &envelope
+			} else {
+				input.Release.Desired = &envelope
+				input.Release.Artist = resolvedCollision
+				input.Release.ArtistCreditsResolved = true
+				input.Position.Artist = []librarymetadata.ArtistCredit{{ArtistName: "Track Artist", CreditName: "Track Artist"}}
+			}
+			projection, err := ProjectTags(input)
+			if err != nil {
+				t.Fatalf("ProjectTags() error = %v", err)
+			}
+			mbidKey, artistKey := "MUSICBRAINZ_ARTISTID", "ARTISTS"
+			if scope == librarymetadata.ScopeRelease {
+				mbidKey, artistKey = "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTS"
+			}
+			if values := projection.Tags[mbidKey]; values == nil || len(values) != 0 {
+				t.Errorf("collision-omitted credit MBID group = %#v", values)
+			}
+			if values := projection.Tags[artistKey]; values == nil || len(values) != 0 {
+				t.Errorf("collision-omitted artist group = %#v", values)
+			}
+		})
+	}
+}

@@ -509,7 +509,10 @@ func canonicalCredits(source []FrozenArtistCredit, artists []MatchingProjectionE
 	credits := make([]librarymetadata.ArtistCredit, 0, len(source))
 	for _, credit := range source {
 		artistName := credit.Name
-		if entity, ok := findProjectionEntity(artists, "artist", credit.ArtistProviderKey); ok && entity != nil {
+		localArtist, locallyBound := publicationTagArtistFact(facts, credit.ArtistProviderKey)
+		if locallyBound {
+			artistName = localArtist.Name
+		} else if entity, ok := findProjectionEntity(artists, "artist", credit.ArtistProviderKey); ok && entity != nil {
 			fields, err := decodeFrozenObject(entity.Fields)
 			if err == nil && hasProviderFieldEvidence(decodeEvidence(entity.FieldEvidence), "name") {
 				if canonical := jsonString(fields["name"]); strings.TrimSpace(canonical) != "" {
@@ -526,20 +529,25 @@ func canonicalCredits(source []FrozenArtistCredit, artists []MatchingProjectionE
 			parsed := mbid.String()
 			artistMBID = &parsed
 		}
-		disambiguation := localArtistDisambiguation(facts, credit.ArtistProviderKey)
-		if entity, ok := findProjectionEntity(artists, "artist", credit.ArtistProviderKey); ok && entity != nil && hasProviderFieldEvidence(decodeEvidence(entity.FieldEvidence), "disambiguation") {
-			fields, decodeErr := decodeFrozenObject(entity.Fields)
-			if decodeErr != nil {
-				return nil, decodeErr
-			}
-			disambiguation, _, decodeErr = acceptedProviderString(fields, "disambiguation")
-			if decodeErr != nil {
-				return nil, decodeErr
-			}
-		} else if providerDisambiguation, present, decodeErr := providerArtistMetadataString(facts, credit.ArtistProviderKey, "disambiguation"); decodeErr != nil {
+		disambiguation, localDisambiguationPresent, decodeErr := localArtistDisambiguation(facts, credit.ArtistProviderKey)
+		if decodeErr != nil {
 			return nil, decodeErr
-		} else if present {
-			disambiguation = providerDisambiguation
+		}
+		if !localDisambiguationPresent {
+			if entity, ok := findProjectionEntity(artists, "artist", credit.ArtistProviderKey); ok && entity != nil && hasProviderFieldEvidence(decodeEvidence(entity.FieldEvidence), "disambiguation") {
+				fields, decodeErr := decodeFrozenObject(entity.Fields)
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+				disambiguation, _, decodeErr = acceptedProviderString(fields, "disambiguation")
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+			} else if providerDisambiguation, present, decodeErr := providerArtistMetadataString(facts, credit.ArtistProviderKey, "disambiguation"); decodeErr != nil {
+				return nil, decodeErr
+			} else if present {
+				disambiguation = providerDisambiguation
+			}
 		}
 		credits = append(credits, librarymetadata.ArtistCredit{
 			ArtistName: artistName, CreditName: credit.Name, JoinPhrase: credit.JoinPhrase, MBID: artistMBID,
@@ -568,22 +576,31 @@ func localArtistSortName(facts []PublicationProviderTagArtist, providerKey strin
 	return ""
 }
 
-func localArtistDisambiguation(facts []PublicationProviderTagArtist, providerKey string) string {
+func localArtistDisambiguation(facts []PublicationProviderTagArtist, providerKey string) (string, bool, error) {
 	for _, artist := range facts {
 		if !strings.EqualFold(artist.ProviderKey, providerKey) {
 			continue
 		}
 		fields, err := decodeFrozenObject(artist.Metadata)
 		if err != nil {
-			return ""
+			return "", false, fmt.Errorf("decode local artist metadata: %w", err)
 		}
-		value, _, err := acceptedProviderString(fields, "disambiguation")
+		value, present, err := acceptedProviderString(fields, "disambiguation")
 		if err != nil {
-			return ""
+			return "", false, fmt.Errorf("decode local artist disambiguation: %w", err)
 		}
-		return value
+		return value, present, nil
 	}
-	return ""
+	return "", false, nil
+}
+
+func publicationTagArtistFact(facts []PublicationProviderTagArtist, providerKey string) (PublicationProviderTagArtist, bool) {
+	for _, artist := range facts {
+		if strings.EqualFold(artist.ProviderKey, providerKey) {
+			return artist, true
+		}
+	}
+	return PublicationProviderTagArtist{}, false
 }
 
 func providerArtistMetadataString(facts []PublicationProviderTagArtist, providerKey, field string) (string, bool, error) {

@@ -36,6 +36,7 @@ type PublicationProviderTagContext struct {
 // provider artist entities used by this publication projection.
 type PublicationProviderTagArtist struct {
 	ProviderKey      string          `json:"provider_key"`
+	Name             string          `json:"name"`
 	ProviderMetadata json.RawMessage `json:"provider_metadata"`
 	Metadata         json.RawMessage `json:"metadata"`
 	MetadataRevision int64           `json:"metadata_revision"`
@@ -278,7 +279,7 @@ func readPublicationProviderTagArtists(ctx context.Context, tx bun.IDB, provider
 		return []PublicationProviderTagArtist{}, nil
 	}
 	var rows []PublicationProviderTagArtist
-	query := `SELECT artist.provider_key,artist.metadata AS provider_metadata,local.metadata,local.metadata_revision
+	query := `SELECT artist.provider_key,local.name,artist.metadata AS provider_metadata,local.metadata,local.metadata_revision
 		FROM provider_local_artist binding
 		JOIN provider_artist artist ON artist.id=binding.provider_artist_id AND artist.provider_id=binding.provider_id
 		JOIN local_artist local ON local.id=binding.local_artist_id

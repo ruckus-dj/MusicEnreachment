@@ -128,6 +128,26 @@ export interface DeleteSourceBody {
   confirmed_path: string;
 }
 
+export interface LibraryMetadataArtistCredit {
+  artist_id: string;
+  artist_name: string;
+  credit_name: string;
+  disambiguation?: string;
+  join_phrase: string;
+  mbid?: string;
+  metadata_revision: number;
+  role?: string;
+  sort_name?: string;
+}
+
+export interface EffectiveArtistCredit {
+  /** @nullable */
+  credits: LibraryMetadataArtistCredit[] | null;
+  origin: string;
+  state: string;
+  status: string;
+}
+
 export interface Provenance {
   kind: string;
   reference?: string;
@@ -510,6 +530,23 @@ export interface LibraryArtistPage {
   total: number;
 }
 
+export interface LibraryArtistReference {
+  /** @nullable */
+  disambiguation: string | null;
+  id: string;
+  name: string;
+  provider_links: LibraryProviderLinkResponse[];
+}
+
+export interface LibraryArtistReferencesPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: LibraryArtistReference[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
 export interface LibraryArtistResolution {
   /** @nullable */
   candidate_artist_ids: string[] | null;
@@ -619,6 +656,9 @@ export interface ProviderGenreBaseline {
 export interface LibraryMetadataGetResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @nullable */
+  artist_credit_baseline: LibraryMetadataArtistCredit[] | null;
+  effective_artist_credit?: EffectiveArtistCredit;
   envelope: Envelope;
   provider_genre_baseline?: ProviderGenreBaseline;
   publication_applied: boolean;
@@ -2093,6 +2133,19 @@ query: string;
  * @maximum 100
  */
 limit?: number;
+};
+
+export type SearchLibraryArtistReferencesParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+q?: string;
 };
 
 export type ListLibraryArtistsParams = {

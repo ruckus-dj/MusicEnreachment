@@ -429,6 +429,9 @@ func materializeMatchingProviderRelease(ctx context.Context, tx bun.Tx, preview 
 			if err := materializeMatchingLocalProviderCredits(ctx, tx, localTrackID, "track_artist", track.RecordingCredits); err != nil {
 				return uuid.Nil, err
 			}
+			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, artistCreditOriginRecordingFallback); err != nil {
+				return uuid.Nil, err
+			}
 		}
 		variants := previewSourceIDs(preview.Sources, assignment.FileMemberID)
 		if len(variants) == 0 {

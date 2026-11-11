@@ -17,6 +17,12 @@ type libraryArtistsInput struct {
 	Availability string `query:"availability" enum:"all,available,missing" default:"all"`
 }
 
+type libraryArtistReferencesInput struct {
+	Limit  int    `query:"limit" minimum:"1" maximum:"100" default:"25"`
+	Offset int    `query:"offset" minimum:"0" default:"0"`
+	Query  string `query:"q"`
+}
+
 type libraryReleasesInput struct {
 	Limit        int    `query:"limit" minimum:"1" maximum:"100" required:"true"`
 	Offset       int    `query:"offset" minimum:"0" default:"0"`
@@ -42,6 +48,20 @@ type LibraryArtistPage struct {
 	Limit   int                    `json:"limit"`
 	Offset  int                    `json:"offset"`
 	Summary LibraryCatalogSummary  `json:"summary"`
+}
+
+type LibraryArtistReferencesPage struct {
+	Items  []LibraryArtistReference `json:"items" nullable:"false"`
+	Total  int                      `json:"total"`
+	Limit  int                      `json:"limit"`
+	Offset int                      `json:"offset"`
+}
+
+type LibraryArtistReference struct {
+	ID             uuid.UUID                     `json:"id"`
+	Name           string                        `json:"name"`
+	Disambiguation *string                       `json:"disambiguation" nullable:"true"`
+	ProviderLinks  []LibraryProviderLinkResponse `json:"provider_links" nullable:"false"`
 }
 
 type LibraryReleasePage struct {
@@ -164,6 +184,9 @@ type LibraryPositionSummary struct {
 type libraryArtistsOutput struct {
 	Body LibraryArtistPage `json:"body"`
 }
+type libraryArtistReferencesOutput struct {
+	Body LibraryArtistReferencesPage `json:"body"`
+}
 type libraryReleasesOutput struct {
 	Body LibraryReleasePage `json:"body"`
 }
@@ -232,6 +255,16 @@ type LibraryReleaseGroupTrackResponse struct {
 }
 
 func registerLibraryCatalog(api huma.API, catalog *service.LibraryCatalog) {
+	huma.Register(api, huma.Operation{OperationID: "search-library-artist-references", Method: http.MethodGet, Path: "/library/artist-references", Summary: "Search local artists for metadata credits", Tags: []string{"Library"}}, func(ctx context.Context, input *libraryArtistReferencesInput) (*libraryArtistReferencesOutput, error) {
+		if catalog == nil {
+			return nil, huma.Error503ServiceUnavailable("library catalog service is unavailable")
+		}
+		page, err := catalog.ArtistReferences(ctx, input.Query, input.Limit, input.Offset)
+		if err != nil {
+			return nil, libraryCatalogError(err)
+		}
+		return &libraryArtistReferencesOutput{Body: libraryArtistReferencesPage(page)}, nil
+	})
 	huma.Register(api, huma.Operation{OperationID: "list-library-artists", Method: http.MethodGet, Path: "/library/artists", Summary: "Read the current local library catalog", Tags: []string{"Library"}}, func(ctx context.Context, input *libraryArtistsInput) (*libraryArtistsOutput, error) {
 		if catalog == nil {
 			return nil, huma.Error503ServiceUnavailable("library catalog service is unavailable")
@@ -319,6 +352,14 @@ func registerLibraryCatalog(api huma.API, catalog *service.LibraryCatalog) {
 		}
 		return &libraryArtistOutput{Body: libraryArtist(artist)}, nil
 	})
+}
+
+func libraryArtistReferencesPage(page service.LibraryArtistReferencePage) LibraryArtistReferencesPage {
+	items := make([]LibraryArtistReference, 0, len(page.Items))
+	for _, artist := range page.Items {
+		items = append(items, LibraryArtistReference{ID: artist.ID, Name: artist.Name, Disambiguation: artist.Disambiguation, ProviderLinks: libraryProviderLinks(artist.ProviderLinks)})
+	}
+	return LibraryArtistReferencesPage{Items: items, Total: page.Total, Limit: page.Limit, Offset: page.Offset}
 }
 
 func parseOptionalLibraryID(value, kind string) (*uuid.UUID, error) {

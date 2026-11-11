@@ -1004,6 +1004,7 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 				return err
 			}
 			credits, err := acceptedTrackArtistCredits(state.release.Fields, trackCreditEvidence, medium, position, recordingKey, state.release.ProviderKey)
+			trackCreditOverride := credits != nil
 			if err != nil {
 				return err
 			}
@@ -1014,6 +1015,13 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 				return err
 			}
 			if err := materializeArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, localTrackID, "track_artist", credits, "", state.fence.AcceptedProjectionRevision, true); err != nil {
+				return err
+			}
+			origin := artistCreditOriginRecordingFallback
+			if trackCreditOverride {
+				origin = artistCreditOriginProviderPosition
+			}
+			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, origin); err != nil {
 				return err
 			}
 		}
@@ -1121,10 +1129,15 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 			if err := writeManualMetadata(ctx, tx, "local_track", localTrackID, field, key, seal.SourceID, seal.ProviderID, preview.EvaluationRevision, jsonEvidence(field, source)); err != nil {
 				return err
 			}
-			if len(track.Credits) > 0 {
-				if err := materializeFrozenManualArtistCredits(ctx, tx, seal.ProviderID, seal.SourceID, localTrackID, "track_artist", track.Credits, preview.EvaluationRevision); err != nil {
-					return err
-				}
+			if err := materializeFrozenManualArtistCredits(ctx, tx, seal.ProviderID, seal.SourceID, localTrackID, "track_artist", track.Credits, preview.EvaluationRevision); err != nil {
+				return err
+			}
+			origin := artistCreditOriginRecordingFallback
+			if track.TrackCreditOverride {
+				origin = artistCreditOriginProviderPosition
+			}
+			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, origin); err != nil {
+				return err
 			}
 		}
 		if !appliedOverrides[assignment.ProviderTrackID] {

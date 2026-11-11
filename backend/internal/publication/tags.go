@@ -20,24 +20,28 @@ type TagProjectionInput struct {
 }
 
 type ReleaseTags struct {
-	Title       string
-	Artist      []librarymetadata.ArtistCredit
-	ID          *uuid.UUID
-	GroupID     *uuid.UUID
-	Desired     *librarymetadata.Envelope
-	Compilation *bool
+	Title                 string
+	Artist                []librarymetadata.ArtistCredit
+	ArtistCreditsResolved bool
+	ArtistCreditTerminal  bool
+	ID                    *uuid.UUID
+	GroupID               *uuid.UUID
+	Desired               *librarymetadata.Envelope
+	Compilation           *bool
 }
 
 type PositionTags struct {
-	Title          string
-	Artist         []librarymetadata.ArtistCredit
-	RecordingID    *uuid.UUID
-	ReleaseTrackID *uuid.UUID
-	DiscNumber     *int
-	DiscTotal      *int
-	TrackNumber    *int
-	TrackTotal     *int
-	Desired        *librarymetadata.Envelope
+	Title                 string
+	Artist                []librarymetadata.ArtistCredit
+	ArtistCreditsResolved bool
+	ArtistCreditTerminal  bool
+	RecordingID           *uuid.UUID
+	ReleaseTrackID        *uuid.UUID
+	DiscNumber            *int
+	DiscTotal             *int
+	TrackNumber           *int
+	TrackTotal            *int
+	Desired               *librarymetadata.Envelope
 }
 
 type TagFieldResult struct {
@@ -62,12 +66,16 @@ func ProjectTags(input TagProjectionInput) (TagProjection, error) {
 	if err := validateDesiredEnvelope(input.Position.Desired, librarymetadata.ScopePosition); err != nil {
 		return TagProjection{}, err
 	}
-	if !hasMeaningfulCredit(input.Release.Artist) || !hasMeaningfulCredit(input.Position.Artist) || strings.TrimSpace(input.Release.Title) == "" || strings.TrimSpace(input.Position.Title) == "" {
+	if (!hasMeaningfulCredit(input.Release.Artist) && !input.Release.ArtistCreditTerminal) || (!hasMeaningfulCredit(input.Position.Artist) && !input.Position.ArtistCreditTerminal) || strings.TrimSpace(input.Release.Title) == "" || strings.TrimSpace(input.Position.Title) == "" {
 		return TagProjection{}, fmt.Errorf("publication tags require release artist, release title, and track artist and title")
 	}
 	projection := TagProjection{Tags: make(map[string][]string), Fields: make(map[string]TagFieldResult)}
-	projection.Notices = append(projection.Notices, setCredits(projection.Tags, projection.Fields, "artist_credit", "ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "ARTISTSORT", "ARTISTSSORT", input.Position.Artist)...)
-	projection.Notices = append(projection.Notices, setCredits(projection.Tags, projection.Fields, "album_artist_credit", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTSORT", "ALBUMARTISTSSORT", input.Release.Artist)...)
+	if input.Position.ArtistCreditsResolved || !hasDesiredCreditField(input.Position.Desired) {
+		projection.Notices = append(projection.Notices, setCredits(projection.Tags, projection.Fields, "artist_credit", "ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "ARTISTSORT", "ARTISTSSORT", input.Position.Artist)...)
+	}
+	if input.Release.ArtistCreditsResolved || !hasDesiredCreditField(input.Release.Desired) {
+		projection.Notices = append(projection.Notices, setCredits(projection.Tags, projection.Fields, "album_artist_credit", "ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTSORT", "ALBUMARTISTSSORT", input.Release.Artist)...)
+	}
 	projection.Tags["ALBUM"] = []string{input.Release.Title}
 	projection.Tags["TITLE"] = []string{input.Position.Title}
 	projection.Fields["release.title"] = TagFieldResult{Status: "represented"}
@@ -88,8 +96,8 @@ func ProjectTags(input TagProjectionInput) (TagProjection, error) {
 		projection.Tags["COMPILATION"] = []string{value}
 		projection.Fields["compilation"] = TagFieldResult{Status: "represented"}
 	}
-	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopeRelease, input.Release.Desired)...)
-	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopePosition, input.Position.Desired)...)
+	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopeRelease, input.Release.Desired, input.Release.ArtistCreditsResolved)...)
+	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopePosition, input.Position.Desired, input.Position.ArtistCreditsResolved)...)
 	return projection, nil
 }
 
@@ -105,6 +113,10 @@ func validateDesiredEnvelope(envelope *librarymetadata.Envelope, scope libraryme
 
 func setCredits(tags map[string][]string, fields map[string]TagFieldResult, name, fullKey, listKey, mbidKey, sortKey, sortListKey string, credits []librarymetadata.ArtistCredit) []string {
 	if len(credits) == 0 {
+		for _, key := range []string{fullKey, listKey, mbidKey, sortKey, sortListKey} {
+			tags[key] = []string{}
+		}
+		fields[name] = TagFieldResult{Status: "explicit_empty"}
 		return nil
 	}
 	full := make([]string, 0, len(credits))
@@ -113,11 +125,7 @@ func setCredits(tags map[string][]string, fields map[string]TagFieldResult, name
 	sortNames := make([]string, 0, len(credits))
 	completeIDs := true
 	for _, credit := range credits {
-		creditedName := strings.TrimSpace(credit.CreditName)
-		if creditedName == "" {
-			creditedName = credit.ArtistName
-		}
-		full = append(full, creditedName+credit.JoinPhrase)
+		full = append(full, credit.CreditName+credit.JoinPhrase)
 		sortName := credit.SortName
 		if sortName == "" {
 			sortName = credit.ArtistName
@@ -159,6 +167,14 @@ func setCredits(tags map[string][]string, fields map[string]TagFieldResult, name
 		fields[name+".sort_names"] = TagFieldResult{Status: "represented"}
 	}
 	return notices
+}
+
+func hasDesiredCreditField(envelope *librarymetadata.Envelope) bool {
+	if envelope == nil {
+		return false
+	}
+	_, exists := envelope.Desired["artist_credit"]
+	return exists
 }
 
 func hasMeaningfulCredit(credits []librarymetadata.ArtistCredit) bool {
@@ -228,7 +244,7 @@ func setNumber(tags map[string][]string, fields map[string]TagFieldResult, field
 	fields[field] = TagFieldResult{Status: "represented"}
 }
 
-func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, envelope *librarymetadata.Envelope) []string {
+func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, envelope *librarymetadata.Envelope, artistCreditsResolved bool) []string {
 	if envelope == nil {
 		return nil
 	}
@@ -239,6 +255,9 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		if artistCreditsResolved && isArtistCreditProjectionField(name) {
+			continue
+		}
 		value := envelope.Desired[name]
 		if value.State == librarymetadata.StateAbsent {
 			continue
@@ -315,6 +334,15 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 		fields[string(scope)+"."+name] = TagFieldResult{Status: "represented"}
 	}
 	return notices
+}
+
+func isArtistCreditProjectionField(name string) bool {
+	switch name {
+	case "artist_credit", "artists", "artist_mbid", "album_artist_mbid", "artist_sort_names", "album_artist_sort_names":
+		return true
+	default:
+		return false
+	}
 }
 
 func genreTagValues(value any) ([]string, bool) {

@@ -149,6 +149,9 @@ func seedSourceRepublishAdmissionFixture(t *testing.T, fixture *firstAdmissionFi
 		if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
 			return err
 		}
+		if err := seedRecordingCreditBaselineTx(ctx, tx, positionID, trackID, "source republish retain", "Source republish artist"); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, associationID, trackID, fixture.variantID); err != nil {
 			return err
 		}

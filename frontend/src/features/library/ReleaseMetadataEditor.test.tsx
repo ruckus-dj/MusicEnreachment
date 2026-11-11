@@ -22,6 +22,7 @@ const metadata = (
   revision: number,
   scope = "release",
 ): LibraryMetadataGetResponse => ({
+  artist_credit_baseline: [],
   envelope: {
     scope,
     version: 1,
