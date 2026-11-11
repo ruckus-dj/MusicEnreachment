@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -227,8 +233,24 @@ beforeEach(() => {
 
 describe("incoming manual group review", () => {
   it("confirms partial receipt; network retry preserves request id and payload", async () => {
-    setup();
+    setup(
+      review({
+        authority_mode: "manual",
+        current_linked_manual_media_source_ids: [
+          "550e8400-e29b-41d4-a716-446655440000",
+        ],
+      }),
+    );
+    expect(await screen.findAllByText("folder/01.flac")).not.toHaveLength(0);
+    expect(
+      screen.queryByText("550e8400-e29b-41d4-a716-446655440000"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(ids.memberOne)).not.toBeInTheDocument();
+    expect(screen.queryByText("recording-repeat")).not.toBeInTheDocument();
     await chooseRelease();
+    expect(
+      screen.getAllByText("Диск 1 · трек 1 · Открытие").length,
+    ).toBeGreaterThan(0);
     fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
       target: { value: ids.trackOne },
     });
@@ -263,23 +285,38 @@ describe("incoming manual group review", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Явно подтвердить" }));
     await screen.findByRole("alert");
+    server.use(
+      http.get("/api/incoming-groups", () => {
+        return HttpResponse.json({ ...incomingGroups(), files: [] });
+      }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Повторить подтверждение" }),
     );
     expect(
       await screen.findByRole("heading", {
-        name: /Подтверждено · локальное издание local-release-42/,
+        name: "Подтверждено · локальное издание",
       }),
     ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText("folder/01.flac")).not.toBeInTheDocument(),
+    );
     expect(requestBodies).toHaveLength(2);
     expect(requestBodies[1]).toEqual(requestBodies[0]);
     expect(requestBodies[0].request_id).toBeTruthy();
     expect(
       within(
         screen.getByRole("region", {
-          name: "Подтверждено · локальное издание local-release-42",
+          name: "Подтверждено · локальное издание",
         }),
       ).getByText(/остаётся во входящих/),
+    ).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", {
+          name: "Подтверждено · локальное издание",
+        }),
+      ).getByText("folder/02.flac остаётся во входящих"),
     ).toBeInTheDocument();
   });
 });

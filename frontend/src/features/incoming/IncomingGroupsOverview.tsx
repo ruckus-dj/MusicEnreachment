@@ -35,7 +35,7 @@ export function IncomingGroupsOverview({
             </tr>
           </thead>
           <tbody>
-            {(snapshot.groups ?? []).map((group) => {
+            {(snapshot.groups ?? []).map((group, index) => {
               const unready = new Set(group.unready_members ?? []);
               const members = new Set([...(group.members ?? []), ...unready]);
               const paths = new Map(
@@ -52,7 +52,7 @@ export function IncomingGroupsOverview({
                 <tr key={group.id}>
                   <td className="border-b p-2">
                     <AppButton onPress={() => onSelect(group.id)}>
-                      Открыть {group.id}
+                      Открыть группу {index + 1}
                     </AppButton>
                     <p>
                       {group.manual

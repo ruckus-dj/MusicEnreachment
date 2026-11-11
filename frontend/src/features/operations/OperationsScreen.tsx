@@ -2,6 +2,14 @@ import { useState } from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import { retryOperation, useListOperations } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  operationKindLabel,
+  operationProgressLabel,
+  operationStageLabel,
+  operationStateLabel,
+  operationTargetLabel,
+} from "./operationPresentation";
 import "./operations.css";
 
 const CURRENT_STATES = new Set(["queued", "running", "failed"]);
@@ -33,12 +41,8 @@ function formatDate(value?: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-function formatProgress(operation: OperationResponse) {
-  if (operation.bytes_total === undefined) return "—";
-  return `${operation.bytes_completed.toLocaleString()} / ${operation.bytes_total.toLocaleString()} байт`;
-}
-
 export function OperationsScreen() {
+  const { locale } = useI18n();
   const operationsQuery = useListOperations();
   const [actionError, setActionError] = useState("");
   const [retryingID, setRetryingID] = useState("");
@@ -171,28 +175,25 @@ export function OperationsScreen() {
             <tbody>
               {operations.map((operation) => (
                 <tr key={operation.id}>
+                  <td>{operationTargetLabel(operation, locale)}</td>
                   <td>
-                    <code>
-                      {operation.target_identity ||
-                        operation.target_installation_id ||
-                        operation.target_source_location_id ||
-                        operation.target_source_root_id ||
-                        operation.id}
-                    </code>
-                  </td>
-                  <td>
-                    <strong>{operation.kind}</strong>
-                    <small>{operation.id}</small>
+                    <strong>
+                      {operationKindLabel(operation.kind, locale)}
+                    </strong>
                   </td>
                   <td>
                     <span
                       className={`operations-badge operations-${operation.state}`}
                     >
-                      {operation.state}
+                      {operationStateLabel(operation.state, locale)}
                     </span>
-                    <small>{operation.stage || "—"}</small>
+                    {operationStageLabel(operation.stage, locale) && (
+                      <small>
+                        {operationStageLabel(operation.stage, locale)}
+                      </small>
+                    )}
                   </td>
-                  <td>{formatProgress(operation)}</td>
+                  <td>{operationProgressLabel(operation, locale)}</td>
                   <td>{formatDate(operation.created_at)}</td>
                   <td className="operations-diagnostic">
                     {operation.safe_error || "—"}
@@ -218,7 +219,8 @@ export function OperationsScreen() {
         </div>
       )}
       <p className="operations-footnote">
-        Показаны только queued, running и failed. Завершённые операции скрыты.
+        Показаны операции в очереди, выполняющиеся и требующие внимания.
+        Завершённые операции скрыты.
       </p>
     </section>
   );

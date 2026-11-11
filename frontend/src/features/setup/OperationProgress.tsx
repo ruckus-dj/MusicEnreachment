@@ -4,6 +4,14 @@ import { useOperationFollower } from "../../api/client/useOperationFollower";
 import { retryOperation } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  operationKindLabel,
+  operationProgressLabel,
+  operationStageLabel,
+  operationStateLabel,
+  operationTargetLabel,
+} from "../operations/operationPresentation";
 
 export function OperationProgress({
   id,
@@ -16,6 +24,7 @@ export function OperationProgress({
   onSuccess: () => Promise<void>;
   onFinished: (id: string, snapshot: OperationResponse) => void;
 }) {
+  const { locale } = useI18n();
   const [snapshot, setSnapshot] = useState(initial);
   const [error, setError] = useState("");
   const [refreshError, setRefreshError] = useState("");
@@ -99,19 +108,35 @@ export function OperationProgress({
   }
   return (
     <div role="status" className="setup-operation">
-      Операция {id}:{" "}
       {snapshot
-        ? `${snapshot.state}, ${snapshot.stage}, ${snapshot.bytes_completed}${snapshot.bytes_total == null ? "" : ` / ${snapshot.bytes_total}`} bytes. ${snapshot.safe_error || ""}`
-        : "Ожидается REST snapshot…"}
+        ? `${operationKindLabel(snapshot.kind, locale)} — ${operationTargetLabel(snapshot, locale)}: ${operationStateLabel(snapshot.state, locale)}`
+        : locale === "ru"
+          ? "Загрузка инструмента"
+          : "Tool download"}
+      {snapshot &&
+        operationStageLabel(snapshot.stage, locale) &&
+        ` · ${operationStageLabel(snapshot.stage, locale)}`}
+      {snapshot && ` · ${operationProgressLabel(snapshot, locale)}`}
+      {snapshot?.safe_error && ` · ${snapshot.safe_error}`}
+      {!snapshot &&
+        (locale === "ru" ? " — загрузка состояния…" : " — loading status…")}
       {error && (
         <AppButton isDisabled={snapshotPending} onPress={refreshSnapshot}>
-          Повторить загрузку операции {id}
+          {locale === "ru"
+            ? "Повторить загрузку состояния"
+            : "Retry status read"}
         </AppButton>
       )}
-      {snapshotPending && <span> Загрузка состояния операции…</span>}
+      {snapshotPending && (
+        <span>
+          {locale === "ru"
+            ? " Загрузка состояния операции…"
+            : " Loading operation status…"}
+        </span>
+      )}
       {snapshot?.state === "failed" && (
         <AppButton isDisabled={pending} onPress={retry}>
-          Повторить операцию {id}
+          {locale === "ru" ? "Повторить загрузку" : "Retry download"}
         </AppButton>
       )}
       {snapshot?.state === "succeeded" && refreshError && (
@@ -121,15 +146,21 @@ export function OperationProgress({
             void refreshInstallations(snapshot);
           }}
         >
-          Повторить загрузку установок {id}
+          {locale === "ru"
+            ? "Повторить загрузку списка инструментов"
+            : "Retry tool list refresh"}
         </AppButton>
       )}
       {pending && (
         <span>
           {" "}
           {snapshot?.state === "succeeded"
-            ? "Загрузка установок…"
-            : "Повтор операции…"}
+            ? locale === "ru"
+              ? "Загрузка инструментов…"
+              : "Refreshing tools…"
+            : locale === "ru"
+              ? "Повторная загрузка…"
+              : "Retrying download…"}
         </span>
       )}
       {refreshError && (

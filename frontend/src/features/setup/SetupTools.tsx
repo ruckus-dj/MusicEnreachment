@@ -17,6 +17,14 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  operationKindLabel,
+  operationProgressLabel,
+  operationStageLabel,
+  operationStateLabel,
+  operationTargetLabel,
+} from "../operations/operationPresentation";
 import { GitHubTokenForm } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
@@ -45,6 +53,7 @@ export function SetupTools({
   hasGitHubToken?: boolean;
   onGitHubTokenChanged?: () => void | Promise<void>;
 }) {
+  const { locale } = useI18n();
   const [ids, setIds] = useState(savedIds);
   const initialIds = useRef(ids);
   const finishedIds = useRef(new Set<string>());
@@ -292,8 +301,12 @@ export function SetupTools({
       ) : null}
       {completed.map((item) => (
         <p key={item.id} role="status" className="setup-operation">
-          Операция {item.id}: {item.state}, {item.stage}, {item.bytes_completed}{" "}
-          bytes.
+          {operationKindLabel(item.kind, locale)} —{" "}
+          {operationTargetLabel(item, locale)}:{" "}
+          {operationStateLabel(item.state, locale)}.
+          {operationStageLabel(item.stage, locale) &&
+            ` ${operationStageLabel(item.stage, locale)}.`}
+          {` ${operationProgressLabel(item, locale)}.`}
         </p>
       ))}
       {ids.map((id) => (

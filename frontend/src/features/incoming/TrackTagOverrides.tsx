@@ -18,7 +18,6 @@ export function emptyTrackTagOverride(): TrackTagOverrideDraft {
 
 export function TrackTagOverrides({
   title,
-  trackId,
   override,
   disabled,
   onChange,
@@ -51,7 +50,7 @@ export function TrackTagOverrides({
             })
           }
         />
-        Переопределить название для {title} ({trackId})
+        Переопределить название для {title}
       </label>
       {override.title.enabled ? (
         <label className="block text-sm">
@@ -84,7 +83,7 @@ export function TrackTagOverrides({
             })
           }
         />
-        Переопределить список исполнителей для {title} ({trackId})
+        Переопределить список исполнителей для {title}
       </label>
       {override.artists.enabled ? (
         <div className="space-y-2">
@@ -147,7 +146,7 @@ export function TrackTagOverrides({
               })
             }
           >
-            Добавить исполнителя для {title} ({trackId})
+            Добавить исполнителя для {title}
           </button>
           {!override.artists.values.length ? (
             <p className="text-xs text-stone-600">

@@ -85,15 +85,21 @@ function parsedProposal(review: MatchingReview | undefined): ReviewProposal {
   return review.proposal as ReviewProposal;
 }
 
-function layoutLabel(release: MatchingReviewRelease) {
-  return `${release.title} · ${release.release_id}${release.tracklist_complete ? "" : " · неполный список"}`;
+function layoutLabel(
+  release: MatchingReviewRelease,
+  releases: MatchingReviewRelease[],
+) {
+  const sameTitle = releases.filter((item) => item.title === release.title);
+  const duplicateTitle = sameTitle.length > 1;
+  const ordinal = sameTitle.indexOf(release);
+  return `${release.title}${release.tracklist_complete ? "" : " · неполный список"}${duplicateTitle ? ` · издание ${ordinal + 1}` : ""}`;
 }
 
 function positionLabel(
   position: NonNullable<MatchingReviewRelease["positions"]>[number],
 ) {
   const number = position.displayed_number || `${position.position + 1}`;
-  return `Носитель ${position.medium + 1} · ${number} · ${position.title} (${position.recording_id})`;
+  return `Диск ${position.medium + 1} · трек ${number} · ${position.title}`;
 }
 
 function Metadata({
@@ -163,6 +169,7 @@ function IncomingGroupReviewContent() {
   const [receipt, setReceipt] = useState<{
     groupId: string;
     response: MatchingManualPreview;
+    omittedFileLabels: Record<string, string>;
   }>();
   const [pendingRequest, setPendingRequest] = useState<{
     id: number;
@@ -293,6 +300,18 @@ function IncomingGroupReviewContent() {
   const proposalFiles = new Map(
     (proposal.files ?? []).map((file) => [file.file_member_id, file]),
   );
+  const fileLabel = (memberId: string, index: number) => {
+    const file = groupFiles.find((item) => item.variant_id === memberId);
+    const path = file?.locations?.[0]?.relative_path;
+    if (path) return path;
+    const tags = proposalFiles.get(memberId)?.raw_tags ?? file?.tags;
+    const title = tags?.TITLE?.find(Boolean);
+    const artist = tags?.ARTIST?.find(Boolean);
+    return (
+      [title, artist].filter(Boolean).join(" · ") ||
+      `Файл ${index >= 0 ? index + 1 : 1}`
+    );
+  };
   const intentPayload = useMemo(() => {
     if (!review?.evaluation_revision || !release) return "";
     const assignments: ManualAssignmentWithOverrides[] = memberIds.flatMap(
@@ -582,7 +601,16 @@ function IncomingGroupReviewContent() {
         }
         throw responseError(response, "Подтверждение не выполнено");
       }
-      setReceipt({ groupId: preserved.groupId, response: response.data });
+      setReceipt({
+        groupId: preserved.groupId,
+        response: response.data,
+        omittedFileLabels: Object.fromEntries(
+          (response.data.omitted_member_ids ?? []).map((memberId) => [
+            memberId,
+            fileLabel(memberId, memberIds.indexOf(memberId)),
+          ]),
+        ),
+      });
       setPreview(undefined);
       setConfirmIntent(undefined);
       setNotice(
@@ -701,9 +729,9 @@ function IncomingGroupReviewContent() {
               value={groupId}
               onChange={(event) => changeGroup(event.target.value)}
             >
-              {groups.map((item) => (
+              {groups.map((item, index) => (
                 <option key={item.id} value={item.id}>
-                  {item.id} · {item.members?.length ?? 0} файлов
+                  Группа {index + 1} · {item.members?.length ?? 0} файлов
                   {item.manual ? " · вручную сгруппирована" : ""}
                 </option>
               ))}
@@ -790,15 +818,6 @@ function IncomingGroupReviewContent() {
               ) : null}
               {review.authority_mode === "manual" ? (
                 <div className="mt-3">
-                  <p className="text-sm">
-                    Сохранённые ручные связи источников:{" "}
-                    {(review.current_linked_manual_media_source_ids ?? [])
-                      .length
-                      ? (
-                          review.current_linked_manual_media_source_ids ?? []
-                        ).join(", ")
-                      : "нет"}
-                  </p>
                   <AppButton
                     isDisabled={sameGroupInFlight}
                     onPress={() => void performAuthorityAction()}
@@ -963,7 +982,7 @@ function IncomingGroupReviewContent() {
                         key={item.provider_release_id}
                         value={item.provider_release_id}
                       >
-                        {layoutLabel(item)}
+                        {layoutLabel(item, releases)}
                       </option>
                     ))}
                   </select>
@@ -994,11 +1013,23 @@ function IncomingGroupReviewContent() {
                                 <tr
                                   key={`${candidate.file_member_id}-${position.track_id}`}
                                 >
-                                  <td className="border-b p-2 font-mono">
-                                    {candidate.file_member_id}
+                                  <td className="border-b p-2">
+                                    {fileLabel(
+                                      candidate.file_member_id,
+                                      memberIds.indexOf(
+                                        candidate.file_member_id,
+                                      ),
+                                    )}
                                   </td>
                                   <td className="border-b p-2">
-                                    {candidate.release_id}
+                                    {releases.find(
+                                      (item) =>
+                                        item.release_id ===
+                                          candidate.release_id ||
+                                        item.provider_release_id ===
+                                          candidate.release_id,
+                                    )?.title ??
+                                      "Издание вне сохранённого макета"}
                                   </td>
                                   <td className="border-b p-2">
                                     {Number.isFinite(
@@ -1018,11 +1049,23 @@ function IncomingGroupReviewContent() {
                                 <tr
                                   key={`${candidate.file_member_id}-${candidate.release_id}`}
                                 >
-                                  <td className="border-b p-2 font-mono">
-                                    {candidate.file_member_id}
+                                  <td className="border-b p-2">
+                                    {fileLabel(
+                                      candidate.file_member_id,
+                                      memberIds.indexOf(
+                                        candidate.file_member_id,
+                                      ),
+                                    )}
                                   </td>
                                   <td className="border-b p-2">
-                                    {candidate.release_id}
+                                    {releases.find(
+                                      (item) =>
+                                        item.release_id ===
+                                          candidate.release_id ||
+                                        item.provider_release_id ===
+                                          candidate.release_id,
+                                    )?.title ??
+                                      "Издание вне сохранённого макета"}
                                   </td>
                                   <td className="border-b p-2">
                                     {Number.isFinite(
@@ -1074,7 +1117,7 @@ function IncomingGroupReviewContent() {
                         >
                           {positionLabel(position)}
                           <TrackTagOverrides
-                            title={position.title}
+                            title={positionLabel(position)}
                             trackId={position.track_id}
                             override={
                               tagOverridesByTrack[position.track_id] ??
@@ -1137,7 +1180,11 @@ function IncomingGroupReviewContent() {
                               }}
                               className="rounded border border-stone-400 bg-stone-50 p-2 text-left text-sm"
                             >
-                              {path ?? memberId}
+                              {path ??
+                                fileLabel(
+                                  memberId,
+                                  memberIds.indexOf(memberId),
+                                )}
                             </button>
                           </li>
                         );
@@ -1180,7 +1227,7 @@ function IncomingGroupReviewContent() {
                             </p>
                             <p className="mt-1 text-stone-700">
                               {occupants.length
-                                ? `Назначено файлов: ${occupants.length} · ${occupants.map((memberId) => groupFiles.find((file) => file.variant_id === memberId)?.locations?.[0]?.relative_path ?? memberId).join(", ")}`
+                                ? `Назначено файлов: ${occupants.length} · ${occupants.map((memberId) => fileLabel(memberId, memberIds.indexOf(memberId))).join(", ")}`
                                 : "Нет назначенных файлов"}
                             </p>
                           </li>
@@ -1213,7 +1260,7 @@ function IncomingGroupReviewContent() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="font-medium">
-                            Участник {index + 1} · <code>{memberId}</code>
+                            {fileLabel(memberId, index)}
                           </h3>
                           {file?.locations?.map((location) => (
                             <p
@@ -1420,8 +1467,7 @@ function IncomingGroupReviewContent() {
               aria-labelledby="receipt-title"
             >
               <h2 id="receipt-title" className="font-semibold">
-                Подтверждено · локальное издание{" "}
-                {receipt.response.local_release_id || "не указано"}
+                Подтверждено · локальное издание
               </h2>
               <p>
                 Назначено файлов:{" "}
@@ -1433,7 +1479,8 @@ function IncomingGroupReviewContent() {
               <ul className="mt-2 list-inside list-disc text-sm">
                 {(receipt.response.omitted_member_ids ?? []).map((memberId) => (
                   <li key={memberId}>
-                    <code>{memberId}</code> остаётся во входящих
+                    {receipt.omittedFileLabels[memberId] ?? "Файл"} остаётся во
+                    входящих
                   </li>
                 ))}
               </ul>

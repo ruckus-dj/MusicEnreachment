@@ -11,7 +11,6 @@ import {
 import type {
   IncomingGroupingActionInput,
   IncomingGroupingEditBody,
-  IncomingGroupResponse,
   IncomingGroupsBody,
 } from "../../api/generated/client.schemas";
 
@@ -29,8 +28,8 @@ function errorMessage(
     .message;
 }
 
-function groupLabel(group: IncomingGroupResponse, index: number) {
-  return `Группа ${index + 1} · ${group.id}`;
+function groupLabel(index: number) {
+  return `Группа ${index + 1}`;
 }
 
 export function IncomingGroupingEditor({
@@ -262,13 +261,11 @@ export function IncomingGroupingEditor({
               key={group.id}
               className="rounded border border-stone-300 p-3"
             >
-              <legend className="font-semibold">
-                {groupLabel(group, index)}
-              </legend>
+              <legend className="font-semibold">{groupLabel(index)}</legend>
               <label className="mr-4 inline-flex items-center gap-2">
                 <input
                   type="checkbox"
-                  aria-label={`Выбрать ${groupLabel(group, index)} для объединения`}
+                  aria-label={`Выбрать ${groupLabel(index)} для объединения`}
                   checked={groupSelection.includes(group.id)}
                   disabled={busy || needsPreview}
                   onChange={() =>
@@ -350,9 +347,9 @@ export function IncomingGroupingEditor({
             onChange={(event) => setMoveTarget(event.target.value)}
           >
             <option value="">Выберите группу</option>
-            {groups.map((group) => (
+            {groups.map((group, index) => (
               <option key={group.id} value={group.id}>
-                {group.id}
+                Группа {index + 1}
               </option>
             ))}
           </select>

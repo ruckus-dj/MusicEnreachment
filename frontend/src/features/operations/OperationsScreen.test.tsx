@@ -36,10 +36,11 @@ it("shows loading then current operations with real diagnostics and failed retry
           },
           {
             id: "done-id",
-            kind: "old_success",
+            kind: "install",
             state: "succeeded",
             stage: "done",
             bytes_completed: 1,
+            target_identity: "ffmpeg:test:4.2.3:linux:amd64",
             created_at: "2025-01-01T00:00:00Z",
             updated_at: "2025-01-01T00:01:00Z",
           },
@@ -63,8 +64,8 @@ it("shows loading then current operations with real diagnostics and failed retry
   renderScreen();
   expect(screen.getByRole("status")).toHaveTextContent("Загрузка");
   expect(await screen.findByText("Permission denied")).toBeInTheDocument();
-  expect(screen.getByText("12 / 30 байт")).toBeInTheDocument();
-  expect(screen.queryByText("old_success")).not.toBeInTheDocument();
+  expect(screen.getByText("12 / 30 bytes")).toBeInTheDocument();
+  expect(screen.queryByText("FFmpeg, version 4.2.3")).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
   await waitFor(() => expect(retried).toBe(true));

@@ -134,7 +134,8 @@ export function MatchingEvidenceInspector({
           {candidate.positions?.map((position) => (
             <div key={position.track_id}>
               <dt className="font-medium">
-                Уверенность позиции · {position.track_id}
+                Уверенность позиции · Диск {position.medium + 1} · трек{" "}
+                {position.displayed_number || position.position + 1}
               </dt>
               <dd>{displayValue(position.assignment_confidence)}</dd>
             </div>
