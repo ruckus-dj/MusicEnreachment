@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   fireEvent,
   render,
@@ -7,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
+import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { LibraryMetadataGetResponse } from "../../api/generated/client.schemas";
 import { I18nProvider } from "../../i18n/I18nProvider";
@@ -23,6 +25,12 @@ const metadata = (
   scope = "release",
 ): LibraryMetadataGetResponse => ({
   artist_credit_baseline: [],
+  effective_artist_credit: {
+    credits: [],
+    origin: "release",
+    state: "value",
+    status: "resolved",
+  },
   envelope: {
     scope,
     version: 1,
@@ -57,8 +65,53 @@ const metadata = (
   revision,
 });
 
+function metadataWithDuplicateCredits(revision: number) {
+  const result = metadata(revision);
+  return {
+    ...result,
+    envelope: {
+      ...result.envelope,
+      desired: {
+        ...result.envelope.desired,
+        artist_credit: {
+          authority: "local",
+          provenance: { kind: "manual" },
+          state: "value",
+          value: [
+            {
+              artist_id: "123e4567-e89b-42d3-a456-426614174000",
+              artist_name: "Same local artist",
+              credit_name: "First credit",
+              join_phrase: " feat. ",
+              role: "performer",
+            },
+            {
+              artist_id: "123e4567-e89b-42d3-a456-426614174000",
+              artist_name: "Same local artist",
+              credit_name: "Second credit",
+              join_phrase: " & ",
+              role: "legacy-role-value",
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
 function openGroup(region: HTMLElement, label: string) {
   fireEvent.click(within(region).getByText(label));
+}
+
+function renderMetadataEditor(children: ReactNode) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <I18nProvider>{children}</I18nProvider>
+    </QueryClientProvider>,
+  );
 }
 
 it("saves recording and position title overrides through their own scopes", async () => {
@@ -93,15 +146,15 @@ it("saves recording and position title overrides through their own scopes", asyn
     ),
   );
 
-  render(
-    <I18nProvider>
+  renderMetadataEditor(
+    <>
       <ScopedLibraryMetadataEditor scope="recording" ownerId={recordingId} />
       <ScopedLibraryMetadataEditor
         scope="position"
         ownerId={positionId}
         releaseId={releaseId}
       />
-    </I18nProvider>,
+    </>,
   );
 
   const recording = screen.getByRole("region", {
@@ -177,7 +230,7 @@ it("sends exact typed states at the loaded revision and retains the draft on con
   let patchBody: unknown;
   server.use(
     http.get(`*/api/library/releases/${releaseId}/metadata`, () =>
-      HttpResponse.json(metadata(7)),
+      HttpResponse.json(metadataWithDuplicateCredits(7)),
     ),
     http.patch(
       `*/api/library/releases/${releaseId}/metadata`,
@@ -191,11 +244,7 @@ it("sends exact typed states at the loaded revision and retains the draft on con
     ),
   );
 
-  render(
-    <I18nProvider>
-      <ReleaseMetadataEditor releaseId={releaseId} />
-    </I18nProvider>,
-  );
+  renderMetadataEditor(<ReleaseMetadataEditor releaseId={releaseId} />);
 
   const editButton = screen.getByRole("button", { name: "Изменить" });
   await waitFor(() => expect(editButton).toBeEnabled());
@@ -220,6 +269,29 @@ it("sends exact typed states at the loaded revision and retains the draft on con
     }),
     { target: { value: "absent" } },
   );
+  const creditDisclosure = within(release).getByText("Исполнители", {
+    selector: "summary",
+  });
+  fireEvent.click(creditDisclosure);
+  const credits = within(release).getByRole("region", {
+    name: "Исполнители",
+  });
+  expect(
+    within(credits).queryByRole("option", {
+      name: "Локальное переопределение не задано",
+    }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(
+    within(credits).getByRole("button", {
+      name: "Изменить порядок исполнителей: Выше — Исполнитель 2",
+    }),
+  );
+  fireEvent.change(
+    within(credits).getAllByRole("textbox", {
+      name: "Текст после этого исполнителя",
+    })[0],
+    { target: { value: "" } },
+  );
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 
   await waitFor(() => expect(patchBody).toBeDefined());
@@ -230,6 +302,25 @@ it("sends exact typed states at the loaded revision and retains the draft on con
       release_date: { state: "explicit_empty" },
       label: { state: "value", value: ["North", "South"] },
       catalog_number: { state: "absent" },
+      artist_credit: {
+        state: "value",
+        value: [
+          {
+            artist_id: "123e4567-e89b-42d3-a456-426614174000",
+            artist_name: "Same local artist",
+            credit_name: "Second credit",
+            join_phrase: "",
+            role: "legacy-role-value",
+          },
+          {
+            artist_id: "123e4567-e89b-42d3-a456-426614174000",
+            artist_name: "Same local artist",
+            credit_name: "First credit",
+            join_phrase: " feat. ",
+            role: "performer",
+          },
+        ],
+      },
     },
   });
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -238,6 +329,21 @@ it("sends exact typed states at the loaded revision and retains the draft on con
   expect(screen.getByRole("textbox", { name: "Название" })).toHaveValue(
     "  New title  ",
   );
+  expect(
+    within(credits).getAllByRole("textbox", {
+      name: "Имя в списке исполнителей",
+    }),
+  ).toHaveLength(2);
+  expect(
+    within(credits).getAllByRole("textbox", {
+      name: "Имя в списке исполнителей",
+    })[0],
+  ).toHaveValue("Second credit");
+  expect(
+    within(credits).getAllByRole("textbox", {
+      name: "Текст после этого исполнителя",
+    })[0],
+  ).toHaveValue("");
 });
 
 it("round-trips boolean, decimal, integer, and advisory values by scope", async () => {
@@ -338,8 +444,8 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
     ),
   );
 
-  render(
-    <I18nProvider>
+  renderMetadataEditor(
+    <>
       <ReleaseMetadataEditor releaseId={releaseId} />
       <ScopedLibraryMetadataEditor scope="recording" ownerId={recordingId} />
       <ScopedLibraryMetadataEditor
@@ -347,7 +453,7 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
         ownerId={positionId}
         releaseId={releaseId}
       />
-    </I18nProvider>,
+    </>,
   );
 
   const release = screen.getByRole("region", { name: "Метаданные релиза" });

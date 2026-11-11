@@ -4,13 +4,27 @@ import {
   getLibraryPositionMetadata,
   getLibraryRecordingMetadata,
   getLibraryReleaseMetadata,
+  getSearchLibraryArtistReferencesQueryKey,
   patchLibraryPositionMetadata,
   patchLibraryRecordingMetadata,
   patchLibraryReleaseMetadata,
+  useSearchLibraryArtistReferences,
 } from "../../api/generated/client";
-import type { LibraryMetadataResponse } from "../../api/generated/client.schemas";
+import type {
+  LibraryMetadataGetResponse,
+  LibraryMetadataResponse,
+} from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ArtistCreditRowsEditor } from "./ArtistCreditRowsEditor";
+import {
+  type ArtistCreditDraft,
+  type ArtistCreditResolutionStatus,
+  type ArtistCreditRow,
+  adaptArtistCreditMetadata,
+  serializeArtistCreditChange,
+} from "./artistCreditDraft";
+import { artistCreditMessages } from "./artistCreditMessages";
 
 type FieldState = "absent" | "value" | "explicit_empty";
 type MetadataValue = string | string[] | number | boolean;
@@ -45,6 +59,7 @@ type ReleaseFieldKey =
   | "disc_number"
   | "disc_total";
 type MetadataFieldKey = ReleaseFieldKey | "title" | "sort_title";
+type DirtyFieldKey = MetadataFieldKey | "artist_credit";
 type ReleaseField = {
   key: MetadataFieldKey;
   kind:
@@ -152,6 +167,7 @@ const copy = {
       position: "Position details",
       additional: "Additional metadata",
       main: "Titles",
+      artistCredits: "Artist credits",
     },
     noOverride: "Inherited · no local override",
     explicitEmpty: "Explicitly cleared",
@@ -221,6 +237,7 @@ const copy = {
       position: "Сведения о позиции",
       additional: "Дополнительные метаданные",
       main: "Названия",
+      artistCredits: "Исполнители",
     },
     noOverride: "Наследуется · локальное значение не задано",
     explicitEmpty: "Явно очищено",
@@ -277,8 +294,12 @@ function emptyValues(fields: ReleaseField[]): EditorValues {
   ) as EditorValues;
 }
 
+function emptyArtistCreditDraft(): ArtistCreditDraft {
+  return { hasDesiredOverride: false, state: "absent", rows: [] };
+}
+
 function readValues(
-  metadata: LibraryMetadataResponse,
+  metadata: LibraryMetadataGetResponse | LibraryMetadataResponse,
   fields: ReleaseField[],
 ): EditorValues {
   const values = emptyValues(fields);
@@ -427,7 +448,9 @@ function LibraryScopedMetadataEditorSession({
       : scope === "recording"
         ? text.recordingTitle
         : text.positionTitle;
-  const [metadata, setMetadata] = useState<LibraryMetadataResponse>();
+  const [metadata, setMetadata] = useState<
+    LibraryMetadataGetResponse | LibraryMetadataResponse
+  >();
   const metadataRevision = useRef<number | undefined>(undefined);
   const readGeneration = useRef(0);
   const readController = useRef<AbortController | undefined>(undefined);
@@ -444,9 +467,23 @@ function LibraryScopedMetadataEditorSession({
   const dirtyRef = useRef(false);
   const [saved, setSaved] = useState<EditorValues>(() => emptyValues(fields));
   const [draft, setDraft] = useState<EditorValues>(() => emptyValues(fields));
-  const [dirtyFields, setDirtyFields] = useState<Set<MetadataFieldKey>>(
+  const [dirtyFields, setDirtyFields] = useState<Set<DirtyFieldKey>>(
     () => new Set(),
   );
+  const [savedArtistCredit, setSavedArtistCredit] = useState<ArtistCreditDraft>(
+    emptyArtistCreditDraft,
+  );
+  const [artistCreditDraft, setArtistCreditDraft] = useState<ArtistCreditDraft>(
+    emptyArtistCreditDraft,
+  );
+  const [artistCreditBaseline, setArtistCreditBaseline] = useState<
+    ArtistCreditRow[]
+  >([]);
+  const [effectiveArtistCredit, setEffectiveArtistCredit] = useState<{
+    status: ArtistCreditResolutionStatus;
+    origin: string | null;
+  }>({ status: "unclassified", origin: null });
+  const [artistSearchQuery, setArtistSearchQuery] = useState("");
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -454,6 +491,39 @@ function LibraryScopedMetadataEditorSession({
   const [saveError, setSaveError] = useState("");
   const [refreshConflict, setRefreshConflict] = useState(false);
   const previousRefreshToken = useRef(refreshToken);
+
+  const artistSearchTerm = artistSearchQuery.trim();
+  const artistSearchParams = artistSearchTerm
+    ? { q: artistSearchTerm, limit: 20, offset: 0 }
+    : undefined;
+  const artistSearch = useSearchLibraryArtistReferences(artistSearchParams, {
+    query: {
+      enabled:
+        editing && artistCreditDraft.state === "value" && !!artistSearchTerm,
+      queryKey: [
+        ...getSearchLibraryArtistReferencesQueryKey(artistSearchParams),
+        sessionIdentity,
+      ],
+    },
+  });
+  const artistSearchData =
+    artistSearch.data?.status === 200 ? artistSearch.data.data.items : [];
+  const artistCreditSearchResults = artistSearchData.map((artist) => ({
+    id: artist.id,
+    name: artist.name,
+    ...(artist.disambiguation ? { disambiguation: artist.disambiguation } : {}),
+    ...(artist.provider_links.length
+      ? {
+          providerFacts: artist.provider_links.map((link) => ({
+            label: `${link.provider_code} · ${link.method}`,
+            value: artistCreditMessages[locale].providerLinked,
+          })),
+        }
+      : {}),
+  }));
+  const artistSearchError =
+    artistSearch.isError ||
+    (artistSearch.data !== undefined && artistSearch.data.status !== 200);
 
   const loadMetadata = useCallback(
     async (force = false) => {
@@ -486,11 +556,19 @@ function LibraryScopedMetadataEditorSession({
           return;
         }
         const next = readValues(response.data, fields);
+        const creditDisplay = adaptArtistCreditMetadata(response.data);
         metadataRevision.current = response.data.revision;
         setMetadata(response.data);
         setSaved(next);
+        setSavedArtistCredit(creditDisplay.draft);
+        setArtistCreditBaseline(creditDisplay.baseline);
+        setEffectiveArtistCredit({
+          status: creditDisplay.effective.status,
+          origin: creditDisplay.effective.origin,
+        });
         if (!dirtyRef.current) {
           setDraft(next);
+          setArtistCreditDraft(creditDisplay.draft);
           setDirtyFields(new Set());
           setRefreshConflict(false);
         }
@@ -525,6 +603,8 @@ function LibraryScopedMetadataEditorSession({
 
   function beginEdit() {
     setDraft(saved);
+    setArtistCreditDraft(savedArtistCredit);
+    setArtistSearchQuery("");
     dirtyRef.current = false;
     setDirtyFields(new Set());
     setSaveError("");
@@ -536,6 +616,8 @@ function LibraryScopedMetadataEditorSession({
     dirtyRef.current = false;
     setDirtyFields(new Set());
     setDraft(saved);
+    setArtistCreditDraft(savedArtistCredit);
+    setArtistSearchQuery("");
     setEditing(false);
     setSaveError("");
     if (refreshConflict) void loadMetadata(true);
@@ -550,6 +632,14 @@ function LibraryScopedMetadataEditorSession({
     dirtyRef.current = true;
     setDraft((current) => ({ ...current, [key]: next }));
     setDirtyFields((current) => new Set(current).add(key));
+    setSaveError("");
+  }
+
+  function updateArtistCreditDraft(next: ArtistCreditDraft) {
+    if (writePending.current) return;
+    dirtyRef.current = true;
+    setArtistCreditDraft(next);
+    setDirtyFields((current) => new Set(current).add("artist_credit"));
     setSaveError("");
   }
 
@@ -572,8 +662,12 @@ function LibraryScopedMetadataEditorSession({
     setSaving(true);
     setSaveError("");
     try {
-      const changes = Object.fromEntries(
-        [...dirtyFields].map((key) => {
+      const changesEntries: [string, unknown][] = [...dirtyFields].flatMap(
+        (key): [string, unknown][] => {
+          if (key === "artist_credit") {
+            const creditChange = serializeArtistCreditChange(artistCreditDraft);
+            return creditChange ? [[key, creditChange]] : [];
+          }
           const field = draft[key];
           const definition = fields.find((candidate) => candidate.key === key);
           let value: MetadataValue = field.value;
@@ -606,13 +700,25 @@ function LibraryScopedMetadataEditorSession({
             }
           }
           return [
-            key,
-            field.state === "value"
-              ? { state: field.state, value }
-              : { state: field.state },
+            [
+              key,
+              field.state === "value"
+                ? { state: field.state, value }
+                : { state: field.state },
+            ],
           ];
-        }),
+        },
       );
+      const changes = Object.fromEntries(changesEntries);
+      if (!Object.keys(changes).length) {
+        dirtyRef.current = false;
+        setDirtyFields(new Set());
+        setDraft(saved);
+        setArtistCreditDraft(savedArtistCredit);
+        setArtistSearchQuery("");
+        setEditing(false);
+        return;
+      }
       const body = {
         expected_revision: metadata.revision,
         changes,
@@ -642,10 +748,13 @@ function LibraryScopedMetadataEditorSession({
       setMetadata(response.data);
       setSaved(next);
       setDraft(next);
+      setSavedArtistCredit(artistCreditDraft);
+      setArtistCreditDraft(artistCreditDraft);
       dirtyRef.current = false;
       setDirtyFields(new Set());
       setRefreshConflict(false);
       setEditing(false);
+      setArtistSearchQuery("");
       notifySaved(response.data);
       // The mutation is committed. A follow-up read must not turn it into a
       // reported save failure, and must not overwrite the committed revision.
@@ -848,6 +957,28 @@ function LibraryScopedMetadataEditorSession({
             </dl>
           </details>
         ))}
+        <details className="min-w-0 rounded border border-[var(--line)]">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+            {text.groups.artistCredits}
+          </summary>
+          <div className="grid min-w-0 gap-2 p-2">
+            <ArtistCreditRowsEditor
+              draft={editing ? artistCreditDraft : savedArtistCredit}
+              savedHasDesiredOverride={savedArtistCredit.hasDesiredOverride}
+              baseline={artistCreditBaseline}
+              effective={effectiveArtistCredit}
+              searchQuery={artistSearchQuery}
+              searchResults={artistCreditSearchResults}
+              searchLoading={artistSearch.isFetching}
+              searchError={artistSearchError}
+              editing={editing}
+              disabled={!editing || saving}
+              onDraftChange={updateArtistCreditDraft}
+              onSearchQueryChange={setArtistSearchQuery}
+              onRetrySearch={() => void artistSearch.refetch()}
+            />
+          </div>
+        </details>
       </div>
       {loading ? (
         <p role="status" className="m-0 text-sm text-[var(--muted)]">

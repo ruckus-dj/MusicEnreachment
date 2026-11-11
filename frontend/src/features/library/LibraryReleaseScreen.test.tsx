@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
   fireEvent,
@@ -135,6 +136,17 @@ function installHandlers(published: boolean) {
   );
 }
 
+function renderScreen(releaseId: string) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <LibraryReleaseScreen releaseId={releaseId} />
+    </QueryClientProvider>,
+  );
+}
+
 afterEach(() => {
   cleanup();
 });
@@ -154,7 +166,7 @@ beforeEach(() => {
 it("shows the current publication summary from release detail without source inventory", async () => {
   installHandlers(true);
 
-  render(<LibraryReleaseScreen releaseId={releaseID} />);
+  renderScreen(releaseID);
 
   const summary = await screen.findByRole("region", {
     name: "Текущая публикация",
@@ -178,7 +190,7 @@ it("shows the current publication summary from release detail without source inv
 it("shows an explicit unpublished state when release detail has no publication summary", async () => {
   installHandlers(false);
 
-  render(<LibraryReleaseScreen releaseId={releaseID} />);
+  renderScreen(releaseID);
 
   const summary = await screen.findByRole("region", {
     name: "Текущая публикация",
@@ -227,7 +239,7 @@ it("invalidates preview context immediately even if release detail refresh fails
     ),
   );
 
-  render(<LibraryReleaseScreen releaseId={releaseID} />);
+  renderScreen(releaseID);
   await screen.findByRole("region", { name: "Текущая публикация" });
   const preview = screen.getByTestId("publication-preview");
   const initialToken = preview.getAttribute("data-refresh-token");
@@ -279,7 +291,7 @@ it("replaces the release-detail publication summary with refreshed position stat
     ),
   );
 
-  render(<LibraryReleaseScreen releaseId={releaseID} />);
+  renderScreen(releaseID);
 
   const summary = await screen.findByRole("region", {
     name: "Текущая публикация",
@@ -314,7 +326,7 @@ it("updates generation and path after a manual position refresh", async () => {
     ),
   );
 
-  render(<LibraryReleaseScreen releaseId={releaseID} />);
+  renderScreen(releaseID);
 
   const summary = await screen.findByRole("region", {
     name: "Текущая публикация",
