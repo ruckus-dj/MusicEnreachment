@@ -9,8 +9,9 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import { firstPublicationPreviewMessages } from "./firstPublicationPreviewMessages";
+import { PublicationPreviewDetails } from "./PublicationPreviewDetails";
 
-type SourceChoice = Pick<
+export type SourceChoice = Pick<
   FirstPublicationPreviewSource,
   "location_id" | "media_variant_id" | "stream_index"
 >;
@@ -39,11 +40,21 @@ export type PublicationPreviewState = {
   blockers: string[];
   confirmationCapabilityStatus?: string;
   confirmationCapabilityReasonCodes: string[];
+  inspection: {
+    preview?: LibraryFirstPublicationPreviewResponse;
+    workflow: PreviewWorkflow;
+    sourceCandidates: FirstPublicationPreviewSource[];
+    selectedChoice: SourceChoice | null;
+    needsExplicitChoice: boolean;
+    sourceChoiceDisabled: boolean;
+  };
 };
 
 export type PublicationPreviewController = {
   prepare: (mode: PublicationMode) => void;
   confirm: (expected: PublicationPreviewIdentity) => void;
+  selectSource: (choice: SourceChoice | null) => void;
+  refresh: () => void;
 };
 
 function choiceKey(choice: SourceChoice | null) {
@@ -69,98 +80,6 @@ function responseError(
   fallback: (status: number) => string,
 ) {
   return data.detail || fallback(status);
-}
-
-type PreviewCopy =
-  (typeof firstPublicationPreviewMessages)[keyof typeof firstPublicationPreviewMessages];
-
-function coverFactsText(
-  facts: { mime: string; size: number; sha256: string },
-  copy: PreviewCopy,
-) {
-  return `${facts.mime} · ${facts.size} ${copy.coverBytes} · ${copy.coverSHA256} ${facts.sha256}`;
-}
-
-function lyricsStateText(state: string, copy: PreviewCopy) {
-  switch (state) {
-    case "absent":
-      return copy.lyricsStateAbsent;
-    case "value":
-      return copy.lyricsStateValue;
-    case "unknown":
-      return copy.lyricsStateUnknown;
-    case "unprocessable":
-      return copy.lyricsStateUnprocessable;
-    default:
-      return state;
-  }
-}
-
-function lyricsOriginText(origin: string, copy: PreviewCopy) {
-  switch (origin) {
-    case "none":
-      return copy.lyricsOriginNone;
-    case "manual":
-      return copy.lyricsOriginManual;
-    case "source":
-      return copy.lyricsOriginSource;
-    case "lrclib":
-      return copy.lyricsOriginLrclib;
-    default:
-      return origin;
-  }
-}
-
-function lyricsComparisonText(status: string, copy: PreviewCopy) {
-  switch (status) {
-    case "matches":
-      return copy.lyricsComparisonMatches;
-    case "differs":
-      return copy.lyricsComparisonDiffers;
-    case "unavailable":
-      return copy.lyricsComparisonUnavailable;
-    default:
-      return status;
-  }
-}
-
-function lyricsWarningText(code: string, copy: PreviewCopy) {
-  const warnings: Record<string, string> = copy.lyricsWarnings;
-  return warnings[code] ?? code;
-}
-
-function previewWarningText(code: string, copy: PreviewCopy) {
-  return code === "output_quality_would_downgrade"
-    ? copy.outputQualityDowngradeWarning
-    : code;
-}
-
-function audioStatusText(status: string, copy: PreviewCopy) {
-  switch (status) {
-    case "matches":
-      return copy.audioStatusMatches;
-    case "differs":
-      return copy.audioStatusDiffers;
-    default:
-      return copy.audioStatusUnavailable;
-  }
-}
-
-function audioAuthorityStatusText(status: string, copy: PreviewCopy) {
-  switch (status) {
-    case "present":
-      return copy.audioAuthorityPresent;
-    case "stale":
-      return copy.audioAuthorityStale;
-    case "missing":
-      return copy.audioAuthorityMissing;
-    default:
-      return copy.audioAuthorityUnknown;
-  }
-}
-
-function isZeroUUID(value: string | undefined) {
-  return !value || value === "00000000-0000-0000-0000-000000000000";
 }
 
 export function FirstPublicationPreview({
@@ -214,10 +133,22 @@ export function FirstPublicationPreview({
     admissionUncertain: false,
     blockers: [],
     confirmationCapabilityReasonCodes: [],
+    inspection: {
+      workflow: comparisonOnly ? "comparison" : "first",
+      sourceCandidates: [],
+      selectedChoice: null,
+      needsExplicitChoice: false,
+      sourceChoiceDisabled: false,
+    },
   });
   const aggregateConfirmRef = useRef<
     (expected: PublicationPreviewIdentity) => void
   >(() => {});
+  const changeChoiceRef = useRef<(choice: SourceChoice | null) => void>(
+    () => {},
+  );
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
   const confirmationPending = useRef(false);
   const admissionLocked = useRef(false);
   const previousRefreshToken = useRef(refreshToken);
@@ -318,6 +249,7 @@ export function FirstPublicationPreview({
       setLoading(true);
       setError("");
       setPreview(undefined);
+      setSourceCandidates([]);
       setPreviewChoiceKey("");
       try {
         const response = await getLibraryFirstPublicationPreview(
@@ -489,6 +421,7 @@ export function FirstPublicationPreview({
     setAdmittedOperationID("");
     void loadPreview(choice);
   }
+  changeChoiceRef.current = changeChoice;
 
   function changeMode(nextMode: "ordinary" | "forced") {
     if (
@@ -605,12 +538,14 @@ export function FirstPublicationPreview({
         admissionLocked.current = true;
         setAdmittedOperationID(response.data.id);
         setPreview(undefined);
+        setSourceCandidates([]);
         onAdmitted(response.data.id);
         return;
       }
       if (response.status === 409) {
         admissionLocked.current = false;
         setPreview(undefined);
+        setSourceCandidates([]);
         setError(confirmedChoice ? copy.sourceUnavailable : copy.staleConfirm);
         onRefresh();
         return;
@@ -675,6 +610,8 @@ export function FirstPublicationPreview({
     () => ({
       prepare: (requestedMode) => prepareRef.current(requestedMode),
       confirm: (expected) => aggregateConfirmRef.current(expected),
+      selectSource: (choice) => changeChoiceRef.current(choice),
+      refresh: () => onRefreshRef.current(),
     }),
     [],
   );
@@ -730,6 +667,20 @@ export function FirstPublicationPreview({
       confirmationCapabilityStatus: preview?.confirmation_capability?.status,
       confirmationCapabilityReasonCodes:
         preview?.confirmation_capability?.reason_codes ?? [],
+      inspection: {
+        preview,
+        workflow,
+        sourceCandidates,
+        selectedChoice,
+        needsExplicitChoice,
+        sourceChoiceDisabled: Boolean(
+          confirming ||
+            admissionUncertain ||
+            admittedOperationID ||
+            confirmationPending.current ||
+            admissionLocked.current,
+        ),
+      },
     }),
     [
       aggregateIdentity,
@@ -742,6 +693,11 @@ export function FirstPublicationPreview({
       preview?.blockers,
       preview?.confirmation_capability?.status,
       preview?.confirmation_capability?.reason_codes,
+      preview,
+      workflow,
+      sourceCandidates,
+      selectedChoice,
+      needsExplicitChoice,
     ],
   );
   aggregateStateRef.current = aggregateState;
@@ -755,16 +711,7 @@ export function FirstPublicationPreview({
     return () => onController?.(null);
   }, [onController, controller]);
 
-  const audioEvidence = preview?.current_comparison?.audio_evidence;
-  const audioAuthorityPresent =
-    audioEvidence?.source_authority_status === "present";
-  const lyricsPlan = preview?.lyrics_plan;
-  const lyricsComparisonStatus = lyricsPlan
-    ? !lyricsPlan.current_comparison_available
-      ? "unavailable"
-      : (preview?.current_comparison?.lyrics_status ??
-        lyricsPlan.current_status)
-    : "unavailable";
+  if (aggregateManaged) return null;
 
   return (
     <section
@@ -773,10 +720,7 @@ export function FirstPublicationPreview({
     >
       {comparisonOnly && (
         <>
-          <fieldset
-            className="space-y-2"
-            disabled={loading || aggregateManaged}
-          >
+          <fieldset className="space-y-2" disabled={loading}>
             <legend className="font-medium">{copy.currentWorkflow}</legend>
             <label className="block">
               <input
@@ -800,10 +744,7 @@ export function FirstPublicationPreview({
           {workflow === "comparison" && (
             <p role="note">{copy.comparisonReadOnly}</p>
           )}
-          <fieldset
-            className="space-y-2"
-            disabled={loading || aggregateManaged}
-          >
+          <fieldset className="space-y-2" disabled={loading}>
             <legend className="font-medium">{copy.mode}</legend>
             <label className="block">
               <input
@@ -829,7 +770,6 @@ export function FirstPublicationPreview({
       <button
         type="button"
         disabled={
-          aggregateManaged ||
           loading ||
           confirming ||
           Boolean(admittedOperationID) ||
@@ -841,437 +781,40 @@ export function FirstPublicationPreview({
       >
         {loading ? copy.loading : copy.preview}
       </button>
-      {error && <p role="alert">{error}</p>}
-      {workflow !== "retained_same_path" && needsExplicitChoice && (
-        <fieldset
-          className="space-y-2"
+      <PublicationPreviewDetails
+        state={aggregateState}
+        sourceGroupName={`publication-source-${releaseId}-${positionId}`}
+        onSourceChoice={changeChoice}
+        onRefresh={onRefresh}
+      />
+      {!comparisonOnly && workflow === "first" && (
+        <button
+          type="button"
           disabled={
+            !canConfirm ||
             confirming ||
             admissionUncertain ||
-            Boolean(admittedOperationID) ||
             confirmationPending.current ||
             admissionLocked.current
           }
+          onClick={() => void confirmPreview()}
         >
-          <legend className="font-medium">{copy.sourceChoice}</legend>
-          <label className="block">
-            <input
-              type="radio"
-              name={`publication-source-${releaseId}-${positionId}`}
-              checked={selectedChoice === null}
-              onChange={() => changeChoice(null)}
-            />{" "}
-            {copy.noSource}
-          </label>
-          {candidates.map((candidate) => {
-            const candidateChoice: SourceChoice = {
-              location_id: candidate.location_id,
-              media_variant_id: candidate.media_variant_id,
-              stream_index: candidate.stream_index,
-            };
-            return (
-              <label className="block" key={choiceKey(candidateChoice)}>
-                <input
-                  type="radio"
-                  name={`publication-source-${releaseId}-${positionId}`}
-                  checked={
-                    choiceKey(selectedChoice) === choiceKey(candidateChoice)
-                  }
-                  onChange={() => changeChoice(candidateChoice)}
-                />{" "}
-                {candidate.title || candidate.codec} · {candidate.codec},{" "}
-                {copy.stream} {candidate.stream_index}
-                {candidate.language ? ` · ${candidate.language}` : ""}
-                {candidate.channels
-                  ? ` · ${candidate.channels} ${copy.channels}`
-                  : ""}
-                {candidate.unsupported_audio_stream_count > 0
-                  ? ` · ${copy.unsupportedStreams}: ${candidate.unsupported_audio_stream_count}`
-                  : ""}
-                {` · ${copy.root} ${candidate.root_id}, ${copy.location} ${candidate.location_id}, ${copy.variant} ${candidate.media_variant_id}`}
-              </label>
-            );
-          })}
-        </fieldset>
+          {confirming ? copy.publicationStart : copy.publish}
+        </button>
       )}
-      {preview && (
-        <div className="space-y-2">
-          <h3 className="font-semibold">
-            {workflow === "comparison"
-              ? copy.currentComparison
-              : workflow === "retained_same_path"
-                ? copy.retainedPlan
-                : copy.firstPlan}
-          </h3>
-          {workflow === "retained_same_path" && retainedCapability && (
-            <p role="status">
-              {retainedCapability.status === "ready"
-                ? copy.retainedCapabilityReady
-                : retainedCapability.status === "unchanged"
-                  ? copy.retainedUnchanged
-                  : copy.retainedBlocked}
-            </p>
-          )}
-          <p>
-            {copy.source}:{" "}
-            {preview.selected_source
-              ? `${preview.selected_source.codec}, ${copy.stream} ${preview.selected_source.stream_index} · ${copy.variant} ${preview.selected_source.media_variant_id}`
-              : copy.unselected}
-          </p>
-          <p>
-            {copy.transform}:{" "}
-            {preview.transform
-              ? `${preview.transform.action} → ${preview.transform.output_container}${preview.transform.extension ? ` (.${preview.transform.extension})` : ""}${preview.transform.bitrate ? `, ${preview.transform.bitrate} ${copy.bitrate}` : ""}`
-              : copy.undefined}
-          </p>
-          <p>
-            {copy.plannedPath}:{" "}
-            {preview.resolved_path_components?.length
-              ? preview.resolved_path_components.join("/")
-              : copy.namespaceUnconfirmed}
-          </p>
-          <div className="rounded bg-amber-50 p-3">
-            <h4 className="font-medium">{copy.plannedTags}</h4>
-            {Object.entries(preview.desired_tags ?? {}).map(
-              ([name, values]) => (
-                <p key={name}>
-                  {name}: {(values ?? []).join(", ")}
-                </p>
-              ),
-            )}
-          </div>
-          <div>
-            <h4 className="font-medium">{copy.metadataRevisions}</h4>
-            {Object.keys(preview.metadata_revisions ?? {}).length ? (
-              <ul>
-                {Object.entries(preview.metadata_revisions).map(
-                  ([field, revision]) => (
-                    <li key={field}>
-                      {field}: {copy.revision} {revision}
-                    </li>
-                  ),
-                )}
-              </ul>
-            ) : (
-              <p>{copy.noProjections}</p>
-            )}
-          </div>
-          <div>
-            <h4 className="font-medium">{copy.warnings}</h4>
-            {preview.warnings?.length ? (
-              <ul>
-                {Array.from(new Set(preview.warnings ?? [])).map((item) => (
-                  <li key={item}>{previewWarningText(item, copy)}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>{copy.none}</p>
-            )}
-          </div>
-          <div>
-            <h4 className="font-medium">{copy.blockers}</h4>
-            {preview.blockers?.length ? (
-              <ul>
-                {Array.from(new Set(preview.blockers ?? [])).map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>{copy.none}</p>
-            )}
-          </div>
-          <p role="status">
-            {copy.namespaceCheck}: {preview.native_status}.{" "}
-            {workflow === "retained_same_path"
-              ? copy.retainedPrestartRevalidation
-              : copy.previewNotPublicationCheck}
-          </p>
-          {preview.cover_plan && (
-            <section
-              className="space-y-2 rounded border border-stone-200 p-3"
-              aria-label={copy.coverPlanAria}
-            >
-              <h4 className="font-medium">{copy.coverPlan}</h4>
-              <p>
-                {copy.coverAuthority}:{" "}
-                {preview.cover_plan.authority_mode === "automatic"
-                  ? copy.coverModeAutomatic
-                  : preview.cover_plan.authority_mode === "manual"
-                    ? copy.coverModeManual
-                    : preview.cover_plan.authority_mode}
-                , {copy.revision} {preview.cover_plan.authority_revision}
-              </p>
-              {preview.cover_plan.authority_generation && (
-                <p>
-                  {copy.coverGeneration}:{" "}
-                  {preview.cover_plan.authority_generation}
-                </p>
-              )}
-              <p>
-                {copy.coverRelease}: {preview.cover_plan.release_id}
-              </p>
-              {preview.cover_plan.original ? (
-                <div>
-                  <p className="font-medium">{copy.coverOriginal}</p>
-                  <p className="break-all">
-                    {coverFactsText(preview.cover_plan.original, copy)}
-                  </p>
-                </div>
-              ) : (
-                <p>{copy.coverDerivationAbsent}</p>
-              )}
-              {preview.cover_plan.derivative ? (
-                <div>
-                  <p className="font-medium">{copy.coverDerivative}</p>
-                  <p className="break-all">
-                    {coverFactsText(preview.cover_plan.derivative, copy)}
-                  </p>
-                </div>
-              ) : (
-                preview.cover_plan.derivation === "optional_failure" && (
-                  <div>
-                    <p className="font-medium">{copy.coverDerivative}</p>
-                    <p>{copy.coverDerivativeUnavailable}</p>
-                    {preview.cover_plan.failure_reason && (
-                      <p>
-                        {copy.coverFailureReason}:{" "}
-                        {preview.cover_plan.failure_reason}
-                      </p>
-                    )}
-                  </div>
-                )
-              )}
-              {preview.cover_plan.derivation !== "absent" && (
-                <p>
-                  {copy.coverDerivation}:{" "}
-                  {preview.cover_plan.derivation === "ready"
-                    ? copy.coverDerivationReady
-                    : copy.coverDerivationOptionalFailure}
-                </p>
-              )}
-              <p>{copy.coverPlanNotGuarantee}</p>
-            </section>
-          )}
-          {lyricsPlan && (
-            <section
-              className="space-y-2 rounded border border-stone-200 p-3"
-              aria-label={copy.lyricsPlanAria}
-            >
-              <h4 className="font-medium">{copy.lyricsPlan}</h4>
-              <p>
-                {copy.lyricsState}: {lyricsStateText(lyricsPlan.state, copy)}
-              </p>
-              <p>
-                {copy.lyricsOrigin}: {lyricsOriginText(lyricsPlan.origin, copy)}
-              </p>
-              {lyricsPlan.state === "value" &&
-                lyricsPlan.lyrics !== undefined && (
-                  <div>
-                    <p className="font-medium">{copy.lyricsPlannedText}</p>
-                    <pre className="whitespace-pre-wrap break-words">
-                      {lyricsPlan.lyrics}
-                    </pre>
-                  </div>
-                )}
-              {lyricsPlan.sha256 && (
-                <p className="break-all">
-                  {copy.lyricsChecksum}: {lyricsPlan.sha256}
-                </p>
-              )}
-              {lyricsPlan.warning_code && (
-                <p>
-                  {copy.lyricsWarning}:{" "}
-                  {lyricsWarningText(lyricsPlan.warning_code, copy)}
-                </p>
-              )}
-              <div>
-                <h5 className="font-medium">{copy.lyricsCurrentFields}</h5>
-                {lyricsPlan.current_present ? (
-                  <>
-                    {lyricsPlan.current_lyrics === null ? (
-                      <p>{copy.lyricsCurrentNil}</p>
-                    ) : lyricsPlan.current_lyrics.length === 0 ? (
-                      <p>{copy.lyricsCurrentEmpty}</p>
-                    ) : null}
-                    {Object.keys(lyricsPlan.current_lyrics_fields ?? {})
-                      .length ? (
-                      <ul className="space-y-1">
-                        {Object.entries(
-                          lyricsPlan.current_lyrics_fields ?? {},
-                        ).map(([field, values]) => (
-                          <li key={field}>
-                            <p className="break-all font-medium">{field}</p>
-                            {values?.length ? (
-                              <pre className="whitespace-pre-wrap break-words">
-                                {JSON.stringify(values, null, 2)}
-                              </pre>
-                            ) : (
-                              <p>{copy.lyricsFieldEmpty}</p>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p>{copy.lyricsNoFields}</p>
-                    )}
-                  </>
-                ) : (
-                  <p>{copy.lyricsCurrentAbsent}</p>
-                )}
-              </div>
-              <p>
-                {copy.lyricsComparison}:{" "}
-                {lyricsComparisonText(lyricsComparisonStatus, copy)}
-              </p>
-              <p>{copy.lyricsComparisonBasis}</p>
-            </section>
-          )}
-          {workflow !== "first" && preview.current_comparison && (
-            <section
-              className="space-y-2"
-              aria-label={copy.currentComparisonAria}
-            >
-              <p>
-                {copy.comparisonStatus}: {preview.current_comparison.status}
-              </p>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {[
-                  [
-                    copy.currentPath,
-                    preview.current_comparison.current_components,
-                  ],
-                  [
-                    copy.renderedPath,
-                    preview.current_comparison.rendered_components,
-                  ],
-                  [
-                    copy.resolvedPath,
-                    preview.current_comparison.resolved_components,
-                  ],
-                ].map(([label, components]) => (
-                  <p key={label as string}>
-                    {label}:{" "}
-                    {Array.isArray(components) && components.length
-                      ? components.join("/")
-                      : copy.pathUnknown}
-                  </p>
-                ))}
-              </div>
-              <p>
-                {copy.audioComparison}:{" "}
-                {audioStatusText(preview.current_comparison.audio_status, copy)}
-              </p>
-              {audioEvidence && (
-                <div>
-                  <p>
-                    {copy.audioAuthorityStatus}:{" "}
-                    {audioAuthorityStatusText(
-                      audioEvidence.source_authority_status,
-                      copy,
-                    )}
-                  </p>
-                  {audioAuthorityPresent && (
-                    <ul>
-                      {!isZeroUUID(audioEvidence.media_variant_id) && (
-                        <li>
-                          {copy.audioCurrentVariant}:{" "}
-                          {audioEvidence.media_variant_id}
-                        </li>
-                      )}
-                      <li>
-                        {copy.audioSelectedVariant}:{" "}
-                        {isZeroUUID(audioEvidence.selected_media_variant_id)
-                          ? copy.audioNotRecorded
-                          : audioEvidence.selected_media_variant_id}
-                      </li>
-                      {audioEvidence.canonical_source_sha256 && (
-                        <li className="break-all">
-                          {copy.audioCanonicalSHA256}:{" "}
-                          {audioEvidence.canonical_source_sha256}
-                        </li>
-                      )}
-                    </ul>
-                  )}
-                </div>
-              )}
-              <p>{copy.audioComparisonBasis}</p>
-              <p>
-                {copy.coverComparison}:{" "}
-                {preview.current_comparison.cover_status === "matches"
-                  ? copy.coverStatusMatches
-                  : preview.current_comparison.cover_status === "differs"
-                    ? copy.coverStatusDiffers
-                    : copy.coverStatusUnavailable}
-              </p>
-              <h4 className="font-medium">{copy.tagDifferences}</h4>
-              {preview.current_comparison.tag_differences?.length ? (
-                <ol className="list-decimal pl-5">
-                  {preview.current_comparison.tag_differences.map(
-                    (difference) => (
-                      <li key={difference.key}>
-                        <strong>{difference.key}</strong>: {copy.currentValue}{" "}
-                        {difference.current_present
-                          ? JSON.stringify(difference.current)
-                          : copy.absent}
-                        ; {copy.calculatedValue}{" "}
-                        {difference.desired_present
-                          ? JSON.stringify(difference.desired)
-                          : copy.absent}
-                      </li>
-                    ),
-                  )}
-                </ol>
-              ) : (
-                <p>{copy.noTagDifferences}</p>
-              )}
-              <p>{copy.readOnlyBoundary}</p>
-            </section>
-          )}
-          {!aggregateManaged && !comparisonOnly && workflow === "first" && (
-            <button
-              type="button"
-              disabled={
-                !canConfirm ||
-                confirming ||
-                admissionUncertain ||
-                confirmationPending.current ||
-                admissionLocked.current
-              }
-              onClick={() => void confirmPreview()}
-            >
-              {confirming ? copy.publicationStart : copy.publish}
-            </button>
-          )}
-          {!aggregateManaged && workflow === "retained_same_path" && (
-            <button
-              type="button"
-              disabled={
-                !canConfirm ||
-                confirming ||
-                admissionUncertain ||
-                confirmationPending.current ||
-                admissionLocked.current
-              }
-              onClick={() => void confirmPreview()}
-            >
-              {confirming ? copy.publicationStart : copy.retainedRepublish}
-            </button>
-          )}
-        </div>
-      )}
-      {admittedOperationID && (
-        <div>
-          <p role="status">
-            {copy.queued}: {admittedOperationID}.
-          </p>
-          <button type="button" onClick={onRefresh}>
-            {copy.refreshPublication}
-          </button>
-        </div>
-      )}
-      {admissionUncertain && (
-        <button type="button" onClick={onRefresh}>
-          {copy.refreshPublication}
+      {workflow === "retained_same_path" && (
+        <button
+          type="button"
+          disabled={
+            !canConfirm ||
+            confirming ||
+            admissionUncertain ||
+            confirmationPending.current ||
+            admissionLocked.current
+          }
+          onClick={() => void confirmPreview()}
+        >
+          {confirming ? copy.publicationStart : copy.retainedRepublish}
         </button>
       )}
     </section>

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type {
   PublicationPreviewController,
   PublicationPreviewIdentity,
   PublicationPreviewState,
 } from "./FirstPublicationPreview";
+import { PublicationPreviewDetails } from "./PublicationPreviewDetails";
 
 type AggregatePosition = {
   id: string;
@@ -78,6 +79,11 @@ export function AggregatePublicationPreview({
   const [included, setIncluded] = useState<Set<string>>(
     () => new Set(positions.map((position) => position.id)),
   );
+  const [selectedPositionID, setSelectedPositionID] = useState(
+    positions[0]?.id ?? "",
+  );
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const mobileDialog = useRef<HTMLDialogElement>(null);
   const copy =
     locale === "ru"
       ? {
@@ -93,6 +99,10 @@ export function AggregatePublicationPreview({
           notPrepared: "Предпросмотр не подготовлен",
           noController: "Нет контроллера публикации для этой позиции",
           none: "Нет выбранных позиций.",
+          select: "Позиция для инспектора",
+          inspector: "Инспектор публикации",
+          noPosition: "Выберите позицию, чтобы посмотреть подробности.",
+          close: "Закрыть",
           dispositions: {
             create: "Создать",
             update: "Обновить",
@@ -114,7 +124,11 @@ export function AggregatePublicationPreview({
           loading: "Preview is loading",
           notPrepared: "Preview has not been prepared",
           noController: "No publication controller for this position",
-          none: "No positions selected.",
+          none: "No selected positions.",
+          select: "Position inspector",
+          inspector: "Publication inspector",
+          noPosition: "Select a position to inspect its details.",
+          close: "Close",
           dispositions: {
             create: "Create",
             update: "Update",
@@ -162,6 +176,26 @@ export function AggregatePublicationPreview({
     !hasBlockingPositions &&
     !preparing &&
     preparedMode === mode;
+  const selectedPosition =
+    positions.find((position) => position.id === selectedPositionID) ??
+    positions[0];
+  const selectedState = selectedPosition
+    ? states[selectedPosition.id]
+    : undefined;
+  const selectedController = selectedPosition
+    ? controllers.get(selectedPosition.id)
+    : undefined;
+
+  useEffect(() => {
+    if (
+      mobileInspectorOpen &&
+      mobileDialog.current &&
+      !mobileDialog.current.open
+    )
+      mobileDialog.current.showModal();
+    if (!mobileInspectorOpen && mobileDialog.current?.open)
+      mobileDialog.current.close();
+  }, [mobileInspectorOpen]);
 
   function prepare() {
     if (!selected.length || !allControllersAvailable) return;
@@ -192,6 +226,25 @@ export function AggregatePublicationPreview({
     for (const { controller, identity } of admissions)
       controller.confirm(identity);
   }
+
+  function selectPosition(positionID: string) {
+    setSelectedPositionID(positionID);
+    const isNarrow = window.matchMedia
+      ? window.matchMedia("(max-width: 899px)").matches
+      : window.innerWidth < 900;
+    if (isNarrow) setMobileInspectorOpen(true);
+  }
+
+  const inspector = selectedState ? (
+    <PublicationPreviewDetails
+      state={selectedState}
+      sourceGroupName={`aggregate-publication-source-${selectedPosition?.id ?? "none"}`}
+      onSourceChoice={(choice) => selectedController?.selectSource(choice)}
+      onRefresh={() => selectedController?.refresh()}
+    />
+  ) : (
+    <p>{selectedPosition ? copy.notPrepared : copy.noPosition}</p>
+  );
 
   return (
     <section
@@ -242,54 +295,101 @@ export function AggregatePublicationPreview({
       {!positions.length ? (
         <p>{copy.none}</p>
       ) : (
-        <ul className="space-y-2">
-          {positions.map((position) => {
-            const isIncluded = included.has(position.id);
-            const state = states[position.id];
-            const disposition = dispositions.get(position.id) ?? "blocked";
-            const status = state?.loading
-              ? copy.loading
-              : preparedMode !== mode
-                ? copy.notPrepared
-                : copy.dispositions[disposition];
-            const reason =
-              state?.error ||
-              state?.blockers[0] ||
-              state?.confirmationCapabilityReasonCodes?.[0] ||
-              (!controllers.has(position.id)
-                ? copy.noController
-                : disposition === "blocked"
-                  ? copy.notPrepared
-                  : "");
-            return (
-              <li
-                className="rounded border border-stone-200 p-3"
-                key={position.id}
-              >
-                <label className="flex items-start gap-2">
-                  <input
-                    type="checkbox"
-                    checked={isIncluded}
-                    aria-label={`${copy.include}: ${position.label}`}
-                    onChange={() =>
-                      setIncluded((current) => {
-                        const next = new Set(current);
-                        if (next.has(position.id)) next.delete(position.id);
-                        else next.add(position.id);
-                        return next;
-                      })
-                    }
-                  />
-                  <span>
-                    <strong>{position.label}</strong>: {status}
-                  </span>
-                </label>
-                {isIncluded && reason && <p>{reason}</p>}
-              </li>
-            );
-          })}
-        </ul>
+        <div className="grid min-w-0 gap-3 min-[900px]:grid-cols-1 min-[1400px]:grid-cols-[minmax(220px,0.38fr)_minmax(0,1fr)]">
+          <section aria-label={copy.select} className="min-w-0">
+            <h3 className="sr-only">{copy.select}</h3>
+            <ul className="max-h-80 space-y-1 overflow-y-auto min-[1400px]:max-h-[34rem]">
+              {positions.map((position) => {
+                const isIncluded = included.has(position.id);
+                const state = states[position.id];
+                const disposition = dispositions.get(position.id) ?? "blocked";
+                const status = state?.loading
+                  ? copy.loading
+                  : preparedMode !== mode
+                    ? copy.notPrepared
+                    : copy.dispositions[disposition];
+                const reason =
+                  state?.error ||
+                  state?.blockers[0] ||
+                  state?.confirmationCapabilityReasonCodes?.[0] ||
+                  (!controllers.has(position.id)
+                    ? copy.noController
+                    : disposition === "blocked"
+                      ? copy.notPrepared
+                      : "");
+                const isSelected = position.id === selectedPosition?.id;
+                return (
+                  <li className="min-w-0" key={position.id}>
+                    <div
+                      className={`grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border px-2 py-1 ${isSelected ? "border-stone-500 bg-stone-100" : "border-stone-200"}`}
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={isSelected}
+                        aria-label={position.label}
+                        className="min-w-0 text-left focus-visible:outline-2 focus-visible:outline-offset-2"
+                        onClick={() => selectPosition(position.id)}
+                      >
+                        <span className="block truncate font-medium">
+                          {position.label}
+                        </span>
+                        <span className="block truncate text-xs text-stone-600">
+                          {status}
+                          {isIncluded && reason ? ` · ${reason}` : ""}
+                        </span>
+                      </button>
+                      <label className="flex items-center gap-1 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={isIncluded}
+                          aria-label={`${copy.include}: ${position.label}`}
+                          onChange={() =>
+                            setIncluded((current) => {
+                              const next = new Set(current);
+                              if (next.has(position.id))
+                                next.delete(position.id);
+                              else next.add(position.id);
+                              return next;
+                            })
+                          }
+                        />
+                        {copy.include}
+                      </label>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+          <section
+            aria-label={copy.inspector}
+            className="min-w-0 rounded border border-stone-200 p-3 max-[899px]:hidden"
+          >
+            <h3 className="mb-2 font-medium">
+              {selectedPosition?.label ?? copy.inspector}
+            </h3>
+            <div className="max-h-[34rem] min-w-0 overflow-y-auto">
+              {!mobileInspectorOpen && inspector}
+            </div>
+          </section>
+        </div>
       )}
+      <dialog
+        ref={mobileDialog}
+        aria-label={copy.inspector}
+        className="m-auto max-h-[90dvh] w-[min(96vw,46rem)] overflow-y-auto rounded border border-stone-300 p-4 backdrop:bg-black/40"
+        onClose={() => setMobileInspectorOpen(false)}
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="font-semibold">
+            {selectedPosition?.label ?? copy.inspector}
+          </h2>
+          <button type="button" onClick={() => setMobileInspectorOpen(false)}>
+            {copy.close}
+          </button>
+        </div>
+        {mobileInspectorOpen && inspector}
+      </dialog>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"

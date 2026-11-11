@@ -85,6 +85,10 @@ export const firstPublicationPreviewMessages = {
     audioComparisonBasis:
       "Equality is established only by the same media variant or equal canonical source SHA-256 values. A missing or stale source authority is not a comparison baseline.",
     tagDifferences: "Saved tag differences",
+    tagField: "Field",
+    tagNow: "Now",
+    tagAfter: "After",
+    noCurrent: "No CURRENT baseline",
     noTagDifferences: "No tag differences.",
     currentValue: "Current publication",
     calculatedValue: "Calculated",
@@ -250,6 +254,10 @@ export const firstPublicationPreviewMessages = {
     audioComparisonBasis:
       "Равенство устанавливается только при совпадении варианта носителя или равенстве SHA-256 канонического источника. Отсутствующие или устаревшие сведения об источнике не являются основой для сравнения.",
     tagDifferences: "Различия сохранённых тегов",
+    tagField: "Поле",
+    tagNow: "Сейчас",
+    tagAfter: "После",
+    noCurrent: "Нет исходной публикации CURRENT",
     noTagDifferences: "Различий тегов нет.",
     currentValue: "Текущая публикация",
     calculatedValue: "Расчёт",

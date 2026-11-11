@@ -46,6 +46,7 @@ const preview = {
     unsupported_audio_stream_count: 0,
   },
   source_candidates: [],
+  desired_tags: { TITLE: [" Track  ", "Second"], GENRE: [] },
   transform: { action: "copy", output_container: "flac" },
 } as unknown as LibraryFirstPublicationPreviewResponse;
 
@@ -256,6 +257,33 @@ it("prepares and confirms through the aggregate controller using its frozen iden
 });
 
 it("requires a fresh aggregate prepare after mode changes and allows explicit exclusion of unchanged CURRENT", async () => {
+  let currentPreviewCount = 0;
+  const sourceCandidates = [
+    {
+      audio_stream_count: 1,
+      codec: "FLAC",
+      language: "",
+      location_id: "location-1",
+      media_variant_id: "variant-1",
+      requires_explicit_stream_selection: false,
+      root_id: "root-1",
+      stream_index: 0,
+      title: "Candidate One",
+      unsupported_audio_stream_count: 0,
+    },
+    {
+      audio_stream_count: 1,
+      codec: "FLAC",
+      language: "",
+      location_id: "location-1",
+      media_variant_id: "variant-2",
+      requires_explicit_stream_selection: false,
+      root_id: "root-1",
+      stream_index: 1,
+      title: "Candidate Two",
+      unsupported_audio_stream_count: 0,
+    },
+  ];
   api.getLibraryFirstPublicationPreview.mockImplementation(
     async (
       _releaseId: string,
@@ -263,7 +291,10 @@ it("requires a fresh aggregate prepare after mode changes and allows explicit ex
       params: { mode?: string },
     ) =>
       positionID === "first"
-        ? { status: 200, data: preview }
+        ? {
+            status: 200,
+            data: { ...preview, source_candidates: sourceCandidates },
+          }
         : {
             status: 200,
             data: {
@@ -278,12 +309,27 @@ it("requires a fresh aggregate prepare after mode changes and allows explicit ex
                 resolved_components: [],
                 resolved_matches: true,
                 status: "matches",
-                tag_differences: [],
+                tag_differences: [
+                  {
+                    key: "TITLE",
+                    current_present: true,
+                    current: ["Track", "First"],
+                    desired_present: true,
+                    desired: [" Track  ", "Second"],
+                  },
+                  {
+                    key: "GENRE",
+                    current_present: false,
+                    current: null,
+                    desired_present: true,
+                    desired: [],
+                  },
+                ],
               },
               confirmation_capability: {
                 kind: "retained_same_path",
-                status: "unchanged",
-                reason_codes: ["content_unchanged"],
+                status: currentPreviewCount++ === 0 ? "ready" : "unchanged",
+                reason_codes: [],
                 current_generation: "generation-1",
               },
               mode: params.mode ?? "ordinary",
@@ -311,12 +357,32 @@ it("requires a fresh aggregate prepare after mode changes and allows explicit ex
   await waitFor(() =>
     expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(2),
   );
-  await waitFor(() => expect(confirm).toBeEnabled());
   const aggregate = screen.getByRole("region", {
     name: "Общий предпросмотр публикации",
   });
-  expect(aggregate).toHaveTextContent(/Создать\s*1/);
-  expect(aggregate).toHaveTextContent(/Без изменений\s*1/);
+  await waitFor(() => expect(aggregate).toHaveTextContent(/Обновить\s*1/));
+  expect(aggregate).not.toHaveTextContent(/Создать\s*1/);
+  fireEvent.click(screen.getByRole("button", { name: "First position" }));
+  expect(aggregate).toHaveTextContent("Нет исходной публикации CURRENT");
+  expect(aggregate).toHaveTextContent('[" Track ","Second"]');
+  const candidateOne = screen.getByRole("radio", { name: /Candidate One/ });
+  fireEvent.click(candidateOne);
+  await waitFor(() =>
+    expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(3),
+  );
+  await waitFor(() => expect(aggregate).toHaveTextContent(/Создать\s*1/));
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: /Candidate One/ })).toBeChecked(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Current position" }));
+  fireEvent.click(screen.getByRole("button", { name: "First position" }));
+  expect(screen.getByRole("radio", { name: /Candidate One/ })).toBeChecked();
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(3);
+  await waitFor(() => expect(confirm).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Current position" }));
+  expect(aggregate).toHaveTextContent('["Track","First"]');
+  expect(aggregate).toHaveTextContent("отсутствует");
+  expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(3);
   expect(api.getLibraryFirstPublicationPreview).toHaveBeenNthCalledWith(
     1,
     "release-1",
@@ -339,7 +405,7 @@ it("requires a fresh aggregate prepare after mode changes and allows explicit ex
     screen.getByRole("button", { name: "Подготовить предпросмотр" }),
   );
   await waitFor(() =>
-    expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(4),
+    expect(api.getLibraryFirstPublicationPreview).toHaveBeenCalledTimes(5),
   );
   fireEvent.click(
     screen.getByRole("checkbox", {
@@ -347,6 +413,13 @@ it("requires a fresh aggregate prepare after mode changes and allows explicit ex
     }),
   );
   await waitFor(() => expect(aggregate).toHaveTextContent(/Пропущено\s*1/));
+  fireEvent.click(screen.getByRole("button", { name: "Current position" }));
+  expect(aggregate).toHaveTextContent("[]");
+  expect(aggregate).toHaveTextContent("отсутствует");
+  expect(aggregate).toHaveTextContent(/Пропущено\s*1/);
+  expect(aggregate).toHaveTextContent(
+    "Выбранный источник не изменит текущую публикацию; действие недоступно.",
+  );
   expect(confirm).toBeEnabled();
   fireEvent.click(
     screen.getByRole("checkbox", {
@@ -354,7 +427,7 @@ it("requires a fresh aggregate prepare after mode changes and allows explicit ex
     }),
   );
   expect(confirm).toBeEnabled();
-  expect(within(aggregate).getByText("Без изменений")).toBeInTheDocument();
+  expect(within(aggregate).getAllByText("Без изменений")).toHaveLength(2);
   fireEvent.click(confirm);
   await waitFor(() =>
     expect(api.startLibraryFirstPublication).toHaveBeenCalledTimes(1),
