@@ -89,8 +89,9 @@ export function catalogArtistMatches(
 	hasAudio: (track: CatalogTrack) => boolean,
 ) {
 	const search = normalizeCatalogSearch(query);
-	const matchingRelease = artistReleases(releases, artist.id).some(
-		(release) => {
+	const matchingRelease = releases
+		.filter((release) => release.artistId === artist.id)
+		.some((release) => {
 			return (
 				filter === "all" ||
 				release.tracks.some((track) =>
@@ -101,8 +102,7 @@ export function catalogArtistMatches(
 							: !hasAudio(track),
 				)
 			);
-		},
-	);
+		});
 	const hasMissingGroup = missingGroups.some(
 		(group) => group.artistId === artist.id,
 	);

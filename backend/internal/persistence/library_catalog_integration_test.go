@@ -71,6 +71,13 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 			}
 		}
 	}
+	guestArtistID := uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO local_artist(id,name,metadata) VALUES (?, 'AAA Guest Artist', '{"genres":[]}')`, guestArtistID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO track_artist(track_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,'AAA Guest Artist','')`, fixtures[0].track, guestArtistID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
 	published := fixtures[1]
 	if _, err := db.NewRaw(`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?, ?, ?, 'track.flac', '{}', '{}', '{}', '{}', 1, now())`, published.position, uuid.New(), uuid.New()).Exec(ctx); err != nil {
 		t.Fatal(err)
@@ -218,6 +225,13 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	if artistPage.Total != 2 {
 		t.Fatalf("artist list after accepted group projections = %#v", artistPage)
 	}
+	artistPage, err = repository.ReadLibraryArtists(ctx, LibraryCatalogRequest{Limit: 1, Offset: 1, Publication: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artistPage.Total != 2 || len(artistPage.Items) != 1 || artistPage.Items[0].ID != artistID {
+		t.Fatalf("artist list pagination with track-only guest = %#v", artistPage)
+	}
 	var listedArtist *LibraryCatalogArtist
 	for i := range artistPage.Items {
 		if artistPage.Items[i].ID == artistID {
@@ -299,6 +313,15 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	}
 	if positions.Total != 2 || len(positions.Items) != 2 {
 		t.Fatalf("all positions page = %#v", positions)
+	}
+	var guestCreditPreserved bool
+	for _, credit := range positions.Items[0].Artists {
+		if credit.ArtistID != nil && *credit.ArtistID == guestArtistID && credit.CreditName == "AAA Guest Artist" {
+			guestCreditPreserved = true
+		}
+	}
+	if !guestCreditPreserved {
+		t.Fatalf("track-only guest credit missing from position: %#v", positions.Items[0].Artists)
 	}
 	positions, err = repository.ReadLibraryPositions(ctx, LibraryCatalogRequest{Limit: 50, Publication: "published"})
 	if err != nil {

@@ -145,7 +145,7 @@ it("searches normalized artist, credit, track, and complete absent-edition metad
 			"all",
 			() => false,
 		),
-	).toBe(true);
+	).toBe(false);
 	expect(
 		normalizeCatalogSearch(albumSearchText(creditedRelease, artists)).includes(
 			normalizeCatalogSearch(" Guest   Artist "),
