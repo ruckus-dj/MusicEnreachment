@@ -319,4 +319,35 @@ describe("incoming manual group review", () => {
       ).getByText("folder/02.flac остаётся во входящих"),
     ).toBeInTheDocument();
   });
+
+  it("inspects a file and position without changing assignment drafts", async () => {
+    setup();
+    await chooseRelease();
+
+    const fileCard = screen
+      .getAllByLabelText("Назначение")[1]
+      .closest("article");
+    expect(fileCard).not.toBeNull();
+    fireEvent.click(
+      within(fileCard as HTMLElement).getByRole("button", {
+        name: /folder\/02\.flac/,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Диск 2 · трек 2 · Открытие (повтор записи)",
+      }),
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Осмотр: folder/02.flac · Диск 2 · трек 2 · Открытие (повтор записи)",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen
+        .getAllByLabelText<HTMLSelectElement>("Назначение")
+        .map((select) => select.value),
+    ).toEqual(["", ""]);
+  });
 });

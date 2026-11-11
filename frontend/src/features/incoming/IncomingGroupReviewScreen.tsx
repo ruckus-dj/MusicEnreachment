@@ -152,6 +152,8 @@ function IncomingGroupReviewContent() {
   const groups = groupsQuery.data?.groups ?? [];
   const [groupId, setGroupId] = useState("");
   const [selectedReleaseId, setSelectedReleaseId] = useState("");
+  const [inspectedMemberId, setInspectedMemberId] = useState("");
+  const [inspectedTrackId, setInspectedTrackId] = useState("");
   const [preparedReleaseMBID, setPreparedReleaseMBID] = useState("");
   const [searchReleaseSelections, setSearchReleaseSelections] = useState<
     Record<string, string>
@@ -651,12 +653,33 @@ function IncomingGroupReviewContent() {
     );
   }
 
+  const inspectedFileMemberId = memberIds.includes(inspectedMemberId)
+    ? inspectedMemberId
+    : (memberIds[0] ?? "");
+  const inspectedPosition =
+    release?.positions?.find(
+      (position) => position.track_id === inspectedTrackId,
+    ) ??
+    [...(release?.positions ?? [])].sort(
+      (a, b) => a.medium - b.medium || a.position - b.position,
+    )[0];
+  const inspectedFile = groupFiles.find(
+    (file) => file.variant_id === inspectedFileMemberId,
+  );
+  const inspectedSavedFacts = proposalFiles.get(inspectedFileMemberId);
+  const inspectedCandidate = review?.candidates?.find(
+    (item) =>
+      item.file_member_id === inspectedFileMemberId &&
+      (item.release_id === release?.release_id ||
+        item.release_id === release?.provider_release_id),
+  );
+
   return (
     <section
-      className="mx-auto max-w-7xl space-y-5"
+      className="incoming-screen mx-auto max-w-[1800px] space-y-5 min-[1400px]:flex min-[1400px]:h-full min-[1400px]:min-h-0 min-[1400px]:flex-col min-[1400px]:overflow-y-auto"
       aria-labelledby="incoming-title"
     >
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
         <div>
           <h1 id="incoming-title" className="text-2xl font-semibold">
             Разбор входящих групп
@@ -691,199 +714,208 @@ function IncomingGroupReviewContent() {
 
       {groups.length > 0 ? (
         <>
-          {groupsQuery.data ? (
-            <details className="rounded border border-stone-300 p-3">
-              <summary className="cursor-pointer font-semibold">
-                Объединить, разделить или переместить файлы групп
-              </summary>
-              <IncomingGroupingEditor
-                snapshot={groupsQuery.data}
-                onConfirmed={async (snapshot) => {
-                  invalidateIntent();
-                  setPreview(undefined);
-                  setConfirmIntent(undefined);
-                  setAuthorityIntent(undefined);
-                  queryClient.setQueryData(
-                    getGetIncomingGroupsQueryKey(),
-                    snapshot,
-                  );
-                  await queryClient.invalidateQueries({
-                    queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
-                  });
-                }}
-              />
-            </details>
-          ) : null}
-          {groupsQuery.data ? (
-            <IncomingGroupsOverview
-              snapshot={groupsQuery.data}
-              selectedGroupId={groupId}
-              review={review}
-              onSelect={changeGroup}
-            />
-          ) : null}
-          <label className="block max-w-2xl text-sm font-medium">
-            Входящая группа
-            <select
-              className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
-              value={groupId}
-              onChange={(event) => changeGroup(event.target.value)}
-            >
-              {groups.map((item, index) => (
-                <option key={item.id} value={item.id}>
-                  Группа {index + 1} · {item.members?.length ?? 0} файлов
-                  {item.manual ? " · вручную сгруппирована" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {group && groupsQuery.data ? (
-            <details className="rounded border border-stone-300 p-3">
-              <summary className="cursor-pointer font-semibold">
-                Локальный релиз без связей с провайдерами
-              </summary>
-              <LocalReleaseEditor
-                group={group}
-                files={groupsQuery.data.files ?? []}
-                authorityRevision={review?.authority_revision}
-                onConfirmed={async () => {
-                  invalidateIntent();
-                  setPreview(undefined);
-                  setConfirmIntent(undefined);
-                  setAuthorityIntent(undefined);
-                  await Promise.all([
-                    queryClient.invalidateQueries({
-                      queryKey: getGetIncomingGroupsQueryKey(),
-                    }),
-                    queryClient.invalidateQueries({
+          <div className="space-y-5 min-[1400px]:max-h-[30dvh] min-[1400px]:shrink-0 min-[1400px]:overflow-y-auto">
+            {groupsQuery.data ? (
+              <details className="rounded border border-stone-300 p-3">
+                <summary className="cursor-pointer font-semibold">
+                  Объединить, разделить или переместить файлы групп
+                </summary>
+                <IncomingGroupingEditor
+                  snapshot={groupsQuery.data}
+                  onConfirmed={async (snapshot) => {
+                    invalidateIntent();
+                    setPreview(undefined);
+                    setConfirmIntent(undefined);
+                    setAuthorityIntent(undefined);
+                    queryClient.setQueryData(
+                      getGetIncomingGroupsQueryKey(),
+                      snapshot,
+                    );
+                    await queryClient.invalidateQueries({
                       queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
-                    }),
-                  ]);
-                }}
+                    });
+                  }}
+                />
+              </details>
+            ) : null}
+            {groupsQuery.data ? (
+              <IncomingGroupsOverview
+                snapshot={groupsQuery.data}
+                selectedGroupId={groupId}
+                review={review}
+                onSelect={changeGroup}
               />
-            </details>
-          ) : null}
-
-          {reviewQuery.isLoading ? (
-            <p role="status">Чтение сохранённой оценки…</p>
-          ) : null}
-          {reviewQuery.isError ? (
-            <div role="alert" className="space-y-2">
-              <p>
-                {errorText(
-                  reviewQuery.error,
-                  "Оценка сопоставления недоступна.",
-                )}
-              </p>
-              <AppButton
-                isDisabled={sameGroupInFlight}
-                onPress={() => {
-                  void reviewQuery.refetch();
-                }}
+            ) : null}
+            <label className="block max-w-2xl text-sm font-medium">
+              Входящая группа
+              <select
+                className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
+                value={groupId}
+                onChange={(event) => changeGroup(event.target.value)}
               >
-                Повторить чтение
-              </AppButton>
-            </div>
-          ) : null}
-          {review && !review.evaluated ? (
-            <p className="rounded border border-amber-500 bg-amber-50 p-3">
-              Оценка ещё не выполнялась. Автоматическое сопоставление здесь не
-              запускается.
-            </p>
-          ) : null}
-          {review ? (
-            <section
-              className="rounded border border-stone-300 bg-white p-4"
-              aria-labelledby="authority-title"
-            >
-              <h2 id="authority-title" className="font-semibold">
-                Текущий режим управления сопоставлением
-              </h2>
-              <p className="mt-1 text-sm">
-                Режим: <strong>{review.authority_mode}</strong> · ревизия:{" "}
-                <code>{review.authority_revision}</code>
-              </p>
-              <p className="mt-1 text-sm">
-                Сохранённая текущая оценка и её доказательства показаны отдельно
-                ниже. Удаление источников выполняется вне этого экрана.
-              </p>
-              {authorityNotice ? (
-                <p
-                  role="status"
-                  className="mt-2 rounded border border-green-700 p-3"
-                >
-                  {authorityNotice}
+                {groups.map((item, index) => (
+                  <option key={item.id} value={item.id}>
+                    Группа {index + 1} · {item.members?.length ?? 0} файлов
+                    {item.manual ? " · вручную сгруппирована" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {group && groupsQuery.data ? (
+              <details className="rounded border border-stone-300 p-3">
+                <summary className="cursor-pointer font-semibold">
+                  Локальный релиз без связей с провайдерами
+                </summary>
+                <LocalReleaseEditor
+                  group={group}
+                  files={groupsQuery.data.files ?? []}
+                  authorityRevision={review?.authority_revision}
+                  onConfirmed={async () => {
+                    invalidateIntent();
+                    setPreview(undefined);
+                    setConfirmIntent(undefined);
+                    setAuthorityIntent(undefined);
+                    await Promise.all([
+                      queryClient.invalidateQueries({
+                        queryKey: getGetIncomingGroupsQueryKey(),
+                      }),
+                      queryClient.invalidateQueries({
+                        queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
+                      }),
+                    ]);
+                  }}
+                />
+              </details>
+            ) : null}
+
+            {reviewQuery.isLoading ? (
+              <p role="status">Чтение сохранённой оценки…</p>
+            ) : null}
+            {reviewQuery.isError ? (
+              <div role="alert" className="space-y-2">
+                <p>
+                  {errorText(
+                    reviewQuery.error,
+                    "Оценка сопоставления недоступна.",
+                  )}
                 </p>
-              ) : null}
-              {review.authority_mode === "manual" ? (
-                <div className="mt-3">
-                  <AppButton
-                    isDisabled={sameGroupInFlight}
-                    onPress={() => void performAuthorityAction()}
-                  >
-                    {currentAuthorityIntent?.action === "automatic"
-                      ? "Повторить возврат к автоматическому сопоставлению"
-                      : "Вернуть к автоматическому сопоставлению"}
-                  </AppButton>
-                </div>
-              ) : null}
-              {error.includes("изменились") ? (
                 <AppButton
                   isDisabled={sameGroupInFlight}
                   onPress={() => {
-                    setAuthorityIntent(undefined);
-                    void Promise.all([
-                      groupsQuery.refetch(),
-                      reviewQuery.refetch(),
-                    ]);
+                    void reviewQuery.refetch();
                   }}
                 >
-                  Обновить данные группы и режима
+                  Повторить чтение
                 </AppButton>
-              ) : null}
-            </section>
-          ) : null}
-          {review?.evaluated && !review.proposal_available ? (
-            <p className="rounded border border-amber-500 bg-amber-50 p-3">
-              Сохраненные данные предложения недоступны или неполны. Ручной
-              просмотр для этой оценки невозможен.
-            </p>
-          ) : null}
+              </div>
+            ) : null}
+            {review && !review.evaluated ? (
+              <p className="rounded border border-amber-500 bg-amber-50 p-3">
+                Оценка ещё не выполнялась. Автоматическое сопоставление здесь не
+                запускается.
+              </p>
+            ) : null}
+            {review ? (
+              <section
+                className="rounded border border-stone-300 bg-white p-4"
+                aria-labelledby="authority-title"
+              >
+                <h2 id="authority-title" className="font-semibold">
+                  Текущий режим управления сопоставлением
+                </h2>
+                <p className="mt-1 text-sm">
+                  Режим: <strong>{review.authority_mode}</strong> · ревизия:{" "}
+                  <code>{review.authority_revision}</code>
+                </p>
+                <p className="mt-1 text-sm">
+                  Сохранённая текущая оценка и её доказательства показаны
+                  отдельно ниже. Удаление источников выполняется вне этого
+                  экрана.
+                </p>
+                {authorityNotice ? (
+                  <p
+                    role="status"
+                    className="mt-2 rounded border border-green-700 p-3"
+                  >
+                    {authorityNotice}
+                  </p>
+                ) : null}
+                {review.authority_mode === "manual" ? (
+                  <div className="mt-3">
+                    <AppButton
+                      isDisabled={sameGroupInFlight}
+                      onPress={() => void performAuthorityAction()}
+                    >
+                      {currentAuthorityIntent?.action === "automatic"
+                        ? "Повторить возврат к автоматическому сопоставлению"
+                        : "Вернуть к автоматическому сопоставлению"}
+                    </AppButton>
+                  </div>
+                ) : null}
+                {error.includes("изменились") ? (
+                  <AppButton
+                    isDisabled={sameGroupInFlight}
+                    onPress={() => {
+                      setAuthorityIntent(undefined);
+                      void Promise.all([
+                        groupsQuery.refetch(),
+                        reviewQuery.refetch(),
+                      ]);
+                    }}
+                  >
+                    Обновить данные группы и режима
+                  </AppButton>
+                ) : null}
+              </section>
+            ) : null}
+            {review?.evaluated && !review.proposal_available ? (
+              <p className="rounded border border-amber-500 bg-amber-50 p-3">
+                Сохраненные данные предложения недоступны или неполны. Ручной
+                просмотр для этой оценки невозможен.
+              </p>
+            ) : null}
 
-          {group ? (
-            <>
-              <ManualSearchPicker
-                groupId={groupId}
-                groupRevision={group.revision}
-                disabled={!review || busy || authorityBusy || sameGroupInFlight}
-                onSelectRelease={(releaseId) =>
-                  setSearchReleaseSelections((current) => ({
-                    ...current,
-                    [groupId]: releaseId,
-                  }))
-                }
-              />
-              <ManualReleasePicker
-                groupId={groupId}
-                groupRevision={group.revision}
-                evaluationRevision={review?.evaluation_revision || undefined}
-                disabled={!review || busy || authorityBusy || sameGroupInFlight}
-                searchRelease={searchReleaseSelections[groupId]}
-                onPrepared={setPreparedReleaseMBID}
-              />
-            </>
-          ) : null}
-          {review?.evaluated &&
-          review.proposal_available &&
-          review.releases?.length === 0 ? (
-            <p className="rounded border border-stone-300 p-3">
-              Для этой оценки нет доступных макетов изданий.
-            </p>
-          ) : null}
+            {group && !(review?.evaluated && review.proposal_available) ? (
+              <section
+                className="grid gap-3 rounded border border-stone-300 bg-white p-3 lg:grid-cols-2"
+                aria-label="Поиск и подготовка издания"
+              >
+                <ManualSearchPicker
+                  groupId={groupId}
+                  groupRevision={group.revision}
+                  disabled={
+                    !review || busy || authorityBusy || sameGroupInFlight
+                  }
+                  onSelectRelease={(releaseId) =>
+                    setSearchReleaseSelections((current) => ({
+                      ...current,
+                      [groupId]: releaseId,
+                    }))
+                  }
+                />
+                <ManualReleasePicker
+                  groupId={groupId}
+                  groupRevision={group.revision}
+                  evaluationRevision={review?.evaluation_revision || undefined}
+                  disabled={
+                    !review || busy || authorityBusy || sameGroupInFlight
+                  }
+                  searchRelease={searchReleaseSelections[groupId]}
+                  onPrepared={setPreparedReleaseMBID}
+                />
+              </section>
+            ) : null}
 
-          {review?.evaluated && review.proposal_available ? (
-            <>
+            {review?.evaluated &&
+            review.proposal_available &&
+            review.releases?.length === 0 ? (
+              <p className="rounded border border-stone-300 p-3">
+                Для этой оценки нет доступных макетов изданий.
+              </p>
+            ) : null}
+
+            {review?.evaluated && review.proposal_available ? (
               <section
                 className="rounded border border-stone-300 bg-white p-4"
                 aria-label="Сводка входящей группы"
@@ -953,22 +985,57 @@ function IncomingGroupReviewContent() {
                   Черновик назначений не изменяет эти связи до подтверждения.
                 </p>
               </section>
+            ) : null}
+          </div>
+
+          {review?.evaluated && review.proposal_available ? (
+            <div
+              data-matching-workspace
+              className="grid min-h-0 gap-3 min-[1400px]:min-h-[360px] min-[1400px]:flex-1 min-[1400px]:grid-cols-[minmax(320px,.85fr)_minmax(480px,2.1fr)_minmax(250px,.8fr)] min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))]"
+            >
               <section
-                className="rounded border border-stone-300 bg-white p-4"
-                aria-labelledby="evaluation-title"
+                data-matching-candidates
+                className="min-w-0 space-y-3 rounded border border-stone-300 bg-white p-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto"
+                aria-labelledby="matching-search-title"
               >
-                <h2 id="evaluation-title" className="font-semibold">
-                  Сохраненная оценка
+                <h2 id="matching-search-title" className="font-semibold">
+                  Поиск и файлы
                 </h2>
-                <p className="mt-1 text-sm">
-                  Ревизия:{" "}
-                  <code>{review.evaluation_revision || "не указана"}</code>
-                </p>
+                {group ? (
+                  <>
+                    <ManualSearchPicker
+                      groupId={groupId}
+                      groupRevision={group.revision}
+                      disabled={
+                        !review || busy || authorityBusy || sameGroupInFlight
+                      }
+                      onSelectRelease={(releaseId) =>
+                        setSearchReleaseSelections((current) => ({
+                          ...current,
+                          [groupId]: releaseId,
+                        }))
+                      }
+                    />
+                    <ManualReleasePicker
+                      groupId={groupId}
+                      groupRevision={group.revision}
+                      evaluationRevision={
+                        review?.evaluation_revision || undefined
+                      }
+                      disabled={
+                        !review || busy || authorityBusy || sameGroupInFlight
+                      }
+                      searchRelease={searchReleaseSelections[groupId]}
+                      onPrepared={setPreparedReleaseMBID}
+                    />
+                  </>
+                ) : null}
+                <h3 className="font-medium">Сохраненная оценка</h3>
                 <p className="text-sm">
-                  Участников группы: {memberIds.length}. Ребра-кандидаты не
-                  считаются назначениями и не заполнены автоматически.
+                  Ревизия: {review.evaluation_revision || "не указана"} ·
+                  участников: {memberIds.length}
                 </p>
-                <label className="mt-3 block max-w-2xl text-sm font-medium">
+                <label className="block text-sm font-medium">
                   Издание (выбор вручную)
                   <select
                     disabled={busy || authorityBusy || sameGroupInFlight}
@@ -988,217 +1055,102 @@ function IncomingGroupReviewContent() {
                   </select>
                 </label>
                 {savedSelectedId && selectedReleaseId === savedSelectedId ? (
-                  <p className="mt-2 text-sm">
+                  <p className="text-sm">
                     Это издание сохранено в оценке сервера.
                   </p>
                 ) : null}
+                <h3 className="font-medium">Сохранённые кандидаты</h3>
                 {review.candidates?.length ? (
-                  <div className="mt-3 overflow-x-auto">
-                    <table className="w-full border-collapse text-left text-sm">
-                      <caption className="mb-2 text-left font-medium">
-                        Уверенность издания отдельно от уверенности назначений
-                      </caption>
-                      <thead>
-                        <tr>
-                          <th className="border-b p-2">Файл</th>
-                          <th className="border-b p-2">Издание-кандидат</th>
-                          <th className="border-b p-2">Уверенность издания</th>
-                          <th className="border-b p-2">Уверенность позиции</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {review.candidates.flatMap((candidate) =>
-                          candidate.positions?.length
-                            ? candidate.positions.map((position) => (
-                                <tr
-                                  key={`${candidate.file_member_id}-${position.track_id}`}
-                                >
-                                  <td className="border-b p-2">
-                                    {fileLabel(
-                                      candidate.file_member_id,
-                                      memberIds.indexOf(
-                                        candidate.file_member_id,
-                                      ),
-                                    )}
-                                  </td>
-                                  <td className="border-b p-2">
-                                    {releases.find(
-                                      (item) =>
-                                        item.release_id ===
-                                          candidate.release_id ||
-                                        item.provider_release_id ===
-                                          candidate.release_id,
-                                    )?.title ??
-                                      "Издание вне сохранённого макета"}
-                                  </td>
-                                  <td className="border-b p-2">
-                                    {Number.isFinite(
-                                      candidate.release_confidence,
-                                    )
-                                      ? candidate.release_confidence
-                                      : "неизвестно"}
-                                  </td>
-                                  <td className="border-b p-2">
-                                    {position.assignment_confidence == null
-                                      ? "неизвестно"
-                                      : position.assignment_confidence}
-                                  </td>
-                                </tr>
-                              ))
-                            : [
-                                <tr
-                                  key={`${candidate.file_member_id}-${candidate.release_id}`}
-                                >
-                                  <td className="border-b p-2">
-                                    {fileLabel(
-                                      candidate.file_member_id,
-                                      memberIds.indexOf(
-                                        candidate.file_member_id,
-                                      ),
-                                    )}
-                                  </td>
-                                  <td className="border-b p-2">
-                                    {releases.find(
-                                      (item) =>
-                                        item.release_id ===
-                                          candidate.release_id ||
-                                        item.provider_release_id ===
-                                          candidate.release_id,
-                                    )?.title ??
-                                      "Издание вне сохранённого макета"}
-                                  </td>
-                                  <td className="border-b p-2">
-                                    {Number.isFinite(
-                                      candidate.release_confidence,
-                                    )
-                                      ? candidate.release_confidence
-                                      : "неизвестно"}
-                                  </td>
-                                  <td className="border-b p-2">неизвестно</td>
-                                </tr>,
-                              ],
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                  <ul className="space-y-2 text-sm">
+                    {review.candidates.flatMap((candidate) =>
+                      candidate.positions?.length
+                        ? candidate.positions.map((position) => (
+                            <li
+                              key={`${candidate.file_member_id}-${position.track_id}`}
+                              className="rounded border border-stone-200 p-2"
+                            >
+                              <strong>
+                                {fileLabel(
+                                  candidate.file_member_id,
+                                  memberIds.indexOf(candidate.file_member_id),
+                                )}
+                              </strong>
+                              <p>
+                                {releases.find(
+                                  (item) =>
+                                    item.release_id === candidate.release_id ||
+                                    item.provider_release_id ===
+                                      candidate.release_id,
+                                )?.title ?? "Издание вне сохранённого макета"}
+                              </p>
+                              <p>
+                                Уверенность издания:{" "}
+                                {Number.isFinite(candidate.release_confidence)
+                                  ? candidate.release_confidence
+                                  : "неизвестно"}{" "}
+                                · позиции:{" "}
+                                {position.displayed_number ||
+                                  position.position + 1}{" "}
+                                —{" "}
+                                {position.assignment_confidence ?? "неизвестно"}
+                              </p>
+                            </li>
+                          ))
+                        : [
+                            <li
+                              key={`${candidate.file_member_id}-${candidate.release_id}`}
+                              className="rounded border border-stone-200 p-2"
+                            >
+                              <strong>
+                                {fileLabel(
+                                  candidate.file_member_id,
+                                  memberIds.indexOf(candidate.file_member_id),
+                                )}
+                              </strong>
+                              <p>
+                                {releases.find(
+                                  (item) =>
+                                    item.release_id === candidate.release_id ||
+                                    item.provider_release_id ===
+                                      candidate.release_id,
+                                )?.title ?? "Издание вне сохранённого макета"}
+                              </p>
+                              <p>
+                                Уверенность издания:{" "}
+                                {Number.isFinite(candidate.release_confidence)
+                                  ? candidate.release_confidence
+                                  : "неизвестно"}
+                              </p>
+                            </li>,
+                          ],
+                    )}
+                  </ul>
                 ) : (
-                  <p className="mt-3 text-sm">
-                    Сохраненных ребер-кандидатов нет.
-                  </p>
+                  <p className="text-sm">Сохранённых рёбер-кандидатов нет.</p>
                 )}
               </section>
 
               {release ? (
                 <section
-                  className="rounded border border-stone-300 bg-white p-4"
-                  aria-labelledby="layout-title"
+                  data-matching-positions
+                  className="min-w-0 rounded border border-stone-300 bg-white p-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto"
+                  aria-labelledby="assignment-board-title"
                 >
-                  <h2 id="layout-title" className="font-semibold">
-                    Макет издания: {release.title}
+                  <h2 id="assignment-board-title" className="font-semibold">
+                    Позиции издания · {release.title}
                   </h2>
-                  <p className="text-sm">
+                  <p className="mt-1 text-sm text-stone-700">
+                    Перетащите свободный файл на позицию или выберите назначение
+                    в списке файла. Несколько файлов могут быть назначены одной
+                    позиции.
+                  </p>
+                  <p className="mt-1 text-sm text-stone-700">
                     {release.tracklist_complete
                       ? "Список позиций полный"
                       : "Список позиций помечен как неполный"}{" "}
                     · {release.positions?.length ?? 0} позиций
                   </p>
-                  <ol className="mt-3 grid gap-2 md:grid-cols-2">
-                    {[...(release.positions ?? [])]
-                      .sort(
-                        (a, b) =>
-                          a.medium - b.medium ||
-                          a.position - b.position ||
-                          a.track_id.localeCompare(b.track_id),
-                      )
-                      .map((position) => (
-                        <li
-                          key={position.track_id}
-                          className="rounded border border-stone-200 p-2 text-sm"
-                        >
-                          {positionLabel(position)}
-                          <TrackTagOverrides
-                            title={positionLabel(position)}
-                            trackId={position.track_id}
-                            override={
-                              tagOverridesByTrack[position.track_id] ??
-                              emptyTrackTagOverride()
-                            }
-                            disabled={
-                              busy || authorityBusy || sameGroupInFlight
-                            }
-                            onChange={(override) =>
-                              updateTrackTagOverride(
-                                position.track_id,
-                                override,
-                              )
-                            }
-                          />
-                        </li>
-                      ))}
-                  </ol>
-                </section>
-              ) : null}
-
-              {release ? (
-                <section
-                  className="rounded border border-stone-300 bg-white p-4"
-                  aria-labelledby="assignment-board-title"
-                >
-                  <h2 id="assignment-board-title" className="font-semibold">
-                    Доска назначений
-                  </h2>
-                  <p className="mt-1 text-sm text-stone-700">
-                    Перетащите файл из свободного пула на позицию. Клавиатурное
-                    назначение доступно в списке «Назначение» у каждого файла.
-                    Позиции допускают несколько файлов.
-                  </p>
-                  <h3 className="mt-3 font-medium">Свободные файлы</h3>
-                  <ul className="mt-2 flex flex-wrap gap-2">
-                    {memberIds
-                      .filter((memberId) => !assignmentsByMember[memberId])
-                      .map((memberId) => {
-                        const file = groupFiles.find(
-                          (item) => item.variant_id === memberId,
-                        );
-                        const path = file?.locations?.[0]?.relative_path;
-                        return (
-                          <li key={memberId}>
-                            <button
-                              type="button"
-                              draggable={
-                                !busy && !authorityBusy && !sameGroupInFlight
-                              }
-                              disabled={
-                                busy || authorityBusy || sameGroupInFlight
-                              }
-                              onDragStart={(event) => {
-                                event.dataTransfer.setData(
-                                  "text/plain",
-                                  memberId,
-                                );
-                                event.dataTransfer.effectAllowed = "move";
-                              }}
-                              className="rounded border border-stone-400 bg-stone-50 p-2 text-left text-sm"
-                            >
-                              {path ??
-                                fileLabel(
-                                  memberId,
-                                  memberIds.indexOf(memberId),
-                                )}
-                            </button>
-                          </li>
-                        );
-                      })}
-                    {memberIds.every(
-                      (memberId) => assignmentsByMember[memberId],
-                    ) ? (
-                      <li className="text-sm text-stone-600">
-                        Свободных файлов нет.
-                      </li>
-                    ) : null}
-                  </ul>
-                  <h3 className="mt-3 font-medium">Позиции издания</h3>
-                  <ol className="mt-2 grid gap-2 md:grid-cols-2">
+                  <ol className="mt-3 space-y-2">
                     {[...(release.positions ?? [])]
                       .sort(
                         (a, b) =>
@@ -1220,94 +1172,152 @@ function IncomingGroupReviewContent() {
                               if (memberIds.includes(memberId))
                                 assign(memberId, position.track_id);
                             }}
-                            className="min-h-20 rounded border border-dashed border-stone-400 p-2 text-sm"
+                            className={`min-h-24 rounded border border-dashed p-3 text-sm ${inspectedPosition?.track_id === position.track_id ? "border-stone-600 bg-stone-50" : "border-stone-400"}`}
                           >
-                            <p className="font-medium">
+                            <button
+                              type="button"
+                              className="text-left font-medium underline decoration-stone-400 underline-offset-2"
+                              aria-pressed={
+                                inspectedPosition?.track_id ===
+                                position.track_id
+                              }
+                              onClick={() =>
+                                setInspectedTrackId(position.track_id)
+                              }
+                            >
                               {positionLabel(position)}
-                            </p>
+                            </button>
                             <p className="mt-1 text-stone-700">
                               {occupants.length
                                 ? `Назначено файлов: ${occupants.length} · ${occupants.map((memberId) => fileLabel(memberId, memberIds.indexOf(memberId))).join(", ")}`
                                 : "Нет назначенных файлов"}
                             </p>
+                            <TrackTagOverrides
+                              title={positionLabel(position)}
+                              trackId={position.track_id}
+                              override={
+                                tagOverridesByTrack[position.track_id] ??
+                                emptyTrackTagOverride()
+                              }
+                              disabled={
+                                busy || authorityBusy || sameGroupInFlight
+                              }
+                              onChange={(override) =>
+                                updateTrackTagOverride(
+                                  position.track_id,
+                                  override,
+                                )
+                              }
+                            />
                           </li>
                         );
                       })}
                   </ol>
                 </section>
-              ) : null}
+              ) : (
+                <section className="rounded border border-stone-300 bg-white p-3">
+                  <h2 className="font-semibold">Позиции издания</h2>
+                  <p className="mt-2 text-sm">
+                    Выберите или подготовьте издание, чтобы показать его позиции
+                    и начать ручное назначение.
+                  </p>
+                </section>
+              )}
 
-              <section className="space-y-3" aria-labelledby="members-title">
-                <h2 id="members-title" className="text-lg font-semibold">
-                  Файлы и явные назначения
+              <section
+                data-matching-sources
+                className="min-w-0 space-y-3 rounded border border-stone-300 bg-white p-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto"
+                aria-labelledby="matching-sources-title"
+              >
+                <h2 id="matching-sources-title" className="font-semibold">
+                  Файлы источников
                 </h2>
+                <p className="text-sm text-stone-700">
+                  Перетащите свободный файл на позицию или назначьте его из
+                  этого списка с клавиатуры.
+                </p>
                 {memberIds.map((memberId, index) => {
                   const file = groupFiles.find(
                     (item) => item.variant_id === memberId,
                   );
                   const savedFacts = proposalFiles.get(memberId);
-                  const candidate = review.candidates?.find(
-                    (item) =>
-                      item.file_member_id === memberId &&
-                      (item.release_id === release?.release_id ||
-                        item.release_id === release?.provider_release_id),
+                  const isFree = !assignmentsByMember[memberId];
+                  const assignedPosition = release?.positions?.find(
+                    (position) =>
+                      position.track_id === assignmentsByMember[memberId],
                   );
                   return (
                     <article
                       key={memberId}
-                      className="rounded border border-stone-300 bg-white p-3"
+                      className="rounded border border-stone-200 p-3"
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <h3 className="font-medium">
-                            {fileLabel(memberId, index)}
-                          </h3>
-                          {file?.locations?.map((location) => (
-                            <p
-                              key={location.location_id}
-                              className="text-sm text-stone-700"
-                            >
-                              {location.relative_path}
-                            </p>
-                          ))}
-                          {!file?.locations?.length ? (
-                            <p className="text-sm text-stone-600">
-                              Путь файла не сохранён.
-                            </p>
-                          ) : null}
-                        </div>
-                        <label className="min-w-64 flex-1 text-sm font-medium">
-                          Назначение
-                          <select
-                            disabled={
-                              !release ||
-                              busy ||
-                              authorityBusy ||
-                              sameGroupInFlight
-                            }
-                            className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
-                            value={assignmentsByMember[memberId] ?? ""}
-                            onChange={(event) =>
-                              assign(memberId, event.target.value)
-                            }
+                      <button
+                        type="button"
+                        draggable={
+                          isFree &&
+                          !busy &&
+                          !authorityBusy &&
+                          !sameGroupInFlight
+                        }
+                        disabled={busy || authorityBusy || sameGroupInFlight}
+                        aria-pressed={inspectedFileMemberId === memberId}
+                        onClick={() => setInspectedMemberId(memberId)}
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData("text/plain", memberId);
+                          event.dataTransfer.effectAllowed = "move";
+                        }}
+                        className={`w-full rounded border p-2 text-left text-sm ${inspectedFileMemberId === memberId ? "border-stone-600 bg-stone-50" : "border-stone-400 bg-stone-50"}`}
+                      >
+                        <strong className="block">
+                          {fileLabel(memberId, index)}
+                        </strong>
+                        {file?.locations?.map((location) => (
+                          <span
+                            key={location.location_id}
+                            className="block text-stone-700"
                           >
-                            <option value="">
-                              Не назначать — оставить во входящих
+                            {location.relative_path}
+                          </span>
+                        ))}
+                        <span className="mt-1 block text-xs text-stone-700">
+                          {isFree
+                            ? "Свободен"
+                            : assignedPosition
+                              ? `Назначен: ${positionLabel(assignedPosition)}`
+                              : "Назначение вне выбранного издания"}
+                        </span>
+                      </button>
+                      <label className="mt-2 block text-sm font-medium">
+                        Назначение
+                        <select
+                          disabled={
+                            !release ||
+                            busy ||
+                            authorityBusy ||
+                            sameGroupInFlight
+                          }
+                          className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
+                          value={assignmentsByMember[memberId] ?? ""}
+                          onChange={(event) =>
+                            assign(memberId, event.target.value)
+                          }
+                        >
+                          <option value="">
+                            Не назначать — оставить во входящих
+                          </option>
+                          {(release?.positions ?? []).map((position) => (
+                            <option
+                              key={position.track_id}
+                              value={position.track_id}
+                            >
+                              {positionLabel(position)}
                             </option>
-                            {(release?.positions ?? []).map((position) => (
-                              <option
-                                key={position.track_id}
-                                value={position.track_id}
-                              >
-                                {positionLabel(position)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
+                          ))}
+                        </select>
+                      </label>
                       {savedFacts?.raw_tags ? (
                         <Metadata
-                          title="Сохраненные метаданные предложения"
+                          title="Сохранённые метаданные предложения"
                           tags={savedFacts.raw_tags}
                         />
                       ) : null}
@@ -1334,133 +1344,156 @@ function IncomingGroupReviewContent() {
                           </ul>
                         </div>
                       ) : null}
-                      <MatchingEvidenceInspector
-                        candidate={candidate}
-                        rawTags={savedFacts?.raw_tags ?? file?.tags}
-                      />
                     </article>
                   );
                 })}
+                {memberIds.length === 0 ? (
+                  <p className="text-sm text-stone-600">В группе нет файлов.</p>
+                ) : null}
               </section>
 
-              {error ? (
-                <p role="alert" className="rounded border border-red-600 p-3">
-                  {error}
-                </p>
-              ) : null}
-              {notice ? (
-                <p
-                  role="status"
-                  className="rounded border border-green-700 p-3"
-                >
-                  {notice}
-                </p>
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                <AppButton
-                  isDisabled={
-                    sameGroupInFlight || !release || !review.evaluation_revision
-                  }
-                  onPress={() => {
-                    void createPreview();
-                  }}
-                >
-                  {busy && !currentRetryIntent
-                    ? "Обработка…"
-                    : "Предпросмотр всего назначения"}
-                </AppButton>
-                {currentPreview ? (
-                  <AppButton
-                    isDisabled={sameGroupInFlight}
-                    onPress={() => {
-                      void confirm();
-                    }}
-                  >
-                    {currentRetryIntent
-                      ? "Повторить подтверждение"
-                      : "Явно подтвердить"}
-                  </AppButton>
-                ) : null}
-                {error.includes("изменились") ? (
-                  <AppButton
-                    isDisabled={sameGroupInFlight}
-                    onPress={() => {
-                      void reloadReview();
-                    }}
-                  >
-                    Обновить сохранённую оценку
-                  </AppButton>
-                ) : null}
-              </div>
-              {currentPreview ? (
-                <section
-                  className="rounded border border-sky-700 bg-white p-4"
-                  aria-labelledby="preview-title"
-                >
-                  <h2 id="preview-title" className="font-semibold">
-                    Предпросмотр полного назначения
+              <section
+                data-matching-inspector
+                className="min-w-0 rounded border border-stone-300 bg-white p-3 min-[1400px]:col-span-3 min-[1400px]:grid min-[1400px]:min-h-0 min-[1400px]:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] min-[1400px]:gap-3"
+                aria-labelledby="matching-inspector-title"
+              >
+                <div className="min-w-0 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto">
+                  <h2 id="matching-inspector-title" className="font-semibold">
+                    Осмотр:{" "}
+                    {inspectedFileMemberId
+                      ? fileLabel(
+                          inspectedFileMemberId,
+                          memberIds.indexOf(inspectedFileMemberId),
+                        )
+                      : "файл не выбран"}
+                    {inspectedPosition
+                      ? ` · ${positionLabel(inspectedPosition)}`
+                      : ""}
                   </h2>
-                  <p>
-                    Издание: {currentPreview.selected_release.title}. Назначено:{" "}
-                    {currentPreview.members?.filter(
-                      (member) => member.assignment,
-                    ).length ?? 0}
-                    ; пропущено:{" "}
-                    {currentPreview.omitted_member_ids?.length ?? 0}.
-                  </p>
-                  <p className="text-sm">
-                    Контрольный digest:{" "}
-                    <code>{currentPreview.preview_digest}</code>
-                  </p>
-                  {release?.positions?.some((position) => {
-                    const override = tagOverridesByTrack[position.track_id];
-                    return (
-                      Object.values(assignmentsByMember).includes(
-                        position.track_id,
-                      ) &&
-                      (override?.title.enabled || override?.artists.enabled)
-                    );
-                  }) ? (
-                    <div className="mt-2 text-sm">
-                      <h3 className="font-medium">
-                        Ручные метаданные, которые будут применены
-                      </h3>
-                      <ul className="list-inside list-disc">
-                        {release.positions?.map((position) => {
-                          const override =
-                            tagOverridesByTrack[position.track_id];
-                          if (
-                            !Object.values(assignmentsByMember).includes(
-                              position.track_id,
-                            ) ||
-                            (!override?.title.enabled &&
-                              !override?.artists.enabled)
-                          )
-                            return null;
-                          return (
-                            <li key={position.track_id}>
-                              {position.title}:{" "}
-                              {[
-                                override.title.enabled
-                                  ? `название «${override.title.value}»`
-                                  : undefined,
-                                override.artists.enabled
-                                  ? `исполнители ${override.artists.values.length ? override.artists.values.map((artist) => `«${artist.name}»`).join(", ") : "(пустой список)"}`
-                                  : undefined,
-                              ]
-                                .filter(Boolean)
-                                .join("; ")}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
+                  <MatchingEvidenceInspector
+                    candidate={inspectedCandidate}
+                    rawTags={
+                      inspectedSavedFacts?.raw_tags ?? inspectedFile?.tags
+                    }
+                  />
+                </div>
+                <aside
+                  data-matching-actions
+                  className="flex flex-wrap content-start items-start gap-2 min-[1400px]:min-h-0 min-[1400px]:min-w-[220px] min-[1400px]:flex-col min-[1400px]:overflow-y-auto"
+                  aria-label="Действия с назначением"
+                >
+                  {error ? (
+                    <p
+                      role="alert"
+                      className="w-full rounded border border-red-600 p-2 text-sm"
+                    >
+                      {error}
+                    </p>
                   ) : null}
-                </section>
-              ) : null}
-            </>
+                  {notice ? (
+                    <p
+                      role="status"
+                      className="w-full rounded border border-green-700 p-2 text-sm"
+                    >
+                      {notice}
+                    </p>
+                  ) : null}
+                  <AppButton
+                    isDisabled={
+                      sameGroupInFlight ||
+                      !release ||
+                      !review.evaluation_revision
+                    }
+                    onPress={() => void createPreview()}
+                  >
+                    {busy && !currentRetryIntent
+                      ? "Обработка…"
+                      : "Предпросмотр всего назначения"}
+                  </AppButton>
+                  {currentPreview ? (
+                    <AppButton
+                      isDisabled={sameGroupInFlight}
+                      onPress={() => void confirm()}
+                    >
+                      {currentRetryIntent
+                        ? "Повторить подтверждение"
+                        : "Явно подтвердить"}
+                    </AppButton>
+                  ) : null}
+                  {error.includes("изменились") ? (
+                    <AppButton
+                      isDisabled={sameGroupInFlight}
+                      onPress={() => void reloadReview()}
+                    >
+                      Обновить сохранённую оценку
+                    </AppButton>
+                  ) : null}
+                </aside>
+              </section>
+            </div>
           ) : null}
 
+          {currentPreview ? (
+            <section
+              className="rounded border border-sky-700 bg-white p-4 min-[1400px]:max-h-[20dvh] min-[1400px]:min-h-0 min-[1400px]:shrink-0 min-[1400px]:overflow-y-auto"
+              aria-labelledby="preview-title"
+            >
+              <h2 id="preview-title" className="font-semibold">
+                Предпросмотр полного назначения
+              </h2>
+              <p>
+                Издание: {currentPreview.selected_release.title}. Назначено:{" "}
+                {currentPreview.members?.filter((member) => member.assignment)
+                  .length ?? 0}
+                ; пропущено: {currentPreview.omitted_member_ids?.length ?? 0}.
+              </p>
+              <p className="text-sm">
+                Контрольный digest: <code>{currentPreview.preview_digest}</code>
+              </p>
+              {release?.positions?.some((position) => {
+                const override = tagOverridesByTrack[position.track_id];
+                return (
+                  Object.values(assignmentsByMember).includes(
+                    position.track_id,
+                  ) &&
+                  (override?.title.enabled || override?.artists.enabled)
+                );
+              }) ? (
+                <div className="mt-2 text-sm">
+                  <h3 className="font-medium">
+                    Ручные метаданные, которые будут применены
+                  </h3>
+                  <ul className="list-inside list-disc">
+                    {release.positions?.map((position) => {
+                      const override = tagOverridesByTrack[position.track_id];
+                      if (
+                        !Object.values(assignmentsByMember).includes(
+                          position.track_id,
+                        ) ||
+                        (!override?.title.enabled && !override?.artists.enabled)
+                      )
+                        return null;
+                      return (
+                        <li key={position.track_id}>
+                          {position.title}:{" "}
+                          {[
+                            override.title.enabled
+                              ? `название «${override.title.value}»`
+                              : undefined,
+                            override.artists.enabled
+                              ? `исполнители ${override.artists.values.length ? override.artists.values.map((artist) => `«${artist.name}»`).join(", ") : "(пустой список)"}`
+                              : undefined,
+                          ]
+                            .filter(Boolean)
+                            .join("; ")}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
           {receipt?.groupId === groupId ? (
             <section
               className="rounded border border-green-700 bg-white p-4"
