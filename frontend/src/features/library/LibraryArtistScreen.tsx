@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiResponseError } from "../../api/client/errors";
 import {
@@ -7,6 +8,7 @@ import {
 } from "../../api/generated/client";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
+import { ArtistDetailsEditor } from "./ArtistDetailsEditor";
 import { ArtistSortNameEditor } from "./ArtistSortNameEditor";
 import { GenreMetadataEditor } from "./GenreMetadataEditor";
 import {
@@ -21,6 +23,7 @@ const PAGE_SIZE = 50;
 
 export function LibraryArtistScreen({ artistId }: { artistId: string }) {
   const { locale } = useI18n();
+  const queryClient = useQueryClient();
   const hash = useHashLocation();
   const route = parseLibraryArtistRoute(hash) ?? {
     artistId,
@@ -40,6 +43,22 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     availability: route.availability,
   });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [artistMetadataRefreshToken, setArtistMetadataRefreshToken] =
+    useState(0);
+  function invalidateArtistMetadata() {
+    setArtistMetadataRefreshToken((generation) => generation + 1);
+    void queryClient.invalidateQueries({
+      predicate: ({ queryKey }) => {
+        const key = queryKey[0];
+        return (
+          typeof key === "string" &&
+          (key.startsWith("/api/library/artists") ||
+            key.startsWith("/api/library/releases") ||
+            key.includes("/publication/"))
+        );
+      },
+    });
+  }
   const error =
     artistQuery.data?.status !== undefined && artistQuery.data.status !== 200
       ? apiResponseError(
@@ -82,10 +101,13 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
         <>
           <header className="catalog-header">
             <div>
-              <h1 id="artist-title">{artist.name}</h1>
-              {artist.disambiguation && (
-                <p className="catalog-muted">{artist.disambiguation}</p>
-              )}
+              <ArtistDetailsEditor
+                artistId={artistId}
+                fallbackName={artist.name}
+                fallbackDisambiguation={artist.disambiguation}
+                refreshToken={artistMetadataRefreshToken}
+                onSaved={invalidateArtistMetadata}
+              />
               <p className="catalog-muted">
                 {artist.release_count} {locale === "ru" ? "альбомов" : "albums"}{" "}
                 · {artist.position_count} позиций · С аудио:{" "}
@@ -104,16 +126,16 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
               ))}
             </div>
           </header>
-          <ArtistSortNameEditor artistId={artistId} />
+          <ArtistSortNameEditor
+            artistId={artistId}
+            refreshToken={artistMetadataRefreshToken}
+            onSaved={invalidateArtistMetadata}
+          />
           <GenreMetadataEditor
             owner="artist"
             ownerId={artistId}
-            onSaved={async () => {
-              await Promise.all([
-                artistQuery.refetch(),
-                releasesQuery.refetch(),
-              ]);
-            }}
+            refreshToken={artistMetadataRefreshToken}
+            onSaved={invalidateArtistMetadata}
           />
           {releasesQuery.isLoading ? (
             <p role="status">Загрузка релизов…</p>

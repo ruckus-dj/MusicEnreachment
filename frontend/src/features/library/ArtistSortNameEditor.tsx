@@ -51,13 +51,23 @@ const copy = {
   },
 } as const;
 
-export function ArtistSortNameEditor({ artistId }: { artistId: string }) {
+export function ArtistSortNameEditor({
+  artistId,
+  refreshToken,
+  onSaved,
+}: {
+  artistId: string;
+  refreshToken?: number | string;
+  onSaved?: () => void;
+}) {
   const { locale } = useI18n();
   const text = copy[locale];
   const [metadata, setMetadata] = useState<LibraryMetadataResponse>();
   const metadataRef = useRef<LibraryMetadataResponse | undefined>(undefined);
   const generation = useRef(0);
   const controller = useRef<AbortController | undefined>(undefined);
+  const previousRefreshToken = useRef(refreshToken);
+  const skipNextRefresh = useRef(false);
   const [saved, setSaved] = useState<SortName>({ present: false, value: "" });
   const [draft, setDraft] = useState<SortName>({ present: false, value: "" });
   const [editing, setEditing] = useState(false);
@@ -121,6 +131,16 @@ export function ArtistSortNameEditor({ artistId }: { artistId: string }) {
     };
   }, [loadMetadata]);
 
+  useEffect(() => {
+    if (Object.is(previousRefreshToken.current, refreshToken)) return;
+    previousRefreshToken.current = refreshToken;
+    if (skipNextRefresh.current) {
+      skipNextRefresh.current = false;
+      return;
+    }
+    void loadMetadata();
+  }, [loadMetadata, refreshToken]);
+
   function beginEdit() {
     setDraft({ ...saved });
     dirtyRef.current = false;
@@ -178,6 +198,14 @@ export function ArtistSortNameEditor({ artistId }: { artistId: string }) {
       setDirty(false);
       setRefreshConflict(false);
       setEditing(false);
+      if (onSaved) {
+        skipNextRefresh.current = true;
+        try {
+          onSaved();
+        } catch {
+          // The metadata PATCH is committed; cache refresh errors do not undo it.
+        }
+      }
     } catch (reason) {
       setSaveError(errorMessage(reason, ""));
     } finally {

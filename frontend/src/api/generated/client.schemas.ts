@@ -492,6 +492,25 @@ export interface LibraryArtistCreditResponse {
   role?: string;
 }
 
+export interface LibraryArtistDetails {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  disambiguation: string | null;
+  id: string;
+  name: string;
+  publication_applied: boolean;
+  revision: number;
+}
+
+export interface LibraryArtistDetailsPatchInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  disambiguation?: string;
+  expected_revision: number;
+  name?: string;
+}
+
 export interface LibraryProviderLinkResponse {
   method: string;
   provider_code: string;

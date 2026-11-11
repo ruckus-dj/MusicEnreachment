@@ -113,6 +113,7 @@ function GenreMetadataEditorSession({
   const searchController = useRef<AbortController | undefined>(undefined);
   const statusController = useRef<AbortController | undefined>(undefined);
   const previousRefreshToken = useRef(refreshToken);
+  const skipNextRefresh = useRef(false);
   const [metadata, setMetadata] = useState<LibraryMetadataResponse>();
   const metadataRevision = useRef<number | undefined>(undefined);
   const [providerGenreBaseline, setProviderGenreBaseline] =
@@ -227,6 +228,10 @@ function GenreMetadataEditorSession({
   useEffect(() => {
     if (Object.is(previousRefreshToken.current, refreshToken)) return;
     previousRefreshToken.current = refreshToken;
+    if (skipNextRefresh.current) {
+      skipNextRefresh.current = false;
+      return;
+    }
     void loadMetadata();
   }, [loadMetadata, refreshToken]);
 
@@ -379,9 +384,16 @@ function GenreMetadataEditorSession({
       setDraftDirty(false);
       setRefreshConflict(false);
       setEditing(false);
-      void Promise.resolve()
-        .then(() => onSaved?.(owner, ownerId, response.data))
-        .catch(() => undefined);
+      if (onSaved) {
+        skipNextRefresh.current = true;
+        try {
+          void Promise.resolve(onSaved(owner, ownerId, response.data)).catch(
+            () => undefined,
+          );
+        } catch {
+          // The metadata PATCH is committed; refresh failures do not undo it.
+        }
+      }
       // PATCH responses intentionally contain only desired metadata, so always
       // reload the baseline independently. The parent callback may also trigger
       // a full read; generation/abort keeps the latest read authoritative, and

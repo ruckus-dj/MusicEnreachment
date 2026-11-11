@@ -38,6 +38,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerLibraryReleaseCover(api, dependencies.LibraryReleaseCovers)
 	registerLibraryReleaseCoverApply(api, dependencies.LibraryReleaseCovers, dependencies.Operations)
 	registerLibraryMetadata(api, dependencies.LibraryMetadata)
+	registerLibraryArtistDetails(api, dependencies.LibraryMetadata)
 	registerLibraryPublication(api, dependencies)
 	registerLibraryFirstPublicationPreview(api, dependencies)
 	registerLibraryFirstPublicationAdmission(api, dependencies)
