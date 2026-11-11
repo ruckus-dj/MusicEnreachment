@@ -41,6 +41,10 @@ frontend/
 ## CONVENTIONS
 **Generated API client**: Orval generates the API client and schemas in src/api/generated/ from openapi.json. Run `task generate` to sync; tools/check-generated.test.mjs enforces drift detection. Test suites use handwritten MSW handlers, with shared setup in src/test/server.ts.
 
+Worktrees running `task generate` or dependency installation need their own real
+`frontend/node_modules` directory. Do not symlink another worktree's dependencies:
+`npm ci` can empty the shared target and break that tree's normal hook.
+
 **Biome only**: No ESLint, no Prettier. Biome handles lint and format.
 
 When formatting changed TS/TSX files, also organize their imports. `biome format`

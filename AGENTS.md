@@ -86,6 +86,9 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 request that can fail opaquely with `unable to get latest version` before tests.
 For infrastructure-only failures, inspect the failed step and rerun failed jobs;
 never remove gates or mistake an incomplete platform matrix for full success.
+Watch long CI runs with a coarse interval (for example `gh run watch --interval 60`),
+not concurrent three-second watchers. On API rate limiting, stop API retries and
+keep the complete CI result unconfirmed until it can be read again.
 
 **Lint**: Go 1.27 gofmt + golangci-lint default linters; Biome (not ESLint/Prettier) for frontend; zero `nolint` usage.
 
@@ -301,6 +304,10 @@ or commit hook at a time. Parallel code work does not authorize concurrent full
 PostgreSQL integration suites. If a gate times out, inspect active tests and DB
 waits before attributing it to contention; do not raise timeouts, skip tests, or
 weaken normal hooks to obtain a pass.
+For host `too many open files` failures, inspect descriptor ownership first.
+Session-owned `gopls mcp` processes have repeatedly retained tens of thousands of
+descriptors; stop a confirmed leaking helper instead of changing system limits or
+test gates, and avoid restarting that helper during the affected work.
 
 ```bash
 # Prerequisites: Go 1.27, Node 24 LTS, Task 3, golangci-lint 2.14, Docker Compose, pre-commit
