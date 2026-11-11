@@ -237,10 +237,10 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 			}
 			inventory := artwork.ArtworkInventory()
 			if !equalAudioUpgradeArtworkWitnesses(witnesses, inventory) {
-				return PublicationStageObservation{}, errors.New("audio-upgrade stage artwork inventory does not match current publication")
+				return PublicationStageObservation{}, publicationStageMismatch("audio-upgrade stage artwork inventory does not match current publication")
 			}
 			if err := validateAudioUpgradeTopology(raw, inventory); err != nil {
-				return PublicationStageObservation{}, err
+				return PublicationStageObservation{}, publicationStageMismatch(err.Error())
 			}
 		} else if mode == publicationStageSourceRepublish {
 			assets, assetErr := ObservePublicationAssets(capture)
@@ -331,18 +331,18 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 	}
 	lossless, knownLossless := publicationCodecLossless(actualCodec)
 	if !knownLossless {
-		return PublicationStageObservation{}, errors.New("publication stage codec losslessness is unknown")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage codec losslessness is unknown")
 	}
 	if actual.Index == nil || *actual.Index < 0 || int64(int(*actual.Index)) != *actual.Index {
-		return PublicationStageObservation{}, errors.New("publication stage audio stream index is missing or out of range")
+		return PublicationStageObservation{}, publicationStageMismatch("publication stage audio stream index is missing or out of range")
 	}
 	actualAudioFacts, err := persistedPublicationStageAudioFacts(int(*actual.Index), actualCodec, lossless, actual.Channels, actual.ChannelLayout, actual.BitRate, actual.BitsPerSample, actual.SampleRateHz, plan.OutputContainer)
 	if err != nil {
-		return PublicationStageObservation{}, err
+		return PublicationStageObservation{}, publicationStageMismatch(err.Error())
 	}
 	if input.Version == persistence.PublicationAudioUpgradeInputsVersion {
 		if input.AudioUpgrade == nil || publication.CompareQuality(audioUpgradeQualityCandidate(actualAudioFacts), audioUpgradeQualityCandidate(input.AudioUpgrade.Current.AudioFacts)) != publication.QualityBetter {
-			return PublicationStageObservation{}, errors.New("publication audio-upgrade stage quality is not strictly better than current")
+			return PublicationStageObservation{}, publicationStageMismatch("publication audio-upgrade stage quality is not strictly better than current")
 		}
 	}
 	actualAudio, err := json.Marshal(struct {
@@ -386,7 +386,7 @@ func (validator RealPublicationStageValidator) validate(ctx context.Context, sta
 		return PublicationStageObservation{}, errors.New("automatic retry changed the verified current cover")
 	}
 	if input.Version == persistence.PublicationAudioUpgradeInputsVersion && input.AudioUpgrade != nil && !reflect.DeepEqual(assets, input.AudioUpgrade.Current.Assets) {
-		return PublicationStageObservation{}, errors.New("audio-upgrade stage assets do not match current publication")
+		return PublicationStageObservation{}, publicationStageMismatch("audio-upgrade stage assets do not match current publication")
 	}
 	if input.ProviderTags != nil && !reflect.DeepEqual(assets, input.ProviderTags.Current.Assets) {
 		return PublicationStageObservation{}, errors.New("provider-tag stage assets do not match current publication")

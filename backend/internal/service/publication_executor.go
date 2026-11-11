@@ -244,6 +244,13 @@ func (executor *PublicationExecutor) ExecutePublicationDelivery(ctx context.Cont
 		if recovered {
 			return nil
 		}
+		recovered, err = executor.recoverInterruptedAudioUpgrade(ctx, attempt, input, guard, outputPath, root, commands)
+		if err != nil {
+			return err
+		}
+		if recovered {
+			return nil
+		}
 		recovered, err = executor.recoverInterruptedFirstAudio(ctx, attempt, input, guard, outputPath, root, commands)
 		if err != nil {
 			return err

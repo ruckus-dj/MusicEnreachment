@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -25,9 +26,137 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
+	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
+	"github.com/uptrace/bun/driver/pgdriver"
 	"go.senan.xyz/taglib"
 )
+
+const audioUpgradeCrashChildExitCode = 73
+
+type publicationRecoveryCallbackCounts struct {
+	AudioTranscodes int `json:"audio_transcodes"`
+	MetadataWrites  int `json:"metadata_writes"`
+}
+
+type countedPublicationCommandRunner struct {
+	runner PublicationCommandRunner
+	counts *publicationRecoveryCallbackCounts
+}
+
+func (runner *countedPublicationCommandRunner) Run(ctx context.Context, executable string, args ...string) (PublicationCommandResult, error) {
+	if strings.HasPrefix(strings.ToLower(filepath.Base(executable)), "ffmpeg") {
+		versionQuery := len(args) == 1 && args[0] == "-version"
+		if !versionQuery {
+			runner.counts.AudioTranscodes++
+		}
+	}
+	return runner.runner.Run(ctx, executable, args...)
+}
+
+func (runner *countedPublicationCommandRunner) RunFile(ctx context.Context, request tools.FileCommandRequest) (PublicationCommandResult, error) {
+	fileRunner, ok := runner.runner.(PublicationFileCommandRunner)
+	if !ok {
+		return unavailablePublicationCommand()
+	}
+	return fileRunner.RunFile(ctx, request)
+}
+
+type countedPublicationMetadataWriter struct {
+	metadata.Writer
+	counts *publicationRecoveryCallbackCounts
+}
+
+func (writer countedPublicationMetadataWriter) Write(ctx context.Context, filename string, tags map[string][]string, cover *metadata.Cover) (metadata.WriteResult, error) {
+	writer.counts.MetadataWrites++
+	return writer.Writer.Write(ctx, filename, tags, cover)
+}
+
+func (writer countedPublicationMetadataWriter) WriteWithOptionalAssets(ctx context.Context, filename string, tags map[string][]string, cover *metadata.Cover) (metadata.OptionalAssetsWriteResult, error) {
+	writer.counts.MetadataWrites++
+	return writer.Writer.WriteWithOptionalAssets(ctx, filename, tags, cover)
+}
+
+type audioUpgradeCrashRepository struct {
+	*persistence.SetupManagerRepository
+	callbackFile string
+	counts       *publicationRecoveryCallbackCounts
+}
+
+func (repository *audioUpgradeCrashRepository) CommitPublicationResult(context.Context, persistence.PublicationDeliveryGuard, persistence.PublicationResult) (bool, error) {
+	callbacks, err := json.Marshal(repository.counts)
+	if err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(repository.callbackFile, callbacks, 0o600); err != nil {
+		return false, err
+	}
+	os.Exit(audioUpgradeCrashChildExitCode)
+	return false, nil
+}
+
+func TestAudioUpgradePublicationCrashChild(t *testing.T) {
+	selected := false
+	for _, argument := range os.Args {
+		if argument == "-test.run=^TestAudioUpgradePublicationCrashChild$" {
+			selected = true
+			break
+		}
+	}
+	if !selected {
+		return
+	}
+	var request struct {
+		URL          string
+		OperationID  string
+		JobID        int64
+		CallbackFile string
+	}
+	if err := json.NewDecoder(os.Stdin).Decode(&request); err != nil {
+		t.Fatal(err)
+	}
+	operationID, err := uuid.Parse(request.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := bun.NewDB(sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(request.URL))), pgdialect.New())
+	defer db.Close()
+	repository := persistence.NewSetupManagerRepository(db)
+	registry := settings.New(persistence.NewSettingsRepository(db), nil)
+	commands, err := NewPublicationJobCommands(4<<20, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callbacks := &publicationRecoveryCallbackCounts{}
+	crashRepository := &audioUpgradeCrashRepository{SetupManagerRepository: repository, callbackFile: request.CallbackFile, counts: callbacks}
+	executor := newPublicationExecutor(crashRepository, registry, tools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), &countedPublicationCommandRunner{runner: commands, counts: callbacks})
+	executor.metadata = countedPublicationMetadataWriter{counts: callbacks}
+	if err := executor.ExecutePublicationDelivery(context.Background(), operationID, request.JobID, 1); err != nil {
+		t.Fatalf("execute child publication until crash boundary: %v", err)
+	}
+	t.Fatal("child publication unexpectedly returned before crash boundary")
+}
+
+func runAudioUpgradeCrashChild(t *testing.T, db *bun.DB, operationID uuid.UUID, jobID int64, callbackFile string) {
+	t.Helper()
+	request, err := json.Marshal(struct {
+		URL          string
+		OperationID  string
+		JobID        int64
+		CallbackFile string
+	}{URL: testpostgres.URL(t, db), OperationID: operationID.String(), JobID: jobID, CallbackFile: callbackFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestAudioUpgradePublicationCrashChild$", "-test.count=1")
+	command.Stdin = strings.NewReader(string(request))
+	output, err := command.CombinedOutput()
+	exitError, exited := err.(*exec.ExitError)
+	if !exited || exitError.ExitCode() != audioUpgradeCrashChildExitCode {
+		t.Fatalf("audio-upgrade child crash boundary exit=%v output=%s", err, output)
+	}
+}
 
 // This test deliberately starts with the existing publication-source fixture,
 // but replaces its test-only source and tool rows before the first admission.
@@ -181,6 +310,7 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 	var expectedTags map[string][]string
 	var originalPrimary []byte
 	var originalHigher []byte
+	var originalHigherModTime time.Time
 	var originalCurrentAudio persistence.PersistedAudioFacts
 	var committedGeneration uuid.UUID
 	var binariesForDelivery toolsManagedExecutables
@@ -295,6 +425,7 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 			if err != nil {
 				t.Fatal(err)
 			}
+			originalHigherModTime = higherInfo.ModTime()
 			originalHigher, err = os.ReadFile(upgradeSource)
 			if err != nil {
 				t.Fatal(err)
@@ -398,9 +529,76 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 			if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, upgradeJob); err != nil {
 				t.Fatal(err)
 			}
-			upgradeExecutor := NewPublicationExecutor(repository, registry, tools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), commands)
-			if err := upgradeExecutor.ExecutePublicationDelivery(ctx, upgradeOperation, upgradeJob, 1); err != nil {
-				t.Fatalf("execute reconciled real-media audio upgrade: %v", err)
+			callbackFile := filepath.Join(t.TempDir(), "audio-upgrade-crash-callbacks.json")
+			runAudioUpgradeCrashChild(t, db, upgradeOperation, upgradeJob, callbackFile)
+			var callbacks publicationRecoveryCallbackCounts
+			callbackBytes, err := os.ReadFile(callbackFile)
+			if err != nil {
+				t.Fatalf("read post-crash publication callback counts: %v", err)
+			}
+			if err := json.Unmarshal(callbackBytes, &callbacks); err != nil {
+				t.Fatalf("decode post-crash publication callback counts: %v", err)
+			}
+			if callbacks.AudioTranscodes == 0 || callbacks.MetadataWrites == 0 {
+				t.Fatalf("crash boundary did not exercise preparation callbacks: %+v", callbacks)
+			}
+			callbacksBeforeRecovery := callbacks
+			var executionState string
+			var executionBoot uuid.UUID
+			if err := db.NewRaw(`SELECT state,boot_uuid FROM publication_execution_claim WHERE operation_id=?`, upgradeOperation).Scan(ctx, &executionState, &executionBoot); err != nil || executionState != "executing" || executionBoot == uuid.Nil {
+				t.Fatalf("crashed delivery claim = %q/%s, %v; want retained executing claim", executionState, executionBoot, err)
+			}
+			interruptedTarget := filepath.Join(output, filepath.FromSlash(target))
+			installedBeforeRecovery, err := (metadata.Reader{}).Read(ctx, interruptedTarget, metadata.ReadRequest{CoverInspection: true})
+			if err != nil || !reflect.DeepEqual(installedBeforeRecovery.Tags, expectedTags) {
+				t.Fatalf("interrupted automatic-upgrade target = %#v, %v; want complete CURRENT tags", installedBeforeRecovery.Tags, err)
+			}
+			interruptedInfo, err := os.Stat(interruptedTarget)
+			if err != nil {
+				t.Fatalf("stat installed target before adoption: %v", err)
+			}
+			interruptedBytes, err := os.ReadFile(interruptedTarget)
+			if err != nil {
+				t.Fatalf("read installed target before adoption: %v", err)
+			}
+			higherBeforeRecovery, err := os.ReadFile(upgradeSource)
+			if err != nil || !reflect.DeepEqual(higherBeforeRecovery, originalHigher) {
+				t.Fatalf("higher-quality source changed before interruption recovery: %v", err)
+			}
+			if !reflect.DeepEqual(expectedHigherProbe, mustProbeAgain(t, ctx, binariesForDelivery.ffprobe, upgradeSource)) {
+				t.Fatal("frozen higher source probe no longer matches its file before interruption recovery")
+			}
+			if err := os.Remove(upgradeSource); err != nil {
+				t.Fatalf("make frozen automatic-upgrade source unavailable: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=2,attempted_at=now() WHERE id=?`, upgradeJob); err != nil {
+				t.Fatal(err)
+			}
+			recoveryCommands := &countedPublicationCommandRunner{runner: commands, counts: &callbacks}
+			upgradeExecutor := NewPublicationExecutor(repository, registry, tools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, publication.NewCoordinator(), uuid.New(), recoveryCommands)
+			upgradeExecutor.metadata = countedPublicationMetadataWriter{counts: &callbacks}
+			if err := upgradeExecutor.ExecutePublicationDelivery(ctx, upgradeOperation, upgradeJob, 2); err != nil {
+				t.Fatalf("adopt interrupted real-media audio upgrade without its source: %v", err)
+			}
+			if callbacks != callbacksBeforeRecovery {
+				t.Fatalf("interrupted-target adoption changed transcode/metadata-write callbacks: before=%+v after=%+v", callbacksBeforeRecovery, callbacks)
+			}
+			recoveredInfo, err := os.Stat(interruptedTarget)
+			if err != nil || !os.SameFile(interruptedInfo, recoveredInfo) || interruptedInfo.Size() != recoveredInfo.Size() || !interruptedInfo.ModTime().Equal(recoveredInfo.ModTime()) {
+				t.Fatalf("interrupted-target adoption installed or changed the target: before=%v after=%v err=%v", interruptedInfo, recoveredInfo, err)
+			}
+			recoveredBytes, err := os.ReadFile(interruptedTarget)
+			if err != nil || !reflect.DeepEqual(recoveredBytes, interruptedBytes) {
+				t.Fatalf("interrupted-target adoption changed installed bytes: %v", err)
+			}
+			if _, err := os.Stat(upgradeSource); !os.IsNotExist(err) {
+				t.Fatalf("audio-upgrade recovery unexpectedly recreated its unavailable source: %v", err)
+			}
+			if err := os.WriteFile(upgradeSource, originalHigher, 0o600); err != nil {
+				t.Fatalf("restore higher-quality source for subsequent scenario: %v", err)
+			}
+			if err := os.Chtimes(upgradeSource, originalHigherModTime, originalHigherModTime); err != nil {
+				t.Fatalf("restore higher-quality source observation for subsequent scenario: %v", err)
 			}
 			committedGeneration = upgradeAttempt.CandidateGeneration
 			currentContext, err := repository.ReadLibraryPublicationContext(ctx, fixtureReleaseID, positionID)
@@ -439,14 +637,6 @@ func TestAudioUpgradeReconciliationPreservesRealMultiImageCurrentPostgreSQL(t *t
 			if err != nil || !reflect.DeepEqual(primaryAfter, originalPrimary) {
 				t.Fatalf("original source changed during upgrade: %v", err)
 			}
-			higherAfter, err := os.ReadFile(upgradeSource)
-			if err != nil || !reflect.DeepEqual(higherAfter, originalHigher) {
-				t.Fatalf("higher-quality source was not preserved: %v", err)
-			}
-			if !reflect.DeepEqual(expectedHigherProbe, mustProbeAgain(t, ctx, binariesForDelivery.ffprobe, upgradeSource)) {
-				t.Fatal("frozen higher source probe no longer matches its file")
-			}
-
 			// Explicitly republish the already-selected higher-quality source using a
 			// changed extension/path template. Admission must retain the old CURRENT
 			// as cleanup authority until the real delivery commits the new container.
