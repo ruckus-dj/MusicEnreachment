@@ -5,12 +5,18 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { SettingsScreen } from "./SettingsScreen";
+import {
+  readSettingsDraft,
+  resetSettingsDraftMemory,
+  writeSettingsDraft,
+} from "./settingsDraft";
 
 const settings = {
   completed: true,
@@ -164,6 +170,9 @@ beforeEach(() => {
   });
   vi.stubGlobal("localStorage", createMemoryStorage());
   localStorage.clear();
+  vi.stubGlobal("sessionStorage", createMemoryStorage());
+  sessionStorage.clear();
+  resetSettingsDraftMemory();
   TestEventSource.instances = [];
   vi.stubGlobal("EventSource", TestEventSource);
   common();
@@ -175,6 +184,45 @@ afterEach(() => {
 });
 
 describe("SettingsScreen", () => {
+  it("restores an invalid raw concurrency draft without applying it", async () => {
+    writeSettingsDraft(sessionStorage, {
+      sourceFileConcurrency: {
+        value: "not-a-number",
+        baseline: "4",
+        revision: 3,
+      },
+    });
+    const checked = vi.fn(() => json({ success: true, error: "" }));
+    const settingsWrites = vi.fn(() => new HttpResponse(null, { status: 204 }));
+    server.use(
+      http.post("/api/settings/musicbrainz/check", checked),
+      http.put("/api/settings/runtime", settingsWrites),
+      http.put("/api/settings/musicbrainz", settingsWrites),
+    );
+
+    render(<SettingsScreen />);
+
+    const concurrency = await screen.findByLabelText("Одновременные файлы");
+    await waitFor(() => expect(concurrency).toHaveValue("not-a-number"));
+    expect(
+      screen.getByText("Есть несохранённое изменение параллельности."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Сохранить параллельность" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить и проверить MusicBrainz" }),
+    );
+    await waitFor(() => expect(checked).toHaveBeenCalledTimes(1));
+    expect(settingsWrites).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText("MusicBrainz проверен."),
+    ).toBeInTheDocument();
+    expect(
+      readSettingsDraft(sessionStorage)?.sourceFileConcurrency?.value,
+    ).toBe("not-a-number");
+  });
+
   it("loads the staged work directory independently of the output directory", async () => {
     const workDirectory = "/srv/staging-work";
     server.use(
@@ -242,11 +290,49 @@ describe("SettingsScreen", () => {
 
   it("autosaves publication format and log level without saving an unrelated concurrency draft", async () => {
     let publicationFormat = "mka";
+    let publicationRemoveSources = false;
+    let lrclibEnabled = true;
     let logLevel = "info";
+    let releaseFirstFormatWrite!: () => void;
+    const firstFormatWrite = new Promise<void>((resolve) => {
+      releaseFirstFormatWrite = resolve;
+    });
+    const musicBrainz = {
+      mode: "self-hosted",
+      baseURL: "https://saved.musicbrainz.test",
+      throttle: false,
+      delay: 0.5,
+    };
     const runtimeWrites = vi.fn(async ({ request }: { request: Request }) => {
-      const body = (await request.json()) as { publication_format: string };
-      expect(body).toEqual({ publication_format: "m4a" });
-      publicationFormat = body.publication_format;
+      const body = (await request.json()) as {
+        publication_format?: string;
+        publication_remove_sources?: boolean;
+        expected: {
+          publication_format?: string;
+          publication_remove_sources?: boolean;
+        };
+      };
+      if (body.publication_format !== undefined) {
+        if (body.publication_format === "m4a") {
+          expect(body).toEqual({
+            publication_format: "m4a",
+            expected: { publication_format: "source" },
+          });
+          await firstFormatWrite;
+        } else {
+          expect(body).toEqual({
+            publication_format: "source",
+            expected: { publication_format: "m4a" },
+          });
+        }
+        publicationFormat = body.publication_format;
+      } else {
+        expect(body).toEqual({
+          publication_remove_sources: true,
+          expected: { publication_remove_sources: false },
+        });
+        publicationRemoveSources = body.publication_remove_sources ?? false;
+      }
       return new HttpResponse(null, { status: 204 });
     });
     const logWrites = vi.fn(async ({ request }: { request: Request }) => {
@@ -255,40 +341,108 @@ describe("SettingsScreen", () => {
       logLevel = body.level;
       return new HttpResponse(null, { status: 204 });
     });
+    const lrclibWrites = vi.fn(async ({ request }: { request: Request }) => {
+      expect(await request.json()).toEqual({ enabled: false });
+      lrclibEnabled = false;
+      return new HttpResponse(null, { status: 204 });
+    });
+    const musicBrainzWrites = vi.fn(
+      async ({ request }: { request: Request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        if ("self_hosted_throttle" in body) {
+          expect(body).toEqual({
+            self_hosted_throttle: true,
+            expected: { self_hosted_throttle: false },
+          });
+          musicBrainz.throttle = true;
+        } else {
+          expect(body).toEqual({
+            mode: "public",
+            base_url: "",
+            expected: {
+              mode: "self-hosted",
+              base_url: "https://saved.musicbrainz.test",
+            },
+          });
+          musicBrainz.mode = "public";
+          musicBrainz.baseURL = "";
+        }
+        return new HttpResponse(null, { status: 204 });
+      },
+    );
     server.use(
       http.put("/api/settings/runtime", runtimeWrites),
       http.put("/api/settings/log-level", logWrites),
+      http.put("/api/settings/lrclib", lrclibWrites),
+      http.put("/api/settings/musicbrainz", musicBrainzWrites),
       http.get("/api/settings", () =>
         json({
           ...settings,
           settings: {
             ...settings.settings,
             publication_format: publicationFormat,
+            publication_remove_sources: publicationRemoveSources,
+            lrclib_enabled: lrclibEnabled,
             log_level: logLevel,
+            musicbrainz_mode: musicBrainz.mode,
+            musicbrainz_base_url: musicBrainz.baseURL,
+            musicbrainz_self_hosted_throttle: musicBrainz.throttle,
+            musicbrainz_self_hosted_delay_seconds: musicBrainz.delay,
           },
         }),
       ),
     );
     render(<SettingsScreen />);
     const concurrency = await screen.findByLabelText("Одновременные файлы");
-    fireEvent.change(concurrency, { target: { value: "8" } });
+    fireEvent.change(concurrency, { target: { value: "8 invalid" } });
+    publicationFormat = "source";
+    fireEvent.click(screen.getByRole("button", { name: "Обновить состояние" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Publication format/ }),
+      ).toHaveTextContent("Исходный формат"),
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Publication format/ }),
+    );
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
     await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(1));
     expect(
       screen.getByText(/M4A сохраняет AAC и ALAC без перекодирования/),
     ).toHaveAttribute("role", "note");
-    expect(concurrency).toHaveValue(8);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Publication format/ }),
+    );
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Исходный формат" }),
+    );
+    expect(runtimeWrites).toHaveBeenCalledTimes(1);
+    releaseFirstFormatWrite();
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(publicationFormat).toBe("source"));
+    expect(
+      await screen.findByText("Формат публикации сохранён."),
+    ).toBeInTheDocument();
+    expect(concurrency).toHaveValue("8 invalid");
     const shaCheckbox = screen.getByLabelText("Вычислять SHA-256");
     expect(shaCheckbox).toHaveAttribute("aria-describedby", "sha256-help");
     expect(
       screen.getByText(/Настройка применяется к последующим анализам/),
     ).toBeInTheDocument();
-    expect(concurrency).toHaveAttribute(
-      "aria-describedby",
-      "source-file-concurrency-help",
+    const concurrencyDescriptionIds =
+      concurrency.getAttribute("aria-describedby")?.split(/\s+/) ?? [];
+    expect(concurrencyDescriptionIds).toEqual(
+      expect.arrayContaining([
+        "source-file-concurrency-help",
+        "settings-concurrency-error",
+      ]),
     );
+    expect(
+      screen.getByText(
+        "Введите положительное целое число, точно представимое в браузере.",
+      ),
+    ).toHaveAttribute("id", "settings-concurrency-error");
     expect(
       screen.getByText(/Положительное целое число файлов/),
     ).toBeInTheDocument();
@@ -296,11 +450,59 @@ describe("SettingsScreen", () => {
       screen.getByText("Есть несохранённое изменение параллельности."),
     ).toBeInTheDocument();
 
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "MusicBrainz base URL" }),
+      {
+        target: { value: "https://unsaved.musicbrainz.test" },
+      },
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Интервал запросов (секунды)" }),
+      {
+        target: { value: "invalid delay" },
+      },
+    );
+    fireEvent.click(
+      screen.getByLabelText(
+        "Ограничивать частоту запросов к self-hosted MusicBrainz",
+      ),
+    );
+    await waitFor(() => expect(musicBrainzWrites).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText("MusicBrainz mode"), {
+      target: { value: "public" },
+    });
+    await waitFor(() => expect(musicBrainzWrites).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(
+      screen.getByLabelText("Разрешить удаление исходников после публикации"),
+    );
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(3));
+    expect(
+      await screen.findByText("Настройка удаления исходников сохранена."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("LRCLIB включён"));
+    await waitFor(() => expect(lrclibWrites).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText("Настройка LRCLIB сохранена."),
+    ).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: /Log level/ }));
     fireEvent.click(await screen.findByRole("option", { name: "debug" }));
     await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
-    expect(runtimeWrites).toHaveBeenCalledTimes(1);
+    expect(runtimeWrites).toHaveBeenCalledTimes(3);
     expect(logWrites).toHaveBeenCalledTimes(1);
+    expect(musicBrainzWrites).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(
+        readSettingsDraft(sessionStorage)?.sourceFileConcurrency?.value,
+      ).toBe("8 invalid"),
+    );
+    expect(readSettingsDraft(sessionStorage)?.musicBrainzURL?.value).toBe(
+      "https://unsaved.musicbrainz.test",
+    );
+    expect(readSettingsDraft(sessionStorage)?.musicBrainzDelay?.value).toBe(
+      "invalid delay",
+    );
   });
 
   it("retries an explicit false SHA-256 value without requiring a different toggle selection", async () => {
@@ -371,22 +573,23 @@ describe("SettingsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
     await waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
-    expect(
-      screen.getByRole("button", {
-        name: "Повторить сохранение: формат публикации (M4A)",
-      }),
-    ).toBeInTheDocument();
+    const retry = await screen.findByRole("button", {
+      name: "Повторить сохранение: формат публикации (M4A)",
+    });
+    expect(retry).toBeInTheDocument();
 
     fail = false;
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Повторить сохранение: формат публикации (M4A)",
-      }),
-    );
+    fireEvent.click(retry);
     await waitFor(() => expect(writes).toHaveBeenCalledTimes(2));
     expect(bodies).toEqual([
-      { publication_format: "m4a" },
-      { publication_format: "m4a" },
+      {
+        publication_format: "m4a",
+        expected: { publication_format: "mka" },
+      },
+      {
+        publication_format: "m4a",
+        expected: { publication_format: "mka" },
+      },
     ]);
     await waitFor(() =>
       expect(
@@ -442,8 +645,14 @@ describe("SettingsScreen", () => {
     releaseFirst();
     await waitFor(() => expect(writes).toHaveBeenCalledTimes(2));
     expect(bodies).toEqual([
-      { publication_format: "m4a" },
-      { publication_format: "source" },
+      {
+        publication_format: "m4a",
+        expected: { publication_format: "mka" },
+      },
+      {
+        publication_format: "source",
+        expected: { publication_format: "mka" },
+      },
     ]);
     await waitFor(() =>
       expect(formatButton).toHaveTextContent("Исходный формат"),
@@ -560,24 +769,35 @@ describe("SettingsScreen", () => {
     fireEvent.click(saveConcurrency);
     await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(2));
     expect(runtimeBodies).toEqual([
-      { source_file_concurrency: 5 },
-      { source_file_concurrency: 6 },
+      {
+        source_file_concurrency: 5,
+        expected: { source_file_concurrency: 4 },
+      },
+      {
+        source_file_concurrency: 6,
+        expected: { source_file_concurrency: 5 },
+      },
     ]);
   });
 
   it("serializes accepted autosaves across remount and lets a fresh choice win", async () => {
     let format = "mka";
     let level = "info";
+    let failNextFormatConfirmation = false;
     let releaseFormat!: () => void;
     const formatReady = new Promise<void>((resolve) => {
       releaseFormat = resolve;
     });
     const runtimeBodies: unknown[] = [];
     const runtimeWrites = vi.fn(async ({ request }: { request: Request }) => {
-      const body = (await request.json()) as { publication_format: string };
+      const body = (await request.json()) as {
+        publication_format: string;
+        expected: { publication_format: string };
+      };
       runtimeBodies.push(body);
       if (runtimeBodies.length === 1) await formatReady;
       format = body.publication_format;
+      if (runtimeBodies.length === 3) failNextFormatConfirmation = true;
       return new HttpResponse(null, { status: 204 });
     });
     const logWrites = vi.fn(async ({ request }: { request: Request }) => {
@@ -586,6 +806,13 @@ describe("SettingsScreen", () => {
       return new HttpResponse(null, { status: 204 });
     });
     const settingsReads = vi.fn(() => {
+      if (failNextFormatConfirmation) {
+        failNextFormatConfirmation = false;
+        return HttpResponse.json(
+          { detail: "confirmation read failed" },
+          { status: 500 },
+        );
+      }
       return json({
         ...settings,
         settings: {
@@ -630,27 +857,150 @@ describe("SettingsScreen", () => {
     releaseFormat();
     await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(settingsReads).toHaveBeenCalledTimes(4));
-    await screen.findByLabelText("Одновременные файлы");
-    expect(
-      screen.getByRole("button", { name: /Publication format/ }),
-    ).toHaveTextContent("M4A");
+    const formatButton = await screen.findByRole("button", {
+      name: /Publication format/,
+    });
+    expect(formatButton).toHaveTextContent("M4A");
     expect(screen.getByRole("button", { name: /Log level/ })).toHaveTextContent(
       "debug",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(formatButton);
     fireEvent.click(
       await screen.findByRole("option", { name: "Исходный формат" }),
     );
     await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(settingsReads).toHaveBeenCalledTimes(5));
     expect(runtimeBodies).toEqual([
-      { publication_format: "m4a" },
-      { publication_format: "source" },
+      {
+        publication_format: "m4a",
+        expected: { publication_format: "mka" },
+      },
+      {
+        publication_format: "source",
+        expected: { publication_format: "m4a" },
+      },
     ]);
     expect(
       screen.getByRole("button", { name: /Publication format/ }),
     ).toHaveTextContent("Исходный формат");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Publication format/ }),
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(3));
+    const retryConfirmation = await screen.findByRole("button", {
+      name: "Повторить подтверждение: формат публикации (M4A)",
+    });
+    fireEvent.click(retryConfirmation);
+    expect(
+      await screen.findByText("Настройка подтверждена сервером."),
+    ).toBeInTheDocument();
+
+    const publicationFormatAfterConfirmation = await screen.findByRole(
+      "button",
+      { name: /Publication format/ },
+    );
+    fireEvent.click(publicationFormatAfterConfirmation);
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Исходный формат" }),
+    );
+    await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(4));
+    expect(runtimeBodies.slice(2)).toEqual([
+      {
+        publication_format: "m4a",
+        expected: { publication_format: "source" },
+      },
+      {
+        publication_format: "source",
+        expected: { publication_format: "m4a" },
+      },
+    ]);
+  });
+
+  it("keeps a dirty group through refresh and 409 until explicitly replaced or taken saved", async () => {
+    let sourceConcurrency = 4;
+    const template = settings.settings.publication_path_template;
+    let firstConflictAttempt = true;
+    const writes = vi.fn(async ({ request }: { request: Request }) => {
+      const body = (await request.json()) as {
+        source_file_concurrency: number;
+        expected: { source_file_concurrency: number };
+      };
+      if (firstConflictAttempt) {
+        firstConflictAttempt = false;
+        expect(body).toEqual({
+          source_file_concurrency: 8,
+          expected: { source_file_concurrency: 6 },
+        });
+        sourceConcurrency = 7;
+        return HttpResponse.json(
+          { detail: "settings changed" },
+          { status: 409 },
+        );
+      }
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            source_file_concurrency: sourceConcurrency,
+            publication_path_template: template,
+          },
+        }),
+      ),
+      http.put("/api/settings/runtime", writes),
+    );
+    render(<SettingsScreen />);
+    const concurrency = await screen.findByLabelText("Одновременные файлы");
+    const templateInput = screen.getByLabelText("Шаблон пути публикации");
+    fireEvent.change(concurrency, { target: { value: "8" } });
+    fireEvent.change(templateInput, {
+      target: { value: "{ALBUM_NAME}/draft" },
+    });
+
+    sourceConcurrency = 6;
+    fireEvent.click(screen.getByRole("button", { name: "Обновить состояние" }));
+    const conflict = await screen.findByRole("status", {
+      name: "Конфликт настроек: параллельность анализа",
+    });
+    fireEvent.click(
+      within(conflict).getByRole("button", {
+        name: "Продолжить редактирование: параллельность анализа",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить параллельность" }),
+    );
+    const confirmation = await screen.findByRole("dialog", {
+      name: "Заменить сохранённое значение?",
+    });
+    expect(confirmation).toHaveTextContent("6");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Заменить сохранённое значение" }),
+    );
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(concurrency).toHaveValue("8"));
+    expect(templateInput).toHaveValue("{ALBUM_NAME}/draft");
+
+    const renewedConflict = await screen.findByRole("status", {
+      name: "Конфликт настроек: параллельность анализа",
+    });
+    expect(renewedConflict).toHaveTextContent("7");
+    const takeSaved = within(renewedConflict).getByRole("button", {
+      name: "Взять сохранённое: параллельность анализа",
+    });
+    await waitFor(() => expect(takeSaved).toBeEnabled());
+    fireEvent.click(takeSaved);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Одновременные файлы")).toHaveValue("7"),
+    );
+    expect(templateInput).toHaveValue("{ALBUM_NAME}/draft");
+    expect(template).toBe(settings.settings.publication_path_template);
   });
 
   it("continues queued autosaves and initial loading after an earlier write fails", async () => {

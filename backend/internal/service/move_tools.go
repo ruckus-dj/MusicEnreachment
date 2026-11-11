@@ -61,7 +61,7 @@ func NewMoveTools(repository MoveRepository, registry *settings.Registry, platfo
 	return &MoveTools{repository: repository, settings: registry, platform: platform, river: riverClient}
 }
 
-func (service *MoveTools) Preflight(ctx context.Context, newRoot string, removeOldFiles bool) (MovePreflight, error) {
+func (service *MoveTools) Preflight(ctx context.Context, newRoot string, removeOldFiles bool, expectedToolsRoot ...string) (MovePreflight, error) {
 	if !service.platform.Supported() {
 		return MovePreflight{}, fmt.Errorf("unsupported instance platform")
 	}
@@ -71,6 +71,12 @@ func (service *MoveTools) Preflight(ctx context.Context, newRoot string, removeO
 	}
 	if !hasOldRoot || oldRoot == "" {
 		return MovePreflight{}, fmt.Errorf("current tools directory is not configured")
+	}
+	if len(expectedToolsRoot) > 1 {
+		return MovePreflight{}, fmt.Errorf("at most one expected tools directory may be supplied")
+	}
+	if len(expectedToolsRoot) == 1 && oldRoot != expectedToolsRoot[0] {
+		return MovePreflight{}, fmt.Errorf("%w: tools directory changed since this draft was opened", settings.ErrSettingsConflict)
 	}
 	newRoot, err = settings.NormalizePath(newRoot)
 	if err != nil {
@@ -96,6 +102,9 @@ func (service *MoveTools) Preflight(ctx context.Context, newRoot string, removeO
 	snapshot := MoveSnapshot{
 		SchemaVersion: 1, OldRoot: oldRoot, NewRoot: newRoot,
 		Files: make([]MoveFileIdentity, 0), RemoveOldFiles: removeOldFiles,
+	}
+	if len(expectedToolsRoot) == 1 && snapshot.OldRoot != expectedToolsRoot[0] {
+		return MovePreflight{}, fmt.Errorf("%w: tools directory changed since this draft was opened", settings.ErrSettingsConflict)
 	}
 	conflicts := make([]string, 0)
 	for _, installation := range installations {

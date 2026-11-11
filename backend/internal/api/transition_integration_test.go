@@ -144,7 +144,16 @@ func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
 
 	createTransitionInstallation(t, ctx, repository, toolsRoot, "fpcalc", "2.0", false)
 	newRoot := t.TempDir()
-	response = transitionRequest(t, router, http.MethodPost, "/tools/move/preflight", fmt.Sprintf(`{"new_tools_directory":%q,"remove_old_files":false}`, newRoot))
+	savedToolsRoot, _, err := registry.GetToolsDirectory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleToolsRoot := t.TempDir()
+	response = transitionRequest(t, router, http.MethodPost, "/tools/move/preflight", fmt.Sprintf(`{"new_tools_directory":%q,"expected_tools_directory":%q,"remove_old_files":false}`, newRoot, staleToolsRoot))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("stale tools-root preflight status=%d want=%d body=%s", response.Code, http.StatusConflict, response.Body.String())
+	}
+	response = transitionRequest(t, router, http.MethodPost, "/tools/move/preflight", fmt.Sprintf(`{"new_tools_directory":%q,"expected_tools_directory":%q,"remove_old_files":false}`, newRoot, savedToolsRoot))
 	if response.Code != http.StatusOK {
 		t.Fatalf("move preflight status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -155,7 +164,7 @@ func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
 	if movePlan.Token == "" || movePlan.FileCount != 1 || len(movePlan.Conflicts) != 0 {
 		t.Fatalf("move preflight response = %#v", movePlan)
 	}
-	response = transitionRequest(t, router, http.MethodPost, "/tools/move/preflight", fmt.Sprintf(`{"new_tools_directory":%q,"remove_old_files":false}`, toolsRoot))
+	response = transitionRequest(t, router, http.MethodPost, "/tools/move/preflight", fmt.Sprintf(`{"new_tools_directory":%q,"expected_tools_directory":%q,"remove_old_files":false}`, toolsRoot, savedToolsRoot))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("overlapping move preflight status=%d want=%d body=%s", response.Code, http.StatusBadRequest, response.Body.String())
 	}

@@ -1684,13 +1684,16 @@ func verifyToolsOperationRootForRetry(ctx context.Context, tx bun.Tx, operation 
 func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, id uuid.UUID) error {
 	result, err := repository.db.NewDelete().Model((*Operation)(nil)).
 		Where("id = ?", id).
+		Where("kind <> 'delete_library_v1'").
 		Where("state = 'failed'").
 		Where("NOT EXISTS (SELECT 1 FROM tools_execution_claim WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_work_execution WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM publication_source_hold WHERE operation_id = operation.id)").
+		Where("NOT EXISTS (SELECT 1 FROM manual_matching_receipt WHERE retired_by_operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM publication_reconciliation_event WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM publication_source_cleanup_request WHERE originating_operation_id = operation.id)").
+		Where("kind <> 'delete_library_v1' OR (state = 'succeeded' AND jsonb_array_length(input_snapshot->'residual_publication_ids') = 0)").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("dismiss operation: %w", err)

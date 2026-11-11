@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	appsettings "github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
@@ -43,6 +44,7 @@ type OutputResetRequest struct {
 	ExpectedToolsRoot          string
 	NewRoot                    string
 	RuntimeValues              map[string]string
+	ExpectedRuntimeSettings    *appsettings.RuntimeSettingsExpected
 	RuntimeValuesAfterPrepare  func(context.Context) (map[string]string, error)
 	AllowedDirectories         []string
 	OutputCaseSensitive        *bool
@@ -51,10 +53,93 @@ type OutputResetRequest struct {
 	Finish                     func(context.Context, OutputResetJournal) error
 }
 
+// OutputSemanticsRefreshRequest updates settings for an already-configured
+// output root while holding the same filesystem coordination gates as reset.
+type OutputSemanticsRefreshRequest struct {
+	ExpectedToolsRoot       string
+	ExpectedOutputRoot      string
+	RuntimeValues           map[string]string
+	ExpectedRuntimeSettings *appsettings.RuntimeSettingsExpected
+	Refresh                 func(context.Context) (map[string]string, error)
+}
+
 type OutputResetSession struct{ conn *sql.Conn }
 
 type outputResetOutcomes struct {
 	RemovedCandidateOperationIDs []uuid.UUID `json:"removed_candidate_operation_ids"`
+}
+
+// RunOutputSemanticsRefresh validates the saved roots and browser projection
+// before probing the existing output directory, then commits the refreshed
+// semantics and any accompanying runtime settings under the same gates.
+func (repository *SetupManagerRepository) RunOutputSemanticsRefresh(ctx context.Context, request OutputSemanticsRefreshRequest) error {
+	values := cloneSettingValues(request.RuntimeValues)
+	if request.Refresh == nil {
+		return fmt.Errorf("output semantics refresh callback is required")
+	}
+	expectedToolsRoot, err := normalizeResetRoot(request.ExpectedToolsRoot)
+	if err != nil {
+		return fmt.Errorf("normalize expected tools directory: %w", err)
+	}
+	expectedOutputRoot, err := normalizeResetRoot(request.ExpectedOutputRoot)
+	if err != nil || expectedOutputRoot == "" {
+		return fmt.Errorf("expected output directory is invalid")
+	}
+	return WithExclusiveOutputAdmissionSession(ctx, repository.db, func(session *OutputResetSession) error {
+		tx, err := session.conn.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin output semantics refresh: %w", err)
+		}
+		toolsMoveLocked := false
+		defer func() {
+			_ = tx.Rollback()
+			if toolsMoveLocked {
+				session.unlockToolsMoveGate()
+			}
+		}()
+		if value, ok := values[appsettings.PublicationRemoveSourcesKey]; ok && value == "false" {
+			if err := lockPublicationSourceCleanupPolicySQL(ctx, tx, false); err != nil {
+				return err
+			}
+		}
+		if err := session.lockToolsMoveGate(ctx); err != nil {
+			return err
+		}
+		toolsMoveLocked = true
+		var currentToolsRoot, currentOutputRoot string
+		if err := tx.QueryRowContext(ctx, `SELECT
+			COALESCE(MAX(setting_value) FILTER (WHERE setting_name = 'tools_directory'), ''),
+			COALESCE(MAX(setting_value) FILTER (WHERE setting_name = 'output_directory'), '')
+			FROM app_setting WHERE setting_name IN ('tools_directory', 'output_directory')`).
+			Scan(&currentToolsRoot, &currentOutputRoot); err != nil {
+			return fmt.Errorf("read output roots before semantics refresh: %w", err)
+		}
+		if currentToolsRoot != expectedToolsRoot {
+			return fmt.Errorf("%w: tools directory changed since this draft was opened", appsettings.ErrSettingsConflict)
+		}
+		if currentOutputRoot != expectedOutputRoot {
+			return fmt.Errorf("%w: output directory changed since this draft was opened", appsettings.ErrSettingsConflict)
+		}
+		if request.ExpectedRuntimeSettings != nil {
+			if err := checkRuntimeSettingsExpected(ctx, tx, *request.ExpectedRuntimeSettings); err != nil {
+				return err
+			}
+		}
+		refreshed, err := request.Refresh(ctx)
+		if err != nil {
+			return fmt.Errorf("probe output directory semantics: %w", err)
+		}
+		for name, value := range refreshed {
+			values[name] = value
+		}
+		if err := updateRuntimeSettingsSQL(ctx, tx, expectedToolsRoot, expectedOutputRoot, request.ExpectedRuntimeSettings, values); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit output semantics refresh: %w", err)
+		}
+		return nil
+	})
 }
 
 // RunOutputResetRequest holds the exclusive output admission gate from journal
@@ -137,6 +222,11 @@ func (repository *SetupManagerRepository) RunOutputResetRequest(ctx context.Cont
 			return err
 		}
 		defer session.unlockToolsMoveGate()
+		if request.ExpectedRuntimeSettings != nil {
+			if err := checkRuntimeSettingsExpected(ctx, session.conn, *request.ExpectedRuntimeSettings); err != nil {
+				return err
+			}
+		}
 		if err := session.begin(ctx, token, oldRoot, newRoot, expectedToolsRoot, runtimeValues); err != nil {
 			return err
 		}

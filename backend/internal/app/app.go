@@ -268,6 +268,9 @@ func Run(ctx context.Context, config Config) error {
 	if err != nil {
 		return fmt.Errorf("create publication boot identity: %w", err)
 	}
+	libraryDeletionService := service.NewLibraryDeletionService(setupManagerRepository, publicationCoordinator, publicationBootUUID, nil)
+	libraryDeletionWorker := jobs.NewLibraryDeletionWorker(libraryDeletionService, operationService)
+	libraryDeletionAPI := libraryDeletionAPI{deletion: libraryDeletionService, river: riverSlot}
 	publicationExecutor := service.NewPublicationExecutor(
 		setupManagerRepository, registry,
 		tools.Platform{GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH},
@@ -336,6 +339,7 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, matchingEvaluationWorker)
 		river.AddWorker(workers, matchingApplyWorker)
 		river.AddWorker(workers, publicationWorker)
+		registerLibraryDeletionWorker(workers, libraryDeletionWorker)
 		river.AddWorker(workers, obsoleteOutputCleanupWorker)
 		river.AddWorker(workers, publicationReconciliationWorker)
 		river.AddWorker(workers, publicationReconciliationDispatchWorker)
@@ -499,6 +503,7 @@ func Run(ctx context.Context, config Config) error {
 		LibraryMetadata:        libraryMetadata,
 		LibraryReleaseCovers:   libraryReleaseCovers,
 		LibraryPublications:    libraryPublications,
+		LibraryDeletion:        libraryDeletionAPI,
 		LocalProviderCatalog:   localProviderCatalog,
 	}))
 	router.Handle("/*", static.Handler())

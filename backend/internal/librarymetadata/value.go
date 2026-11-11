@@ -121,10 +121,11 @@ type ArtistCredit struct {
 }
 
 type Contributor struct {
-	Name     string  `json:"name"`
-	Role     string  `json:"role"`
-	ArtistID *string `json:"artist_id,omitempty"`
-	MBID     *string `json:"mbid,omitempty"`
+	Name       string  `json:"name"`
+	Role       string  `json:"role"`
+	Instrument string  `json:"instrument,omitempty"`
+	ArtistID   *string `json:"artist_id,omitempty"`
+	MBID       *string `json:"mbid,omitempty"`
 }
 
 type Work struct {
@@ -303,9 +304,14 @@ func validateTypedValue(valueType ValueType, value any) error {
 			return optionalUUID(item, "mbid")
 		})
 	case TypeContributors:
-		return validateObjectList(value, map[string]bool{"name": true, "role": true, "artist_id": true, "mbid": true}, func(item map[string]any) error {
+		return validateObjectList(value, map[string]bool{"name": true, "role": true, "instrument": true, "artist_id": true, "mbid": true}, func(item map[string]any) error {
 			if err := requiredStringFields(item, "name", "role"); err != nil {
 				return err
+			}
+			if entry, exists := item["instrument"]; exists {
+				if _, ok := entry.(string); !ok {
+					return fmt.Errorf("instrument must be a string")
+				}
 			}
 			if err := optionalUUID(item, "artist_id"); err != nil {
 				return err

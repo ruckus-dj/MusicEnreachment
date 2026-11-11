@@ -7,6 +7,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
 type UpdateSettingsInput struct {
@@ -14,9 +15,19 @@ type UpdateSettingsInput struct {
 }
 
 type UpdateSettingsBody struct {
-	OutputDirectory          string  `json:"output_directory,omitempty" maxLength:"4096"`
+	OutputDirectory          string                      `json:"output_directory,omitempty" maxLength:"4096"`
+	WorkDirectory            *string                     `json:"work_directory,omitempty" maxLength:"4096"`
+	PublicationFormat        string                      `json:"publication_format,omitempty" enum:"source,mka,m4a"`
+	PublicationPathTemplate  *string                     `json:"publication_path_template,omitempty" maxLength:"4096"`
+	PublicationRemoveSources *bool                       `json:"publication_remove_sources,omitempty"`
+	SourceFileConcurrency    *int                        `json:"source_file_concurrency,omitempty" minimum:"1"`
+	Expected                 *UpdateSettingsExpectedBody `json:"expected,omitempty"`
+}
+
+type UpdateSettingsExpectedBody struct {
 	WorkDirectory            *string `json:"work_directory,omitempty" maxLength:"4096"`
-	PublicationFormat        string  `json:"publication_format,omitempty" enum:"source,mka,m4a"`
+	OutputDirectory          *string `json:"output_directory,omitempty" maxLength:"4096"`
+	PublicationFormat        *string `json:"publication_format,omitempty"`
 	PublicationPathTemplate  *string `json:"publication_path_template,omitempty" maxLength:"4096"`
 	PublicationRemoveSources *bool   `json:"publication_remove_sources,omitempty"`
 	SourceFileConcurrency    *int    `json:"source_file_concurrency,omitempty" minimum:"1"`
@@ -27,8 +38,16 @@ type UpdateMusicBrainzInput struct {
 }
 
 type UpdateMusicBrainzBody struct {
-	Mode                   string   `json:"mode" enum:"public,self-hosted"`
-	BaseURL                string   `json:"base_url,omitempty" maxLength:"2048"`
+	Mode                   *string                        `json:"mode,omitempty" enum:"public,self-hosted"`
+	BaseURL                *string                        `json:"base_url,omitempty" maxLength:"2048"`
+	SelfHostedThrottle     *bool                          `json:"self_hosted_throttle,omitempty"`
+	SelfHostedDelaySeconds *float64                       `json:"self_hosted_delay_seconds,omitempty" minimum:"0" maximum:"60"`
+	Expected               *UpdateMusicBrainzExpectedBody `json:"expected"`
+}
+
+type UpdateMusicBrainzExpectedBody struct {
+	Mode                   *string  `json:"mode,omitempty" enum:"public,self-hosted"`
+	BaseURL                *string  `json:"base_url,omitempty" maxLength:"2048"`
 	SelfHostedThrottle     *bool    `json:"self_hosted_throttle,omitempty"`
 	SelfHostedDelaySeconds *float64 `json:"self_hosted_delay_seconds,omitempty" minimum:"0" maximum:"60"`
 }
@@ -143,12 +162,35 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if input.Body.PublicationFormat != "" {
 			publicationFormat = &input.Body.PublicationFormat
 		}
+		expected := input.Body.Expected
+		hasChanges := input.Body.WorkDirectory != nil || input.Body.OutputDirectory != "" || publicationFormat != nil ||
+			input.Body.PublicationPathTemplate != nil || input.Body.PublicationRemoveSources != nil || input.Body.SourceFileConcurrency != nil
+		if hasChanges && (expected == nil ||
+			(input.Body.WorkDirectory != nil && expected.WorkDirectory == nil) ||
+			(input.Body.OutputDirectory != "" && expected.OutputDirectory == nil) ||
+			(publicationFormat != nil && expected.PublicationFormat == nil) ||
+			(input.Body.PublicationPathTemplate != nil && expected.PublicationPathTemplate == nil) ||
+			(input.Body.PublicationRemoveSources != nil && expected.PublicationRemoveSources == nil) ||
+			(input.Body.SourceFileConcurrency != nil && expected.SourceFileConcurrency == nil)) {
+			return nil, huma.Error422UnprocessableEntity("expected saved settings are required for every changed field")
+		}
+		var expectedValues *settings.RuntimeSettingsExpected
+		if expected != nil {
+			expectedValues = &settings.RuntimeSettingsExpected{
+				WorkDirectory: expected.WorkDirectory, OutputDirectory: expected.OutputDirectory,
+				PublicationFormat: expected.PublicationFormat, PublicationPathTemplate: expected.PublicationPathTemplate,
+				PublicationRemoveSources: expected.PublicationRemoveSources, SourceFileConcurrency: expected.SourceFileConcurrency,
+			}
+		}
 		if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
 			OutputDirectory: outputDirectory, WorkDirectory: input.Body.WorkDirectory, PublicationFormat: publicationFormat,
 			PublicationPathTemplate:  input.Body.PublicationPathTemplate,
 			PublicationRemoveSources: input.Body.PublicationRemoveSources,
-			SourceFileConcurrency:    input.Body.SourceFileConcurrency,
+			SourceFileConcurrency:    input.Body.SourceFileConcurrency, Expected: expectedValues,
 		}); err != nil {
+			if errors.Is(err, service.ErrSettingsConflict) {
+				return nil, huma.Error409Conflict("settings changed since this draft was opened")
+			}
 			return nil, huma.Error400BadRequest("settings could not be saved")
 		}
 		return nil, nil
@@ -164,13 +206,35 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		if err := requireSupportedPlatform(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := setup.SaveMusicBrainz(ctx, input.Body.Mode, input.Body.BaseURL); err != nil {
-			return nil, huma.Error400BadRequest("MusicBrainz settings are invalid")
+		targetChanged := input.Body.Mode != nil || input.Body.BaseURL != nil
+		if (input.Body.Mode == nil) != (input.Body.BaseURL == nil) ||
+			(input.Body.Expected != nil && (input.Body.Expected.Mode == nil) != (input.Body.Expected.BaseURL == nil)) {
+			return nil, huma.Error422UnprocessableEntity("MusicBrainz mode and base URL must be supplied together")
 		}
-		if input.Body.SelfHostedThrottle != nil || input.Body.SelfHostedDelaySeconds != nil {
-			if err := setup.SaveMusicBrainzProviderSettings(ctx, input.Body.SelfHostedThrottle, input.Body.SelfHostedDelaySeconds); err != nil {
-				return nil, huma.Error400BadRequest("MusicBrainz provider settings are invalid")
+		if input.Body.Expected == nil && (targetChanged || input.Body.SelfHostedThrottle != nil || input.Body.SelfHostedDelaySeconds != nil) {
+			return nil, huma.Error422UnprocessableEntity("expected MusicBrainz settings are required")
+		}
+		if targetChanged && (input.Body.Expected.Mode == nil || input.Body.Expected.BaseURL == nil) {
+			return nil, huma.Error422UnprocessableEntity("expected MusicBrainz target is required when changing the target")
+		}
+		if !targetChanged && input.Body.Expected != nil && (input.Body.Expected.Mode != nil || input.Body.Expected.BaseURL != nil) {
+			return nil, huma.Error422UnprocessableEntity("MusicBrainz target expectation requires a target update")
+		}
+		if (input.Body.SelfHostedThrottle != nil && input.Body.Expected.SelfHostedThrottle == nil) ||
+			(input.Body.SelfHostedDelaySeconds != nil && input.Body.Expected.SelfHostedDelaySeconds == nil) {
+			return nil, huma.Error422UnprocessableEntity("expected saved provider settings are required for every changed field")
+		}
+		var expected settings.MusicBrainzSettingsExpected
+		if input.Body.Expected != nil {
+			expected.Mode, expected.BaseURL = input.Body.Expected.Mode, input.Body.Expected.BaseURL
+			expected.SelfHostedThrottle = input.Body.Expected.SelfHostedThrottle
+			expected.SelfHostedDelaySeconds = input.Body.Expected.SelfHostedDelaySeconds
+		}
+		if err := setup.SaveMusicBrainzSettings(ctx, input.Body.Mode, input.Body.BaseURL, expected, input.Body.SelfHostedThrottle, input.Body.SelfHostedDelaySeconds); err != nil {
+			if errors.Is(err, service.ErrSettingsConflict) {
+				return nil, huma.Error409Conflict("MusicBrainz settings changed since this draft was opened")
 			}
+			return nil, huma.Error400BadRequest("MusicBrainz settings are invalid")
 		}
 		return nil, nil
 	})

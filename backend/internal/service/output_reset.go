@@ -18,6 +18,10 @@ type outputResetRepository interface {
 	RecoverOutputReset(context.Context, func(context.Context, persistence.OutputResetJournal) error) error
 }
 
+type outputSemanticsRefreshRepository interface {
+	RunOutputSemanticsRefresh(context.Context, persistence.OutputSemanticsRefreshRequest) error
+}
+
 // OutputReset coordinates filesystem preparation with the persistence journal.
 // The supplied logical directory names are passed explicitly so adding or
 // changing output areas remains a product-level choice rather than an implicit
@@ -25,6 +29,7 @@ type outputResetRepository interface {
 type OutputReset struct {
 	repository   outputResetRepository
 	filesystem   *settings.ResetFilesystem
+	probeOutput  func(string, bool) (settings.FilesystemSemantics, error)
 	logicalAreas []string
 	registry     *settings.Registry
 	coordinator  *publication.Coordinator
@@ -50,7 +55,19 @@ func NewOutputReset(repository outputResetRepository, filesystem *settings.Reset
 	if filesystem == nil {
 		filesystem = settings.NewResetFilesystem()
 	}
-	return &OutputReset{repository: repository, filesystem: filesystem, logicalAreas: append([]string(nil), logicalAreas...)}
+	return &OutputReset{
+		repository: repository, filesystem: filesystem, probeOutput: settings.ProbeOutputDirectory,
+		logicalAreas: append([]string(nil), logicalAreas...),
+	}
+}
+
+// WithOutputDirectoryProbe replaces the semantics probe, primarily for testing
+// that rejected stale writes do not reach filesystem work.
+func (s *OutputReset) WithOutputDirectoryProbe(probe func(string, bool) (settings.FilesystemSemantics, error)) *OutputReset {
+	if probe != nil {
+		s.probeOutput = probe
+	}
+	return s
 }
 
 // Reset changes the output root through the durable reset coordinator. Candidate
@@ -128,6 +145,13 @@ func (s *OutputReset) ResetRuntime(ctx context.Context, expectedTools, expectedO
 	if s.repository == nil {
 		return uuid.Nil, fmt.Errorf("output reset repository is required")
 	}
+	if update.Expected != nil {
+		expected, err := settings.NormalizeRuntimeSettingsExpected(*update.Expected)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		update.Expected = &expected
+	}
 	release, err := s.acquirePublicationMutation(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -140,21 +164,34 @@ func (s *OutputReset) ResetRuntime(ctx context.Context, expectedTools, expectedO
 	if newRoot != candidate {
 		return uuid.Nil, fmt.Errorf("output directory must be a normalized path")
 	}
-	if expectedOutput == newRoot {
-		// A same-root save is a semantics refresh, not a reset. Existing output is
-		// intentionally allowed to be populated.
-		semantics, err := settings.ProbeOutputDirectory(newRoot, false)
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("output directory semantics: %w", err)
-		}
-		update.OutputCaseSensitive = &semantics.CaseSensitive
-		update.OutputUnicodeNormalization = &semantics.UnicodeNormalization
-		update.ExpectedToolsDirectory = &expectedTools
-		update.ExpectedOutputDirectory = &expectedOutput
-		return uuid.Nil, s.registry.UpdateRuntime(ctx, update)
-	}
 	update.OutputDirectory = &newRoot
 	update.ExpectedToolsDirectory, update.ExpectedOutputDirectory = &expectedTools, &expectedOutput
+	if expectedOutput == newRoot {
+		// A same-root save is a semantics refresh, not a reset. Existing output is
+		// intentionally allowed to be populated. The repository checks the saved
+		// roots and expected projection before invoking the probe, and commits the
+		// refreshed semantics while retaining the coordination gates.
+		return uuid.Nil, s.registryCoordinate(ctx, expectedTools, expectedOutput, update, func(runtime map[string]string) error {
+			repository, ok := s.repository.(outputSemanticsRefreshRepository)
+			if !ok {
+				return fmt.Errorf("output semantics refresh repository is required")
+			}
+			return repository.RunOutputSemanticsRefresh(ctx, persistence.OutputSemanticsRefreshRequest{
+				ExpectedToolsRoot: expectedTools, ExpectedOutputRoot: expectedOutput,
+				RuntimeValues: runtime, ExpectedRuntimeSettings: update.Expected,
+				Refresh: func(ctx context.Context) (map[string]string, error) {
+					semantics, err := s.probeOutput(newRoot, false)
+					if err != nil {
+						return nil, fmt.Errorf("output directory semantics: %w", err)
+					}
+					return map[string]string{
+						settings.OutputCaseSensitiveKey:        strconv.FormatBool(semantics.CaseSensitive),
+						settings.OutputUnicodeNormalizationKey: semantics.UnicodeNormalization,
+					}, nil
+				},
+			})
+		})
+	}
 	var token uuid.UUID
 	err = s.registryCoordinate(ctx, expectedTools, expectedOutput, update, func(runtime map[string]string) error {
 		directories := append([]string{newRoot}, s.areaPaths(newRoot)...)
@@ -169,14 +206,14 @@ func (s *OutputReset) ResetRuntime(ctx context.Context, expectedTools, expectedO
 			}); err != nil {
 				return err
 			}
-			semantics, err = settings.ProbeOutputDirectory(newRoot, false)
+			semantics, err = s.probeOutput(newRoot, false)
 			return err
 		}
 		finish := func(context.Context, persistence.OutputResetJournal) error { return nil }
 		runtime[settings.OutputDirectoryKey] = newRoot
 		request := persistence.OutputResetRequest{
 			ExpectedToolsRoot: expectedTools, ExpectedOldRoot: expectedOutput, NewRoot: newRoot,
-			AllowedDirectories: planned, RuntimeValues: runtime, Prepare: prepare, Finish: finish,
+			AllowedDirectories: planned, RuntimeValues: runtime, ExpectedRuntimeSettings: update.Expected, Prepare: prepare, Finish: finish,
 			RuntimeValuesAfterPrepare: func(context.Context) (map[string]string, error) {
 				return map[string]string{
 					settings.OutputCaseSensitiveKey:        strconv.FormatBool(semantics.CaseSensitive),

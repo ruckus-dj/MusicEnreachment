@@ -124,8 +124,7 @@ export function SettingsGeneralSection({
             <Label className={sectionStyles.label}>Одновременные файлы</Label>
             <Input
               id="settings-concurrency"
-              type="number"
-              min="1"
+              type="text"
               inputMode="numeric"
               aria-invalid={concurrencyInvalid}
               aria-describedby={

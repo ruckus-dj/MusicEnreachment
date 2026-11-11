@@ -125,6 +125,35 @@ func TestPublicationTagKeysForFieldUsesApprovedMappingFootprints(t *testing.T) {
 	}
 }
 
+func TestPublicationTagKeysForContributorValueIncludesOwnedPerformerKeys(t *testing.T) {
+	keys, err := PublicationTagKeysForFieldValue(librarymetadata.ScopePosition, "contributors", []librarymetadata.Contributor{
+		{Name: "Composer", Role: "composer", Instrument: "ignored for role mapping"},
+		{Name: "Guitarist", Role: "performer", Instrument: "guitar"},
+		{Name: "Pianist", Role: "performer", Instrument: "piano"},
+		{Name: "Vocalist", Role: "performer"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"COMPOSER", "LYRICIST", "CONDUCTOR", "ARRANGER", "ENGINEER", "PRODUCER", "REMIXER", "DJMIXER", "MIXER",
+		"PERFORMER:GUITAR", "PERFORMER:PIANO", "PERFORMER:PERFORMER",
+	}
+	if !reflect.DeepEqual(keys, want) {
+		t.Fatalf("performer-aware contributor footprint = %#v, want %#v", keys, want)
+	}
+	current := map[string][]string{"TITLE": {"Current"}, "PERFORMER:GUITAR": {"Guitarist"}, "PERFORMER:DRUMS": {"Unrelated performer"}}
+	protected, err := ApplyProviderTagPatch(current, map[string][]string{"TITLE": {"Provider title"}}, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(protected["PERFORMER:GUITAR"], current["PERFORMER:GUITAR"]) ||
+		!reflect.DeepEqual(protected["PERFORMER:DRUMS"], current["PERFORMER:DRUMS"]) ||
+		!reflect.DeepEqual(protected["TITLE"], []string{"Provider title"}) {
+		t.Fatalf("provider projection did not limit its change: got %#v", protected)
+	}
+}
+
 func TestApplyProviderTagPatchProtectsCompleteOptionalFieldFootprints(t *testing.T) {
 	fields := []struct {
 		scope librarymetadata.Scope

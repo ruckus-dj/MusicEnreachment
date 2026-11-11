@@ -15,6 +15,8 @@ import type {
   LibraryPublicationResponse,
   LibraryReleaseDetailResponse,
 } from "../../api/generated/client.schemas";
+import { I18nProvider } from "../../i18n/I18nProvider";
+import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { LibraryReleaseScreen } from "./LibraryReleaseScreen";
 
@@ -35,12 +37,16 @@ const releaseID = "release-1";
 const positionID = "position-1";
 const validatedAt = "2026-10-20T12:34:56Z";
 
-function release(published: boolean): LibraryReleaseDetailResponse {
+function release(
+  published: boolean,
+  generation = "generation-1",
+  canRefreshMusicBrainz = false,
+): LibraryReleaseDetailResponse {
   return {
     id: releaseID,
     title: "Contextual Release",
     artists: null,
-    can_refresh_musicbrainz: false,
+    can_refresh_musicbrainz: canRefreshMusicBrainz,
     metadata: {},
     metadata_revision: 1,
     metadata_version: 1,
@@ -79,7 +85,7 @@ function release(published: boolean): LibraryReleaseDetailResponse {
           ? {
               container: "flac",
               codec: "FLAC",
-              generation: "generation-1",
+              generation,
               relative_path: "Artist/Album/01 - Position One.flac",
               validated_at: validatedAt,
             }
@@ -95,7 +101,10 @@ const metadata: LibraryMetadataResponse = {
   revision: 1,
 };
 
-function publication(published: boolean): LibraryPublicationResponse {
+function publication(
+  published: boolean,
+  generation = "generation-1",
+): LibraryPublicationResponse {
   return {
     active_epoch: "epoch-1",
     can_apply_manual_lyrics: false,
@@ -104,7 +113,7 @@ function publication(published: boolean): LibraryPublicationResponse {
     release_id: releaseID,
     ...(published
       ? {
-          current_generation: "generation-1",
+          current_generation: generation,
           current_path: "Artist/Album/01 - Position One.flac",
           current_validated_at: validatedAt,
           current_audio: {
@@ -149,6 +158,7 @@ function renderScreen(releaseId: string) {
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 beforeEach(() => {
@@ -351,4 +361,153 @@ it("updates generation and path after a manual position refresh", async () => {
         .getAttribute("data-refresh-token"),
     ).toContain("generation-2"),
   );
+});
+
+it("refreshes deletion from authoritative position state without remounting publication preview", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "ru");
+  vi.stubGlobal("localStorage", storage);
+  let deleted = false;
+  let generation = "generation-1";
+  let previewReads = 0;
+  let deletionCalls = 0;
+  server.use(
+    http.get("*/api/library/releases/:releaseId", () =>
+      HttpResponse.json(release(!deleted, generation, true)),
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/metadata",
+      () => HttpResponse.json(metadata),
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/publication",
+      () => HttpResponse.json(publication(!deleted, generation)),
+    ),
+    http.get("*/api/library/releases/:releaseId/deletion/preview", () =>
+      HttpResponse.json({
+        blockers: [],
+        confirmation_digest: "b".repeat(64),
+        kind: "release",
+        outputs: [],
+        position_ids: [positionID],
+        release_id: releaseID,
+        title: "Contextual Release",
+      }),
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/deletion/preview",
+      () => {
+        previewReads += 1;
+        return HttpResponse.json({
+          blockers: [],
+          confirmation_digest: "b".repeat(64),
+          kind: "publication",
+          outputs: [
+            {
+              capturable: true,
+              position_id: positionID,
+              relative_path: `Artist/Album/${generation}.flac`,
+            },
+          ],
+          position_ids: [positionID],
+          release_id: releaseID,
+          title: "Contextual Release",
+        });
+      },
+    ),
+    http.post("*/api/library/deletion/confirm", () => {
+      deletionCalls += 1;
+      deleted = true;
+      return HttpResponse.json(
+        {
+          id: "76092c63-0e0f-4dc1-af39-674dc1ce037c",
+          kind: "delete_library_v1",
+          state: "succeeded",
+          stage: "succeeded",
+          bytes_completed: 100,
+          created_at: "2026-11-11T10:00:00Z",
+          updated_at: "2026-11-11T10:00:01Z",
+        },
+        { status: 202 },
+      );
+    }),
+    http.post("*/api/library/releases/:releaseId/musicbrainz-refresh", () => {
+      deleted = false;
+      generation = "generation-2";
+      return HttpResponse.json(
+        {
+          id: "43119aa6-c611-4b4e-afbe-421d3e3d2809",
+          kind: "refresh_library_release_musicbrainz",
+          state: "succeeded",
+          stage: "succeeded",
+          bytes_completed: 0,
+          created_at: "2026-11-11T10:00:00Z",
+          updated_at: "2026-11-11T10:00:01Z",
+        },
+        { status: 202 },
+      );
+    }),
+  );
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <I18nProvider>
+      <QueryClientProvider client={client}>
+        <LibraryReleaseScreen releaseId={releaseID} positionId={positionID} />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+  const publicationPreview = await screen.findByTestId("publication-preview");
+  const summary = await screen.findByRole("region", {
+    name: "Текущая публикация",
+  });
+  const positionArticle = await screen.findByRole("article");
+  fireEvent.click(
+    await within(positionArticle).findByRole("button", {
+      name: "Удалить текущую публикацию",
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Загрузить точный предпросмотр" }),
+  );
+  expect(
+    await screen.findByText("Artist/Album/generation-1.flac"),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Подтвердить удаление" }));
+
+  await waitFor(() => expect(summary).toHaveTextContent("Не опубликовано"));
+  expect(
+    within(positionArticle).queryByRole("button", {
+      name: "Удалить текущую публикацию",
+    }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByTestId("publication-preview")).toBe(publicationPreview);
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Обновить данные MusicBrainz" }),
+  );
+  await waitFor(() => expect(summary).toHaveTextContent("Опубликовано"));
+  await waitFor(() =>
+    expect(
+      within(positionArticle).getByRole("button", {
+        name: "Удалить текущую публикацию",
+      }),
+    ).toBeInTheDocument(),
+  );
+  fireEvent.click(
+    within(positionArticle).getByRole("button", {
+      name: "Удалить текущую публикацию",
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Загрузить точный предпросмотр" }),
+  );
+  expect(
+    await screen.findByText("Artist/Album/generation-2.flac"),
+  ).toBeInTheDocument();
+  expect(previewReads).toBe(2);
+  expect(deletionCalls).toBe(1);
+  expect(screen.getByTestId("publication-preview")).toBe(publicationPreview);
 });

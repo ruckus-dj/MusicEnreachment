@@ -373,12 +373,22 @@ func publicationSourceCleanupRetryError(kind string) error {
 	return fmt.Errorf("retry operation: publication source cleanup requires an explicit recovery")
 }
 
+func libraryDeletionRetryError(kind string) error {
+	if kind == persistence.LibraryDeletionOperationKind {
+		return fmt.Errorf("retry operation: library deletion requires explicit recovery")
+	}
+	return nil
+}
+
 func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Operation, error) {
 	if s.enqueuer != nil {
 		return s.retryEnqueued(ctx, id)
 	}
 	existing, err := s.Get(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := libraryDeletionRetryError(existing.Kind); err != nil {
 		return nil, err
 	}
 	// Checked before the state gate so an incomplete cleanup operation gets the
@@ -429,6 +439,9 @@ func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Oper
 func (s *Operations) retryEnqueued(ctx context.Context, id uuid.UUID) (*persistence.Operation, error) {
 	existing, err := s.repository.GetOperation(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := libraryDeletionRetryError(existing.Kind); err != nil {
 		return nil, err
 	}
 	operation, err := s.enqueueRetry(ctx, existing)

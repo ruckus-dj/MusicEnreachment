@@ -100,7 +100,7 @@ function metadataWithDuplicateCredits(revision: number) {
 }
 
 function openGroup(region: HTMLElement, label: string) {
-  fireEvent.click(within(region).getByText(label));
+  fireEvent.click(within(region).getByText(label, { selector: "summary" }));
 }
 
 function renderMetadataEditor(children: ReactNode) {
@@ -122,13 +122,31 @@ it("saves recording and position title overrides through their own scopes", asyn
   const recordingId = "recording-metadata-test";
   const positionId = "position-metadata-test";
   const patchBodies = new Map<string, unknown>();
+  const positionMetadata = (revision: number) => {
+    const result = metadata(revision, "position");
+    result.envelope.desired.contributors = {
+      authority: "local",
+      provenance: { kind: "manual" },
+      state: "value",
+      value: [
+        {
+          name: "A, (B)",
+          role: "performer",
+          instrument: "Piano",
+          artist_id: "123e4567-e89b-42d3-a456-426614174000",
+          mbid: "223e4567-e89b-42d3-a456-426614174000",
+        },
+      ],
+    };
+    return result;
+  };
   server.use(
     http.get(`*/api/library/recordings/${recordingId}/metadata`, () =>
       HttpResponse.json(metadata(3, "recording")),
     ),
     http.get(
       `*/api/library/releases/${releaseId}/positions/${positionId}/metadata`,
-      () => HttpResponse.json(metadata(5, "position")),
+      () => HttpResponse.json(positionMetadata(5)),
     ),
     http.patch(
       `*/api/library/recordings/${recordingId}/metadata`,
@@ -141,7 +159,7 @@ it("saves recording and position title overrides through their own scopes", asyn
       `*/api/library/releases/${releaseId}/positions/${positionId}/metadata`,
       async ({ request }) => {
         patchBodies.set("position", await request.json());
-        return HttpResponse.json(metadata(6, "position"));
+        return HttpResponse.json(positionMetadata(6));
       },
     ),
   );
@@ -201,6 +219,32 @@ it("saves recording and position title overrides through their own scopes", asyn
     }),
     { target: { value: "explicit_empty" } },
   );
+  openGroup(position, "Участники");
+  fireEvent.change(
+    within(position).getByRole("textbox", { name: "Имя участника 1" }),
+    { target: { value: "Doe, Jane (live)" } },
+  );
+  fireEvent.change(within(position).getByRole("combobox", { name: "Роль 1" }), {
+    target: { value: "composer" },
+  });
+  expect(
+    within(position).getByRole("textbox", { name: "Инструмент 1" }),
+  ).toHaveValue("Piano");
+  fireEvent.change(within(position).getByRole("combobox", { name: "Роль 1" }), {
+    target: { value: "performer" },
+  });
+  expect(
+    within(position).getByRole("textbox", { name: "Инструмент 1" }),
+  ).toHaveValue("Piano");
+  expect(
+    within(position).queryByText("123e4567-e89b-42d3-a456-426614174000"),
+  ).not.toBeInTheDocument();
+  expect(
+    within(position).queryByText("223e4567-e89b-42d3-a456-426614174000"),
+  ).not.toBeInTheDocument();
+  expect(
+    within(position).getByText("Связь с локальным артистом сохранена"),
+  ).toBeInTheDocument();
   fireEvent.click(within(recording).getByRole("button", { name: "Сохранить" }));
   fireEvent.click(within(position).getByRole("button", { name: "Сохранить" }));
 
@@ -214,6 +258,18 @@ it("saves recording and position title overrides through their own scopes", asyn
       changes: {
         sort_title: { state: "value", value: "Position sort title" },
         title: { state: "explicit_empty" },
+        contributors: {
+          state: "value",
+          value: [
+            {
+              name: "Doe, Jane (live)",
+              role: "performer",
+              instrument: "Piano",
+              artist_id: "123e4567-e89b-42d3-a456-426614174000",
+              mbid: "223e4567-e89b-42d3-a456-426614174000",
+            },
+          ],
+        },
       },
     });
   });
@@ -397,6 +453,31 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
           state: "value",
           value: overrides.track_number ?? 2,
         };
+      result.envelope.desired.works = {
+        authority: "local",
+        provenance: { kind: "manual" },
+        state: "value",
+        value:
+          scope === "recording"
+            ? [
+                {
+                  name: "Recording work",
+                  mbid: "11111111-1111-4111-8111-111111111111",
+                },
+              ]
+            : [
+                {
+                  name: "Position work",
+                  mbid: "22222222-2222-4222-8222-222222222222",
+                },
+              ],
+      };
+      result.envelope.desired.movement = {
+        authority: "local",
+        provenance: { kind: "manual" },
+        state: "value",
+        value: { name: "Opening", number: 1, count: 4 },
+      };
     }
     return result;
   };
@@ -474,6 +555,8 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
   openGroup(recording, "Сведения о записи");
   openGroup(position, "Сведения о позиции");
   openGroup(position, "Дополнительные метаданные");
+  openGroup(recording, "Произведения и части");
+  openGroup(position, "Произведения и части");
   fireEvent.click(within(release).getByRole("button", { name: "Изменить" }));
   fireEvent.click(within(recording).getByRole("button", { name: "Изменить" }));
   fireEvent.click(within(position).getByRole("button", { name: "Изменить" }));
@@ -546,6 +629,46 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
     within(position).getByRole("textbox", { name: "Подзаголовок трека" }),
     { target: { value: "Live at the Forum" } },
   );
+  fireEvent.change(
+    within(recording).getByRole("textbox", { name: "Название произведения 1" }),
+    { target: { value: "Recording work edited" } },
+  );
+  fireEvent.change(
+    within(position).getByRole("textbox", { name: "Название произведения 1" }),
+    { target: { value: "Position work edited" } },
+  );
+  fireEvent.change(
+    within(recording).getByRole("textbox", { name: "Название части" }),
+    { target: { value: "Finale" } },
+  );
+  fireEvent.change(
+    within(recording).getByRole("textbox", { name: "Номер части" }),
+    { target: { value: "2" } },
+  );
+  fireEvent.change(
+    within(recording).getByRole("textbox", { name: "Всего частей" }),
+    { target: { value: "6" } },
+  );
+  fireEvent.change(
+    within(position).getByRole("textbox", { name: "Название части" }),
+    { target: { value: "Coda" } },
+  );
+  fireEvent.change(
+    within(position).getByRole("textbox", { name: "Номер части" }),
+    { target: { value: "3" } },
+  );
+  fireEvent.change(
+    within(position).getByRole("textbox", { name: "Всего частей" }),
+    { target: { value: "7" } },
+  );
+  expect(
+    within(recording).getByText("11111111-1111-4111-8111-111111111111"),
+  ).toBeInTheDocument();
+  expect(
+    within(recording).queryByRole("textbox", {
+      name: "MusicBrainz ID произведения",
+    }),
+  ).not.toBeInTheDocument();
   fireEvent.click(within(recording).getByRole("button", { name: "Сохранить" }));
   expect(await within(recording).findByRole("alert")).toHaveTextContent(
     "Введите положительное конечное число",
@@ -579,6 +702,19 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
       changes: {
         bpm: { state: "value", value: 128.75 },
         recording_date: { state: "value", value: "1999-03-04" },
+        works: {
+          state: "value",
+          value: [
+            {
+              name: "Recording work edited",
+              mbid: "11111111-1111-4111-8111-111111111111",
+            },
+          ],
+        },
+        movement: {
+          state: "value",
+          value: { name: "Finale", number: 2, count: 6 },
+        },
       },
     });
     expect(patchBodies.get("position")).toEqual({
@@ -586,6 +722,19 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
       changes: {
         track_number: { state: "value", value: 3 },
         subtitle: { state: "value", value: "Live at the Forum" },
+        works: {
+          state: "value",
+          value: [
+            {
+              name: "Position work edited",
+              mbid: "22222222-2222-4222-8222-222222222222",
+            },
+          ],
+        },
+        movement: {
+          state: "value",
+          value: { name: "Coda", number: 3, count: 7 },
+        },
       },
     });
   });

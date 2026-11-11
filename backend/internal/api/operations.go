@@ -49,7 +49,7 @@ type OperationResponse struct {
 	CleanupResults         []service.SourceAnalysisArtifactCleanupItemResult `json:"cleanup_results,omitempty"`
 }
 
-func registerOperations(api huma.API, operations *service.Operations, setup *service.SetupService, cleanup *service.SourceAnalysisArtifactCleanup) {
+func registerOperations(api huma.API, operations *service.Operations, setup *service.SetupService, cleanup *service.SourceAnalysisArtifactCleanup, libraryDeletion LibraryDeletionAPI) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-operations", Method: http.MethodGet, Path: "/operations",
 		Summary: "List current operation snapshots", Tags: []string{"Operations"},
@@ -99,6 +99,20 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		}
 		if err := requireSupportedPlatform(ctx, setup); err != nil {
 			return nil, err
+		}
+		if snapshot, err := operations.Snapshot(ctx, input.ID); err == nil && snapshot.Kind == service.LibraryDeletionOperationKind {
+			if libraryDeletion == nil {
+				return nil, huma.Error503ServiceUnavailable("library deletion retry is unavailable")
+			}
+			retriedID, err := libraryDeletion.Retry(ctx, input.ID)
+			if err != nil {
+				return nil, libraryDeletionRetryError(err)
+			}
+			retried, err := operations.Snapshot(ctx, retriedID)
+			if err != nil {
+				return nil, huma.Error500InternalServerError("failed to read retried deletion operation")
+			}
+			return operationOutput(retried), nil
 		}
 		if _, err := operations.Retry(ctx, input.ID); err != nil {
 			return nil, huma.Error409Conflict("operation could not be retried")

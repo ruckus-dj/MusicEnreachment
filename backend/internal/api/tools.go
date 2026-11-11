@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -96,8 +97,9 @@ type InstallationActionInput struct {
 
 type MovePreflightInput struct {
 	Body struct {
-		NewRoot        string `json:"new_tools_directory" minLength:"1" maxLength:"4096"`
-		RemoveOldFiles bool   `json:"remove_old_files"`
+		NewRoot                string `json:"new_tools_directory" minLength:"1" maxLength:"4096"`
+		ExpectedToolsDirectory string `json:"expected_tools_directory" minLength:"1" maxLength:"4096"`
+		RemoveOldFiles         bool   `json:"remove_old_files"`
 	}
 }
 
@@ -278,8 +280,11 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		if dependencies.MoveTools == nil {
 			return nil, huma.Error503ServiceUnavailable("move service is unavailable")
 		}
-		plan, err := dependencies.MoveTools.Preflight(ctx, input.Body.NewRoot, input.Body.RemoveOldFiles)
+		plan, err := dependencies.MoveTools.Preflight(ctx, input.Body.NewRoot, input.Body.RemoveOldFiles, input.Body.ExpectedToolsDirectory)
 		if err != nil {
+			if errors.Is(err, service.ErrSettingsConflict) {
+				return nil, huma.Error409Conflict("tools directory changed since this draft was opened")
+			}
 			return nil, huma.Error400BadRequest("tools directory preflight failed")
 		}
 		token := tokens.issueMove(plan)

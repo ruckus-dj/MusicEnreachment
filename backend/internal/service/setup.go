@@ -21,6 +21,7 @@ import (
 )
 
 var (
+	ErrSettingsConflict                 = settings.ErrSettingsConflict
 	ErrGitHubTokenMalformed             = errors.New("GitHub token is malformed")
 	ErrGitHubTokenRejected              = errors.New("GitHub rejected the token")
 	ErrGitHubTokenValidationUnavailable = errors.New("GitHub token validation is unavailable")
@@ -405,6 +406,7 @@ type RuntimeUpdateRequest struct {
 	PublicationPathTemplate  *string
 	PublicationRemoveSources *bool
 	SourceFileConcurrency    *int
+	Expected                 *settings.RuntimeSettingsExpected
 }
 
 // SaveRuntimeUpdate saves all supplied runtime values atomically.
@@ -416,6 +418,7 @@ func (s *SetupService) saveRuntimeRequest(ctx context.Context, request RuntimeUp
 	toolsDirectory, outputDirectory, publicationFormat := request.ToolsDirectory, request.OutputDirectory, request.PublicationFormat
 	update := settings.RuntimeUpdate{}
 	update.WorkDirectory = request.WorkDirectory
+	update.Expected = request.Expected
 	currentTools, hasTools, err := s.registry.GetToolsDirectory(ctx)
 	if err != nil {
 		return fmt.Errorf("get tools directory: %w", err)
@@ -430,6 +433,14 @@ func (s *SetupService) saveRuntimeRequest(ctx context.Context, request RuntimeUp
 	}
 	if !hasOutput {
 		expectedOutput = ""
+	}
+	if request.Expected != nil {
+		if request.Expected.ToolsDirectory != nil {
+			expectedTools = *request.Expected.ToolsDirectory
+		}
+		if request.Expected.OutputDirectory != nil {
+			expectedOutput = *request.Expected.OutputDirectory
+		}
 	}
 	update.ExpectedToolsDirectory = &expectedTools
 	update.ExpectedOutputDirectory = &expectedOutput
@@ -475,9 +486,9 @@ func (s *SetupService) saveRuntimeRequest(ctx context.Context, request RuntimeUp
 		}
 		currentOutput, hasOutput = normalized, true
 		update.OutputDirectory = &normalized
-		if normalized != expectedOutput {
+		if normalized != expectedOutput || request.Expected != nil {
 			if s.outputReset == nil {
-				return fmt.Errorf("output directory changes require the durable output reset service")
+				return fmt.Errorf("output directory updates require the durable output reset service")
 			}
 			_, err = s.outputReset.ResetRuntime(ctx, expectedTools, expectedOutput, normalized, update)
 			return err
@@ -604,6 +615,13 @@ func (s *SetupService) SaveMusicBrainz(ctx context.Context, mode, baseURL string
 func (s *SetupService) SaveMusicBrainzProviderSettings(ctx context.Context, throttle *bool, delaySeconds *float64) error {
 	if err := s.registry.UpdateMusicBrainzProviderSettings(ctx, throttle, delaySeconds); err != nil {
 		return fmt.Errorf("save MusicBrainz provider settings: %w", err)
+	}
+	return nil
+}
+
+func (s *SetupService) SaveMusicBrainzSettings(ctx context.Context, mode, baseURL *string, expected settings.MusicBrainzSettingsExpected, throttle *bool, delaySeconds *float64) error {
+	if err := s.registry.UpdateMusicBrainzSettings(ctx, expected, mode, baseURL, throttle, delaySeconds); err != nil {
+		return fmt.Errorf("save MusicBrainz settings: %w", err)
 	}
 	return nil
 }

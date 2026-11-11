@@ -50,6 +50,8 @@ import type {
   LibraryArtistPage,
   LibraryArtistReferencesPage,
   LibraryArtistSummary,
+  LibraryDeletionConfirmationInputBody,
+  LibraryDeletionPreviewResponse,
   LibraryFirstPublicationAdmissionInputBody,
   LibraryFirstPublicationPreviewResponse,
   LibraryMetadataBody,
@@ -110,6 +112,7 @@ import type {
   RerunSourceFingerprintBody,
   RetrySourceAnalysisStepBody,
   SaveRuntimeBody,
+  SaveSetupMusicBrainzBody,
   SearchGenreCatalogParams,
   SearchLibraryArtistReferencesParams,
   SetGitHubTokenBody,
@@ -3121,6 +3124,120 @@ export function useGetLibraryCoverCandidateImage<TData = Awaited<ReturnType<type
 
 
 
+export type confirmLibraryDeletionResponse202 = {
+  data: OperationResponse
+  status: 202
+}
+
+export type confirmLibraryDeletionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type confirmLibraryDeletionResponseSuccess = (confirmLibraryDeletionResponse202) & {
+  headers: Headers;
+};
+export type confirmLibraryDeletionResponseError = (confirmLibraryDeletionResponseDefault) & {
+  headers: Headers;
+};
+
+export type confirmLibraryDeletionResponse = (confirmLibraryDeletionResponseSuccess | confirmLibraryDeletionResponseError)
+
+export const getConfirmLibraryDeletionUrl = () => {
+
+
+
+
+  return `/api/library/deletion/confirm`
+}
+
+/**
+ * @summary Confirm a previewed library deletion
+ */
+export const confirmLibraryDeletion = async (libraryDeletionConfirmationInputBody: NonReadonly<LibraryDeletionConfirmationInputBody>, options?: RequestInit): Promise<confirmLibraryDeletionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getConfirmLibraryDeletionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(libraryDeletionConfirmationInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: confirmLibraryDeletionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as confirmLibraryDeletionResponse
+}
+
+
+
+
+
+export const getConfirmLibraryDeletionMutationKey = () => ['confirmLibraryDeletion'] as const;
+
+export const getConfirmLibraryDeletionMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmLibraryDeletion>>, TError,ConfirmLibraryDeletionMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmLibraryDeletion>>, TError,ConfirmLibraryDeletionMutationVariables, TContext> => {
+
+const mutationKey = getConfirmLibraryDeletionMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmLibraryDeletion>>, ConfirmLibraryDeletionMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  confirmLibraryDeletion(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmLibraryDeletionMutationResult = NonNullable<Awaited<ReturnType<typeof confirmLibraryDeletion>>>
+    export type ConfirmLibraryDeletionMutationBody = NonReadonly<LibraryDeletionConfirmationInputBody>
+    export type ConfirmLibraryDeletionMutationError = ErrorModel
+    export type ConfirmLibraryDeletionMutationVariables = {data: NonReadonly<LibraryDeletionConfirmationInputBody>}
+
+    /**
+ * @summary Confirm a previewed library deletion
+ */
+export const useConfirmLibraryDeletion = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmLibraryDeletion>>, TError,ConfirmLibraryDeletionMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof confirmLibraryDeletion>>,
+        TError,
+        ConfirmLibraryDeletionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getConfirmLibraryDeletionMutationOptions(options), queryClient);
+    }
+
 export type listLibraryPositionsResponse200 = {
   data: LibraryPositionPage
   status: 200
@@ -5021,6 +5138,133 @@ export const useRetryLibraryReleaseCover = <TError = ErrorModel,
       return useMutation(getRetryLibraryReleaseCoverMutationOptions(options), queryClient);
     }
 
+export type previewLibraryReleaseDeletionResponse200 = {
+  data: LibraryDeletionPreviewResponse
+  status: 200
+}
+
+export type previewLibraryReleaseDeletionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type previewLibraryReleaseDeletionResponseSuccess = (previewLibraryReleaseDeletionResponse200) & {
+  headers: Headers;
+};
+export type previewLibraryReleaseDeletionResponseError = (previewLibraryReleaseDeletionResponseDefault) & {
+  headers: Headers;
+};
+
+export type previewLibraryReleaseDeletionResponse = (previewLibraryReleaseDeletionResponseSuccess | previewLibraryReleaseDeletionResponseError)
+
+export const getPreviewLibraryReleaseDeletionUrl = (releaseId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/deletion/preview`
+}
+
+/**
+ * @summary Preview a library release deletion
+ */
+export const previewLibraryReleaseDeletion = async (releaseId: string, options?: RequestInit): Promise<previewLibraryReleaseDeletionResponse> => {
+
+  const res = await fetch(getPreviewLibraryReleaseDeletionUrl(releaseId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: previewLibraryReleaseDeletionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as previewLibraryReleaseDeletionResponse
+}
+
+
+
+
+
+export const getPreviewLibraryReleaseDeletionQueryKey = (releaseId: string,) => {
+    return [
+    `/api/library/releases/${releaseId}/deletion/preview`
+    ] as const;
+    }
+
+
+export const getPreviewLibraryReleaseDeletionQueryOptions = <TData = Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError = ErrorModel>(releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPreviewLibraryReleaseDeletionQueryKey(releaseId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>> = ({ signal }) => previewLibraryReleaseDeletion(releaseId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseId !== null && releaseId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PreviewLibraryReleaseDeletionQueryResult = NonNullable<Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>>
+export type PreviewLibraryReleaseDeletionQueryError = ErrorModel
+
+
+export function usePreviewLibraryReleaseDeletion<TData = Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError = ErrorModel>(
+ releaseId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>,
+          TError,
+          Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewLibraryReleaseDeletion<TData = Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError = ErrorModel>(
+ releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>,
+          TError,
+          Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewLibraryReleaseDeletion<TData = Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError = ErrorModel>(
+ releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Preview a library release deletion
+ */
+
+export function usePreviewLibraryReleaseDeletion<TData = Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError = ErrorModel>(
+ releaseId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryReleaseDeletion>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPreviewLibraryReleaseDeletionQueryOptions(releaseId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export type getLibraryReleaseMetadataResponse200 = {
   data: LibraryMetadataGetResponse
   status: 200
@@ -5362,6 +5606,141 @@ export const useRefreshLibraryReleaseMusicbrainz = <TError = ErrorModel,
       > => {
       return useMutation(getRefreshLibraryReleaseMusicbrainzMutationOptions(options), queryClient);
     }
+
+export type previewLibraryPublicationDeletionResponse200 = {
+  data: LibraryDeletionPreviewResponse
+  status: 200
+}
+
+export type previewLibraryPublicationDeletionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type previewLibraryPublicationDeletionResponseSuccess = (previewLibraryPublicationDeletionResponse200) & {
+  headers: Headers;
+};
+export type previewLibraryPublicationDeletionResponseError = (previewLibraryPublicationDeletionResponseDefault) & {
+  headers: Headers;
+};
+
+export type previewLibraryPublicationDeletionResponse = (previewLibraryPublicationDeletionResponseSuccess | previewLibraryPublicationDeletionResponseError)
+
+export const getPreviewLibraryPublicationDeletionUrl = (releaseId: string,
+    positionId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/positions/${positionId}/deletion/preview`
+}
+
+/**
+ * @summary Preview a library publication deletion
+ */
+export const previewLibraryPublicationDeletion = async (releaseId: string,
+    positionId: string, options?: RequestInit): Promise<previewLibraryPublicationDeletionResponse> => {
+
+  const res = await fetch(getPreviewLibraryPublicationDeletionUrl(releaseId,positionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: previewLibraryPublicationDeletionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as previewLibraryPublicationDeletionResponse
+}
+
+
+
+
+
+export const getPreviewLibraryPublicationDeletionQueryKey = (releaseId: string,
+    positionId: string,) => {
+    return [
+    `/api/library/releases/${releaseId}/positions/${positionId}/deletion/preview`
+    ] as const;
+    }
+
+
+export const getPreviewLibraryPublicationDeletionQueryOptions = <TData = Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError = ErrorModel>(releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPreviewLibraryPublicationDeletionQueryKey(releaseId,positionId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>> = ({ signal }) => previewLibraryPublicationDeletion(releaseId,positionId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: releaseId !== null && releaseId !== undefined && positionId !== null && positionId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PreviewLibraryPublicationDeletionQueryResult = NonNullable<Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>>
+export type PreviewLibraryPublicationDeletionQueryError = ErrorModel
+
+
+export function usePreviewLibraryPublicationDeletion<TData = Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>,
+          TError,
+          Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewLibraryPublicationDeletion<TData = Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>,
+          TError,
+          Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewLibraryPublicationDeletion<TData = Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Preview a library publication deletion
+ */
+
+export function usePreviewLibraryPublicationDeletion<TData = Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError = ErrorModel>(
+ releaseId: string,
+    positionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryPublicationDeletion>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPreviewLibraryPublicationDeletionQueryOptions(releaseId,positionId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type getLibraryPositionMetadataResponse200 = {
   data: LibraryMetadataGetResponse
@@ -10857,7 +11236,7 @@ export const getSaveSetupMusicbrainzUrl = () => {
 /**
  * @summary Save setup MusicBrainz configuration
  */
-export const saveSetupMusicbrainz = async (updateMusicBrainzBody: NonReadonly<UpdateMusicBrainzBody>, options?: RequestInit): Promise<saveSetupMusicbrainzResponse> => {
+export const saveSetupMusicbrainz = async (saveSetupMusicBrainzBody: NonReadonly<SaveSetupMusicBrainzBody>, options?: RequestInit): Promise<saveSetupMusicbrainzResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -10878,7 +11257,7 @@ const res = await fetch(getSaveSetupMusicbrainzUrl(),
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(updateMusicBrainzBody)
+    body: JSON.stringify(saveSetupMusicBrainzBody)
   }
 )
 
@@ -10923,9 +11302,9 @@ const {mutation: mutationOptions, fetch: fetchOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type SaveSetupMusicbrainzMutationResult = NonNullable<Awaited<ReturnType<typeof saveSetupMusicbrainz>>>
-    export type SaveSetupMusicbrainzMutationBody = NonReadonly<UpdateMusicBrainzBody>
+    export type SaveSetupMusicbrainzMutationBody = NonReadonly<SaveSetupMusicBrainzBody>
     export type SaveSetupMusicbrainzMutationError = ErrorModel
-    export type SaveSetupMusicbrainzMutationVariables = {data: NonReadonly<UpdateMusicBrainzBody>}
+    export type SaveSetupMusicbrainzMutationVariables = {data: NonReadonly<SaveSetupMusicBrainzBody>}
 
     /**
  * @summary Save setup MusicBrainz configuration

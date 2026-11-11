@@ -27,6 +27,7 @@ var baselineMigrationNames = []string{
 	"20261108000002",
 	"20261108000003",
 	"20261109000001",
+	"20261111000001",
 }
 
 var currentMigrationNames = append([]string(nil), baselineMigrationNames...)
@@ -375,6 +376,8 @@ func assertMigrationGroup(t *testing.T, group *migrate.MigrationGroup, want []st
 func assertCurrentSchema(t *testing.T, database *bun.DB) {
 	t.Helper()
 	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns, artistMetadataRevision, artistMetadataConstraint, coverObserved, coverConstraint, sourceMetadataReference, coverPreparationDiagnostic, publicationResumeMode, publicationResumeModeConstraint int
+	var deletionShape, deletionTargetShape, manualReceiptOriginalRelease, manualReceiptRetirementShape int
+	var deletionOperationKind, deletionMutationTarget, deletionTargetIdentity, deletionUUIDArrayValidator, manualReceiptRetirementGuard, manualReceiptDeleteGuard, manualReceiptWriteOnce int
 	ctx := context.Background()
 	checks := []struct {
 		query  string
@@ -394,6 +397,17 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.track_publication'::regclass AND conname='track_publication_cover_embedding_projection_check' AND pg_get_constraintdef(oid) LIKE '%unsupported_source%' AND pg_get_constraintdef(oid) LIKE '%decode_failed%' AND pg_get_constraintdef(oid) LIKE '%derivative_failed%' AND pg_get_constraintdef(oid) LIKE '%source_unavailable%'`, &coverPreparationDiagnostic, 1},
 		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='track_publication_attempt' AND column_name='resume_mode' AND data_type='text' AND is_nullable='NO' AND column_default LIKE '%prepare%'`, &publicationResumeMode, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.track_publication_attempt'::regclass AND conname='track_publication_attempt_resume_mode_check' AND contype='c'`, &publicationResumeModeConstraint, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.operation'::regclass AND conname='operation_library_deletion_shape' AND contype='c' AND pg_get_constraintdef(oid) LIKE '%confirmation_digest%'`, &deletionShape, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.operation'::regclass AND conname='operation_library_deletion_target_shape' AND contype='c'`, &deletionTargetShape, 1},
+		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='manual_matching_receipt' AND column_name='original_local_release_id' AND is_nullable='NO'`, &manualReceiptOriginalRelease, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.manual_matching_receipt'::regclass AND conname='manual_matching_receipt_retirement_shape' AND contype='c'`, &manualReceiptRetirementShape, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.operation'::regclass AND conname='operation_kind_check' AND contype='c' AND pg_get_constraintdef(oid) LIKE '%delete_library_v1%' AND pg_get_constraintdef(oid) LIKE '%publish_track_v1%' AND pg_get_constraintdef(oid) LIKE '%cleanup_publication_sources_v1%' AND pg_get_constraintdef(oid) LIKE '%publication_reconcile_v1%' AND pg_get_constraintdef(oid) LIKE '%retry_publication_sources_v1%' AND pg_get_constraintdef(oid) LIKE '%obsolete_publication_output_cleanup_v1%' AND pg_get_constraintdef(oid) LIKE '%refresh_genre_catalog_v1%'`, &deletionOperationKind, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.operation'::regclass AND conname='operation_mutation_has_target_installation' AND contype='c' AND pg_get_constraintdef(oid) LIKE '%delete_library_v1%' AND pg_get_constraintdef(oid) LIKE '%refresh_genre_catalog_v1%'`, &deletionMutationTarget, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.operation'::regclass AND conname='operation_target_identity' AND contype='c' AND pg_get_constraintdef(oid) LIKE '%delete_library_v1%' AND pg_get_constraintdef(oid) LIKE '%refresh_genre_catalog_v1%'`, &deletionTargetIdentity, 1},
+		{`SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname='valid_library_deletion_uuid_array' AND proargtypes='3802'::oidvector`, &deletionUUIDArrayValidator, 1},
+		{`SELECT count(*) FROM pg_trigger WHERE tgrelid='public.manual_matching_receipt'::regclass AND tgname='manual_matching_receipt_retirement_guard' AND NOT tgisinternal`, &manualReceiptRetirementGuard, 1},
+		{`SELECT count(*) FROM pg_trigger WHERE tgrelid='public.manual_matching_receipt'::regclass AND tgname='manual_matching_receipt_delete_write_once' AND NOT tgisinternal`, &manualReceiptDeleteGuard, 1},
+		{`SELECT count(*) FROM pg_trigger WHERE tgrelid='public.manual_matching_receipt'::regclass AND tgname='manual_matching_receipt_write_once' AND NOT tgisinternal`, &manualReceiptWriteOnce, 0},
 	}
 	for _, check := range checks {
 		if err := database.NewRaw(check.query).Scan(ctx, check.result); err != nil {

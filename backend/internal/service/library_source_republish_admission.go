@@ -266,7 +266,18 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 				break
 			}
 		}
-		transactionTags, tagErr := publication.ProjectTags(transactionContext.Tags)
+		var transactionTags publication.TagProjection
+		var tagErr error
+		if transactionSource != nil {
+			transactionPlan, planErr := publication.PlanAudioTransform(publication.AudioPublicationFormat(transactionSettings.PublicationFormat), transactionSource.Quality.AudioSourceFacts())
+			if planErr != nil {
+				tagErr = planErr
+			} else {
+				tagInput := transactionContext.Tags
+				tagInput.OutputContainer = transactionPlan.OutputContainer
+				transactionTags, tagErr = publication.ProjectTags(tagInput)
+			}
+		}
 		if transactionSource == nil || tagErr != nil || !reflect.DeepEqual(audioInputCopy(&transactionSource.Input), input.Audio) ||
 			!reflect.DeepEqual(cloneDesiredPublicationTags(transactionTags.Tags), input.DesiredTags) {
 			return nil, persistence.ErrPublicationAdmissionConflict

@@ -17,7 +17,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerGenreCatalog(api, dependencies.GenreCatalog)
 	registerLocalProviderCatalog(api, dependencies.LocalProviderCatalog)
 	registerTools(api, dependencies, tokens)
-	registerOperations(api, dependencies.Operations, dependencies.Setup, dependencies.SourceArtifactCleanup)
+	registerOperations(api, dependencies.Operations, dependencies.Setup, dependencies.SourceArtifactCleanup, dependencies.LibraryDeletion)
 	registerSourceCleanupRetry(api, dependencies.SourceCleanupRetries, dependencies.Operations)
 	registerSources(api, dependencies)
 	registerSourceLocationDetail(api, dependencies)
@@ -42,6 +42,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerLibraryPublication(api, dependencies)
 	registerLibraryFirstPublicationPreview(api, dependencies)
 	registerLibraryFirstPublicationAdmission(api, dependencies)
+	registerLibraryDeletion(api, dependencies)
 }
 
 func registerOperationEvents(router chi.Router, operations *service.Operations) {

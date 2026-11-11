@@ -46,7 +46,16 @@ type Dependencies struct {
 	LibraryMetadata        *service.LibraryMetadataService
 	LibraryReleaseCovers   *service.ReleaseCovers
 	LibraryPublications    LibraryPublicationService
+	LibraryDeletion        LibraryDeletionAPI
 	LocalProviderCatalog   *service.LocalProviderCatalog
+}
+
+// LibraryDeletionAPI keeps explicit deletion confirmation and retry behind a
+// narrow service boundary without exposing persistence or filesystem authority.
+type LibraryDeletionAPI interface {
+	Preview(context.Context, string, uuid.UUID, uuid.UUID) (*service.LibraryDeletionPreview, error)
+	Confirm(context.Context, string) (uuid.UUID, error)
+	Retry(context.Context, uuid.UUID) (uuid.UUID, error)
 }
 
 // LibraryPublicationService is the API's narrow boundary to publication state.

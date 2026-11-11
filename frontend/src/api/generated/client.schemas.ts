@@ -588,6 +588,44 @@ export interface LibraryCoverCandidateOption {
   width: number | null;
 }
 
+export interface LibraryDeletionBlockerResponse {
+  code: string;
+  message: string;
+  position_id?: string;
+}
+
+export interface LibraryDeletionConfirmationInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 64
+     * @maxLength 64
+     * @pattern ^[0-9a-f]{64}$
+     */
+  confirmation_digest: string;
+}
+
+export interface LibraryDeletionOutputResponse {
+  capturable: boolean;
+  position_id: string;
+  relative_path: string;
+}
+
+export interface LibraryDeletionPreviewResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  blockers: LibraryDeletionBlockerResponse[] | null;
+  confirmation_digest: string;
+  kind: string;
+  /** @nullable */
+  outputs: LibraryDeletionOutputResponse[] | null;
+  /** @nullable */
+  position_ids: string[] | null;
+  release_id: string;
+  title: string;
+}
+
 export interface LibraryFirstPublicationAdmissionInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1590,6 +1628,11 @@ export interface MovePreflightInputBody {
      * @minLength 1
      * @maxLength 4096
      */
+  expected_tools_directory: string;
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
   new_tools_directory: string;
   remove_old_files: boolean;
 }
@@ -1720,6 +1763,22 @@ export interface SaveRuntimeBody {
   tools_directory?: string;
   /** @maxLength 4096 */
   work_directory?: string;
+}
+
+export type SaveSetupMusicBrainzBodyMode = typeof SaveSetupMusicBrainzBodyMode[keyof typeof SaveSetupMusicBrainzBodyMode];
+
+
+export const SaveSetupMusicBrainzBodyMode = {
+  public: 'public',
+  'self-hosted': 'self-hosted',
+} as const;
+
+export interface SaveSetupMusicBrainzBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 2048 */
+  base_url: string;
+  mode: SaveSetupMusicBrainzBodyMode;
 }
 
 export interface SetGitHubTokenBody {
@@ -2073,12 +2132,33 @@ export const UpdateMusicBrainzBodyMode = {
   'self-hosted': 'self-hosted',
 } as const;
 
+export type UpdateMusicBrainzExpectedBodyMode = typeof UpdateMusicBrainzExpectedBodyMode[keyof typeof UpdateMusicBrainzExpectedBodyMode];
+
+
+export const UpdateMusicBrainzExpectedBodyMode = {
+  public: 'public',
+  'self-hosted': 'self-hosted',
+} as const;
+
+export interface UpdateMusicBrainzExpectedBody {
+  /** @maxLength 2048 */
+  base_url?: string;
+  mode?: UpdateMusicBrainzExpectedBodyMode;
+  /**
+     * @minimum 0
+     * @maximum 60
+     */
+  self_hosted_delay_seconds?: number;
+  self_hosted_throttle?: boolean;
+}
+
 export interface UpdateMusicBrainzBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** @maxLength 2048 */
   base_url?: string;
-  mode: UpdateMusicBrainzBodyMode;
+  expected: UpdateMusicBrainzExpectedBody;
+  mode?: UpdateMusicBrainzBodyMode;
   /**
      * @minimum 0
      * @maximum 60
@@ -2102,9 +2182,23 @@ export const UpdateSettingsBodyPublicationFormat = {
   m4a: 'm4a',
 } as const;
 
+export interface UpdateSettingsExpectedBody {
+  /** @maxLength 4096 */
+  output_directory?: string;
+  publication_format?: string;
+  /** @maxLength 4096 */
+  publication_path_template?: string;
+  publication_remove_sources?: boolean;
+  /** @minimum 1 */
+  source_file_concurrency?: number;
+  /** @maxLength 4096 */
+  work_directory?: string;
+}
+
 export interface UpdateSettingsBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  expected?: UpdateSettingsExpectedBody;
   /** @maxLength 4096 */
   output_directory?: string;
   publication_format?: UpdateSettingsBodyPublicationFormat;

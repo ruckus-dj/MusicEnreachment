@@ -29,6 +29,7 @@ import {
   type PublicationPreviewState,
 } from "./FirstPublicationPreview";
 import { GenreMetadataEditor } from "./GenreMetadataEditor";
+import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import {
   PositionIdentity,
   PositionSources,
@@ -107,6 +108,7 @@ export function LibraryReleaseScreen({
   const [release, setRelease] = useState<LibraryReleaseDetailResponse>();
   const [loadedReleaseID, setLoadedReleaseID] = useState("");
   const [positions, setPositions] = useState<Record<string, PositionData>>({});
+  const deletionIdentityByPosition = useRef(new Map<string, string>());
   const aggregateControllers = useRef(
     new Map<string, PublicationPreviewController>(),
   );
@@ -1374,6 +1376,34 @@ export function LibraryReleaseScreen({
     );
   }
 
+  function handleDeletionSnapshot(
+    target: "release" | "publication",
+    snapshot: OperationResponse,
+    requestScope: typeof scope.current,
+    targetPositionId?: string,
+  ) {
+    if (
+      !mounted.current ||
+      scope.current !== requestScope ||
+      currentReleaseID.current !== releaseId
+    )
+      return;
+    if (target === "release") {
+      void refreshReleaseDetail(requestScope).catch(() => undefined);
+      void Promise.all(
+        (release?.tracks ?? []).map((track) =>
+          refreshPosition(track.id).catch(() => undefined),
+        ),
+      );
+      if (snapshot.state === "succeeded") window.location.hash = "/library";
+      return;
+    }
+    if (targetPositionId) {
+      void refreshPosition(targetPositionId).catch(() => undefined);
+      void refreshReleaseDetail(requestScope).catch(() => undefined);
+    }
+  }
+
   if (error)
     return (
       <section>
@@ -1391,6 +1421,7 @@ export function LibraryReleaseScreen({
     );
   if (!release || loadedReleaseID !== releaseId)
     return <p role="status">Загрузка релиза…</p>;
+  const releaseRenderScope = scope.current;
   const selectedTrack = positionId
     ? (release.tracks ?? []).find((track) => track.id === positionId)
     : undefined;
@@ -1399,6 +1430,12 @@ export function LibraryReleaseScreen({
       ? [selectedTrack]
       : []
     : (release.tracks ?? []);
+  const positionLabels = new Map(
+    (release.tracks ?? []).map((track) => [
+      track.id,
+      `${track.displayed_number.trim() || track.position}. ${track.title}`,
+    ]),
+  );
   return (
     <section className="library-release-screen mx-auto max-w-5xl space-y-6">
       <nav
@@ -1470,6 +1507,18 @@ export function LibraryReleaseScreen({
               )}
           </div>
         )}
+        {!positionId ? (
+          <div className="mt-3">
+            <LibraryDeletionControl
+              target={{ type: "release", releaseId }}
+              releaseTitle={release.title}
+              positionLabels={positionLabels}
+              onSnapshot={(snapshot) =>
+                handleDeletionSnapshot("release", snapshot, releaseRenderScope)
+              }
+            />
+          </div>
+        ) : null}
       </header>
       <GenreMetadataEditor
         owner="release"
@@ -1537,6 +1586,19 @@ export function LibraryReleaseScreen({
         const renderScope = scope.current;
         const position = positions[track.id];
         const publication = position?.publication;
+        const hasCurrentPublication = publication
+          ? Boolean(publication.current_generation || publication.current_path)
+          : Boolean(track.publication?.generation);
+        const currentDeletionIdentity =
+          publication?.current_generation ??
+          publication?.current_path ??
+          track.publication?.generation ??
+          track.publication?.relative_path;
+        if (currentDeletionIdentity)
+          deletionIdentityByPosition.current.set(
+            track.id,
+            currentDeletionIdentity,
+          );
         const publicationSummary = publication
           ? publication.current_generation
             ? {
@@ -1621,6 +1683,26 @@ export function LibraryReleaseScreen({
                   </dl>
                 )}
             </section>
+            <LibraryDeletionControl
+              target={{
+                type: "publication",
+                releaseId,
+                positionId: track.id,
+              }}
+              releaseTitle={release.title}
+              targetIdentity={deletionIdentityByPosition.current.get(track.id)}
+              positionLabel={`${track.displayed_number.trim() || track.position}. ${track.title}`}
+              positionLabels={positionLabels}
+              showButton={hasCurrentPublication}
+              onSnapshot={(snapshot) =>
+                handleDeletionSnapshot(
+                  "publication",
+                  snapshot,
+                  renderScope,
+                  track.id,
+                )
+              }
+            />
             <PositionIdentity track={track} />
             <ReleaseCreditList credits={credits} />
             {track.recording_id ? (

@@ -61,6 +61,16 @@ func TestMetadataWriterRoundTripsKnownStandardFields(t *testing.T) {
 				"MIXER":                          {"Mixer One", "Mixer, Two"},
 				taglib.Lyrics:                    {"[00:01.00]First synced line\n[00:02.50]Second synced line\n"},
 			}
+			performerTags := map[string][]string{
+				"PERFORMER:GUITAR":    {"Guitarist, One", "Guitarist (Live)", "Guitarist, One"},
+				"PERFORMER:PIANO":     {"Pianist (First)", "Pianist, Two"},
+				"PERFORMER:PERFORMER": {"Unspecified performer"},
+			}
+			if ext == ".flac" || ext == ".mka" {
+				for key, values := range performerTags {
+					want[key] = values
+				}
+			}
 			// Contributor names deliberately include commas, Unicode, and ordered
 			// multiple values. A lossy TIPL parse is a capability failure, not a
 			// reason to rewrite requested values. Duplicate-value behavior is
@@ -79,6 +89,12 @@ func TestMetadataWriterRoundTripsKnownStandardFields(t *testing.T) {
 			}
 			for key, values := range want {
 				assertValues(t, fresh.Tags, key, values)
+			}
+			if ext == ".mp3" || ext == ".m4a" {
+				for key := range performerTags {
+					assertValues(t, result.Tags, key, nil)
+					assertValues(t, fresh.Tags, key, nil)
+				}
 			}
 			if result.Cover == nil || result.Cover.Error != "" || !bytes.Equal(result.Cover.Data, imageBytes) {
 				t.Fatalf("write cover observation = %#v", result.Cover)

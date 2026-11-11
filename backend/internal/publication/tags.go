@@ -15,8 +15,9 @@ import (
 // Desired envelopes are scoped and resolved by the caller; this package does
 // not perform fallback to source or provider metadata.
 type TagProjectionInput struct {
-	Release  ReleaseTags
-	Position PositionTags
+	Release         ReleaseTags
+	Position        PositionTags
+	OutputContainer AudioContainer
 }
 
 type ReleaseTags struct {
@@ -96,8 +97,8 @@ func ProjectTags(input TagProjectionInput) (TagProjection, error) {
 		projection.Tags["COMPILATION"] = []string{value}
 		projection.Fields["compilation"] = TagFieldResult{Status: "represented"}
 	}
-	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopeRelease, input.Release.Desired, input.Release.ArtistCreditsResolved)...)
-	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopePosition, input.Position.Desired, input.Position.ArtistCreditsResolved)...)
+	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopeRelease, input.Release.Desired, input.Release.ArtistCreditsResolved, input.OutputContainer)...)
+	projection.Notices = append(projection.Notices, applyDesired(projection.Tags, projection.Fields, librarymetadata.ScopePosition, input.Position.Desired, input.Position.ArtistCreditsResolved, input.OutputContainer)...)
 	return projection, nil
 }
 
@@ -244,7 +245,7 @@ func setNumber(tags map[string][]string, fields map[string]TagFieldResult, field
 	fields[field] = TagFieldResult{Status: "represented"}
 }
 
-func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, envelope *librarymetadata.Envelope, artistCreditsResolved bool) []string {
+func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, envelope *librarymetadata.Envelope, artistCreditsResolved bool, outputContainer AudioContainer) []string {
 	if envelope == nil {
 		return nil
 	}
@@ -283,7 +284,7 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 			continue
 		}
 		if name == "movement" || name == "works" || name == "contributors" || name == "content_advisory" {
-			projectStructuredDesired(tags, fields, scope, name, value.Value)
+			projectStructuredDesired(tags, fields, scope, name, value.Value, outputContainer, &notices)
 			continue
 		}
 		if name == "artist_credit" {
@@ -364,10 +365,10 @@ func genreTagValues(value any) ([]string, bool) {
 	return values, true
 }
 
-func projectStructuredDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, field string, value any) {
+func projectStructuredDesired(tags map[string][]string, fields map[string]TagFieldResult, scope librarymetadata.Scope, field string, value any, outputContainer AudioContainer, notices *[]string) {
 	fieldName := string(scope) + "." + field
 	if field == "contributors" {
-		projectContributors(tags, fields, fieldName, value)
+		projectContributors(tags, fields, fieldName, value, outputContainer, notices)
 		return
 	}
 	if field == "content_advisory" {
@@ -454,7 +455,7 @@ func projectStructuredDesired(tags map[string][]string, fields map[string]TagFie
 	}
 }
 
-func projectContributors(tags map[string][]string, fields map[string]TagFieldResult, fieldName string, value any) {
+func projectContributors(tags map[string][]string, fields map[string]TagFieldResult, fieldName string, value any, outputContainer AudioContainer, notices *[]string) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
@@ -465,8 +466,8 @@ func projectContributors(tags map[string][]string, fields map[string]TagFieldRes
 		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
 		return
 	}
-	// Map only these standard role properties; no instrument taxonomy is
-	// implied, and unknown roles remain unsupported rather than becoming PERFORMER.
+	// Map only approved standard role properties. Instrumental performer data is
+	// retained in structured metadata, but is not flattened into a lossy tag.
 	roleKeys := map[string]string{
 		"composer": "COMPOSER", "lyricist": "LYRICIST", "conductor": "CONDUCTOR", "arranger": "ARRANGER",
 		"engineer": "ENGINEER", "producer": "PRODUCER", "remixer": "REMIXER", "djmixer": "DJMIXER", "mixer": "MIXER",
@@ -474,6 +475,7 @@ func projectContributors(tags map[string][]string, fields map[string]TagFieldRes
 	unsupported := false
 	mbidsIncomplete := false
 	mbidsPresent := false
+	performerOmitted := false
 	for _, contributor := range contributors {
 		if contributor.MBID == nil || strings.TrimSpace(*contributor.MBID) == "" {
 			mbidsIncomplete = true
@@ -481,12 +483,40 @@ func projectContributors(tags map[string][]string, fields map[string]TagFieldRes
 			mbidsPresent = true
 		}
 		role := strings.ToLower(strings.TrimSpace(contributor.Role))
+		if role == "performer" {
+			switch outputContainer {
+			case AudioContainerMP3, AudioContainerM4A:
+				unsupported = true
+				performerOmitted = true
+			case AudioContainerFLAC, AudioContainerMKA:
+				tags[performerTagKey(contributor.Instrument)] = append(tags[performerTagKey(contributor.Instrument)], contributor.Name)
+			default:
+				unsupported = true
+				performerOmitted = true
+			}
+			continue
+		}
 		key, ok := roleKeys[role]
 		if !ok {
 			unsupported = true
 			continue
 		}
 		tags[key] = append(tags[key], contributor.Name)
+	}
+	if performerOmitted {
+		reason := "structured performer data has no approved normalized TagLib mapping"
+		if outputContainer == AudioContainerMP3 || outputContainer == AudioContainerM4A {
+			reason = fmt.Sprintf("structured performer data is omitted from %s output because the TagLib writer cannot preserve its performer and instrument/subrole structure", strings.ToUpper(string(outputContainer)))
+			*notices = append(*notices, reason)
+		}
+		fields[fieldName+".performer"] = TagFieldResult{Status: "unsupported", Reason: reason}
+	} else {
+		for _, contributor := range contributors {
+			if strings.EqualFold(strings.TrimSpace(contributor.Role), "performer") {
+				fields[fieldName+".performer"] = TagFieldResult{Status: "represented"}
+				break
+			}
+		}
 	}
 	if unsupported {
 		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "one or more contributor roles have no approved normalized TagLib mapping"}
@@ -500,6 +530,13 @@ func projectContributors(tags map[string][]string, fields map[string]TagFieldRes
 	} else {
 		delete(fields, fieldName+".mbids")
 	}
+}
+
+func performerTagKey(instrument string) string {
+	if instrument == "" {
+		return "PERFORMER:PERFORMER"
+	}
+	return "PERFORMER:" + strings.ToUpper(instrument)
 }
 
 func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, bool) {

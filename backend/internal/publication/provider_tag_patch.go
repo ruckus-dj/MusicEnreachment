@@ -1,6 +1,7 @@
 package publication
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -59,6 +60,39 @@ func PublicationTagKeysForField(scope librarymetadata.Scope, field string) []str
 	return keys
 }
 
+// PublicationTagKeysForFieldValue includes value-dependent keys emitted by a
+// field, such as instrument-qualified performer tags.
+func PublicationTagKeysForFieldValue(scope librarymetadata.Scope, field string, value any) ([]string, error) {
+	keys := PublicationTagKeysForField(scope, field)
+	if field != "contributors" || scope != librarymetadata.ScopePosition {
+		return keys, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode publication contributors for tag footprint: %w", err)
+	}
+	var contributors []librarymetadata.Contributor
+	if err := json.Unmarshal(encoded, &contributors); err != nil {
+		return nil, fmt.Errorf("decode publication contributors for tag footprint: %w", err)
+	}
+	seen := make(map[string]struct{}, len(keys)+len(contributors))
+	for _, key := range keys {
+		seen[key] = struct{}{}
+	}
+	for _, contributor := range contributors {
+		if !strings.EqualFold(strings.TrimSpace(contributor.Role), "performer") {
+			continue
+		}
+		key := performerTagKey(contributor.Instrument)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		keys = append(keys, key)
+		seen[key] = struct{}{}
+	}
+	return keys, nil
+}
+
 func validProviderTagKey(key string) bool {
 	if key == "" || strings.TrimSpace(key) != key || key == "LYRICS" {
 		return false
@@ -81,7 +115,7 @@ var providerTagKeys = func() map[string]struct{} {
 }()
 
 func validProtectedTagKey(key string) bool {
-	return key == "LYRICS" || validProviderTagKey(key)
+	return key == "LYRICS" || validProviderTagKey(key) || strings.HasPrefix(key, "PERFORMER:") && len(key) > len("PERFORMER:")
 }
 
 func cloneTagMap(tags map[string][]string) map[string][]string {

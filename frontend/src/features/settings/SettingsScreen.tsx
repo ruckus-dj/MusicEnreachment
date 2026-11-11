@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -41,10 +42,18 @@ import type {
   SetupStateBody,
   UpdateLogLevelBodyLevel,
   UpdateMusicBrainzBodyMode,
+  UpdateMusicBrainzExpectedBody,
   UpdateSettingsBodyPublicationFormat,
+  UpdateSettingsExpectedBody,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { DirectoryPathField } from "../../components/DirectoryPathField";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type HashAttempt,
+  registerHashNavigationGuard,
+  resolveHashNavigation,
+} from "../../navigation/hashLocation";
 import { GitHubTokenForm } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
@@ -53,6 +62,14 @@ import {
 } from "../tools/toolWorkflow";
 import { GenreCatalogPanel } from "./GenreCatalogPanel";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
+import {
+  getSettingsDraftStorage,
+  readSettingsDraft,
+  type SettingsDraftSnapshot,
+  type SettingsDraftValue,
+  settingsDraftIsDirty,
+  writeSettingsDraft,
+} from "./settingsDraft";
 import "../setup/setup.css";
 import "./settings.css";
 
@@ -71,6 +88,19 @@ type MovePlan = {
   plan: MovePreflightBody;
 };
 type GeneralSettingKey = "publicationFormat" | "sha256" | "logLevel";
+type ConflictGroup =
+  | "concurrency"
+  | "publicationTemplate"
+  | "musicBrainz"
+  | "workDirectory"
+  | "toolsDirectory"
+  | "outputDirectory";
+type ConflictConfirmation = {
+  group: ConflictGroup;
+  label: string;
+  currentValue: unknown;
+  onConfirm: () => void;
+};
 type GeneralFailurePhase = "write" | "confirm";
 type GeneralSettingFailure = {
   revision: number;
@@ -80,6 +110,78 @@ type GeneralSettingFailure = {
     | boolean
     | UpdateLogLevelBodyLevel;
 };
+type MusicBrainzSavedSnapshot = {
+  mode: UpdateMusicBrainzBodyMode;
+  baseURL: string;
+  delay: number;
+  throttle: boolean;
+};
+
+function persistedTextDraft(
+  value: unknown,
+  baseline: unknown,
+  revision: number,
+): SettingsDraftValue | undefined {
+  if (typeof value !== "string" || typeof baseline !== "string")
+    return undefined;
+  return { value, baseline, revision };
+}
+
+type SettingsSaveOutcome = {
+  status:
+    | "saved"
+    | "invalid"
+    | "confirmation_pending"
+    | "conflict"
+    | "uncertain"
+    | "failed";
+  group:
+    | "concurrency"
+    | "publicationTemplate"
+    | "workDirectory"
+    | "musicBrainz"
+    | "outputDirectory"
+    | "toolsDirectory"
+    | "all";
+  validSavedTarget?: boolean;
+  confirmationRead?: boolean;
+  message?: string;
+};
+class SettingsConflictError extends Error {}
+class SettingsValidationError extends Error {}
+
+function conflictLabel(group: ConflictGroup) {
+  switch (group) {
+    case "concurrency":
+      return "параллельность анализа";
+    case "publicationTemplate":
+      return "шаблон пути публикации";
+    case "musicBrainz":
+      return "настройки MusicBrainz";
+    case "workDirectory":
+      return "рабочая папка";
+    case "toolsDirectory":
+      return "каталог инструментов";
+    case "outputDirectory":
+      return "каталог публикации";
+  }
+}
+
+function displaySettingValue(value: unknown) {
+  return typeof value === "string" ? `«${value}»` : JSON.stringify(value);
+}
+
+function musicBrainzSavedSnapshot(
+  settings: SetupStateBody["settings"],
+): MusicBrainzSavedSnapshot {
+  return {
+    mode:
+      settings.musicbrainz_mode === "self-hosted" ? "self-hosted" : "public",
+    baseURL: settings.musicbrainz_base_url,
+    delay: settings.musicbrainz_self_hosted_delay_seconds,
+    throttle: settings.musicbrainz_self_hosted_throttle,
+  };
+}
 
 type SectionDraft<T> = {
   value: T | undefined;
@@ -87,12 +189,15 @@ type SectionDraft<T> = {
   revision: number;
 };
 
-function useSectionDraft<T>(equal: (left: T, right: T) => boolean = Object.is) {
-  const [draft, setDraft] = useState<SectionDraft<T>>({
-    value: undefined,
-    baseline: undefined,
-    revision: 0,
-  });
+function useSectionDraft<T>(
+  equal: (left: T, right: T) => boolean = Object.is,
+  restored?: { value: unknown; baseline: unknown; revision: number },
+) {
+  const [draft, setDraft] = useState<SectionDraft<T>>(() => ({
+    value: restored?.value as T | undefined,
+    baseline: restored?.baseline as T | undefined,
+    revision: restored?.revision ?? 0,
+  }));
   const current = useRef(draft);
   const pendingRevision = useRef<number | undefined>(undefined);
   const update = useCallback((value: T) => {
@@ -112,11 +217,36 @@ function useSectionDraft<T>(equal: (left: T, right: T) => boolean = Object.is) {
         (previous.value === undefined ||
           (previous.baseline !== undefined &&
             equal(previous.value, previous.baseline)));
-      const next = {
-        ...previous,
-        baseline: value,
-        value: pristine ? value : previous.value,
-      };
+      let baseline = pristine ? value : previous.baseline;
+      let draftValue = pristine ? value : previous.value;
+      if (
+        !pristine &&
+        typeof previous.value === "object" &&
+        previous.value !== null &&
+        typeof previous.baseline === "object" &&
+        previous.baseline !== null &&
+        typeof value === "object" &&
+        value !== null
+      ) {
+        baseline = { ...previous.baseline };
+        draftValue = { ...previous.value };
+        for (const key of Object.keys(value)) {
+          if (
+            Object.is(
+              (previous.value as Record<string, unknown>)[key],
+              (previous.baseline as Record<string, unknown>)[key],
+            )
+          ) {
+            (baseline as Record<string, unknown>)[key] = (
+              value as Record<string, unknown>
+            )[key];
+            (draftValue as Record<string, unknown>)[key] = (
+              value as Record<string, unknown>
+            )[key];
+          }
+        }
+      }
+      const next = { ...previous, baseline, value: draftValue };
       current.current = next;
       setDraft(next);
     },
@@ -125,6 +255,7 @@ function useSectionDraft<T>(equal: (left: T, right: T) => boolean = Object.is) {
   const capture = useCallback(
     () => ({
       value: current.current.value,
+      baseline: current.current.baseline,
       revision: current.current.revision,
     }),
     [],
@@ -146,12 +277,59 @@ function useSectionDraft<T>(equal: (left: T, right: T) => boolean = Object.is) {
     current.current = next;
     setDraft(next);
   }, []);
+  const acknowledgeField = useCallback(
+    <K extends keyof T>(
+      field: K,
+      submitted: T[K],
+      saved: T[K],
+      preserveDraft = false,
+    ) => {
+      const previous = current.current;
+      if (
+        typeof previous.value !== "object" ||
+        previous.value === null ||
+        typeof previous.baseline !== "object" ||
+        previous.baseline === null
+      )
+        return;
+      const baseline = { ...previous.baseline, [field]: saved };
+      const value = {
+        ...previous.value,
+        [field]:
+          !preserveDraft && Object.is(previous.value[field], submitted)
+            ? saved
+            : previous.value[field],
+      };
+      const next = { ...previous, value, baseline };
+      current.current = next;
+      setDraft(next);
+    },
+    [],
+  );
   const dirty =
     draft.value !== undefined &&
     draft.baseline !== undefined &&
     !equal(draft.value, draft.baseline);
+  const persisted = useCallback((): SettingsDraftValue | undefined => {
+    const value = current.current.value;
+    const baseline = current.current.baseline;
+    if (typeof value !== "string" || typeof baseline !== "string")
+      return undefined;
+    return { value, baseline, revision: current.current.revision };
+  }, []);
+  const snapshot = useCallback(() => current.current, []);
+  const isPristineAndIdle = useCallback(
+    () =>
+      pendingRevision.current === undefined &&
+      (current.current.value === undefined ||
+        (current.current.baseline !== undefined &&
+          equal(current.current.value, current.current.baseline))),
+    [equal],
+  );
   return {
     value: draft.value,
+    baseline: draft.baseline,
+    revision: draft.revision,
     dirty,
     update,
     sync,
@@ -159,6 +337,10 @@ function useSectionDraft<T>(equal: (left: T, right: T) => boolean = Object.is) {
     beginSave,
     endSave,
     acknowledge,
+    acknowledgeField,
+    persisted,
+    snapshot,
+    isPristineAndIdle,
   };
 }
 
@@ -167,19 +349,31 @@ const sameMusicBrainz = (
     mode: UpdateMusicBrainzBodyMode;
     baseURL: string;
     selfHostedThrottle: boolean;
-    selfHostedDelaySeconds: number;
+    selfHostedDelaySeconds: string;
   },
   right: {
     mode: UpdateMusicBrainzBodyMode;
     baseURL: string;
     selfHostedThrottle: boolean;
-    selfHostedDelaySeconds: number;
+    selfHostedDelaySeconds: string;
   },
 ) =>
   left.mode === right.mode &&
   left.baseURL === right.baseURL &&
   left.selfHostedThrottle === right.selfHostedThrottle &&
   left.selfHostedDelaySeconds === right.selfHostedDelaySeconds;
+
+function validMusicBrainzBaseURL(value: string) {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.hostname !== ""
+    );
+  } catch {
+    return false;
+  }
+}
 
 function message(reason: unknown): string {
   return sharedErrorMessage(reason, "Не удалось выполнить запрос.");
@@ -193,7 +387,21 @@ function activeOperation(operation: OperationResponse) {
 }
 
 export function SettingsScreen() {
+  const { locale } = useI18n();
+  const [restoredSettingsDraft] = useState(() =>
+    readSettingsDraft(getSettingsDraftStorage()),
+  );
   const [state, setState] = useState<SetupStateBody>();
+  const [conflictConfirmation, setConflictConfirmation] =
+    useState<ConflictConfirmation>();
+  const [navigationAttempt, setNavigationAttempt] = useState<HashAttempt>();
+  const [navigationError, setNavigationError] = useState("");
+  const [activeConflicts, setActiveConflicts] = useState<
+    Partial<Record<ConflictGroup, boolean>>
+  >({});
+  const authorizedConflictExpected = useRef<
+    Partial<Record<ConflictGroup, unknown>>
+  >({});
   const [installations, setInstallations] = useState<InstallationResponse[]>(
     [],
   );
@@ -206,16 +414,55 @@ export function SettingsScreen() {
     () => localStorage.getItem(catalogCheckedKey) || "",
   );
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const [draftStorageWarning, setDraftStorageWarning] = useState(false);
   const [operations, setOperations] = useState<OperationResponse[]>([]);
   const [acoustIDApplicationKey, setAcoustIDApplicationKey] = useState("");
-  const outputDirectory = useSectionDraft<string>();
-  const workDirectory = useSectionDraft<string>();
+  const outputDirectory = useSectionDraft<string>(
+    Object.is,
+    restoredSettingsDraft?.outputDirectory,
+  );
+  const workDirectory = useSectionDraft<string>(
+    Object.is,
+    restoredSettingsDraft?.workDirectory,
+  );
   const publicationFormat =
     useSectionDraft<UpdateSettingsBodyPublicationFormat>();
-  const publicationPathTemplate = useSectionDraft<string>();
+  const confirmedPublicationFormat = useRef<
+    UpdateSettingsBodyPublicationFormat | undefined
+  >(undefined);
+  const publicationPathTemplate = useSectionDraft<string>(
+    Object.is,
+    restoredSettingsDraft?.publicationPathTemplate,
+  );
   const publicationRemoveSources = useSectionDraft<boolean>();
-  const sourceFileConcurrency = useSectionDraft<string>();
-  const musicBrainz = useSectionDraft(sameMusicBrainz);
+  const sourceFileConcurrency = useSectionDraft<string>(
+    Object.is,
+    restoredSettingsDraft?.sourceFileConcurrency,
+  );
+  const musicBrainz = useSectionDraft(
+    sameMusicBrainz,
+    (() => {
+      const mode = restoredSettingsDraft?.musicBrainzMode;
+      const url = restoredSettingsDraft?.musicBrainzURL;
+      const delay = restoredSettingsDraft?.musicBrainzDelay;
+      if (!mode || !url || !delay) return undefined;
+      return {
+        value: {
+          mode: mode.value as UpdateMusicBrainzBodyMode,
+          baseURL: url.value,
+          selfHostedThrottle: false,
+          selfHostedDelaySeconds: delay.value,
+        },
+        baseline: {
+          mode: mode.baseline as UpdateMusicBrainzBodyMode,
+          baseURL: url.baseline,
+          selfHostedThrottle: false,
+          selfHostedDelaySeconds: delay.baseline,
+        },
+        revision: Math.max(mode.revision, url.revision, delay.revision),
+      };
+    })(),
+  );
   const lrclib = useSectionDraft<boolean>();
   const sha256 = useSectionDraft<boolean>();
   const logLevel = useSectionDraft<UpdateLogLevelBodyLevel>();
@@ -226,7 +473,9 @@ export function SettingsScreen() {
   const [installDialog, setInstallDialog] = useState<InstallPlan>();
   const [moveDialog, setMoveDialog] = useState(false);
   const [outputDialog, setOutputDialog] = useState(false);
-  const [moveDirectory, setMoveDirectory] = useState("");
+  const [moveDirectory, setMoveDirectory] = useState(
+    () => restoredSettingsDraft?.toolsDirectoryCandidate?.value ?? "",
+  );
   const [removeOld, setRemoveOld] = useState(false);
   const [movePlan, setMovePlan] = useState<MovePlan>();
   const [busy, setBusy] = useState(false);
@@ -242,12 +491,15 @@ export function SettingsScreen() {
   const [outputDialogError, setOutputDialogError] = useState("");
   const [notice, setNotice] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
+  const latestNavigationAttempt = useRef<HashAttempt | undefined>(undefined);
   const alert = useRef<HTMLParagraphElement>(null);
   const loadErrorAlert = useRef<HTMLParagraphElement>(null);
   const installDialogAlert = useRef<HTMLParagraphElement>(null);
   const moveDialogAlert = useRef<HTMLParagraphElement>(null);
   const outputDialogAlert = useRef<HTMLParagraphElement>(null);
   const outputDialogRef = useRef<HTMLDialogElement>(null);
+  const conflictDialogRef = useRef<HTMLDialogElement>(null);
+  const navigationDialogRef = useRef<HTMLDialogElement>(null);
   const catalogAlert = useRef<HTMLParagraphElement>(null);
   const automaticCatalogRequested = useRef(false);
   const catalogRequestInFlight = useRef(false);
@@ -259,8 +511,15 @@ export function SettingsScreen() {
   const moveDialogRef = useRef<HTMLDialogElement>(null);
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
   const dialogFocusRestorePending = useRef(false);
-  const moveDirectoryRef = useRef("");
-  const moveDirectoryBaseline = useRef<string | undefined>(undefined);
+  const moveDirectoryRef = useRef(
+    restoredSettingsDraft?.toolsDirectoryCandidate?.value ?? "",
+  );
+  const [moveDirectoryBaselineValue, setMoveDirectoryBaselineValue] = useState(
+    restoredSettingsDraft?.toolsDirectoryCandidate?.baseline,
+  );
+  const moveDirectoryBaseline = useRef<string | undefined>(
+    moveDirectoryBaselineValue,
+  );
   const removeOldRef = useRef(false);
   const moveInputRevision = useRef(0);
   const moveSessionRevision = useRef(0);
@@ -296,6 +555,10 @@ export function SettingsScreen() {
     },
     [invalidateMovePlan],
   );
+  const setMoveDirectoryBaseline = useCallback((baseline: string) => {
+    moveDirectoryBaseline.current = baseline;
+    setMoveDirectoryBaselineValue(baseline);
+  }, []);
   function setRemoveOldValue(remove: boolean) {
     removeOldRef.current = remove;
     moveInputRevision.current += 1;
@@ -321,13 +584,18 @@ export function SettingsScreen() {
       const settings = fresh.settings;
       outputDirectory.sync(settings.output_directory);
       workDirectory.sync(settings.work_directory);
-      publicationFormat.sync(
+      const freshPublicationFormat =
         settings.publication_format === "source"
           ? "source"
           : settings.publication_format === "m4a"
             ? "m4a"
-            : "mka",
-      );
+            : "mka";
+      const canAdoptPublicationFormat =
+        publicationFormat.isPristineAndIdle() &&
+        generalFailures.publicationFormat === undefined;
+      publicationFormat.sync(freshPublicationFormat);
+      if (canAdoptPublicationFormat)
+        confirmedPublicationFormat.current = freshPublicationFormat;
       publicationPathTemplate.sync(settings.publication_path_template);
       publicationRemoveSources.sync(settings.publication_remove_sources);
       sourceFileConcurrency.sync(String(settings.source_file_concurrency));
@@ -338,32 +606,36 @@ export function SettingsScreen() {
             : "public",
         baseURL: settings.musicbrainz_base_url,
         selfHostedThrottle: settings.musicbrainz_self_hosted_throttle,
-        selfHostedDelaySeconds: settings.musicbrainz_self_hosted_delay_seconds,
+        selfHostedDelaySeconds: String(
+          settings.musicbrainz_self_hosted_delay_seconds,
+        ),
       });
       lrclib.sync(settings.lrclib_enabled);
       sha256.sync(settings.sha256_enabled);
       logLevel.sync(settings.log_level as UpdateLogLevelBodyLevel);
+      const moveDirectoryDirty =
+        moveDirectoryBaseline.current !== undefined &&
+        moveDirectoryRef.current !== moveDirectoryBaseline.current;
       if (
         moveDirectoryBaseline.current !== undefined &&
         moveDirectoryBaseline.current !== settings.tools_directory
-      ) {
+      )
         invalidateMovePlan();
-      }
-      if (
-        moveDirectoryBaseline.current === undefined ||
-        moveDirectoryRef.current === moveDirectoryBaseline.current
-      ) {
+      if (!moveDirectoryDirty) {
         if (moveDirectoryRef.current !== settings.tools_directory)
           setMoveDirectoryValue(settings.tools_directory);
+        setMoveDirectoryBaseline(settings.tools_directory);
       }
-      moveDirectoryBaseline.current = settings.tools_directory;
       ack?.(fresh);
     },
     [
       setMoveDirectoryValue,
+      setMoveDirectoryBaseline,
+      generalFailures.publicationFormat,
       outputDirectory.sync,
       workDirectory.sync,
       publicationFormat.sync,
+      publicationFormat.isPristineAndIdle,
       publicationPathTemplate.sync,
       publicationRemoveSources.sync,
       sourceFileConcurrency.sync,
@@ -373,6 +645,58 @@ export function SettingsScreen() {
       logLevel.sync,
       invalidateMovePlan,
     ],
+  );
+
+  const currentSettingsDraftSnapshot =
+    useCallback((): SettingsDraftSnapshot => {
+      const musicDraft = musicBrainz.snapshot();
+      const outputDraft = outputDirectory.persisted();
+      const workDraft = workDirectory.persisted();
+      const templateDraft = publicationPathTemplate.persisted();
+      const concurrencyDraft = sourceFileConcurrency.persisted();
+      return {
+        ...(outputDraft ? { outputDirectory: outputDraft } : {}),
+        ...(workDraft ? { workDirectory: workDraft } : {}),
+        ...(templateDraft ? { publicationPathTemplate: templateDraft } : {}),
+        ...(concurrencyDraft
+          ? { sourceFileConcurrency: concurrencyDraft }
+          : {}),
+        toolsDirectoryCandidate: {
+          value: moveDirectoryRef.current,
+          baseline: moveDirectoryBaseline.current ?? "",
+          revision: moveInputRevision.current,
+        },
+        ...(musicDraft.value && musicDraft.baseline
+          ? {
+              musicBrainzMode: {
+                value: musicDraft.value.mode,
+                baseline: musicDraft.baseline.mode,
+                revision: musicDraft.revision,
+              },
+              musicBrainzURL: {
+                value: musicDraft.value.baseURL,
+                baseline: musicDraft.baseline.baseURL,
+                revision: musicDraft.revision,
+              },
+              musicBrainzDelay: {
+                value: musicDraft.value.selfHostedDelaySeconds,
+                baseline: musicDraft.baseline.selfHostedDelaySeconds,
+                revision: musicDraft.revision,
+              },
+            }
+          : {}),
+      };
+    }, [
+      musicBrainz.snapshot,
+      outputDirectory.persisted,
+      workDirectory.persisted,
+      publicationPathTemplate.persisted,
+      sourceFileConcurrency.persisted,
+    ]);
+
+  const hasUnsavedSettingsTextDrafts = useCallback(
+    () => settingsDraftIsDirty(currentSettingsDraftSnapshot()),
+    [currentSettingsDraftSnapshot],
   );
 
   const refreshState = useCallback(
@@ -393,6 +717,62 @@ export function SettingsScreen() {
     },
     [readSettings, syncForm],
   );
+
+  function confirmConflictingSave(
+    group: ConflictGroup,
+    label: string,
+    currentValue: unknown,
+    onConfirm: () => void,
+  ): boolean {
+    if (
+      !(group in conflictValues) ||
+      Object.hasOwn(authorizedConflictExpected.current, group)
+    ) {
+      onConfirm();
+      return false;
+    }
+    setConflictConfirmation({ group, label, currentValue, onConfirm });
+    return true;
+  }
+
+  function expectedForSave<T>(group: ConflictGroup, fallback: T): T {
+    if (!Object.hasOwn(authorizedConflictExpected.current, group))
+      return fallback;
+    const expected = authorizedConflictExpected.current[group] as T;
+    delete authorizedConflictExpected.current[group];
+    return expected;
+  }
+
+  function continueEditingConflict(group: ConflictGroup) {
+    setActiveConflicts((previous) => ({ ...previous, [group]: false }));
+  }
+
+  async function acceptSettingsWrite<
+    T extends { status: number },
+    S extends T["status"],
+  >(response: T, expectedStatus: S) {
+    if (response.status === 409) {
+      try {
+        await refreshState();
+        setActiveConflicts((previous) => {
+          const next = { ...previous };
+          for (const group of Object.keys(next) as ConflictGroup[])
+            if (group in conflictValues) next[group] = true;
+          return next;
+        });
+      } catch (reason) {
+        throw new SettingsConflictError(
+          `Настройки изменились на сервере. Черновик сохранён, но текущее состояние не удалось обновить: ${message(reason)}`,
+        );
+      }
+      throw new SettingsConflictError(
+        "Настройки изменились на сервере. Текущий снимок обновлён; черновик сохранён для разрешения конфликта.",
+      );
+    }
+    if (response.status === 400 || response.status === 422)
+      throw new SettingsValidationError(apiResponseError(response).message);
+    return successful(response, expectedStatus);
+  }
 
   const refreshInstallations = useCallback(
     async (isCurrent: () => boolean = () => mountedRef.current) => {
@@ -523,6 +903,12 @@ export function SettingsScreen() {
   useLayoutEffect(() => {
     if (outputDialog) showSettingsDialog(outputDialogRef.current);
   }, [outputDialog]);
+  useLayoutEffect(() => {
+    if (conflictConfirmation) showSettingsDialog(conflictDialogRef.current);
+  }, [conflictConfirmation]);
+  useLayoutEffect(() => {
+    if (navigationAttempt) showSettingsDialog(navigationDialogRef.current);
+  }, [navigationAttempt]);
   useEffect(() => {
     if (catalogError) catalogAlert.current?.focus();
   }, [catalogError]);
@@ -563,6 +949,112 @@ export function SettingsScreen() {
     }
   }, [checkedAt, initialLoadComplete, requestCatalog, state]);
 
+  const persistedSettingsDraftSnapshot = useMemo<SettingsDraftSnapshot>(() => {
+    const output = persistedTextDraft(
+      outputDirectory.value,
+      outputDirectory.baseline,
+      outputDirectory.revision,
+    );
+    const work = persistedTextDraft(
+      workDirectory.value,
+      workDirectory.baseline,
+      workDirectory.revision,
+    );
+    const template = persistedTextDraft(
+      publicationPathTemplate.value,
+      publicationPathTemplate.baseline,
+      publicationPathTemplate.revision,
+    );
+    const concurrency = persistedTextDraft(
+      sourceFileConcurrency.value,
+      sourceFileConcurrency.baseline,
+      sourceFileConcurrency.revision,
+    );
+    const musicValue = musicBrainz.value;
+    const musicBaseline = musicBrainz.baseline;
+    return {
+      ...(output ? { outputDirectory: output } : {}),
+      ...(work ? { workDirectory: work } : {}),
+      ...(template ? { publicationPathTemplate: template } : {}),
+      ...(concurrency ? { sourceFileConcurrency: concurrency } : {}),
+      toolsDirectoryCandidate: {
+        value: moveDirectory,
+        baseline:
+          moveDirectoryBaselineValue ?? state?.settings.tools_directory ?? "",
+        revision: moveInputRevision.current,
+      },
+      ...(musicValue && musicBaseline
+        ? {
+            musicBrainzMode: {
+              value: musicValue.mode,
+              baseline: musicBaseline.mode,
+              revision: musicBrainz.revision,
+            },
+            musicBrainzURL: {
+              value: musicValue.baseURL,
+              baseline: musicBaseline.baseURL,
+              revision: musicBrainz.revision,
+            },
+            musicBrainzDelay: {
+              value: musicValue.selfHostedDelaySeconds,
+              baseline: musicBaseline.selfHostedDelaySeconds,
+              revision: musicBrainz.revision,
+            },
+          }
+        : {}),
+    };
+  }, [
+    state,
+    outputDirectory.value,
+    outputDirectory.baseline,
+    outputDirectory.revision,
+    workDirectory.value,
+    workDirectory.baseline,
+    workDirectory.revision,
+    publicationPathTemplate.value,
+    publicationPathTemplate.baseline,
+    publicationPathTemplate.revision,
+    sourceFileConcurrency.value,
+    sourceFileConcurrency.baseline,
+    sourceFileConcurrency.revision,
+    musicBrainz.value,
+    musicBrainz.baseline,
+    musicBrainz.revision,
+    moveDirectory,
+    moveDirectoryBaselineValue,
+  ]);
+
+  useEffect(() => {
+    if (!initialLoadComplete || !state) return;
+    const dirty = settingsDraftIsDirty(persistedSettingsDraftSnapshot);
+    const stored = writeSettingsDraft(
+      getSettingsDraftStorage(),
+      dirty ? persistedSettingsDraftSnapshot : null,
+    );
+    setDraftStorageWarning(!stored && dirty);
+  }, [initialLoadComplete, persistedSettingsDraftSnapshot, state]);
+  useLayoutEffect(
+    () =>
+      registerHashNavigationGuard({
+        shouldBlock: hasUnsavedSettingsTextDrafts,
+        onBlocked: (attempt) => {
+          latestNavigationAttempt.current = attempt;
+          setNavigationAttempt(attempt);
+          setNavigationError("");
+        },
+      }),
+    [hasUnsavedSettingsTextDrafts],
+  );
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedSettingsTextDrafts()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedSettingsTextDrafts]);
+
   async function mutate<
     T extends { status: number },
     C extends { revision: number },
@@ -584,7 +1076,7 @@ export function SettingsScreen() {
     ) => boolean,
     shouldAnnounce?: (savedDraft: C) => boolean,
     originatingGeneration = mountGeneration.current,
-  ) {
+  ): Promise<SettingsSaveOutcome> {
     const savedDraft = capturedDraft ?? capture();
     const generation = originatingGeneration;
     const isCurrent = () =>
@@ -598,7 +1090,7 @@ export function SettingsScreen() {
     let phase: GeneralFailurePhase = "write";
     try {
       const response = await action(savedDraft);
-      successful(response, status);
+      await acceptSettingsWrite(response, status);
       phase = "confirm";
       try {
         await refreshState((fresh) => acknowledge(fresh, savedDraft.revision));
@@ -609,11 +1101,31 @@ export function SettingsScreen() {
       }
       if (isCurrent() && (shouldAnnounce?.(savedDraft) ?? true))
         setNotice(successText);
+      return { status: "saved", group: "all" };
     } catch (reason) {
+      const conflict = reason instanceof SettingsConflictError;
+      if (conflict) {
+        setActiveConflicts((previous) => {
+          const next = { ...previous };
+          for (const group of Object.keys(next) as ConflictGroup[])
+            if (group in conflictValues) next[group] = true;
+          return next;
+        });
+      }
       const report = isCurrent()
-        ? (onFailure?.(savedDraft, phase, reason) ?? true)
+        ? conflict
+          ? true
+          : (onFailure?.(savedDraft, phase, reason) ?? true)
         : false;
       if (isCurrent() && report) setError(message(reason));
+      const status = conflict
+        ? "conflict"
+        : reason instanceof SettingsValidationError
+          ? "invalid"
+          : phase === "confirm"
+            ? "uncertain"
+            : "failed";
+      return { status, group: "all", message: message(reason) };
     } finally {
       endDraftSave(savedDraft.revision);
       if (manageBusy && isCurrent()) setBusy(false);
@@ -679,19 +1191,31 @@ export function SettingsScreen() {
       (savedDraft) =>
         updateSettings({
           publication_format: savedDraft.value ?? value,
+          expected: {
+            publication_format:
+              confirmedPublicationFormat.current ??
+              (savedDraft.baseline as UpdateSettingsBodyPublicationFormat) ??
+              state?.settings.publication_format ??
+              value,
+          } satisfies UpdateSettingsExpectedBody,
         }),
       204,
       "Формат публикации сохранён.",
       publicationFormat.capture,
-      (fresh, revision) =>
-        publicationFormat.acknowledge(
+      (fresh, revision) => {
+        const confirmed =
           fresh.settings.publication_format === "source"
             ? "source"
             : fresh.settings.publication_format === "m4a"
               ? "m4a"
-              : "mka",
-          revision,
-        ),
+              : "mka";
+        if (confirmed !== value)
+          throw new Error(
+            `Сервер не подтвердил формат публикации ${value}; сейчас сохранено ${confirmed}.`,
+          );
+        confirmedPublicationFormat.current = confirmed;
+        publicationFormat.acknowledge(confirmed, revision);
+      },
       publicationFormat.beginSave,
       publicationFormat.endSave,
       (savedDraft, phase) =>
@@ -705,6 +1229,156 @@ export function SettingsScreen() {
       (savedDraft) =>
         publicationFormat.capture().revision === savedDraft.revision,
     );
+  }
+
+  async function saveConcurrency(): Promise<SettingsSaveOutcome> {
+    if (isEffectivelyBusy()) return { status: "failed", group: "concurrency" };
+    const draft = sourceFileConcurrency.capture();
+    const current = state?.settings.source_file_concurrency;
+    if (draft.value === undefined || current === undefined)
+      return { status: "failed", group: "concurrency" };
+    if (!sourceFileConcurrency.dirty)
+      return { status: "saved", group: "concurrency" };
+    if (!validConcurrency(draft.value))
+      return {
+        status: "invalid",
+        group: "concurrency",
+        message: "Параллельность должна быть положительным целым числом.",
+      };
+    let attempt: Promise<SettingsSaveOutcome> | undefined;
+    const confirmationPending = confirmConflictingSave(
+      "concurrency",
+      "Параллельность анализа",
+      current,
+      () => {
+        attempt = mutate(
+          (savedDraft) =>
+            updateSettings({
+              source_file_concurrency: Number(savedDraft.value),
+              expected: {
+                source_file_concurrency: Number(
+                  expectedForSave(
+                    "concurrency",
+                    savedDraft.baseline ?? String(current),
+                  ),
+                ),
+              } satisfies UpdateSettingsExpectedBody,
+            }),
+          204,
+          "Параллельность анализа сохранена.",
+          sourceFileConcurrency.capture,
+          (fresh, revision) =>
+            sourceFileConcurrency.acknowledge(
+              String(fresh.settings.source_file_concurrency),
+              revision,
+            ),
+          sourceFileConcurrency.beginSave,
+          sourceFileConcurrency.endSave,
+          draft,
+        ).then((result) => ({ ...result, group: "concurrency" }));
+      },
+    );
+    if (confirmationPending)
+      return { status: "confirmation_pending", group: "concurrency" };
+    return (await attempt) ?? { status: "failed", group: "concurrency" };
+  }
+
+  async function savePublicationTemplate(): Promise<SettingsSaveOutcome> {
+    if (isEffectivelyBusy())
+      return { status: "failed", group: "publicationTemplate" };
+    const draft = publicationPathTemplate.capture();
+    const current = state?.settings.publication_path_template;
+    if (current === undefined)
+      return { status: "failed", group: "publicationTemplate" };
+    if (!publicationPathTemplate.dirty)
+      return { status: "saved", group: "publicationTemplate" };
+    if (!draft.value)
+      return {
+        status: "invalid",
+        group: "publicationTemplate",
+        message: "Укажите шаблон пути публикации.",
+      };
+    let attempt: Promise<SettingsSaveOutcome> | undefined;
+    const confirmationPending = confirmConflictingSave(
+      "publicationTemplate",
+      "Шаблон пути публикации",
+      current,
+      () => {
+        attempt = mutate(
+          (savedDraft) =>
+            updateSettings({
+              publication_path_template: savedDraft.value,
+              expected: {
+                publication_path_template: expectedForSave(
+                  "publicationTemplate",
+                  savedDraft.baseline ?? current,
+                ),
+              } satisfies UpdateSettingsExpectedBody,
+            }),
+          204,
+          "Шаблон пути публикации сохранён.",
+          publicationPathTemplate.capture,
+          (fresh, revision) =>
+            publicationPathTemplate.acknowledge(
+              fresh.settings.publication_path_template,
+              revision,
+            ),
+          publicationPathTemplate.beginSave,
+          publicationPathTemplate.endSave,
+          draft,
+        ).then((result) => ({ ...result, group: "publicationTemplate" }));
+      },
+    );
+    if (confirmationPending)
+      return { status: "confirmation_pending", group: "publicationTemplate" };
+    return (
+      (await attempt) ?? {
+        status: "failed",
+        group: "publicationTemplate",
+      }
+    );
+  }
+
+  async function saveWorkDirectory(): Promise<SettingsSaveOutcome> {
+    if (isEffectivelyBusy())
+      return { status: "failed", group: "workDirectory" };
+    const draft = workDirectory.capture();
+    const current = state?.settings.work_directory;
+    if (draft.value === undefined || current === undefined)
+      return { status: "failed", group: "workDirectory" };
+    if (!workDirectory.dirty)
+      return { status: "saved", group: "workDirectory" };
+    let attempt: Promise<SettingsSaveOutcome> | undefined;
+    const confirmationPending = confirmConflictingSave(
+      "workDirectory",
+      "Рабочая папка",
+      current,
+      () => {
+        attempt = mutate(
+          (savedDraft) =>
+            updateSettings({
+              work_directory: savedDraft.value,
+              expected: {
+                work_directory: expectedForSave(
+                  "workDirectory",
+                  savedDraft.baseline ?? current,
+                ),
+              } satisfies UpdateSettingsExpectedBody,
+            }),
+          204,
+          "Рабочая папка изменена.",
+          workDirectory.capture,
+          (fresh, revision) =>
+            workDirectory.acknowledge(fresh.settings.work_directory, revision),
+          workDirectory.beginSave,
+          workDirectory.endSave,
+          draft,
+        ).then((result) => ({ ...result, group: "workDirectory" }));
+      },
+    );
+    if (confirmationPending)
+      return { status: "confirmation_pending", group: "workDirectory" };
+    return (await attempt) ?? { status: "failed", group: "workDirectory" };
   }
 
   function saveSha256(enabled: boolean) {
@@ -731,6 +1405,53 @@ export function SettingsScreen() {
           sha256.capture().revision,
         ),
       (savedDraft) => sha256.capture().revision === savedDraft.revision,
+    );
+  }
+
+  function savePublicationRemoveSources(enabled: boolean) {
+    publicationRemoveSources.update(enabled);
+    const savedDraft = publicationRemoveSources.capture();
+    void mutate(
+      (draft) =>
+        updateSettings({
+          publication_remove_sources: draft.value ?? enabled,
+          expected: {
+            publication_remove_sources:
+              draft.baseline ??
+              state?.settings.publication_remove_sources ??
+              false,
+          } satisfies UpdateSettingsExpectedBody,
+        }),
+      204,
+      "Настройка удаления исходников сохранена.",
+      publicationRemoveSources.capture,
+      (fresh, revision) =>
+        publicationRemoveSources.acknowledge(
+          fresh.settings.publication_remove_sources,
+          revision,
+        ),
+      publicationRemoveSources.beginSave,
+      publicationRemoveSources.endSave,
+      savedDraft,
+    );
+  }
+
+  function saveLrclib(enabled: boolean) {
+    lrclib.update(enabled);
+    const savedDraft = lrclib.capture();
+    void mutate(
+      (draft) =>
+        updateLrclibSetting({
+          enabled: draft.value ?? enabled,
+        }),
+      204,
+      "Настройка LRCLIB сохранена.",
+      lrclib.capture,
+      (fresh, revision) =>
+        lrclib.acknowledge(fresh.settings.lrclib_enabled, revision),
+      lrclib.beginSave,
+      lrclib.endSave,
+      savedDraft,
     );
   }
 
@@ -837,32 +1558,35 @@ export function SettingsScreen() {
       setError("");
       setNotice("");
       try {
-        await refreshState((fresh) => {
-          switch (setting) {
-            case "publicationFormat":
-              publicationFormat.acknowledge(
-                fresh.settings.publication_format === "source"
-                  ? "source"
-                  : fresh.settings.publication_format === "m4a"
-                    ? "m4a"
-                    : "mka",
-                failure.revision,
+        const fresh = await refreshState();
+        if (!mountedRef.current || mountGeneration.current !== generation)
+          return;
+        switch (setting) {
+          case "publicationFormat": {
+            const confirmed =
+              fresh.settings.publication_format === "source"
+                ? "source"
+                : fresh.settings.publication_format === "m4a"
+                  ? "m4a"
+                  : "mka";
+            if (confirmed !== failure.value)
+              throw new Error(
+                `Сервер не подтвердил принятое значение формата публикации (${String(failure.value)}); сейчас сохранено ${confirmed}.`,
               );
-              break;
-            case "sha256":
-              sha256.acknowledge(
-                fresh.settings.sha256_enabled,
-                failure.revision,
-              );
-              break;
-            case "logLevel":
-              logLevel.acknowledge(
-                fresh.settings.log_level as UpdateLogLevelBodyLevel,
-                failure.revision,
-              );
-              break;
+            confirmedPublicationFormat.current = confirmed;
+            publicationFormat.acknowledge(confirmed, failure.revision);
+            break;
           }
-        });
+          case "sha256":
+            sha256.acknowledge(fresh.settings.sha256_enabled, failure.revision);
+            break;
+          case "logLevel":
+            logLevel.acknowledge(
+              fresh.settings.log_level as UpdateLogLevelBodyLevel,
+              failure.revision,
+            );
+            break;
+        }
         if (
           mountedRef.current &&
           mountGeneration.current === generation &&
@@ -913,6 +1637,22 @@ export function SettingsScreen() {
   );
 
   async function confirmOutputDirectory() {
+    if (
+      "outputDirectory" in conflictValues &&
+      !Object.hasOwn(authorizedConflictExpected.current, "outputDirectory")
+    ) {
+      const current = state?.settings.output_directory;
+      if (current !== undefined)
+        confirmConflictingSave(
+          "outputDirectory",
+          "Каталог публикации",
+          current,
+          () => {
+            void confirmOutputDirectory();
+          },
+        );
+      return;
+    }
     if (isEffectivelyBusy() || runningOperation) return;
     const savedDraft = outputDirectory.capture();
     const output = savedDraft.value;
@@ -922,7 +1662,18 @@ export function SettingsScreen() {
     setOutputDialogError("");
     setNotice("");
     try {
-      successful(await updateSettings({ output_directory: output }), 204);
+      await acceptSettingsWrite(
+        await updateSettings({
+          output_directory: output,
+          expected: {
+            output_directory: expectedForSave(
+              "outputDirectory",
+              savedDraft.baseline ?? state?.settings.output_directory ?? "",
+            ),
+          } satisfies UpdateSettingsExpectedBody,
+        }),
+        204,
+      );
       try {
         await refreshState((fresh) =>
           outputDirectory.acknowledge(
@@ -989,43 +1740,318 @@ export function SettingsScreen() {
     );
   }
 
-  async function checkMusicBrainz() {
+  function saveMusicBrainzMode(mode: UpdateMusicBrainzBodyMode) {
+    const before = musicBrainz.snapshot();
+    const beforeValue = before.value;
+    const beforeBaseline = before.baseline;
+    if (!beforeValue || !beforeBaseline) return;
+    if (mode === beforeBaseline.mode) {
+      musicBrainz.update({ ...beforeValue, mode });
+      return;
+    }
+    musicBrainz.update({ ...beforeValue, mode });
+    if (
+      mode === "self-hosted" &&
+      !validMusicBrainzBaseURL(beforeBaseline.baseURL)
+    )
+      return;
+    const currentSettings = state?.settings;
+    if (!currentSettings) return;
+    const currentValue: MusicBrainzSavedSnapshot =
+      musicBrainzSavedSnapshot(currentSettings);
+    if (
+      "musicBrainz" in conflictValues &&
+      !Object.hasOwn(authorizedConflictExpected.current, "musicBrainz")
+    ) {
+      confirmConflictingSave(
+        "musicBrainz",
+        "настройки MusicBrainz",
+        currentValue,
+        () => {
+          saveMusicBrainzMode(mode);
+        },
+      );
+      return;
+    }
+    const savedDraft = musicBrainz.capture();
+    const submittedBaseURL = mode === "public" ? "" : beforeBaseline.baseURL;
+    const replacingConflict = Object.hasOwn(
+      authorizedConflictExpected.current,
+      "musicBrainz",
+    );
+    const replacement = expectedForSave("musicBrainz", currentValue);
+    const expected: UpdateMusicBrainzExpectedBody = {
+      mode: replacingConflict ? replacement.mode : beforeBaseline.mode,
+      base_url: replacingConflict
+        ? replacement.baseURL
+        : beforeBaseline.baseURL,
+    };
+    void mutate(
+      () =>
+        updateMusicbrainzSettings({
+          mode,
+          base_url: submittedBaseURL,
+          expected,
+        }),
+      204,
+      "Режим MusicBrainz сохранён.",
+      musicBrainz.capture,
+      (fresh) => {
+        musicBrainz.acknowledgeField(
+          "mode",
+          mode,
+          fresh.settings.musicbrainz_mode === "self-hosted"
+            ? "self-hosted"
+            : "public",
+        );
+        musicBrainz.acknowledgeField(
+          "baseURL",
+          beforeValue.baseURL,
+          fresh.settings.musicbrainz_base_url,
+          beforeValue.baseURL !== beforeBaseline.baseURL,
+        );
+      },
+      musicBrainz.beginSave,
+      musicBrainz.endSave,
+      savedDraft,
+    );
+  }
+
+  function saveMusicBrainzThrottle(enabled: boolean) {
+    const before = musicBrainz.snapshot();
+    if (!before.value || !before.baseline) return;
+    if (
+      enabled === before.baseline.selfHostedThrottle ||
+      before.baseline.mode !== "self-hosted"
+    ) {
+      musicBrainz.update({ ...before.value, selfHostedThrottle: enabled });
+      return;
+    }
+    musicBrainz.update({ ...before.value, selfHostedThrottle: enabled });
+    const saved = state?.settings;
+    if (!saved) return;
+    if (
+      "musicBrainz" in conflictValues &&
+      !Object.hasOwn(authorizedConflictExpected.current, "musicBrainz")
+    ) {
+      confirmConflictingSave(
+        "musicBrainz",
+        "настройки MusicBrainz",
+        musicBrainzSavedSnapshot(saved),
+        () => saveMusicBrainzThrottle(enabled),
+      );
+      return;
+    }
+    const savedDraft = musicBrainz.capture();
+    const replacingConflict = Object.hasOwn(
+      authorizedConflictExpected.current,
+      "musicBrainz",
+    );
+    const replacement = expectedForSave(
+      "musicBrainz",
+      musicBrainzSavedSnapshot(saved),
+    );
+    const expected: UpdateMusicBrainzExpectedBody = {
+      self_hosted_throttle: replacingConflict
+        ? replacement.throttle
+        : before.baseline.selfHostedThrottle,
+    };
+    void mutate(
+      () =>
+        updateMusicbrainzSettings({ self_hosted_throttle: enabled, expected }),
+      204,
+      "Ограничение частоты MusicBrainz сохранено.",
+      musicBrainz.capture,
+      (fresh) =>
+        musicBrainz.acknowledgeField(
+          "selfHostedThrottle",
+          enabled,
+          fresh.settings.musicbrainz_self_hosted_throttle,
+        ),
+      musicBrainz.beginSave,
+      musicBrainz.endSave,
+      savedDraft,
+    );
+  }
+
+  async function checkMusicBrainz(): Promise<SettingsSaveOutcome> {
     const savedDraft = musicBrainz.capture();
     const payload = savedDraft.value;
-    if (!payload) return;
-    musicBrainz.beginSave(savedDraft.revision);
-    setBusy(true);
+    const baseline = savedDraft.baseline;
+    if (!payload || !baseline)
+      return { status: "failed", group: "musicBrainz" };
+    const delay = Number(payload.selfHostedDelaySeconds);
+    const delayIsValid =
+      payload.selfHostedDelaySeconds.trim() !== "" &&
+      Number.isFinite(delay) &&
+      delay >= 0 &&
+      delay <= 60;
+    const targetChanged =
+      payload.mode !== baseline.mode ||
+      (payload.mode === "self-hosted" && payload.baseURL !== baseline.baseURL);
+    const delayChanged =
+      payload.mode === "self-hosted" &&
+      payload.selfHostedDelaySeconds !== baseline.selfHostedDelaySeconds;
+    const throttleChanged =
+      payload.mode === "self-hosted" &&
+      payload.selfHostedThrottle !== baseline.selfHostedThrottle;
+    if (
+      payload.mode === "self-hosted" &&
+      targetChanged &&
+      !validMusicBrainzBaseURL(payload.baseURL)
+    ) {
+      setError("Сначала задайте корректный MusicBrainz base URL.");
+      return {
+        status: "invalid",
+        group: "musicBrainz",
+        validSavedTarget: false,
+        confirmationRead: false,
+        message: "Сначала задайте корректный MusicBrainz base URL.",
+      };
+    }
+    if (payload.mode === "self-hosted" && delayChanged && !delayIsValid) {
+      setError("Интервал запросов должен быть числом от 0 до 60 секунд.");
+      return {
+        status: "invalid",
+        group: "musicBrainz",
+        validSavedTarget: false,
+        confirmationRead: false,
+        message: "Интервал запросов должен быть числом от 0 до 60 секунд.",
+      };
+    }
+    if (
+      (targetChanged || delayChanged || throttleChanged) &&
+      "musicBrainz" in conflictValues &&
+      !Object.hasOwn(authorizedConflictExpected.current, "musicBrainz")
+    ) {
+      const saved = state?.settings;
+      if (saved)
+        confirmConflictingSave(
+          "musicBrainz",
+          "настройки MusicBrainz",
+          musicBrainzSavedSnapshot(saved),
+          () => void checkMusicBrainz(),
+        );
+      return {
+        status: "confirmation_pending",
+        group: "musicBrainz",
+        validSavedTarget: false,
+        confirmationRead: false,
+      };
+    }
     setError("");
     setNotice("");
+    const shouldSaveDraft = targetChanged || delayChanged || throttleChanged;
+    let targetAccepted = false;
+    let targetConfirmed = !shouldSaveDraft;
+    if (shouldSaveDraft) {
+      musicBrainz.beginSave(savedDraft.revision);
+      setBusy(true);
+    }
     try {
-      const saved = await updateMusicbrainzSettings({
-        mode: payload.mode,
-        base_url: payload.mode === "public" ? "" : payload.baseURL,
-        self_hosted_throttle: payload.selfHostedThrottle,
-        self_hosted_delay_seconds: payload.selfHostedDelaySeconds,
-      });
-      successful(saved, 204);
-      try {
-        await refreshState((fresh) =>
-          musicBrainz.acknowledge(
-            {
-              mode:
+      if (shouldSaveDraft) {
+        const expected: UpdateMusicBrainzExpectedBody = {};
+        const replacingConflict = Object.hasOwn(
+          authorizedConflictExpected.current,
+          "musicBrainz",
+        );
+        const currentSettings = state?.settings;
+        const fallbackSnapshot: MusicBrainzSavedSnapshot = currentSettings
+          ? musicBrainzSavedSnapshot(currentSettings)
+          : {
+              mode: baseline.mode,
+              baseURL: baseline.baseURL,
+              delay: Number(baseline.selfHostedDelaySeconds),
+              throttle: baseline.selfHostedThrottle,
+            };
+        const replacement = expectedForSave("musicBrainz", fallbackSnapshot);
+        const body: {
+          mode?: UpdateMusicBrainzBodyMode;
+          base_url?: string;
+          self_hosted_delay_seconds?: number;
+          self_hosted_throttle?: boolean;
+          expected: UpdateMusicBrainzExpectedBody;
+        } = { expected };
+        const submittedBaseURL =
+          payload.mode === "public" ? "" : payload.baseURL;
+        if (targetChanged) {
+          body.mode = payload.mode;
+          body.base_url = submittedBaseURL;
+          expected.mode = replacingConflict ? replacement.mode : baseline.mode;
+          expected.base_url = replacingConflict
+            ? replacement.baseURL
+            : baseline.baseURL;
+        }
+        if (delayChanged) {
+          body.self_hosted_delay_seconds = delay;
+          expected.self_hosted_delay_seconds = replacingConflict
+            ? replacement.delay
+            : Number(baseline.selfHostedDelaySeconds);
+        }
+        if (throttleChanged) {
+          body.self_hosted_throttle = payload.selfHostedThrottle;
+          expected.self_hosted_throttle = replacingConflict
+            ? replacement.throttle
+            : baseline.selfHostedThrottle;
+        }
+        const saved = await updateMusicbrainzSettings(body);
+        await acceptSettingsWrite(saved, 204);
+        targetAccepted = true;
+        try {
+          await refreshState((fresh) => {
+            const freshMode =
+              fresh.settings.musicbrainz_mode === "self-hosted"
+                ? "self-hosted"
+                : "public";
+            if (
+              (targetChanged &&
+                (freshMode !== payload.mode ||
+                  fresh.settings.musicbrainz_base_url !== submittedBaseURL)) ||
+              (delayChanged &&
+                fresh.settings.musicbrainz_self_hosted_delay_seconds !==
+                  delay) ||
+              (throttleChanged &&
+                fresh.settings.musicbrainz_self_hosted_throttle !==
+                  payload.selfHostedThrottle)
+            )
+              throw new Error(
+                "Сервер не подтвердил отправленные настройки MusicBrainz.",
+              );
+            if (targetChanged) {
+              musicBrainz.acknowledgeField(
+                "mode",
+                payload.mode,
                 fresh.settings.musicbrainz_mode === "self-hosted"
                   ? "self-hosted"
                   : "public",
-              baseURL: fresh.settings.musicbrainz_base_url,
-              selfHostedThrottle:
+              );
+              musicBrainz.acknowledgeField(
+                "baseURL",
+                payload.baseURL,
+                fresh.settings.musicbrainz_base_url,
+                payload.mode === "public" &&
+                  payload.baseURL !== baseline.baseURL,
+              );
+            }
+            if (delayChanged)
+              musicBrainz.acknowledgeField(
+                "selfHostedDelaySeconds",
+                payload.selfHostedDelaySeconds,
+                String(fresh.settings.musicbrainz_self_hosted_delay_seconds),
+              );
+            if (throttleChanged)
+              musicBrainz.acknowledgeField(
+                "selfHostedThrottle",
+                payload.selfHostedThrottle,
                 fresh.settings.musicbrainz_self_hosted_throttle,
-              selfHostedDelaySeconds:
-                fresh.settings.musicbrainz_self_hosted_delay_seconds,
-            },
-            savedDraft.revision,
-          ),
-        );
-      } catch (reason) {
-        throw new Error(
-          `Настройки MusicBrainz приняты сервером, но не удалось подтвердить их чтением: ${message(reason)}`,
-        );
+              );
+          });
+          targetConfirmed = true;
+        } catch (reason) {
+          throw new Error(
+            `Настройки MusicBrainz приняты сервером, но не удалось подтвердить их чтением: ${message(reason)}`,
+          );
+        }
       }
       const checked = successful(await checkSettingsMusicbrainz(), 200);
       try {
@@ -1035,15 +2061,212 @@ export function SettingsScreen() {
           `MusicBrainz сохранён и проверен, но не удалось подтвердить состояние чтением: ${message(reason)}`,
         );
       }
-      if (!checked.data.success)
-        throw new Error(checked.data.error || "MusicBrainz недоступен.");
+      if (!checked.data.success) {
+        const failure = checked.data.error || "MusicBrainz недоступен.";
+        setError(failure);
+        return {
+          status: "invalid",
+          group: "musicBrainz",
+          validSavedTarget: false,
+          confirmationRead: targetConfirmed,
+          message: failure,
+        };
+      }
+      const currentMusicDraft = musicBrainz.capture();
+      if (
+        currentMusicDraft.value &&
+        currentMusicDraft.baseline &&
+        !sameMusicBrainz(currentMusicDraft.value, currentMusicDraft.baseline)
+      ) {
+        const failure =
+          "В текущем режиме остались несохранённые изменения MusicBrainz.";
+        setError(failure);
+        return {
+          status: "invalid",
+          group: "musicBrainz",
+          validSavedTarget: true,
+          confirmationRead: targetConfirmed,
+          message: failure,
+        };
+      }
       setNotice("MusicBrainz проверен.");
+      return {
+        status: "saved",
+        group: "musicBrainz",
+        validSavedTarget: true,
+        confirmationRead: targetConfirmed,
+      };
     } catch (reason) {
       setError(message(reason));
+      return {
+        status:
+          reason instanceof SettingsConflictError
+            ? "conflict"
+            : reason instanceof SettingsValidationError
+              ? "invalid"
+              : targetAccepted && !targetConfirmed
+                ? "uncertain"
+                : "failed",
+        group: "musicBrainz",
+        validSavedTarget: false,
+        confirmationRead: targetConfirmed,
+        message: message(reason),
+      };
     } finally {
-      musicBrainz.endSave(savedDraft.revision);
-      setBusy(false);
+      if (shouldSaveDraft) {
+        musicBrainz.endSave(savedDraft.revision);
+        setBusy(false);
+      }
     }
+  }
+
+  async function saveEligibleTextDrafts(): Promise<SettingsSaveOutcome> {
+    if (isEffectivelyBusy())
+      return {
+        status: "failed",
+        group: "all",
+        message: "Дождитесь завершения текущего запроса.",
+      };
+    if (outputDirectory.dirty) {
+      dialogReturnFocusRef.current =
+        navigationDialogRef.current?.querySelector(
+          "button[data-settings-navigation-save]",
+        ) ?? heading.current;
+      setError("");
+      setOutputDialogError("");
+      setOutputDialog(true);
+      return { status: "confirmation_pending", group: "outputDirectory" };
+    }
+    if (
+      moveDirectoryBaseline.current !== undefined &&
+      moveDirectoryRef.current !== moveDirectoryBaseline.current
+    ) {
+      dialogReturnFocusRef.current =
+        navigationDialogRef.current?.querySelector(
+          "button[data-settings-navigation-save]",
+        ) ?? heading.current;
+      setError("");
+      setMoveDialogError("");
+      moveSessionRevision.current += 1;
+      moveInputRevision.current += 1;
+      setMovePlan(undefined);
+      setMoveDialog(true);
+      return { status: "confirmation_pending", group: "toolsDirectory" };
+    }
+
+    const textSaves: Array<[boolean, () => Promise<SettingsSaveOutcome>]> = [
+      [sourceFileConcurrency.dirty, saveConcurrency],
+      [publicationPathTemplate.dirty, savePublicationTemplate],
+      [workDirectory.dirty, saveWorkDirectory],
+    ];
+    for (const [dirty, save] of textSaves) {
+      if (!dirty) continue;
+      const outcome = await save();
+      if (outcome.status !== "saved") return outcome;
+      const currentDraft =
+        outcome.group === "concurrency"
+          ? sourceFileConcurrency.capture()
+          : outcome.group === "publicationTemplate"
+            ? publicationPathTemplate.capture()
+            : workDirectory.capture();
+      const draftStillDirty =
+        currentDraft.value !== undefined &&
+        currentDraft.baseline !== undefined &&
+        currentDraft.value !== currentDraft.baseline;
+      if (draftStillDirty)
+        return {
+          status: "failed",
+          group: outcome.group,
+          message:
+            "Во время сохранения появились новые несохранённые изменения.",
+        };
+    }
+
+    if (musicBrainz.dirty) return checkMusicBrainz();
+    return { status: "saved", group: "all" };
+  }
+
+  function resolveNavigation(
+    attempt: HashAttempt,
+    resolution: "stay" | "leave",
+  ) {
+    if (latestNavigationAttempt.current?.id !== attempt.id) return false;
+    if (!resolveHashNavigation(attempt.id, resolution)) return false;
+    latestNavigationAttempt.current = undefined;
+    setNavigationAttempt(undefined);
+    setNavigationError("");
+    return true;
+  }
+
+  function keepDraftAndLeave(attempt: HashAttempt) {
+    const storage = getSettingsDraftStorage();
+    const persisted = writeSettingsDraft(
+      storage,
+      currentSettingsDraftSnapshot(),
+    );
+    if (!persisted) {
+      setDraftStorageWarning(true);
+      setNavigationError(
+        locale === "ru"
+          ? "Не удалось сохранить черновик в хранилище браузера. Останьтесь на странице и повторите попытку."
+          : "The draft could not be saved to browser storage. Stay on this page and try again.",
+      );
+      return;
+    }
+    resolveNavigation(attempt, "leave");
+  }
+
+  function discardDraftAndLeave(attempt: HashAttempt) {
+    const storage = getSettingsDraftStorage();
+    if (!writeSettingsDraft(storage, null)) {
+      writeSettingsDraft(storage, currentSettingsDraftSnapshot());
+      setDraftStorageWarning(true);
+      setNavigationError(
+        locale === "ru"
+          ? "Не удалось удалить сохранённый черновик. Останьтесь на странице и повторите попытку."
+          : "The saved draft could not be discarded. Stay on this page and try again.",
+      );
+      return;
+    }
+    if (!resolveNavigation(attempt, "leave"))
+      writeSettingsDraft(storage, currentSettingsDraftSnapshot());
+  }
+
+  async function saveDraftAndLeave(attempt: HashAttempt) {
+    setNavigationError("");
+    const outcome = await saveEligibleTextDrafts();
+    if (latestNavigationAttempt.current?.id !== attempt.id) return;
+    if (outcome.status === "saved" && !hasUnsavedSettingsTextDrafts()) {
+      resolveNavigation(attempt, "leave");
+      return;
+    }
+    const messages: Record<SettingsSaveOutcome["status"], string> =
+      locale === "ru"
+        ? {
+            saved:
+              "Появились новые несохранённые изменения. Проверьте настройки перед выходом.",
+            invalid: "Исправьте некорректные настройки перед выходом.",
+            confirmation_pending:
+              "Завершите открытое подтверждение настроек, затем повторите сохранение.",
+            conflict:
+              "Настройки изменились на сервере. Разрешите конфликт перед выходом.",
+            uncertain:
+              "Не удалось подтвердить сохранение. Проверьте состояние и повторите попытку.",
+            failed: "Не удалось сохранить настройки перед выходом.",
+          }
+        : {
+            saved:
+              "New unsaved changes appeared. Review the settings before leaving.",
+            invalid: "Correct the invalid settings before leaving.",
+            confirmation_pending:
+              "Complete the open settings confirmation, then try saving again.",
+            conflict:
+              "Settings changed on the server. Resolve the conflict before leaving.",
+            uncertain:
+              "The save could not be confirmed. Review the current state and try again.",
+            failed: "Settings could not be saved before leaving.",
+          };
+    setNavigationError(outcome.message || messages[outcome.status]);
   }
 
   function closeInstallDialog() {
@@ -1241,6 +2464,22 @@ export function SettingsScreen() {
     }
   }
   async function preflightMove() {
+    if (
+      "toolsDirectory" in conflictValues &&
+      !Object.hasOwn(authorizedConflictExpected.current, "toolsDirectory")
+    ) {
+      const current = state?.settings.tools_directory;
+      if (current !== undefined)
+        confirmConflictingSave(
+          "toolsDirectory",
+          "Каталог инструментов",
+          current,
+          () => {
+            void preflightMove();
+          },
+        );
+      return;
+    }
     const directory = moveDirectoryRef.current;
     const removeOldFiles = removeOldRef.current;
     const inputRevision = moveInputRevision.current;
@@ -1252,8 +2491,12 @@ export function SettingsScreen() {
     setError("");
     setMoveDialogError("");
     try {
-      const response = successful(
+      const response = await acceptSettingsWrite(
         await preflightToolsRootMove({
+          expected_tools_directory: expectedForSave(
+            "toolsDirectory",
+            moveDirectoryBaseline.current ?? sourceDirectory,
+          ),
           new_tools_directory: directory,
           remove_old_files: removeOldFiles,
         }),
@@ -1279,8 +2522,10 @@ export function SettingsScreen() {
         },
       });
     } catch (reason) {
+      if (reason instanceof SettingsConflictError) invalidateMovePlan();
       if (
-        requestRevision === moveRequestRevision.current &&
+        (reason instanceof SettingsConflictError ||
+          requestRevision === moveRequestRevision.current) &&
         inputRevision === moveInputRevision.current &&
         sessionRevision === moveSessionRevision.current &&
         moveDialog
@@ -1369,6 +2614,174 @@ export function SettingsScreen() {
   const persistedTime = checkedAt
     ? new Date(checkedAt).toLocaleString()
     : "Каталог ещё не проверялся.";
+  const concurrencyDraft = sourceFileConcurrency.snapshot();
+  const templateDraft = publicationPathTemplate.snapshot();
+  const workDraft = workDirectory.snapshot();
+  const outputDraft = outputDirectory.snapshot();
+  const musicDraft = musicBrainz.snapshot();
+  const conflictValues = useMemo(() => {
+    const values: Partial<Record<ConflictGroup, unknown>> = {};
+    if (
+      state &&
+      concurrencyDraft.value !== undefined &&
+      concurrencyDraft.baseline !== undefined &&
+      concurrencyDraft.value !== concurrencyDraft.baseline &&
+      String(state.settings.source_file_concurrency) !==
+        concurrencyDraft.baseline
+    )
+      values.concurrency = state.settings.source_file_concurrency;
+    if (
+      state &&
+      templateDraft.value !== undefined &&
+      templateDraft.baseline !== undefined &&
+      templateDraft.value !== templateDraft.baseline &&
+      state.settings.publication_path_template !== templateDraft.baseline
+    )
+      values.publicationTemplate = state.settings.publication_path_template;
+    if (
+      state &&
+      workDraft.value !== undefined &&
+      workDraft.baseline !== undefined &&
+      workDraft.value !== workDraft.baseline &&
+      state.settings.work_directory !== workDraft.baseline
+    )
+      values.workDirectory = state.settings.work_directory;
+    if (
+      state &&
+      outputDraft.value !== undefined &&
+      outputDraft.baseline !== undefined &&
+      outputDraft.value !== outputDraft.baseline &&
+      state.settings.output_directory !== outputDraft.baseline
+    )
+      values.outputDirectory = state.settings.output_directory;
+    if (
+      state &&
+      musicDraft.value &&
+      musicDraft.baseline &&
+      (musicDraft.value.mode !== musicDraft.baseline.mode ||
+        musicDraft.value.baseURL !== musicDraft.baseline.baseURL ||
+        musicDraft.value.selfHostedDelaySeconds !==
+          musicDraft.baseline.selfHostedDelaySeconds ||
+        musicDraft.value.selfHostedThrottle !==
+          musicDraft.baseline.selfHostedThrottle) &&
+      ((state.settings.musicbrainz_mode === "self-hosted"
+        ? "self-hosted"
+        : "public") !== musicDraft.baseline.mode ||
+        state.settings.musicbrainz_base_url !== musicDraft.baseline.baseURL ||
+        String(state.settings.musicbrainz_self_hosted_delay_seconds) !==
+          musicDraft.baseline.selfHostedDelaySeconds ||
+        state.settings.musicbrainz_self_hosted_throttle !==
+          musicDraft.baseline.selfHostedThrottle)
+    ) {
+      values.musicBrainz = {
+        mode: state.settings.musicbrainz_mode,
+        baseURL: state.settings.musicbrainz_base_url,
+        delay: state.settings.musicbrainz_self_hosted_delay_seconds,
+        throttle: state.settings.musicbrainz_self_hosted_throttle,
+      };
+    }
+    const toolsCurrent = state?.settings.tools_directory;
+    if (
+      state &&
+      moveDirectory !== moveDirectoryBaselineValue &&
+      moveDirectoryBaselineValue !== undefined &&
+      toolsCurrent !== moveDirectoryBaselineValue
+    )
+      values.toolsDirectory = toolsCurrent;
+    return values;
+  }, [
+    state,
+    concurrencyDraft.value,
+    concurrencyDraft.baseline,
+    templateDraft.value,
+    templateDraft.baseline,
+    workDraft.value,
+    workDraft.baseline,
+    outputDraft.value,
+    outputDraft.baseline,
+    musicDraft.value,
+    musicDraft.baseline,
+    moveDirectory,
+    moveDirectoryBaselineValue,
+  ]);
+  useEffect(() => {
+    setActiveConflicts((previous) => {
+      const next = { ...previous };
+      let changed = false;
+      for (const group of Object.keys(previous) as ConflictGroup[])
+        if (!Object.hasOwn(conflictValues, group)) {
+          delete next[group];
+          changed = true;
+        }
+      for (const group of Object.keys(conflictValues) as ConflictGroup[])
+        if (!Object.hasOwn(previous, group)) {
+          next[group] = true;
+          changed = true;
+        }
+      return changed ? next : previous;
+    });
+  }, [conflictValues]);
+  function takeSavedConflict(group: ConflictGroup) {
+    const current = state?.settings;
+    if (!current) return;
+    switch (group) {
+      case "concurrency": {
+        const value = String(current.source_file_concurrency);
+        sourceFileConcurrency.update(value);
+        sourceFileConcurrency.acknowledge(
+          value,
+          sourceFileConcurrency.capture().revision,
+        );
+        break;
+      }
+      case "publicationTemplate":
+        publicationPathTemplate.update(current.publication_path_template);
+        publicationPathTemplate.acknowledge(
+          current.publication_path_template,
+          publicationPathTemplate.capture().revision,
+        );
+        break;
+      case "workDirectory":
+        workDirectory.update(current.work_directory);
+        workDirectory.acknowledge(
+          current.work_directory,
+          workDirectory.capture().revision,
+        );
+        break;
+      case "outputDirectory":
+        outputDirectory.update(current.output_directory);
+        outputDirectory.acknowledge(
+          current.output_directory,
+          outputDirectory.capture().revision,
+        );
+        break;
+      case "musicBrainz": {
+        const value = musicBrainz.snapshot().value;
+        if (value)
+          musicBrainz.acknowledge(
+            {
+              ...value,
+              mode:
+                current.musicbrainz_mode === "self-hosted"
+                  ? "self-hosted"
+                  : "public",
+              baseURL: current.musicbrainz_base_url,
+              selfHostedThrottle: current.musicbrainz_self_hosted_throttle,
+              selfHostedDelaySeconds: String(
+                current.musicbrainz_self_hosted_delay_seconds,
+              ),
+            },
+            musicBrainz.capture().revision,
+          );
+        break;
+      }
+      case "toolsDirectory":
+        setMoveDirectoryBaseline(current.tools_directory);
+        setMoveDirectoryValue(current.tools_directory);
+        break;
+    }
+    setActiveConflicts((previous) => ({ ...previous, [group]: false }));
+  }
   return (
     <section
       aria-labelledby="settings-title"
@@ -1382,6 +2795,12 @@ export function SettingsScreen() {
         возвращают приложение в мастер.
       </p>
       {effectiveBusy && <p role="status">Выполняется запрос…</p>}
+      {draftStorageWarning && (
+        <p role="status">
+          Черновик настроек сохранён только в памяти страницы; после её закрытия
+          восстановить изменения не удастся.
+        </p>
+      )}
       {!initialLoadComplete && !loadError && (
         <p role="status">Загрузка настроек и состояния сервера…</p>
       )}
@@ -1438,25 +2857,7 @@ export function SettingsScreen() {
             concurrencySavingDisabled={effectiveBusy}
             concurrencyDirty={sourceFileConcurrency.dirty}
             onConcurrencyChange={sourceFileConcurrency.update}
-            onSaveConcurrency={() => {
-              if (isEffectivelyBusy()) return;
-              void mutate(
-                (savedDraft) =>
-                  updateSettings({
-                    source_file_concurrency: Number(savedDraft.value),
-                  }),
-                204,
-                "Параллельность анализа сохранена.",
-                sourceFileConcurrency.capture,
-                (fresh, revision) =>
-                  sourceFileConcurrency.acknowledge(
-                    String(fresh.settings.source_file_concurrency),
-                    revision,
-                  ),
-                sourceFileConcurrency.beginSave,
-                sourceFileConcurrency.endSave,
-              );
-            }}
+            onSaveConcurrency={saveConcurrency}
             sha256Enabled={sha256.value ?? state.settings.sha256_enabled}
             onSha256Change={saveSha256}
             logLevel={logLevel.value ?? "info"}
@@ -1547,24 +2948,7 @@ export function SettingsScreen() {
               )}
               <AppButton
                 isDisabled={effectiveBusy || !publicationPathTemplate.value}
-                onPress={() =>
-                  void mutate(
-                    (savedDraft) =>
-                      updateSettings({
-                        publication_path_template: savedDraft.value,
-                      }),
-                    204,
-                    "Шаблон пути публикации сохранён.",
-                    publicationPathTemplate.capture,
-                    (fresh, revision) =>
-                      publicationPathTemplate.acknowledge(
-                        fresh.settings.publication_path_template,
-                        revision,
-                      ),
-                    publicationPathTemplate.beginSave,
-                    publicationPathTemplate.endSave,
-                  )
-                }
+                onPress={savePublicationTemplate}
               >
                 Сохранить шаблон пути
               </AppButton>
@@ -1576,7 +2960,7 @@ export function SettingsScreen() {
                     state.settings.publication_remove_sources
                   }
                   onChange={(event) =>
-                    publicationRemoveSources.update(event.target.checked)
+                    savePublicationRemoveSources(event.target.checked)
                   }
                 />{" "}
                 Разрешить удаление исходников после публикации
@@ -1590,31 +2974,6 @@ export function SettingsScreen() {
               {publicationRemoveSources.dirty && (
                 <p>Есть несохранённая настройка удаления исходников.</p>
               )}
-              <AppButton
-                isDisabled={effectiveBusy}
-                onPress={() =>
-                  void mutate(
-                    (savedDraft) =>
-                      updateSettings({
-                        publication_remove_sources:
-                          savedDraft.value ??
-                          state.settings.publication_remove_sources,
-                      }),
-                    204,
-                    "Настройка удаления исходников сохранена.",
-                    publicationRemoveSources.capture,
-                    (fresh, revision) =>
-                      publicationRemoveSources.acknowledge(
-                        fresh.settings.publication_remove_sources,
-                        revision,
-                      ),
-                    publicationRemoveSources.beginSave,
-                    publicationRemoveSources.endSave,
-                  )
-                }
-              >
-                Сохранить настройку удаления
-              </AppButton>
               <AppButton
                 isDisabled={
                   effectiveBusy ||
@@ -1653,22 +3012,7 @@ export function SettingsScreen() {
               )}
               <AppButton
                 isDisabled={effectiveBusy || !workDirectory.dirty}
-                onPress={() =>
-                  void mutate(
-                    (savedDraft) =>
-                      updateSettings({ work_directory: savedDraft.value }),
-                    204,
-                    "Рабочая папка изменена.",
-                    workDirectory.capture,
-                    (fresh, revision) =>
-                      workDirectory.acknowledge(
-                        fresh.settings.work_directory,
-                        revision,
-                      ),
-                    workDirectory.beginSave,
-                    workDirectory.endSave,
-                  )
-                }
+                onPress={saveWorkDirectory}
               >
                 Сохранить рабочую папку
               </AppButton>
@@ -1718,14 +3062,9 @@ export function SettingsScreen() {
                 <select
                   value={musicBrainz.value?.mode ?? "public"}
                   onChange={(event) =>
-                    musicBrainz.update({
-                      mode: event.target.value as UpdateMusicBrainzBodyMode,
-                      baseURL: musicBrainz.value?.baseURL ?? "",
-                      selfHostedThrottle:
-                        musicBrainz.value?.selfHostedThrottle ?? false,
-                      selfHostedDelaySeconds:
-                        musicBrainz.value?.selfHostedDelaySeconds ?? 0.5,
-                    })
+                    saveMusicBrainzMode(
+                      event.target.value as UpdateMusicBrainzBodyMode,
+                    )
                   }
                 >
                   <option value="public">Public</option>
@@ -1752,32 +3091,28 @@ export function SettingsScreen() {
                     <input
                       type="checkbox"
                       checked={musicBrainz.value?.selfHostedThrottle ?? false}
-                      onChange={(event) => {
-                        const currentValue = musicBrainz.value;
-                        if (currentValue === undefined) return;
-                        musicBrainz.update({
-                          ...currentValue,
-                          selfHostedThrottle: event.target.checked,
-                        });
-                      }}
+                      onChange={(event) =>
+                        saveMusicBrainzThrottle(event.target.checked)
+                      }
                     />{" "}
                     Ограничивать частоту запросов к self-hosted MusicBrainz
                   </label>
                   <label>
                     Интервал запросов (секунды)
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       min="0"
                       max="60"
                       step="any"
                       required
-                      value={musicBrainz.value?.selfHostedDelaySeconds ?? 0.5}
+                      value={musicBrainz.value?.selfHostedDelaySeconds ?? "0.5"}
                       onChange={(event) => {
                         const currentValue = musicBrainz.value;
                         if (currentValue === undefined) return;
                         musicBrainz.update({
                           ...currentValue,
-                          selfHostedDelaySeconds: Number(event.target.value),
+                          selfHostedDelaySeconds: event.target.value,
                         });
                       }}
                     />
@@ -1801,35 +3136,11 @@ export function SettingsScreen() {
                 <input
                   type="checkbox"
                   checked={lrclib.value ?? state.settings.lrclib_enabled}
-                  onChange={(event) => lrclib.update(event.target.checked)}
+                  onChange={(event) => saveLrclib(event.target.checked)}
                 />{" "}
                 LRCLIB включён
               </label>
               {lrclib.dirty && <p>Есть несохранённые изменения LRCLIB.</p>}
-              <AppButton
-                isDisabled={effectiveBusy}
-                onPress={() =>
-                  void mutate(
-                    (savedDraft) =>
-                      updateLrclibSetting({
-                        enabled:
-                          savedDraft.value ?? state.settings.lrclib_enabled,
-                      }),
-                    204,
-                    "Настройка LRCLIB сохранена.",
-                    lrclib.capture,
-                    (fresh, revision) =>
-                      lrclib.acknowledge(
-                        fresh.settings.lrclib_enabled,
-                        revision,
-                      ),
-                    lrclib.beginSave,
-                    lrclib.endSave,
-                  )
-                }
-              >
-                Сохранить LRCLIB
-              </AppButton>
             </section>
             <section
               aria-labelledby="tools-root-title"
@@ -2039,6 +3350,133 @@ export function SettingsScreen() {
         <AppButton isDisabled={effectiveBusy} onPress={() => void loadScreen()}>
           Обновить состояние
         </AppButton>
+      )}
+      {Object.entries(conflictValues).map(([rawGroup, currentValue]) => {
+        const group = rawGroup as ConflictGroup;
+        if (!activeConflicts[group]) return null;
+        const label = conflictLabel(group);
+        return (
+          <section
+            key={group}
+            aria-label={`Конфликт настроек: ${label}`}
+            className="setup-panel settings-panel"
+            role="status"
+          >
+            <p>
+              Сохранённое значение для «{label}» изменилось:{" "}
+              {displaySettingValue(currentValue)}.
+            </p>
+            <AppButton
+              isDisabled={effectiveBusy}
+              onPress={() => takeSavedConflict(group)}
+            >
+              Взять сохранённое: {label}
+            </AppButton>
+            <AppButton
+              isDisabled={effectiveBusy}
+              onPress={() => continueEditingConflict(group)}
+            >
+              Продолжить редактирование: {label}
+            </AppButton>
+          </section>
+        );
+      })}
+      {navigationAttempt && (
+        <dialog
+          ref={navigationDialogRef}
+          aria-modal="true"
+          aria-labelledby="settings-navigation-title"
+          aria-describedby="settings-navigation-description"
+          className="settings-dialog"
+          onCancel={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            resolveNavigation(navigationAttempt, "stay");
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest("dialog") !== event.currentTarget
+            )
+              return;
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              resolveNavigation(navigationAttempt, "stay");
+              return;
+            }
+            onDialogKeyDown(event, () =>
+              resolveNavigation(navigationAttempt, "stay"),
+            );
+          }}
+        >
+          <h2 id="settings-navigation-title">
+            {locale === "ru" ? "Несохранённые настройки" : "Unsaved settings"}
+          </h2>
+          <p id="settings-navigation-description">
+            {locale === "ru"
+              ? "В настройках есть несохранённые текстовые изменения. Что сделать перед переходом?"
+              : "Settings contain unsaved text changes. What would you like to do before leaving?"}
+          </p>
+          {navigationError && <p role="alert">{navigationError}</p>}
+          <AppButton
+            onPress={() => resolveNavigation(navigationAttempt, "stay")}
+          >
+            {locale === "ru" ? "Остаться" : "Stay"}
+          </AppButton>
+          <AppButton onPress={() => keepDraftAndLeave(navigationAttempt)}>
+            {locale === "ru" ? "Уйти, сохранив черновик" : "Leave with draft"}
+          </AppButton>
+          <AppButton onPress={() => discardDraftAndLeave(navigationAttempt)}>
+            {locale === "ru"
+              ? "Удалить черновик и уйти"
+              : "Discard draft and leave"}
+          </AppButton>
+          <AppButton
+            data-settings-navigation-save
+            onPress={() => void saveDraftAndLeave(navigationAttempt)}
+          >
+            {locale === "ru" ? "Сохранить и уйти" : "Save and leave"}
+          </AppButton>
+        </dialog>
+      )}
+      {conflictConfirmation && (
+        <dialog
+          ref={conflictDialogRef}
+          aria-labelledby="conflict-confirm-title"
+          aria-describedby="conflict-confirm-description"
+          className="settings-dialog"
+          onClose={() => setConflictConfirmation(undefined)}
+          onCancel={(event) => {
+            event.preventDefault();
+            setConflictConfirmation(undefined);
+          }}
+          onKeyDown={(event) =>
+            onDialogKeyDown(event, () => setConflictConfirmation(undefined))
+          }
+        >
+          <h2 id="conflict-confirm-title">Заменить сохранённое значение?</h2>
+          <p id="conflict-confirm-description">
+            Для «{conflictConfirmation.label}» сейчас сохранено:{" "}
+            {displaySettingValue(conflictConfirmation.currentValue)}.
+            Подтвердите замену этим черновиком. При новом конфликте потребуется
+            подтвердить ещё раз.
+          </p>
+          <AppButton
+            onPress={() => {
+              authorizedConflictExpected.current[conflictConfirmation.group] =
+                conflictConfirmation.currentValue;
+              const confirm = conflictConfirmation.onConfirm;
+              setConflictConfirmation(undefined);
+              confirm();
+            }}
+          >
+            Заменить сохранённое значение
+          </AppButton>
+          <AppButton onPress={() => setConflictConfirmation(undefined)}>
+            Отмена
+          </AppButton>
+        </dialog>
       )}
       {outputDialog && (
         <dialog

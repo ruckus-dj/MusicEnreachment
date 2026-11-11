@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { apiResponseError, errorMessage } from "../../api/client/errors";
 import {
   getLibraryPositionMetadata,
@@ -25,9 +25,32 @@ import {
   serializeArtistCreditChange,
 } from "./artistCreditDraft";
 import { artistCreditMessages } from "./artistCreditMessages";
+import {
+  createMetadataDraftRowKey,
+  type MetadataMovementDraft,
+  type MetadataWorkDraft,
+  readMetadataMovementDraft,
+  readMetadataWorkDrafts,
+  StructuredMetadataField,
+} from "./StructuredMetadataFields";
 
 type FieldState = "absent" | "value" | "explicit_empty";
-type MetadataValue = string | string[] | number | boolean;
+type ContributorDraft = {
+  uiKey: string;
+  name: string;
+  role: string;
+  instrument?: string;
+  artist_id?: string;
+  mbid?: string;
+};
+type MetadataValue =
+  | string
+  | string[]
+  | number
+  | boolean
+  | MetadataWorkDraft[]
+  | ContributorDraft[]
+  | MetadataMovementDraft;
 type ReleaseFieldKey =
   | "title"
   | "sort_title"
@@ -55,6 +78,9 @@ type ReleaseFieldKey =
   | "isrc"
   | "bpm"
   | "language"
+  | "works"
+  | "contributors"
+  | "movement"
   | "disc_title"
   | "track_number"
   | "track_total"
@@ -71,7 +97,10 @@ type ReleaseField = {
     | "boolean"
     | "integer"
     | "number"
-    | "advisory";
+    | "advisory"
+    | "works"
+    | "contributors"
+    | "movement";
   group: string;
 };
 
@@ -106,6 +135,9 @@ const titleFields: ReleaseField[] = [
 
 const recordingFields: ReleaseField[] = [
   ...titleFields,
+  { key: "contributors", kind: "contributors", group: "contributors" },
+  { key: "works", kind: "works", group: "worksMovement" },
+  { key: "movement", kind: "movement", group: "worksMovement" },
   { key: "recording_date", kind: "date", group: "recording" },
   { key: "isrc", kind: "list", group: "recording" },
   { key: "bpm", kind: "number", group: "recording" },
@@ -161,6 +193,9 @@ const copy = {
       isrc: "ISRCs",
       bpm: "BPM",
       language: "Language",
+      works: "Works",
+      contributors: "Contributors",
+      movement: "Movement",
       disc_title: "Disc title",
       track_number: "Track number",
       track_total: "Track total",
@@ -172,8 +207,10 @@ const copy = {
       recording: "Recording details",
       position: "Position details",
       additional: "Additional metadata",
+      worksMovement: "Works and movement",
       main: "Titles",
       artistCredits: "Artist credits",
+      contributors: "Contributors",
     },
     noOverride: "Inherited · no local override",
     explicitEmpty: "Explicitly cleared",
@@ -199,8 +236,38 @@ const copy = {
     invalidDate: "Enter a valid date as YYYY, YYYY-MM, or YYYY-MM-DD.",
     invalidPositiveInteger: "Enter a positive whole number.",
     invalidPositiveNumber: "Enter a positive finite number.",
+    invalidMovementName: "Enter a movement name.",
     explicit: "Explicit",
     clean: "Clean",
+    workName: "Work name",
+    workMBID: "MusicBrainz work ID",
+    addWork: "Add work",
+    moveWorkUp: (index: number) => `Move work up ${index}`,
+    moveWorkDown: (index: number) => `Move work down ${index}`,
+    removeWork: (index: number) => `Remove work ${index}`,
+    movementName: "Movement name",
+    movementNumber: "Movement number",
+    movementCount: "Movement total",
+    contributorName: "Contributor name",
+    contributorRole: "Role",
+    contributorInstrument: "Instrument",
+    artistLinkRetained: "Local artist link retained",
+    mbidRetained: "MusicBrainz identity retained",
+    addContributor: "Add contributor",
+    removeContributor: (index: number) => `Remove contributor ${index}`,
+    contributorRoles: {
+      composer: "Composer",
+      lyricist: "Lyricist",
+      conductor: "Conductor",
+      director: "Director",
+      djmixer: "DJ mixer",
+      mixer: "Mixer",
+      engineer: "Engineer",
+      arranger: "Arranger",
+      producer: "Producer",
+      remixer: "Remixer",
+      performer: "Performer",
+    },
   },
   ru: {
     title: "Метаданные релиза",
@@ -233,6 +300,9 @@ const copy = {
       isrc: "Коды ISRC",
       bpm: "Темп (BPM)",
       language: "Язык",
+      works: "Произведения",
+      contributors: "Участники",
+      movement: "Часть произведения",
       disc_title: "Название диска",
       track_number: "Номер дорожки",
       track_total: "Всего дорожек",
@@ -244,8 +314,10 @@ const copy = {
       recording: "Сведения о записи",
       position: "Сведения о позиции",
       additional: "Дополнительные метаданные",
+      worksMovement: "Произведения и части",
       main: "Названия",
       artistCredits: "Исполнители",
+      contributors: "Участники",
     },
     noOverride: "Наследуется · локальное значение не задано",
     explicitEmpty: "Явно очищено",
@@ -273,8 +345,38 @@ const copy = {
       "Введите корректную дату в формате ГГГГ, ГГГГ-ММ или ГГГГ-ММ-ДД.",
     invalidPositiveInteger: "Введите положительное целое число.",
     invalidPositiveNumber: "Введите положительное конечное число.",
+    invalidMovementName: "Введите название части.",
     explicit: "С ненормативной лексикой",
     clean: "Без ненормативной лексики",
+    workName: "Название произведения",
+    workMBID: "MusicBrainz ID произведения",
+    addWork: "Добавить произведение",
+    moveWorkUp: (index: number) => `Переместить произведение вверх ${index}`,
+    moveWorkDown: (index: number) => `Переместить произведение вниз ${index}`,
+    removeWork: (index: number) => `Удалить произведение ${index}`,
+    movementName: "Название части",
+    movementNumber: "Номер части",
+    movementCount: "Всего частей",
+    contributorName: "Имя участника",
+    contributorRole: "Роль",
+    contributorInstrument: "Инструмент",
+    artistLinkRetained: "Связь с локальным артистом сохранена",
+    mbidRetained: "Идентификатор MusicBrainz сохранён",
+    addContributor: "Добавить участника",
+    removeContributor: (index: number) => `Удалить участника ${index}`,
+    contributorRoles: {
+      composer: "Композитор",
+      lyricist: "Автор текста",
+      conductor: "Дирижёр",
+      director: "Режиссёр",
+      djmixer: "Диджей-микшер",
+      mixer: "Микшер",
+      engineer: "Звукорежиссёр",
+      arranger: "Аранжировщик",
+      producer: "Продюсер",
+      remixer: "Ремиксер",
+      performer: "Исполнитель",
+    },
   },
 } as const;
 
@@ -290,13 +392,15 @@ function emptyValues(fields: ReleaseField[]): EditorValues {
       {
         state: "absent",
         value:
-          kind === "list"
+          kind === "list" || kind === "works" || kind === "contributors"
             ? []
-            : kind === "boolean"
-              ? false
-              : kind === "advisory"
-                ? "explicit"
-                : "",
+            : kind === "movement"
+              ? { name: "", number: "", count: "" }
+              : kind === "boolean"
+                ? false
+                : kind === "advisory"
+                  ? "explicit"
+                  : "",
       },
     ]),
   ) as EditorValues;
@@ -317,15 +421,21 @@ function readValues(
       continue;
     const state = field.state as FieldState;
     let value: MetadataValue =
-      kind === "list"
+      kind === "list" || kind === "works" || kind === "contributors"
         ? []
-        : kind === "boolean"
-          ? false
-          : kind === "advisory"
-            ? "explicit"
-            : "";
+        : kind === "movement"
+          ? { name: "", number: "", count: "" }
+          : kind === "boolean"
+            ? false
+            : kind === "advisory"
+              ? "explicit"
+              : "";
     if (state === "value") {
-      if (kind === "list" && Array.isArray(field.value))
+      if (kind === "works") value = readMetadataWorkDrafts(field.value);
+      else if (kind === "contributors") value = readContributors(field.value);
+      else if (kind === "movement")
+        value = readMetadataMovementDraft(field.value);
+      else if (kind === "list" && Array.isArray(field.value))
         value = field.value.filter(
           (item): item is string => typeof item === "string",
         );
@@ -342,6 +452,35 @@ function readValues(
     values[key] = { state, value };
   }
   return values;
+}
+
+function readContributors(value: unknown): ContributorDraft[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const contributor = item as Record<string, unknown>;
+    if (
+      typeof contributor.name !== "string" ||
+      typeof contributor.role !== "string"
+    )
+      return [];
+    return [
+      {
+        uiKey: createMetadataDraftRowKey(),
+        name: contributor.name,
+        role: contributor.role,
+        ...(typeof contributor.instrument === "string"
+          ? { instrument: contributor.instrument }
+          : {}),
+        ...(typeof contributor.artist_id === "string"
+          ? { artist_id: contributor.artist_id }
+          : {}),
+        ...(typeof contributor.mbid === "string"
+          ? { mbid: contributor.mbid }
+          : {}),
+      },
+    ];
+  });
 }
 
 function displayValue(
@@ -367,6 +506,12 @@ function validPartialDate(value: string) {
       ? date.toISOString().slice(0, 7) === value
       : date.toISOString().slice(0, 10) === value)
   );
+}
+
+function positiveIntegerDraft(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined;
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
 }
 
 export function ReleaseMetadataEditor({
@@ -449,6 +594,7 @@ function LibraryScopedMetadataEditorSession({
   onSaved,
 }: LibraryScopedMetadataEditorSessionProps) {
   const { locale } = useI18n();
+  const contributorControlPrefix = useId();
   const text = copy[locale];
   const title =
     scope === "release"
@@ -678,7 +824,7 @@ function LibraryScopedMetadataEditorSession({
           }
           const field = draft[key];
           const definition = fields.find((candidate) => candidate.key === key);
-          let value: MetadataValue = field.value;
+          let wireValue: unknown = field.value;
           if (field.state === "value" && definition) {
             if (definition.kind === "integer" || definition.kind === "number") {
               const number = Number(field.value);
@@ -699,19 +845,49 @@ function LibraryScopedMetadataEditorSession({
                     : text.invalidPositiveNumber,
                 );
               }
-              value = number;
+              wireValue = number;
             } else if (
               definition.kind === "date" &&
               !validPartialDate(String(field.value))
             ) {
               throw new Error(text.invalidDate);
+            } else if (definition.kind === "works") {
+              wireValue = (field.value as MetadataWorkDraft[]).map((work) => ({
+                name: work.name,
+                ...(work.mbid ? { mbid: work.mbid } : {}),
+              }));
+            } else if (definition.kind === "contributors") {
+              wireValue = (field.value as ContributorDraft[]).map(
+                (contributor) => ({
+                  name: contributor.name,
+                  role: contributor.role,
+                  ...(contributor.instrument !== undefined
+                    ? { instrument: contributor.instrument }
+                    : {}),
+                  ...(contributor.artist_id !== undefined
+                    ? { artist_id: contributor.artist_id }
+                    : {}),
+                  ...(contributor.mbid !== undefined
+                    ? { mbid: contributor.mbid }
+                    : {}),
+                }),
+              );
+            } else if (definition.kind === "movement") {
+              const movement = field.value as MetadataMovementDraft;
+              const number = positiveIntegerDraft(movement.number);
+              const count = positiveIntegerDraft(movement.count);
+              if (movement.name === "")
+                throw new Error(text.invalidMovementName);
+              if (number === undefined || count === undefined)
+                throw new Error(text.invalidPositiveInteger);
+              wireValue = { name: movement.name, number, count };
             }
           }
           return [
             [
               key,
               field.state === "value"
-                ? { state: field.state, value }
+                ? { state: field.state, value: wireValue }
                 : { state: field.state },
             ],
           ];
@@ -842,7 +1018,313 @@ function LibraryScopedMetadataEditorSession({
                     >
                       <dt className="text-xs text-[var(--muted)]">{label}</dt>
                       <dd className="m-0 min-w-0 text-sm">
-                        {editing ? (
+                        {kind === "contributors" ? (
+                          <div className="grid min-w-0 gap-2">
+                            {field.state === "absent" ? (
+                              <span className="text-sm text-[var(--muted)]">
+                                {text.noOverride}
+                              </span>
+                            ) : field.state === "explicit_empty" ? (
+                              <span className="text-sm text-[var(--muted)]">
+                                {text.explicitEmpty}
+                              </span>
+                            ) : (
+                              <>
+                                {(field.value as ContributorDraft[]).map(
+                                  (contributor, index) => (
+                                    <div
+                                      key={contributor.uiKey}
+                                      className="grid min-w-0 gap-2 rounded border border-[var(--line)] p-2"
+                                    >
+                                      {editing ? (
+                                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                          <label
+                                            htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-name`}
+                                          >
+                                            {`${text.contributorName} ${index + 1}`}
+                                          </label>
+                                          <input
+                                            id={`${contributorControlPrefix}-${contributor.uiKey}-name`}
+                                            className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
+                                            value={contributor.name}
+                                            disabled={saving}
+                                            onChange={(event) => {
+                                              const next = [
+                                                ...(field.value as ContributorDraft[]),
+                                              ];
+                                              next[index] = {
+                                                ...contributor,
+                                                name: event.currentTarget.value,
+                                              };
+                                              updateField(key, {
+                                                state: "value",
+                                                value: next,
+                                              });
+                                            }}
+                                          />
+                                        </div>
+                                      ) : (
+                                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                          <span>{`${text.contributorName} ${index + 1}`}</span>
+                                          <span className="min-h-9 break-words py-2 text-sm text-[var(--ink)]">
+                                            {contributor.name ||
+                                              text.emptyValue}
+                                          </span>
+                                        </div>
+                                      )}
+                                      {editing ? (
+                                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                          <label
+                                            htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-role`}
+                                          >
+                                            {`${text.contributorRole} ${index + 1}`}
+                                          </label>
+                                          <select
+                                            id={`${contributorControlPrefix}-${contributor.uiKey}-role`}
+                                            className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
+                                            value={contributor.role}
+                                            disabled={saving}
+                                            onChange={(event) => {
+                                              const role =
+                                                event.currentTarget.value;
+                                              const next = [
+                                                ...(field.value as ContributorDraft[]),
+                                              ];
+                                              next[index] = {
+                                                ...contributor,
+                                                role,
+                                              };
+                                              updateField(key, {
+                                                state: "value",
+                                                value: next,
+                                              });
+                                            }}
+                                          >
+                                            <option value="">
+                                              {text.contributorRole}
+                                            </option>
+                                            {contributor.role &&
+                                            !Object.hasOwn(
+                                              text.contributorRoles,
+                                              contributor.role,
+                                            ) ? (
+                                              <option value={contributor.role}>
+                                                {contributor.role}
+                                              </option>
+                                            ) : null}
+                                            {Object.entries(
+                                              text.contributorRoles,
+                                            ).map(([role, roleLabel]) => (
+                                              <option key={role} value={role}>
+                                                {roleLabel}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      ) : (
+                                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                          <span>{`${text.contributorRole} ${index + 1}`}</span>
+                                          <span className="min-h-9 py-2 text-sm text-[var(--ink)]">
+                                            {text.contributorRoles[
+                                              contributor.role as keyof typeof text.contributorRoles
+                                            ] ?? contributor.role}
+                                          </span>
+                                        </div>
+                                      )}
+                                      {editing ? (
+                                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                          <label
+                                            htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-instrument`}
+                                          >
+                                            {`${text.contributorInstrument} ${index + 1}`}
+                                          </label>
+                                          <input
+                                            id={`${contributorControlPrefix}-${contributor.uiKey}-instrument`}
+                                            className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
+                                            value={contributor.instrument ?? ""}
+                                            disabled={saving}
+                                            onChange={(event) => {
+                                              const next = [
+                                                ...(field.value as ContributorDraft[]),
+                                              ];
+                                              next[index] = {
+                                                ...contributor,
+                                                instrument:
+                                                  event.currentTarget.value ||
+                                                  undefined,
+                                              };
+                                              updateField(key, {
+                                                state: "value",
+                                                value: next,
+                                              });
+                                            }}
+                                          />
+                                        </div>
+                                      ) : (
+                                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                          <span>{`${text.contributorInstrument} ${index + 1}`}</span>
+                                          <span className="min-h-9 py-2 text-sm text-[var(--ink)]">
+                                            {contributor.instrument ||
+                                              text.emptyValue}
+                                          </span>
+                                        </div>
+                                      )}
+                                      {contributor.artist_id ? (
+                                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                          <span className="text-sm text-[var(--ink)]">
+                                            {text.artistLinkRetained}
+                                          </span>
+                                        </div>
+                                      ) : null}
+                                      {contributor.mbid ? (
+                                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                          <span className="text-sm text-[var(--ink)]">
+                                            {text.mbidRetained}
+                                          </span>
+                                        </div>
+                                      ) : null}
+                                      {editing ? (
+                                        <AppButton
+                                          type="button"
+                                          isDisabled={saving}
+                                          onPress={() =>
+                                            updateField(key, {
+                                              state: "value",
+                                              value: (
+                                                field.value as ContributorDraft[]
+                                              ).filter(
+                                                (_, row) => row !== index,
+                                              ),
+                                            })
+                                          }
+                                          className="min-w-0 justify-center justify-self-start"
+                                        >
+                                          {text.removeContributor(index + 1)}
+                                        </AppButton>
+                                      ) : null}
+                                    </div>
+                                  ),
+                                )}
+                                {editing ? (
+                                  <AppButton
+                                    type="button"
+                                    isDisabled={saving}
+                                    onPress={() =>
+                                      updateField(key, {
+                                        state: "value",
+                                        value: [
+                                          ...(field.value as ContributorDraft[]),
+                                          {
+                                            uiKey: createMetadataDraftRowKey(),
+                                            name: "",
+                                            role: "",
+                                          },
+                                        ],
+                                      })
+                                    }
+                                    className="min-w-0 justify-center justify-self-start"
+                                  >
+                                    {text.addContributor}
+                                  </AppButton>
+                                ) : (field.value as ContributorDraft[])
+                                    .length === 0 ? (
+                                  <span className="text-sm text-[var(--muted)]">
+                                    {text.emptyValue}
+                                  </span>
+                                ) : null}
+                              </>
+                            )}
+                            {editing ? (
+                              <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                <label
+                                  htmlFor={`${contributorControlPrefix}-${key}-state`}
+                                >
+                                  {text.mode}
+                                </label>
+                                <select
+                                  id={`${contributorControlPrefix}-${key}-state`}
+                                  aria-label={`${label} — ${text.mode}`}
+                                  className="min-h-9 w-full rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-[var(--ink)]"
+                                  value={field.state}
+                                  disabled={saving}
+                                  onChange={(event) =>
+                                    updateField(key, {
+                                      state: event.currentTarget
+                                        .value as FieldState,
+                                      value: field.value,
+                                    })
+                                  }
+                                >
+                                  <option value="absent">{text.absent}</option>
+                                  <option value="value">{text.value}</option>
+                                  <option value="explicit_empty">
+                                    {text.explicitEmpty}
+                                  </option>
+                                </select>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : kind === "works" ? (
+                          <StructuredMetadataField
+                            kind="works"
+                            label={label}
+                            state={field.state}
+                            value={field.value as MetadataWorkDraft[]}
+                            editing={editing}
+                            saving={saving}
+                            modeLabel={text.mode}
+                            absentLabel={text.absent}
+                            valueLabel={text.value}
+                            explicitEmptyLabel={text.explicitEmpty}
+                            noOverrideLabel={text.noOverride}
+                            emptyValueLabel={text.emptyValue}
+                            workNameLabel={text.workName}
+                            workMBIDLabel={text.workMBID}
+                            movementNameLabel={text.movementName}
+                            movementNumberLabel={text.movementNumber}
+                            movementCountLabel={text.movementCount}
+                            addWorkLabel={text.addWork}
+                            moveWorkUpLabel={text.moveWorkUp}
+                            moveWorkDownLabel={text.moveWorkDown}
+                            removeWorkLabel={text.removeWork}
+                            onStateChange={(state) =>
+                              updateField(key, { state, value: field.value })
+                            }
+                            onValueChange={(value) =>
+                              updateField(key, { state: "value", value })
+                            }
+                          />
+                        ) : kind === "movement" ? (
+                          <StructuredMetadataField
+                            kind="movement"
+                            label={label}
+                            state={field.state}
+                            value={field.value as MetadataMovementDraft}
+                            editing={editing}
+                            saving={saving}
+                            modeLabel={text.mode}
+                            absentLabel={text.absent}
+                            valueLabel={text.value}
+                            explicitEmptyLabel={text.explicitEmpty}
+                            noOverrideLabel={text.noOverride}
+                            emptyValueLabel={text.emptyValue}
+                            workNameLabel={text.workName}
+                            workMBIDLabel={text.workMBID}
+                            movementNameLabel={text.movementName}
+                            movementNumberLabel={text.movementNumber}
+                            movementCountLabel={text.movementCount}
+                            addWorkLabel={text.addWork}
+                            moveWorkUpLabel={text.moveWorkUp}
+                            moveWorkDownLabel={text.moveWorkDown}
+                            removeWorkLabel={text.removeWork}
+                            onStateChange={(state) =>
+                              updateField(key, { state, value: field.value })
+                            }
+                            onValueChange={(value) =>
+                              updateField(key, { state: "value", value })
+                            }
+                          />
+                        ) : editing ? (
                           <div className="grid min-w-0 gap-1.5">
                             <label className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
                               <span>{text.mode}</span>

@@ -396,7 +396,11 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 			preview.Transform = &plan
 		}
 	}
-	projection, projectionErr := publication.ProjectTags(contextSnapshot.Tags)
+	tagInput := contextSnapshot.Tags
+	if preview.Transform != nil {
+		tagInput.OutputContainer = preview.Transform.OutputContainer
+	}
+	projection, projectionErr := publication.ProjectTags(tagInput)
 	if projectionErr != nil {
 		preview.Blockers = append(preview.Blockers, "desired tags are incomplete: "+projectionErr.Error())
 	} else {

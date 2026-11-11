@@ -54,7 +54,11 @@ func BuildPublicationProviderTagProtection(context *PublicationProviderTagContex
 			if value.State == librarymetadata.StateAbsent {
 				absent[field] = struct{}{}
 			}
-			for _, key := range publication.PublicationTagKeysForField(tagProtectionScope(scope), field) {
+			fieldKeys, err := publication.PublicationTagKeysForFieldValue(tagProtectionScope(scope), field, value.Value)
+			if err != nil {
+				return fmt.Errorf("resolve local contributor tag footprint: %w", err)
+			}
+			for _, key := range fieldKeys {
 				keys[key] = struct{}{}
 			}
 		}

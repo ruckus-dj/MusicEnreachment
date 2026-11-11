@@ -15,6 +15,12 @@
   do not turn assumptions into requirements.
 - Historical plans and reports remain evidence of their work and time. They are
   not the current contract and should not be rewritten as if they were current.
+- This is a development/prototype project with no deployed installations. Build
+  directly for the current approved contract: do not retain legacy compatibility
+  branches, obsolete wire aliases, backfills, or migration workflows merely to
+  preserve earlier development behavior/data. Remove obsolete paths in the
+  affected scope instead of supporting both designs. This does not relax current
+  safety/authority checks or authorize deleting `downloads`.
 
 MeloTrove (legacy name: MusicEnreachment) - music library manager with source inventory, audio analysis (Chromaprint), transcoding (ffmpeg), and publication. Go 1.27 backend (Huma/chi API, Bun ORM, River jobs, PostgreSQL) + React 19 frontend (Vite, TanStack Query, Orval-generated client). No auth by design; deployment-boundary security only.
 

@@ -1,12 +1,17 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
 import type {
   SetupStateBody,
   SourceRootResponse,
 } from "../api/generated/client.schemas";
+import {
+  resetSettingsDraftMemory,
+  settingsDraftStorageKey,
+} from "../features/settings/settingsDraft";
 import { createMemoryStorage } from "../test/memoryStorage";
 import { server } from "../test/server";
 
@@ -62,10 +67,28 @@ const sourceRoot: SourceRootResponse = {
   updated_at: "2026-09-26T10:20:00Z",
 };
 beforeEach(() => {
+  Object.defineProperty(window.HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+      this.querySelector<HTMLElement>(
+        "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
+      )?.focus();
+    },
+  });
+  Object.defineProperty(window.HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.removeAttribute("open");
+      this.dispatchEvent(new Event("close"));
+    },
+  });
   window.location.hash = "";
   const localStorage = createMemoryStorage();
   localStorage.setItem("melotrove-language", "ru");
   vi.stubGlobal("localStorage", localStorage);
+  vi.stubGlobal("sessionStorage", createMemoryStorage());
+  resetSettingsDraftMemory();
   server.use(
     http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
     http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
@@ -76,6 +99,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  resetSettingsDraftMemory();
   window.location.hash = "";
   vi.unstubAllGlobals();
 });
@@ -138,6 +162,104 @@ describe("AppShell sources routing", () => {
       await screen.findByRole("heading", { level: 1, name: "Источники" }),
     ).toBeVisible();
     expect(await screen.findByText("/srv/inbox")).toBeVisible();
+  });
+
+  it("guards dirty Settings drafts across anchor and browser navigation attempts", async () => {
+    const settingsState: SetupStateBody = {
+      ...completedState,
+      settings: {
+        ...completedState.settings,
+        tools_directory: "/srv/tools",
+        output_directory: "/srv/music",
+        work_directory: "/srv/work",
+        publication_path_template: "{TRACK_NAME}.{EXT}",
+      },
+    };
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/settings", () => HttpResponse.json(settingsState)),
+      http.get("/api/tools/installations", () =>
+        HttpResponse.json({ installations: [] }),
+      ),
+      http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
+      http.get("/api/genres/catalog", () =>
+        HttpResponse.json({
+          count: 0,
+          items: [],
+          last_attempt_at: null,
+          last_error: null,
+          refresh_status: "idle",
+          active_operation_id: null,
+          updated_at: null,
+        }),
+      ),
+      http.get("/api/tools/catalog", ({ request }) =>
+        HttpResponse.json({
+          package_kind: new URL(request.url).searchParams.get("package_kind"),
+          releases: [],
+        }),
+      ),
+    );
+    window.location.hash = "/settings";
+    const view = render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Настройки" }),
+    ).toBeVisible();
+    const template = await screen.findByLabelText("Шаблон пути публикации");
+    act(() => {
+      fireEvent.change(template, {
+        target: { value: "draft-{TRACK_NAME}.{EXT}" },
+      });
+      fireEvent.click(screen.getByRole("link", { name: "Операции" }));
+    });
+
+    expect(
+      await screen.findByRole("dialog", { name: "Несохранённые настройки" }),
+    ).toBeVisible();
+    view.rerender(<App />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Уйти, сохранив черновик" }),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Операции", current: "page" }),
+    ).toBeVisible();
+    expect(sessionStorage.getItem(settingsDraftStorageKey)).toContain(
+      "draft-{TRACK_NAME}.{EXT}",
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Настройки" }));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Настройки" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByDisplayValue("draft-{TRACK_NAME}.{EXT}"),
+    ).toBeVisible();
+
+    act(() => {
+      window.history.pushState(null, "", "/#/operations");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(
+      await screen.findByRole("dialog", { name: "Несохранённые настройки" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Остаться" }));
+    expect(window.location.hash).toBe("#/settings");
+
+    act(() => {
+      window.history.pushState(null, "", "/#/operations");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(
+      await screen.findByRole("dialog", { name: "Несохранённые настройки" }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Уйти, сохранив черновик" }),
+    );
+    expect(
+      await screen.findByRole("link", { name: "Операции", current: "page" }),
+    ).toBeVisible();
   });
 
   it("keeps the legacy publications URL inside the library without standalone navigation", async () => {

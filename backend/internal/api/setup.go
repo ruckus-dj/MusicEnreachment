@@ -72,6 +72,15 @@ type SaveRuntimeBody struct {
 	SourceFileConcurrency    *int    `json:"source_file_concurrency,omitempty" minimum:"1"`
 }
 
+type SaveSetupMusicBrainzInput struct {
+	Body SaveSetupMusicBrainzBody `json:"body"`
+}
+
+type SaveSetupMusicBrainzBody struct {
+	Mode    string `json:"mode" enum:"public,self-hosted"`
+	BaseURL string `json:"base_url" maxLength:"2048"`
+}
+
 type CheckPathsInput struct {
 	Body struct {
 		ToolsDirectory  string `json:"tools_directory,omitempty" maxLength:"4096"`
@@ -278,7 +287,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "save-setup-musicbrainz", Method: http.MethodPut, Path: "/setup/musicbrainz",
 		Summary: "Save setup MusicBrainz configuration", Tags: []string{"Setup"},
-	}, func(ctx context.Context, input *UpdateMusicBrainzInput) (*struct{}, error) {
+	}, func(ctx context.Context, input *SaveSetupMusicBrainzInput) (*struct{}, error) {
 		if err := requireSetupIncomplete(ctx, setup); err != nil {
 			return nil, err
 		}

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +80,50 @@ func (store apiSettingsStore) ReadAcoustIDCredential(_ context.Context) (string,
 func (store apiSettingsStore) SetMany(_ context.Context, values map[string]string) error {
 	for key, value := range values {
 		store[key] = value
+	}
+	return nil
+}
+
+func (store apiSettingsStore) UpdateMusicBrainzSettingsIfCurrent(_ context.Context, expected settings.MusicBrainzSettingsExpected, mode, baseURL *string, throttle *bool, delay *float64) error {
+	if expected.Mode != nil {
+		actualMode, ok := store[settings.MusicBrainzModeKey]
+		if !ok {
+			actualMode = "public"
+		}
+		actualURL := store[settings.MusicBrainzBaseURLKey]
+		if actualMode != *expected.Mode || actualURL != *expected.BaseURL {
+			return settings.ErrSettingsConflict
+		}
+	}
+	if throttle != nil {
+		actual := store[settings.MusicBrainzSelfHostedThrottleKey] == "true"
+		if actual != *expected.SelfHostedThrottle {
+			return settings.ErrSettingsConflict
+		}
+	}
+	if delay != nil {
+		actual, exists := store[settings.MusicBrainzSelfHostedDelayKey]
+		if !exists {
+			actual = "0.5"
+		}
+		if actual != strconv.FormatFloat(*expected.SelfHostedDelaySeconds, 'f', -1, 64) {
+			return settings.ErrSettingsConflict
+		}
+	}
+	if mode != nil {
+		targetChanged := *mode != *expected.Mode || *baseURL != *expected.BaseURL
+		store[settings.MusicBrainzModeKey] = *mode
+		store[settings.MusicBrainzBaseURLKey] = *baseURL
+		if targetChanged {
+			store[settings.MusicBrainzConfigIdentityKey] = uuid.NewString()
+			store[settings.MusicBrainzVerifiedAtKey] = ""
+		}
+	}
+	if throttle != nil {
+		store[settings.MusicBrainzSelfHostedThrottleKey] = strconv.FormatBool(*throttle)
+	}
+	if delay != nil {
+		store[settings.MusicBrainzSelfHostedDelayKey] = strconv.FormatFloat(*delay, 'f', -1, 64)
 	}
 	return nil
 }
@@ -301,6 +346,68 @@ func TestSaveRuntimeDistinguishesOmittedAndEmptyOutputDirectory(t *testing.T) {
 	}
 }
 
+func TestMusicBrainzSettingsUpdateIsPresenceAwareAndRejectsStaleProviderBaseline(t *testing.T) {
+	store := apiSettingsStore{
+		settings.SetupCompletedAtKey:           "complete",
+		settings.MusicBrainzSelfHostedDelayKey: "0.5",
+	}
+	registry := settings.New(store, nil)
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	handler := api.HandlerWithSetup(setup)
+	put := func(body string) int {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPut, "/settings/musicbrainz", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+	throttleExpected := false
+	first, err := json.Marshal(map[string]any{
+		"mode": "self-hosted", "base_url": "https://mb.example.org/ws/2", "self_hosted_throttle": true,
+		"expected": map[string]any{"mode": "public", "base_url": "", "self_hosted_throttle": throttleExpected},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := put(string(first)); status != http.StatusNoContent {
+		t.Fatalf("target and throttle update status=%d", status)
+	}
+	if store[settings.MusicBrainzSelfHostedThrottleKey] != "true" || store[settings.MusicBrainzSelfHostedDelayKey] != "0.5" {
+		t.Fatalf("presence-aware provider values = throttle:%q delay:%q", store[settings.MusicBrainzSelfHostedThrottleKey], store[settings.MusicBrainzSelfHostedDelayKey])
+	}
+	if _, exists := store[settings.MusicBrainzVerifiedAtKey]; !exists {
+		t.Fatal("MusicBrainz target update did not invalidate its prior verification")
+	}
+
+	delayExpected := 0.5
+	delayRequest, err := json.Marshal(map[string]any{
+		"self_hosted_delay_seconds": 1.25,
+		"expected":                  map[string]any{"self_hosted_delay_seconds": delayExpected},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := put(string(delayRequest)); status != http.StatusNoContent {
+		t.Fatalf("delay-only update status=%d", status)
+	}
+	if store[settings.MusicBrainzSelfHostedThrottleKey] != "true" || store[settings.MusicBrainzSelfHostedDelayKey] != "1.25" {
+		t.Fatalf("delay-only update changed companion setting: throttle:%q delay:%q", store[settings.MusicBrainzSelfHostedThrottleKey], store[settings.MusicBrainzSelfHostedDelayKey])
+	}
+	stale, err := json.Marshal(map[string]any{
+		"self_hosted_throttle": false,
+		"expected":             map[string]any{"self_hosted_throttle": false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := put(string(stale)); status != http.StatusConflict {
+		t.Fatalf("stale provider update status=%d, want %d", status, http.StatusConflict)
+	}
+	if store[settings.MusicBrainzSelfHostedThrottleKey] != "true" || store[settings.MusicBrainzSelfHostedDelayKey] != "1.25" {
+		t.Fatalf("stale update changed saved provider values: throttle:%q delay:%q", store[settings.MusicBrainzSelfHostedThrottleKey], store[settings.MusicBrainzSelfHostedDelayKey])
+	}
+}
+
 func TestSetupRuntimeResponseIncludesDefaultSourceFileConcurrency(t *testing.T) {
 	store := apiSettingsStore{}
 	setup := service.NewSetup(store, settings.New(store, nil), settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
@@ -430,7 +537,7 @@ func TestSettingsAndMoveRoutesUseSetupCompletionGates(t *testing.T) {
 		want   int
 	}{
 		{http.MethodPut, "/settings/runtime", `{}`, http.StatusConflict},
-		{http.MethodPost, "/tools/move/preflight", `{"new_tools_directory":"/new-tools","remove_old_files":false}`, http.StatusConflict},
+		{http.MethodPost, "/tools/move/preflight", `{"new_tools_directory":"/new-tools","expected_tools_directory":"/old-tools","remove_old_files":false}`, http.StatusConflict},
 		{http.MethodDelete, "/tools/installations/" + uuid.NewString(), `{"package_kind":"ffmpeg"}`, http.StatusConflict},
 	}
 	for _, test := range requests {
@@ -454,7 +561,7 @@ func TestSettingsAndMoveRoutesUseSetupCompletionGates(t *testing.T) {
 	}{
 		{http.MethodPut, "/setup/runtime", `{}`, http.StatusNotFound},
 		{http.MethodPut, "/settings/runtime", `{}`, http.StatusNoContent},
-		{http.MethodPost, "/tools/move/preflight", `{"new_tools_directory":"/new-tools","remove_old_files":false}`, http.StatusServiceUnavailable},
+		{http.MethodPost, "/tools/move/preflight", `{"new_tools_directory":"/new-tools","expected_tools_directory":"/old-tools","remove_old_files":false}`, http.StatusServiceUnavailable},
 	}
 	for _, test := range requests {
 		response := httptest.NewRecorder()

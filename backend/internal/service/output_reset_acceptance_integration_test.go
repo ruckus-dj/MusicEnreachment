@@ -40,7 +40,7 @@ func TestOutputResetAcceptanceSaveChangedRootPreservesRuntimeAndOldFiles(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	setup, registry, _ := outputResetAcceptanceSetup(t, database, oldRoot)
+	setup, registry, _, _ := outputResetAcceptanceSetup(t, database, oldRoot)
 	format := "mka"
 	if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{ToolsDirectory: &tools, OutputDirectory: &oldRoot, PublicationFormat: &format}); err != nil {
 		t.Fatal(err)
@@ -77,11 +77,62 @@ func TestOutputResetAcceptanceSaveChangedRootPreservesRuntimeAndOldFiles(t *test
 	}
 }
 
+func TestOutputResetRejectsStaleBrowserRootBeforePreparation(t *testing.T) {
+	database := testpostgres.OpenMigratedWithRiver(t)
+	ctx := context.Background()
+	oldRoot, err := settings.NormalizePath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup, _, _, outputReset := outputResetAcceptanceSetup(t, database, oldRoot)
+	concurrentRoot, err := settings.NormalizePath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.NewRaw("UPDATE app_setting SET setting_value = ? WHERE setting_name = ?", concurrentRoot, settings.OutputDirectoryKey).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := settings.NormalizePath(filepath.Join(t.TempDir(), "not-prepared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	format := "source"
+	expectedFormat := "mka"
+	expectedRoot := oldRoot
+	err = setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
+		OutputDirectory: &candidate, PublicationFormat: &format,
+		Expected: &settings.RuntimeSettingsExpected{OutputDirectory: &expectedRoot, PublicationFormat: &expectedFormat},
+	})
+	if !errors.Is(err, settings.ErrSettingsConflict) {
+		t.Fatalf("stale output update error = %v, want settings conflict", err)
+	}
+	if _, err := os.Lstat(candidate); !os.IsNotExist(err) {
+		t.Fatalf("stale output candidate was prepared before rejection: %v", err)
+	}
+	var journals int
+	if err := database.NewRaw("SELECT count(*) FROM output_reset_journal WHERE new_root = ?", candidate).Scan(ctx, &journals); err != nil || journals != 0 {
+		t.Fatalf("stale output reset journals = %d, err=%v, want no journal", journals, err)
+	}
+	probeCalls := 0
+	outputReset.WithOutputDirectoryProbe(func(string, bool) (settings.FilesystemSemantics, error) {
+		probeCalls++
+		return settings.FilesystemSemantics{CaseSensitive: true, UnicodeNormalization: "none"}, nil
+	})
+	sameRoot := oldRoot
+	err = setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
+		OutputDirectory: &sameRoot,
+		Expected:        &settings.RuntimeSettingsExpected{OutputDirectory: &expectedRoot},
+	})
+	if !errors.Is(err, settings.ErrSettingsConflict) || probeCalls != 0 {
+		t.Fatalf("stale same-root output update error=%v probeCalls=%d, want conflict before probe", err, probeCalls)
+	}
+}
+
 func TestOutputResetAcceptanceIntentWithoutDurableIdentityFailsClosed(t *testing.T) {
 	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	oldRoot := t.TempDir()
-	_, registry, _ := outputResetAcceptanceSetup(t, database, oldRoot)
+	_, registry, _, _ := outputResetAcceptanceSetup(t, database, oldRoot)
 	before, err := registry.ReadRuntimeSettings(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +255,7 @@ func TestOutputResetProcessCrashAfterDurablePrepareRecoversOwnedDirectories(t *t
 	database := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
 	oldRoot := t.TempDir()
-	_, registry, repository := outputResetAcceptanceSetup(t, database, oldRoot)
+	_, registry, repository, _ := outputResetAcceptanceSetup(t, database, oldRoot)
 	runtimeSettings, err := registry.ReadRuntimeSettings(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -373,19 +424,18 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-func outputResetAcceptanceSetup(t *testing.T, database *bun.DB, outputRoot string) (*service.SetupService, *settings.Registry, *persistence.SetupManagerRepository) {
+func outputResetAcceptanceSetup(t *testing.T, database *bun.DB, outputRoot string) (*service.SetupService, *settings.Registry, *persistence.SetupManagerRepository, *service.OutputReset) {
 	t.Helper()
 	_ = openSourceScanRiver(t, database)
 	store := persistence.NewSettingsRepository(database)
 	registry := settings.New(store, nil)
 	repository := persistence.NewSetupManagerRepository(database)
 	platform := settings.PlatformState{Platform: settings.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}}
-	setup := service.NewSetup(store, registry, platform, repository, nil).WithOutputReset(
-		service.NewOutputReset(repository, nil, nil),
-	)
+	outputReset := service.NewOutputReset(repository, nil, nil)
+	setup := service.NewSetup(store, registry, platform, repository, nil).WithOutputReset(outputReset)
 	tools, format := t.TempDir(), "mka"
 	if err := setup.SaveRuntimeUpdate(t.Context(), service.RuntimeUpdateRequest{ToolsDirectory: &tools, OutputDirectory: &outputRoot, PublicationFormat: &format}); err != nil {
 		t.Fatal(err)
 	}
-	return setup, registry, repository
+	return setup, registry, repository, outputReset
 }

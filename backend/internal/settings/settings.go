@@ -3,6 +3,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
@@ -13,6 +14,9 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// ErrSettingsConflict reports that a browser's expected saved value is stale.
+var ErrSettingsConflict = errors.New("settings conflict")
 
 const (
 	PlatformGOOSKey                  = "instance.goos"
@@ -66,12 +70,20 @@ type musicBrainzConfigSnapshotStore interface {
 	GetMusicBrainzConfigValues(context.Context) (map[string]string, error)
 }
 
+type conditionalMusicBrainzSettingsStore interface {
+	UpdateMusicBrainzSettingsIfCurrent(context.Context, MusicBrainzSettingsExpected, *string, *string, *bool, *float64) error
+}
+
 type publicationPlanningSnapshotStore interface {
 	GetPublicationPlanningValues(context.Context) (map[string]string, error)
 }
 
 type runtimeUpdateStore interface {
 	UpdateRuntime(context.Context, string, string, map[string]string) error
+}
+
+type conditionalRuntimeUpdateStore interface {
+	UpdateRuntimeIfCurrent(context.Context, string, string, RuntimeSettingsExpected, map[string]string) error
 }
 
 type acoustIDCredentialStore interface {
@@ -96,6 +108,15 @@ type MusicBrainzConfig struct {
 	BaseURL    string // empty for public, HTTP(S) URL for self-hosted
 	Identity   string // changes when the effective provider target changes
 	VerifiedAt *time.Time
+}
+
+// MusicBrainzSettingsExpected projects the saved provider target and any
+// provider preferences being edited by a browser draft.
+type MusicBrainzSettingsExpected struct {
+	Mode                   *string
+	BaseURL                *string
+	SelfHostedThrottle     *bool
+	SelfHostedDelaySeconds *float64
 }
 
 type ConfigurationHealth struct {
@@ -163,6 +184,34 @@ type RuntimeUpdate struct {
 	PublicationPathTemplate    *string
 	PublicationRemoveSources   *bool
 	SourceFileConcurrency      *int
+	Expected                   *RuntimeSettingsExpected
+}
+
+// RuntimeSettingsExpected is the typed projection of browser-saved values
+// against which supplied runtime changes are conditionally applied.
+type RuntimeSettingsExpected struct {
+	ToolsDirectory           *string
+	WorkDirectory            *string
+	OutputDirectory          *string
+	PublicationFormat        *string
+	PublicationPathTemplate  *string
+	PublicationRemoveSources *bool
+	SourceFileConcurrency    *int
+}
+
+// DefaultRuntimeSettingsExpected returns the effective values used when a
+// setting row has not yet been persisted.
+func DefaultRuntimeSettingsExpected() RuntimeSettingsExpected {
+	format := ""
+	work, output, tools := "", "", ""
+	template := defaultPublicationPathTemplate
+	removeSources := defaultPublicationRemoveSources
+	concurrency := defaultFileConcurrency
+	return RuntimeSettingsExpected{
+		ToolsDirectory: &tools, WorkDirectory: &work, OutputDirectory: &output,
+		PublicationFormat: &format, PublicationPathTemplate: &template,
+		PublicationRemoveSources: &removeSources, SourceFileConcurrency: &concurrency,
+	}
 }
 
 type Registry struct {
@@ -396,6 +445,16 @@ func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) erro
 	if len(values) == 0 {
 		return nil
 	}
+	if update.Expected != nil {
+		expected, err := normalizeRuntimeExpected(*update.Expected)
+		if err != nil {
+			return err
+		}
+		if err := validateRuntimeExpected(expected, values); err != nil {
+			return err
+		}
+		update.Expected = &expected
+	}
 	if store, ok := r.store.(runtimeUpdateStore); ok {
 		if (update.ToolsDirectory != nil || update.WorkDirectory != nil || update.OutputDirectory != nil || update.OutputCaseSensitive != nil || update.OutputUnicodeNormalization != nil) &&
 			(update.ExpectedToolsDirectory == nil || update.ExpectedOutputDirectory == nil) {
@@ -408,7 +467,16 @@ func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) erro
 		if update.ExpectedOutputDirectory != nil {
 			expectedOutput = *update.ExpectedOutputDirectory
 		}
-		err := store.UpdateRuntime(ctx, expectedTools, expectedOutput, values)
+		var err error
+		if update.Expected != nil {
+			conditionalStore, ok := r.store.(conditionalRuntimeUpdateStore)
+			if !ok {
+				return fmt.Errorf("conditional runtime settings storage is unavailable")
+			}
+			err = conditionalStore.UpdateRuntimeIfCurrent(ctx, expectedTools, expectedOutput, *update.Expected, values)
+		} else {
+			err = store.UpdateRuntime(ctx, expectedTools, expectedOutput, values)
+		}
 		if err == nil {
 			r.notifyConcurrencyUpdate(values)
 		}
@@ -417,11 +485,105 @@ func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) erro
 	if update.ToolsDirectory != nil || update.WorkDirectory != nil || update.OutputDirectory != nil || update.OutputCaseSensitive != nil || update.OutputUnicodeNormalization != nil {
 		return fmt.Errorf("runtime path updates require transactional settings storage")
 	}
+	if update.Expected != nil {
+		return fmt.Errorf("conditional runtime settings storage is unavailable")
+	}
 	err = r.store.SetMany(ctx, values)
 	if err == nil {
 		r.notifyConcurrencyUpdate(values)
 	}
 	return err
+}
+
+func validateRuntimeExpected(expected RuntimeSettingsExpected, values map[string]string) error {
+	checks := []struct {
+		name string
+		set  bool
+	}{
+		{ToolsDirectoryKey, expected.ToolsDirectory != nil},
+		{WorkDirectoryKey, expected.WorkDirectory != nil},
+		{OutputDirectoryKey, expected.OutputDirectory != nil},
+		{PublicationFormatKey, expected.PublicationFormat != nil},
+		{PublicationPathTemplateKey, expected.PublicationPathTemplate != nil},
+		{PublicationRemoveSourcesKey, expected.PublicationRemoveSources != nil},
+		{SourceFileConcurrencyKey, expected.SourceFileConcurrency != nil},
+	}
+	for _, check := range checks {
+		if _, changed := values[check.name]; changed && !check.set {
+			return fmt.Errorf("expected saved value is required for %s", check.name)
+		}
+	}
+	return nil
+}
+
+func normalizeRuntimeExpected(expected RuntimeSettingsExpected) (RuntimeSettingsExpected, error) {
+	if expected.ToolsDirectory != nil {
+		value, err := normalizeExpectedPath(*expected.ToolsDirectory, toolsRootSetting, "tools directory")
+		if err != nil {
+			return RuntimeSettingsExpected{}, err
+		}
+		expected.ToolsDirectory = &value
+	}
+	if expected.WorkDirectory != nil {
+		value, err := normalizeExpectedPath(*expected.WorkDirectory, workRootSetting, "work directory")
+		if err != nil {
+			return RuntimeSettingsExpected{}, err
+		}
+		expected.WorkDirectory = &value
+	}
+	if expected.OutputDirectory != nil {
+		value, err := normalizeExpectedPath(*expected.OutputDirectory, outputRootSetting, "output directory")
+		if err != nil {
+			return RuntimeSettingsExpected{}, err
+		}
+		expected.OutputDirectory = &value
+	}
+	if expected.PublicationFormat != nil {
+		if *expected.PublicationFormat != "" {
+			value, err := serializeSetting(publicationSetting, *expected.PublicationFormat)
+			if err != nil {
+				return RuntimeSettingsExpected{}, err
+			}
+			expected.PublicationFormat = &value
+		}
+	}
+	if expected.PublicationPathTemplate != nil {
+		value, err := serializeSetting(publicationPathTemplateSetting, *expected.PublicationPathTemplate)
+		if err != nil {
+			return RuntimeSettingsExpected{}, err
+		}
+		expected.PublicationPathTemplate = &value
+	}
+	if expected.PublicationRemoveSources != nil {
+		_, err := serializeSetting(publicationRemoveSourcesSetting, *expected.PublicationRemoveSources)
+		if err != nil {
+			return RuntimeSettingsExpected{}, err
+		}
+	}
+	if expected.SourceFileConcurrency != nil {
+		_, err := serializeSetting(sourceFileConcurrencySetting, *expected.SourceFileConcurrency)
+		if err != nil {
+			return RuntimeSettingsExpected{}, err
+		}
+	}
+	return expected, nil
+}
+
+// NormalizeRuntimeSettingsExpected validates and canonicalizes the values in a
+// browser's expected runtime projection before persistence compares them.
+func NormalizeRuntimeSettingsExpected(expected RuntimeSettingsExpected) (RuntimeSettingsExpected, error) {
+	return normalizeRuntimeExpected(expected)
+}
+
+func normalizeExpectedPath(value string, definition settingDefinition[string], label string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	normalized, err := NormalizePath(value)
+	if err != nil {
+		return "", fmt.Errorf("expected %s: %w", label, err)
+	}
+	return serializeSetting(definition, normalized)
 }
 
 // WithConcurrencyObserver registers a non-blocking wake-up called after source
@@ -450,6 +612,16 @@ func (r *Registry) CoordinateRuntimeReset(ctx context.Context, expectedTools, ex
 	values, err := runtimeUpdateValues(update)
 	if err != nil {
 		return err
+	}
+	if update.Expected != nil {
+		expected, err := normalizeRuntimeExpected(*update.Expected)
+		if err != nil {
+			return err
+		}
+		if err := validateRuntimeExpected(expected, values); err != nil {
+			return err
+		}
+		update.Expected = &expected
 	}
 	if run == nil {
 		return fmt.Errorf("runtime reset callback is required")
@@ -648,6 +820,79 @@ func (r *Registry) SetMusicBrainzConfig(ctx context.Context, mode, baseURL strin
 		MusicBrainzConfigIdentityKey: uuid.NewString(),
 		MusicBrainzVerifiedAtKey:     "",
 	})
+}
+
+// UpdateMusicBrainzSettings atomically applies the provider target group and
+// independently supplied throttle and delay fields against their saved values.
+func (r *Registry) UpdateMusicBrainzSettings(ctx context.Context, expected MusicBrainzSettingsExpected, mode, baseURL *string, throttle *bool, delaySeconds *float64) error {
+	if mode == nil && throttle == nil && delaySeconds == nil {
+		return nil
+	}
+	if (mode == nil) != (baseURL == nil) || (expected.Mode == nil) != (expected.BaseURL == nil) {
+		return fmt.Errorf("MusicBrainz mode and base URL must be supplied together")
+	}
+	if (mode == nil) != (expected.Mode == nil) {
+		return fmt.Errorf("expected MusicBrainz target is required when changing the target")
+	}
+	if mode != nil {
+		serializedMode, err := serializeSetting(musicBrainzModeSetting, *mode)
+		if err != nil {
+			return err
+		}
+		if serializedMode == "public" {
+			*baseURL = ""
+		} else if *baseURL == "" {
+			return fmt.Errorf("self-hosted mode requires valid HTTP(S) base URL")
+		}
+		serializedURL, err := serializeSetting(musicBrainzURLSetting, *baseURL)
+		if err != nil {
+			return err
+		}
+		*mode, *baseURL = serializedMode, serializedURL
+		expectedMode, err := serializeSetting(musicBrainzModeSetting, *expected.Mode)
+		if err != nil {
+			return fmt.Errorf("expected MusicBrainz mode: %w", err)
+		}
+		if expectedMode == "self-hosted" && *expected.BaseURL == "" {
+			return fmt.Errorf("expected self-hosted mode requires valid HTTP(S) base URL")
+		}
+		expectedURL, err := serializeSetting(musicBrainzURLSetting, *expected.BaseURL)
+		if err != nil {
+			return fmt.Errorf("expected MusicBrainz base URL: %w", err)
+		}
+		expected.Mode, expected.BaseURL = &expectedMode, &expectedURL
+	}
+	if throttle != nil && expected.SelfHostedThrottle == nil {
+		return fmt.Errorf("expected saved value is required for MusicBrainz self-hosted throttle")
+	}
+	if delaySeconds != nil && expected.SelfHostedDelaySeconds == nil {
+		return fmt.Errorf("expected saved value is required for MusicBrainz self-hosted delay")
+	}
+	if expected.SelfHostedThrottle != nil {
+		if _, err := serializeSetting(musicBrainzSelfHostedThrottleSetting, *expected.SelfHostedThrottle); err != nil {
+			return fmt.Errorf("expected MusicBrainz self-hosted throttle: %w", err)
+		}
+	}
+	if expected.SelfHostedDelaySeconds != nil {
+		if _, err := serializeSetting(musicBrainzSelfHostedDelaySetting, *expected.SelfHostedDelaySeconds); err != nil {
+			return fmt.Errorf("expected MusicBrainz self-hosted delay: %w", err)
+		}
+	}
+	if throttle != nil {
+		if _, err := serializeSetting(musicBrainzSelfHostedThrottleSetting, *throttle); err != nil {
+			return err
+		}
+	}
+	if delaySeconds != nil {
+		if _, err := serializeSetting(musicBrainzSelfHostedDelaySetting, *delaySeconds); err != nil {
+			return err
+		}
+	}
+	store, ok := r.store.(conditionalMusicBrainzSettingsStore)
+	if !ok {
+		return fmt.Errorf("conditional MusicBrainz settings storage is unavailable")
+	}
+	return store.UpdateMusicBrainzSettingsIfCurrent(ctx, expected, mode, baseURL, throttle, delaySeconds)
 }
 
 // MarkMusicBrainzVerified records successful connectivity check.

@@ -1,6 +1,7 @@
 package publication
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -389,7 +390,11 @@ func TestProjectTagsMapsDistinctDateAndSubtitleSemantics(t *testing.T) {
 }
 
 func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
-	position, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"position","desired":{"contributors":{"state":"value","value":[{"name":"Family,Given 音楽","role":" Composer ","artist_id":"11111111-1111-4111-8111-111111111111"},{"name":"作詞者","role":"LYRICIST","mbid":"22222222-2222-4222-8222-222222222222"},{"name":"unknown role","role":"instrumentalist"}],"authority":"manual","provenance":{"kind":"manual"}}}}`))
+	position, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"position","desired":{"contributors":{"state":"value","value":[{"name":"Family,Given 音楽","role":" Composer ","instrument":"piano","artist_id":"11111111-1111-4111-8111-111111111111"},{"name":"作詞者","role":"LYRICIST","mbid":"22222222-2222-4222-8222-222222222222"},{"name":"Guitarist, One","role":"performer","instrument":"guitar"},{"name":"Guitarist (Live)","role":"performer","instrument":"guitar"},{"name":"Guitarist, One","role":"performer","instrument":"guitar"},{"name":"Vocalist","role":"performer"},{"name":"unknown role","role":"instrumentalist"}],"authority":"manual","provenance":{"kind":"manual"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalPosition, err := json.Marshal(position)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,10 +402,12 @@ func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := ProjectTags(TagProjectionInput{
-		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Album Artist"}}, Desired: &release},
-		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Track Artist"}}, Desired: &position},
-	})
+	input := TagProjectionInput{
+		Release:         ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Album Artist"}}, Desired: &release},
+		Position:        PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Track Artist"}}, Desired: &position},
+		OutputContainer: AudioContainerMP3,
+	}
+	result, err := ProjectTags(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,8 +421,78 @@ func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 	if result.Fields["position.contributors"].Status != "unsupported" {
 		t.Errorf("unknown role status = %#v", result.Fields["position.contributors"])
 	}
-	if _, exists := result.Tags["PERFORMER"]; exists {
-		t.Fatal("unknown contributor role was coerced to PERFORMER")
+	for key := range result.Tags {
+		if strings.HasPrefix(key, "PERFORMER:") {
+			t.Fatalf("performer data was projected into MP3 key %q", key)
+		}
+	}
+	performerNotice := false
+	for _, notice := range result.Notices {
+		performerNotice = performerNotice || strings.Contains(notice, "omitted from MP3 output")
+	}
+	if result.Fields["position.contributors.performer"].Status != "unsupported" || !performerNotice {
+		t.Fatalf("MP3 performer omission was not reported: fields=%#v notices=%#v", result.Fields, result.Notices)
+	}
+	for _, container := range []AudioContainer{AudioContainerFLAC, AudioContainerMKA} {
+		input.OutputContainer = container
+		containerProjection, projectErr := ProjectTags(input)
+		if projectErr != nil {
+			t.Fatal(projectErr)
+		}
+		for key, want := range map[string][]string{
+			"PERFORMER:GUITAR":    {"Guitarist, One", "Guitarist (Live)", "Guitarist, One"},
+			"PERFORMER:PERFORMER": {"Vocalist"},
+		} {
+			if !reflect.DeepEqual(containerProjection.Tags[key], want) {
+				t.Errorf("%s %s = %#v, want %#v", container, key, containerProjection.Tags[key], want)
+			}
+		}
+		// Notices also carry the unrelated incomplete-artist-MBID diagnostics for
+		// this fixture, so only performer-specific notices are disqualifying here.
+		containerPerformerNotice := false
+		for _, notice := range containerProjection.Notices {
+			containerPerformerNotice = containerPerformerNotice || strings.Contains(notice, "performer")
+		}
+		if containerPerformerNotice || containerProjection.Fields["position.contributors.performer"].Status != "represented" {
+			t.Errorf("%s performer projection = %#v", container, containerProjection)
+		}
+		// The input also contains an unknown instrumentalist role, so the
+		// aggregate contributor capability stays unsupported even though the
+		// performer data itself is represented for this container.
+		if got := containerProjection.Fields["position.contributors"]; got.Status != "unsupported" || !strings.Contains(got.Reason, "no approved normalized TagLib mapping") {
+			t.Errorf("%s aggregate contributor status = %#v, want unsupported for the unknown instrumentalist role", container, got)
+		}
+	}
+	input.OutputContainer = AudioContainerM4A
+	m4aProjection, err := ProjectTags(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string][]string{
+		"COMPOSER": {"Family,Given 音楽"}, "LYRICIST": {"作詞者"}, "ITUNESADVISORY": {"1"},
+	} {
+		if !reflect.DeepEqual(m4aProjection.Tags[key], want) {
+			t.Errorf("M4A %s = %#v, want %#v", key, m4aProjection.Tags[key], want)
+		}
+	}
+	for key := range m4aProjection.Tags {
+		if strings.HasPrefix(key, "PERFORMER:") {
+			t.Fatalf("performer data was projected into M4A key %q", key)
+		}
+	}
+	m4aPerformerNotice := false
+	for _, notice := range m4aProjection.Notices {
+		m4aPerformerNotice = m4aPerformerNotice || strings.Contains(notice, "omitted from M4A output")
+	}
+	if got := m4aProjection.Fields["position.contributors.performer"]; got.Status != "unsupported" || !m4aPerformerNotice {
+		t.Fatalf("M4A performer omission was not reported: fields=%#v notices=%#v", m4aProjection.Fields, m4aProjection.Notices)
+	}
+	currentPosition, err := json.Marshal(position)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(currentPosition, originalPosition) {
+		t.Fatal("M4A projection mutated the structured contributor input")
 	}
 	if result.Fields["position.contributors.mbids"].Status != "unsupported" {
 		t.Errorf("MBID status = %#v", result.Fields["position.contributors.mbids"])
@@ -427,10 +504,7 @@ func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 		}
 	}
 	release.Desired["content_advisory"] = librarymetadata.ManualFieldValue(librarymetadata.StateValue, "clean", true)
-	result, err = ProjectTags(TagProjectionInput{
-		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Album Artist"}}, Desired: &release},
-		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Track Artist"}}, Desired: &position},
-	})
+	result, err = ProjectTags(input)
 	if err != nil {
 		t.Fatal(err)
 	}

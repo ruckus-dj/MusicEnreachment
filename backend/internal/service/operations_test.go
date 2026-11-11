@@ -53,6 +53,32 @@ func TestPublicationRetryWithoutRiverRejectsWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestLibraryDeletionRejectsGenericRetryWithoutMutation(t *testing.T) {
+	jobID := int64(75)
+	operation := &persistence.Operation{
+		ID: uuid.New(), Kind: LibraryDeletionOperationKind, State: "failed",
+		Stage: "deletion_recovery_required", Attempt: 3, RiverJobID: &jobID,
+	}
+	t.Run("without River enqueuer", func(t *testing.T) {
+		repository := &memoryOperations{values: map[uuid.UUID]*persistence.Operation{operation.ID: operation}}
+		if _, err := NewOperations(repository).Retry(context.Background(), operation.ID); err == nil {
+			t.Fatal("generic retry unexpectedly accepted library deletion")
+		}
+		if repository.updates != 0 || operation.State != "failed" || operation.Attempt != 3 {
+			t.Fatalf("generic retry mutated deletion operation: %+v updates=%d", operation, repository.updates)
+		}
+	})
+	t.Run("with River enqueuer", func(t *testing.T) {
+		repository := &riverMemoryOperations{memoryOperations: &memoryOperations{values: map[uuid.UUID]*persistence.Operation{operation.ID: operation}}}
+		if _, err := NewOperationsWithRiver(repository, noOpRiverInserter{}).Retry(context.Background(), operation.ID); err == nil {
+			t.Fatal("enqueued generic retry unexpectedly accepted library deletion")
+		}
+		if repository.genericRetries != 0 || operation.State != "failed" || operation.Attempt != 3 {
+			t.Fatalf("enqueued generic retry mutated deletion operation: %+v generic retries=%d", operation, repository.genericRetries)
+		}
+	})
+}
+
 type memoryOperations struct {
 	values      map[uuid.UUID]*persistence.Operation
 	updates     int
