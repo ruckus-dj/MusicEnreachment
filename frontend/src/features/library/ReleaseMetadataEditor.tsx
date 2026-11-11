@@ -33,12 +33,14 @@ type ReleaseFieldKey =
   | "sort_title"
   | "release_date"
   | "original_release_date"
+  | "recording_date"
   | "release_country"
   | "label"
   | "catalog_number"
   | "release_primary_type"
   | "release_secondary_types"
   | "release_version"
+  | "subtitle"
   | "barcode"
   | "release_status"
   | "compilation"
@@ -104,6 +106,7 @@ const titleFields: ReleaseField[] = [
 
 const recordingFields: ReleaseField[] = [
   ...titleFields,
+  { key: "recording_date", kind: "date", group: "recording" },
   { key: "isrc", kind: "list", group: "recording" },
   { key: "bpm", kind: "number", group: "recording" },
   { key: "language", kind: "text", group: "additional" },
@@ -114,6 +117,7 @@ const recordingFields: ReleaseField[] = [
   { key: "copyright", kind: "text", group: "additional" },
   { key: "license", kind: "text", group: "additional" },
   { key: "website", kind: "text", group: "additional" },
+  { key: "subtitle", kind: "text", group: "additional" },
 ];
 
 const positionFields: ReleaseField[] = [
@@ -135,12 +139,14 @@ const copy = {
       sort_title: "Sort title",
       release_date: "Release date",
       original_release_date: "Original release date",
+      recording_date: "Recording date",
       release_country: "Country",
       label: "Labels",
       catalog_number: "Catalog number",
       release_primary_type: "Primary release type",
       release_secondary_types: "Secondary release types",
       release_version: "Release version",
+      subtitle: "Track subtitle",
       barcode: "Barcode",
       release_status: "Release status",
       compilation: "Compilation",
@@ -205,12 +211,14 @@ const copy = {
       sort_title: "Сортировочное название",
       release_date: "Дата выпуска",
       original_release_date: "Дата первого выпуска",
+      recording_date: "Дата записи",
       release_country: "Страна",
       label: "Лейблы",
       catalog_number: "Номер каталога",
       release_primary_type: "Основной тип релиза",
       release_secondary_types: "Дополнительные типы релиза",
       release_version: "Версия релиза",
+      subtitle: "Подзаголовок трека",
       barcode: "Штрихкод",
       release_status: "Статус релиза",
       compilation: "Сборник",

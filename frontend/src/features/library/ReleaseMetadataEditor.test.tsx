@@ -473,6 +473,7 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
   openGroup(release, "Сведения о релизе");
   openGroup(recording, "Сведения о записи");
   openGroup(position, "Сведения о позиции");
+  openGroup(position, "Дополнительные метаданные");
   fireEvent.click(within(release).getByRole("button", { name: "Изменить" }));
   fireEvent.click(within(recording).getByRole("button", { name: "Изменить" }));
   fireEvent.click(within(position).getByRole("button", { name: "Изменить" }));
@@ -515,6 +516,36 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
       target: { value: "2024-02" },
     },
   );
+  fireEvent.change(
+    within(release).getByRole("combobox", {
+      name: "Версия релиза — Состояние переопределения",
+    }),
+    { target: { value: "value" } },
+  );
+  fireEvent.change(
+    within(release).getByRole("textbox", { name: "Версия релиза" }),
+    { target: { value: "Deluxe Edition" } },
+  );
+  fireEvent.change(
+    within(recording).getByRole("combobox", {
+      name: "Дата записи — Состояние переопределения",
+    }),
+    { target: { value: "value" } },
+  );
+  fireEvent.change(
+    within(recording).getByRole("textbox", { name: "Дата записи" }),
+    { target: { value: "1999-03-04" } },
+  );
+  fireEvent.change(
+    within(position).getByRole("combobox", {
+      name: "Подзаголовок трека — Состояние переопределения",
+    }),
+    { target: { value: "value" } },
+  );
+  fireEvent.change(
+    within(position).getByRole("textbox", { name: "Подзаголовок трека" }),
+    { target: { value: "Live at the Forum" } },
+  );
   fireEvent.click(within(recording).getByRole("button", { name: "Сохранить" }));
   expect(await within(recording).findByRole("alert")).toHaveTextContent(
     "Введите положительное конечное число",
@@ -540,15 +571,22 @@ it("round-trips boolean, decimal, integer, and advisory values by scope", async 
         compilation: { state: "value", value: true },
         content_advisory: { state: "value", value: "clean" },
         release_date: { state: "value", value: "2024-02" },
+        release_version: { state: "value", value: "Deluxe Edition" },
       },
     });
     expect(patchBodies.get("recording")).toEqual({
       expected_revision: 5,
-      changes: { bpm: { state: "value", value: 128.75 } },
+      changes: {
+        bpm: { state: "value", value: 128.75 },
+        recording_date: { state: "value", value: "1999-03-04" },
+      },
     });
     expect(patchBodies.get("position")).toEqual({
       expected_revision: 7,
-      changes: { track_number: { state: "value", value: 3 } },
+      changes: {
+        track_number: { state: "value", value: 3 },
+        subtitle: { state: "value", value: "Live at the Forum" },
+      },
     });
   });
   await waitFor(() => {

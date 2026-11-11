@@ -2,6 +2,7 @@ package librarymetadata
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -211,6 +212,35 @@ func TestFieldRegistryIsStableAndProtectsCanonicalFields(t *testing.T) {
 	definition, _ := Field("title")
 	if !containsScope(definition.Scopes, ScopeRelease) {
 		t.Fatal("registry definitions were mutated through returned slice")
+	}
+}
+
+func TestScalarDateAndSubtitleRegistryScopes(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		typeOf ValueType
+		scopes []Scope
+	}{
+		{name: "release_date", typeOf: TypeDate, scopes: []Scope{ScopeRelease}},
+		{name: "recording_date", typeOf: TypeDate, scopes: []Scope{ScopeRecording, ScopeTrack, ScopePosition}},
+		{name: "release_version", typeOf: TypeString, scopes: []Scope{ScopeRelease}},
+		{name: "subtitle", typeOf: TypeString, scopes: []Scope{ScopeRecording, ScopeTrack, ScopePosition}},
+	} {
+		definition, ok := Field(test.name)
+		if !ok || definition.Type != test.typeOf || !reflect.DeepEqual(definition.Scopes, test.scopes) {
+			t.Errorf("Field(%q) = %#v, %t; want type %q and scopes %v", test.name, definition, ok, test.typeOf, test.scopes)
+		}
+	}
+	for _, field := range []string{"recording_date", "subtitle"} {
+		for _, scope := range []Scope{ScopeRecording, ScopeTrack, ScopePosition} {
+			data := `{"version":1,"scope":"` + string(scope) + `","desired":{"` + field + `":{"state":"absent","authority":"automatic","provenance":{"kind":"provider"}}}}`
+			if _, err := DecodeEnvelope([]byte(data)); err != nil {
+				t.Errorf("DecodeEnvelope() rejected %q in %q scope: %v", field, scope, err)
+			}
+		}
+		if _, err := DecodeEnvelope([]byte(`{"version":1,"scope":"release","desired":{"` + field + `":{"state":"absent","authority":"automatic","provenance":{"kind":"provider"}}}}`)); err == nil {
+			t.Errorf("release scope accepted %q", field)
+		}
 	}
 }
 

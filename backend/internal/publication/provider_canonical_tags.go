@@ -50,7 +50,7 @@ func ProjectProviderCanonicalTagValues(values ProviderCanonicalTagValues) Provid
 	if values.PositionTitle != nil && *values.PositionTitle != "" {
 		tags["TITLE"] = []string{*values.PositionTitle}
 	}
-	setProviderStringTag(tags, "DATE", values.ReleaseDate)
+	setProviderStringTag(tags, "RELEASEDATE", values.ReleaseDate)
 	setProviderStringTag(tags, "MUSICBRAINZ_ALBUMID", values.ReleaseMBID)
 	setProviderStringTag(tags, "MUSICBRAINZ_RELEASEGROUPID", values.ReleaseGroupMBID)
 	setProviderStringTag(tags, "ORIGINALDATE", values.OriginalDate)

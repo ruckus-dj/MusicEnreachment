@@ -355,6 +355,39 @@ func TestProjectTagsReleaseBarcodeCountryAndStatusStates(t *testing.T) {
 	}
 }
 
+func TestProjectTagsMapsDistinctDateAndSubtitleSemantics(t *testing.T) {
+	release := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease,
+		Desired: map[string]librarymetadata.FieldValue{
+			"release_date":    librarymetadata.ManualFieldValue(librarymetadata.StateValue, "2001-02", true),
+			"release_version": librarymetadata.ManualFieldValue(librarymetadata.StateValue, "Deluxe", true),
+		},
+	}
+	position := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
+		Desired: map[string]librarymetadata.FieldValue{
+			"recording_date": librarymetadata.ManualFieldValue(librarymetadata.StateValue, "1999-03-04", true),
+			"subtitle":       librarymetadata.ManualFieldValue(librarymetadata.StateValue, "Live", true),
+		},
+	}
+	projection, err := ProjectTags(TagProjectionInput{
+		Release:  ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &release},
+		Position: PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &position},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		"RELEASEDATE": {"2001-02"}, "DATE": {"1999-03-04"},
+		"ALBUMVERSION": {"Deluxe"}, "SUBTITLE": {"Live"},
+	}
+	for key, values := range want {
+		if !reflect.DeepEqual(projection.Tags[key], values) {
+			t.Errorf("%s = %#v, want %#v", key, projection.Tags[key], values)
+		}
+	}
+}
+
 func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 	position, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"position","desired":{"contributors":{"state":"value","value":[{"name":"Family,Given 音楽","role":" Composer ","artist_id":"11111111-1111-4111-8111-111111111111"},{"name":"作詞者","role":"LYRICIST","mbid":"22222222-2222-4222-8222-222222222222"},{"name":"unknown role","role":"instrumentalist"}],"authority":"manual","provenance":{"kind":"manual"}}}}`))
 	if err != nil {

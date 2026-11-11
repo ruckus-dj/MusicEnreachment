@@ -62,7 +62,7 @@ func TestBuildPublicationProviderCanonicalTagPatchProjectsAcceptedReleaseAndReco
 		t.Fatal(err)
 	}
 	want := map[string][]string{
-		"DATE":                       {"1999-02-03"},
+		"RELEASEDATE":                {"1999-02-03"},
 		"MUSICBRAINZ_ALBUMID":        {"11111111-1111-4111-8111-111111111111"},
 		"MUSICBRAINZ_RELEASEGROUPID": {"22222222-2222-4222-8222-222222222222"},
 		"ORIGINALDATE":               {"1998"},
@@ -558,12 +558,31 @@ func TestBuildPublicationProviderTagProtectionCoversAddedProviderTagFootprints(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"BARCODE", "DATE", "ISRC", "MUSICBRAINZ_RELEASEGROUPID", "MUSICBRAINZ_TRACKID", "RELEASECOUNTRY", "RELEASESTATUS"}
+	want := []string{"BARCODE", "ISRC", "MUSICBRAINZ_RELEASEGROUPID", "MUSICBRAINZ_TRACKID", "RELEASECOUNTRY", "RELEASEDATE", "RELEASESTATUS"}
 	if !reflect.DeepEqual(protection.Keys, want) {
 		t.Fatalf("protected keys = %#v, want %#v", protection.Keys, want)
 	}
 	if !reflect.DeepEqual(protection.ManualAbsentFields, []string{"release_group_mbid", "release_status"}) {
 		t.Fatalf("manual absent fields = %#v", protection.ManualAbsentFields)
+	}
+}
+
+func TestBuildPublicationProviderTagProtectionUsesDistinctDateAndSubtitleFootprints(t *testing.T) {
+	context := &PublicationProviderTagContext{}
+	context.ReleaseOwner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"release","desired":{"release_date":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}},"release_version":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`)
+	context.PositionOwner.Owner.Metadata = json.RawMessage(`{"local_metadata":{"version":1,"scope":"position","desired":{"recording_date":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}},"subtitle":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`)
+
+	protection, err := BuildPublicationProviderTagProtection(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ALBUMVERSION", "DATE", "RELEASEDATE", "SUBTITLE"}
+	if !reflect.DeepEqual(protection.Keys, want) {
+		t.Fatalf("protected keys = %#v, want %#v", protection.Keys, want)
+	}
+	wantAbsent := []string{"recording_date", "release_date", "release_version", "subtitle"}
+	if !reflect.DeepEqual(protection.ManualAbsentFields, wantAbsent) {
+		t.Fatalf("manual absent fields = %#v, want %#v", protection.ManualAbsentFields, wantAbsent)
 	}
 }
 
