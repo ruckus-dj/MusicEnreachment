@@ -102,6 +102,7 @@ export function completeLibraryDeletion(
 export interface ManagedPathDeletionEvidence {
 	state: ManagedPathObservation;
 	deleteSucceeded: boolean;
+	metadataCommitSucceeded?: boolean;
 }
 
 /** Missing is conclusive only when the output root was confirmed available. */
@@ -132,13 +133,20 @@ export type ManagedLibraryDeletionOutcome =
 			artists: CatalogArtist[];
 	  }
 	| {
-			status: Exclude<ManagedPublicationDeletionResult, "completed">;
+			status: Exclude<ManagedPublicationDeletionResult, "completed" | "stale">;
+			releases: OriginalRelease[];
+			artists: CatalogArtist[];
+			residualOperation: DeletionOperation;
+	  }
+	| {
+			status: "stale";
 	  };
 
 /**
  * Validates the confirmed scope first, then interprets explicit per-path
- * evidence and the metadata commit outcome. Rows are released only when every
- * confirmed managed path is safe and the metadata commit succeeded.
+ * evidence and the metadata commit outcome. Successfully committed publication
+ * rows are applied independently; aggregate rows are released only when every
+ * confirmed managed path and the final metadata commit have succeeded.
  */
 export function completeManagedLibraryDeletion(
 	operation: DeletionOperation,
@@ -148,18 +156,65 @@ export function completeManagedLibraryDeletion(
 ): ManagedLibraryDeletionOutcome {
 	const next = completeLibraryDeletion(operation, releases, artists);
 	if (!next) return { status: "stale" };
-	let retry = !evidence.metadataCommitSucceeded;
+	const completedPaths = new Set<string>();
+	const selectedTrackIds = new Set(operation.libraryTrackIds ?? []);
+	let conflict = false;
 	for (const path of operation.paths) {
+		const owners = releases.flatMap((release) =>
+			release.tracks.filter((track) => track.published?.path === path),
+		);
+		if (owners.some((track) => !selectedTrackIds.has(track.id))) {
+			conflict = true;
+			continue;
+		}
 		const observed = evidence.paths[path];
+		const metadataCommitSucceeded =
+			observed?.metadataCommitSucceeded ?? evidence.metadataCommitSucceeded;
 		const resolution = resolveManagedPublicationDeletion(
 			observed?.state ?? "unknown",
 			observed?.deleteSucceeded ?? false,
-			evidence.metadataCommitSucceeded,
+			metadataCommitSucceeded,
 		);
-		if (resolution === "conflict") return { status: "conflict" };
-		if (resolution === "retry") retry = true;
+		if (resolution === "conflict") conflict = true;
+		else if (resolution === "completed") completedPaths.add(path);
 	}
-	return retry
-		? { status: "retry" }
-		: { status: "completed", releases: next.releases, artists: next.artists };
+	const partiallyUpdatedReleases = releases.map((release) => ({
+		...release,
+		tracks: release.tracks.map((track) =>
+			track.published &&
+			selectedTrackIds.has(track.id) &&
+			completedPaths.has(track.published.path)
+				? {
+						...track,
+						published: null,
+						metadataBaseline: undefined,
+						metadataBaselineExtras: undefined,
+					}
+				: track,
+		),
+	}));
+	const remainingPaths = operation.paths.filter(
+		(path) => !completedPaths.has(path),
+	);
+	const residualOperation = {
+		...operation,
+		paths: remainingPaths,
+		publications: remainingPaths.length,
+	};
+	const finalMetadataCommitRequired =
+		operation.kind !== "publication" || operation.paths.length === 0;
+	const status: ManagedPublicationDeletionResult = conflict
+		? "conflict"
+		: remainingPaths.length ||
+				(finalMetadataCommitRequired && !evidence.metadataCommitSucceeded)
+			? "retry"
+			: "completed";
+	if (status !== "completed")
+		return {
+			status,
+			releases: partiallyUpdatedReleases,
+			artists,
+			residualOperation,
+		};
+	return { status, releases: next.releases, artists: next.artists };
 }

@@ -257,8 +257,8 @@ it("retries metadata cleanup after unlink without deleting a replacement", () =>
 			releases,
 			artists,
 			managedEvidence(operation, "present", false),
-		),
-	).toEqual({ status: "retry" });
+		).status,
+	).toBe("retry");
 	expect(
 		completeManagedLibraryDeletion(
 			operation,
@@ -273,8 +273,8 @@ it("retries metadata cleanup after unlink without deleting a replacement", () =>
 			releases,
 			artists,
 			managedEvidence(operation, "replaced"),
-		),
-	).toEqual({ status: "conflict" });
+		).status,
+	).toBe("conflict");
 	expect({ releases, artists }).toEqual(before);
 });
 
@@ -290,8 +290,8 @@ it("does not interpret unavailable or unobserved paths as absence", () => {
 				clone(originalReleases),
 				clone(originalArtists),
 				evidence,
-			),
-		).toEqual({ status: "retry" });
+			).status,
+		).toBe("retry");
 	}
 	const evidence = managedEvidence(operation);
 	const path = operation.paths[0];
@@ -302,8 +302,8 @@ it("does not interpret unavailable or unobserved paths as absence", () => {
 			clone(originalReleases),
 			clone(originalArtists),
 			evidence,
-		),
-	).toEqual({ status: "retry" });
+		).status,
+	).toBe("retry");
 });
 
 it("rejects stale scope before applying managed deletion outcomes", () => {
@@ -322,7 +322,7 @@ it("rejects stale scope before applying managed deletion outcomes", () => {
 	expect({ releases, artists }).toEqual(before);
 });
 
-it("protects all rows when one path in a multi-publication deletion is replaced", () => {
+it("commits successful publication rows while retaining unresolved aggregate dependencies", () => {
 	const releases = clone(originalReleases);
 	const artists = clone(originalArtists);
 	const release = releases.find((item) => item.id === "north");
@@ -347,16 +347,71 @@ it("protects all rows when one path in a multi-publication deletion is replaced"
 			managedEvidence(operation),
 		).status,
 	).toBe("completed");
-	const before = clone({ releases, artists });
+	const blockedPath = operation.paths[0];
+	const unselectedOwner = releases
+		.flatMap((item) => item.tracks)
+		.find(
+			(track) =>
+				!operation.libraryTrackIds?.includes(track.id) && track.published,
+		);
+	if (!blockedPath || !unselectedOwner?.published)
+		throw new Error("Missing shared-path fixture");
+	unselectedOwner.published = {
+		...unselectedOwner.published,
+		path: blockedPath,
+	};
 	const evidence = managedEvidence(operation);
-	evidence.paths[operation.paths.at(-1) ?? ""] = {
+	const failedPath = operation.paths.at(-1) ?? "";
+	evidence.metadataCommitSucceeded = false;
+	for (const path of operation.paths.filter((item) => item !== failedPath))
+		evidence.paths[path] = {
+			state: "present",
+			deleteSucceeded: true,
+			metadataCommitSucceeded: true,
+		};
+	evidence.paths[failedPath] = {
 		state: "replaced",
 		deleteSucceeded: false,
 	};
+	const result = completeManagedLibraryDeletion(
+		operation,
+		releases,
+		artists,
+		evidence,
+	);
+	expect(result.status).toBe("conflict");
+	if (result.status !== "conflict") throw new Error("Expected path conflict");
+	expect(result.residualOperation.paths).toEqual([blockedPath, failedPath]);
+	expect(result.residualOperation.libraryReleaseIds).toEqual([release.id]);
 	expect(
-		completeManagedLibraryDeletion(operation, releases, artists, evidence),
-	).toEqual({ status: "conflict" });
-	expect({ releases, artists }).toEqual(before);
+		result.releases
+			.find((item) => item.id === release.id)
+			?.tracks.filter((track) => track.published)
+			.map((track) => track.published?.path),
+	).toEqual([blockedPath, failedPath]);
+	expect(
+		result.releases
+			.flatMap((item) => item.tracks)
+			.find((track) => track.id === unselectedOwner.id)?.published?.path,
+	).toBe(blockedPath);
+	expect(result.releases.some((item) => item.id === release.id)).toBe(true);
+	expect(result.artists).toEqual(artists);
+	const retryReleases = clone(result.releases);
+	const retryOwner = retryReleases
+		.flatMap((item) => item.tracks)
+		.find((track) => track.id === unselectedOwner.id);
+	if (!retryOwner) throw new Error("Missing retry owner fixture");
+	retryOwner.published = null;
+	const retry = completeManagedLibraryDeletion(
+		result.residualOperation,
+		retryReleases,
+		result.artists,
+		managedEvidence(result.residualOperation),
+	);
+	expect(retry.status).toBe("completed");
+	if (retry.status !== "completed")
+		throw new Error("Expected retry completion");
+	expect(retry.releases.some((item) => item.id === release.id)).toBe(false);
 });
 
 it("requires the metadata commit even when no managed paths exist", () => {
@@ -379,6 +434,6 @@ it("requires the metadata commit even when no managed paths exist", () => {
 		completeManagedLibraryDeletion(noPaths, releases, artists, {
 			paths: {},
 			metadataCommitSucceeded: false,
-		}),
-	).toEqual({ status: "retry" });
+		}).status,
+	).toBe("retry");
 });

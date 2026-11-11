@@ -355,16 +355,20 @@ export function CatalogDemo({
 		null,
 	);
 	const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
+	const [residualDeletions, setResidualDeletions] = useState(
+		() => new Map<DeletionOperation, DeletionOperation>(),
+	);
 	const queueDeletion = (operation: DeletionOperation) => {
 		setDeletions((previous) => [...previous, operation]);
 		window.location.hash = "operations";
 	};
 	const completeDeletion = (operation: DeletionOperation) => {
+		const confirmedOperation = residualDeletions.get(operation) ?? operation;
 		const tracks = releases.flatMap((release) => release.tracks);
-		const selectedTracks = new Set(operation.libraryTrackIds);
+		const selectedTracks = new Set(confirmedOperation.libraryTrackIds);
 		// Fixtures supply observations, not real unlink or database commit results.
 		const paths = Object.fromEntries(
-			operation.paths.map((path) => {
+			confirmedOperation.paths.map((path) => {
 				const owners = tracks.filter((track) => track.published?.path === path);
 				const observation = owners[0]?.observedFile;
 				let state: ManagedPathObservation = "unknown";
@@ -374,13 +378,38 @@ export function CatalogDemo({
 				return [path, { state, deleteSucceeded: state === "present" }];
 			}),
 		);
-		const next = completeManagedLibraryDeletion(operation, releases, artists, {
-			paths,
-			metadataCommitSucceeded: true,
-		});
-		if (next.status !== "completed") return next.status;
+		const next = completeManagedLibraryDeletion(
+			confirmedOperation,
+			releases,
+			artists,
+			{
+				paths,
+				metadataCommitSucceeded: true,
+			},
+		);
+		if (next.status === "stale") return next.status;
 		setReleases(next.releases);
 		setArtists(next.artists);
+		if (next.status !== "completed") {
+			setResidualDeletions((previous) =>
+				new Map(previous).set(operation, next.residualOperation),
+			);
+			if (
+				next.residualOperation.paths.length < confirmedOperation.paths.length
+			) {
+				setIncoming((previous) => ({
+					...previous,
+					plan: null,
+					inventoryVersion: previous.inventoryVersion + 1,
+				}));
+			}
+			return next.status;
+		}
+		setResidualDeletions((previous) => {
+			const updated = new Map(previous);
+			updated.delete(operation);
+			return updated;
+		});
 		setDeletions((previous) => previous.filter((item) => item !== operation));
 		setIncoming((previous) => ({
 			...previous,
