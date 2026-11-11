@@ -217,6 +217,18 @@ describe("AppShell sources routing", () => {
     expect(
       await screen.findByRole("dialog", { name: "Несохранённые настройки" }),
     ).toBeVisible();
+    const operationsLink = screen.getByRole("link", { name: "Операции" });
+    fireEvent.click(screen.getByRole("button", { name: "Остаться" }));
+    expect(window.location.hash).toBe("#/settings");
+    expect(
+      screen.queryByRole("dialog", { name: "Несохранённые настройки" }),
+    ).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(operationsLink);
+
+    fireEvent.click(operationsLink);
+    expect(
+      await screen.findByRole("dialog", { name: "Несохранённые настройки" }),
+    ).toBeVisible();
     view.rerender(<App />);
     fireEvent.click(
       screen.getByRole("button", { name: "Уйти, сохранив черновик" }),

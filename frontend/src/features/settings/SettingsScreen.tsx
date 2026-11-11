@@ -492,6 +492,10 @@ export function SettingsScreen() {
   const [notice, setNotice] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
   const latestNavigationAttempt = useRef<HashAttempt | undefined>(undefined);
+  const capturedNavigationAnchor = useRef<HTMLAnchorElement | null>(null);
+  const navigationReturnFocus = useRef<HTMLElement | null>(null);
+  const navigationEditedControl = useRef<HTMLElement | null>(null);
+  const navigationFocusRestorePending = useRef(false);
   const alert = useRef<HTMLParagraphElement>(null);
   const loadErrorAlert = useRef<HTMLParagraphElement>(null);
   const installDialogAlert = useRef<HTMLParagraphElement>(null);
@@ -909,6 +913,18 @@ export function SettingsScreen() {
   useLayoutEffect(() => {
     if (navigationAttempt) showSettingsDialog(navigationDialogRef.current);
   }, [navigationAttempt]);
+  useLayoutEffect(() => {
+    if (navigationAttempt || !navigationFocusRestorePending.current) return;
+    navigationFocusRestorePending.current = false;
+    if (document.querySelector("dialog[open]")) return;
+    const target = [
+      navigationReturnFocus.current,
+      navigationEditedControl.current,
+    ].find((candidate) => candidate?.isConnected);
+    navigationReturnFocus.current = null;
+    navigationEditedControl.current = null;
+    target?.focus();
+  }, [navigationAttempt]);
   useEffect(() => {
     if (catalogError) catalogAlert.current?.focus();
   }, [catalogError]);
@@ -1033,18 +1049,82 @@ export function SettingsScreen() {
     );
     setDraftStorageWarning(!stored && dirty);
   }, [initialLoadComplete, persistedSettingsDraftSnapshot, state]);
-  useLayoutEffect(
-    () =>
-      registerHashNavigationGuard({
-        shouldBlock: hasUnsavedSettingsTextDrafts,
-        onBlocked: (attempt) => {
-          latestNavigationAttempt.current = attempt;
-          setNavigationAttempt(attempt);
-          setNavigationError("");
-        },
-      }),
-    [hasUnsavedSettingsTextDrafts],
-  );
+  useLayoutEffect(() => {
+    const captureNavigationAnchor = (event: MouseEvent) => {
+      capturedNavigationAnchor.current = null;
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      )
+        return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest<HTMLAnchorElement>("a[href]");
+      if (
+        !anchor ||
+        anchor.hasAttribute("download") ||
+        (anchor.target && anchor.target.toLowerCase() !== "_self")
+      )
+        return;
+      const destination = new URL(anchor.href, window.location.href);
+      const current = new URL(window.location.href);
+      if (
+        destination.origin === current.origin &&
+        destination.pathname === current.pathname &&
+        destination.search === current.search &&
+        destination.hash &&
+        destination.hash !== window.location.hash
+      ) {
+        capturedNavigationAnchor.current = anchor;
+        queueMicrotask(() => {
+          if (capturedNavigationAnchor.current === anchor)
+            capturedNavigationAnchor.current = null;
+        });
+      }
+    };
+    window.addEventListener("click", captureNavigationAnchor, true);
+    const unregister = registerHashNavigationGuard({
+      shouldBlock: hasUnsavedSettingsTextDrafts,
+      onBlocked: (attempt) => {
+        const anchor = capturedNavigationAnchor.current;
+        capturedNavigationAnchor.current = null;
+        navigationReturnFocus.current =
+          anchor?.isConnected &&
+          new URL(anchor.href, window.location.href).hash === attempt.to
+            ? anchor
+            : null;
+        const activeControl =
+          document.activeElement instanceof HTMLElement &&
+          document.activeElement !== document.body &&
+          !navigationDialogRef.current?.contains(document.activeElement)
+            ? document.activeElement
+            : null;
+        const templateDraft = publicationPathTemplate.snapshot();
+        const templateDirty =
+          templateDraft.value !== undefined &&
+          templateDraft.baseline !== undefined &&
+          templateDraft.value !== templateDraft.baseline;
+        navigationEditedControl.current =
+          activeControl ??
+          (templateDirty
+            ? document.querySelector<HTMLElement>(
+                '[aria-describedby="publication-template-help"]',
+              )
+            : null);
+        latestNavigationAttempt.current = attempt;
+        setNavigationAttempt(attempt);
+        setNavigationError("");
+      },
+    });
+    return () => {
+      window.removeEventListener("click", captureNavigationAnchor, true);
+      unregister();
+    };
+  }, [hasUnsavedSettingsTextDrafts, publicationPathTemplate.snapshot]);
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!hasUnsavedSettingsTextDrafts()) return;
@@ -2191,7 +2271,15 @@ export function SettingsScreen() {
     resolution: "stay" | "leave",
   ) {
     if (latestNavigationAttempt.current?.id !== attempt.id) return false;
-    if (!resolveHashNavigation(attempt.id, resolution)) return false;
+    const resolved = resolveHashNavigation(attempt.id, resolution);
+    if (
+      !resolved &&
+      (resolution !== "stay" ||
+        latestNavigationAttempt.current?.id !== attempt.id ||
+        window.location.hash !== attempt.from)
+    )
+      return false;
+    navigationFocusRestorePending.current = resolution === "stay";
     latestNavigationAttempt.current = undefined;
     setNavigationAttempt(undefined);
     setNavigationError("");

@@ -322,6 +322,17 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        E2E; cover/lyrics отдельно браузером не приняты. Полная
        [CI 43044490318](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43044490318)
        ещё ожидается. Settings, matching и полный metadata port оставляют пункт открытым.
+     - [x] `90bd7913`: Settings сохраняет селекторы/переключатели автоматически,
+       ручной текст — явной командой; browser-only draft, предупреждение об уходе
+       и конфликт изменённых настроек не теряют ввод. Серверный CAS по `expected`
+       изменённых полей возвращает 409 без перезаписи. Metadata editor добавляет
+       works, movement и contributors с порядком и состояниями
+       absent/explicit_empty через существующий API. MP3/M4A явно сообщают в
+       preview о пропуске инструментальных performer credits; FLAC/MKA performer
+       проверен реальным writer/readback. Обычный полный hook прошёл;
+       [CI 43106992902](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43106992902)
+        прошёл полностью, включая Windows и публикацию образа. Browser/real-backend приёмка и полный metadata port
+       остаются открытыми.
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через
@@ -402,8 +413,18 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      прошли. В браузере штатный drift второй позиции Northern Lines сохраняет
      релиз и одну из пяти публикаций; повтор сохраняет конфликт, другое издание
      не изменяется. Это проверка in-memory прототипа, не реальной файловой системы.
-     Production workflow этим не реализован; поведение удаления артиста
-     при гостевых credits требует отдельного согласования.
+     Гостевое участие уже исключено из scope удаления артиста текущим контрактом;
+     отдельного согласования это правило не требует. Production workflow удаления
+     артиста остаётся нереализованным.
+   - [x] `90bd7913`: production preview → confirm → asynchronous operation для
+     удаления library publication и release использует durable confirmation digest
+     и frozen ownership witnesses; принадлежащий приложению файл безопасно
+     удаляется до строк БД, provider/recording данные сохраняются. Успешная часть
+     фиксируется отдельно, а explicit retry возобновляет неизменённый остаточный
+     scope. Удаление артиста этим workflow не реализовано. Обычный полный hook
+     прошёл;
+     [CI 43106992902](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43106992902)
+      прошёл полностью, включая Windows и публикацию образа. Browser и real-backend приёмка остаются открытыми.
 10. [ ] **RU/EN integration.** Интегрировать локализацию во все затронутые
    production/prototype экраны; направление не зависит от завершения удаления
    или Local CRUD. **Приёмка:** все состояния и доступные имена доступны на обоих
