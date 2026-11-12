@@ -13,13 +13,17 @@ import {
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { DirectoryPathField } from "../../components/DirectoryPathField";
+import { useI18n } from "../../i18n/I18nProvider";
 import { SourceLocations } from "./SourceLocations";
 import { SourceScanControl } from "./SourceScanControl";
+import { type SourceMessage, sourceMessage } from "./sourceMessages";
 import {
   fileCount,
   inventoryLabel,
   lastScanLabel,
   message,
+  renderSourceError,
+  sourceError,
   sourceFailure,
   statusLabel,
 } from "./sourcesApi";
@@ -32,6 +36,11 @@ type EditForm = {
 };
 
 export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
+  const { locale } = useI18n();
+  const t = (
+    key: Parameters<typeof sourceMessage>[1],
+    values?: Record<string, string | number>,
+  ) => sourceMessage(locale, key, values);
   const [root, setRoot] = useState<SourceRootResponse>();
   // Every authoritative root update also re-reads the published inventory: a
   // successful scan publishes a new generation, and a path edit changes what
@@ -45,10 +54,14 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   });
   const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [formError, setFormError] = useState("");
-  const [deleteError, setDeleteError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [error, setError] = useState<ReturnType<typeof message> | null>(null);
+  const [formError, setFormError] = useState<ReturnType<typeof message> | null>(
+    null,
+  );
+  const [deleteError, setDeleteError] = useState<ReturnType<
+    typeof message
+  > | null>(null);
+  const [notice, setNotice] = useState<SourceMessage | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
   const formAlert = useRef<HTMLParagraphElement>(null);
@@ -63,7 +76,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
 
   const load = useCallback(async () => {
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       const response = await getSource(sourceId, { cache: "no-store" });
       if (response.status !== 200) throw sourceFailure("read", response);
@@ -103,19 +116,19 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       path: root.configured_path,
       processingMode: root.processing_mode,
     });
-    setFormError("");
-    setNotice("");
+    setFormError(null);
+    setNotice(null);
     setEditing(true);
   }
 
   async function save() {
     if (!form.displayName.trim() || !form.path.trim()) {
-      setFormError("Укажите имя каталога и абсолютный путь на сервере.");
+      setFormError(sourceError("invalidEdit"));
       return;
     }
     setBusy(true);
-    setFormError("");
-    setNotice("");
+    setFormError(null);
+    setNotice(null);
     try {
       const response = await updateSource(sourceId, {
         display_name: form.displayName.trim(),
@@ -127,8 +140,11 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       setEditing(false);
       setNotice(
         response.data.stale && response.data.inventory_path
-          ? `Каталог сохранён. Инвентарь относится к прежнему пути ${response.data.inventory_path} и заменится после успешного сканирования нового пути.`
-          : "Каталог сохранён.",
+          ? {
+              key: "sourceSavedStale",
+              values: { path: response.data.inventory_path },
+            }
+          : { key: "sourceSaved" },
       );
     } catch (reason) {
       setFormError(message(reason));
@@ -144,7 +160,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   }
 
   function closeDelete() {
-    setDeleteError("");
+    setDeleteError(null);
     if (dialog.current?.open) dialog.current.close();
     else {
       setDeleting(false);
@@ -155,7 +171,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   async function confirmDelete() {
     if (!root) return;
     setBusy(true);
-    setDeleteError("");
+    setDeleteError(null);
     try {
       const response = await deleteSource(sourceId, {
         confirmed_path: root.configured_path,
@@ -178,39 +194,41 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       className="sources-screen mx-auto max-w-5xl py-3"
     >
       <h1 ref={heading} tabIndex={-1} id="source-title">
-        {root ? root.display_name : "Каталог источника"}
+        {root ? root.display_name : t("sourceTitle")}
       </h1>
-      <AppButton onPress={backToList}>К списку каталогов</AppButton>
-      {busy && root && <p role="status">Выполняется запрос…</p>}
-      {!root && !error && <p role="status">Загрузка каталога…</p>}
+      <AppButton onPress={backToList}>{t("backToSources")}</AppButton>
+      {busy && root && <p role="status">{t("requestRunning")}</p>}
+      {!root && !error && <p role="status">{t("loadingLocations")}</p>}
       {error && (
         <>
           <p ref={alert} tabIndex={-1} role="alert">
-            {error}
+            {renderSourceError(error, locale)}
           </p>
-          <AppButton onPress={() => void load()}>Повторить загрузку</AppButton>
+          <AppButton onPress={() => void load()}>{t("retryLoad")}</AppButton>
         </>
       )}
-      {notice && <p role="status">{notice}</p>}
+      {notice && (
+        <p role="status">{sourceMessage(locale, notice.key, notice.values)}</p>
+      )}
       {root && (
         <>
           <section
             aria-labelledby="source-summary-title"
             className="sources-panel"
           >
-            <h2 id="source-summary-title">Каталог</h2>
+            <h2 id="source-summary-title">{t("sourceSummary")}</h2>
             <dl className="sources-summary">
               <div>
-                <dt>Серверный путь</dt>
+                <dt>{t("serverPath")}</dt>
                 <dd>
                   <code>{root.configured_path}</code>
                 </dd>
               </div>
               <div>
-                <dt>Доступность</dt>
+                <dt>{t("availabilityLabel")}</dt>
                 <dd>
                   <span className="sources-chip" data-status={root.status}>
-                    {statusLabel(root.status)}
+                    {statusLabel(root.status, locale)}
                   </span>
                   {root.status === "unavailable" && root.safe_error && (
                     <span className="sources-note">{root.safe_error}</span>
@@ -218,40 +236,30 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                 </dd>
               </div>
               <div>
-                <dt>Включён</dt>
-                <dd>
-                  {root.enabled
-                    ? "Да: новые сканирования разрешены."
-                    : "Нет: новые сканирования запрещены."}
-                </dd>
+                <dt>{t("enabled")}</dt>
+                <dd>{root.enabled ? t("yesNewScans") : t("noNewScans")}</dd>
               </div>
               <div>
-                <dt>Последнее успешное сканирование</dt>
-                <dd>{lastScanLabel(root)}</dd>
+                <dt>{t("lastSuccessfulScan")}</dt>
+                <dd>{lastScanLabel(root, locale)}</dd>
               </div>
               <div>
-                <dt>Инвентарь</dt>
-                <dd>{inventoryLabel(root)}</dd>
+                <dt>{t("inventory")}</dt>
+                <dd>{inventoryLabel(root, locale)}</dd>
               </div>
               {root.inventory_path && (
                 <div>
-                  <dt>Путь инвентаря</dt>
+                  <dt>{t("inventoryPath")}</dt>
                   <dd>
                     <code>{root.inventory_path}</code>
                     {root.stale && (
-                      <span className="sources-note">
-                        Это прежний путь: инвентарь заменится после успешного
-                        сканирования текущего пути.
-                      </span>
+                      <span className="sources-note">{t("previousPath")}</span>
                     )}
                   </dd>
                 </div>
               )}
             </dl>
-            <p className="sources-help">
-              Каталог принадлежит серверу: MeloTrove читает его только для
-              чтения и ничего в него не записывает.
-            </p>
+            <p className="sources-help">{t("sourceReadOnly")}</p>
           </section>
           <SourceScanControl root={root} onScanCompleted={load} />
           <SourceLocations
@@ -263,7 +271,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
             aria-labelledby="source-edit-title"
             className="sources-panel"
           >
-            <h2 id="source-edit-title">Имя, путь и режим</h2>
+            <h2 id="source-edit-title">{t("editTitle")}</h2>
             {editing ? (
               <form
                 aria-labelledby="source-edit-title"
@@ -273,7 +281,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                 }}
               >
                 <label>
-                  Имя каталога
+                  {t("name")}
                   <input
                     value={form.displayName}
                     onChange={(event) =>
@@ -283,13 +291,13 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                 </label>
                 <DirectoryPathField
                   id="source-edit-path"
-                  label="Путь на сервере"
+                  label={t("serverPath")}
                   value={form.path}
                   onSelect={(path) => setForm({ ...form, path })}
                   disabled={busy}
                 />
                 <label>
-                  Режим обработки
+                  {t("processingMode")}
                   <select
                     className="sources-select"
                     required
@@ -302,55 +310,42 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                       })
                     }
                   >
-                    <option value="in_place">in_place</option>
-                    <option value="staged">staged</option>
+                    <option value="in_place">{t("inPlace")}</option>
+                    <option value="staged">{t("staged")}</option>
                   </select>
                 </label>
-                <p className="sources-help">
-                  Смена режима влияет только на будущую обработку и не запускает
-                  повторный анализ текущего инвентаря.
-                </p>
-                <p className="sources-help">
-                  Путь принадлежит серверу, а не этому компьютеру. Смена пути не
-                  удаляет инвентарь: прежние записи остаются видимыми как
-                  относящиеся к прежнему пути, пока новое сканирование не
-                  завершится успешно.
-                </p>
+                <p className="sources-help">{t("modeChange")}</p>
+                <p className="sources-help">{t("pathChange")}</p>
                 {formError && (
                   <p ref={formAlert} tabIndex={-1} role="alert">
-                    {formError}
+                    {renderSourceError(formError, locale)}
                   </p>
                 )}
                 <AppButton type="submit" isDisabled={busy}>
-                  Сохранить каталог
+                  {t("saveSource")}
                 </AppButton>
-                <AppButton onPress={() => setEditing(false)}>Отмена</AppButton>
+                <AppButton onPress={() => setEditing(false)}>
+                  {t("cancel")}
+                </AppButton>
               </form>
             ) : (
-              <AppButton onPress={openEdit}>Изменить каталог</AppButton>
+              <AppButton onPress={openEdit}>{t("editSource")}</AppButton>
             )}
           </section>
           <section
             aria-labelledby="source-delete-title"
             className="sources-panel sources-danger"
           >
-            <h2 id="source-delete-title">Удаление каталога</h2>
-            <p>
-              Вместе с инвентарём удаляются сохранённые копии анализа,
-              принадлежащие MeloTrove, и завершённые неудачные задания этого
-              каталога без возможности повторить их. Исходные файлы в каталоге
-              источника, объекты медиатеки, текущие публикации и файлы в output
-              не затрагиваются. Пока задания каталога ждут запуска или
-              выполняются, сервер отклоняет удаление.
-            </p>
+            <h2 id="source-delete-title">{t("deleteTitle")}</h2>
+            <p>{t("deleteExplanation")}</p>
             <AppButton
               onPress={(event) => {
                 dialogTrigger.current = event.target as HTMLElement;
-                setDeleteError("");
+                setDeleteError(null);
                 setDeleting(true);
               }}
             >
-              Удалить каталог
+              {t("deleteSource")}
             </AppButton>
           </section>
         </>
@@ -377,27 +372,23 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
           }}
         >
           <h2 id="source-delete-dialog-title">
-            Удалить инвентарь каталога «{root.display_name}»?
+            {t("deleteConfirmTitle", { name: root.display_name })}
           </h2>
           <p>
-            Будут удалены записи инвентаря: {fileCount(root.location_count)} по
-            серверному пути <code>{root.configured_path}</code>, а также
-            сохранённые копии анализа и завершённые неудачные задания этого
-            каталога без возможности повторить их.
+            {t("deleteConfirmBody", {
+              count: fileCount(root.location_count, locale),
+              path: root.configured_path,
+            })}
           </p>
-          <p>
-            Исходные файлы в каталоге источника остаются на месте: MeloTrove
-            удаляет только собственные записи и копии. Объекты медиатеки,
-            текущие публикации и файлы в output не затрагиваются.
-          </p>
+          <p>{t("sourceFilesRemain")}</p>
           {deleteError && (
             <p ref={deleteAlert} tabIndex={-1} role="alert">
-              {deleteError}
+              {renderSourceError(deleteError, locale)}
             </p>
           )}
-          <AppButton onPress={closeDelete}>Отмена</AppButton>
+          <AppButton onPress={closeDelete}>{t("cancel")}</AppButton>
           <AppButton isDisabled={busy} onPress={() => void confirmDelete()}>
-            Подтвердить удаление
+            {t("confirmDelete")}
           </AppButton>
         </dialog>
       )}

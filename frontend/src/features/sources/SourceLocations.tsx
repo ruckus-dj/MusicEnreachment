@@ -6,12 +6,15 @@ import type {
   SourceRootResponse,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
+import { numberFormat, sourceMessage } from "./sourceMessages";
 import {
   fileCount,
   inventoryAvailabilityNote,
   inventoryEmptyNote,
   inventoryScopeNote,
   message,
+  renderSourceError,
   sourceFailure,
 } from "./sourcesApi";
 import "./sources.css";
@@ -33,25 +36,17 @@ function pageLimit(limit?: number): number {
   return Math.min(MAX_PAGE_LIMIT, Math.max(1, Math.trunc(limit)));
 }
 
-const sizeFormat = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
-
-const SIZE_UNITS = ["Б", "КБ", "МБ", "ГБ"] as const;
-
-function sizeLabel(bytes: number): string {
+function sizeLabel(bytes: number, locale: "en" | "ru"): string {
   let value = bytes;
   let unit = 0;
-  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
+  const units =
+    locale === "ru" ? ["Б", "КБ", "МБ", "ГБ"] : ["B", "KB", "MB", "GB"];
+  while (value >= 1024 && unit < units.length - 1) {
     value /= 1024;
     unit += 1;
   }
-  return `${sizeFormat.format(value)} ${SIZE_UNITS[unit]}`;
+  return `${numberFormat(locale, { maximumFractionDigits: 1 }).format(value)} ${units[unit]}`;
 }
-
-const PROBE_LABELS: Record<SourceLocationResponse["probe_status"], string> = {
-  audio: "Аудио",
-  no_audio: "Нет аудиодорожки",
-  probe_error: "Ошибка проверки",
-};
 
 export function SourceLocations({
   sourceId,
@@ -59,6 +54,11 @@ export function SourceLocations({
   refreshToken,
   limit,
 }: SourceLocationsProps) {
+  const { locale } = useI18n();
+  const t = (
+    key: Parameters<typeof sourceMessage>[1],
+    values?: Record<string, string | number>,
+  ) => sourceMessage(locale, key, values);
   const size = pageLimit(limit);
   const generation = root.scan_generation;
   // Another source, generation, page size or refresh token starts page 1 again.
@@ -71,7 +71,7 @@ export function SourceLocations({
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ReturnType<typeof message> | null>(null);
   const alert = useRef<HTMLParagraphElement>(null);
 
   const loadFirstPage = useCallback(async () => {
@@ -79,7 +79,7 @@ export function SourceLocations({
     setLocations([]);
     setNextCursor(undefined);
     setLoaded(false);
-    setError("");
+    setError(null);
     setBusy(true);
     try {
       const response = await listSourceLocations(
@@ -110,7 +110,7 @@ export function SourceLocations({
       setLocations([]);
       setNextCursor(undefined);
       setLoaded(false);
-      setError("");
+      setError(null);
       setBusy(false);
       return;
     }
@@ -126,7 +126,7 @@ export function SourceLocations({
     if (!cursor) return;
     const epoch = requestEpoch.current;
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       const response = await listSourceLocations(
         sourceId,
@@ -155,43 +155,38 @@ export function SourceLocations({
   }
 
   const neverScanned = generation === 0;
-  const availabilityNote = inventoryAvailabilityNote(root);
-  const scopeNote = inventoryScopeNote(root);
+  const availabilityNote = inventoryAvailabilityNote(root, locale);
+  const scopeNote = inventoryScopeNote(root, locale);
 
   return (
     <section aria-labelledby="source-locations-title" className="sources-panel">
-      <h2 id="source-locations-title">Файлы инвентаря</h2>
+      <h2 id="source-locations-title">{t("inventoryFiles")}</h2>
       {neverScanned ? (
-        <p className="sources-note">
-          Инвентаря нет: каталог ещё ни разу не сканировался успешно. Список
-          файлов появится после успешного сканирования.
-        </p>
+        <p className="sources-note">{t("noInventoryYet")}</p>
       ) : (
         <>
           <p className="sources-help">
-            Показаны записи последнего успешного сканирования: файлы с
-            поддерживаемым аудиорасширением. Пути указаны относительно{" "}
+            {t("inventoryHelp")}{" "}
             <code>{root.inventory_path ?? root.configured_path}</code>.
           </p>
           {availabilityNote && (
             <p className="sources-note">{availabilityNote}</p>
           )}
           {scopeNote && <p className="sources-note">{scopeNote}</p>}
-          {!loaded && !error && <p role="status">Загрузка списка файлов…</p>}
+          {!loaded && !error && <p role="status">{t("loadingFiles")}</p>}
           {error && (
             <>
               <p ref={alert} tabIndex={-1} role="alert">
-                {error}
+                {renderSourceError(error, locale)}
               </p>
               <AppButton isDisabled={busy} onPress={retry}>
-                Повторить загрузку
+                {t("retryLoad")}
               </AppButton>
             </>
           )}
           {loaded && !error && locations.length === 0 && (
             <p role="status">
-              {inventoryEmptyNote(root) ||
-                "Последнее успешное сканирование не нашло ни одного файла с поддерживаемым аудиорасширением."}
+              {inventoryEmptyNote(root, locale) || t("noSupportedFiles")}
             </p>
           )}
           {locations.length > 0 && (
@@ -199,45 +194,52 @@ export function SourceLocations({
               <div className="sources-table-wrap">
                 <table className="sources-table">
                   <caption className="sources-visually-hidden">
-                    Файлы последнего успешного сканирования: относительный путь,
-                    размер, время изменения и проверка аудиопотока
+                    {t("filesCaption")}
                   </caption>
                   <thead>
                     <tr>
-                      <th scope="col">Путь</th>
-                      <th scope="col">Размер</th>
-                      <th scope="col">Изменён</th>
-                      <th scope="col">Проверка</th>
+                      <th scope="col">{t("pathColumn")}</th>
+                      <th scope="col">{t("size")}</th>
+                      <th scope="col">{t("modified")}</th>
+                      <th scope="col">{t("audioCheck")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {locations.map((location) => (
                       <tr key={location.id}>
-                        <th scope="row" data-label="Путь">
+                        <th scope="row" data-label={t("pathColumn")}>
                           <Link
                             href={`#/sources/${encodeURIComponent(sourceId)}/locations/${encodeURIComponent(location.id)}`}
                           >
                             <code>{location.relative_path}</code>
                           </Link>
                         </th>
-                        <td data-label="Размер">
-                          {sizeLabel(location.size_bytes)}
+                        <td data-label={t("size")}>
+                          {sizeLabel(location.size_bytes, locale)}
                         </td>
-                        <td data-label="Изменён">
-                          {new Date(location.mtime).toLocaleString()}
+                        <td data-label={t("modified")}>
+                          {new Intl.DateTimeFormat(
+                            locale === "ru" ? "ru-RU" : "en-US",
+                            { dateStyle: "short", timeStyle: "short" },
+                          ).format(new Date(location.mtime))}
                         </td>
-                        <td data-label="Проверка">
+                        <td data-label={t("audioCheck")}>
                           <span>
                             <span
                               className="sources-chip"
                               data-status={location.probe_status}
                             >
-                              {PROBE_LABELS[location.probe_status]}
+                              {t(
+                                location.probe_status === "audio"
+                                  ? "streamAudio"
+                                  : location.probe_status === "no_audio"
+                                    ? "noAudio"
+                                    : "probeError",
+                              )}
                             </span>
                             {location.probe_status === "no_audio" && (
                               <span className="sources-note">
-                                Аудиодорожки нет: файл не может участвовать в
-                                анализе.
+                                {t("noAudioReason")}
                               </span>
                             )}
                             {location.probe_status === "probe_error" && (
@@ -248,8 +250,7 @@ export function SourceLocations({
                                   </span>
                                 )}
                                 <span className="sources-note">
-                                  Проверка повторится при следующем
-                                  сканировании.
+                                  {t("probeRetryNote")}
                                 </span>
                               </>
                             )}
@@ -261,14 +262,16 @@ export function SourceLocations({
                 </table>
               </div>
               <p className="sources-note">
-                Показано {fileCount(locations.length)}.
+                {t("shownCount", {
+                  count: fileCount(locations.length, locale),
+                })}
               </p>
               {nextCursor && (
                 <AppButton isDisabled={busy} onPress={() => void loadMore()}>
-                  Показать ещё
+                  {t("showMore")}
                 </AppButton>
               )}
-              {busy && <p role="status">Загрузка следующей страницы…</p>}
+              {busy && <p role="status">{t("loadingNextPage")}</p>}
             </>
           )}
         </>

@@ -124,7 +124,7 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       analysis results и старых файлов. Полный gate и вся CI `331eea29`, включая
       публикацию контейнера, прошли. Это service/DB/native-приёмка; общий browser
       E2E и визуальная приёмка остаются в пункте 11.
-3. [ ] **Recovery и явная republish.** Устранить расхождения восстановления и
+3. [x] **Recovery и явная republish.** Устранить расхождения восстановления и
    повторной публикации с утверждёнными правилами. **Приёмка:** interrupted,
    frozen target при актуальной authority регистрируется по соответствующим
    тегам/техническим параметрам без транскодирования и доказательства происхождения
@@ -201,6 +201,19 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       Специализированные intents и changed-path republish остаются открытыми.
       `2176e764` прошёл обычный полный hook, независимое ревью и всю
       [CI 42667650390](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42667650390).
+     - [x] Итоговая сверка на `ff63a3ca`: достижимые first-audio, manual rewrite,
+       cover/lyrics, automatic audio upgrade и same/changed-path republish имеют
+       interrupted adoption либо полный retry при неподходящем target. Existing
+       retry/result-сценарии проверяют повтор подготовки после ошибки settlement,
+       source-gone adoption, stale authority и completed redelivery без filesystem
+       callbacks. Forced republish отделён от ordinary unchanged в preview/admission.
+       Ранее не отмеченные срезы `6b51c3f7` (automatic lyrics recovery) и `278e0712`
+       (automatic audio upgrade recovery) прошли полный hook и всю CI:
+       [42707479372](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42707479372),
+       [43037394910](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43037394910).
+       Независимое ревью не нашло остатка критериев пункта; неиспользуемый
+       ProviderTags admission не требует восстановления снятой автоматической
+       перезаписи metadata. Общая browser/real-backend приёмка остаётся в пункте 11.
 4. [x] **Metadata ownership и provider edges.** Привести ownership, provider
    relationships и границы влияния metadata к документации; Local create/update
    не создаёт library entries. **Приёмка:** самостоятельный recording и позиция
@@ -428,6 +441,14 @@ React-прототипе. Не добавлять backwards compatibility: ст�
      прошёл;
      [CI 43106992902](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43106992902)
       прошёл полностью, включая Windows и публикацию образа. Browser и real-backend приёмка остаются открытыми.
+    - [x] `ff63a3ca`: инвариант достижимости library-графа запрещает release без
+      artist-связи и recording без позиции релиза. Удаление последней связи
+      удаляет library recording; общие recordings, provider records и исходники
+      сохраняются. Пустой track-list релиза допустим. Обычный полный hook и вся
+      [CI 43215814659](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43215814659)
+      прошли, включая Windows и публикацию контейнера; первый Windows shutdown
+      PostgreSQL завершился инфраструктурной ошибкой, повтор упавших jobs прошёл
+      без изменения кода. Production-удаление артиста остаётся открытым.
 10. [ ] **RU/EN integration.** Интегрировать локализацию во все затронутые
    production/prototype экраны; направление не зависит от завершения удаления
    или Local CRUD. **Приёмка:** все состояния и доступные имена доступны на обоих
@@ -439,9 +460,20 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       прошли. Browser component fixture сохранил назначение incoming при RU→EN,
       не выполнил дополнительных `/api/setup` запросов и обновил `document.lang`.
       Это не локализация всех экранов и не сквозная приёмка.
-    - [x] `17018e91`: локализованы собственные тексты экрана операций, fallback
-      ошибок и даты; сохранены серверные diagnostics и состояние операций.
-      Обычный полный hook прошёл; полный CI ещё не подтверждён.
+     - [x] `17018e91`: локализованы собственные тексты экрана операций, fallback
+       ошибок и даты; сохранены серверные diagnostics и состояние операций.
+       Обычный полный hook прошёл; полный CI ещё не подтверждён.
+     - [x] RU/EN-черновик Settings/Sources после `ff63a3ca` завершён: directory
+       picker, темы, managed tools и GitHub token form используют текущую локаль;
+       собственные сохранённые сообщения и HTTP fallback рендерятся из descriptors,
+       серверные diagnostics, пути и музыкальные данные не переводятся.
+       Независимое ревью выполнено. Production UI с контролируемыми API проверен
+       на 1440×900 и 390×844 в обеих темах и языках без горизонтального переполнения.
+       Переключение сохраняет Settings draft `23`, source-name draft и фокус;
+       открытый picker сохраняет тот же path input и несохранённый путь, без новых
+       API-запросов. Отмена picker не меняет внешний server path. Это fixture-based
+       browser-проверка, не real-backend приёмка; полный hook и CI этого среза
+       ещё должны завершиться.
 
 11. [ ] **Сквозная и визуальная приёмка.** Проверить актуальный provider-mediated
    путь на реальных данных и UI против sole prototype reference на desktop/mobile,

@@ -14,6 +14,8 @@ import type {
   UpdateSettingsBodyPublicationFormat,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
+import { settingsMessage } from "./settingsMessages";
 
 const sectionStyles = {
   panel:
@@ -69,12 +71,15 @@ export function SettingsGeneralSection({
   logLevel,
   onLogLevelChange,
 }: Props) {
+  const { locale } = useI18n();
+  const t = (key: Parameters<typeof settingsMessage>[1]) =>
+    settingsMessage(locale, key);
   return (
     <section
       aria-labelledby="settings-general-title"
       className={`settings-general-section ${sectionStyles.panel}`}
     >
-      <h2 id="settings-general-title">Общие</h2>
+      <h2 id="settings-general-title">{t("generalTitle")}</h2>
       <div className={sectionStyles.controls}>
         <div className="grid content-start gap-2">
           <Select
@@ -87,9 +92,11 @@ export function SettingsGeneralSection({
             }}
             className={sectionStyles.select}
           >
-            <Label className={sectionStyles.label}>Publication format</Label>
+            <Label className={sectionStyles.label}>
+              {t("publicationFormat")}
+            </Label>
             <Button
-              aria-label="Publication format"
+              aria-label={t("publicationFormat")}
               className={sectionStyles.trigger}
             >
               <SelectValue className={sectionStyles.value} />
@@ -97,10 +104,10 @@ export function SettingsGeneralSection({
             <Popover className={sectionStyles.popover}>
               <ListBox className={sectionStyles.listBox}>
                 <ListBoxItem id="source" className={sectionStyles.option}>
-                  Исходный формат
+                  {t("originalFormat")}
                 </ListBoxItem>
                 <ListBoxItem id="mka" className={sectionStyles.option}>
-                  MKA remux
+                  {t("mkaRemux")}
                 </ListBoxItem>
                 <ListBoxItem id="m4a" className={sectionStyles.option}>
                   M4A
@@ -110,8 +117,7 @@ export function SettingsGeneralSection({
           </Select>
           {publicationFormat === "m4a" && (
             <p className="m-0 text-xs text-[var(--muted)]" role="note">
-              M4A сохраняет AAC и ALAC без перекодирования; другие lossless
-              кодируются в ALAC, другие lossy — в AAC с потерями.
+              {t("m4aHelp")}
             </p>
           )}
         </div>
@@ -121,7 +127,9 @@ export function SettingsGeneralSection({
             onChange={onConcurrencyChange}
             className={sectionStyles.field}
           >
-            <Label className={sectionStyles.label}>Одновременные файлы</Label>
+            <Label className={sectionStyles.label}>
+              {t("concurrentFiles")}
+            </Label>
             <Input
               id="settings-concurrency"
               type="text"
@@ -139,8 +147,7 @@ export function SettingsGeneralSection({
             id="source-file-concurrency-help"
             className="m-0 text-xs text-[var(--muted)]"
           >
-            Положительное целое число файлов, обрабатываемых одновременно.
-            Значение должно точно представляться в браузере.
+            {t("concurrencyHelp")}
           </p>
           {concurrencyInvalid && (
             <p
@@ -148,12 +155,10 @@ export function SettingsGeneralSection({
               className="m-0 text-[var(--error)]"
               role="alert"
             >
-              Введите положительное целое число, точно представимое в браузере.
+              {t("concurrencyInvalid")}
             </p>
           )}
-          {concurrencyDirty && (
-            <p className="m-0">Есть несохранённое изменение параллельности.</p>
-          )}
+          {concurrencyDirty && <p className="m-0">{t("concurrencyDirty")}</p>}
           <AppButton
             className="justify-self-start"
             isDisabled={
@@ -163,7 +168,7 @@ export function SettingsGeneralSection({
             }
             onPress={onSaveConcurrency}
           >
-            Сохранить параллельность
+            {t("saveConcurrency")}
           </AppButton>
         </div>
         <div className="grid content-start gap-2">
@@ -174,11 +179,10 @@ export function SettingsGeneralSection({
               checked={sha256Enabled}
               onChange={(event) => onSha256Change(event.target.checked)}
             />
-            Вычислять SHA-256
+            {t("calculateSha")}
           </label>
           <p id="sha256-help" className="m-0 text-xs text-[var(--muted)]">
-            Настройка применяется к последующим анализам. Её изменение не
-            удаляет сохранённые результаты и не запускает массовый пересчёт.
+            {t("shaHelp")}
           </p>
         </div>
         <Select
@@ -188,8 +192,8 @@ export function SettingsGeneralSection({
           }}
           className={sectionStyles.select}
         >
-          <Label className={sectionStyles.label}>Log level</Label>
-          <Button aria-label="Log level" className={sectionStyles.trigger}>
+          <Label className={sectionStyles.label}>{t("logLevel")}</Label>
+          <Button aria-label={t("logLevel")} className={sectionStyles.trigger}>
             <SelectValue className={sectionStyles.value} />
           </Button>
           <Popover className={sectionStyles.popover}>

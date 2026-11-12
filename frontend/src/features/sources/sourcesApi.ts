@@ -1,95 +1,197 @@
-import {
-  apiResponseError,
-  errorMessage as sharedErrorMessage,
-} from "../../api/client/errors";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
+import type { Locale } from "../../i18n/locale";
+import { type SourceMessageKey, sourceMessage } from "./sourceMessages";
+
+export type SourceError =
+  | {
+      type: "message";
+      key: SourceMessageKey;
+      values?: Record<string, string | number>;
+      prefix?: SourceError;
+      suffix?: SourceError;
+    }
+  | {
+      type: "diagnostic";
+      message: string;
+      prefix?: SourceError;
+      suffix?: SourceError;
+    };
+
+class SourceRequestError extends Error {
+  constructor(readonly sourceError: SourceError) {
+    super("Source request failed");
+  }
+}
+
+export function sourceError(
+  key: SourceMessageKey,
+  values?: Record<string, string | number>,
+): SourceError {
+  return { type: "message", key, values };
+}
+
+export function sourceMessageFailure(
+  key: SourceMessageKey,
+  values?: Record<string, string | number>,
+  suffix?: SourceError,
+): Error {
+  return new SourceRequestError({ ...sourceError(key, values), suffix });
+}
+
+export function sourceDiagnosticFailure(
+  diagnostic: string,
+  suffix?: SourceError,
+): Error {
+  return new SourceRequestError({
+    type: "diagnostic",
+    message: diagnostic,
+    suffix,
+  });
+}
+
+export function renderSourceError(error: SourceError, locale: Locale): string {
+  if (error.type === "diagnostic")
+    return [
+      error.prefix && renderSourceError(error.prefix, locale),
+      error.message,
+      error.suffix && renderSourceError(error.suffix, locale),
+    ]
+      .filter(Boolean)
+      .join(" ");
+  return [
+    error.prefix && renderSourceError(error.prefix, locale),
+    sourceMessage(locale, error.key, error.values),
+    error.suffix && renderSourceError(error.suffix, locale),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 
 export type SourceAction = "list" | "read" | "create" | "edit" | "delete";
 
-export function message(reason: unknown): string {
-  return sharedErrorMessage(reason, "Не удалось выполнить запрос.");
+export function message(reason: unknown): SourceError {
+  if (reason instanceof SourceRequestError) return reason.sourceError;
+  if (reason instanceof Error)
+    return { type: "diagnostic", message: reason.message };
+  return sourceError("requestFailed");
+}
+
+export function sourceResponseError(
+  response: { status: number; data?: { detail?: string } },
+  fallback: SourceError,
+): Error {
+  return new SourceRequestError(
+    response.data?.detail
+      ? { type: "diagnostic", message: response.data.detail }
+      : fallback,
+  );
 }
 
 export function sourceFailure(
   action: SourceAction,
   response: { status: number; data?: { detail?: string } },
+  _locale?: Locale,
 ): Error {
-  if (response.status === 404) {
-    return new Error("Каталог не найден: возможно, его удалили в другом окне.");
-  }
-  if (response.status === 409) {
-    return new Error(
-      "Каталог участвует в активном сканировании. Изменение пути, отключение и удаление отклонены сервером: повторите после завершения сканирования.",
-    );
-  }
-  if (response.status === 400 && action === "delete") {
-    return new Error(
-      "Подтверждение удаления не совпало с текущим каталогом: обновите страницу и повторите.",
-    );
-  }
-  if (response.status === 400 && (action === "create" || action === "edit")) {
-    return new Error(
-      "Сервер отклонил каталог: путь должен быть существующим читаемым каталогом на сервере, не пересекаться с каталогами MeloTrove и не повторять уже зарегистрированный путь.",
-    );
-  }
-  return apiResponseError(response, `Сервер вернул ошибку ${response.status}.`);
+  if (response.status === 404)
+    return new SourceRequestError(sourceError("sourceMissing"));
+  if (response.status === 409)
+    return new SourceRequestError(sourceError("sourceConflict"));
+  if (response.status === 400 && action === "delete")
+    return new SourceRequestError(sourceError("deleteConfirmationStale"));
+  if (response.status === 400 && (action === "create" || action === "edit"))
+    return new SourceRequestError(sourceError("sourcePathRejected"));
+  return sourceResponseError(
+    response,
+    sourceError("serverError", { status: response.status }),
+  );
 }
 
-export function statusLabel(status: SourceRootResponse["status"]): string {
-  if (status === "available") return "Доступен";
-  if (status === "unavailable") return "Недоступен";
-  return "Не проверен";
+export function statusLabel(
+  status: SourceRootResponse["status"],
+  locale: Locale,
+): string {
+  if (status === "available") return sourceMessage(locale, "sourceAvailable");
+  if (status === "unavailable")
+    return sourceMessage(locale, "sourceUnavailable");
+  return sourceMessage(locale, "sourceUnchecked");
 }
 
-// Russian plural forms do not follow the count alone: 1 файл, 2 файла, 11 файлов.
-export function fileCount(count: number): string {
-  const mod100 = count % 100;
-  const mod10 = count % 10;
-  if (mod100 >= 11 && mod100 <= 14) return `${count} файлов`;
-  if (mod10 === 1) return `${count} файл`;
-  if (mod10 >= 2 && mod10 <= 4) return `${count} файла`;
-  return `${count} файлов`;
+export function fileCount(count: number, locale: Locale): string {
+  const formatted = new Intl.NumberFormat(
+    locale === "ru" ? "ru-RU" : "en-US",
+  ).format(count);
+  const plural = new Intl.PluralRules(
+    locale === "ru" ? "ru-RU" : "en-US",
+  ).select(count);
+  const key =
+    locale === "ru"
+      ? plural === "one"
+        ? "fileCountOne"
+        : plural === "few"
+          ? "fileCountFew"
+          : "fileCountMany"
+      : count === 1
+        ? "fileCountOne"
+        : "fileCountOther";
+  return sourceMessage(locale, key, { count: formatted });
 }
 
-export function lastScanLabel(root: SourceRootResponse): string {
+export function lastScanLabel(
+  root: SourceRootResponse,
+  locale: Locale,
+): string {
   return root.last_successful_scan_at
-    ? new Date(root.last_successful_scan_at).toLocaleString()
-    : "Не выполнялось";
+    ? new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-US", {
+        dateStyle: "short",
+        timeStyle: "short",
+      }).format(new Date(root.last_successful_scan_at))
+    : sourceMessage(locale, "neverScanned");
 }
 
-// Generation 0 records that no successful traversal was ever applied.
-export function inventoryLabel(root: SourceRootResponse): string {
+export function inventoryLabel(
+  root: SourceRootResponse,
+  locale: Locale,
+): string {
   return root.scan_generation === 0
-    ? "Не сканировался"
-    : fileCount(root.location_count);
+    ? sourceMessage(locale, "neverScanned")
+    : fileCount(root.location_count, locale);
 }
 
-export function inventoryAvailabilityNote(root: SourceRootResponse): string {
+export function inventoryAvailabilityNote(
+  root: SourceRootResponse,
+  locale: Locale,
+): string {
   return root.status === "unavailable" && root.scan_generation > 0
-    ? "Каталог недоступен: показан инвентарь последнего успешного сканирования."
+    ? sourceMessage(locale, "scannedInventoryUnavailable")
     : "";
 }
 
-export function inventoryScopeNote(root: SourceRootResponse): string {
+export function inventoryScopeNote(
+  root: SourceRootResponse,
+  locale: Locale,
+): string {
   return root.stale && root.inventory_path
-    ? `Инвентарь относится к прежнему пути ${root.inventory_path}.`
+    ? sourceMessage(locale, "oldInventoryPath", { path: root.inventory_path })
     : "";
 }
 
-export function inventoryEmptyNote(root: SourceRootResponse): string {
+export function inventoryEmptyNote(
+  root: SourceRootResponse,
+  locale: Locale,
+): string {
   return root.status === "available" &&
     root.scan_generation > 0 &&
     root.location_count === 0
-    ? "Последнее успешное сканирование не нашло файлов с поддерживаемым аудиорасширением."
+    ? sourceMessage(locale, "emptyInventory")
     : "";
 }
 
-export function filesSummary(root: SourceRootResponse): string {
-  if (root.scan_generation === 0) {
-    return "Инвентаря нет: каталог ещё ни разу не сканировался успешно.";
-  }
-  if (root.location_count === 0) {
-    return "Последнее успешное сканирование не нашло ни одного файла с поддерживаемым аудиорасширением.";
-  }
-  return `В инвентаре последнего успешного сканирования ${fileCount(root.location_count)}.`;
+export function filesSummary(root: SourceRootResponse, locale: Locale): string {
+  if (root.scan_generation === 0)
+    return sourceMessage(locale, "noInventoryYet");
+  if (root.location_count === 0)
+    return sourceMessage(locale, "noSupportedFiles");
+  return sourceMessage(locale, "inventorySummary", {
+    count: fileCount(root.location_count, locale),
+  });
 }

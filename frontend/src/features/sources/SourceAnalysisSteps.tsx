@@ -1,8 +1,8 @@
 import type { SourceTechnicalResultResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
 import { SourceTechnicalResult } from "./SourceTechnicalResult";
-
-const unknown = "Неизвестно";
+import { sourceMessage } from "./sourceMessages";
 
 export type SourceAnalysisStepName =
   | "sha256"
@@ -66,34 +66,13 @@ export interface SourceAnalysisStepsProps {
 
 const stepNames: ReadonlyArray<{
   readonly name: SourceAnalysisStepName;
-  readonly label: string;
+  readonly label: "sha256" | "probeStep" | "fingerprint" | "metadata";
 }> = [
-  { name: "sha256", label: "SHA-256" },
-  { name: "probe", label: "Технический анализ ffprobe" },
-  { name: "fingerprint", label: "Акустический отпечаток" },
-  { name: "metadata", label: "Метаданные тегов" },
+  { name: "sha256", label: "sha256" },
+  { name: "probe", label: "probeStep" },
+  { name: "fingerprint", label: "fingerprint" },
+  { name: "metadata", label: "metadata" },
 ];
-
-function stateLabel(state: SourceAnalysisStepState): string {
-  switch (state) {
-    case "not_requested":
-      return "Не запрошено";
-    case "loading":
-      return "Загрузка";
-    case "queued":
-      return "В очереди";
-    case "running":
-      return "Выполняется";
-    case "failed":
-      return "Ошибка";
-    case "succeeded":
-      return "Завершено";
-    case "skipped":
-      return "Пропущено";
-    case "pending":
-      return "Ожидает выполнения";
-  }
-}
 
 function isBusy(state: SourceAnalysisStepState): boolean {
   return (
@@ -102,6 +81,17 @@ function isBusy(state: SourceAnalysisStepState): boolean {
     state === "running" ||
     state === "pending"
   );
+}
+
+function stateMessageKey(state: SourceAnalysisStepState) {
+  switch (state) {
+    case "not_requested":
+      return "notRequested";
+    case "loading":
+      return "loadingState";
+    default:
+      return state;
+  }
 }
 
 export function SourceAnalysisSteps({
@@ -118,20 +108,33 @@ export function SourceAnalysisSteps({
   activeFingerprintVersion,
   matching,
 }: SourceAnalysisStepsProps) {
+  const { locale } = useI18n();
+  const t = (
+    key: Parameters<typeof sourceMessage>[1],
+    values?: Record<string, string | number>,
+  ) => sourceMessage(locale, key, values);
+  const unknown = t("unknown");
+  const stepLabel = (name: SourceAnalysisStepName) =>
+    t(stepNames.find((step) => step.name === name)?.label ?? "metadata");
   const firstError = stepNames
-    .map(({ name, label }) => ({ name, label, error: steps[name]?.safeError }))
+    .map(({ name }) => ({
+      name,
+      label: stepLabel(name),
+      error: steps[name]?.safeError,
+    }))
     .find(({ error }) => error);
 
   return (
     <section className="sources-panel" aria-labelledby="analysis-steps-title">
-      <h2 id="analysis-steps-title">Этапы анализа файла</h2>
+      <h2 id="analysis-steps-title">{t("analysisSteps")}</h2>
       {firstError && (
         <p role="alert">
-          Ошибка этапа «{firstError.label}»: {firstError.error}
+          {t("stepError", { step: firstError.label })} {firstError.error}
         </p>
       )}
       <ul>
-        {stepNames.map(({ name, label }) => {
+        {stepNames.map(({ name }) => {
+          const label = stepLabel(name);
           const step = steps[name] ?? { state: "not_requested" as const };
           const busy = isBusy(step.state);
           const hasSuccess =
@@ -142,7 +145,9 @@ export function SourceAnalysisSteps({
           return (
             <li key={name} aria-label={label}>
               <h3>{label}</h3>
-              <p>Состояние: {stateLabel(step.state)}</p>
+              <p>
+                {t("state")}: {t(stateMessageKey(step.state))}
+              </p>
               {step.safeError && <p role="alert">{step.safeError}</p>}
               {step.skipReason && (
                 <p className="sources-note">{step.skipReason}</p>
@@ -164,17 +169,17 @@ export function SourceAnalysisSteps({
               {name === "fingerprint" && fingerprint && (
                 <>
                   <p>
-                    Отпечаток: <code>{fingerprint.value}</code>
+                    {t("fingerprintValue")} <code>{fingerprint.value}</code>
                   </p>
                   <p>
-                    Версия fpcalc результата: {fingerprint.version}
+                    {t("resultVersion")} {fingerprint.version}
                     {activeFingerprintVersion !== undefined &&
                       activeFingerprintVersion !== fingerprint.version &&
-                      ` · Активная версия fpcalc: ${activeFingerprintVersion}`}
+                      ` · ${t("activeVersion")} ${activeFingerprintVersion}`}
                   </p>
                   {activeFingerprintVersion === undefined && (
                     <p className="sources-note">
-                      Активная версия fpcalc недоступна.
+                      {t("activeVersionUnavailable")}
                     </p>
                   )}
                   {fingerprint.provenance && (
@@ -185,7 +190,7 @@ export function SourceAnalysisSteps({
               {name === "metadata" && metadata && (
                 <>
                   <p>
-                    Источник: {metadata.provenance.name}{" "}
+                    {t("metadataSource")} {metadata.provenance.name}{" "}
                     {metadata.provenance.version}
                   </p>
                   <p className="sources-note">{metadata.provenance.contract}</p>
@@ -201,13 +206,13 @@ export function SourceAnalysisSteps({
                       ))}
                     </dl>
                   ) : (
-                    <p className="sources-note">Сохранённых тегов нет.</p>
+                    <p className="sources-note">{t("noSavedTags")}</p>
                   )}
                 </>
               )}
               {step.state === "failed" && retryAvailable[name] && (
                 <AppButton isDisabled={busy} onPress={() => onRetry(name)}>
-                  Повторить этап «{label}»
+                  {t("retryStep", { step: label })}
                 </AppButton>
               )}
               {name === "fingerprint" && (
@@ -215,25 +220,23 @@ export function SourceAnalysisSteps({
                   isDisabled={busy || !fingerprintRerunAvailable}
                   onPress={onRerunFingerprint}
                 >
-                  Повторно вычислить отпечаток
+                  {t("rerunFingerprint")}
                 </AppButton>
               )}
               {!successful &&
                 step.state !== "failed" &&
                 step.state !== "skipped" &&
                 step.state !== "not_requested" && (
-                  <p className="sources-note">
-                    Успешный результат этапа отсутствует.
-                  </p>
+                  <p className="sources-note">{t("noSuccessfulStep")}</p>
                 )}
             </li>
           );
         })}
       </ul>
       <section aria-labelledby="matching-title">
-        <h3 id="matching-title">Сопоставление</h3>
+        <h3 id="matching-title">{t("matching")}</h3>
         <p>
-          {matching.eligible ? "Доступно" : "Недоступно"}
+          {matching.eligible ? t("available") : t("unavailable")}
           {matching.reason && ` · ${matching.reason}`}
         </p>
       </section>

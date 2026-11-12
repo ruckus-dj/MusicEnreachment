@@ -1,17 +1,28 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
+import { sourceMessage } from "./sourceMessages";
+import { renderSourceError } from "./sourcesApi";
 import { useSourceArtifactCleanup } from "./useSourceArtifactCleanup";
 
-const itemStateLabel: Record<string, string> = {
-  cleanup_eligible: "Ожидает очистки",
-  cleanup_failed: "Предыдущая очистка не удалась",
-  deleted: "Удалён",
-  missing: "Файл уже отсутствует",
-  failed: "Не удалось удалить",
-  claimed: "Выполняется",
-};
-
 export function SourceArtifactCleanupPanel() {
+  const { locale } = useI18n();
+  const t = (
+    key: Parameters<typeof sourceMessage>[1],
+    values?: Record<string, string | number>,
+  ) => sourceMessage(locale, key, values);
+  const stateText = (state: string) =>
+    t(
+      state === "queued"
+        ? "queued"
+        : state === "running"
+          ? "running"
+          : state === "succeeded"
+            ? "succeeded"
+            : state === "failed"
+              ? "failed"
+              : "unknown",
+    );
   const cleanup = useSourceArtifactCleanup();
   const [confirmation, setConfirmation] = useState<string[] | undefined>();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -47,42 +58,41 @@ export function SourceArtifactCleanupPanel() {
 
   return (
     <section aria-labelledby="artifact-cleanup-title" className="sources-panel">
-      <h2 id="artifact-cleanup-title">Временные копии анализа</h2>
-      <p>
-        Здесь показана ограниченная сервером подборка копий, для которых
-        разрешена явная очистка. Исходные файлы не затрагиваются.
-      </p>
+      <h2 id="artifact-cleanup-title">{t("cleanupTitle")}</h2>
+      <p>{t("cleanupDescription")}</p>
 
       {cleanup.loading && cleanup.batchCount === undefined && (
-        <p role="status">Загрузка доступных копий…</p>
+        <p role="status">{t("loadingCopies")}</p>
       )}
       {cleanup.error && (
         <>
           <p ref={alert} tabIndex={-1} role="alert">
-            {cleanup.error}
+            {renderSourceError(cleanup.error, locale)}
           </p>
           <AppButton onPress={() => void cleanup.load()}>
-            Обновить подборку
+            {t("refreshCopies")}
           </AppButton>
         </>
       )}
       {cleanup.batchCount !== undefined && (
         <p role="status">
-          В текущей подборке: {cleanup.batchCount}. Это количество записей в
-          возвращённом пакете, а не общее число копий или лимит удаления.
-          Максимум в пакете — 1000.
+          {t("currentBatch", {
+            count: new Intl.NumberFormat(
+              locale === "ru" ? "ru-RU" : "en-US",
+            ).format(cleanup.batchCount),
+          })}
         </p>
       )}
       {cleanup.loading && cleanup.batchCount !== undefined && (
-        <p role="status">Обновление подборки…</p>
+        <p role="status">{t("refreshingCopies")}</p>
       )}
 
       {cleanup.batchCount !== undefined && cleanup.candidates.length === 0 ? (
-        <p>Нет копий, доступных для очистки.</p>
+        <p>{t("noCopies")}</p>
       ) : (
         cleanup.candidates.length > 0 && (
           <>
-            <ul aria-label="Копии, доступные для очистки">
+            <ul aria-label={t("cleanupCandidates")}>
               {cleanup.candidates.map((candidate) => (
                 <li key={candidate.artifact_id}>
                   <label>
@@ -93,7 +103,21 @@ export function SourceArtifactCleanupPanel() {
                       onChange={() => cleanup.toggle(candidate.artifact_id)}
                     />{" "}
                     <code>{candidate.relative_path}</code> —{" "}
-                    {itemStateLabel[candidate.state] ?? candidate.state}
+                    {t(
+                      candidate.state === "cleanup_eligible"
+                        ? "cleanupEligible"
+                        : candidate.state === "cleanup_failed"
+                          ? "cleanupFailed"
+                          : candidate.state === "deleted"
+                            ? "deleted"
+                            : candidate.state === "missing"
+                              ? "missing"
+                              : candidate.state === "failed"
+                                ? "deletionFailed"
+                                : candidate.state === "claimed"
+                                  ? "claimed"
+                                  : "unknown",
+                    )}
                   </label>
                 </li>
               ))}
@@ -109,18 +133,19 @@ export function SourceArtifactCleanupPanel() {
                 setConfirmation([...cleanup.selected]);
               }}
             >
-              Очистить выбранные ({cleanup.selected.length})
+              {t("cleanupSelected", {
+                count: new Intl.NumberFormat(
+                  locale === "ru" ? "ru-RU" : "en-US",
+                ).format(cleanup.selected.length),
+              })}
             </AppButton>
           </>
         )
       )}
 
       {selectedNotInBatch.length > 0 && (
-        <section aria-label="Выбранные копии вне текущей подборки">
-          <p>
-            Эти выбранные идентификаторы больше не входят в текущую подборку;
-            они не заменены другими копиями:
-          </p>
+        <section aria-label={t("outsideBatch")}>
+          <p>{t("outsideBatchHelp")}</p>
           <ul>
             {selectedNotInBatch.map((id) => (
               <li key={id}>
@@ -129,7 +154,7 @@ export function SourceArtifactCleanupPanel() {
                   isDisabled={cleanup.isPending || cleanup.busy}
                   onPress={() => cleanup.toggle(id)}
                 >
-                  Снять выбор
+                  {t("deselect")}
                 </AppButton>
               </li>
             ))}
@@ -139,39 +164,50 @@ export function SourceArtifactCleanupPanel() {
 
       {operation && (
         <section aria-labelledby="artifact-cleanup-operation-title">
-          <h3 id="artifact-cleanup-operation-title">Очистка копий</h3>
+          <h3 id="artifact-cleanup-operation-title">{t("cleanupOperation")}</h3>
           {cleanup.isPending ? (
             <p role="status">
-              Операция {operation.state}: {operation.stage}.
+              {t("operationRunning", {
+                state: stateText(operation.state),
+                stage: operation.stage,
+              })}
             </p>
           ) : (
             <p role="status">
-              Операция завершена: {operation.state}.
+              {t("operationComplete", { state: stateText(operation.state) })}
               {operation.safe_error ? ` ${operation.safe_error}` : ""}
             </p>
           )}
           {cleanup.streamError && cleanup.isPending && (
-            <p role="status">
-              Поток обновлений прерван; клиент продолжает ждать актуальный
-              снимок операции.
-            </p>
+            <p role="status">{t("cleanupStreamInterrupted")}</p>
           )}
           {cleanup.results && cleanup.results.length > 0 && (
-            <ul aria-label="Результаты очистки">
+            <ul aria-label={t("cleanupResults")}>
               {cleanup.results.map((result) => (
                 <li key={result.artifact_id}>
                   <code>{result.artifact_id}</code>:{" "}
-                  {itemStateLabel[result.state] ?? result.state}
+                  {t(
+                    result.state === "cleanup_eligible"
+                      ? "cleanupEligible"
+                      : result.state === "cleanup_failed"
+                        ? "cleanupFailed"
+                        : result.state === "deleted"
+                          ? "deleted"
+                          : result.state === "missing"
+                            ? "missing"
+                            : result.state === "failed"
+                              ? "deletionFailed"
+                              : result.state === "claimed"
+                                ? "claimed"
+                                : "unknown",
+                  )}
                   {result.safe_error ? ` — ${result.safe_error}` : ""}
                 </li>
               ))}
             </ul>
           )}
           {!cleanup.isPending && !cleanup.results?.length && (
-            <p>
-              Сервер не вернул результаты по отдельным копиям; состояние
-              удаления неизвестно.
-            </p>
+            <p>{t("unknownRemoval")}</p>
           )}
         </section>
       )}
@@ -236,10 +272,13 @@ export function SourceArtifactCleanupPanel() {
             }
           }}
         >
-          <h2 id="artifact-cleanup-confirm-title">Очистить выбранные копии?</h2>
+          <h2 id="artifact-cleanup-confirm-title">{t("confirmCleanup")}</h2>
           <p>
-            Будут отправлены только эти {confirmation.length} идентификатора из
-            показанного снимка списка:
+            {t("confirmationIds", {
+              count: new Intl.NumberFormat(
+                locale === "ru" ? "ru-RU" : "en-US",
+              ).format(confirmation.length),
+            })}
           </p>
           <ul>
             {confirmation.map((id) => (
@@ -248,8 +287,8 @@ export function SourceArtifactCleanupPanel() {
               </li>
             ))}
           </ul>
-          <p>Файлы источника не удаляются.</p>
-          <AppButton onPress={closeConfirmation}>Отмена</AppButton>
+          <p>{t("sourceFilesNotDeleted")}</p>
+          <AppButton onPress={closeConfirmation}>{t("cancel")}</AppButton>
           <AppButton
             isDisabled={cleanup.busy}
             onPress={() => {
@@ -259,7 +298,7 @@ export function SourceArtifactCleanupPanel() {
               void cleanup.start(ids);
             }}
           >
-            Подтвердить очистку
+            {t("confirmCleanupAction")}
           </AppButton>
         </dialog>
       )}

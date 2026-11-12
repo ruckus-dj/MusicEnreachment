@@ -6,11 +6,6 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  apiResponseError,
-  errorMessage as sharedErrorMessage,
-} from "../../api/client/errors";
-import { successful } from "../../api/client/response";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
   activateToolInstallation,
@@ -54,6 +49,11 @@ import {
   registerHashNavigationGuard,
   resolveHashNavigation,
 } from "../../navigation/hashLocation";
+import {
+  operationKindLabel,
+  operationStageLabel,
+  operationStateLabel,
+} from "../operations/operationPresentation";
 import { GitHubTokenForm } from "../tools/GitHubTokenForm";
 import {
   loadManagedToolCatalogs,
@@ -70,6 +70,13 @@ import {
   settingsDraftIsDirty,
   writeSettingsDraft,
 } from "./settingsDraft";
+import {
+  SettingsMessageError,
+  type SettingsMessageKey,
+  type SettingsMessageValues,
+  settingsHttpError,
+  settingsMessage,
+} from "./settingsMessages";
 import "../setup/setup.css";
 import "./settings.css";
 
@@ -97,7 +104,6 @@ type ConflictGroup =
   | "outputDirectory";
 type ConflictConfirmation = {
   group: ConflictGroup;
-  label: string;
   currentValue: unknown;
   onConfirm: () => void;
 };
@@ -116,6 +122,15 @@ type MusicBrainzSavedSnapshot = {
   delay: number;
   throttle: boolean;
 };
+type SettingsNotice = {
+  key: SettingsMessageKey;
+  values?: SettingsMessageValues;
+};
+type SettingsFeedback = string | SettingsNotice;
+const settingsNotice = (
+  key: SettingsMessageKey,
+  values?: SettingsMessageValues,
+): SettingsNotice => ({ key, values });
 
 function persistedTextDraft(
   value: unknown,
@@ -145,25 +160,36 @@ type SettingsSaveOutcome = {
     | "all";
   validSavedTarget?: boolean;
   confirmationRead?: boolean;
-  message?: string;
+  message?: SettingsFeedback;
 };
-class SettingsConflictError extends Error {}
-class SettingsValidationError extends Error {}
+class SettingsLocalizedError extends SettingsMessageError {}
+class SettingsConflictError extends SettingsLocalizedError {}
+class SettingsValidationError extends Error {
+  readonly feedback: SettingsFeedback;
 
-function conflictLabel(group: ConflictGroup) {
+  constructor(reason: Error) {
+    super();
+    this.feedback =
+      reason instanceof SettingsMessageError
+        ? reason.descriptor
+        : reason.message;
+  }
+}
+
+function conflictLabel(group: ConflictGroup, locale: "en" | "ru"): string {
   switch (group) {
     case "concurrency":
-      return "параллельность анализа";
+      return settingsMessage(locale, "conflictConcurrency");
     case "publicationTemplate":
-      return "шаблон пути публикации";
+      return settingsMessage(locale, "conflictTemplate");
     case "musicBrainz":
-      return "настройки MusicBrainz";
+      return settingsMessage(locale, "conflictMusicBrainz");
     case "workDirectory":
-      return "рабочая папка";
+      return settingsMessage(locale, "conflictWorkDirectory");
     case "toolsDirectory":
-      return "каталог инструментов";
+      return settingsMessage(locale, "conflictToolsDirectory");
     case "outputDirectory":
-      return "каталог публикации";
+      return settingsMessage(locale, "conflictOutputDirectory");
   }
 }
 
@@ -375,9 +401,27 @@ function validMusicBrainzBaseURL(value: string) {
   }
 }
 
-function message(reason: unknown): string {
-  return sharedErrorMessage(reason, "Не удалось выполнить запрос.");
+function message(reason: unknown): SettingsFeedback {
+  if (reason instanceof SettingsMessageError) return reason.descriptor;
+  if (reason instanceof SettingsValidationError) return reason.feedback;
+  if (reason instanceof Error) return reason.message;
+  return settingsNotice("requestFailed");
 }
+
+function feedbackText(feedback: SettingsFeedback, locale: "en" | "ru") {
+  return typeof feedback === "string"
+    ? feedback
+    : settingsMessage(locale, feedback.key, feedback.values);
+}
+
+function settingsSuccessful<
+  T extends { status: number },
+  S extends T["status"],
+>(response: T, status: S): Extract<T, { status: S }> {
+  if (response.status !== status) throw settingsHttpError(response);
+  return response as Extract<T, { status: S }>;
+}
+
 function activeOperation(operation: OperationResponse) {
   return (
     operation.state === "queued" ||
@@ -388,6 +432,10 @@ function activeOperation(operation: OperationResponse) {
 
 export function SettingsScreen() {
   const { locale } = useI18n();
+  const t = (
+    key: Parameters<typeof settingsMessage>[1],
+    values?: Parameters<typeof settingsMessage>[2],
+  ) => settingsMessage(locale, key, values);
   const [restoredSettingsDraft] = useState(() =>
     readSettingsDraft(getSettingsDraftStorage()),
   );
@@ -395,7 +443,9 @@ export function SettingsScreen() {
   const [conflictConfirmation, setConflictConfirmation] =
     useState<ConflictConfirmation>();
   const [navigationAttempt, setNavigationAttempt] = useState<HashAttempt>();
-  const [navigationError, setNavigationError] = useState("");
+  const [navigationError, setNavigationError] = useState<SettingsFeedback | "">(
+    "",
+  );
   const [activeConflicts, setActiveConflicts] = useState<
     Partial<Record<ConflictGroup, boolean>>
   >({});
@@ -409,7 +459,7 @@ export function SettingsScreen() {
     {},
   );
   const [catalogBusy, setCatalogBusy] = useState(false);
-  const [catalogError, setCatalogError] = useState("");
+  const [catalogError, setCatalogError] = useState<SettingsFeedback | "">("");
   const [checkedAt, setCheckedAt] = useState(
     () => localStorage.getItem(catalogCheckedKey) || "",
   );
@@ -484,12 +534,18 @@ export function SettingsScreen() {
   const [generalFailures, setGeneralFailures] = useState<
     Partial<Record<GeneralSettingKey, GeneralSettingFailure>>
   >({});
-  const [error, setError] = useState("");
-  const [loadError, setLoadError] = useState("");
-  const [installDialogError, setInstallDialogError] = useState("");
-  const [moveDialogError, setMoveDialogError] = useState("");
-  const [outputDialogError, setOutputDialogError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [error, setError] = useState<SettingsFeedback | "">("");
+  const [loadError, setLoadError] = useState<SettingsFeedback | "">("");
+  const [installDialogError, setInstallDialogError] = useState<
+    SettingsFeedback | ""
+  >("");
+  const [moveDialogError, setMoveDialogError] = useState<SettingsFeedback | "">(
+    "",
+  );
+  const [outputDialogError, setOutputDialogError] = useState<
+    SettingsFeedback | ""
+  >("");
+  const [notice, setNotice] = useState<SettingsNotice | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const latestNavigationAttempt = useRef<HashAttempt | undefined>(undefined);
   const capturedNavigationAnchor = useRef<HTMLAnchorElement | null>(null);
@@ -709,7 +765,7 @@ export function SettingsScreen() {
       isCurrent: () => boolean = () => mountedRef.current,
     ) => {
       const generation = mountGeneration.current;
-      const response = successful(await readSettings(), 200);
+      const response = settingsSuccessful(await readSettings(), 200);
       if (
         !mountedRef.current ||
         mountGeneration.current !== generation ||
@@ -724,7 +780,6 @@ export function SettingsScreen() {
 
   function confirmConflictingSave(
     group: ConflictGroup,
-    label: string,
     currentValue: unknown,
     onConfirm: () => void,
   ): boolean {
@@ -735,7 +790,7 @@ export function SettingsScreen() {
       onConfirm();
       return false;
     }
-    setConflictConfirmation({ group, label, currentValue, onConfirm });
+    setConflictConfirmation({ group, currentValue, onConfirm });
     return true;
   }
 
@@ -766,16 +821,18 @@ export function SettingsScreen() {
         });
       } catch (reason) {
         throw new SettingsConflictError(
-          `Настройки изменились на сервере. Черновик сохранён, но текущее состояние не удалось обновить: ${message(reason)}`,
+          settingsNotice("settingsConflictRefreshFailed", {
+            detail: message(reason),
+          }),
         );
       }
       throw new SettingsConflictError(
-        "Настройки изменились на сервере. Текущий снимок обновлён; черновик сохранён для разрешения конфликта.",
+        settingsNotice("settingsConflictDraftKept"),
       );
     }
     if (response.status === 400 || response.status === 422)
-      throw new SettingsValidationError(apiResponseError(response).message);
-    return successful(response, expectedStatus);
+      throw new SettingsValidationError(settingsHttpError(response));
+    return settingsSuccessful(response, expectedStatus);
   }
 
   const refreshInstallations = useCallback(
@@ -785,8 +842,8 @@ export function SettingsScreen() {
         listInstallations({ package_kind: "ffmpeg" }),
         listInstallations({ package_kind: "fpcalc" }),
       ]);
-      successful(ffmpeg, 200);
-      successful(fpcalc, 200);
+      settingsSuccessful(ffmpeg, 200);
+      settingsSuccessful(fpcalc, 200);
       if (
         !mountedRef.current ||
         mountGeneration.current !== generation ||
@@ -804,7 +861,7 @@ export function SettingsScreen() {
   const refreshOperations = useCallback(
     async (isCurrent: () => boolean = () => mountedRef.current) => {
       const generation = mountGeneration.current;
-      const response = successful(await listOperations(), 200);
+      const response = settingsSuccessful(await listOperations(), 200);
       const active = (response.data.operations || []).filter(activeOperation);
       if (
         !mountedRef.current ||
@@ -941,7 +998,7 @@ export function SettingsScreen() {
     setCatalogBusy(true);
     setCatalogError("");
     try {
-      const catalogs = await loadManagedToolCatalogs();
+      const catalogs = await loadManagedToolCatalogs(settingsHttpError);
       if (!isCurrent()) return;
       setCatalog(catalogs);
       const timestamp = new Date().toISOString();
@@ -1141,7 +1198,7 @@ export function SettingsScreen() {
   >(
     action: (saved: C) => Promise<T>,
     status: T["status"],
-    successText: string,
+    successText: SettingsNotice,
     capture: () => C,
     acknowledge: (fresh: SetupStateBody, revision: number) => void,
     beginDraftSave: (revision: number) => void,
@@ -1165,7 +1222,7 @@ export function SettingsScreen() {
     if (manageBusy && isCurrent()) setBusy(true);
     if (isCurrent()) {
       setError("");
-      setNotice("");
+      setNotice(null);
     }
     let phase: GeneralFailurePhase = "write";
     try {
@@ -1175,8 +1232,10 @@ export function SettingsScreen() {
       try {
         await refreshState((fresh) => acknowledge(fresh, savedDraft.revision));
       } catch (reason) {
-        throw new Error(
-          `Настройки приняты сервером, но не удалось подтвердить их чтением: ${message(reason)}`,
+        throw new SettingsLocalizedError(
+          settingsNotice("settingsAcceptedRefreshFailed", {
+            detail: message(reason),
+          }),
         );
       }
       if (isCurrent() && (shouldAnnounce?.(savedDraft) ?? true))
@@ -1218,7 +1277,7 @@ export function SettingsScreen() {
   >(
     action: (saved: C) => Promise<T>,
     status: T["status"],
-    successText: string,
+    successText: SettingsNotice,
     capture: () => C,
     acknowledge: (fresh: SetupStateBody, revision: number) => void,
     beginDraftSave: (revision: number) => void,
@@ -1280,7 +1339,7 @@ export function SettingsScreen() {
           } satisfies UpdateSettingsExpectedBody,
         }),
       204,
-      "Формат публикации сохранён.",
+      settingsNotice("publicationFormatSaved"),
       publicationFormat.capture,
       (fresh, revision) => {
         const confirmed =
@@ -1290,8 +1349,8 @@ export function SettingsScreen() {
               ? "m4a"
               : "mka";
         if (confirmed !== value)
-          throw new Error(
-            `Сервер не подтвердил формат публикации ${value}; сейчас сохранено ${confirmed}.`,
+          throw new SettingsLocalizedError(
+            settingsNotice("serverDidNotConfirmFormat", { value, confirmed }),
           );
         confirmedPublicationFormat.current = confirmed;
         publicationFormat.acknowledge(confirmed, revision);
@@ -1323,12 +1382,11 @@ export function SettingsScreen() {
       return {
         status: "invalid",
         group: "concurrency",
-        message: "Параллельность должна быть положительным целым числом.",
+        message: settingsNotice("concurrencyMustBePositive"),
       };
     let attempt: Promise<SettingsSaveOutcome> | undefined;
     const confirmationPending = confirmConflictingSave(
       "concurrency",
-      "Параллельность анализа",
       current,
       () => {
         attempt = mutate(
@@ -1345,7 +1403,7 @@ export function SettingsScreen() {
               } satisfies UpdateSettingsExpectedBody,
             }),
           204,
-          "Параллельность анализа сохранена.",
+          settingsNotice("concurrencySaved"),
           sourceFileConcurrency.capture,
           (fresh, revision) =>
             sourceFileConcurrency.acknowledge(
@@ -1376,12 +1434,11 @@ export function SettingsScreen() {
       return {
         status: "invalid",
         group: "publicationTemplate",
-        message: "Укажите шаблон пути публикации.",
+        message: settingsNotice("templateRequired"),
       };
     let attempt: Promise<SettingsSaveOutcome> | undefined;
     const confirmationPending = confirmConflictingSave(
       "publicationTemplate",
-      "Шаблон пути публикации",
       current,
       () => {
         attempt = mutate(
@@ -1396,7 +1453,7 @@ export function SettingsScreen() {
               } satisfies UpdateSettingsExpectedBody,
             }),
           204,
-          "Шаблон пути публикации сохранён.",
+          settingsNotice("templateSaved"),
           publicationPathTemplate.capture,
           (fresh, revision) =>
             publicationPathTemplate.acknowledge(
@@ -1431,7 +1488,6 @@ export function SettingsScreen() {
     let attempt: Promise<SettingsSaveOutcome> | undefined;
     const confirmationPending = confirmConflictingSave(
       "workDirectory",
-      "Рабочая папка",
       current,
       () => {
         attempt = mutate(
@@ -1446,7 +1502,7 @@ export function SettingsScreen() {
               } satisfies UpdateSettingsExpectedBody,
             }),
           204,
-          "Рабочая папка изменена.",
+          settingsNotice("workDirectoryChanged"),
           workDirectory.capture,
           (fresh, revision) =>
             workDirectory.acknowledge(fresh.settings.work_directory, revision),
@@ -1470,7 +1526,7 @@ export function SettingsScreen() {
           enabled: savedDraft.value ?? state?.settings.sha256_enabled ?? true,
         }),
       204,
-      "Настройка SHA-256 сохранена.",
+      settingsNotice("shaSaved"),
       sha256.capture,
       (fresh, revision) =>
         sha256.acknowledge(fresh.settings.sha256_enabled, revision),
@@ -1503,7 +1559,7 @@ export function SettingsScreen() {
           } satisfies UpdateSettingsExpectedBody,
         }),
       204,
-      "Настройка удаления исходников сохранена.",
+      settingsNotice("sourceDeletionSaved"),
       publicationRemoveSources.capture,
       (fresh, revision) =>
         publicationRemoveSources.acknowledge(
@@ -1525,7 +1581,7 @@ export function SettingsScreen() {
           enabled: draft.value ?? enabled,
         }),
       204,
-      "Настройка LRCLIB сохранена.",
+      settingsNotice("lrclibSaved"),
       lrclib.capture,
       (fresh, revision) =>
         lrclib.acknowledge(fresh.settings.lrclib_enabled, revision),
@@ -1547,7 +1603,7 @@ export function SettingsScreen() {
             "info",
         }),
       204,
-      "Уровень журнала применён.",
+      settingsNotice("logLevelApplied"),
       logLevel.capture,
       (fresh, revision) =>
         logLevel.acknowledge(
@@ -1636,7 +1692,7 @@ export function SettingsScreen() {
       )
         return;
       setError("");
-      setNotice("");
+      setNotice(null);
       try {
         const fresh = await refreshState();
         if (!mountedRef.current || mountGeneration.current !== generation)
@@ -1650,8 +1706,11 @@ export function SettingsScreen() {
                   ? "m4a"
                   : "mka";
             if (confirmed !== failure.value)
-              throw new Error(
-                `Сервер не подтвердил принятое значение формата публикации (${String(failure.value)}); сейчас сохранено ${confirmed}.`,
+              throw new SettingsLocalizedError(
+                settingsNotice("serverDidNotConfirmFormat", {
+                  value: String(failure.value),
+                  confirmed,
+                }),
               );
             confirmedPublicationFormat.current = confirmed;
             publicationFormat.acknowledge(confirmed, failure.revision);
@@ -1679,7 +1738,7 @@ export function SettingsScreen() {
             delete next[setting];
             return next;
           });
-          setNotice("Настройка подтверждена сервером.");
+          setNotice(settingsNotice("settingConfirmed"));
         }
       } catch (reason) {
         if (
@@ -1688,7 +1747,9 @@ export function SettingsScreen() {
           currentRevision() === failure.revision
         )
           setError(
-            `Настройка принята сервером, но не удалось подтвердить её чтением: ${message(reason)}`,
+            settingsNotice("settingsAcceptedRefreshFailed", {
+              detail: message(reason),
+            }),
           );
       }
     });
@@ -1723,14 +1784,9 @@ export function SettingsScreen() {
     ) {
       const current = state?.settings.output_directory;
       if (current !== undefined)
-        confirmConflictingSave(
-          "outputDirectory",
-          "Каталог публикации",
-          current,
-          () => {
-            void confirmOutputDirectory();
-          },
-        );
+        confirmConflictingSave("outputDirectory", current, () => {
+          void confirmOutputDirectory();
+        });
       return;
     }
     if (isEffectivelyBusy() || runningOperation) return;
@@ -1740,7 +1796,7 @@ export function SettingsScreen() {
     outputDirectory.beginSave(savedDraft.revision);
     setBusy(true);
     setOutputDialogError("");
-    setNotice("");
+    setNotice(null);
     try {
       await acceptSettingsWrite(
         await updateSettings({
@@ -1762,11 +1818,13 @@ export function SettingsScreen() {
           ),
         );
       } catch (reason) {
-        throw new Error(
-          `Каталог публикации принят сервером, но не удалось подтвердить его чтением: ${message(reason)}`,
+        throw new SettingsLocalizedError(
+          settingsNotice("outputDirectoryAcceptedRefreshFailed", {
+            detail: message(reason),
+          }),
         );
       }
-      setNotice("Каталог публикации изменён.");
+      setNotice(settingsNotice("outputDirectoryChanged"));
       closeOutputDialog(true);
     } catch (reason) {
       setOutputDialogError(message(reason));
@@ -1780,15 +1838,15 @@ export function SettingsScreen() {
     if (isEffectivelyBusy() || acoustIDApplicationKey.length === 0) return;
     setBusy(true);
     setError("");
-    setNotice("");
+    setNotice(null);
     try {
-      successful(
+      settingsSuccessful(
         await setAcoustidApplicationKey({ key: acoustIDApplicationKey }),
         204,
       );
       setAcoustIDApplicationKey("");
       await refreshState();
-      setNotice("Ключ приложения AcoustID сохранён.");
+      setNotice(settingsNotice("acoustIdSaved"));
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -1800,12 +1858,12 @@ export function SettingsScreen() {
     if (isEffectivelyBusy()) return;
     setBusy(true);
     setError("");
-    setNotice("");
+    setNotice(null);
     try {
-      successful(await deleteAcoustidApplicationKey(), 204);
+      settingsSuccessful(await deleteAcoustidApplicationKey(), 204);
       setAcoustIDApplicationKey("");
       await refreshState();
-      setNotice("Ключ приложения AcoustID удалён.");
+      setNotice(settingsNotice("acoustIdDeleted"));
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -1843,14 +1901,9 @@ export function SettingsScreen() {
       "musicBrainz" in conflictValues &&
       !Object.hasOwn(authorizedConflictExpected.current, "musicBrainz")
     ) {
-      confirmConflictingSave(
-        "musicBrainz",
-        "настройки MusicBrainz",
-        currentValue,
-        () => {
-          saveMusicBrainzMode(mode);
-        },
-      );
+      confirmConflictingSave("musicBrainz", currentValue, () => {
+        saveMusicBrainzMode(mode);
+      });
       return;
     }
     const savedDraft = musicBrainz.capture();
@@ -1874,7 +1927,7 @@ export function SettingsScreen() {
           expected,
         }),
       204,
-      "Режим MusicBrainz сохранён.",
+      settingsNotice("musicBrainzSaved"),
       musicBrainz.capture,
       (fresh) => {
         musicBrainz.acknowledgeField(
@@ -1916,7 +1969,6 @@ export function SettingsScreen() {
     ) {
       confirmConflictingSave(
         "musicBrainz",
-        "настройки MusicBrainz",
         musicBrainzSavedSnapshot(saved),
         () => saveMusicBrainzThrottle(enabled),
       );
@@ -1940,7 +1992,7 @@ export function SettingsScreen() {
       () =>
         updateMusicbrainzSettings({ self_hosted_throttle: enabled, expected }),
       204,
-      "Ограничение частоты MusicBrainz сохранено.",
+      settingsNotice("musicBrainzThrottleSaved"),
       musicBrainz.capture,
       (fresh) =>
         musicBrainz.acknowledgeField(
@@ -1980,23 +2032,23 @@ export function SettingsScreen() {
       targetChanged &&
       !validMusicBrainzBaseURL(payload.baseURL)
     ) {
-      setError("Сначала задайте корректный MusicBrainz base URL.");
+      setError(settingsNotice("invalidMusicBrainzUrl"));
       return {
         status: "invalid",
         group: "musicBrainz",
         validSavedTarget: false,
         confirmationRead: false,
-        message: "Сначала задайте корректный MusicBrainz base URL.",
+        message: settingsNotice("invalidMusicBrainzUrl"),
       };
     }
     if (payload.mode === "self-hosted" && delayChanged && !delayIsValid) {
-      setError("Интервал запросов должен быть числом от 0 до 60 секунд.");
+      setError(settingsNotice("invalidMusicBrainzDelay"));
       return {
         status: "invalid",
         group: "musicBrainz",
         validSavedTarget: false,
         confirmationRead: false,
-        message: "Интервал запросов должен быть числом от 0 до 60 секунд.",
+        message: settingsNotice("invalidMusicBrainzDelay"),
       };
     }
     if (
@@ -2008,7 +2060,6 @@ export function SettingsScreen() {
       if (saved)
         confirmConflictingSave(
           "musicBrainz",
-          "настройки MusicBrainz",
           musicBrainzSavedSnapshot(saved),
           () => void checkMusicBrainz(),
         );
@@ -2020,7 +2071,7 @@ export function SettingsScreen() {
       };
     }
     setError("");
-    setNotice("");
+    setNotice(null);
     const shouldSaveDraft = targetChanged || delayChanged || throttleChanged;
     let targetAccepted = false;
     let targetConfirmed = !shouldSaveDraft;
@@ -2094,8 +2145,8 @@ export function SettingsScreen() {
                 fresh.settings.musicbrainz_self_hosted_throttle !==
                   payload.selfHostedThrottle)
             )
-              throw new Error(
-                "Сервер не подтвердил отправленные настройки MusicBrainz.",
+              throw new SettingsLocalizedError(
+                settingsNotice("serverDidNotConfirmMusicBrainz"),
               );
             if (targetChanged) {
               musicBrainz.acknowledgeField(
@@ -2128,21 +2179,26 @@ export function SettingsScreen() {
           });
           targetConfirmed = true;
         } catch (reason) {
-          throw new Error(
-            `Настройки MusicBrainz приняты сервером, но не удалось подтвердить их чтением: ${message(reason)}`,
+          throw new SettingsLocalizedError(
+            settingsNotice("musicBrainzAcceptedRefreshFailed", {
+              detail: message(reason),
+            }),
           );
         }
       }
-      const checked = successful(await checkSettingsMusicbrainz(), 200);
+      const checked = settingsSuccessful(await checkSettingsMusicbrainz(), 200);
       try {
         await refreshState();
       } catch (reason) {
-        throw new Error(
-          `MusicBrainz сохранён и проверен, но не удалось подтвердить состояние чтением: ${message(reason)}`,
+        throw new SettingsLocalizedError(
+          settingsNotice("musicBrainzSavedRefreshFailed", {
+            detail: message(reason),
+          }),
         );
       }
       if (!checked.data.success) {
-        const failure = checked.data.error || "MusicBrainz недоступен.";
+        const failure: SettingsFeedback =
+          checked.data.error || settingsNotice("musicBrainzUnavailable");
         setError(failure);
         return {
           status: "invalid",
@@ -2158,8 +2214,7 @@ export function SettingsScreen() {
         currentMusicDraft.baseline &&
         !sameMusicBrainz(currentMusicDraft.value, currentMusicDraft.baseline)
       ) {
-        const failure =
-          "В текущем режиме остались несохранённые изменения MusicBrainz.";
+        const failure = settingsNotice("unsavedMusicBrainzMode");
         setError(failure);
         return {
           status: "invalid",
@@ -2169,7 +2224,7 @@ export function SettingsScreen() {
           message: failure,
         };
       }
-      setNotice("MusicBrainz проверен.");
+      setNotice(settingsNotice("musicBrainzChecked"));
       return {
         status: "saved",
         group: "musicBrainz",
@@ -2205,7 +2260,7 @@ export function SettingsScreen() {
       return {
         status: "failed",
         group: "all",
-        message: "Дождитесь завершения текущего запроса.",
+        message: settingsNotice("waitForRequest"),
       };
     if (outputDirectory.dirty) {
       dialogReturnFocusRef.current =
@@ -2257,8 +2312,7 @@ export function SettingsScreen() {
         return {
           status: "failed",
           group: outcome.group,
-          message:
-            "Во время сохранения появились новые несохранённые изменения.",
+          message: settingsNotice("newChangesWhileSaving"),
         };
     }
 
@@ -2294,11 +2348,7 @@ export function SettingsScreen() {
     );
     if (!persisted) {
       setDraftStorageWarning(true);
-      setNavigationError(
-        locale === "ru"
-          ? "Не удалось сохранить черновик в хранилище браузера. Останьтесь на странице и повторите попытку."
-          : "The draft could not be saved to browser storage. Stay on this page and try again.",
-      );
+      setNavigationError(settingsNotice("errorSavingDraft"));
       return;
     }
     resolveNavigation(attempt, "leave");
@@ -2309,11 +2359,7 @@ export function SettingsScreen() {
     if (!writeSettingsDraft(storage, null)) {
       writeSettingsDraft(storage, currentSettingsDraftSnapshot());
       setDraftStorageWarning(true);
-      setNavigationError(
-        locale === "ru"
-          ? "Не удалось удалить сохранённый черновик. Останьтесь на странице и повторите попытку."
-          : "The saved draft could not be discarded. Stay on this page and try again.",
-      );
+      setNavigationError(settingsNotice("errorDiscardingDraft"));
       return;
     }
     if (!resolveNavigation(attempt, "leave"))
@@ -2328,32 +2374,14 @@ export function SettingsScreen() {
       resolveNavigation(attempt, "leave");
       return;
     }
-    const messages: Record<SettingsSaveOutcome["status"], string> =
-      locale === "ru"
-        ? {
-            saved:
-              "Появились новые несохранённые изменения. Проверьте настройки перед выходом.",
-            invalid: "Исправьте некорректные настройки перед выходом.",
-            confirmation_pending:
-              "Завершите открытое подтверждение настроек, затем повторите сохранение.",
-            conflict:
-              "Настройки изменились на сервере. Разрешите конфликт перед выходом.",
-            uncertain:
-              "Не удалось подтвердить сохранение. Проверьте состояние и повторите попытку.",
-            failed: "Не удалось сохранить настройки перед выходом.",
-          }
-        : {
-            saved:
-              "New unsaved changes appeared. Review the settings before leaving.",
-            invalid: "Correct the invalid settings before leaving.",
-            confirmation_pending:
-              "Complete the open settings confirmation, then try saving again.",
-            conflict:
-              "Settings changed on the server. Resolve the conflict before leaving.",
-            uncertain:
-              "The save could not be confirmed. Review the current state and try again.",
-            failed: "Settings could not be saved before leaving.",
-          };
+    const messages: Record<SettingsSaveOutcome["status"], SettingsNotice> = {
+      saved: settingsNotice("saveLeaveNewChanges"),
+      invalid: settingsNotice("saveLeaveInvalid"),
+      confirmation_pending: settingsNotice("saveLeaveConfirmation"),
+      conflict: settingsNotice("saveLeaveConflict"),
+      uncertain: settingsNotice("saveLeaveUncertain"),
+      failed: settingsNotice("saveLeaveFailed"),
+    };
     setNavigationError(outcome.message || messages[outcome.status]);
   }
 
@@ -2422,7 +2450,7 @@ export function SettingsScreen() {
   async function preflightInstall(kind: Kind) {
     const release = selectedRelease[kind];
     if (!release) {
-      setError("Выберите версию для установки.");
+      setError(settingsNotice("installVersionRequired"));
       return;
     }
     const sessionRevision = ++installSessionRevision.current;
@@ -2432,7 +2460,11 @@ export function SettingsScreen() {
     setError("");
     setBusy(true);
     try {
-      const plan = await preflightManagedToolInstall(kind, release);
+      const plan = await preflightManagedToolInstall(
+        kind,
+        release,
+        settingsHttpError,
+      );
       if (
         sessionRevision !== installSessionRevision.current ||
         requestRevision !== installRequestRevision.current
@@ -2459,7 +2491,11 @@ export function SettingsScreen() {
     sessionRevision?: number,
   ) {
     const startRevision = ++installStartRevision.current;
-    const started = await startManagedToolInstall(plan, confirmed);
+    const started = await startManagedToolInstall(
+      plan,
+      confirmed,
+      settingsHttpError,
+    );
     setOperations((previous) => [
       ...previous.filter((item) => item.id !== started.id),
       started,
@@ -2479,9 +2515,11 @@ export function SettingsScreen() {
     setBusy(true);
     setInstallDialogError("");
     try {
-      const started = await startManagedToolInstall(installDialog.plan, [
-        ...(installDialog.plan.conflicts || []),
-      ]);
+      const started = await startManagedToolInstall(
+        installDialog.plan,
+        [...(installDialog.plan.conflicts || [])],
+        settingsHttpError,
+      );
       setOperations((previous) => [
         ...previous.filter((item) => item.id !== started.id),
         started,
@@ -2509,14 +2547,16 @@ export function SettingsScreen() {
   async function activate(item: InstallationResponse, kind: Kind) {
     setBusy(true);
     setError("");
-    setNotice("");
+    setNotice(null);
     try {
-      successful(
+      settingsSuccessful(
         await activateToolInstallation(item.id, { package_kind: kind }),
         204,
       );
       await Promise.all([refreshState(), refreshInstallations()]);
-      setNotice(`${kind} ${item.version} активирован.`);
+      setNotice(
+        settingsNotice("activatedVersion", { kind, version: item.version }),
+      );
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -2532,19 +2572,21 @@ export function SettingsScreen() {
           activeOperation(operation),
       )
     ) {
-      setError("Активную или занятую операцией версию удалить нельзя.");
+      setError(settingsNotice("cannotRemoveActive"));
       return;
     }
     setBusy(true);
     setError("");
-    setNotice("");
+    setNotice(null);
     try {
-      successful(
+      settingsSuccessful(
         await deleteToolInstallation(item.id, { package_kind: kind }),
         204,
       );
       await Promise.all([refreshState(), refreshInstallations()]);
-      setNotice(`${kind} ${item.version} удалён.`);
+      setNotice(
+        settingsNotice("removedVersion", { kind, version: item.version }),
+      );
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -2558,14 +2600,9 @@ export function SettingsScreen() {
     ) {
       const current = state?.settings.tools_directory;
       if (current !== undefined)
-        confirmConflictingSave(
-          "toolsDirectory",
-          "Каталог инструментов",
-          current,
-          () => {
-            void preflightMove();
-          },
-        );
+        confirmConflictingSave("toolsDirectory", current, () => {
+          void preflightMove();
+        });
       return;
     }
     const directory = moveDirectoryRef.current;
@@ -2645,7 +2682,7 @@ export function SettingsScreen() {
     setBusy(true);
     setMoveDialogError("");
     try {
-      const response = successful(
+      const response = settingsSuccessful(
         await startToolsRootMove({
           preflight_token: confirmedPlan.plan.preflight_token,
           confirmed_conflicts: [...(confirmedPlan.plan.conflicts || [])],
@@ -2700,8 +2737,8 @@ export function SettingsScreen() {
     state?.platform.supported && !state.platform.diagnostic,
   );
   const persistedTime = checkedAt
-    ? new Date(checkedAt).toLocaleString()
-    : "Каталог ещё не проверялся.";
+    ? new Date(checkedAt).toLocaleString(locale)
+    : t("catalogNotChecked");
   const concurrencyDraft = sourceFileConcurrency.snapshot();
   const templateDraft = publicationPathTemplate.snapshot();
   const workDraft = workDirectory.snapshot();
@@ -2876,32 +2913,24 @@ export function SettingsScreen() {
       className="settings-screen mx-auto max-w-5xl py-3"
     >
       <h1 ref={heading} tabIndex={-1} id="settings-title">
-        Настройки
+        {t("pageTitle")}
       </h1>
-      <p className="setup-help">
-        После завершения Setup проблемы конфигурации отображаются здесь и не
-        возвращают приложение в мастер.
-      </p>
-      {effectiveBusy && <p role="status">Выполняется запрос…</p>}
-      {draftStorageWarning && (
-        <p role="status">
-          Черновик настроек сохранён только в памяти страницы; после её закрытия
-          восстановить изменения не удастся.
-        </p>
-      )}
+      <p className="setup-help">{t("pageDescription")}</p>
+      {effectiveBusy && <p role="status">{t("requestInProgress")}</p>}
+      {draftStorageWarning && <p role="status">{t("draftMemoryWarning")}</p>}
       {!initialLoadComplete && !loadError && (
-        <p role="status">Загрузка настроек и состояния сервера…</p>
+        <p role="status">{t("loadingSettings")}</p>
       )}
       {loadError && (
         <>
           <p ref={loadErrorAlert} tabIndex={-1} role="alert">
-            Не удалось загрузить настройки и состояние сервера: {loadError}
+            {t("loadSettingsError")} {feedbackText(loadError, locale)}
           </p>
           <AppButton
             isDisabled={effectiveBusy}
             onPress={() => void loadScreen()}
           >
-            Повторить загрузку
+            {t("retryLoading")}
           </AppButton>
         </>
       )}
@@ -2911,11 +2940,11 @@ export function SettingsScreen() {
             aria-labelledby="health-title"
             className="setup-panel settings-panel"
           >
-            <h2 id="health-title">Состояние конфигурации</h2>
+            <h2 id="health-title">{t("configurationHealth")}</h2>
             <p role={state.configuration_health.healthy ? "status" : "alert"}>
               {state.configuration_health.healthy
-                ? "Конфигурация исправна."
-                : "Есть проблемы конфигурации."}
+                ? t("healthyConfiguration")
+                : t("unhealthyConfiguration")}
             </p>
             {!!state.configuration_health.problems?.length && (
               <ul>
@@ -2924,12 +2953,7 @@ export function SettingsScreen() {
                 ))}
               </ul>
             )}
-            {!platformReady && (
-              <p role="alert">
-                Платформа недоступна: операции с инструментами отключены.
-                Настройки можно исправлять.
-              </p>
-            )}
+            {!platformReady && <p role="alert">{t("platformUnavailable")}</p>}
           </section>
           <SettingsGeneralSection
             publicationFormat={publicationFormat.value ?? "mka"}
@@ -2957,40 +2981,40 @@ export function SettingsScreen() {
               if (!failure) return null;
               const label =
                 setting === "publicationFormat"
-                  ? "формат публикации"
+                  ? t("publicationFormatLabel")
                   : setting === "sha256"
                     ? "SHA-256"
-                    : "уровень журнала";
+                    : t("logLevelLabel");
               const value =
                 setting === "publicationFormat"
                   ? failure.value === "source"
-                    ? "Исходный формат"
+                    ? t("originalFormat")
                     : failure.value === "m4a"
                       ? "M4A"
-                      : "MKA remux"
+                      : t("mkaRemux")
                   : setting === "sha256"
                     ? failure.value
-                      ? "включено"
-                      : "выключено"
+                      ? t("enabled")
+                      : t("disabled")
                     : String(failure.value);
               return (
                 <fieldset
                   key={setting}
                   className="grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3"
-                  aria-label={`Повторное сохранение: ${label}`}
+                  aria-label={t("unsavedChanges")}
                 >
                   <p className="m-0" role="status">
                     {failure.phase === "write"
-                      ? `Не удалось сохранить ${label}: ${value}.`
-                      : `Значение ${label} (${value}) принято сервером, но чтение для подтверждения не удалось.`}
+                      ? t("saveFailed", { label, value })
+                      : t("saveUnconfirmed", { label, value })}
                   </p>
                   <AppButton
                     isDisabled={effectiveBusy}
                     onPress={() => retryGeneralFailure(setting)}
                   >
                     {failure.phase === "write"
-                      ? `Повторить сохранение: ${label} (${value})`
-                      : `Повторить подтверждение: ${label} (${value})`}
+                      ? t("retrySave", { label, value })
+                      : t("retryConfirm", { label, value })}
                   </AppButton>
                 </fieldset>
               );
@@ -3001,19 +3025,17 @@ export function SettingsScreen() {
               aria-labelledby="runtime-title"
               className="setup-panel settings-panel"
             >
-              <h2 id="runtime-title">Публикация</h2>
+              <h2 id="runtime-title">{t("publication")}</h2>
               <DirectoryPathField
                 id="settings-output-directory"
-                label="Output directory"
+                label={t("outputDirectory")}
                 value={outputDirectory.value ?? ""}
                 onSelect={outputDirectory.update}
                 disabled={effectiveBusy}
               />
-              {outputDirectory.dirty && (
-                <p>Есть несохранённые изменения публикации.</p>
-              )}
+              {outputDirectory.dirty && <p>{t("unsavedPublication")}</p>}
               <label>
-                Шаблон пути публикации
+                {t("publicationTemplate")}
                 <input
                   aria-describedby="publication-template-help"
                   maxLength={4096}
@@ -3026,19 +3048,13 @@ export function SettingsScreen() {
                   }
                 />
               </label>
-              <p id="publication-template-help">
-                Токены в фигурных скобках подставляются из метаданных; для
-                отсутствующего значения задайте альтернативу через |. Шаблон
-                может содержать только имя файла без каталогов.
-              </p>
-              {publicationPathTemplate.dirty && (
-                <p>Есть несохранённый шаблон пути публикации.</p>
-              )}
+              <p id="publication-template-help">{t("templateHelp")}</p>
+              {publicationPathTemplate.dirty && <p>{t("unsavedTemplate")}</p>}
               <AppButton
                 isDisabled={effectiveBusy || !publicationPathTemplate.value}
                 onPress={savePublicationTemplate}
               >
-                Сохранить шаблон пути
+                {t("saveTemplate")}
               </AppButton>
               <label className="settings-inline">
                 <input
@@ -3051,16 +3067,11 @@ export function SettingsScreen() {
                     savePublicationRemoveSources(event.target.checked)
                   }
                 />{" "}
-                Разрешить удаление исходников после публикации
+                {t("allowSourceDeletion")}
               </label>
-              <p role="note">
-                Выключено по умолчанию. При включении удаление в будущем может
-                применяться только после успешной проверки публикации; изменение
-                настройки не удаляет существующие файлы и не запускает
-                обработку.
-              </p>
+              <p role="note">{t("sourceDeletionHelp")}</p>
               {publicationRemoveSources.dirty && (
-                <p>Есть несохранённая настройка удаления исходников.</p>
+                <p>{t("unsavedSourceDeletion")}</p>
               )}
               <AppButton
                 isDisabled={
@@ -3075,43 +3086,37 @@ export function SettingsScreen() {
                   setOutputDialog(true);
                 }}
               >
-                Сменить output
+                {t("changeOutput")}
               </AppButton>
             </section>
             <section
               aria-labelledby="work-directory-title"
               className="setup-panel settings-panel"
             >
-              <h2 id="work-directory-title">Обработка источников</h2>
+              <h2 id="work-directory-title">{t("sourceProcessing")}</h2>
               <DirectoryPathField
                 id="settings-work-directory"
-                label="Work directory для staged-копий"
+                label={t("workDirectory")}
                 value={workDirectory.value ?? ""}
                 onSelect={workDirectory.update}
                 disabled={effectiveBusy}
               />
-              <p>
-                Настройка не требуется для Setup или регистрации source root, но
-                обязательна для обработки staged-источников. Каталог нельзя
-                изменить, пока существуют операции или сохранённые копии.
-              </p>
-              {workDirectory.dirty && (
-                <p>Есть несохранённые изменения рабочей папки.</p>
-              )}
+              <p>{t("workDirectoryHelp")}</p>
+              {workDirectory.dirty && <p>{t("unsavedWorkDirectory")}</p>}
               <AppButton
                 isDisabled={effectiveBusy || !workDirectory.dirty}
                 onPress={saveWorkDirectory}
               >
-                Сохранить рабочую папку
+                {t("saveWorkDirectory")}
               </AppButton>
             </section>
             <section
               aria-labelledby="providers-title"
               className="setup-panel settings-panel"
             >
-              <h2 id="providers-title">Провайдеры метаданных</h2>
+              <h2 id="providers-title">{t("metadataProviders")}</h2>
               <label>
-                Ключ приложения AcoustID
+                {t("acoustIdKey")}
                 <input
                   type="password"
                   autoComplete="new-password"
@@ -3124,8 +3129,8 @@ export function SettingsScreen() {
               </label>
               <p>
                 {state.settings.has_acoustid_application_key
-                  ? "Ключ сохранён. Его значение нельзя прочитать из настроек."
-                  : "Ключ не задан; поиск AcoustID недоступен."}
+                  ? t("keySaved")
+                  : t("keyMissing")}
               </p>
               <div className="settings-actions">
                 <AppButton
@@ -3134,19 +3139,19 @@ export function SettingsScreen() {
                   }
                   onPress={() => void saveAcoustIDApplicationKey()}
                 >
-                  Сохранить ключ AcoustID
+                  {t("saveAcoustIdKey")}
                 </AppButton>
                 {state.settings.has_acoustid_application_key && (
                   <AppButton
                     isDisabled={effectiveBusy}
                     onPress={() => void deleteAcoustIDApplicationKey()}
                   >
-                    Удалить ключ AcoustID
+                    {t("deleteAcoustIdKey")}
                   </AppButton>
                 )}
               </div>
               <label>
-                MusicBrainz mode
+                {t("musicBrainzMode")}
                 <select
                   value={musicBrainz.value?.mode ?? "public"}
                   onChange={(event) =>
@@ -3155,14 +3160,14 @@ export function SettingsScreen() {
                     )
                   }
                 >
-                  <option value="public">Public</option>
-                  <option value="self-hosted">Self-hosted</option>
+                  <option value="public">{t("public")}</option>
+                  <option value="self-hosted">{t("selfHosted")}</option>
                 </select>
               </label>
               {musicBrainz.value?.mode === "self-hosted" && (
                 <>
                   <label>
-                    MusicBrainz base URL
+                    {t("musicBrainzBaseUrl")}
                     <input
                       value={musicBrainz.value?.baseURL ?? ""}
                       onChange={(event) => {
@@ -3183,10 +3188,10 @@ export function SettingsScreen() {
                         saveMusicBrainzThrottle(event.target.checked)
                       }
                     />{" "}
-                    Ограничивать частоту запросов к self-hosted MusicBrainz
+                    {t("throttleMusicBrainz")}
                   </label>
                   <label>
-                    Интервал запросов (секунды)
+                    {t("requestInterval")}
                     <input
                       type="text"
                       inputMode="decimal"
@@ -3208,17 +3213,15 @@ export function SettingsScreen() {
                 </>
               )}
               <p>
-                Последняя проверка:{" "}
-                {state.settings.musicbrainz_verified_at || "не проверено"}
+                {t("lastCheck")}{" "}
+                {state.settings.musicbrainz_verified_at || t("notChecked")}
               </p>
-              {musicBrainz.dirty && (
-                <p>Есть несохранённые изменения MusicBrainz.</p>
-              )}
+              {musicBrainz.dirty && <p>{t("unsavedMusicBrainz")}</p>}
               <AppButton
                 isDisabled={effectiveBusy}
                 onPress={() => void checkMusicBrainz()}
               >
-                Сохранить и проверить MusicBrainz
+                {t("saveAndCheckMusicBrainz")}
               </AppButton>
               <label className="settings-inline">
                 <input
@@ -3226,17 +3229,17 @@ export function SettingsScreen() {
                   checked={lrclib.value ?? state.settings.lrclib_enabled}
                   onChange={(event) => saveLrclib(event.target.checked)}
                 />{" "}
-                LRCLIB включён
+                {t("lrclibEnabled")}
               </label>
-              {lrclib.dirty && <p>Есть несохранённые изменения LRCLIB.</p>}
+              {lrclib.dirty && <p>{t("unsavedLrclib")}</p>}
             </section>
             <section
               aria-labelledby="tools-root-title"
               className="setup-panel settings-panel"
             >
-              <h2 id="tools-root-title">Каталог инструментов</h2>
+              <h2 id="tools-root-title">{t("toolsDirectory")}</h2>
               <p>
-                Текущий Tools directory:{" "}
+                {t("toolsDirectory")}:{" "}
                 <code>{state.settings.tools_directory}</code>
               </p>
               <AppButton
@@ -3251,7 +3254,7 @@ export function SettingsScreen() {
                   setMoveDialog(true);
                 }}
               >
-                Перенести каталог
+                {t("moveToolsDirectory")}
               </AppButton>
             </section>
           </div>
@@ -3266,15 +3269,17 @@ export function SettingsScreen() {
                 await refreshState();
               }}
             />
-            <h2 id="managed-title">Managed tools</h2>
-            <p>Последняя успешная проверка каталога: {persistedTime}</p>
+            <h2 id="managed-title">{t("managedTools")}</h2>
+            <p>
+              {t("lastCatalogCheck")} {persistedTime}
+            </p>
             {catalogError && (
               <p ref={catalogAlert} tabIndex={-1} role="alert">
-                {catalogError}
+                {feedbackText(catalogError, locale)}
               </p>
             )}
             <AppButton isDisabled={catalogBusy} onPress={loadCatalogNow}>
-              {catalogBusy ? "Обновление каталога…" : "Обновить каталог"}
+              {catalogBusy ? t("refreshingCatalog") : t("refreshCatalog")}
             </AppButton>
             <div className="settings-grid">
               {(["ffmpeg", "fpcalc"] as const).map((kind) => {
@@ -3295,25 +3300,34 @@ export function SettingsScreen() {
                     className="setup-tool"
                   >
                     <h3 id={`${kind}-title`}>
-                      {kind === "ffmpeg" ? "FFmpeg package" : "fpcalc"}
+                      {kind === "ffmpeg" ? t("ffmpegPackage") : "fpcalc"}
                     </h3>
-                    <h4>Активная версия</h4>
+                    <h4>{t("activeVersion")}</h4>
                     <ul>
                       {installed
                         .filter((item) => item.active)
                         .map((item) => (
-                          <li key={item.id}>{item.version} — активна</li>
+                          <li key={item.id}>
+                            {item.version} — {t("active")}
+                          </li>
                         ))}
                       {!installed.some((item) => item.active) && (
-                        <li>Нет активной версии</li>
+                        <li>{t("noActiveVersion")}</li>
                       )}
                     </ul>
-                    <h4>Установленные версии</h4>
+                    <h4>{t("installedVersions")}</h4>
                     <ul>
                       {installed.map((item) => (
                         <li key={item.id}>
-                          {item.version} ({item.state}){" "}
-                          {item.active && "— активна"}
+                          {item.version} (
+                          {item.state === "ready"
+                            ? t("ready")
+                            : item.state === "preparing"
+                              ? t("preparing")
+                              : item.state === "failed"
+                                ? t("failed")
+                                : item.state}
+                          ) {item.active && `— ${t("active")}`}
                           <AppButton
                             isDisabled={
                               !platformReady ||
@@ -3324,7 +3338,7 @@ export function SettingsScreen() {
                             }
                             onPress={() => void activate(item, kind)}
                           >
-                            Активировать {item.version}
+                            {t("activateVersion", { version: item.version })}
                           </AppButton>
                           <AppButton
                             isDisabled={
@@ -3335,21 +3349,21 @@ export function SettingsScreen() {
                             }
                             onPress={() => void remove(item, kind)}
                           >
-                            Удалить {item.version}
+                            {t("removeVersion", { version: item.version })}
                           </AppButton>
                         </li>
                       ))}
                     </ul>
-                    <h4>Доступные версии</h4>
+                    <h4>{t("availableVersions")}</h4>
                     {catalog[kind] ? (
                       <>
                         {catalog[kind]?.notice && (
                           <p>{catalog[kind]?.notice}</p>
                         )}
                         <label>
-                          Версия для установки
+                          {t("versionToInstall")}
                           <select
-                            aria-label={`Версия ${kind}`}
+                            aria-label={t("versionLabel", { kind })}
                             value={selectedRelease[kind] || ""}
                             onChange={(event) =>
                               setSelectedRelease((previous) => ({
@@ -3358,7 +3372,7 @@ export function SettingsScreen() {
                               }))
                             }
                           >
-                            <option value="">Выберите версию</option>
+                            <option value="">{t("chooseVersion")}</option>
                             {releases.map((release) => (
                               <option
                                 key={release.identity}
@@ -3382,14 +3396,14 @@ export function SettingsScreen() {
                             void preflightInstall(kind);
                           }}
                         >
-                          Установить без активации
+                          {t("installWithoutActivation")}
                         </AppButton>
                       </>
                     ) : (
                       <p>
                         {catalogBusy
-                          ? "Загрузка каталога…"
-                          : "Каталог пока не загружен."}
+                          ? t("loadingCatalog")
+                          : t("catalogNotLoaded")}
                       </p>
                     )}
                   </section>
@@ -3402,20 +3416,23 @@ export function SettingsScreen() {
               aria-labelledby="operations-title"
               className="setup-panel settings-panel"
             >
-              <h2 id="operations-title">Текущие операции</h2>
+              <h2 id="operations-title">{t("currentOperations")}</h2>
               {operations.map((operation) => (
                 <OperationRow
                   key={operation.id}
                   operation={operation}
                   onSnapshot={onOperation}
                   onDismiss={async (id) => {
-                    successful(await dismissOperation(id), 204);
+                    settingsSuccessful(await dismissOperation(id), 204);
                     setOperations((items) =>
                       items.filter((item) => item.id !== id),
                     );
                   }}
                   onRetry={async (id) => {
-                    const retried = successful(await retryOperation(id), 200);
+                    const retried = settingsSuccessful(
+                      await retryOperation(id),
+                      200,
+                    );
                     setOperations((items) =>
                       items.map((item) =>
                         item.id === id ? retried.data : item,
@@ -3430,41 +3447,41 @@ export function SettingsScreen() {
       )}
       {error && (
         <p ref={alert} tabIndex={-1} role="alert">
-          {error}
+          {feedbackText(error, locale)}
         </p>
       )}
-      {notice && <p role="status">{notice}</p>}
+      {notice && <p role="status">{t(notice.key, notice.values)}</p>}
       {state && (
         <AppButton isDisabled={effectiveBusy} onPress={() => void loadScreen()}>
-          Обновить состояние
+          {t("refreshState")}
         </AppButton>
       )}
       {Object.entries(conflictValues).map(([rawGroup, currentValue]) => {
         const group = rawGroup as ConflictGroup;
         if (!activeConflicts[group]) return null;
-        const label = conflictLabel(group);
+        const label = conflictLabel(group, locale);
         return (
           <section
             key={group}
-            aria-label={`Конфликт настроек: ${label}`}
+            aria-label={t("settingsConflict", { label })}
             className="setup-panel settings-panel"
             role="status"
           >
             <p>
-              Сохранённое значение для «{label}» изменилось:{" "}
+              {t("changedSavedValue", { label })}{" "}
               {displaySettingValue(currentValue)}.
             </p>
             <AppButton
               isDisabled={effectiveBusy}
               onPress={() => takeSavedConflict(group)}
             >
-              Взять сохранённое: {label}
+              {t("takeSavedValue", { label })}
             </AppButton>
             <AppButton
               isDisabled={effectiveBusy}
               onPress={() => continueEditingConflict(group)}
             >
-              Продолжить редактирование: {label}
+              {t("continueEditing", { label })}
             </AppButton>
           </section>
         );
@@ -3498,33 +3515,27 @@ export function SettingsScreen() {
             );
           }}
         >
-          <h2 id="settings-navigation-title">
-            {locale === "ru" ? "Несохранённые настройки" : "Unsaved settings"}
-          </h2>
-          <p id="settings-navigation-description">
-            {locale === "ru"
-              ? "В настройках есть несохранённые текстовые изменения. Что сделать перед переходом?"
-              : "Settings contain unsaved text changes. What would you like to do before leaving?"}
-          </p>
-          {navigationError && <p role="alert">{navigationError}</p>}
+          <h2 id="settings-navigation-title">{t("unsavedSettings")}</h2>
+          <p id="settings-navigation-description">{t("navigationPrompt")}</p>
+          {navigationError && (
+            <p role="alert">{feedbackText(navigationError, locale)}</p>
+          )}
           <AppButton
             onPress={() => resolveNavigation(navigationAttempt, "stay")}
           >
-            {locale === "ru" ? "Остаться" : "Stay"}
+            {t("stay")}
           </AppButton>
           <AppButton onPress={() => keepDraftAndLeave(navigationAttempt)}>
-            {locale === "ru" ? "Уйти, сохранив черновик" : "Leave with draft"}
+            {t("leaveKeepDraft")}
           </AppButton>
           <AppButton onPress={() => discardDraftAndLeave(navigationAttempt)}>
-            {locale === "ru"
-              ? "Удалить черновик и уйти"
-              : "Discard draft and leave"}
+            {t("discardDraftLeave")}
           </AppButton>
           <AppButton
             data-settings-navigation-save
             onPress={() => void saveDraftAndLeave(navigationAttempt)}
           >
-            {locale === "ru" ? "Сохранить и уйти" : "Save and leave"}
+            {t("saveLeave")}
           </AppButton>
         </dialog>
       )}
@@ -3543,12 +3554,12 @@ export function SettingsScreen() {
             onDialogKeyDown(event, () => setConflictConfirmation(undefined))
           }
         >
-          <h2 id="conflict-confirm-title">Заменить сохранённое значение?</h2>
+          <h2 id="conflict-confirm-title">{t("replaceSavedTitle")}</h2>
           <p id="conflict-confirm-description">
-            Для «{conflictConfirmation.label}» сейчас сохранено:{" "}
-            {displaySettingValue(conflictConfirmation.currentValue)}.
-            Подтвердите замену этим черновиком. При новом конфликте потребуется
-            подтвердить ещё раз.
+            {t("replaceSavedDescription", {
+              label: conflictLabel(conflictConfirmation.group, locale),
+              value: displaySettingValue(conflictConfirmation.currentValue),
+            })}
           </p>
           <AppButton
             onPress={() => {
@@ -3559,10 +3570,10 @@ export function SettingsScreen() {
               confirm();
             }}
           >
-            Заменить сохранённое значение
+            {t("replaceSaved")}
           </AppButton>
           <AppButton onPress={() => setConflictConfirmation(undefined)}>
-            Отмена
+            {t("cancel")}
           </AppButton>
         </dialog>
       )}
@@ -3584,27 +3595,24 @@ export function SettingsScreen() {
             closeOutputDialog();
           }}
         >
-          <h2 id="output-dialog-title">Сменить каталог публикации?</h2>
-          <p id="output-dialog-warning">
-            Изменение output отменит все операции в очереди и очистит ссылки на
-            прежние файлы в приложении. Сами прежние файлы не будут удалены.
-          </p>
+          <h2 id="output-dialog-title">{t("changePublicationTitle")}</h2>
+          <p id="output-dialog-warning">{t("changePublicationWarning")}</p>
           {outputDialogError && (
             <p ref={outputDialogAlert} tabIndex={-1} role="alert">
-              {outputDialogError}
+              {feedbackText(outputDialogError, locale)}
             </p>
           )}
           <AppButton
             isDisabled={effectiveBusy || runningOperation}
             onPress={() => void confirmOutputDirectory()}
           >
-            Подтвердить смену output
+            {t("confirmOutputChange")}
           </AppButton>
           <AppButton
             isDisabled={effectiveBusy}
             onPress={() => closeOutputDialog()}
           >
-            Отмена
+            {t("cancel")}
           </AppButton>
         </dialog>
       )}
@@ -3626,26 +3634,26 @@ export function SettingsScreen() {
           }}
         >
           <h2 id="install-dialog-title">
-            Подтверждение установки {installDialog.release}
+            {t("confirmInstallation", { release: installDialog.release })}
           </h2>
-          <p>Установка не активирует выбранную версию.</p>
+          <p>{t("installDoesNotActivate")}</p>
           <ConflictList
             conflicts={installDialog.plan.conflicts || []}
             targets={installDialog.plan.targets || []}
           />
           {installDialogError && (
             <p ref={installDialogAlert} tabIndex={-1} role="alert">
-              {installDialogError}
+              {feedbackText(installDialogError, locale)}
             </p>
           )}
           <AppButton
             isDisabled={effectiveBusy}
             onPress={() => void confirmInstall()}
           >
-            Подтвердить перечисленные конфликты
+            {t("confirmConflicts")}
           </AppButton>
           <AppButton isDisabled={effectiveBusy} onPress={closeInstallDialog}>
-            Отмена
+            {t("cancel")}
           </AppButton>
         </dialog>
       )}
@@ -3666,10 +3674,10 @@ export function SettingsScreen() {
             closeMoveDialog();
           }}
         >
-          <h2 id="move-dialog-title">Перенос Tools directory</h2>
+          <h2 id="move-dialog-title">{t("moveToolsTitle")}</h2>
           <DirectoryPathField
             id="settings-move-tools-directory"
-            label="Новый Tools directory"
+            label={t("newToolsDirectory")}
             value={moveDirectory}
             onSelect={setMoveDirectoryValue}
           />
@@ -3679,11 +3687,11 @@ export function SettingsScreen() {
               checked={removeOld}
               onChange={(event) => setRemoveOldValue(event.target.checked)}
             />{" "}
-            Удалить прежние управляемые файлы после успешного переноса
+            {t("removeOldManagedFiles")}
           </label>
           {moveDialogError && (
             <p ref={moveDialogAlert} tabIndex={-1} role="alert">
-              {moveDialogError}
+              {feedbackText(moveDialogError, locale)}
             </p>
           )}
           {!movePlan ? (
@@ -3691,28 +3699,31 @@ export function SettingsScreen() {
               isDisabled={effectiveBusy}
               onPress={() => void preflightMove()}
             >
-              Проверить перенос
+              {t("checkMove")}
             </AppButton>
           ) : (
             <>
               <p>
-                Исходный каталог: <code>{movePlan.sourceDirectory}</code>
+                {t("sourceDirectory")} <code>{movePlan.sourceDirectory}</code>
               </p>
               <p>
-                Каталог назначения: <code>{movePlan.directory}</code>
+                {t("destinationDirectory")} <code>{movePlan.directory}</code>
               </p>
               <p>
-                Удалить прежние управляемые файлы:{" "}
-                {movePlan.removeOld ? "Да" : "Нет"}
+                {t("removeOldFiles")} {movePlan.removeOld ? t("yes") : t("no")}
               </p>
-              <p>Управляемых файлов: {movePlan.plan.managed_file_count}</p>
-              <p>Конфликтов: {movePlan.plan.conflicts?.length || 0}</p>
+              <p>
+                {t("managedFileCount")} {movePlan.plan.managed_file_count}
+              </p>
+              <p>
+                {t("conflictCount")} {movePlan.plan.conflicts?.length || 0}
+              </p>
               <ConflictList conflicts={movePlan.plan.conflicts || []} />
               <AppButton
                 isDisabled={effectiveBusy}
                 onPress={() => void confirmMove()}
               >
-                Подтвердить перенос
+                {t("confirmMove")}
               </AppButton>
             </>
           )}
@@ -3723,7 +3734,7 @@ export function SettingsScreen() {
               closeMoveDialog();
             }}
           >
-            Отмена
+            {t("cancel")}
           </AppButton>
         </dialog>
       )}
@@ -3747,9 +3758,12 @@ function ConflictList({
   conflicts: string[];
   targets?: string[];
 }) {
+  const { locale } = useI18n();
+  const t = (key: Parameters<typeof settingsMessage>[1]) =>
+    settingsMessage(locale, key);
   return (
     <div>
-      <h3>Целевые файлы</h3>
+      <h3>{t("targetFiles")}</h3>
       <ul>
         {targets.map((path) => (
           <li key={path}>
@@ -3757,7 +3771,7 @@ function ConflictList({
           </li>
         ))}
       </ul>
-      <h3>Конфликты для подтверждения</h3>
+      <h3>{t("conflictsToConfirm")}</h3>
       {conflicts.length ? (
         <ul>
           {conflicts.map((path) => (
@@ -3767,7 +3781,7 @@ function ConflictList({
           ))}
         </ul>
       ) : (
-        <p>Конфликтов нет.</p>
+        <p>{t("noConflicts")}</p>
       )}
     </div>
   );
@@ -3784,10 +3798,15 @@ function OperationRow({
   onRetry: (id: string) => Promise<void>;
   onDismiss: (id: string) => Promise<void>;
 }) {
+  const { locale } = useI18n();
+  const t = (
+    key: Parameters<typeof settingsMessage>[1],
+    values?: Parameters<typeof settingsMessage>[2],
+  ) => settingsMessage(locale, key, values);
   const [operation, setOperation] = useState(initial);
   useEffect(() => setOperation(initial), [initial]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<SettingsFeedback | "">("");
   const errorRef = useRef<HTMLParagraphElement>(null);
   useOperationFollower(operation.id, {
     enabled: operation.state === "queued" || operation.state === "running",
@@ -3800,7 +3819,7 @@ function OperationRow({
     onSnapshotRead: (_snapshot, _source, accepted) => {
       if (!accepted) setError("");
     },
-    onHttpError: apiResponseError,
+    onHttpError: settingsHttpError,
     onError: (reason) => setError(message(reason)),
     onStreamError: (reason) => setError(reason.message),
     refreshOnStreamError: true,
@@ -3822,35 +3841,37 @@ function OperationRow({
   const pending = operation.state === "queued" || operation.state === "running";
   return (
     <fieldset
-      aria-label={`Операция ${operation.id}`}
+      aria-label={t("operation", { id: operation.id })}
       className="setup-operation"
     >
       <p role="status">
-        {operation.kind}: {operation.state}, {operation.stage},{" "}
+        {operationKindLabel(operation.kind, locale)}:{" "}
+        {operationStateLabel(operation.state, locale)},{" "}
+        {operationStageLabel(operation.stage, locale) || operation.stage},{" "}
         {operation.bytes_completed}
         {operation.bytes_total == null ? "" : ` / ${operation.bytes_total}`}{" "}
-        bytes. {operation.safe_error || ""}
+        {t("bytes")}. {operation.safe_error || ""}
       </p>
-      {pending && <p>Операция выполняется; состояние обновляется с сервера.</p>}
+      {pending && <p>{t("operationPending")}</p>}
       {operation.state === "failed" && (
         <>
           <AppButton
             isDisabled={busy}
             onPress={() => void action(() => onRetry(operation.id))}
           >
-            Повторить операцию {operation.id}
+            {t("retryOperation", { id: operation.id })}
           </AppButton>
           <AppButton
             isDisabled={busy}
             onPress={() => void action(() => onDismiss(operation.id))}
           >
-            Закрыть ошибку {operation.id}
+            {t("dismissOperation", { id: operation.id })}
           </AppButton>
         </>
       )}
       {error && (
         <p ref={errorRef} tabIndex={-1} role="alert">
-          {error}
+          {feedbackText(error, locale)}
         </p>
       )}
     </fieldset>

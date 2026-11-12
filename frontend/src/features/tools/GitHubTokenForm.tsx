@@ -1,13 +1,74 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { apiResponseError, errorMessage } from "../../api/client/errors";
 import { deleteGithubToken, setGithubToken } from "../../api/generated/client";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
 import "./github-token.css";
+import { type ToolMessages, toolMessages } from "./toolMessages";
 
 const tokenGuide =
   "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens";
 const tokenCreate =
   "https://github.com/settings/personal-access-tokens/new?name=MeloTrove+release+reader&description=Read-only+public+release+metadata&expires_in=90";
+const redactionMarker = "\u0000redacted\u0000";
+
+type TokenError =
+  | { kind: "saveFailed" }
+  | { kind: "deleteFailed" }
+  | { kind: "refreshFailed" }
+  | { kind: "http"; status: number }
+  | { kind: "diagnostic"; text: string };
+
+function responseDetail(response: { data?: unknown }): string | undefined {
+  const data = response.data;
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "detail" in data &&
+    typeof data.detail === "string" &&
+    data.detail
+  )
+    return data.detail;
+  return undefined;
+}
+
+function redact(text: string, secret: string) {
+  return secret ? text.replaceAll(secret, redactionMarker) : text;
+}
+
+function responseFailure(
+  response: { status: number; data?: unknown },
+  secret: string,
+): TokenError {
+  const detail = responseDetail(response);
+  return detail === undefined
+    ? { kind: "http", status: response.status }
+    : { kind: "diagnostic", text: redact(detail, secret) };
+}
+
+function thrownFailure(
+  reason: unknown,
+  fallback: TokenError,
+  secret: string,
+): TokenError {
+  return reason instanceof Error && reason.message
+    ? { kind: "diagnostic", text: redact(reason.message, secret) }
+    : fallback;
+}
+
+function errorText(error: TokenError, copy: ToolMessages) {
+  switch (error.kind) {
+    case "diagnostic":
+      return error.text.replaceAll(redactionMarker, copy.redacted);
+    case "http":
+      return copy.httpError(error.status);
+    case "saveFailed":
+      return copy.saveError;
+    case "deleteFailed":
+      return copy.deleteError;
+    case "refreshFailed":
+      return copy.refreshError;
+  }
+}
 
 export function GitHubTokenForm({
   hasToken,
@@ -16,9 +77,11 @@ export function GitHubTokenForm({
   hasToken: boolean;
   onChanged?: () => void | Promise<void>;
 }) {
+  const { locale } = useI18n();
+  const copy = toolMessages[locale];
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<TokenError | null>(null);
   const [saved, setSaved] = useState(false);
   const headingId = useId();
   const inputId = useId();
@@ -32,33 +95,27 @@ export function GitHubTokenForm({
 
   async function save() {
     if (!draft || busy) return;
+    const token = draft;
     setBusy(true);
-    setError("");
+    setError(null);
     setSaved(false);
     try {
-      const response = await setGithubToken({ token: draft });
-      if (response.status !== 204) throw apiResponseError(response);
+      const response = await setGithubToken({ token });
+      if (response.status !== 204) {
+        if (mounted.current) setError(responseFailure(response, token));
+        return;
+      }
       if (!mounted.current) return;
       setDraft("");
       setSaved(true);
       try {
         await onChanged?.();
       } catch {
-        if (mounted.current) {
-          setError(
-            "Токен сохранён, но не удалось обновить состояние страницы.",
-          );
-        }
+        if (mounted.current) setError({ kind: "refreshFailed" });
       }
     } catch (reason) {
-      if (mounted.current) {
-        setError(
-          errorMessage(reason, "Не удалось сохранить токен GitHub.").replaceAll(
-            draft,
-            "[скрыто]",
-          ),
-        );
-      }
+      if (mounted.current)
+        setError(thrownFailure(reason, { kind: "saveFailed" }, token));
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -66,19 +123,23 @@ export function GitHubTokenForm({
 
   async function remove() {
     if (busy) return;
+    const token = draft;
     setBusy(true);
-    setError("");
+    setError(null);
     setSaved(false);
     try {
       const response = await deleteGithubToken();
-      if (response.status !== 204) throw apiResponseError(response);
+      if (response.status !== 204) {
+        if (mounted.current) setError(responseFailure(response, token));
+        return;
+      }
       if (!mounted.current) return;
       setDraft("");
       setSaved(false);
       await onChanged?.();
     } catch (reason) {
       if (mounted.current)
-        setError(errorMessage(reason, "Не удалось удалить токен GitHub."));
+        setError(thrownFailure(reason, { kind: "deleteFailed" }, token));
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -86,55 +147,39 @@ export function GitHubTokenForm({
 
   return (
     <section className="github-token" aria-labelledby={headingId}>
-      <h2 id={headingId}>GitHub: лимит запросов к релизам (необязательно)</h2>
+      <h2 id={headingId}>{copy.heading}</h2>
+      <p>{copy.rateLimit}</p>
       <p>
-        Без токена GitHub обычно разрешает 60 запросов в час на общий IP-адрес;
-        с токеном — обычно 5000 в час на пользователя. Лимиты могут меняться и
-        быть общими для других приложений.
+        {copy.recommendation[0]}
+        <code>repo</code>
+        {copy.recommendation[1]}
+        <code>public_repo</code>
+        {copy.recommendation[2]}
       </p>
-      <p>
-        Рекомендуем fine-grained personal access token: выберите свой resource
-        owner, доступ только к публичным репозиториям и не добавляйте разрешения
-        — для чтения метаданных публичных релизов достаточно неявного Metadata:
-        read, а разрешения <code>repo</code> и <code>public_repo</code> не
-        нужны. MeloTrove не проверяет и не может подтвердить, что у токена нет
-        дополнительных прав. Достаточно бесплатного аккаунта GitHub: платная
-        подписка не требуется.
-      </p>
-      <p>
-        Токен хранится только на сервере, в базе данных MeloTrove, и попадает в
-        её резервные копии. Защищайте резервные копии так же, как сам токен.
-      </p>
-      <p>
-        Токен отправляется только в запросах к GitHub API: он не записывается в
-        журналы и не передаётся при скачивании файлов.
-      </p>
+      <p>{copy.tokenStorage}</p>
+      <p>{copy.tokenTransport}</p>
       <p>
         <a href={tokenCreate} target="_blank" rel="noreferrer">
-          Создать fine-grained token
+          {copy.createToken}
         </a>{" "}
-        (срок 90 дней предложен как пример, его можно изменить) ·{" "}
+        ({copy.expiryNote}) ·{" "}
         <a href={tokenGuide} target="_blank" rel="noreferrer">
-          официальное руководство GitHub
+          {copy.guide}
         </a>
         .
       </p>
       <ol>
+        <li>{copy.stepOpenSettings}</li>
+        <li>{copy.stepChooseOwner}</li>
         <li>
-          В GitHub откройте Settings → Developer settings → Personal access
-          tokens → Fine-grained tokens и нажмите Generate new token.
-        </li>
-        <li>
-          Выберите свой resource owner, Public repositories и не добавляйте
-          дополнительные permissions.
-        </li>
-        <li>
-          Скопируйте токен (GitHub показывает его один раз) и вставьте сюда.
-          Разрешения <code>repo</code> и <code>public_repo</code> не добавляйте:
-          они не нужны.
+          {copy.stepCopyToken[0]}
+          <code>repo</code>
+          {copy.stepCopyToken[1]}
+          <code>public_repo</code>
+          {copy.stepCopyToken[2]}
         </li>
       </ol>
-      <label htmlFor={inputId}>Personal access token</label>
+      <label htmlFor={inputId}>{copy.tokenLabel}</label>
       <input
         id={inputId}
         type="password"
@@ -143,37 +188,33 @@ export function GitHubTokenForm({
         disabled={busy}
         onChange={(event) => {
           setDraft(event.currentTarget.value);
-          setError("");
+          setError(null);
           setSaved(false);
         }}
       />
       <div className="github-token-actions">
         <AppButton isDisabled={busy || !draft} onPress={() => void save()}>
-          Проверить и сохранить
+          {copy.verifyAndSave}
         </AppButton>
         {hasToken && (
           <AppButton isDisabled={busy} onPress={() => void remove()}>
-            Удалить сохранённый токен
+            {copy.removeSaved}
           </AppButton>
         )}
       </div>
-      <p role="status">
-        {hasToken
-          ? "Токен сохранён (значение не отображается)."
-          : "Токен не сохранён."}
-      </p>
-      {saved && <p role="status">Токен проверен и сохранён.</p>}
-      {busy && <p role="status">Выполняется запрос…</p>}
-      {error && <p role="alert">{error}</p>}
+      <p role="status">{hasToken ? copy.tokenSaved : copy.tokenMissing}</p>
+      {saved && <p role="status">{copy.tokenVerified}</p>}
+      {busy && <p role="status">{copy.requestInProgress}</p>}
+      {error && <p role="alert">{errorText(error, copy)}</p>}
       {hasToken && (
         <p>
-          Удаление из MeloTrove не отзывает токен в GitHub. Для отзыва откройте{" "}
+          {copy.revokeHelp}{" "}
           <a
             href="https://github.com/settings/personal-access-tokens"
             target="_blank"
             rel="noreferrer"
           >
-            настройки токенов GitHub
+            {copy.revokeLink}
           </a>
           .
         </p>

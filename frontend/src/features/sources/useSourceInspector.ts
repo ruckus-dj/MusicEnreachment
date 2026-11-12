@@ -13,20 +13,28 @@ import type {
   OperationResponse,
   SourceLocationDetailResponse,
 } from "../../api/generated/client.schemas";
-import { message } from "./sourcesApi";
+import {
+  message,
+  sourceDiagnosticFailure,
+  sourceError,
+  sourceMessageFailure,
+  sourceResponseError,
+} from "./sourcesApi";
 
 function inspectorFailure(response: {
   readonly status: number;
   readonly data?: { readonly detail?: string };
 }) {
-  if (response.status === 404)
-    return new Error("Файл или каталог не найден: возможно, запись удалили.");
-  if (response.status === 409)
-    return new Error(
-      `${response.data?.detail || "Запрос отклонён: состояние файла или каталога изменилось, либо выполняется другая операция."} Обновите сведения о файле и повторите доступный этап.`,
-    );
-  return new Error(
-    response.data?.detail || `Сервер вернул ошибку ${response.status}.`,
+  if (response.status === 404) return sourceMessageFailure("inspectorNotFound");
+  if (response.status === 409) {
+    const help = sourceError("inspectorConflictHelp");
+    return response.data?.detail
+      ? sourceDiagnosticFailure(response.data.detail, help)
+      : sourceMessageFailure("inspectorConflict", undefined, help);
+  }
+  return sourceResponseError(
+    response,
+    sourceError("serverError", { status: response.status }),
   );
 }
 
@@ -35,8 +43,10 @@ export function useSourceInspector(sourceId: string, locationId: string) {
   const [operation, setOperation] = useState<OperationResponse>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [streamError, setStreamError] = useState("");
+  const [error, setError] = useState<ReturnType<typeof message> | null>(null);
+  const [streamError, setStreamError] = useState<ReturnType<
+    typeof message
+  > | null>(null);
   const lifetime = useRef(new AbortController());
   const detailRequest = useRef<AbortController | undefined>(undefined);
   const actionRequest = useRef<AbortController | undefined>(undefined);
@@ -58,7 +68,7 @@ export function useSourceInspector(sourceId: string, locationId: string) {
     const request = new AbortController();
     detailRequest.current = request;
     setLoading(true);
-    setError("");
+    setError(null);
     try {
       const response = await getSourceLocation(sourceId, locationId, {
         signal: request.signal,
@@ -110,7 +120,7 @@ export function useSourceInspector(sourceId: string, locationId: string) {
     },
     onSnapshotRead: (_snapshot, source) => {
       if (source === "initial") return;
-      if (source === "stream") setStreamError("");
+      if (source === "stream") setStreamError(null);
       // SSE is only a wake-up channel; the follower supplies REST snapshots.
       // Refresh detail on wakes and recovery reads, including duplicate states.
       // A fallback REST read does not prove that EventSource has reconnected.
@@ -118,7 +128,7 @@ export function useSourceInspector(sourceId: string, locationId: string) {
     },
     onHttpError: inspectorFailure,
     onError: (reason) => setStreamError(message(reason)),
-    onStreamError: (reason) => setStreamError(reason.message),
+    onStreamError: (reason) => setStreamError(message(reason)),
     refreshOnStreamError: true,
   });
 
@@ -143,7 +153,7 @@ export function useSourceInspector(sourceId: string, locationId: string) {
     const request = new AbortController();
     actionRequest.current = request;
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       switch (kind) {
         case "retry": {

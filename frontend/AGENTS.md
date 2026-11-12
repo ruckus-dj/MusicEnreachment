@@ -73,8 +73,10 @@ UTC offset. CI runs in different time zones on all supported platforms.
 
 **Query context and browser fixtures**: Shell integration tests must exercise the
 production query-provider composition, not rely on a test-only provider that can
-hide missing production wiring. Theme tests supply an explicit in-memory Storage
-fixture: Node 24 may not expose `window.localStorage` in the test environment.
+hide missing production wiring. Theme and locale tests supply an explicit
+in-memory Storage fixture: Node 24 may not expose `window.localStorage` in the
+test environment. Keep selectors consistent with the fixture's explicit locale;
+localizing an existing mixed-language control also changes its accessible name.
 Deferred editor-refresh tests must await the initial editing controls, not just
 the request count, before mutating the draft. Filter-transition MSW handlers must
 model both the initial and transitioned request values explicitly.

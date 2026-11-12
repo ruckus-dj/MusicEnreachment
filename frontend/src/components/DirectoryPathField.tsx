@@ -1,4 +1,6 @@
 import { useId, useState } from "react";
+import { directoryMessages } from "../i18n/directoryMessages";
+import { useI18n } from "../i18n/I18nProvider";
 import { DirectoryPicker } from "./DirectoryPicker";
 import "./DirectoryPathField.css";
 
@@ -19,6 +21,8 @@ export function DirectoryPathField({
   description?: string;
   "aria-describedby"?: string;
 }) {
+  const { locale } = useI18n();
+  const copy = directoryMessages[locale];
   const [pickerOpen, setPickerOpen] = useState(false);
   const descriptionId = useId();
   const helpIds = [ariaDescribedBy, description ? descriptionId : undefined]
@@ -42,7 +46,7 @@ export function DirectoryPathField({
           disabled={disabled}
           onClick={() => setPickerOpen(true)}
         >
-          Выбрать папку
+          {copy.choose}
         </button>
       </div>
       {description && <p id={descriptionId}>{description}</p>}

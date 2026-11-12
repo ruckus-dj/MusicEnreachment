@@ -7,10 +7,12 @@ import {
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { DirectoryPathField } from "../../components/DirectoryPathField";
+import { useI18n } from "../../i18n/I18nProvider";
 import { useHashLocation } from "../../navigation/hashLocation";
 import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
 import { SourceInspectorScreen } from "./SourceInspectorScreen";
+import { type SourceMessage, sourceMessage } from "./sourceMessages";
 import {
   inventoryAvailabilityNote,
   inventoryEmptyNote,
@@ -18,6 +20,8 @@ import {
   inventoryScopeNote,
   lastScanLabel,
   message,
+  renderSourceError,
+  sourceError,
   sourceFailure,
   statusLabel,
 } from "./sourcesApi";
@@ -56,15 +60,21 @@ function SourcesView({ route }: { route: SourcesRoute }) {
   }
 }
 
-function InventoryCell({ root }: { root: SourceRootResponse }) {
+function InventoryCell({
+  root,
+  locale,
+}: {
+  root: SourceRootResponse;
+  locale: "en" | "ru";
+}) {
   const notes = [
-    inventoryAvailabilityNote(root),
-    inventoryScopeNote(root),
-    inventoryEmptyNote(root),
+    inventoryAvailabilityNote(root, locale),
+    inventoryScopeNote(root, locale),
+    inventoryEmptyNote(root, locale),
   ].filter((note) => note.length > 0);
   return (
     <>
-      {inventoryLabel(root)}
+      {inventoryLabel(root, locale)}
       {notes.map((note) => (
         <span key={note} className="sources-note">
           {note}
@@ -75,6 +85,11 @@ function InventoryCell({ root }: { root: SourceRootResponse }) {
 }
 
 function SourceListScreen() {
+  const { locale } = useI18n();
+  const t = (
+    key: Parameters<typeof sourceMessage>[1],
+    values?: Record<string, string | number>,
+  ) => sourceMessage(locale, key, values);
   const [sources, setSources] = useState<SourceRootResponse[]>();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -83,10 +98,14 @@ function SourceListScreen() {
     "" | "in_place" | "staged"
   >("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [formError, setFormError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [partialSuccess, setPartialSuccess] = useState("");
+  const [error, setError] = useState<ReturnType<typeof message> | null>(null);
+  const [formError, setFormError] = useState<ReturnType<typeof message> | null>(
+    null,
+  );
+  const [notice, setNotice] = useState<SourceMessage | null>(null);
+  const [partialSuccess, setPartialSuccess] = useState<SourceMessage | null>(
+    null,
+  );
   const [partialSourceId, setPartialSourceId] = useState("");
   const registering = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -96,7 +115,7 @@ function SourceListScreen() {
 
   const load = useCallback(async () => {
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       const response = await listSources({ cache: "no-store" });
       if (response.status !== 200) throw sourceFailure("list", response);
@@ -122,16 +141,14 @@ function SourceListScreen() {
   async function register() {
     if (registering.current) return;
     if (!name.trim() || !path.trim() || !processingMode) {
-      setFormError(
-        "Укажите имя каталога, абсолютный путь на сервере и режим обработки.",
-      );
+      setFormError(sourceError("invalidCreate"));
       return;
     }
     registering.current = true;
     setBusy(true);
-    setFormError("");
-    setNotice("");
-    setPartialSuccess("");
+    setFormError(null);
+    setNotice(null);
+    setPartialSuccess(null);
     setPartialSourceId("");
     try {
       const response = await createSource({
@@ -150,9 +167,10 @@ function SourceListScreen() {
         // initial scan. The detail screen adopts this operation by discovery.
         const scan = await startSourceScan(registered.id);
         if (scan.status !== 200) {
-          setPartialSuccess(
-            `Каталог «${registered.display_name}» зарегистрирован, но запуск сканирования не принят сервером. Каталог сохранён: откройте его и запустите сканирование вручную.`,
-          );
+          setPartialSuccess({
+            key: "manualScanSuccess",
+            values: { name: registered.display_name },
+          });
           setPartialSourceId(registered.id);
           await load();
           listHeading.current?.focus();
@@ -160,9 +178,10 @@ function SourceListScreen() {
         }
         window.location.hash = `/sources/${encodeURIComponent(registered.id)}`;
       } catch {
-        setPartialSuccess(
-          `Каталог «${registered.display_name}» зарегистрирован, но запустить сканирование не удалось. Каталог сохранён: откройте его и запустите сканирование вручную.`,
-        );
+        setPartialSuccess({
+          key: "manualScanFailure",
+          values: { name: registered.display_name },
+        });
         setPartialSourceId(registered.id);
         await load();
         listHeading.current?.focus();
@@ -177,8 +196,8 @@ function SourceListScreen() {
 
   function cancelCreate() {
     setCreating(false);
-    setFormError("");
-    setPartialSuccess("");
+    setFormError(null);
+    setPartialSuccess(null);
     setPartialSourceId("");
     setName("");
     setPath("");
@@ -191,36 +210,36 @@ function SourceListScreen() {
       className="sources-screen mx-auto max-w-5xl py-3"
     >
       <h1 ref={heading} tabIndex={-1} id="sources-title">
-        Источники
+        {t("title")}
       </h1>
-      <p className="sources-help">
-        Серверные каталоги, из которых MeloTrove читает файлы. Путь указывается
-        на сервере; каталог читается только для чтения и файлы не загружаются
-        через браузер.
-      </p>
-      {busy && sources && <p role="status">Выполняется запрос…</p>}
-      {notice && <p role="status">{notice}</p>}
+      <p className="sources-help">{t("description")}</p>
+      {busy && sources && <p role="status">{t("requestRunning")}</p>}
+      {notice && (
+        <p role="status">{sourceMessage(locale, notice.key, notice.values)}</p>
+      )}
       {partialSuccess && (
         <div className="sources-partial-success" role="alert">
-          <p>{partialSuccess}</p>
+          <p>
+            {sourceMessage(locale, partialSuccess.key, partialSuccess.values)}
+          </p>
           <AppButton
             onPress={() => {
               window.location.hash = `/sources/${encodeURIComponent(partialSourceId)}`;
             }}
           >
-            Открыть каталог для ручного сканирования
+            {t("openManualScan")}
           </AppButton>
         </div>
       )}
       {error && (
         <>
           <p ref={alert} tabIndex={-1} role="alert">
-            {error}
+            {renderSourceError(error, locale)}
           </p>
-          <AppButton onPress={() => void load()}>Повторить загрузку</AppButton>
+          <AppButton onPress={() => void load()}>{t("retryLoad")}</AppButton>
         </>
       )}
-      {!sources && !error && <p role="status">Загрузка каталогов…</p>}
+      {!sources && !error && <p role="status">{t("loading")}</p>}
       {sources && (
         <>
           {creating ? (
@@ -232,9 +251,9 @@ function SourceListScreen() {
                 void register();
               }}
             >
-              <h2 id="source-create-title">Новый каталог</h2>
+              <h2 id="source-create-title">{t("createTitle")}</h2>
               <label>
-                Имя каталога
+                {t("name")}
                 <input
                   value={name}
                   onChange={(event) => setName(event.target.value)}
@@ -242,13 +261,13 @@ function SourceListScreen() {
               </label>
               <DirectoryPathField
                 id="source-create-path"
-                label="Путь на сервере"
+                label={t("serverPath")}
                 value={path}
                 onSelect={setPath}
                 disabled={busy}
               />
               <label>
-                Режим обработки
+                {t("processingMode")}
                 <select
                   className="sources-select"
                   required
@@ -259,35 +278,31 @@ function SourceListScreen() {
                     )
                   }
                 >
-                  <option value="">Выберите режим</option>
-                  <option value="in_place">in_place</option>
-                  <option value="staged">staged</option>
+                  <option value="">{t("chooseMode")}</option>
+                  <option value="in_place">{t("inPlace")}</option>
+                  <option value="staged">{t("staged")}</option>
                 </select>
               </label>
-              <p className="sources-help">
-                Путь принадлежит серверу, а не этому компьютеру. MeloTrove
-                ничего не создаёт и не записывает в каталог источника: браузер
-                не передаёт файлы.
-              </p>
+              <p className="sources-help">{t("sourcePolicy")}</p>
               {formError && (
                 <p ref={formAlert} tabIndex={-1} role="alert">
-                  {formError}
+                  {renderSourceError(formError, locale)}
                 </p>
               )}
               <AppButton type="submit" isDisabled={busy}>
-                Зарегистрировать каталог
+                {t("register")}
               </AppButton>
-              <AppButton onPress={cancelCreate}>Отмена</AppButton>
+              <AppButton onPress={cancelCreate}>{t("cancel")}</AppButton>
             </form>
           ) : (
             <AppButton
               onPress={() => {
-                setFormError("");
-                setNotice("");
+                setFormError(null);
+                setNotice(null);
                 setCreating(true);
               }}
             >
-              Добавить каталог
+              {t("addSource")}
             </AppButton>
           )}
           <section
@@ -295,43 +310,42 @@ function SourceListScreen() {
             className="sources-panel"
           >
             <h2 ref={listHeading} tabIndex={-1} id="sources-list-title">
-              Подключённые каталоги
+              {t("connectedSources")}
             </h2>
             {sources.length === 0 ? (
-              <p role="status">Ни один каталог не зарегистрирован.</p>
+              <p role="status">{t("noneRegistered")}</p>
             ) : (
               <div className="sources-table-wrap">
                 <table className="sources-table">
                   <caption className="sources-visually-hidden">
-                    Зарегистрированные серверные каталоги: имя, путь,
-                    доступность, включение, последнее сканирование и инвентарь
+                    {t("sourceCaption")}
                   </caption>
                   <thead>
                     <tr>
-                      <th scope="col">Имя</th>
-                      <th scope="col">Путь</th>
-                      <th scope="col">Доступность</th>
-                      <th scope="col">Включён</th>
-                      <th scope="col">Последнее сканирование</th>
-                      <th scope="col">Инвентарь</th>
-                      <th scope="col">Действия</th>
+                      <th scope="col">{t("nameColumn")}</th>
+                      <th scope="col">{t("pathColumn")}</th>
+                      <th scope="col">{t("availability")}</th>
+                      <th scope="col">{t("enabled")}</th>
+                      <th scope="col">{t("lastScan")}</th>
+                      <th scope="col">{t("inventory")}</th>
+                      <th scope="col">{t("actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {sources.map((root) => (
                       <tr key={root.id}>
-                        <th scope="row" data-label="Имя">
+                        <th scope="row" data-label={t("nameColumn")}>
                           {root.display_name}
                         </th>
-                        <td data-label="Путь">
+                        <td data-label={t("pathColumn")}>
                           <code>{root.configured_path}</code>
                         </td>
-                        <td data-label="Доступность">
+                        <td data-label={t("availability")}>
                           <span
                             className="sources-chip"
                             data-status={root.status}
                           >
-                            {statusLabel(root.status)}
+                            {statusLabel(root.status, locale)}
                           </span>
                           {root.status === "unavailable" && root.safe_error && (
                             <span className="sources-note">
@@ -339,22 +353,22 @@ function SourceListScreen() {
                             </span>
                           )}
                         </td>
-                        <td data-label="Включён">
-                          {root.enabled ? "Включён" : "Выключен"}
+                        <td data-label={t("enabled")}>
+                          {root.enabled ? t("enabledYes") : t("enabledNo")}
                         </td>
-                        <td data-label="Последнее сканирование">
-                          {lastScanLabel(root)}
+                        <td data-label={t("lastScan")}>
+                          {lastScanLabel(root, locale)}
                         </td>
-                        <td data-label="Инвентарь">
-                          <InventoryCell root={root} />
+                        <td data-label={t("inventory")}>
+                          <InventoryCell root={root} locale={locale} />
                         </td>
-                        <td data-label="Действия">
+                        <td data-label={t("actions")}>
                           <AppButton
                             onPress={() => {
                               window.location.hash = `/sources/${encodeURIComponent(root.id)}`;
                             }}
                           >
-                            Открыть {root.display_name}
+                            {t("openSource", { name: root.display_name })}
                           </AppButton>
                         </td>
                       </tr>
@@ -363,10 +377,7 @@ function SourceListScreen() {
                 </table>
               </div>
             )}
-            <p className="sources-note">
-              Недоступность каталога или смена пути не удаляют прежний
-              инвентарь: записи остаются от последнего успешного сканирования.
-            </p>
+            <p className="sources-note">{t("unavailableInventory")}</p>
           </section>
           <SourceArtifactCleanupPanel />
         </>

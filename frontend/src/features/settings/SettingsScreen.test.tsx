@@ -1,14 +1,17 @@
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
-  render,
+  render as renderDom,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { SettingsScreen } from "./SettingsScreen";
@@ -17,6 +20,20 @@ import {
   resetSettingsDraftMemory,
   writeSettingsDraft,
 } from "./settingsDraft";
+
+let setTestLanguage: ((language: "en" | "ru") => void) | undefined;
+function TestLanguageBridge() {
+  setTestLanguage = useI18n().setPreference;
+  return null;
+}
+function render(ui: ReactNode) {
+  return renderDom(
+    <I18nProvider>
+      <TestLanguageBridge />
+      {ui}
+    </I18nProvider>,
+  );
+}
 
 const settings = {
   completed: true,
@@ -170,10 +187,12 @@ beforeEach(() => {
   });
   vi.stubGlobal("localStorage", createMemoryStorage());
   localStorage.clear();
+  localStorage.setItem("melotrove-language", "ru");
   vi.stubGlobal("sessionStorage", createMemoryStorage());
   sessionStorage.clear();
   resetSettingsDraftMemory();
   TestEventSource.instances = [];
+  setTestLanguage = undefined;
   vi.stubGlobal("EventSource", TestEventSource);
   common();
 });
@@ -184,6 +203,25 @@ afterEach(() => {
 });
 
 describe("SettingsScreen", () => {
+  it("keeps a text draft and its field mounted when switching from Russian to English", async () => {
+    render(<SettingsScreen />);
+    const concurrency = await screen.findByLabelText("Одновременные файлы");
+    fireEvent.change(concurrency, { target: { value: "8" } });
+    await waitFor(() =>
+      expect(
+        readSettingsDraft(sessionStorage)?.sourceFileConcurrency?.value,
+      ).toBe("8"),
+    );
+
+    act(() => setTestLanguage?.("en"));
+
+    expect(await screen.findByLabelText("Concurrent files")).toBe(concurrency);
+    expect(concurrency).toHaveValue("8");
+    expect(
+      readSettingsDraft(sessionStorage)?.sourceFileConcurrency?.value,
+    ).toBe("8");
+  });
+
   it("restores an invalid raw concurrency draft without applying it", async () => {
     writeSettingsDraft(sessionStorage, {
       sourceFileConcurrency: {
@@ -238,11 +276,11 @@ describe("SettingsScreen", () => {
 
     expect(
       await screen.findByRole("textbox", {
-        name: "Work directory для staged-копий",
+        name: "Рабочая папка для подготовленных копий",
       }),
     ).toHaveValue(workDirectory);
     expect(
-      screen.getByRole("textbox", { name: "Output directory" }),
+      screen.getByRole("textbox", { name: "Каталог публикации" }),
     ).toHaveValue("/srv/music");
   });
 
@@ -399,12 +437,12 @@ describe("SettingsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Обновить состояние" }));
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /Publication format/ }),
+        screen.getByRole("button", { name: /Формат публикации/ }),
       ).toHaveTextContent("Исходный формат"),
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Publication format/ }),
+      await screen.findByRole("button", { name: /Формат публикации/ }),
     );
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
     await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(1));
@@ -412,7 +450,7 @@ describe("SettingsScreen", () => {
       screen.getByText(/M4A сохраняет AAC и ALAC без перекодирования/),
     ).toHaveAttribute("role", "note");
     fireEvent.click(
-      await screen.findByRole("button", { name: /Publication format/ }),
+      await screen.findByRole("button", { name: /Формат публикации/ }),
     );
     fireEvent.click(
       await screen.findByRole("option", { name: "Исходный формат" }),
@@ -451,7 +489,7 @@ describe("SettingsScreen", () => {
     ).toBeInTheDocument();
 
     fireEvent.change(
-      screen.getByRole("textbox", { name: "MusicBrainz base URL" }),
+      screen.getByRole("textbox", { name: "Базовый URL MusicBrainz" }),
       {
         target: { value: "https://unsaved.musicbrainz.test" },
       },
@@ -464,11 +502,11 @@ describe("SettingsScreen", () => {
     );
     fireEvent.click(
       screen.getByLabelText(
-        "Ограничивать частоту запросов к self-hosted MusicBrainz",
+        "Ограничивать частоту запросов к собственному MusicBrainz",
       ),
     );
     await waitFor(() => expect(musicBrainzWrites).toHaveBeenCalledTimes(1));
-    fireEvent.change(screen.getByLabelText("MusicBrainz mode"), {
+    fireEvent.change(screen.getByLabelText("Режим MusicBrainz"), {
       target: { value: "public" },
     });
     await waitFor(() => expect(musicBrainzWrites).toHaveBeenCalledTimes(2));
@@ -486,7 +524,7 @@ describe("SettingsScreen", () => {
       await screen.findByText("Настройка LRCLIB сохранена."),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Log level/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Уровень журнала/ }));
     fireEvent.click(await screen.findByRole("option", { name: "debug" }));
     await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
     expect(runtimeWrites).toHaveBeenCalledTimes(3);
@@ -570,7 +608,7 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     await screen.findByLabelText("Одновременные файлы");
-    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Формат публикации/ }));
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
     await waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
     const retry = await screen.findByRole("button", {
@@ -593,7 +631,7 @@ describe("SettingsScreen", () => {
     ]);
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /Publication format/ }),
+        screen.getByRole("button", { name: /Формат публикации/ }),
       ).toHaveTextContent("M4A"),
     );
   });
@@ -632,7 +670,7 @@ describe("SettingsScreen", () => {
     render(<SettingsScreen />);
     await screen.findByLabelText("Одновременные файлы");
     const formatButton = screen.getByRole("button", {
-      name: /Publication format/,
+      name: /Формат публикации/,
     });
     fireEvent.click(formatButton);
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
@@ -687,7 +725,7 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     await screen.findByLabelText("Одновременные файлы");
-    fireEvent.click(screen.getByRole("button", { name: /Log level/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Уровень журнала/ }));
     fireEvent.click(await screen.findByRole("option", { name: "debug" }));
     await waitFor(() => expect(reads).toBe(2));
     expect(logWrites).toHaveBeenCalledTimes(1);
@@ -839,14 +877,14 @@ describe("SettingsScreen", () => {
 
     const oldView = render(<SettingsScreen />);
     await screen.findByLabelText("Одновременные файлы");
-    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Формат публикации/ }));
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
     await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: /Log level/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Уровень журнала/ }));
     fireEvent.click(await screen.findByRole("option", { name: "debug" }));
-    expect(screen.getByRole("button", { name: /Log level/ })).toHaveTextContent(
-      "debug",
-    );
+    expect(
+      screen.getByRole("button", { name: /Уровень журнала/ }),
+    ).toHaveTextContent("debug");
     expect(logWrites).not.toHaveBeenCalled();
 
     oldView.unmount();
@@ -858,12 +896,12 @@ describe("SettingsScreen", () => {
     await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(settingsReads).toHaveBeenCalledTimes(4));
     const formatButton = await screen.findByRole("button", {
-      name: /Publication format/,
+      name: /Формат публикации/,
     });
     expect(formatButton).toHaveTextContent("M4A");
-    expect(screen.getByRole("button", { name: /Log level/ })).toHaveTextContent(
-      "debug",
-    );
+    expect(
+      screen.getByRole("button", { name: /Уровень журнала/ }),
+    ).toHaveTextContent("debug");
 
     fireEvent.click(formatButton);
     fireEvent.click(
@@ -882,11 +920,11 @@ describe("SettingsScreen", () => {
       },
     ]);
     expect(
-      screen.getByRole("button", { name: /Publication format/ }),
+      screen.getByRole("button", { name: /Формат публикации/ }),
     ).toHaveTextContent("Исходный формат");
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Publication format/ }),
+      await screen.findByRole("button", { name: /Формат публикации/ }),
     );
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
     await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(3));
@@ -900,7 +938,7 @@ describe("SettingsScreen", () => {
 
     const publicationFormatAfterConfirmation = await screen.findByRole(
       "button",
-      { name: /Publication format/ },
+      { name: /Формат публикации/ },
     );
     fireEvent.click(publicationFormatAfterConfirmation);
     fireEvent.click(
@@ -1044,10 +1082,10 @@ describe("SettingsScreen", () => {
 
     const oldView = render(<SettingsScreen />);
     await screen.findByLabelText("Одновременные файлы");
-    fireEvent.click(screen.getByRole("button", { name: /Publication format/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Формат публикации/ }));
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
     await waitFor(() => expect(runtimeWrites).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: /Log level/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Уровень журнала/ }));
     fireEvent.click(await screen.findByRole("option", { name: "debug" }));
     oldView.unmount();
     render(<SettingsScreen />);
@@ -1058,9 +1096,9 @@ describe("SettingsScreen", () => {
     await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(settingsReads).toHaveBeenCalledTimes(3));
     await screen.findByLabelText("Одновременные файлы");
-    expect(screen.getByRole("button", { name: /Log level/ })).toHaveTextContent(
-      "debug",
-    );
+    expect(
+      screen.getByRole("button", { name: /Уровень журнала/ }),
+    ).toHaveTextContent("debug");
     expect(
       screen.queryByRole("button", {
         name: "Повторить сохранение: формат публикации (M4A)",

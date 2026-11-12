@@ -1,16 +1,13 @@
 import { useEffect, useState } from "react";
 import { Tooltip, TooltipTrigger } from "react-aria-components";
+import { useI18n } from "../i18n/I18nProvider";
+import { shellMessages } from "../i18n/shellMessages";
 import { AppButton } from "./AppButton";
 
 export type ThemePreference = "system" | "light" | "dark";
 
 const storageKey = "melotrove-theme";
 const themes: ThemePreference[] = ["system", "light", "dark"];
-const labels: Record<ThemePreference, string> = {
-  system: "Как в системе",
-  light: "Светлая",
-  dark: "Тёмная",
-};
 
 // Keep a page-session choice even when storage is unavailable or the control remounts.
 let sessionPreference: ThemePreference | undefined;
@@ -92,6 +89,13 @@ function ThemeIcon({ theme }: { theme: ThemePreference }) {
 }
 
 export function ThemeControl() {
+  const { locale } = useI18n();
+  const copy = shellMessages[locale];
+  const labels: Record<ThemePreference, string> = {
+    system: copy.systemTheme,
+    light: copy.lightTheme,
+    dark: copy.darkTheme,
+  };
   const [preference, setPreference] = useState<ThemePreference>(readPreference);
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [warning, setWarning] = useState(false);
@@ -123,7 +127,7 @@ export function ThemeControl() {
       <TooltipTrigger>
         <AppButton
           className="h-[26px] w-7 !min-h-0 pointer-coarse:min-h-[40px]! pointer-coarse:min-w-[40px] rounded-[4px] !p-0 text-[var(--ink)] motion-safe:transition-[background-color,border-color] [&_svg]:size-[15px]"
-          aria-label={`Тема: ${currentLabel}. Следующая тема: ${followingLabel}`}
+          aria-label={`${copy.theme}: ${currentLabel}. ${copy.nextTheme}: ${followingLabel}`}
           onPress={() => {
             const next = nextTheme(preference);
             setPreference(next);
@@ -139,7 +143,7 @@ export function ThemeControl() {
           <ThemeIcon theme={preference} />
         </AppButton>
         <Tooltip className="react-aria-Tooltip ui-tooltip z-50 max-w-[260px] rounded-[5px] border border-[var(--line)] bg-[var(--ink)] px-2 py-1.5 text-[10px] text-[var(--surface)] shadow-[0_8px_24px_#0003]">
-          {`Тема: ${currentLabel}`}
+          {`${copy.theme}: ${currentLabel}`}
         </Tooltip>
       </TooltipTrigger>
       {warning && (
@@ -147,7 +151,7 @@ export function ThemeControl() {
           className="max-w-[220px] text-[10px] text-[var(--warning)]"
           role="status"
         >
-          Не удалось сохранить тему. Выбор действует до закрытия страницы.
+          {copy.themeWarning}
         </span>
       )}
     </div>

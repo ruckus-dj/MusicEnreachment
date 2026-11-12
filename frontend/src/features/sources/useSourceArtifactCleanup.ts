@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiResponseError } from "../../api/client/errors";
 import {
   isOperationSnapshotNewer,
   useOperationFollower,
@@ -12,7 +11,7 @@ import type {
   OperationResponse,
   SourceAnalysisArtifactCleanupCandidate,
 } from "../../api/generated/client.schemas";
-import { message } from "./sourcesApi";
+import { message, sourceError, sourceResponseError } from "./sourcesApi";
 
 const pending = (operation: OperationResponse) =>
   operation.state === "queued" || operation.state === "running";
@@ -21,7 +20,10 @@ function requestFailure(response: {
   status: number;
   data?: { detail?: string };
 }) {
-  return apiResponseError(response, `Сервер вернул ошибку ${response.status}.`);
+  return sourceResponseError(
+    response,
+    sourceError("serverError", { status: response.status }),
+  );
 }
 
 export function useSourceArtifactCleanup() {
@@ -33,7 +35,7 @@ export function useSourceArtifactCleanup() {
   const [operation, setOperation] = useState<OperationResponse>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ReturnType<typeof message> | null>(null);
   const [streamError, setStreamError] = useState("");
   const operationSnapshot = useRef<OperationResponse | undefined>(undefined);
   const lifetime = useRef(new AbortController());
@@ -45,7 +47,7 @@ export function useSourceArtifactCleanup() {
     const request = new AbortController();
     candidateRequest.current = request;
     setLoading(true);
-    if (!preserveError) setError("");
+    if (!preserveError) setError(null);
     try {
       const response = await listSourceAnalysisArtifactCleanupCandidates({
         signal: request.signal,
@@ -134,7 +136,7 @@ export function useSourceArtifactCleanup() {
     // same-tick callers from issuing duplicate destructive POSTs.
     actionRequest.current = request;
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       const response = await cleanupSourceAnalysisArtifacts(
         { artifact_ids: [...ids] },

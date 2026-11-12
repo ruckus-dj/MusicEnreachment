@@ -81,7 +81,7 @@ describe("GenreCatalogPanel", () => {
     render(<GenreCatalogPanel />);
 
     expect(await screen.findByText("128")).toBeInTheDocument();
-    expect(screen.getByText("Последняя попытка")).toBeInTheDocument();
+    expect(screen.getByText("Last attempt")).toBeInTheDocument();
   });
 
   it("reports a status request error without discarding the catalog", async () => {
@@ -106,7 +106,7 @@ describe("GenreCatalogPanel", () => {
       data: terminal,
       headers: new Headers(),
     } as never);
-    fireEvent.click(screen.getByRole("button", { name: "Обновить каталог" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh catalog" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "network unavailable",
     );
@@ -149,7 +149,7 @@ describe("GenreCatalogPanel", () => {
 
     render(<GenreCatalogPanel />);
     await screen.findByText("128");
-    fireEvent.click(screen.getByRole("button", { name: "Обновить каталог" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh catalog" }));
 
     await waitFor(() =>
       expect(subscribeToOperation).toHaveBeenCalledWith(
@@ -161,9 +161,7 @@ describe("GenreCatalogPanel", () => {
     await waitFor(() =>
       expect(getOperation).toHaveBeenCalledWith(operationId, expect.anything()),
     );
-    expect(
-      screen.getByText(/Обновление каталога: в очереди/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Catalog refresh: queued/)).toBeInTheDocument();
 
     expect(wake).toBeDefined();
     await wake?.(operationId);
@@ -195,7 +193,7 @@ describe("GenreCatalogPanel", () => {
       ),
     );
     expect(
-      screen.getByRole("button", { name: "Обновить каталог" }),
+      screen.getByRole("button", { name: "Refresh catalog" }),
     ).toBeDisabled();
   });
 });

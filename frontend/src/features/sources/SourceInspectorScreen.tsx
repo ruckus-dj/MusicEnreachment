@@ -5,8 +5,10 @@ import type {
   SourceStagedArtifactResponse,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
 import { SourceAnalysisSteps } from "./SourceAnalysisSteps";
-import { statusLabel } from "./sourcesApi";
+import { numberFormat, sourceMessage } from "./sourceMessages";
+import { renderSourceError, statusLabel } from "./sourcesApi";
 import { useSourceInspector } from "./useSourceInspector";
 import "./sources.css";
 
@@ -20,6 +22,11 @@ export function SourceInspectorScreen({
   readonly sourceId: string;
   readonly locationId: string;
 }) {
+  const { locale } = useI18n();
+  const t = (
+    key: Parameters<typeof sourceMessage>[1],
+    values?: Record<string, string | number>,
+  ) => sourceMessage(locale, key, values);
   const inspector = useSourceInspector(sourceId, locationId);
   const { detail, operation, loading, busy, pending, error, streamError } =
     inspector;
@@ -86,24 +93,22 @@ export function SourceInspectorScreen({
       className="sources-screen sources-inspector mx-auto max-w-5xl py-3"
       aria-labelledby="inspector-title"
     >
-      <nav aria-label="Путь к файлу" className="sources-breadcrumb">
-        <Link href="#/sources">Источники</Link>
+      <nav aria-label={t("breadcrumb")} className="sources-breadcrumb">
+        <Link href="#/sources">{t("title")}</Link>
         <span aria-hidden="true">/</span>
         <Link href={`#/sources/${encodeURIComponent(sourceId)}`}>
-          Каталог источника
+          {t("sourceTitle")}
         </Link>
         <span aria-hidden="true">/</span>
-        <span>Файл</span>
+        <span>{t("file")}</span>
       </nav>
       <h1 id="inspector-title" ref={heading} tabIndex={-1}>
-        Инспектор файла
+        {t("inspector")}
       </h1>
-      {loading && (
-        <p role="status">Загрузка файла и проверка активного анализа…</p>
-      )}
+      {loading && <p role="status">{t("loadingInspection")}</p>}
       {error && (
         <p ref={alert} tabIndex={-1} role="alert">
-          {error}
+          {renderSourceError(error, locale)}
         </p>
       )}
       {error && (
@@ -111,82 +116,83 @@ export function SourceInspectorScreen({
           isDisabled={loading || busy}
           onPress={() => void inspector.load()}
         >
-          Повторить загрузку
+          {t("retryLoad")}
         </AppButton>
       )}
       {detail && (
         <>
           <section className="sources-panel" aria-labelledby="identity-title">
-            <h2 id="identity-title">Исходный файл</h2>
+            <h2 id="identity-title">{t("originalFile")}</h2>
             <dl className="sources-summary">
               <div>
-                <dt>Относительный путь</dt>
+                <dt>{t("relativePath")}</dt>
                 <dd>
                   <code>{detail.relative_path}</code>
                 </dd>
               </div>
               <div>
-                <dt>Путь инвентаря</dt>
+                <dt>{t("inventoryPath")}</dt>
                 <dd>
-                  <code>{detail.root.inventory_path ?? "Неизвестно"}</code>
+                  <code>{detail.root.inventory_path ?? t("unknown")}</code>
                 </dd>
               </div>
               <div>
-                <dt>Размер</dt>
+                <dt>{t("size")}</dt>
                 <dd>
-                  {new Intl.NumberFormat("ru-RU").format(detail.size_bytes)} Б
+                  {numberFormat(locale).format(detail.size_bytes)}{" "}
+                  {t("bytesUnit")}
                 </dd>
               </div>
               <div>
-                <dt>Изменён</dt>
-                <dd>{new Date(detail.mtime).toLocaleString()}</dd>
+                <dt>{t("modified")}</dt>
+                <dd>
+                  {new Intl.DateTimeFormat(
+                    locale === "ru" ? "ru-RU" : "en-US",
+                    { dateStyle: "short", timeStyle: "short" },
+                  ).format(new Date(detail.mtime))}
+                </dd>
               </div>
               <div>
-                <dt>Воздействие анализа</dt>
-                <dd>Анализ не изменяет исходный файл</dd>
+                <dt>{t("analysisImpact")}</dt>
+                <dd>{t("analysisDoesNotChange")}</dd>
               </div>
               <div>
-                <dt>Доступность каталога</dt>
-                <dd>{statusLabel(detail.root.status)}</dd>
+                <dt>{t("sourceAvailability")}</dt>
+                <dd>{statusLabel(detail.root.status, locale)}</dd>
               </div>
             </dl>
             {!detail.root.enabled && (
-              <p className="sources-note">
-                Каталог выключен: анализ недоступен.
-              </p>
+              <p className="sources-note">{t("disabledAnalysis")}</p>
             )}
             {detail.root.stale && (
-              <p className="sources-note">
-                Инвентарь устарел: сначала сканируйте текущий путь каталога.
-              </p>
+              <p className="sources-note">{t("staleInventory")}</p>
             )}
             {detail.root.status === "unavailable" && (
               <p className="sources-note">
-                Каталог недоступен. Сохранённый результат остаётся доступен.{" "}
-                {detail.root.safe_error}
+                {t("unavailableResult")} {detail.root.safe_error}
               </p>
             )}
           </section>
           <section className="sources-panel" aria-labelledby="analysis-title">
-            <h2 id="analysis-title">Технический анализ</h2>
-            {busy && <p role="status">Выполняется запрос…</p>}
+            <h2 id="analysis-title">{t("technicalAnalysis")}</h2>
+            {busy && <p role="status">{t("requestRunning")}</p>}
             {pending && (
               <p role="status">
                 {operation?.state === "queued"
-                  ? "Этап анализа поставлен в очередь."
+                  ? t("queuedStep")
                   : operation?.stage === "applying"
-                    ? "Сохранение результата этапа анализа."
-                    : "Выполняется этап анализа файла."}
+                    ? t("savingStep")
+                    : t("runningStep")}
               </p>
             )}
             {streamError && pending && (
-              <p role="status">
-                Поток событий прерван. Соединение восстановится автоматически;
-                показан последний ответ сервера.
-              </p>
+              <p role="status">{t("streamInterrupted")}</p>
             )}
           </section>
-          <StagedArtifactStatus artifact={detail.staged_artifact} />
+          <StagedArtifactStatus
+            artifact={detail.staged_artifact}
+            locale={locale}
+          />
           <SourceAnalysisSteps
             steps={steps}
             sha256={
@@ -219,9 +225,9 @@ export function SourceInspectorScreen({
               eligible: detail.matching_eligible,
               reason: !detail.matching_eligible
                 ? detail.result?.streams?.length === 0
-                  ? "Не поддерживается для файла без аудиопотоков"
+                  ? t("noAudioSupport")
                   : detail.result?.streams && detail.result.streams.length > 1
-                    ? "Не поддерживается для файла с несколькими аудиопотоками"
+                    ? t("multipleAudioSupport")
                     : undefined
                 : undefined,
             }}
@@ -234,17 +240,21 @@ export function SourceInspectorScreen({
 
 function StagedArtifactStatus({
   artifact,
+  locale,
 }: {
   readonly artifact?: SourceStagedArtifactResponse;
+  readonly locale: "en" | "ru";
 }) {
+  const t = (key: Parameters<typeof sourceMessage>[1]) =>
+    sourceMessage(locale, key);
   const stateLabels = {
-    unknown: "Неизвестно",
-    preparation: "Подготовка",
-    acquiring: "Получение артефакта",
-    ready: "Готов",
-    retained: "Сохранён",
-    cleanup_eligible: "Ожидает очистки",
-    cleanup_failed: "Ошибка очистки",
+    unknown: t("unknown"),
+    preparation: t("artifactPreparation"),
+    acquiring: t("artifactAcquiring"),
+    ready: t("artifactReady"),
+    retained: t("artifactRetained"),
+    cleanup_eligible: t("cleanupEligible"),
+    cleanup_failed: t("cleanupFailed"),
   } as const;
   // The current server always sends an explicit projection, but legacy or
   // malformed payloads may omit it or leave fields out. Absent registry facts
@@ -261,46 +271,51 @@ function StagedArtifactStatus({
 
   return (
     <section className="sources-panel" aria-labelledby="staged-artifact-title">
-      <h2 id="staged-artifact-title">Промежуточный артефакт анализа</h2>
-      <p>Состояние: {stateLabel}</p>
+      <h2 id="staged-artifact-title">{t("stagedArtifact")}</h2>
+      <p>
+        {t("state")}: {stateLabel}
+      </p>
       {state === "ready" && (
-        <p className="sources-note">
-          Артефакт зарегистрирован как готовый; это не подтверждает наличие
-          файла на диске.
-        </p>
+        <p className="sources-note">{t("artifactReadyNote")}</p>
       )}
       {state === "unknown" && (
-        <p className="sources-note">
-          Сведения о промежуточном артефакте неизвестны.
-        </p>
+        <p className="sources-note">{t("artifactUnknownNote")}</p>
       )}
       {requestedStepsKnown ? (
         <>
           <p>
-            Запрошенные этапы:{" "}
-            {requestedSteps.length > 0 ? requestedSteps.join(", ") : "Нет"}
+            {t("requestedSteps")}:{" "}
+            {requestedSteps.length > 0
+              ? requestedSteps
+                  .map((step) =>
+                    t(
+                      step === "sha256"
+                        ? "sha256"
+                        : step === "probe"
+                          ? "probeStep"
+                          : step === "fingerprint"
+                            ? "fingerprint"
+                            : step === "metadata"
+                              ? "metadata"
+                              : "unknown",
+                    ),
+                  )
+                  .join(", ")
+              : t("noSteps")}
           </p>
           {requestedSteps.length === 0 && (
-            <p className="sources-note">
-              Пустой список запрошенных этапов не означает, что этапы завершены.
-            </p>
+            <p className="sources-note">{t("emptyStepsNote")}</p>
           )}
         </>
       ) : (
-        <p className="sources-note">
-          История запрошенных этапов неизвестна; пустой список не означает, что
-          этапы завершены или не запрашивались.
-        </p>
+        <p className="sources-note">{t("requestedHistoryUnknown")}</p>
       )}
       {reusedFromDifferentOperation && (
-        <p className="sources-note">
-          Промежуточный артефакт создан другой операцией и используется текущей
-          операцией.
-        </p>
+        <p className="sources-note">{t("artifactReused")}</p>
       )}
       {state === "cleanup_failed" && artifact?.safe_error && (
         <p role="alert">
-          Очистить промежуточный артефакт не удалось: {artifact.safe_error}
+          {t("artifactCleanupFailed")} {artifact.safe_error}
         </p>
       )}
     </section>

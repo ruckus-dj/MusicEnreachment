@@ -26,6 +26,13 @@ const english = {
   addSourceDescription:
     "Register a music folder in Sources to start working with your library. You can do this now or later.",
   addSource: "Add source",
+  theme: "Theme",
+  nextTheme: "Next theme",
+  systemTheme: "System default",
+  lightTheme: "Light",
+  darkTheme: "Dark",
+  themeWarning:
+    "Could not save the theme preference. Your choice lasts until the page is closed.",
 } as const;
 
 export type ShellMessageKey = keyof typeof english;
@@ -56,6 +63,13 @@ const russian: Record<ShellMessageKey, string> = {
   addSourceDescription:
     "Зарегистрируйте каталог с музыкой в разделе «Источники», чтобы начать работу с медиатекой. Это можно сделать сейчас или позже.",
   addSource: "Добавить источник",
+  theme: "Тема",
+  nextTheme: "Следующая тема",
+  systemTheme: "Как в системе",
+  lightTheme: "Светлая",
+  darkTheme: "Тёмная",
+  themeWarning:
+    "Не удалось сохранить тему. Выбор действует до закрытия страницы.",
 };
 
 export const shellMessages: Record<Locale, Record<ShellMessageKey, string>> = {

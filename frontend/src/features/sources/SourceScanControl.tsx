@@ -13,18 +13,24 @@ import type {
   SourceRootResponse,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { message } from "./sourcesApi";
+import { useI18n } from "../../i18n/I18nProvider";
+import { sourceMessage } from "./sourceMessages";
+import {
+  message,
+  renderSourceError,
+  sourceError,
+  sourceMessageFailure,
+  sourceResponseError,
+} from "./sourcesApi";
 
 // The stage text is the whole progress report: bytes_completed is a byte count,
 // not a file count, and a scan shows no percentage before the tree is read.
-function stageText(operation: OperationResponse): string {
-  if (operation.state === "queued") return "Сканирование поставлено в очередь.";
+function stageText(operation: OperationResponse, locale: "en" | "ru"): string {
+  if (operation.state === "queued") return sourceMessage(locale, "queuedScan");
   const stage = operation.stage.replace(/^retry:/, "");
-  if (stage === "traversing")
-    return "Обход каталога: перечисление файлов и чтение их метаданных.";
-  if (stage === "applying")
-    return "Применение результатов: подтверждённый инвентарь сохраняется.";
-  return `Сканирование выполняется (этап сервера: ${stage}).`;
+  if (stage === "traversing") return sourceMessage(locale, "traversing");
+  if (stage === "applying") return sourceMessage(locale, "applying");
+  return sourceMessage(locale, "scanningStage", { stage });
 }
 
 function scanFailure(response: {
@@ -32,17 +38,12 @@ function scanFailure(response: {
   data?: { detail?: string };
 }): Error {
   if (response.status === 409)
-    return new Error(
-      "Сканирование уже выполняется: сервер отклонил повторный запуск. Дождитесь завершения текущего сканирования и повторите.",
-    );
-  if (response.status === 404)
-    return new Error("Каталог не найден: возможно, его удалили в другом окне.");
-  if (response.status === 400)
-    return new Error(
-      "Сервер отклонил сканирование: каталог выключен, недоступен или настройка ещё не завершена.",
-    );
-  return new Error(
-    response.data?.detail || `Сервер вернул ошибку ${response.status}.`,
+    return sourceMessageFailure("scanAlreadyRunning");
+  if (response.status === 404) return sourceMessageFailure("sourceMissing");
+  if (response.status === 400) return sourceMessageFailure("scanRejected");
+  return sourceResponseError(
+    response,
+    sourceError("serverError", { status: response.status }),
   );
 }
 
@@ -76,13 +77,24 @@ export function SourceScanControl(props: SourceScanControlProps) {
 }
 
 function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
+  const { locale } = useI18n();
+  const t = (
+    key: Parameters<typeof sourceMessage>[1],
+    values?: Record<string, string | number>,
+  ) => sourceMessage(locale, key, values);
   const [operation, setOperation] = useState<OperationResponse>();
   const [starting, setStarting] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  const [actionError, setActionError] = useState("");
-  const [streamError, setStreamError] = useState("");
+  const [actionError, setActionError] = useState<ReturnType<
+    typeof message
+  > | null>(null);
+  const [streamError, setStreamError] = useState<ReturnType<
+    typeof message
+  > | null>(null);
   const [discovering, setDiscovering] = useState(true);
-  const [discoveryError, setDiscoveryError] = useState("");
+  const [discoveryError, setDiscoveryError] = useState<ReturnType<
+    typeof message
+  > | null>(null);
   const startInFlight = useRef(false);
   const retryInFlight = useRef(false);
   const reportedCompletion = useRef("");
@@ -121,7 +133,7 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
     const request = new AbortController();
     const discover = async () => {
       setDiscovering(true);
-      setDiscoveryError("");
+      setDiscoveryError(null);
       try {
         const response = await listOperations(undefined, {
           signal: request.signal,
@@ -130,7 +142,7 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
         if (request.signal.aborted) return;
         if (response.status !== 200) {
           setDiscoveryError(
-            `Не удалось проверить активное сканирование каталога (код ${response.status}). Повторный запуск сервер отклонит, если сканирование уже идёт.`,
+            sourceError("discoverScanError", { status: response.status }),
           );
           return;
         }
@@ -138,9 +150,11 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
         if (adopted) applySnapshot(adopted);
       } catch (reason) {
         if (!request.signal.aborted)
-          setDiscoveryError(
-            `Не удалось проверить активное сканирование каталога: ${message(reason)}`,
-          );
+          setDiscoveryError({
+            type: "message",
+            key: "requestFailed",
+            suffix: message(reason),
+          });
       } finally {
         if (!request.signal.aborted) setDiscovering(false);
       }
@@ -156,15 +170,20 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
       applySnapshot(snapshot, source === "action");
     },
     onSnapshotRead: (_snapshot, source) => {
-      if (source === "stream") setStreamError("");
+      if (source === "stream") setStreamError(null);
     },
-    onError: (reason) =>
+    onError: (reason) => {
+      const status = reason.message.match(/\((\d+)\)/)?.[1];
       setStreamError(
-        reason.message.startsWith("Ошибка сервера (")
-          ? `Не удалось перечитать состояние операции (${reason.message.match(/\((\d+)\)/)?.[1] ?? "?"}).`
+        status
+          ? {
+              ...sourceError("requestFailed"),
+              suffix: { type: "diagnostic", message: `(${status})` },
+            }
           : message(reason),
-      ),
-    onStreamError: (reason) => setStreamError(reason.message),
+      );
+    },
+    onStreamError: (reason) => setStreamError(message(reason)),
     refreshOnStreamError: true,
   });
 
@@ -172,8 +191,8 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
     if (startInFlight.current) return;
     startInFlight.current = true;
     setStarting(true);
-    setActionError("");
-    setDiscoveryError("");
+    setActionError(null);
+    setDiscoveryError(null);
     try {
       const response = await startSourceScan(root.id);
       if (response.status !== 200) {
@@ -195,7 +214,7 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
     if (!operation || retryInFlight.current) return;
     retryInFlight.current = true;
     setRetrying(true);
-    setActionError("");
+    setActionError(null);
     try {
       const response = await retryOperation(operation.id);
       if (response.status !== 200) throw scanFailure(response);
@@ -212,54 +231,36 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
     operation?.state === "queued" || operation?.state === "running";
   const busy = starting || retrying;
   const failure =
-    actionError ||
+    (actionError && renderSourceError(actionError, locale)) ||
     (operation?.state === "failed"
-      ? operation.safe_error ||
-        "Сканирование не завершилось. Повторите попытку."
+      ? operation.safe_error || t("scanFailed")
       : "");
 
   return (
     <section aria-labelledby="source-scan-title" className="sources-panel">
-      <h2 id="source-scan-title">Сканирование</h2>
-      <p className="sources-help">
-        Сканирование запускается только вручную. Число файлов заранее
-        неизвестно, поэтому показываются этапы сервера, без процентов и
-        счётчиков байтов.
-      </p>
-      {!root.enabled && (
-        <p className="sources-note">
-          Каталог выключен: новые сканирования запрещены, пока каталог не
-          включён.
-        </p>
-      )}
+      <h2 id="source-scan-title">{t("scanningTitle")}</h2>
+      <p className="sources-help">{t("manualScanOnly")}</p>
+      {!root.enabled && <p className="sources-note">{t("disabledScan")}</p>}
       <AppButton
         isDisabled={!root.enabled || busy || pending || discovering}
         onPress={() => void startScan()}
       >
-        Сканировать
+        {t("scan")}
       </AppButton>
-      {discovering && (
-        <p role="status">Проверяем активное сканирование этого каталога…</p>
+      {discovering && <p role="status">{t("checkingScan")}</p>}
+      {pending && operation && (
+        <p role="status">{stageText(operation, locale)}</p>
       )}
-      {pending && operation && <p role="status">{stageText(operation)}</p>}
-      {operation?.state === "succeeded" && (
-        <p role="status">
-          Сканирование завершено: инвентарь обновлён последним успешным обходом.
-          Это не означает завершение анализа аудиофайлов.
-        </p>
-      )}
+      {operation?.state === "succeeded" && <p role="status">{t("scanDone")}</p>}
       {operation?.state === "failed" && (
         <AppButton isDisabled={busy} onPress={() => void retryScan()}>
-          Повторить сканирование
+          {t("retryScan")}
         </AppButton>
       )}
-      {operation && streamError && (
-        <p role="status">
-          Обновления по потоку событий прерваны: показано состояние из
-          последнего ответа сервера. Соединение восстановится автоматически.
-        </p>
+      {operation && streamError && <p role="status">{t("scanStreamError")}</p>}
+      {discoveryError && (
+        <p role="status">{renderSourceError(discoveryError, locale)}</p>
       )}
-      {discoveryError && <p role="status">{discoveryError}</p>}
       {failure && <p role="alert">{failure}</p>}
     </section>
   );

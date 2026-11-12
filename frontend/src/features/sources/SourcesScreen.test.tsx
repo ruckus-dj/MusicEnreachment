@@ -1,14 +1,29 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   SourceLocationResponse,
   SourceRootResponse,
 } from "../../api/generated/client.schemas";
+import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
+import { createMemoryStorage } from "../../test/memoryStorage";
 import { selectDirectoryPath } from "../../test/selectDirectoryPath";
 import { server } from "../../test/server";
 import { SourcesScreen } from "./SourcesScreen";
+
+function LocaleFixture({ children }: { children: ReactNode }) {
+  const { setPreference } = useI18n();
+  return (
+    <>
+      <button type="button" onClick={() => setPreference("en")}>
+        Switch to English
+      </button>
+      {children}
+    </>
+  );
+}
 
 function root(overrides: Partial<SourceRootResponse> = {}): SourceRootResponse {
   return {
@@ -41,6 +56,9 @@ function locationsHandler(published: SourceLocationResponse[]) {
 }
 
 beforeEach(() => {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "ru");
+  vi.stubGlobal("localStorage", storage);
   window.location.hash = "";
   server.use(
     http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
@@ -88,6 +106,7 @@ describe("source root creation", () => {
       last_successful_scan_at: undefined,
     });
     const created: SourceRootResponse[] = [];
+    let sourceListRequests = 0;
     const scan = {
       id: "scan-new-root",
       kind: "scan_source",
@@ -100,7 +119,10 @@ describe("source root creation", () => {
     };
     let scanRequests = 0;
     server.use(
-      http.get("/api/sources", () => json(created)),
+      http.get("/api/sources", () => {
+        sourceListRequests += 1;
+        return json(created);
+      }),
       http.get("/api/sources/root-disk", () => HttpResponse.json(registered)),
       locationsHandler([]),
       http.get("/api/operations", () =>
@@ -122,7 +144,13 @@ describe("source root creation", () => {
       }),
     );
     window.location.hash = "/sources";
-    render(<SourcesScreen />);
+    render(
+      <I18nProvider>
+        <LocaleFixture>
+          <SourcesScreen />
+        </LocaleFixture>
+      </I18nProvider>,
+    );
 
     expect(
       await screen.findByText("Ни один каталог не зарегистрирован."),
@@ -156,5 +184,29 @@ describe("source root creation", () => {
       await screen.findByRole("button", { name: "Добавить каталог" }),
     );
     expect(screen.getByLabelText("Режим обработки")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Имя каталога"), {
+      target: { value: "Unsaved source draft" },
+    });
+    fireEvent.change(screen.getByLabelText("Режим обработки"), {
+      target: { value: "staged" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Зарегистрировать каталог" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Укажите имя каталога, абсолютный путь на сервере и режим обработки.",
+    );
+    const requestsBeforeLocaleChange = sourceListRequests;
+    fireEvent.click(screen.getByRole("button", { name: "Switch to English" }));
+    expect(
+      await screen.findByRole("button", { name: "Register source" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Source name")).toHaveValue(
+      "Unsaved source draft",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Enter a source name, an absolute server path, and a processing mode.",
+    );
+    expect(sourceListRequests).toBe(requestsBeforeLocaleChange);
   });
 });

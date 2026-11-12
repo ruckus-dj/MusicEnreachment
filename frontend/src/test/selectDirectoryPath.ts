@@ -3,6 +3,9 @@ import { HttpResponse, http } from "msw";
 import { expect } from "vitest";
 import { server } from "./server";
 
+const button = (dialog: HTMLElement, name: RegExp) =>
+  within(dialog).getByRole("button", { name });
+
 export async function selectDirectoryPath(label: string, path: string) {
   server.use(
     http.get("/api/setup/directories", ({ request }) => {
@@ -23,39 +26,30 @@ export async function selectDirectoryPath(label: string, path: string) {
   if (!container)
     throw new Error(`Missing directory field container for ${label}`);
   fireEvent.click(
-    within(container).getByRole("button", { name: "Выбрать папку" }),
+    within(container).getByRole("button", {
+      name: /^(?:Выбрать папку|Choose folder)$/,
+    }),
   );
 
   const dialog = await screen.findByRole("dialog", {
-    name: "Папка на сервере",
+    name: /^(?:Папка на сервере|Server folder)$/,
   });
   await waitFor(() => {
-    expect(
-      within(dialog).getByRole("button", { name: /^Изменить путь:/ }),
-    ).toBeInTheDocument();
+    expect(button(dialog, /^(?:Изменить путь|Edit path):/)).toBeInTheDocument();
   });
-  fireEvent.click(
-    within(dialog).getByRole("button", { name: /^Изменить путь:/ }),
-  );
-  fireEvent.change(
-    within(dialog).getByRole("textbox", { name: "Путь к папке" }),
-    {
-      target: { value: path },
-    },
-  );
-  fireEvent.keyDown(
-    within(dialog).getByRole("textbox", { name: "Путь к папке" }),
-    {
-      key: "Enter",
-    },
-  );
+  fireEvent.click(button(dialog, /^(?:Изменить путь|Edit path):/));
+  const pathField = within(dialog).getByRole("textbox", {
+    name: /^(?:Путь к папке|Folder path)$/,
+  });
+  fireEvent.change(pathField, {
+    target: { value: path },
+  });
+  fireEvent.keyDown(pathField, {
+    key: "Enter",
+  });
   await waitFor(() => {
-    expect(
-      within(dialog).getByRole("button", { name: "Выбрать папку" }),
-    ).toBeEnabled();
+    expect(button(dialog, /^(?:Выбрать папку|Choose folder)$/)).toBeEnabled();
   });
-  fireEvent.click(
-    within(dialog).getByRole("button", { name: "Выбрать папку" }),
-  );
+  fireEvent.click(button(dialog, /^(?:Выбрать папку|Choose folder)$/));
   await waitFor(() => expect(dialog).not.toHaveAttribute("open"));
 }

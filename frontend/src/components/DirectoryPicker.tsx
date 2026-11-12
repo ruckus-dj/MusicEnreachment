@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { browseServerDirectories } from "../api/generated/client";
 import type { BrowseDirectoriesBody } from "../api/generated/client.schemas";
+import { directoryMessages } from "../i18n/directoryMessages";
+import { useI18n } from "../i18n/I18nProvider";
 import "./DirectoryPicker.css";
-
-const browseError = "Не удалось прочитать каталог сервера.";
 
 function isWindowsPath(path: string) {
   return (
@@ -50,8 +50,10 @@ export function DirectoryPicker({
   const [editingPath, setEditingPath] = useState(false);
   const [listing, setListing] = useState<BrowseDirectoriesBody>();
   const [directories, setDirectories] = useState<string[]>([]);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { locale } = useI18n();
+  const copy = directoryMessages[locale];
   const revision = useRef(0);
   const controller = useRef<AbortController | undefined>(undefined);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -72,7 +74,7 @@ export function DirectoryPicker({
       const requestController = new AbortController();
       controller.current = requestController;
       setLoading(true);
-      setError("");
+      setError(false);
       if (!append) {
         setListing(undefined);
         setDirectories([]);
@@ -86,7 +88,7 @@ export function DirectoryPicker({
             { signal: requestController.signal },
           );
           if (revision.current !== id) return;
-          if (result.status !== 200) throw new Error(browseError);
+          if (result.status !== 200) throw new Error("Directory browse failed");
           const page = result.data;
           if (page.offset !== offset)
             throw new Error("Unexpected directory offset");
@@ -114,7 +116,7 @@ export function DirectoryPicker({
           offset = nextOffset;
         }
       } catch {
-        if (revision.current === id) setError(browseError);
+        if (revision.current === id) setError(true);
       } finally {
         if (revision.current === id) {
           controller.current = undefined;
@@ -177,22 +179,25 @@ export function DirectoryPicker({
       }}
     >
       <div className="directory-picker__header">
-        <h2 id={titleId}>Папка на сервере</h2>
-        <p>Выберите папку, доступную серверу MeloTrove.</p>
+        <h2 id={titleId}>{copy.title}</h2>
+        <p>{copy.help}</p>
         <button
           className="directory-picker__close"
           type="button"
-          aria-label="Закрыть"
+          aria-label={copy.close}
           onClick={close}
         >
           ×
         </button>
       </div>
-      <nav className="directory-picker__navigation" aria-label="Путь к папке">
+      <nav
+        className="directory-picker__navigation"
+        aria-label={copy.navigation}
+      >
         <button
           className="directory-picker__up"
           type="button"
-          aria-label="На уровень выше"
+          aria-label={copy.up}
           disabled={
             loading || !listing || listing.current_path === listing.parent_path
           }
@@ -207,7 +212,7 @@ export function DirectoryPicker({
                 <button
                   type="button"
                   className="directory-picker__current-crumb"
-                  aria-label={`Изменить путь: ${listing?.current_path ?? path}`}
+                  aria-label={`${copy.editPath}: ${listing?.current_path ?? path}`}
                   onClick={() => {
                     setPath(currentPath);
                     setEditingPath(true);
@@ -230,13 +235,13 @@ export function DirectoryPicker({
             <li>
               <button
                 type="button"
-                aria-label={path ? `Изменить путь: ${path}` : "Ввести путь"}
+                aria-label={path ? `${copy.editPath}: ${path}` : copy.enterPath}
                 onClick={() => {
                   setPath(currentPath);
                   setEditingPath(true);
                 }}
               >
-                {path ? "Изменить путь" : "Ввести путь"}
+                {path ? copy.editPath : copy.enterPath}
               </button>
             </li>
           )}
@@ -244,7 +249,7 @@ export function DirectoryPicker({
       </nav>
       {editingPath && (
         <div className="directory-picker__path-editor">
-          <label htmlFor={`${titleId}-path`}>Путь к папке</label>
+          <label htmlFor={`${titleId}-path`}>{copy.pathLabel}</label>
           <input
             ref={editPathRef}
             id={`${titleId}-path`}
@@ -267,7 +272,7 @@ export function DirectoryPicker({
       )}
       <section
         className="directory-picker__listing"
-        aria-label="Папки"
+        aria-label={copy.folders}
         onScroll={(event) => {
           const element = event.currentTarget;
           if (
@@ -282,7 +287,7 @@ export function DirectoryPicker({
       >
         {otherRoots.length > 0 && (
           <>
-            <h3>Корни сервера</h3>
+            <h3>{copy.serverRoots}</h3>
             <ul className="directory-picker__directories">
               {otherRoots.map((root) => (
                 <li key={root}>
@@ -316,16 +321,16 @@ export function DirectoryPicker({
             ))}
           </ul>
         ) : listing && !loading && !error ? (
-          <p className="directory-picker__empty">В этой папке нет подпапок.</p>
+          <p className="directory-picker__empty">{copy.empty}</p>
         ) : null}
         {loading && (
           <p className="directory-picker__status" role="status">
-            Загрузка папок…
+            {copy.loading}
           </p>
         )}
         {error && (
           <div className="directory-picker__error">
-            <p role="alert">{error}</p>
+            <p role="alert">{copy.error}</p>
             <button
               type="button"
               onClick={() =>
@@ -336,14 +341,14 @@ export function DirectoryPicker({
                 )
               }
             >
-              Повторить
+              {copy.retry}
             </button>
           </div>
         )}
       </section>
       <footer className="directory-picker__actions">
         <button type="button" onClick={close}>
-          Отмена
+          {copy.cancel}
         </button>
         <button
           type="button"
@@ -360,7 +365,7 @@ export function DirectoryPicker({
             close();
           }}
         >
-          Выбрать папку
+          {copy.choose}
         </button>
       </footer>
     </dialog>

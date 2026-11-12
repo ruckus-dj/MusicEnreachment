@@ -1,6 +1,25 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { I18nProvider, useI18n } from "../i18n/I18nProvider";
 import { resetThemeSessionPreference, ThemeControl } from "./ThemeControl";
+
+function LocaleSwitch() {
+  const { setPreference } = useI18n();
+  return (
+    <button type="button" onClick={() => setPreference("en")}>
+      Switch to English
+    </button>
+  );
+}
+
+function renderControl() {
+  return render(
+    <I18nProvider>
+      <ThemeControl />
+      <LocaleSwitch />
+    </I18nProvider>,
+  );
+}
 
 function mediaFixture(initial = false) {
   let matches = initial;
@@ -51,6 +70,7 @@ describe("ThemeControl", () => {
       removeItem: (key) => values.delete(key),
       setItem: (key, value) => values.set(key, String(value)),
     };
+    storage.setItem("melotrove-language", "ru");
     vi.stubGlobal("localStorage", storage);
   });
 
@@ -58,7 +78,7 @@ describe("ThemeControl", () => {
 
   it("cycles system, light, dark and persists using the production key", () => {
     mediaFixture();
-    render(<ThemeControl />);
+    renderControl();
     const button = screen.getByRole("button", {
       name: "Тема: Как в системе. Следующая тема: Светлая",
     });
@@ -88,7 +108,7 @@ describe("ThemeControl", () => {
     vi.spyOn(storage, "setItem").mockImplementation(() => {
       throw new Error("blocked");
     });
-    const first = render(<ThemeControl />);
+    const first = renderControl();
     fireEvent.click(
       screen.getByRole("button", {
         name: "Тема: Как в системе. Следующая тема: Светлая",
@@ -98,7 +118,7 @@ describe("ThemeControl", () => {
       "Не удалось сохранить тему",
     );
     first.unmount();
-    render(<ThemeControl />);
+    renderControl();
     expect(
       screen.getByRole("button", {
         name: "Тема: Светлая. Следующая тема: Тёмная",
@@ -108,7 +128,7 @@ describe("ThemeControl", () => {
 
   it("tracks system changes while system mode is selected", () => {
     const media = mediaFixture();
-    render(<ThemeControl />);
+    renderControl();
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
     act(() => media.change(true));
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
@@ -123,7 +143,7 @@ describe("ThemeControl", () => {
 
   it("supports keyboard activation and announces current and next modes", () => {
     mediaFixture();
-    render(<ThemeControl />);
+    renderControl();
     const button = screen.getByRole("button", {
       name: "Тема: Как в системе. Следующая тема: Светлая",
     });
@@ -134,6 +154,12 @@ describe("ThemeControl", () => {
     expect(
       screen.getByRole("button", {
         name: "Тема: Светлая. Следующая тема: Тёмная",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Switch to English" }));
+    expect(
+      screen.getByRole("button", {
+        name: "Theme: Light. Next theme: Dark",
       }),
     ).toBeInTheDocument();
   });
