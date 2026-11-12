@@ -298,6 +298,9 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    filesystem drift; порядок multi-values значим, поисковая нормализация не
    применяется. Новую bulk atomicity/cancel policy не выбирать. Полноту Navidrome
    проверять по всей цепочке editor/storage/preview/writer/readback, а не JSON.
+   MusicBrainz Disc ID исключён владельцем из поддерживаемых полей и не
+   заменяется другим ID; нумерация носителей и позиций (`disc`/`track`)
+   сохраняется.
     - [x] `8bdb1207` и `2235177e`: in-place редактор девяти release fields и
       независимые title/sort_title overrides recording/позиции через существующие
       metadata API. Сохранены revision fences, draft при конфликте, retry чтения

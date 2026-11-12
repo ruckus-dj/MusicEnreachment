@@ -497,7 +497,6 @@ const englishFieldLabels: Record<string, string> = {
 	LICENSE: "License",
 	MEDIA: "Release medium",
 	LABEL: "Label",
-	MUSICBRAINZ_DISCID: "MusicBrainz disc ID",
 	MUSICBRAINZ_WORKID: "Work MBID",
 	RELEASECOUNTRY: "Release country",
 	RELEASESTATUS: "Release status",

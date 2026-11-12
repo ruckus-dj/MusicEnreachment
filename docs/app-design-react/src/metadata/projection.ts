@@ -187,11 +187,7 @@ export function validateMetadataIssues(
 				errors.push({ key, code: "boolean" });
 			if (field.kind === "advisory" && !/^(1|2|4|0)$/.test(value))
 				errors.push({ key, code: "advisory" });
-			if (
-				key.startsWith("musicbrainz_") &&
-				key !== "musicbrainz_discid" &&
-				!uuidPattern.test(value)
-			)
+			if (key.startsWith("musicbrainz_") && !uuidPattern.test(value))
 				errors.push({ key, code: "uuid" });
 		}
 	}
@@ -238,7 +234,6 @@ export function projectMetadataValues(
 		}
 		if (
 			(key.startsWith("musicbrainz_") &&
-				key !== "musicbrainz_discid" &&
 				entries.some((value) => value && !uuidPattern.test(value))) ||
 			(field.kind === "advisory" &&
 				entries.some((value) => value && !/^(0|1|2|4)$/.test(value)))

@@ -820,8 +820,7 @@ export function MetadataEditor({
 								value={rows(current, field.key)}
 								readOnly={
 									!editing ||
-									(field.kind === "identity" &&
-										!["asin", "musicbrainz_discid"].includes(field.key))
+									(field.kind === "identity" && field.key !== "asin")
 								}
 								onChange={(next) => setValue(field.key, next)}
 							/>
@@ -1487,8 +1486,7 @@ export function MetadataEditor({
 												value={rows(current, field.key)}
 												readOnly={
 													!editing ||
-													(field.kind === "identity" &&
-														!["asin", "musicbrainz_discid"].includes(field.key))
+													(field.kind === "identity" && field.key !== "asin")
 												}
 												onChange={(next) => setValue(field.key, next)}
 											/>

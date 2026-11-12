@@ -60,9 +60,9 @@ it("uses the advisory values Navidrome actually reads", () => {
 		).not.toEqual([]);
 });
 
-it("registers the unique Navidrome fields excluding source-only encoder descriptions", () => {
-	expect(navidromeFields).toHaveLength(87);
-	expect(new Set(navidromeFields.map((field) => field.key)).size).toBe(87);
+it("registers the unique supported Navidrome fields", () => {
+	expect(navidromeFields).toHaveLength(86);
+	expect(new Set(navidromeFields.map((field) => field.key)).size).toBe(86);
 	expect(fieldByKey("encodedby")).toBeUndefined();
 	expect(fieldByKey("encodersettings")).toBeUndefined();
 	expect(
@@ -113,7 +113,6 @@ it("keeps structured validation messages locale-aware while preserving the legac
 
 it("keeps descriptive identifiers editable and does not synthesize entity MBIDs", () => {
 	expect(fieldByKey("asin")?.kind).toBe("identity");
-	expect(fieldByKey("musicbrainz_discid")?.kind).toBe("identity");
 	const tags = desiredTags(
 		{
 			id: "release",
