@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestPublicationAttemptInputsFollowUnfinishedLifecyclePostgreSQL(t *testing.T) {
@@ -16,18 +17,25 @@ func TestPublicationAttemptInputsFollowUnfinishedLifecyclePostgreSQL(t *testing.
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	operationID, _ := insertMatchingCurrentSchemaScope(t, ctx, database)
-	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
-	for _, seed := range []struct {
-		query string
-		args  []any
-	}{
-		{`INSERT INTO local_release(id,title) VALUES (?,'release')`, []any{releaseID}},
-		{`INSERT INTO local_track(id,title) VALUES (?,'track')`, []any{trackID}},
-		{`INSERT INTO release_track(id,release_id,track_id,medium,position) VALUES (?,?,?,0,0)`, []any{positionID, releaseID, trackID}},
-	} {
-		if _, err := database.NewRaw(seed.query, seed.args...).Exec(ctx); err != nil {
-			t.Fatal(err)
+	releaseID, trackID, positionID, artistID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, seed := range []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO local_artist(id) VALUES (?)`, []any{artistID}},
+			{`INSERT INTO local_release(id,title) VALUES (?,'release')`, []any{releaseID}},
+			{`INSERT INTO release_artist(release_id,"position",artist_id) VALUES (?,0,?)`, []any{releaseID, artistID}},
+			{`INSERT INTO local_track(id,title) VALUES (?,'track')`, []any{trackID}},
+			{`INSERT INTO release_track(id,release_id,track_id,medium,position) VALUES (?,?,?,0,0)`, []any{positionID, releaseID, trackID}},
+		} {
+			if _, err := tx.NewRaw(seed.query, seed.args...).Exec(ctx); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	for _, phase := range []string{"queued", "preparing", "staged", "validated", "exposing"} {
 		for _, inputs := range []any{nil, `{}`, `[]`, `null`} {

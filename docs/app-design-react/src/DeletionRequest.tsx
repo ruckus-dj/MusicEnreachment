@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { Button, Dialog, Heading, Modal, Tooltip, TooltipTrigger } from "./ui";
 import type { OriginalRelease, OriginalTrack } from "./catalogData";
-import { deletionDialog, deletionFooter } from "./matchingStyles";
+import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
 import { useI18n } from "./i18n/I18nProvider";
-import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
+import { deletionDialog, deletionFooter } from "./matchingStyles";
+import { Button, Dialog, Heading, Modal, Tooltip, TooltipTrigger } from "./ui";
 
 export interface DeletionOperation {
 	kind?: "library" | "publication" | "artist";
@@ -54,7 +54,7 @@ export function deletionPlan(
 			: release.title || "Релиз без названия",
 		scope: track
 			? "Только выбранная публикация; позиция, издание, композиция, записи провайдера и другие публикации сохраняются."
-			: `${release.tracks.length} позиций релиза; самостоятельные композиции, записи провайдера и публикации других релизов сохраняются.`,
+			: `${release.tracks.length} позиций релиза и композиции, потерявшие последнюю связь с релизом. Композиции и публикации других релизов, записи провайдера и исходники сохраняются.`,
 		publications: tracks.filter((item) => item.published).length,
 		paths: tracks.flatMap((item) =>
 			item.published ? [item.published.path] : [],

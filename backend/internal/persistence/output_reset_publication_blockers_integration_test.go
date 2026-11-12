@@ -34,18 +34,23 @@ func newPublicationResetFixture(t *testing.T) publicationResetFixture {
 		t.Fatal(err)
 	}
 	releaseID, trackID := uuid.New(), uuid.New()
-	for _, seed := range []struct {
-		query string
-		args  []any
-	}{
-		{`INSERT INTO local_release(id,title) VALUES (?,'release')`, []any{releaseID}},
-		{`INSERT INTO local_track(id,title) VALUES (?,'track')`, []any{trackID}},
-		{`INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, []any{f.position, releaseID, trackID}},
-		{`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,'track.flac','{}','{}','{}','{}',1,now())`, []any{f.position, f.epoch, uuid.New()}},
-	} {
-		if _, err := f.db.NewRaw(seed.query, seed.args...).Exec(ctx); err != nil {
-			t.Fatal(err)
+	if err := f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'release')`, releaseID); err != nil {
+			return err
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'track')`, trackID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, f.position, releaseID, trackID); err != nil {
+			return err
+		}
+		if err := seedRecordingCreditBaselineTx(ctx, tx, f.position, trackID, "track", "Publication reset artist"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?, ?, ?,'track.flac','{}','{}','{}','{}',1,now())`, f.position, f.epoch, uuid.New())
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if err := f.db.NewRaw(`INSERT INTO river_job(kind,args) VALUES ('publication_reset_probe','{}') RETURNING id`).Scan(ctx, &f.job); err != nil {
 		t.Fatal(err)

@@ -129,7 +129,7 @@ export const catalogueMessages = createNamespace({
 		deletePublicationScope:
 			"Only the selected publication will be removed; its position, release, recording, provider records, and other publications are kept.",
 		deleteReleaseScope:
-			"{count} release positions will be removed; standalone recordings, provider records, and publications of other releases are kept.",
+			"{count} release positions and recordings losing their last release link will be removed. Recordings and publications in other releases, provider records, and source files are kept.",
 	},
 	ru: {
 		artistNotFound: "Артист не найден",
@@ -258,7 +258,7 @@ export const catalogueMessages = createNamespace({
 		deletePublicationScope:
 			"Будет удалена только выбранная публикация; позиция, издание, композиция, записи провайдера и другие публикации сохраняются.",
 		deleteReleaseScope:
-			"Будут удалены {count} позиций релиза; самостоятельные композиции, записи провайдера и публикации других релизов сохраняются.",
+			"Будут удалены {count} позиций релиза и композиции, потерявшие последнюю связь с релизом. Композиции и публикации других релизов, записи провайдера и исходники сохраняются.",
 	},
 });
 

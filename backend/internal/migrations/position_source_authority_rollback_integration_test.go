@@ -30,8 +30,17 @@ func TestPositionSourceAuthorityRollbackRefusesLiveStatePostgreSQL(t *testing.T)
 			if _, err := migrator.Migrate(ctx); err != nil {
 				t.Fatal(err)
 			}
-			releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
-			if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'authority rollback')`, releaseID); err != nil {
+			releaseID, trackID, positionID, artistID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+			if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO local_artist(id) VALUES (?)`, artistID); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'authority rollback')`, releaseID); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(ctx, `INSERT INTO release_artist(release_id,"position",artist_id) VALUES (?,0,?)`, releaseID, artistID)
+				return err
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'authority rollback')`, trackID); err != nil {

@@ -173,25 +173,36 @@ func seedCollectionProviderFixtures(t *testing.T, db *bun.DB) collectionProvider
 			t.Fatalf("insert provider: %v", err)
 		}
 	}
-	for index, id := range []uuid.UUID{fixtures.localArtistFirst, fixtures.localArtistSecond} {
-		if _, err := db.ExecContext(ctx, `INSERT INTO local_artist(id,name) VALUES (?,?)`, id, []string{"First artist", "Second artist"}[index]); err != nil {
-			t.Fatalf("insert local artist: %v", err)
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for index, id := range []uuid.UUID{fixtures.localArtistFirst, fixtures.localArtistSecond} {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO local_artist(id,name) VALUES (?,?)`, id, []string{"First artist", "Second artist"}[index]); err != nil {
+				return err
+			}
 		}
-	}
-	for index, id := range []uuid.UUID{fixtures.localReleaseFirst, fixtures.localReleaseSecond} {
-		if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,?)`, id, []string{"First release", "Second release"}[index]); err != nil {
-			t.Fatalf("insert local release: %v", err)
+		for index, id := range []uuid.UUID{fixtures.localReleaseFirst, fixtures.localReleaseSecond} {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,?)`, id, []string{"First release", "Second release"}[index]); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,?,'')`, id, []uuid.UUID{fixtures.localArtistFirst, fixtures.localArtistSecond}[index], []string{"First artist", "Second artist"}[index]); err != nil {
+				return err
+			}
 		}
-	}
-	for index, id := range []uuid.UUID{fixtures.localRecordingFirst, fixtures.localRecordingSecond} {
-		if _, err := db.ExecContext(ctx, `INSERT INTO local_recording(id,title) VALUES (?,?)`, id, []string{"First recording", "Second recording"}[index]); err != nil {
-			t.Fatalf("insert local recording: %v", err)
+		for index, id := range []uuid.UUID{fixtures.localRecordingFirst, fixtures.localRecordingSecond} {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO local_recording(id,title) VALUES (?,?)`, id, []string{"First recording", "Second recording"}[index]); err != nil {
+				return err
+			}
 		}
-	}
-	for index, id := range []uuid.UUID{fixtures.localTrackFirst, fixtures.localTrackSecond} {
-		if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,?)`, id, []string{"First track", "Second track"}[index]); err != nil {
-			t.Fatalf("insert local track: %v", err)
+		for index, id := range []uuid.UUID{fixtures.localTrackFirst, fixtures.localTrackSecond} {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,?)`, id, []string{"First track", "Second track"}[index]); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,recording_id,position,medium,displayed_number) VALUES (?,?,?,?,0,1,'1')`, uuid.New(), []uuid.UUID{fixtures.localReleaseFirst, fixtures.localReleaseSecond}[index], id, []uuid.UUID{fixtures.localRecordingFirst, fixtures.localRecordingSecond}[index]); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatalf("insert local library graph: %v", err)
 	}
 	for _, entities := range []struct {
 		provider  uuid.UUID

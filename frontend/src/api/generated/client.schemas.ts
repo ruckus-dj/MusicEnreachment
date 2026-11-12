@@ -622,6 +622,10 @@ export interface LibraryDeletionPreviewResponse {
   outputs: LibraryDeletionOutputResponse[] | null;
   /** @nullable */
   position_ids: string[] | null;
+  /** @minimum 0 */
+  recording_count: number;
+  /** @nullable */
+  recording_ids: string[] | null;
   release_id: string;
   title: string;
 }

@@ -14,6 +14,22 @@ BEGIN
 END;
 $baseline_rollback$;
 
+DROP TRIGGER release_track_prevent_orphaning_truncate ON public.release_track;
+DROP TRIGGER release_artist_prevent_orphaning_truncate ON public.release_artist;
+DROP TRIGGER release_track_preserves_old_parent ON public.release_track;
+DROP TRIGGER release_artist_preserves_old_parent ON public.release_artist;
+DROP TRIGGER local_recording_requires_release_track ON public.local_recording;
+DROP TRIGGER local_release_requires_artist ON public.local_release;
+
+DROP FUNCTION public.prevent_release_track_truncate_orphans();
+DROP FUNCTION public.prevent_release_artist_truncate_orphans();
+DROP FUNCTION public.check_release_track_old_parent();
+DROP FUNCTION public.check_release_artist_old_parent();
+DROP FUNCTION public.check_local_recording_release_track_parent();
+DROP FUNCTION public.check_local_release_artist_parent();
+DROP FUNCTION public.assert_local_recording_has_release_track(uuid);
+DROP FUNCTION public.assert_local_release_has_artist(uuid);
+
 ALTER TABLE public.track_source DROP CONSTRAINT track_source_track_id_fkey;
 ALTER TABLE public.track_source DROP CONSTRAINT track_source_media_variant_id_fkey;
 ALTER TABLE public.track_artist DROP CONSTRAINT track_artist_track_id_fkey;

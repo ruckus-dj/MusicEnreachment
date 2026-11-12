@@ -34,6 +34,8 @@ type LibraryDeletionPreviewResponse struct {
 	ReleaseID          uuid.UUID                        `json:"release_id"`
 	Title              string                           `json:"title"`
 	PositionIDs        []uuid.UUID                      `json:"position_ids"`
+	RecordingIDs       []uuid.UUID                      `json:"recording_ids"`
+	RecordingCount     int                              `json:"recording_count" minimum:"0"`
 	Outputs            []LibraryDeletionOutputResponse  `json:"outputs"`
 	Blockers           []LibraryDeletionBlockerResponse `json:"blockers"`
 	ConfirmationDigest string                           `json:"confirmation_digest"`
@@ -115,6 +117,8 @@ func libraryDeletionPreviewResponse(preview *service.LibraryDeletionPreview) Lib
 	response := LibraryDeletionPreviewResponse{
 		Kind: preview.Kind, ReleaseID: preview.ReleaseID, Title: preview.Title,
 		PositionIDs:        append([]uuid.UUID{}, preview.PublicationIDs...),
+		RecordingIDs:       append([]uuid.UUID{}, preview.RecordingIDs...),
+		RecordingCount:     preview.RecordingCount,
 		Outputs:            make([]LibraryDeletionOutputResponse, 0, len(preview.OutputFacts)),
 		Blockers:           make([]LibraryDeletionBlockerResponse, 0, len(preview.Blockers)),
 		ConfirmationDigest: preview.ConfirmationDigest,

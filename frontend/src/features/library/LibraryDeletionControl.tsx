@@ -257,7 +257,7 @@ export function LibraryDeletionControl({
               ? releaseTitle
               : `${releaseTitle} · ${positionLabel ?? "Позиция"}`,
           scopeRelease:
-            "Будут удалены релиз, его позиции и принадлежащие им текущие публикации. Самостоятельные композиции и записи провайдера сохраняются.",
+            "Будут удалены релиз, его позиции, текущие публикации и композиции, потерявшие последнюю связь с релизом. Композиции в других релизах, записи провайдера и исходники сохраняются.",
           scopePublication:
             "Будет удалена только текущая публикация. Позиция, релиз, композиция, записи провайдера, исходники и другие публикации сохраняются.",
           prepare: "Загрузить точный предпросмотр",
@@ -269,6 +269,7 @@ export function LibraryDeletionControl({
           previewError: "Не удалось подготовить предпросмотр.",
           blocked: "Подтверждение недоступно: устраните блокирующие условия.",
           positions: "Позиции",
+          recordings: "Композиции, удаляемые из медиатеки",
           files: "Файлы текущих публикаций",
           outputs: "Будут затронуты файлы",
           blockers: "Блокирующие условия",
@@ -301,7 +302,7 @@ export function LibraryDeletionControl({
               ? releaseTitle
               : `${releaseTitle} · ${positionLabel ?? "Position"}`,
           scopeRelease:
-            "The release, its positions, and their current publications will be deleted. Standalone recordings and provider records are retained.",
+            "The release, its positions, current publications, and recordings losing their last release link will be deleted. Recordings in other releases, provider records, and source files are retained.",
           scopePublication:
             "Only the current publication will be deleted. The position, release, recording, provider records, sources, and other publications are retained.",
           prepare: "Load exact preview",
@@ -313,6 +314,7 @@ export function LibraryDeletionControl({
           previewError: "Could not prepare the preview.",
           blocked: "Confirmation is unavailable; resolve the blockers first.",
           positions: "Positions",
+          recordings: "Recordings removed from the library",
           files: "Current publication files",
           outputs: "Files affected",
           blockers: "Blockers",
@@ -599,6 +601,12 @@ export function LibraryDeletionControl({
                   <dd>
                     {(preview.outputs ?? []).length.toLocaleString(locale)}
                   </dd>
+                  {target.type === "release" ? (
+                    <>
+                      <dt>{text.recordings}</dt>
+                      <dd>{preview.recording_count.toLocaleString(locale)}</dd>
+                    </>
+                  ) : null}
                 </dl>
                 {preview.outputs?.length ? (
                   <>

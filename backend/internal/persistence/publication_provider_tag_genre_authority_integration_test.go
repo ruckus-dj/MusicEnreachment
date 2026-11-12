@@ -199,13 +199,16 @@ func seedProviderTagGenreAuthority(t *testing.T, ctx context.Context, fixture pe
 	if err := fixture.f.db.NewRaw(`SELECT id FROM provider_recording WHERE provider_id=? AND provider_key=?`, fixture.source.ProviderID, recordingKey).Scan(ctx, &providerRecordingID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.f.db.NewRaw(`INSERT INTO local_recording(id,title) VALUES (?,'recording')`, recordingID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.f.db.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method) VALUES(?,?,?,'manual')`, fixture.source.ProviderID, providerRecordingID, recordingID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.f.db.NewRaw(`UPDATE release_track SET recording_id=? WHERE id=?`, recordingID, fixture.position).Exec(ctx); err != nil {
+	if err := fixture.f.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`INSERT INTO local_recording(id,title) VALUES (?,'recording')`, recordingID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method) VALUES(?,?,?,'manual')`, fixture.source.ProviderID, providerRecordingID, recordingID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw(`UPDATE release_track SET recording_id=? WHERE id=?`, recordingID, fixture.position).Exec(ctx)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for index, artistID := range artists {

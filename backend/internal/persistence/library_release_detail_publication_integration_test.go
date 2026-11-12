@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 // parsePostgresTimestamp accepts the timestamptz text representation in the
@@ -47,25 +48,36 @@ func assertJSONEqual(t *testing.T, got json.RawMessage, want string) {
 func TestReadReleaseDetailIncludesCurrentPublicationPerPositionPostgreSQL(t *testing.T) {
 	db := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
-	releaseID, trackID := uuid.New(), uuid.New()
+	releaseID, trackID, artistID := uuid.New(), uuid.New(), uuid.New()
 	publishedPositionID, unpublishedPositionID := uuid.New(), uuid.New()
-	if _, err := db.NewRaw(`INSERT INTO local_release(id,title) VALUES (?,?)`, releaseID, "Album").Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.NewRaw(`INSERT INTO release_medium(id,release_id,medium,title,format) VALUES (?,?,1,'Disc 1','MKA')`, uuid.New(), releaseID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, trackID, "Song").Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-	for _, position := range []struct {
-		id      uuid.UUID
-		number  int
-		display string
-	}{{publishedPositionID, 1, "1"}, {unpublishedPositionID, 2, "2"}} {
-		if _, err := db.NewRaw(`INSERT INTO release_track(id,release_id,track_id,position,medium,displayed_number) VALUES (?,?,?,?,1,?)`, position.id, releaseID, trackID, position.number, position.display).Exec(ctx); err != nil {
-			t.Fatal(err)
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`INSERT INTO local_artist(id,name) VALUES (?,'Release Artist')`, artistID).Exec(ctx); err != nil {
+			return err
 		}
+		if _, err := tx.NewRaw(`INSERT INTO local_release(id,title) VALUES (?,?)`, releaseID, "Album").Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,'Release Artist','')`, releaseID, artistID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO release_medium(id,release_id,medium,title,format) VALUES (?,?,1,'Disc 1','MKA')`, uuid.New(), releaseID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, trackID, "Song").Exec(ctx); err != nil {
+			return err
+		}
+		for _, position := range []struct {
+			id      uuid.UUID
+			number  int
+			display string
+		}{{publishedPositionID, 1, "1"}, {unpublishedPositionID, 2, "2"}} {
+			if _, err := tx.NewRaw(`INSERT INTO release_track(id,release_id,track_id,position,medium,displayed_number) VALUES (?,?,?,?,1,?)`, position.id, releaseID, trackID, position.number, position.display).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	generation := uuid.New()
 	if _, err := db.NewRaw(`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?, ?, ?, ?, '{}', '{"facts":{"codec":"FLAC","container":"MKA"}}', '{}', '{}', 1, '2026-11-05T12:30:00Z')`, publishedPositionID, uuid.New(), generation, "Artist/Album/01 - Song.mka").Exec(ctx); err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
 )
 
@@ -47,14 +48,23 @@ func TestPublicationManualLyricsReceiptRollbackRefusesPopulatedTablePostgreSQL(t
 	if _, err := targetMigrator.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
-	if _, err := database.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?, 'receipt rollback')`, releaseID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?, 'receipt rollback')`, trackID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
+	releaseID, trackID, positionID, artistID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_artist(id) VALUES (?)`, artistID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?, 'receipt rollback')`, releaseID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO release_artist(release_id,"position",artist_id) VALUES (?,0,?)`, releaseID, artistID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?, 'receipt rollback')`, trackID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(ctx, `INSERT INTO publication_manual_lyrics_receipt

@@ -18,18 +18,25 @@ func TestPublicationOperationsRequireTypedSnapshotsAndOwnersPostgreSQL(t *testin
 	t.Parallel()
 	db := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
-	position, release, track := uuid.New(), uuid.New(), uuid.New()
-	for _, seed := range []struct {
-		query string
-		args  []any
-	}{
-		{`INSERT INTO local_release(id,title) VALUES (?,'release')`, []any{release}},
-		{`INSERT INTO local_track(id,title) VALUES (?,'track')`, []any{track}},
-		{`INSERT INTO release_track(id,release_id,track_id,medium,position) VALUES (?,?,?,0,0)`, []any{position, release, track}},
-	} {
-		if _, err := db.NewRaw(seed.query, seed.args...).Exec(ctx); err != nil {
-			t.Fatal(err)
+	position, release, track, artist := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, seed := range []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO local_artist(id) VALUES (?)`, []any{artist}},
+			{`INSERT INTO local_release(id,title) VALUES (?,'release')`, []any{release}},
+			{`INSERT INTO release_artist(release_id,"position",artist_id) VALUES (?,0,?)`, []any{release, artist}},
+			{`INSERT INTO local_track(id,title) VALUES (?,'track')`, []any{track}},
+			{`INSERT INTO release_track(id,release_id,track_id,medium,position) VALUES (?,?,?,0,0)`, []any{position, release, track}},
+		} {
+			if _, err := tx.NewRaw(seed.query, seed.args...).Exec(ctx); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	makeSnapshot := func(kind string, epoch uuid.UUID) string {
 		body := map[string]any{"version": 1, "position_id": position.String(), "output_epoch": epoch.String()}

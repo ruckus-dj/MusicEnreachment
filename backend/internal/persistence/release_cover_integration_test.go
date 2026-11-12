@@ -17,15 +17,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestReleaseCoverAuthorityCASAndManualPendingIsolationPostgreSQL(t *testing.T) {
 	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
-	releaseID := uuid.New()
-	if _, err := db.NewRaw(`INSERT INTO local_release(id) VALUES (?)`, releaseID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
+	releaseID := seedReleaseCoverRelease(t, db, ctx)
 	repository := NewLibraryRepository(db)
 	initial, err := repository.ReadReleaseCover(ctx, releaseID)
 	if err != nil || initial.Revision != 1 || initial.Mode != "automatic" || initial.SelectedGeneration != nil {
@@ -162,10 +160,7 @@ func TestReleaseCoverAuthorityRejectsPartialImageTuplesPostgreSQL(t *testing.T) 
 
 	insert := func(t *testing.T, asset string, omit int, mutation func([]any)) error {
 		t.Helper()
-		releaseID := uuid.New()
-		if _, err := db.NewRaw(`INSERT INTO local_release(id) VALUES (?)`, releaseID).Exec(ctx); err != nil {
-			t.Fatal(err)
-		}
+		releaseID := seedReleaseCoverRelease(t, db, ctx)
 		fields := []string{"release_id"}
 		args := []any{releaseID}
 		for index, column := range columns {
@@ -218,11 +213,26 @@ func TestReleaseCoverAuthorityRejectsPartialImageTuplesPostgreSQL(t *testing.T) 
 	if err := insert(t, "pending", -1, func(args []any) { args[len(args)-1] = "automatic" }); err == nil {
 		t.Fatal("automatic mode with pending manual choice was accepted")
 	}
-	releaseID := uuid.New()
-	if _, err := db.NewRaw(`INSERT INTO local_release(id) VALUES (?)`, releaseID).Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
+	releaseID := seedReleaseCoverRelease(t, db, ctx)
 	if _, err := db.NewRaw(`INSERT INTO release_publication_cover(release_id,mode,acquisition_owner) VALUES (?,'manual',?)`, releaseID, uuid.New()).Exec(ctx); err == nil {
 		t.Fatal("manual mode with active automatic acquisition owner was accepted")
 	}
+}
+
+func seedReleaseCoverRelease(t *testing.T, db *bun.DB, ctx context.Context) uuid.UUID {
+	t.Helper()
+	releaseID, artistID := uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`INSERT INTO local_artist(id,name) VALUES (?,'Cover Test Artist')`, artistID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO local_release(id) VALUES (?)`, releaseID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw(`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,'Cover Test Artist','')`, releaseID, artistID).Exec(ctx)
+		return err
+	}); err != nil {
+		t.Fatalf("seed release cover graph: %v", err)
+	}
+	return releaseID
 }

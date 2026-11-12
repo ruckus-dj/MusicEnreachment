@@ -25,12 +25,20 @@ func TestReadReleaseCoverCandidatesWithPostgreSQL(t *testing.T) {
 	resultA := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	resultB := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 	winningA, winningB := uuid.New(), uuid.New()
+	artistA, artistB := uuid.New(), uuid.New()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
 
 	statements := []struct {
 		query string
 		args  []any
 	}{
+		{`INSERT INTO local_artist(id,name) VALUES (?, 'Release Artist A'), (?, 'Release Artist B')`, []any{artistA, artistB}},
 		{`INSERT INTO local_release(id,title) VALUES (?,?),(?,?)`, []any{releaseID, "Release", nonMusicBrainzReleaseID, "Other provider release"}},
+		{`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,'Release Artist A',''),(?,0,?,'Release Artist B','')`, []any{releaseID, artistA, nonMusicBrainzReleaseID, artistB}},
 		{`INSERT INTO provider(id,code) VALUES (?, 'musicbrainz'), (?, 'other')`, []any{providerID, otherProviderID}},
 		{`INSERT INTO provider_release(id,provider_id,provider_key,title) VALUES (?,?,?,'Release'),(?,?,?,'Release')`, []any{providerReleaseID, providerID, "musicbrainz-mbid", otherProviderReleaseID, otherProviderID, "not-a-mbid"}},
 		{`INSERT INTO provider_release(id,provider_id,provider_key,title) VALUES (?,?,?,'Other release')`, []any{otherSecondReleaseID, otherProviderID, "other-not-a-mbid"}},
@@ -47,9 +55,12 @@ func TestReadReleaseCoverCandidatesWithPostgreSQL(t *testing.T) {
 			[]any{uuid.New(), trackA, variantA, resultA, uuid.New(), trackA, variantB, resultA, uuid.New(), trackB, variantC, resultB}},
 	}
 	for _, statement := range statements {
-		if _, err := db.ExecContext(ctx, statement.query, statement.args...); err != nil {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
 			t.Fatalf("insert release cover candidate fixture: %v", err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit release cover candidate fixture: %v", err)
 	}
 
 	got, err := persistence.NewLibraryRepository(db).ReadReleaseCoverCandidates(ctx, releaseID)

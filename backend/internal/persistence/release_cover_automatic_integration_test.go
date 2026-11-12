@@ -14,10 +14,7 @@ import (
 func TestAutomaticCoverSelectionRejectsLateSuccessAndFailureAfterManualSavePostgreSQL(t *testing.T) {
 	db := testpostgres.OpenMigratedWithRiver(t)
 	ctx := context.Background()
-	releaseID := uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'automatic cover')`, releaseID); err != nil {
-		t.Fatal(err)
-	}
+	releaseID := seedReleaseCoverRelease(t, db, ctx)
 	repository := NewLibraryRepository(db)
 	image := releaseCoverPNG(t)
 	selected, err := repository.RecordAutomaticReleaseCoverSelection(ctx, releaseID, 1, image, "image/png", nil)

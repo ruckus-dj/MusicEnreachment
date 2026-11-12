@@ -13,6 +13,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 type libraryProviderRefreshArgs struct {
@@ -62,7 +63,17 @@ func TestLibraryProviderRefreshAdmissionBindsAndEnqueuesAtomicallyPostgreSQL(t *
 	}
 	releaseID, providerReleaseID := uuid.New(), uuid.New()
 	boundMBID, reboundMBID := uuid.New(), uuid.New()
-	if _, err := db.NewRaw(`INSERT INTO local_release(id,title) VALUES (?,'Refresh admission')`, releaseID).Exec(ctx); err != nil {
+	artistID := uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`INSERT INTO local_artist(id,name) VALUES (?,'Refresh Artist')`, artistID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO local_release(id,title) VALUES (?,'Refresh admission')`, releaseID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw(`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,'Refresh Artist','')`, releaseID, artistID).Exec(ctx)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.NewRaw(`INSERT INTO provider_release(id,provider_id,provider_key,title) VALUES (?,?,?,'Refresh admission')`, providerReleaseID, provider.ID, boundMBID.String()).Exec(ctx); err != nil {

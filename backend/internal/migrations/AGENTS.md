@@ -43,6 +43,9 @@ Each migration is a pair: `YYYYMMDDHHMMSS_description.tx.up.sql` + `.tx.down.sql
 - Baseline rollback is atomic and refuses populated application/recovery state;
   keep all refusal guards ahead of destructive rollback statements.
 - Keep the required `incoming_grouping_state` singleton seed; it is not historical user data
+- Library fixtures must create a release with its artist credit, and a recording
+  with its release position, in the same transaction. Deferred reachability
+  guards reject orphan commits; an empty release with an artist remains valid.
 
 ## ANTI-PATTERNS
 - Running server against unmigrated DB without startup migration path (forbidden by design)

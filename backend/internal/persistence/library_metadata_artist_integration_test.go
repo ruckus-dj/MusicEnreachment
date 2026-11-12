@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/librarymetadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestLibraryArtistMetadataRepositoryUsesRevisionAndCatalog(t *testing.T) {
@@ -76,8 +77,24 @@ func TestLibraryMetadataArtistCreditPatchValidatesAndHydratesIdentity(t *testing
 		t.Fatalf("insert local artist: %v", err)
 	}
 	recordingID := uuid.New()
-	if _, err := db.NewRaw(`INSERT INTO local_recording(id,title) VALUES(?,?)`, recordingID, "Credit Test Recording").Exec(ctx); err != nil {
-		t.Fatalf("insert local recording: %v", err)
+	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`INSERT INTO local_release(id,title) VALUES(?,?)`, releaseID, "Credit Test Release").Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,'Canonical Artist','')`, releaseID, artistID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO local_recording(id,title) VALUES(?,?)`, recordingID, "Credit Test Recording").Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO local_track(id,title) VALUES(?,?)`, trackID, "Credit Test Track").Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw(`INSERT INTO release_track(id,release_id,track_id,recording_id,position,medium,displayed_number) VALUES (?,?,?,?,0,0,'1')`, positionID, releaseID, trackID, recordingID).Exec(ctx)
+		return err
+	}); err != nil {
+		t.Fatalf("insert local recording fixture: %v", err)
 	}
 	repository := NewLibraryRepository(db)
 	current, err := repository.ReadMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID)
@@ -135,29 +152,38 @@ func TestLibraryMetadataDisplayKeepsEnvelopeWhenTrackCreditsAreFallbackOrUnclass
 	if _, err := db.NewRaw(`INSERT INTO local_artist(id,name) VALUES(?,?)`, artistID, "Recording Artist").Exec(ctx); err != nil {
 		t.Fatalf("insert artist: %v", err)
 	}
-	if _, err := db.NewRaw(`INSERT INTO local_release(id,title) VALUES(?,?)`, releaseID, "Display Test Release").Exec(ctx); err != nil {
-		t.Fatalf("insert release: %v", err)
-	}
-	if _, err := db.NewRaw(`INSERT INTO local_recording(id,title) VALUES(?,?)`, recordingID, "Display Test Recording").Exec(ctx); err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-	if _, err := db.NewRaw(`INSERT INTO recording_artist(recording_id,position,artist_id,name) VALUES(?,?,?,?)`, recordingID, 0, artistID, "Recording Artist").Exec(ctx); err != nil {
-		t.Fatalf("insert recording credit: %v", err)
-	}
-	if _, err := db.NewRaw(`INSERT INTO local_track(id,title,metadata) VALUES(?,?,?::jsonb),(?,?,?::jsonb)`,
-		fallbackTrackID, "Fallback Track", `{"artist_credit_origin":{"version":1,"kind":"recording_fallback"}}`,
-		unclassifiedTrackID, "Unclassified Track", `{}`).Exec(ctx); err != nil {
-		t.Fatalf("insert tracks: %v", err)
-	}
 	fallbackPositionID, unclassifiedPositionID := uuid.New(), uuid.New()
-	for _, row := range []struct {
+	positions := []struct {
 		positionID uuid.UUID
 		trackID    uuid.UUID
 		position   int
-	}{{fallbackPositionID, fallbackTrackID, 0}, {unclassifiedPositionID, unclassifiedTrackID, 1}} {
-		if _, err := db.NewRaw(`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES(?,?,?,?,?)`, row.positionID, releaseID, row.position, row.trackID, recordingID).Exec(ctx); err != nil {
-			t.Fatalf("insert release position: %v", err)
+	}{{fallbackPositionID, fallbackTrackID, 0}, {unclassifiedPositionID, unclassifiedTrackID, 1}}
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`INSERT INTO local_release(id,title) VALUES(?,?)`, releaseID, "Display Test Release").Exec(ctx); err != nil {
+			return err
 		}
+		if _, err := tx.NewRaw(`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,'Recording Artist','')`, releaseID, artistID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO local_recording(id,title) VALUES(?,?)`, recordingID, "Display Test Recording").Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO recording_artist(recording_id,position,artist_id,name) VALUES(?,?,?,?)`, recordingID, 0, artistID, "Recording Artist").Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO local_track(id,title,metadata) VALUES(?,?,?::jsonb),(?,?,?::jsonb)`,
+			fallbackTrackID, "Fallback Track", `{"artist_credit_origin":{"version":1,"kind":"recording_fallback"}}`,
+			unclassifiedTrackID, "Unclassified Track", `{}`).Exec(ctx); err != nil {
+			return err
+		}
+		for _, row := range positions {
+			if _, err := tx.NewRaw(`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES(?,?,?,?,?)`, row.positionID, releaseID, row.position, row.trackID, recordingID).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("insert release display fixture: %v", err)
 	}
 	repository := NewLibraryRepository(db)
 	metadata, err := repository.ReadMetadata(ctx, librarymetadata.ScopePosition, releaseID, fallbackPositionID)

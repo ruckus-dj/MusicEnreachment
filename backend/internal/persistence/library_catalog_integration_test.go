@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
@@ -55,21 +56,26 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 		{id: uuid.New(), title: "B Beta", artist: artistID, track: uuid.New(), position: uuid.New()},
 		{id: uuid.New(), title: "C Gamma", artist: otherArtistID},
 	}
-	for i, fixture := range fixtures {
-		if _, err := db.NewRaw(`INSERT INTO local_release(id,title) VALUES (?,?)`, fixture.id, fixture.title).Exec(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.NewRaw(`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,?,'')`, fixture.id, fixture.artist, map[bool]string{true: "Shared credit", false: "Other credit"}[i < 2]).Exec(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if fixture.track != uuid.Nil {
-			if _, err := db.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, fixture.track, fixture.title+" track").Exec(ctx); err != nil {
-				t.Fatal(err)
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for i, fixture := range fixtures {
+			if _, err := tx.NewRaw(`INSERT INTO local_release(id,title) VALUES (?,?)`, fixture.id, fixture.title).Exec(ctx); err != nil {
+				return err
 			}
-			if _, err := db.NewRaw(`INSERT INTO release_track(id,release_id,track_id,position,medium,displayed_number) VALUES (?,?,?,0,0,'1')`, fixture.position, fixture.id, fixture.track).Exec(ctx); err != nil {
-				t.Fatal(err)
+			if _, err := tx.NewRaw(`INSERT INTO release_artist(release_id,position,artist_id,name,name_join_phrase) VALUES (?,0,?,?,'')`, fixture.id, fixture.artist, map[bool]string{true: "Shared credit", false: "Other credit"}[i < 2]).Exec(ctx); err != nil {
+				return err
+			}
+			if fixture.track != uuid.Nil {
+				if _, err := tx.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, fixture.track, fixture.title+" track").Exec(ctx); err != nil {
+					return err
+				}
+				if _, err := tx.NewRaw(`INSERT INTO release_track(id,release_id,track_id,position,medium,displayed_number) VALUES (?,?,?,0,0,'1')`, fixture.position, fixture.id, fixture.track).Exec(ctx); err != nil {
+					return err
+				}
 			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	guestArtistID := uuid.New()
 	if _, err := db.NewRaw(`INSERT INTO local_artist(id,name,metadata) VALUES (?, 'AAA Guest Artist', '{"genres":[]}')`, guestArtistID).Exec(ctx); err != nil {

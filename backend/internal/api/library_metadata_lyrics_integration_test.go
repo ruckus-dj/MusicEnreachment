@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,19 +15,31 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestLibraryMetadataLyricsHTTPPostgreSQL(t *testing.T) {
 	db := testpostgres.OpenMigratedWithRiver(t)
 	releaseID := uuid.New()
-	trackID, positionID := uuid.New(), uuid.New()
-	if _, err := db.ExecContext(t.Context(), `INSERT INTO local_release(id,title,metadata) VALUES(?,?,'{"other":{"keep":true}}')`, releaseID, "Album"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(t.Context(), `INSERT INTO local_track(id,title) VALUES (?,'Track')`, trackID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(t.Context(), `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
+	trackID, positionID, artistID := uuid.New(), uuid.New(), uuid.New()
+	if err := db.RunInTx(t.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+		statements := []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO local_release(id,title,metadata) VALUES(?,?,'{"other":{"keep":true}}')`, []any{releaseID, "Album"}},
+			{`INSERT INTO local_track(id,title) VALUES (?,'Track')`, []any{trackID}},
+			{`INSERT INTO local_artist(id,name) VALUES (?,'Artist')`, []any{artistID}},
+			{`INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, []any{positionID, releaseID, trackID}},
+			{`INSERT INTO release_artist(release_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,'Artist','')`, []any{releaseID, artistID}},
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	path := "/library/releases/" + releaseID.String() + "/positions/" + positionID.String() + "/metadata"

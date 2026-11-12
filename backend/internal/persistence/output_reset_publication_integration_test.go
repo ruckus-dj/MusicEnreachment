@@ -32,13 +32,18 @@ func TestOutputResetClearsOnlyPublicationNamespaceStatePostgreSQL(t *testing.T) 
 		t.Fatal(err)
 	}
 	releaseID, trackID, position, generation, claimID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?, 'release')`, releaseID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?, 'track')`, trackID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,position,track_id) VALUES (?,?,0,?)`, position, releaseID, trackID); err != nil {
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?, 'release')`, releaseID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?, 'track')`, trackID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,position,track_id) VALUES (?,?,0,?)`, position, releaseID, trackID); err != nil {
+			return err
+		}
+		return seedRecordingCreditBaselineTx(ctx, tx, position, trackID, "track", "Output reset artist")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?, ?, ?, 'track.flac', '{}', '{}', '{}', '{}', 1, now())`, position, epoch, generation); err != nil {

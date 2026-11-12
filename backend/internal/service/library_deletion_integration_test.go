@@ -25,6 +25,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 type countingLibraryDeletionOpener struct {
@@ -65,6 +66,7 @@ func TestLibraryDeletionServiceNativePartialSettlementAndExplicitRetryPostgreSQL
 		t.Fatal(err)
 	}
 	releaseID, trackOneID, trackTwoID := uuid.New(), uuid.New(), uuid.New()
+	artistID, recordingOneID, recordingTwoID := uuid.New(), uuid.New(), uuid.New()
 	positionOneID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
 	positionTwoID := uuid.MustParse("00000000-0000-4000-8000-000000000002")
 	generationOne, generationTwo := uuid.New(), uuid.New()
@@ -87,19 +89,31 @@ func TestLibraryDeletionServiceNativePartialSettlementAndExplicitRetryPostgreSQL
 			t.Fatalf("set publication timestamp %s: %v", item.path, err)
 		}
 	}
-	for _, statement := range []struct {
-		query string
-		args  []any
-	}{
-		{`INSERT INTO local_release(id,title) VALUES (?, 'native deletion fixture')`, []any{releaseID}},
-		{`INSERT INTO local_track(id,title) VALUES (?, 'first')`, []any{trackOneID}},
-		{`INSERT INTO local_track(id,title) VALUES (?, 'second')`, []any{trackTwoID}},
-		{`INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, []any{positionOneID, releaseID, trackOneID}},
-		{`INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,1)`, []any{positionTwoID, releaseID, trackTwoID}},
-	} {
-		if _, err := db.ExecContext(ctx, statement.query, statement.args...); err != nil {
-			t.Fatalf("seed native deletion library rows: %v", err)
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		statements := []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO local_release(id,title) VALUES (?, 'native deletion fixture')`, []any{releaseID}},
+			{`INSERT INTO local_track(id,title) VALUES (?, 'first')`, []any{trackOneID}},
+			{`INSERT INTO local_track(id,title) VALUES (?, 'second')`, []any{trackTwoID}},
+			{`INSERT INTO local_artist(id,name) VALUES (?, 'Artist')`, []any{artistID}},
+			{`INSERT INTO local_recording(id,title) VALUES (?, 'first')`, []any{recordingOneID}},
+			{`INSERT INTO local_recording(id,title) VALUES (?, 'second')`, []any{recordingTwoID}},
+			{`INSERT INTO release_track(id,release_id,track_id,recording_id,position) VALUES (?,?,?,?,0)`, []any{positionOneID, releaseID, trackOneID, recordingOneID}},
+			{`INSERT INTO release_track(id,release_id,track_id,recording_id,position) VALUES (?,?,?,?,1)`, []any{positionTwoID, releaseID, trackTwoID, recordingTwoID}},
+			{`INSERT INTO release_artist(release_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,'Artist','')`, []any{releaseID, artistID}},
+			{`INSERT INTO recording_artist(recording_id,position,artist_id,name,name_join_phrase) VALUES (?,?,?,'Artist','')`, []any{recordingOneID, 0, artistID}},
+			{`INSERT INTO recording_artist(recording_id,position,artist_id,name,name_join_phrase) VALUES (?,?,?,'Artist','')`, []any{recordingTwoID, 0, artistID}},
 		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed native deletion library rows: %v", err)
 	}
 	for _, item := range facts {
 		path := filepath.Join(outputRoot, item.path)

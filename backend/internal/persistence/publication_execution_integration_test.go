@@ -59,6 +59,13 @@ func newPublicationExecutionFixtureWithDatabase(t *testing.T, db *bun.DB, scope 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
 		t.Fatal(err)
 	}
+	artistID := uuid.New()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO local_artist(id,name) VALUES (?,'Publication execution artist')`, artistID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,0,?,'Publication execution artist')`, releaseID, artistID); err != nil {
+		t.Fatal(err)
+	}
 	if err := tx.QueryRowContext(ctx, `INSERT INTO river_job(kind,args,state,attempt) VALUES ('publish_track_v1','{}','running',1) RETURNING id`).Scan(&jobID); err != nil {
 		t.Fatal(err)
 	}

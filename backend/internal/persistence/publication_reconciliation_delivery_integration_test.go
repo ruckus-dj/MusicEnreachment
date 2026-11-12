@@ -152,13 +152,18 @@ func reconciliationDeliveryFixture(t *testing.T) (*SetupManagerRepository, conte
 	db := testpostgres.OpenMigratedWithRiver(t)
 	initializeRiver(t, ctx, db)
 	position, release, track := uuid.New(), uuid.New(), uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'reconciliation')`, release); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'track')`, track); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, position, release, track); err != nil {
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'reconciliation')`, release); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'track')`, track); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, position, release, track); err != nil {
+			return err
+		}
+		return seedRecordingCreditBaselineTx(ctx, tx, position, track, "track", "Reconciliation artist")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	var epoch uuid.UUID

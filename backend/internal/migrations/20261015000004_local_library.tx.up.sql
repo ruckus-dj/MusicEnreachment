@@ -276,6 +276,9 @@ ALTER TABLE ONLY public.track_source
 -- index: track_source_one_selected_idx
 CREATE UNIQUE INDEX track_source_one_selected_idx ON public.track_source USING btree (track_id) WHERE selected;
 
+-- index: release_track_recording_id_idx
+CREATE INDEX release_track_recording_id_idx ON public.release_track USING btree (recording_id);
+
 -- fk constraint: collection_artist collection_artist_artist_id_fkey
 ALTER TABLE ONLY public.collection_artist
     ADD CONSTRAINT collection_artist_artist_id_fkey FOREIGN KEY (artist_id) REFERENCES public.local_artist(id) ON DELETE RESTRICT;
@@ -367,3 +370,169 @@ ALTER TABLE ONLY public.track_source
 -- fk constraint: track_source track_source_track_id_fkey
 ALTER TABLE ONLY public.track_source
     ADD CONSTRAINT track_source_track_id_fkey FOREIGN KEY (track_id) REFERENCES public.local_track(id) ON DELETE CASCADE;
+
+-- Deferred checks keep parent-first inserts valid while enforcing final transaction state.
+CREATE FUNCTION public.assert_local_release_has_artist(p_release_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+VOLATILE
+AS $function$
+DECLARE
+    has_artist boolean;
+BEGIN
+    -- Serialize checks for this release, including checks under repeatable-read isolation.
+    UPDATE public.local_release SET id = id WHERE id = p_release_id;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    SELECT EXISTS (
+        SELECT 1 FROM public.release_artist WHERE release_id = p_release_id
+    ) INTO has_artist;
+    IF NOT has_artist THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23514',
+            MESSAGE = 'local release must have at least one release artist';
+    END IF;
+END
+$function$;
+
+CREATE FUNCTION public.assert_local_recording_has_release_track(p_recording_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+VOLATILE
+AS $function$
+DECLARE
+    has_release_track boolean;
+BEGIN
+    -- Serialize checks for this recording, including checks under repeatable-read isolation.
+    UPDATE public.local_recording SET id = id WHERE id = p_recording_id;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    SELECT EXISTS (
+        SELECT 1 FROM public.release_track WHERE recording_id = p_recording_id
+    ) INTO has_release_track;
+    IF NOT has_release_track THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23514',
+            MESSAGE = 'local recording must have at least one release track';
+    END IF;
+END
+$function$;
+
+CREATE FUNCTION public.check_local_release_artist_parent()
+RETURNS trigger
+LANGUAGE plpgsql
+VOLATILE
+AS $function$
+BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.id IS NOT DISTINCT FROM OLD.id THEN
+        RETURN NULL;
+    END IF;
+    PERFORM public.assert_local_release_has_artist(NEW.id);
+    RETURN NULL;
+END
+$function$;
+
+CREATE FUNCTION public.check_local_recording_release_track_parent()
+RETURNS trigger
+LANGUAGE plpgsql
+VOLATILE
+AS $function$
+BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.id IS NOT DISTINCT FROM OLD.id THEN
+        RETURN NULL;
+    END IF;
+    PERFORM public.assert_local_recording_has_release_track(NEW.id);
+    RETURN NULL;
+END
+$function$;
+
+CREATE FUNCTION public.check_release_artist_old_parent()
+RETURNS trigger
+LANGUAGE plpgsql
+VOLATILE
+AS $function$
+BEGIN
+    IF TG_OP = 'DELETE' OR NEW.release_id IS DISTINCT FROM OLD.release_id THEN
+        PERFORM public.assert_local_release_has_artist(OLD.release_id);
+    END IF;
+    RETURN NULL;
+END
+$function$;
+
+CREATE FUNCTION public.check_release_track_old_parent()
+RETURNS trigger
+LANGUAGE plpgsql
+VOLATILE
+AS $function$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM public.assert_local_release_has_artist(OLD.release_id);
+        IF OLD.recording_id IS NOT NULL THEN
+            PERFORM public.assert_local_recording_has_release_track(OLD.recording_id);
+        END IF;
+        RETURN NULL;
+    END IF;
+
+    IF NEW.release_id IS DISTINCT FROM OLD.release_id THEN
+        PERFORM public.assert_local_release_has_artist(OLD.release_id);
+    END IF;
+    IF NEW.recording_id IS DISTINCT FROM OLD.recording_id AND OLD.recording_id IS NOT NULL THEN
+        PERFORM public.assert_local_recording_has_release_track(OLD.recording_id);
+    END IF;
+    RETURN NULL;
+END
+$function$;
+
+CREATE FUNCTION public.prevent_release_artist_truncate_orphans()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $function$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '23514',
+        MESSAGE = 'cannot truncate release_artist; delete the library graph transactionally';
+END
+$function$;
+
+CREATE FUNCTION public.prevent_release_track_truncate_orphans()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $function$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '23514',
+        MESSAGE = 'cannot truncate release_track; delete the library graph transactionally';
+END
+$function$;
+
+CREATE CONSTRAINT TRIGGER local_release_requires_artist
+AFTER INSERT OR UPDATE OF id ON public.local_release
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION public.check_local_release_artist_parent();
+
+CREATE CONSTRAINT TRIGGER local_recording_requires_release_track
+AFTER INSERT OR UPDATE OF id ON public.local_recording
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION public.check_local_recording_release_track_parent();
+
+CREATE CONSTRAINT TRIGGER release_artist_preserves_old_parent
+AFTER DELETE OR UPDATE OF release_id ON public.release_artist
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION public.check_release_artist_old_parent();
+
+CREATE CONSTRAINT TRIGGER release_track_preserves_old_parent
+AFTER DELETE OR UPDATE OF release_id, recording_id ON public.release_track
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION public.check_release_track_old_parent();
+
+CREATE TRIGGER release_artist_prevent_orphaning_truncate
+BEFORE TRUNCATE ON public.release_artist
+FOR EACH STATEMENT EXECUTE FUNCTION public.prevent_release_artist_truncate_orphans();
+
+CREATE TRIGGER release_track_prevent_orphaning_truncate
+BEFORE TRUNCATE ON public.release_track
+FOR EACH STATEMENT EXECUTE FUNCTION public.prevent_release_track_truncate_orphans();

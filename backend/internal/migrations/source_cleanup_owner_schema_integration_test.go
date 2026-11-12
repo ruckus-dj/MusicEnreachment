@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
 )
 
@@ -29,18 +30,25 @@ func TestSourceCleanupOwnerSchemaPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
-	for _, seed := range []struct {
-		query string
-		args  []any
-	}{
-		{`INSERT INTO local_release(id) VALUES (?)`, []any{releaseID}},
-		{`INSERT INTO local_track(id) VALUES (?)`, []any{trackID}},
-		{`INSERT INTO release_track(id,release_id,"position",track_id,recording_id) VALUES (?,?,1,?,NULL)`, []any{positionID, releaseID, trackID}},
-	} {
-		if _, err := db.NewRaw(seed.query, seed.args...).Exec(ctx); err != nil {
-			t.Fatal(err)
+	releaseID, trackID, positionID, artistID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, seed := range []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO local_artist(id) VALUES (?)`, []any{artistID}},
+			{`INSERT INTO local_release(id) VALUES (?)`, []any{releaseID}},
+			{`INSERT INTO release_artist(release_id,"position",artist_id) VALUES (?,0,?)`, []any{releaseID, artistID}},
+			{`INSERT INTO local_track(id) VALUES (?)`, []any{trackID}},
+			{`INSERT INTO release_track(id,release_id,"position",track_id,recording_id) VALUES (?,?,1,?,NULL)`, []any{positionID, releaseID, trackID}},
+		} {
+			if _, err := tx.NewRaw(seed.query, seed.args...).Exec(ctx); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	nextJobID := int64(1000)

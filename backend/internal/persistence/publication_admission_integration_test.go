@@ -18,6 +18,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 type publicationAdmissionInserter struct {
@@ -51,16 +52,26 @@ func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 	initializeRiver(t, ctx, db)
 	positions := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
 	release, tracks := uuid.New(), []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'admission')`, release); err != nil {
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'admission')`, release); err != nil {
+			return err
+		}
+		for i, id := range positions {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'track')`, tracks[i]); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,?)`, id, release, tracks[i], i); err != nil {
+				return err
+			}
+			if i == 0 {
+				if err := seedRecordingCreditBaselineTx(ctx, tx, id, tracks[i], "track", "Admission artist"); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
-	}
-	for i, id := range positions {
-		if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'track')`, tracks[i]); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,?)`, id, release, tracks[i], i); err != nil {
-			t.Fatal(err)
-		}
 	}
 	var epoch uuid.UUID
 	if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {

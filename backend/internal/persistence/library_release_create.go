@@ -109,7 +109,7 @@ type releaseCreateArtist struct {
 }
 
 // CreateStandaloneRelease atomically materializes a manually-authored release
-// and its optional credits, media, source associations, and saved cover.
+// with artist credits and optional media, source associations, and saved cover.
 func (repository *LibraryRepository) CreateStandaloneRelease(ctx context.Context, request LibraryReleaseCreateRequest) (LibraryReleaseCreateResult, error) {
 	if err := validateLibraryReleaseCreate(request); err != nil {
 		return LibraryReleaseCreateResult{}, fmt.Errorf("create standalone release: %w", err)
@@ -230,6 +230,9 @@ func (repository *LibraryRepository) CreateStandaloneRelease(ctx context.Context
 }
 
 func validateLibraryReleaseCreate(r LibraryReleaseCreateRequest) error {
+	if len(r.Credits) == 0 {
+		return errors.New("release requires at least one artist credit")
+	}
 	artists, recordings, media, positions := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, a := range r.NewArtists {
 		if a.Key == "" || artists[a.Key] {

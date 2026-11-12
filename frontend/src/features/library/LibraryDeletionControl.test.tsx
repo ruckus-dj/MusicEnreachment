@@ -74,6 +74,8 @@ function preview(
       },
     ],
     position_ids: [positionID],
+    recording_ids: [],
+    recording_count: 0,
     release_id: releaseId,
     title,
   };
@@ -154,6 +156,7 @@ it("replays one frozen confirmation, follows partial failure, and retries the sa
   expect(dialog).toHaveTextContent("Release A deletion");
   expect(dialog).toHaveTextContent("Позиции");
   expect(dialog).toHaveTextContent("Файлы текущих публикаций");
+  expect(dialog).toHaveTextContent("Композиции, удаляемые из медиатеки");
   expect(dialog).toHaveTextContent("1. Position One");
   expect(dialog).toHaveTextContent("Artist/Release/01 - Track.flac");
   expect(within(dialog).getAllByText("1", { exact: true })).toHaveLength(2);

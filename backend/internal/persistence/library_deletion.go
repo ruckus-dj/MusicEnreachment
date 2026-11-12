@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,21 +33,26 @@ type LibraryDeletionScope struct {
 }
 
 type LibraryDeletionPreview struct {
-	Scope        LibraryDeletionScope
-	ScopeDigest  string
-	Title        string
-	PositionIDs  []uuid.UUID
-	Publications []TrackPublication
-	Blockers     []string
+	Scope          LibraryDeletionScope
+	ScopeDigest    string
+	Title          string
+	PositionIDs    []uuid.UUID
+	RecordingCount int         `json:"recording_count"`
+	RecordingIDs   []uuid.UUID `json:"recording_ids"`
+	Publications   []TrackPublication
+	Blockers       []string
+	orphanTrackIDs []uuid.UUID
+	dependencies   libraryDeletionDependencies
 }
 
 type LibraryDeletionOperationSnapshot struct {
-	SchemaVersion          int                  `json:"schema_version"`
-	Scope                  LibraryDeletionScope `json:"scope"`
-	ScopeDigest            string               `json:"scope_digest"`
-	ConfirmationDigest     string               `json:"confirmation_digest"`
-	OwnershipWitnesses     []json.RawMessage    `json:"ownership_witnesses"`
-	ResidualPublicationIDs []uuid.UUID          `json:"residual_publication_ids"`
+	SchemaVersion          int                         `json:"schema_version"`
+	Scope                  LibraryDeletionScope        `json:"scope"`
+	ScopeDigest            string                      `json:"scope_digest"`
+	ConfirmationDigest     string                      `json:"confirmation_digest"`
+	Dependencies           libraryDeletionDependencies `json:"dependencies"`
+	OwnershipWitnesses     []json.RawMessage           `json:"ownership_witnesses"`
+	ResidualPublicationIDs []uuid.UUID                 `json:"residual_publication_ids"`
 }
 
 // LibraryDeletionOperationID derives one stable operation identity from an
@@ -59,12 +65,24 @@ func LibraryDeletionOperationID(confirmationDigest string) (uuid.UUID, error) {
 }
 
 type libraryDeletionDependencies struct {
-	PositionIDs     []uuid.UUID       `json:"position_ids"`
-	MediumIDs       []uuid.UUID       `json:"medium_ids"`
-	ReleaseCredits  []json.RawMessage `json:"release_credits"`
-	CollectionLinks []json.RawMessage `json:"collection_links"`
-	ProviderLinks   []json.RawMessage `json:"provider_links"`
-	CoverRevision   *int64            `json:"cover_revision,omitempty"`
+	PositionIDs             []uuid.UUID       `json:"position_ids"`
+	PositionTrackLinks      []json.RawMessage `json:"position_track_links"`
+	SurvivingTrackLinks     []json.RawMessage `json:"surviving_track_links"`
+	SurvivingRecordingLinks []json.RawMessage `json:"surviving_recording_links"`
+	CandidateTrackIDs       []uuid.UUID       `json:"candidate_track_ids"`
+	OrphanTrackIDs          []uuid.UUID       `json:"orphan_track_ids"`
+	CandidateRecordingIDs   []uuid.UUID       `json:"candidate_recording_ids"`
+	OrphanRecordingIDs      []uuid.UUID       `json:"orphan_recording_ids"`
+	TrackMappings           []json.RawMessage `json:"track_mappings"`
+	TrackCredits            []json.RawMessage `json:"track_credits"`
+	TrackSources            []json.RawMessage `json:"track_sources"`
+	RecordingMappings       []json.RawMessage `json:"recording_mappings"`
+	RecordingCredits        []json.RawMessage `json:"recording_credits"`
+	MediumIDs               []uuid.UUID       `json:"medium_ids"`
+	ReleaseCredits          []json.RawMessage `json:"release_credits"`
+	CollectionLinks         []json.RawMessage `json:"collection_links"`
+	ProviderLinks           []json.RawMessage `json:"provider_links"`
+	CoverRevision           *int64            `json:"cover_revision,omitempty"`
 }
 
 type libraryDeletionPosition struct {
@@ -91,6 +109,47 @@ type libraryDeletionCollectionLink struct {
 type libraryDeletionProviderLink struct {
 	ProviderID        uuid.UUID `bun:"provider_id"`
 	ProviderReleaseID uuid.UUID `bun:"provider_release_id"`
+}
+
+type libraryDeletionPositionTrackLink struct {
+	PositionID  uuid.UUID  `bun:"position_id" json:"position_id"`
+	ReleaseID   uuid.UUID  `bun:"release_id" json:"release_id"`
+	TrackID     uuid.UUID  `bun:"track_id" json:"track_id"`
+	RecordingID *uuid.UUID `bun:"recording_id" json:"recording_id"`
+}
+
+type libraryDeletionTrackMapping struct {
+	ProviderID      uuid.UUID `bun:"provider_id" json:"provider_id"`
+	ProviderTrackID uuid.UUID `bun:"provider_track_id" json:"provider_track_id"`
+	LocalTrackID    uuid.UUID `bun:"local_track_id" json:"local_track_id"`
+}
+
+type libraryDeletionRecordingMapping struct {
+	ProviderID          uuid.UUID `bun:"provider_id" json:"provider_id"`
+	ProviderRecordingID uuid.UUID `bun:"provider_recording_id" json:"provider_recording_id"`
+	LocalRecordingID    uuid.UUID `bun:"local_recording_id" json:"local_recording_id"`
+}
+
+type libraryDeletionTrackSource struct {
+	ID             uuid.UUID `bun:"id" json:"id"`
+	TrackID        uuid.UUID `bun:"track_id" json:"track_id"`
+	MediaVariantID uuid.UUID `bun:"media_variant_id" json:"media_variant_id"`
+}
+
+type libraryDeletionTrackCredit struct {
+	TrackID    uuid.UUID `bun:"track_id" json:"track_id"`
+	Position   int       `bun:"position" json:"position"`
+	ArtistID   uuid.UUID `bun:"artist_id" json:"artist_id"`
+	Name       string    `bun:"name" json:"name"`
+	JoinPhrase string    `bun:"join_phrase" json:"join_phrase"`
+}
+
+type libraryDeletionRecordingCredit struct {
+	RecordingID uuid.UUID `bun:"recording_id" json:"recording_id"`
+	Position    int       `bun:"position" json:"position"`
+	ArtistID    uuid.UUID `bun:"artist_id" json:"artist_id"`
+	Name        string    `bun:"name" json:"name"`
+	JoinPhrase  string    `bun:"join_phrase" json:"join_phrase"`
 }
 
 // LibraryDeletionDeliveryGuard fences one River delivery of a deletion operation.
@@ -325,10 +384,85 @@ func readLibraryDeletionPreview(ctx context.Context, tx bun.IDB, kind string, re
 		}
 	}
 	dependency := libraryDeletionDependencies{
-		PositionIDs: positionIDs, MediumIDs: []uuid.UUID{},
+		PositionIDs: positionIDs, PositionTrackLinks: []json.RawMessage{}, SurvivingTrackLinks: []json.RawMessage{},
+		SurvivingRecordingLinks: []json.RawMessage{}, OrphanTrackIDs: []uuid.UUID{}, OrphanRecordingIDs: []uuid.UUID{},
+		CandidateTrackIDs: []uuid.UUID{}, CandidateRecordingIDs: []uuid.UUID{},
+		TrackMappings: []json.RawMessage{}, TrackCredits: []json.RawMessage{}, TrackSources: []json.RawMessage{},
+		RecordingMappings: []json.RawMessage{}, RecordingCredits: []json.RawMessage{}, MediumIDs: []uuid.UUID{},
 		ReleaseCredits: []json.RawMessage{}, CollectionLinks: []json.RawMessage{}, ProviderLinks: []json.RawMessage{},
 	}
 	if kind == "release" {
+		links := make([]libraryDeletionPositionTrackLink, 0)
+		if err := tx.NewRaw(`SELECT id AS position_id,release_id,track_id,recording_id FROM release_track WHERE release_id=? ORDER BY id`, releaseID).Scan(ctx, &links); err != nil {
+			return preview, fmt.Errorf("preview library deletion: read position track links: %w", err)
+		}
+		trackSet := make(map[uuid.UUID]struct{}, len(links))
+		recordingSet := make(map[uuid.UUID]struct{}, len(links))
+		for _, link := range links {
+			raw, err := json.Marshal(link)
+			if err != nil {
+				return preview, fmt.Errorf("preview library deletion: encode position track link: %w", err)
+			}
+			dependency.PositionTrackLinks = append(dependency.PositionTrackLinks, raw)
+			trackSet[link.TrackID] = struct{}{}
+			if link.RecordingID != nil {
+				recordingSet[*link.RecordingID] = struct{}{}
+			}
+		}
+		trackIDs := sortedUUIDSet(trackSet)
+		recordingIDs := sortedUUIDSet(recordingSet)
+		dependency.CandidateTrackIDs = trackIDs
+		dependency.CandidateRecordingIDs = recordingIDs
+		trackSurvivors := make([]libraryDeletionPositionTrackLink, 0)
+		if len(trackIDs) > 0 {
+			if err := tx.NewRaw(`SELECT id AS position_id,release_id,track_id,recording_id FROM release_track WHERE track_id IN (?) AND release_id<>? ORDER BY id`, bun.List(trackIDs), releaseID).Scan(ctx, &trackSurvivors); err != nil {
+				return preview, fmt.Errorf("preview library deletion: read surviving track links: %w", err)
+			}
+		}
+		for _, link := range trackSurvivors {
+			raw, err := json.Marshal(link)
+			if err != nil {
+				return preview, fmt.Errorf("preview library deletion: encode surviving track link: %w", err)
+			}
+			dependency.SurvivingTrackLinks = append(dependency.SurvivingTrackLinks, raw)
+		}
+		recordingSurvivors := make([]libraryDeletionPositionTrackLink, 0)
+		if len(recordingIDs) > 0 {
+			if err := tx.NewRaw(`SELECT id AS position_id,release_id,track_id,recording_id FROM release_track WHERE recording_id IN (?) AND release_id<>? ORDER BY id`, bun.List(recordingIDs), releaseID).Scan(ctx, &recordingSurvivors); err != nil {
+				return preview, fmt.Errorf("preview library deletion: read surviving recording links: %w", err)
+			}
+		}
+		for _, link := range recordingSurvivors {
+			raw, err := json.Marshal(link)
+			if err != nil {
+				return preview, fmt.Errorf("preview library deletion: encode surviving recording link: %w", err)
+			}
+			dependency.SurvivingRecordingLinks = append(dependency.SurvivingRecordingLinks, raw)
+		}
+		survivingTracks := make(map[uuid.UUID]struct{}, len(trackSurvivors))
+		for _, link := range trackSurvivors {
+			survivingTracks[link.TrackID] = struct{}{}
+		}
+		for _, id := range trackIDs {
+			if _, survives := survivingTracks[id]; !survives {
+				dependency.OrphanTrackIDs = append(dependency.OrphanTrackIDs, id)
+			}
+		}
+		survivingRecordings := make(map[uuid.UUID]struct{}, len(recordingSurvivors))
+		for _, link := range recordingSurvivors {
+			survivingRecordings[*link.RecordingID] = struct{}{}
+		}
+		for _, id := range recordingIDs {
+			if _, survives := survivingRecordings[id]; !survives {
+				dependency.OrphanRecordingIDs = append(dependency.OrphanRecordingIDs, id)
+			}
+		}
+		preview.RecordingIDs = slices.Clone(dependency.OrphanRecordingIDs)
+		preview.RecordingCount = len(preview.RecordingIDs)
+		preview.orphanTrackIDs = slices.Clone(dependency.OrphanTrackIDs)
+		if err := readLibraryDeletionOrphanIdentities(ctx, tx, &dependency); err != nil {
+			return preview, err
+		}
 		media := make([]libraryDeletionMedium, 0)
 		if err := tx.NewRaw(`SELECT id FROM release_medium WHERE release_id=? ORDER BY id`, releaseID).Scan(ctx, &media); err != nil {
 			return preview, fmt.Errorf("preview library deletion: read release media: %w", err)
@@ -390,14 +524,13 @@ func readLibraryDeletionPreview(ctx context.Context, tx bun.IDB, kind string, re
 			return preview, fmt.Errorf("preview library deletion: read manual matching receipts: %w", err)
 		}
 	}
-	dependencyJSON, err := json.Marshal(dependency)
+	dependencyDigest, err := libraryDeletionDependencyDigest(dependency)
 	if err != nil {
 		return preview, fmt.Errorf("preview library deletion: encode dependency witness: %w", err)
 	}
-	dependencyHash := sha256.Sum256(dependencyJSON)
 	scope := LibraryDeletionScope{
 		Kind: kind, ReleaseID: releaseID, PublicationIDs: slices.Clone(positionIDs),
-		ManualReceiptRequestIDs: receiptIDs, DependencyDigest: hex.EncodeToString(dependencyHash[:]),
+		ManualReceiptRequestIDs: receiptIDs, DependencyDigest: dependencyDigest,
 	}
 	scopeJSON, err := json.Marshal(scope)
 	if err != nil {
@@ -407,7 +540,147 @@ func readLibraryDeletionPreview(ctx context.Context, tx bun.IDB, kind string, re
 	return LibraryDeletionPreview{
 		Scope: scope, ScopeDigest: hex.EncodeToString(scopeHash[:]), Title: title,
 		PositionIDs: positionIDs, Publications: publications, Blockers: blockers,
+		RecordingIDs: slices.Clone(dependency.OrphanRecordingIDs), RecordingCount: len(dependency.OrphanRecordingIDs),
+		orphanTrackIDs: slices.Clone(dependency.OrphanTrackIDs), dependencies: dependency,
 	}, nil
+}
+
+func libraryDeletionDependencyDigest(dependency libraryDeletionDependencies) (string, error) {
+	raw, err := json.Marshal(dependency)
+	if err != nil {
+		return "", err
+	}
+	raw, err = canonicalMatchingJSON(raw)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func sortedUUIDSet(values map[uuid.UUID]struct{}) []uuid.UUID {
+	result := make([]uuid.UUID, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	slices.SortFunc(result, func(left, right uuid.UUID) int { return strings.Compare(left.String(), right.String()) })
+	return result
+}
+
+func appendDeletionIdentities[T any](destination *[]json.RawMessage, values []T) error {
+	for _, value := range values {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		*destination = append(*destination, raw)
+	}
+	return nil
+}
+
+func readLibraryDeletionOrphanIdentities(ctx context.Context, tx bun.IDB, dependency *libraryDeletionDependencies) error {
+	if len(dependency.OrphanTrackIDs) > 0 {
+		mappings := make([]libraryDeletionTrackMapping, 0)
+		if err := tx.NewRaw(`SELECT provider_id,provider_track_id,local_track_id FROM provider_local_track WHERE local_track_id IN (?) ORDER BY provider_id,provider_track_id`, bun.List(dependency.OrphanTrackIDs)).Scan(ctx, &mappings); err != nil {
+			return fmt.Errorf("preview library deletion: read orphan track mappings: %w", err)
+		}
+		if err := appendDeletionIdentities(&dependency.TrackMappings, mappings); err != nil {
+			return fmt.Errorf("preview library deletion: encode orphan track mapping: %w", err)
+		}
+		credits := make([]libraryDeletionTrackCredit, 0)
+		if err := tx.NewRaw(`SELECT track_id,position,artist_id,name,name_join_phrase AS join_phrase FROM track_artist WHERE track_id IN (?) ORDER BY track_id,position`, bun.List(dependency.OrphanTrackIDs)).Scan(ctx, &credits); err != nil {
+			return fmt.Errorf("preview library deletion: read orphan track credits: %w", err)
+		}
+		if err := appendDeletionIdentities(&dependency.TrackCredits, credits); err != nil {
+			return fmt.Errorf("preview library deletion: encode orphan track credit: %w", err)
+		}
+		sources := make([]libraryDeletionTrackSource, 0)
+		if err := tx.NewRaw(`SELECT id,track_id,media_variant_id FROM track_source WHERE track_id IN (?) ORDER BY id`, bun.List(dependency.OrphanTrackIDs)).Scan(ctx, &sources); err != nil {
+			return fmt.Errorf("preview library deletion: read orphan track sources: %w", err)
+		}
+		if err := appendDeletionIdentities(&dependency.TrackSources, sources); err != nil {
+			return fmt.Errorf("preview library deletion: encode orphan track source: %w", err)
+		}
+	}
+	if len(dependency.OrphanRecordingIDs) > 0 {
+		mappings := make([]libraryDeletionRecordingMapping, 0)
+		if err := tx.NewRaw(`SELECT provider_id,provider_recording_id,local_recording_id FROM provider_local_recording WHERE local_recording_id IN (?) ORDER BY provider_id,provider_recording_id`, bun.List(dependency.OrphanRecordingIDs)).Scan(ctx, &mappings); err != nil {
+			return fmt.Errorf("preview library deletion: read orphan recording mappings: %w", err)
+		}
+		if err := appendDeletionIdentities(&dependency.RecordingMappings, mappings); err != nil {
+			return fmt.Errorf("preview library deletion: encode orphan recording mapping: %w", err)
+		}
+		credits := make([]libraryDeletionRecordingCredit, 0)
+		if err := tx.NewRaw(`SELECT recording_id,position,artist_id,name,name_join_phrase AS join_phrase FROM recording_artist WHERE recording_id IN (?) ORDER BY recording_id,position`, bun.List(dependency.OrphanRecordingIDs)).Scan(ctx, &credits); err != nil {
+			return fmt.Errorf("preview library deletion: read orphan recording credits: %w", err)
+		}
+		if err := appendDeletionIdentities(&dependency.RecordingCredits, credits); err != nil {
+			return fmt.Errorf("preview library deletion: encode orphan recording credit: %w", err)
+		}
+	}
+	return nil
+}
+
+func lockLibraryDeletionDependencies(ctx context.Context, tx bun.IDB, dependency libraryDeletionDependencies) error {
+	if len(dependency.CandidateTrackIDs) > 0 {
+		var locked []uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM local_track WHERE id IN (?) ORDER BY id FOR UPDATE`, bun.List(dependency.CandidateTrackIDs)).Scan(ctx, &locked); err != nil {
+			return fmt.Errorf("lock library deletion candidate tracks: %w", err)
+		}
+		if len(locked) != len(dependency.CandidateTrackIDs) {
+			return ErrLibraryDeletionConflict
+		}
+	}
+	if len(dependency.CandidateRecordingIDs) > 0 {
+		var locked []uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM local_recording WHERE id IN (?) ORDER BY id FOR UPDATE`, bun.List(dependency.CandidateRecordingIDs)).Scan(ctx, &locked); err != nil {
+			return fmt.Errorf("lock library deletion candidate recordings: %w", err)
+		}
+		if len(locked) != len(dependency.CandidateRecordingIDs) {
+			return ErrLibraryDeletionConflict
+		}
+	}
+	if len(dependency.CandidateTrackIDs) > 0 || len(dependency.CandidateRecordingIDs) > 0 {
+		conditions := make([]string, 0, 2)
+		args := make([]any, 0, 2)
+		if len(dependency.CandidateTrackIDs) > 0 {
+			conditions = append(conditions, `track_id IN (?)`)
+			args = append(args, bun.List(dependency.CandidateTrackIDs))
+		}
+		if len(dependency.CandidateRecordingIDs) > 0 {
+			conditions = append(conditions, `recording_id IN (?)`)
+			args = append(args, bun.List(dependency.CandidateRecordingIDs))
+		}
+		query := `SELECT id FROM release_track WHERE ` + strings.Join(conditions, ` OR `) + ` ORDER BY id FOR UPDATE`
+		var locked []uuid.UUID
+		if err := tx.NewRaw(query, args...).Scan(ctx, &locked); err != nil {
+			return fmt.Errorf("lock library deletion position references: %w", err)
+		}
+	}
+	if len(dependency.OrphanTrackIDs) > 0 {
+		var mappingIDs, sourceIDs []uuid.UUID
+		var creditPositions []int
+		if err := tx.NewRaw(`SELECT provider_track_id FROM provider_local_track WHERE local_track_id IN (?) ORDER BY provider_id,provider_track_id FOR UPDATE`, bun.List(dependency.OrphanTrackIDs)).Scan(ctx, &mappingIDs); err != nil {
+			return fmt.Errorf("lock library deletion track mappings: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT position FROM track_artist WHERE track_id IN (?) ORDER BY track_id,position FOR UPDATE`, bun.List(dependency.OrphanTrackIDs)).Scan(ctx, &creditPositions); err != nil {
+			return fmt.Errorf("lock library deletion track credits: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT id FROM track_source WHERE track_id IN (?) ORDER BY id FOR UPDATE`, bun.List(dependency.OrphanTrackIDs)).Scan(ctx, &sourceIDs); err != nil {
+			return fmt.Errorf("lock library deletion track sources: %w", err)
+		}
+	}
+	if len(dependency.OrphanRecordingIDs) > 0 {
+		var mappingIDs []uuid.UUID
+		var creditPositions []int
+		if err := tx.NewRaw(`SELECT provider_recording_id FROM provider_local_recording WHERE local_recording_id IN (?) ORDER BY provider_id,provider_recording_id FOR UPDATE`, bun.List(dependency.OrphanRecordingIDs)).Scan(ctx, &mappingIDs); err != nil {
+			return fmt.Errorf("lock library deletion recording mappings: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT position FROM recording_artist WHERE recording_id IN (?) ORDER BY recording_id,position FOR UPDATE`, bun.List(dependency.OrphanRecordingIDs)).Scan(ctx, &creditPositions); err != nil {
+			return fmt.Errorf("lock library deletion recording credits: %w", err)
+		}
+	}
+	return nil
 }
 
 func libraryDeletionPositionBlocked(ctx context.Context, tx bun.IDB, positionID, epoch, generation uuid.UUID) (bool, error) {
@@ -505,6 +778,13 @@ func (repository *SetupManagerRepository) AdmitLibraryDeletionOperation(
 		if err != nil {
 			return err
 		}
+		if err := lockLibraryDeletionDependencies(ctx, tx, current.dependencies); err != nil {
+			return fmt.Errorf("admit library deletion: lock dependency witness: %w", err)
+		}
+		current, err = readLibraryDeletionPreview(ctx, tx, preview.Scope.Kind, preview.Scope.ReleaseID, positionID)
+		if err != nil {
+			return err
+		}
 		if current.ScopeDigest != preview.ScopeDigest || current.Scope.Kind != preview.Scope.Kind || current.Scope.ReleaseID != preview.Scope.ReleaseID || len(current.Blockers) != 0 || !slices.Equal(current.PositionIDs, lockedPositions) {
 			return ErrLibraryDeletionConflict
 		}
@@ -519,8 +799,9 @@ func (repository *SetupManagerRepository) AdmitLibraryDeletionOperation(
 			residual = append(residual, publication.PositionID)
 		}
 		snapshot := LibraryDeletionOperationSnapshot{
-			SchemaVersion: 1, Scope: current.Scope, ScopeDigest: current.ScopeDigest,
+			SchemaVersion: 2, Scope: current.Scope, ScopeDigest: current.ScopeDigest,
 			ConfirmationDigest: confirmationDigest,
+			Dependencies:       current.dependencies,
 			OwnershipWitnesses: cloneLibraryDeletionWitnesses(ownershipWitnesses), ResidualPublicationIDs: residual,
 		}
 		raw, err := json.Marshal(snapshot)
@@ -836,10 +1117,55 @@ func lockLibraryDeletionScope(
 }
 
 func validateLibraryDeletionSnapshot(snapshot LibraryDeletionOperationSnapshot) error {
-	if snapshot.SchemaVersion != 1 || snapshot.Scope.ReleaseID == uuid.Nil || snapshot.ScopeDigest == "" || !validSHA256(snapshot.ScopeDigest) ||
+	dependencyDigest, dependencyErr := libraryDeletionDependencyDigest(snapshot.Dependencies)
+	scopeJSON, scopeErr := json.Marshal(snapshot.Scope)
+	scopeDigest := sha256.Sum256(scopeJSON)
+	if snapshot.SchemaVersion != 2 || snapshot.Scope.ReleaseID == uuid.Nil || snapshot.ScopeDigest == "" || !validSHA256(snapshot.ScopeDigest) ||
 		snapshot.ConfirmationDigest == "" || !validSHA256(snapshot.ConfirmationDigest) ||
 		(snapshot.Scope.Kind != "release" && snapshot.Scope.Kind != "publication") ||
-		(snapshot.Scope.Kind == "publication" && len(snapshot.Scope.PublicationIDs) != 1) {
+		(snapshot.Scope.Kind == "publication" && len(snapshot.Scope.PublicationIDs) != 1) ||
+		dependencyErr != nil || snapshot.Scope.DependencyDigest != dependencyDigest || scopeErr != nil ||
+		snapshot.ScopeDigest != hex.EncodeToString(scopeDigest[:]) ||
+		!slices.Equal(snapshot.Dependencies.PositionIDs, snapshot.Scope.PublicationIDs) ||
+		!strictlySortedUniqueUUIDs(snapshot.Dependencies.CandidateTrackIDs) ||
+		!strictlySortedUniqueUUIDs(snapshot.Dependencies.CandidateRecordingIDs) ||
+		!strictlySortedUniqueUUIDs(snapshot.Dependencies.OrphanTrackIDs) ||
+		!strictlySortedUniqueUUIDs(snapshot.Dependencies.OrphanRecordingIDs) {
+		return ErrLibraryDeletionConflict
+	}
+	if snapshot.Scope.Kind == "release" {
+		triples := make([]libraryDeletionPositionTrackLink, 0, len(snapshot.Dependencies.PositionTrackLinks))
+		for _, raw := range snapshot.Dependencies.PositionTrackLinks {
+			var triple libraryDeletionPositionTrackLink
+			if !publicationJSONObject(raw) || json.Unmarshal(raw, &triple) != nil || triple.PositionID == uuid.Nil ||
+				triple.ReleaseID != snapshot.Scope.ReleaseID || triple.TrackID == uuid.Nil {
+				return ErrLibraryDeletionConflict
+			}
+			triples = append(triples, triple)
+		}
+		if len(triples) != len(snapshot.Scope.PublicationIDs) {
+			return ErrLibraryDeletionConflict
+		}
+		trackSet := make(map[uuid.UUID]struct{}, len(triples))
+		recordingSet := make(map[uuid.UUID]struct{}, len(triples))
+		for index, triple := range triples {
+			if triple.PositionID != snapshot.Scope.PublicationIDs[index] {
+				return ErrLibraryDeletionConflict
+			}
+			trackSet[triple.TrackID] = struct{}{}
+			if triple.RecordingID != nil {
+				recordingSet[*triple.RecordingID] = struct{}{}
+			}
+		}
+		if !slices.Equal(snapshot.Dependencies.CandidateTrackIDs, sortedUUIDSet(trackSet)) ||
+			!slices.Equal(snapshot.Dependencies.CandidateRecordingIDs, sortedUUIDSet(recordingSet)) ||
+			!uuidSubset(snapshot.Dependencies.OrphanTrackIDs, snapshot.Dependencies.CandidateTrackIDs) ||
+			!uuidSubset(snapshot.Dependencies.OrphanRecordingIDs, snapshot.Dependencies.CandidateRecordingIDs) {
+			return ErrLibraryDeletionConflict
+		}
+	} else if len(snapshot.Dependencies.PositionTrackLinks) != 0 || len(snapshot.Dependencies.CandidateTrackIDs) != 0 ||
+		len(snapshot.Dependencies.CandidateRecordingIDs) != 0 || len(snapshot.Dependencies.OrphanTrackIDs) != 0 ||
+		len(snapshot.Dependencies.OrphanRecordingIDs) != 0 {
 		return ErrLibraryDeletionConflict
 	}
 	if !strictlySortedUniqueUUIDs(snapshot.Scope.PublicationIDs) || !strictlySortedUniqueUUIDs(snapshot.Scope.ManualReceiptRequestIDs) ||
@@ -875,6 +1201,15 @@ func validateLibraryDeletionSnapshot(snapshot LibraryDeletionOperationSnapshot) 
 	return nil
 }
 
+func uuidSubset(subset, superset []uuid.UUID) bool {
+	for _, value := range subset {
+		if !slices.Contains(superset, value) {
+			return false
+		}
+	}
+	return true
+}
+
 func strictlySortedUniqueUUIDs(values []uuid.UUID) bool {
 	for index, value := range values {
 		if value == uuid.Nil || index > 0 && values[index-1].String() >= value.String() {
@@ -893,6 +1228,9 @@ func sameLibraryDeletionScope(left, right LibraryDeletionScope) bool {
 func validateLibraryDeletionFrozenScope(ctx context.Context, tx bun.IDB, snapshot LibraryDeletionOperationSnapshot, epoch uuid.UUID, positions []uuid.UUID) error {
 	if !slices.Equal(positions, snapshot.Scope.PublicationIDs) {
 		return ErrLibraryDeletionConflict
+	}
+	if err := lockLibraryDeletionDependencies(ctx, tx, snapshot.Dependencies); err != nil {
+		return fmt.Errorf("lock frozen library deletion dependencies: %w", err)
 	}
 	current, err := readLibraryDeletionPreview(ctx, tx, snapshot.Scope.Kind, snapshot.Scope.ReleaseID, func() uuid.UUID {
 		if snapshot.Scope.Kind == "publication" {
@@ -1076,6 +1414,75 @@ func validateLibraryDeletionPositionAuthority(ctx context.Context, tx bun.IDB, c
 	return nil
 }
 
+func lockAndValidateLibraryDeletionOrphans(ctx context.Context, tx bun.IDB, snapshot LibraryDeletionOperationSnapshot) (LibraryDeletionPreview, error) {
+	preview, err := readLibraryDeletionPreview(ctx, tx, snapshot.Scope.Kind, snapshot.Scope.ReleaseID, uuid.Nil)
+	if err != nil {
+		return LibraryDeletionPreview{}, err
+	}
+	if preview.ScopeDigest != snapshot.ScopeDigest || !sameLibraryDeletionScope(preview.Scope, snapshot.Scope) {
+		return LibraryDeletionPreview{}, ErrLibraryDeletionConflict
+	}
+	if len(preview.orphanTrackIDs) > 0 {
+		var locked []uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM local_track WHERE id IN (?) ORDER BY id FOR UPDATE`, bun.List(preview.orphanTrackIDs)).Scan(ctx, &locked); err != nil {
+			return LibraryDeletionPreview{}, fmt.Errorf("finalize library deletion: lock orphan tracks: %w", err)
+		}
+		if !slices.Equal(locked, preview.orphanTrackIDs) {
+			return LibraryDeletionPreview{}, ErrLibraryDeletionConflict
+		}
+	}
+	if len(preview.RecordingIDs) > 0 {
+		var locked []uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM local_recording WHERE id IN (?) ORDER BY id FOR UPDATE`, bun.List(preview.RecordingIDs)).Scan(ctx, &locked); err != nil {
+			return LibraryDeletionPreview{}, fmt.Errorf("finalize library deletion: lock orphan recordings: %w", err)
+		}
+		if !slices.Equal(locked, preview.RecordingIDs) {
+			return LibraryDeletionPreview{}, ErrLibraryDeletionConflict
+		}
+	}
+	current, err := readLibraryDeletionPreview(ctx, tx, snapshot.Scope.Kind, snapshot.Scope.ReleaseID, uuid.Nil)
+	if err != nil {
+		return LibraryDeletionPreview{}, err
+	}
+	if current.ScopeDigest != snapshot.ScopeDigest || !sameLibraryDeletionScope(current.Scope, snapshot.Scope) {
+		return LibraryDeletionPreview{}, ErrLibraryDeletionConflict
+	}
+	return current, nil
+}
+
+func deleteLibraryDeletionOrphans(ctx context.Context, tx bun.IDB, preview LibraryDeletionPreview) error {
+	if len(preview.orphanTrackIDs) > 0 {
+		for _, statement := range []struct {
+			sql  string
+			name string
+		}{
+			{`DELETE FROM provider_local_track WHERE local_track_id IN (?)`, "orphan track provider mappings"},
+			{`DELETE FROM track_artist WHERE track_id IN (?)`, "orphan track credits"},
+			{`DELETE FROM track_source WHERE track_id IN (?)`, "orphan track source associations"},
+			{`DELETE FROM local_track WHERE id IN (?)`, "orphan tracks"},
+		} {
+			if _, err := tx.NewRaw(statement.sql, bun.List(preview.orphanTrackIDs)).Exec(ctx); err != nil {
+				return fmt.Errorf("finalize library deletion: delete %s: %w", statement.name, err)
+			}
+		}
+	}
+	if len(preview.RecordingIDs) > 0 {
+		for _, statement := range []struct {
+			sql  string
+			name string
+		}{
+			{`DELETE FROM provider_local_recording WHERE local_recording_id IN (?)`, "orphan recording provider mappings"},
+			{`DELETE FROM recording_artist WHERE recording_id IN (?)`, "orphan recording credits"},
+			{`DELETE FROM local_recording WHERE id IN (?)`, "orphan recordings"},
+		} {
+			if _, err := tx.NewRaw(statement.sql, bun.List(preview.RecordingIDs)).Exec(ctx); err != nil {
+				return fmt.Errorf("finalize library deletion: delete %s: %w", statement.name, err)
+			}
+		}
+	}
+	return nil
+}
+
 func requireLibraryDeletionClaim(ctx context.Context, tx bun.IDB, guard LibraryDeletionDeliveryGuard) error {
 	var claim PublicationExecutionClaim
 	err := tx.NewSelect().Model(&claim).Where("operation_id=? AND application_attempt=?", guard.OperationID, guard.ApplicationAttempt).For("UPDATE").Scan(ctx)
@@ -1150,6 +1557,13 @@ func (repository *SetupManagerRepository) FinalizeLibraryDeletion(ctx context.Co
 		if publications != 0 {
 			return ErrLibraryDeletionConflict
 		}
+		var deletionPreview LibraryDeletionPreview
+		if snapshot.Scope.Kind == "release" {
+			deletionPreview, err = lockAndValidateLibraryDeletionOrphans(ctx, tx, snapshot)
+			if err != nil {
+				return err
+			}
+		}
 		receipts := make([]libraryDeletionReceipt, 0)
 		if snapshot.Scope.Kind == "release" {
 			if err := tx.NewRaw(`SELECT request_id,original_local_release_id,local_release_id,retired_by_operation_id FROM manual_matching_receipt
@@ -1198,6 +1612,9 @@ func (repository *SetupManagerRepository) FinalizeLibraryDeletion(ctx context.Co
 			}
 		}
 		if snapshot.Scope.Kind == "release" {
+			if err := deleteLibraryDeletionOrphans(ctx, tx, deletionPreview); err != nil {
+				return err
+			}
 			if _, err := tx.NewRaw(`DELETE FROM release_medium WHERE release_id=?`, snapshot.Scope.ReleaseID).Exec(ctx); err != nil {
 				return fmt.Errorf("finalize library deletion: delete release media: %w", err)
 			}

@@ -17,17 +17,22 @@ func TestPositionSourceAuthorityIsIndependentAndGenerationBoundPostgreSQL(t *tes
 	db := testpostgres.OpenMigratedWithRiver(t)
 	repo := NewSetupManagerRepository(db)
 	releaseID, trackID := uuid.New(), uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'authority fixture')`, releaseID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'authority fixture')`, trackID); err != nil {
-		t.Fatal(err)
-	}
 	positions := []uuid.UUID{uuid.New(), uuid.New()}
-	for i, position := range positions {
-		if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,?)`, position, releaseID, trackID, i); err != nil {
-			t.Fatal(err)
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'authority fixture')`, releaseID); err != nil {
+			return err
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'authority fixture')`, trackID); err != nil {
+			return err
+		}
+		for i, position := range positions {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,?)`, position, releaseID, trackID, i); err != nil {
+				return err
+			}
+		}
+		return seedRecordingCreditBaselineTx(ctx, tx, positions[0], trackID, "authority fixture", "Authority artist")
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if got, err := repo.ReadPositionSourceAuthority(ctx, positions[0]); err != nil || got != nil {
 		t.Fatalf("authority for legacy publication = %+v, %v; want unknown", got, err)

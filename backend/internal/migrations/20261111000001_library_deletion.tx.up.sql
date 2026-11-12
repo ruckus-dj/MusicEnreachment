@@ -70,10 +70,11 @@ ALTER TABLE public.operation
             AND provider_cache_key IS NULL
             AND provider_explicit_refresh IS FALSE
             AND jsonb_typeof(input_snapshot) = 'object'
-            AND input_snapshot ?& ARRAY['schema_version','scope','scope_digest','confirmation_digest','ownership_witnesses','residual_publication_ids']
-            AND input_snapshot - ARRAY['schema_version','scope','scope_digest','confirmation_digest','ownership_witnesses','residual_publication_ids'] = '{}'::jsonb
-            AND input_snapshot->>'schema_version' = '1'
+            AND input_snapshot ?& ARRAY['schema_version','scope','scope_digest','confirmation_digest','ownership_witnesses','residual_publication_ids','dependencies']
+            AND input_snapshot - ARRAY['schema_version','scope','scope_digest','confirmation_digest','ownership_witnesses','residual_publication_ids','dependencies'] = '{}'::jsonb
+            AND input_snapshot->>'schema_version' = '2'
             AND jsonb_typeof(input_snapshot->'scope') = 'object'
+            AND jsonb_typeof(input_snapshot->'dependencies') = 'object'
             AND jsonb_typeof(input_snapshot->'ownership_witnesses') = 'array'
             AND jsonb_typeof(input_snapshot->'residual_publication_ids') = 'array'
             AND length(input_snapshot->>'scope_digest') = 64
@@ -249,6 +250,7 @@ BEGIN
     END IF;
     IF NEW.kind <> OLD.kind
        OR NEW.input_snapshot->'scope' IS DISTINCT FROM OLD.input_snapshot->'scope'
+       OR NEW.input_snapshot->'dependencies' IS DISTINCT FROM OLD.input_snapshot->'dependencies'
        OR NEW.input_snapshot->'ownership_witnesses' IS DISTINCT FROM OLD.input_snapshot->'ownership_witnesses'
        OR NEW.input_snapshot->>'scope_digest' IS DISTINCT FROM OLD.input_snapshot->>'scope_digest'
        OR NEW.input_snapshot->>'confirmation_digest' IS DISTINCT FROM OLD.input_snapshot->>'confirmation_digest'

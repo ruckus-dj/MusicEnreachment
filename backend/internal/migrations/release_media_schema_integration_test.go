@@ -6,8 +6,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
 )
 
@@ -27,8 +29,17 @@ func TestReleaseMediaRollbackRefusesToDiscardMediaMetadata(t *testing.T) {
 	if _, err := migrator.Migrate(ctx); err != nil {
 		t.Fatalf("apply current migrations: %v", err)
 	}
-	var releaseID string
-	if err := db.NewRaw(`INSERT INTO local_release(id,title) VALUES (gen_random_uuid(),'Rollback guard') RETURNING id`).Scan(ctx, &releaseID); err != nil {
+	releaseID, artistID := uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_artist(id) VALUES (?)`, artistID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'Rollback guard')`, releaseID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO release_artist(release_id,"position",artist_id) VALUES (?,0,?)`, releaseID, artistID)
+		return err
+	}); err != nil {
 		t.Fatalf("create release fixture: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO release_medium(release_id,medium,title) VALUES (?::uuid,0,'Disc')`, releaseID); err != nil {

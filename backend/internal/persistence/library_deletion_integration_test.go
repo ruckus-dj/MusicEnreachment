@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,32 +49,56 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 		t.Fatal(err)
 	}
 	targetRelease, foreignRelease := uuid.New(), uuid.New()
-	targetPosition, foreignPosition := uuid.New(), uuid.New()
+	targetPosition, targetSharedPosition, foreignPosition := uuid.New(), uuid.New(), uuid.New()
+	survivorPosition := uuid.New()
 	targetTrack, foreignTrack := uuid.New(), uuid.New()
+	targetRecording, sharedRecording := uuid.New(), uuid.New()
 	artistID, collectionID := uuid.New(), uuid.New()
+	providerID, providerReleaseID, providerRecordingID, providerTrackID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	targetVariant, sharedVariant := uuid.New(), uuid.New()
+	targetSourceID, sharedSourceID := uuid.New(), uuid.New()
 	targetGeneration, foreignGeneration := uuid.New(), uuid.New()
 	sharedDirectoryClaim, targetFileClaim, foreignFileClaim := uuid.New(), uuid.New(), uuid.New()
-	for _, query := range []struct {
-		sql  string
-		args []any
-	}{
-		{`INSERT INTO local_release(id,title) VALUES (?,?)`, []any{targetRelease, "deletion target"}},
-		{`INSERT INTO local_release(id,title) VALUES (?,?)`, []any{foreignRelease, "foreign release"}},
-		{`INSERT INTO local_track(id,title) VALUES (?,?)`, []any{targetTrack, "target track"}},
-		{`INSERT INTO local_track(id,title) VALUES (?,?)`, []any{foreignTrack, "foreign track"}},
-		{`INSERT INTO release_track(id,release_id,position,track_id) VALUES (?,?,0,?)`, []any{targetPosition, targetRelease, targetTrack}},
-		{`INSERT INTO release_track(id,release_id,position,track_id) VALUES (?,?,0,?)`, []any{foreignPosition, foreignRelease, foreignTrack}},
-		{`INSERT INTO local_artist(id,name) VALUES (?, 'retained artist')`, []any{artistID}},
-		{`INSERT INTO track_artist(track_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, []any{foreignTrack, artistID}},
-		{`INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, []any{foreignRelease, artistID}},
-		{`INSERT INTO collection(id,title) VALUES (?, 'retained collection')`, []any{collectionID}},
-		{`INSERT INTO collection_release(collection_id,position,release_id) VALUES (?,0,?)`, []any{collectionID, foreignRelease}},
-		{`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,'root/target.flac','{"size":11}','{}','{}','{}',1,now())`, []any{targetPosition, epoch, targetGeneration}},
-		{`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,'root/foreign.flac','{"size":12}','{}','{}','{}',1,now())`, []any{foreignPosition, epoch, foreignGeneration}},
-	} {
-		if _, err := db.ExecContext(ctx, query.sql, query.args...); err != nil {
-			t.Fatalf("seed deletion fixture: %v", err)
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, query := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO local_release(id,title) VALUES (?,?)`, []any{targetRelease, "deletion target"}},
+			{`INSERT INTO local_release(id,title) VALUES (?,?)`, []any{foreignRelease, "foreign release"}},
+			{`INSERT INTO local_track(id,title) VALUES (?,?)`, []any{targetTrack, "target track"}},
+			{`INSERT INTO local_track(id,title) VALUES (?,?)`, []any{foreignTrack, "foreign track"}},
+			{`INSERT INTO local_recording(id,title) VALUES (?,?)`, []any{targetRecording, "target recording"}},
+			{`INSERT INTO local_recording(id,title) VALUES (?,?)`, []any{sharedRecording, "shared recording"}},
+			{`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,0,?,?)`, []any{targetPosition, targetRelease, targetTrack, targetRecording}},
+			{`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,1,?,?)`, []any{targetSharedPosition, targetRelease, foreignTrack, sharedRecording}},
+			{`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,0,?,?)`, []any{foreignPosition, foreignRelease, foreignTrack, sharedRecording}},
+			{`INSERT INTO local_artist(id,name) VALUES (?, 'retained artist')`, []any{artistID}},
+			{`INSERT INTO track_artist(track_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, []any{foreignTrack, artistID}},
+			{`INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, []any{targetRelease, artistID}},
+			{`INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, []any{foreignRelease, artistID}},
+			{`INSERT INTO provider(id,code) VALUES (?, 'deletion-test')`, []any{providerID}},
+			{`INSERT INTO provider_release(id,provider_id,provider_key,title) VALUES (?,?, 'release-key','provider release')`, []any{providerReleaseID, providerID}},
+			{`INSERT INTO provider_recording(id,provider_id,provider_key,title) VALUES (?,?, 'recording-key','provider recording')`, []any{providerRecordingID, providerID}},
+			{`INSERT INTO provider_release_track(id,provider_id,release_id,recording_id,medium,position,displayed_number) VALUES (?,?,?,?,0,0,'1')`, []any{providerTrackID, providerID, providerReleaseID, providerRecordingID}},
+			{`INSERT INTO provider_local_track(provider_id,provider_track_id,local_track_id,method) VALUES (?,?,?,'manual')`, []any{providerID, providerTrackID, targetTrack}},
+			{`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method) VALUES (?,?,?,'manual')`, []any{providerID, providerRecordingID, targetRecording}},
+			{`INSERT INTO media_variant(id,size_bytes) VALUES (?,1)`, []any{targetVariant}},
+			{`INSERT INTO media_variant(id,size_bytes) VALUES (?,1)`, []any{sharedVariant}},
+			{`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,false,true,'manual','{}'::jsonb)`, []any{targetSourceID, targetTrack, targetVariant}},
+			{`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,false,true,'manual','{}'::jsonb)`, []any{sharedSourceID, foreignTrack, sharedVariant}},
+			{`INSERT INTO collection(id,title) VALUES (?, 'retained collection')`, []any{collectionID}},
+			{`INSERT INTO collection_release(collection_id,position,release_id) VALUES (?,0,?)`, []any{collectionID, foreignRelease}},
+			{`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,'root/target.flac','{"size":11}','{}','{}','{}',1,now())`, []any{targetPosition, epoch, targetGeneration}},
+			{`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,'root/foreign.flac','{"size":12}','{}','{}','{}',1,now())`, []any{foreignPosition, epoch, foreignGeneration}},
+		} {
+			if _, err := tx.ExecContext(ctx, query.sql, query.args...); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed deletion fixture: %v", err)
 	}
 	insertNamespaceClaim := func(id uuid.UUID, key, relative, kind string, owner *uuid.UUID, scope *string) {
 		t.Helper()
@@ -109,6 +134,9 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 		preview, err := repository.PreviewLibraryDeletion(ctx, kind, releaseID, positionID)
 		if err != nil {
 			t.Fatalf("preview %s deletion: %v", kind, err)
+		}
+		if kind == "release" && (preview.RecordingCount != 1 || len(preview.RecordingIDs) != 1 || preview.RecordingIDs[0] != targetRecording) {
+			t.Fatalf("release preview orphan recordings = %v (%d), want only %s", preview.RecordingIDs, preview.RecordingCount, targetRecording)
 		}
 		publications := make([]TrackPublication, 0, 1)
 		if err := db.NewSelect().Model(&publications).Where("position_id IN (?)", bun.In(preview.Scope.PublicationIDs)).Order("position_id").Scan(ctx); err != nil {
@@ -156,12 +184,21 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 		}
 		jobID := operation.RiverJobID
 		if kind == "release" {
+			if _, err := db.ExecContext(ctx, `UPDATE operation SET input_snapshot=jsonb_set(input_snapshot,'{dependencies}','{}'::jsonb) WHERE id=?`, operation.ID); err == nil || !strings.Contains(err.Error(), "library deletion confirmation and residual scope are immutable") {
+				t.Fatalf("frozen dependency mutation: expected immutable confirmation rejection, got %v", err)
+			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO collection_release(collection_id,position,release_id) VALUES (?,1,?)`, collectionID, releaseID); err != nil {
 				t.Fatalf("change release scope after admission: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,1,?,?)`, survivorPosition, foreignRelease, targetTrack, targetRecording); err != nil {
+				t.Fatalf("add a survivor reference after admission: %v", err)
 			}
 			changedPreview, err := repository.PreviewLibraryDeletion(ctx, kind, releaseID, positionID)
 			if err != nil {
 				t.Fatalf("preview changed release scope: %v", err)
+			}
+			if changedPreview.ScopeDigest == preview.ScopeDigest {
+				t.Fatal("survivor-set change did not change the deletion scope digest")
 			}
 			repeated, err := repository.AdmitLibraryDeletionOperation(ctx, operationID, confirmationDigest, expiresAt, changedPreview, witnesses, client, nil)
 			if err != nil || repeated == nil || repeated.ID != operation.ID || repeated.RiverJobID == nil || jobID == nil || *repeated.RiverJobID != *jobID {
@@ -173,6 +210,9 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 			}
 			if rows, err := result.RowsAffected(); err != nil || rows != 1 {
 				t.Fatalf("restore admitted release scope rows=%d err=%v, want one", rows, err)
+			}
+			if _, err := db.ExecContext(ctx, `DELETE FROM release_track WHERE id=?`, survivorPosition); err != nil {
+				t.Fatalf("restore survivor reference: %v", err)
 			}
 		}
 		repeated, err := repository.AdmitLibraryDeletionOperation(ctx, operationID, confirmationDigest, expiresAt, preview, witnesses, client, nil)
@@ -236,7 +276,7 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 	if finalized, err := repository.FinalizeLibraryDeletion(ctx, releaseGuard); err != nil || !finalized {
 		t.Fatalf("finalize release deletion: finalized=%t err=%v", finalized, err)
 	}
-	var sharedClaims, foreignReservations, targetPositions int
+	var sharedClaims, foreignReservations, targetPositions, sharedTargetPositions, targetTracks, targetRecordings, sharedTracks, sharedRecordings int
 	if err := db.NewRaw(`SELECT count(*) FROM publication_namespace_claim WHERE id=?`, sharedDirectoryClaim).Scan(ctx, &sharedClaims); err != nil {
 		t.Fatal(err)
 	}
@@ -246,8 +286,44 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 	if err := db.NewRaw(`SELECT count(*) FROM release_track WHERE id=?`, targetPosition).Scan(ctx, &targetPositions); err != nil {
 		t.Fatal(err)
 	}
-	if sharedClaims != 1 || foreignReservations != 1 || targetPositions != 0 {
-		t.Fatalf("release deletion: shared claims=%d foreign reservations=%d target positions=%d", sharedClaims, foreignReservations, targetPositions)
+	if err := db.NewRaw(`SELECT count(*) FROM release_track WHERE id=?`, targetSharedPosition).Scan(ctx, &sharedTargetPositions); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM local_track WHERE id=?`, targetTrack).Scan(ctx, &targetTracks); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM local_recording WHERE id=?`, targetRecording).Scan(ctx, &targetRecordings); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM local_track WHERE id=?`, foreignTrack).Scan(ctx, &sharedTracks); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM local_recording WHERE id=?`, sharedRecording).Scan(ctx, &sharedRecordings); err != nil {
+		t.Fatal(err)
+	}
+	if sharedClaims != 1 || foreignReservations != 1 || targetPositions != 0 || sharedTargetPositions != 0 || targetTracks != 0 || targetRecordings != 0 || sharedTracks != 1 || sharedRecordings != 1 {
+		t.Fatalf("release deletion: shared claims=%d foreign reservations=%d target positions=%d/%d target track/recording=%d/%d shared track/recording=%d/%d", sharedClaims, foreignReservations, targetPositions, sharedTargetPositions, targetTracks, targetRecordings, sharedTracks, sharedRecordings)
+	}
+	var orphanTrackMappings, orphanRecordingMappings, orphanSources, retainedSource, retainedMediaVariant, retainedProviderRows, retainedProviderRecording int
+	for _, check := range []struct {
+		query       string
+		args        []any
+		destination *int
+	}{
+		{`SELECT count(*) FROM provider_local_track WHERE local_track_id=?`, []any{targetTrack}, &orphanTrackMappings},
+		{`SELECT count(*) FROM provider_local_recording WHERE local_recording_id=?`, []any{targetRecording}, &orphanRecordingMappings},
+		{`SELECT count(*) FROM track_source WHERE id=?`, []any{targetSourceID}, &orphanSources},
+		{`SELECT count(*) FROM track_source WHERE id=?`, []any{sharedSourceID}, &retainedSource},
+		{`SELECT count(*) FROM media_variant WHERE id IN (?,?)`, []any{targetVariant, sharedVariant}, &retainedMediaVariant},
+		{`SELECT count(*) FROM provider_release_track WHERE id=?`, []any{providerTrackID}, &retainedProviderRows},
+		{`SELECT count(*) FROM provider_recording WHERE id=?`, []any{providerRecordingID}, &retainedProviderRecording},
+	} {
+		if err := db.NewRaw(check.query, check.args...).Scan(ctx, check.destination); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if orphanTrackMappings != 0 || orphanRecordingMappings != 0 || orphanSources != 0 || retainedSource != 1 || retainedMediaVariant != 2 || retainedProviderRows != 1 || retainedProviderRecording != 1 {
+		t.Fatalf("orphan cleanup/preservation: track mappings=%d recording mappings=%d orphan sources=%d retained source=%d media variants=%d provider track/recording entities=%d/%d", orphanTrackMappings, orphanRecordingMappings, orphanSources, retainedSource, retainedMediaVariant, retainedProviderRows, retainedProviderRecording)
 	}
 
 	publicationGuard := admitAndClaim("publication", foreignRelease, foreignPosition, false)

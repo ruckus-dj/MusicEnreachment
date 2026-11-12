@@ -101,14 +101,28 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 	oldMTime = info.ModTime().UTC().Truncate(time.Microsecond)
 
 	positionID, releaseID, trackID := uuid.New(), uuid.New(), uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'preparation fixture')`, releaseID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'preparation fixture')`, trackID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
-		t.Fatal(err)
+	artistID, recordingID := uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		statements := []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO local_release(id,title) VALUES (?,'preparation fixture')`, []any{releaseID}},
+			{`INSERT INTO local_track(id,title) VALUES (?,'preparation fixture')`, []any{trackID}},
+			{`INSERT INTO local_artist(id,name) VALUES (?,'Artist')`, []any{artistID}},
+			{`INSERT INTO local_recording(id,title) VALUES (?,'Published track')`, []any{recordingID}},
+			{`INSERT INTO release_track(id,release_id,track_id,recording_id,position) VALUES (?,?,?,?,0)`, []any{positionID, releaseID, trackID, recordingID}},
+			{`INSERT INTO release_artist(release_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,'Artist','')`, []any{releaseID, artistID}},
+			{`INSERT INTO recording_artist(recording_id,position,artist_id,name,name_join_phrase) VALUES (?,?,?,'Artist','')`, []any{recordingID, 0, artistID}},
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed publication library fixture: %v", err)
 	}
 	var epoch uuid.UUID
 	if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &epoch); err != nil {
@@ -304,23 +318,6 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 				settings.PublicationFormatKey:        "source",
 				settings.ActiveFFmpegInstallationKey: installationID.String(),
 			}); err != nil {
-				t.Fatal(err)
-			}
-			artistID := uuid.New()
-			if _, err := db.ExecContext(ctx, `INSERT INTO local_artist(id,name) VALUES (?,'Artist')`, artistID); err != nil {
-				t.Fatal(err)
-			}
-			recordingID := uuid.New()
-			if _, err := db.ExecContext(ctx, `INSERT INTO local_recording(id,title) VALUES (?,'Published track')`, recordingID); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := db.ExecContext(ctx, `INSERT INTO recording_artist(recording_id,position,artist_id,name,name_join_phrase) VALUES (?,?,?,'Artist','')`, recordingID, 0, artistID); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := db.ExecContext(ctx, `UPDATE release_track SET recording_id=? WHERE id=?`, recordingID, positionID); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := db.ExecContext(ctx, `INSERT INTO release_artist(release_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,'Artist','')`, releaseID, artistID); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO track_artist(track_id,artist_id,position,name,name_join_phrase) VALUES (?,?,0,'Artist','')`, trackID, artistID); err != nil {

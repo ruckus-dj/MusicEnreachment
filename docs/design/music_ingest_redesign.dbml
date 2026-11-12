@@ -344,7 +344,7 @@ Table collection_release {
     release_date
   }
 
-  Note: 'Локальный release создаётся только через входящее сопоставление provider-записи, включая Local; самостоятельного workflow создания collection release нет. Внешний provider не обязателен: Local является provider, а CRUD его каталога сам по себе не создаёт library entry. script — необязательная система письма и доступна для Local. Выбранный artwork candidate обязан принадлежать этому collection release. Удаление release сначала обрабатывает managed publications его positions, затем удаляет positions и release; recordings, на которые ссылались positions, остаются самостоятельными.'
+  Note: 'Локальный release создаётся только через входящее сопоставление provider-записи, включая Local; самостоятельного workflow создания collection release нет. Внешний provider не обязателен: Local является provider, а CRUD его каталога сам по себе не создаёт library entry. script — необязательная система письма и доступна для Local. Выбранный artwork candidate обязан принадлежать этому collection release. Инвариант достижимости локального графа и удаление recordings после последней связи с релизом определены в продуктовом контракте.'
 }
 
 Table collection_release_artist {

@@ -174,14 +174,23 @@ func TestSourceRepublishCoverPreparationRollbackRetainsOutcome(t *testing.T) {
 	if _, err := migrator.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	releaseID, trackID, positionID := uuid.New(), uuid.New(), uuid.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'cover rollback')`, releaseID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'cover rollback')`, trackID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
+	releaseID, trackID, positionID, artistID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_artist(id) VALUES (?)`, artistID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'cover rollback')`, releaseID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO release_artist(release_id,"position",artist_id) VALUES (?,0,?)`, releaseID, artistID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'cover rollback')`, trackID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	coverProjection, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,cover_embedding,quality_policy_version,validated_at)
@@ -238,19 +247,27 @@ func TestRecoveredCoverProjectionConstraintAndRollback(t *testing.T) {
 	}
 
 	insertProjection := func(positionID, releaseID uuid.UUID, projection string) error {
-		trackID := uuid.New()
-		if _, err := db.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'recovered cover')`, releaseID); err != nil {
+		trackID, artistID := uuid.New(), uuid.New()
+		return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO local_artist(id) VALUES (?)`, artistID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO local_release(id,title) VALUES (?,'recovered cover')`, releaseID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO release_artist(release_id,"position",artist_id) VALUES (?,0,?)`, releaseID, artistID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'recovered cover')`, trackID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,cover_embedding,quality_policy_version,validated_at)
+				VALUES (?,?,?,'Track.flac','{}','{}','{}','{}',?::jsonb,1,now())`, positionID, uuid.New(), uuid.New(), projection)
 			return err
-		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO local_track(id,title) VALUES (?,'recovered cover')`, trackID); err != nil {
-			return err
-		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO release_track(id,release_id,track_id,position) VALUES (?,?,?,0)`, positionID, releaseID, trackID); err != nil {
-			return err
-		}
-		_, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,cover_embedding,quality_policy_version,validated_at)
-			VALUES (?,?,?,'Track.flac','{}','{}','{}','{}',?::jsonb,1,now())`, positionID, uuid.New(), uuid.New(), projection)
-		return err
+		})
 	}
 
 	// Version 1 keeps its pre-recovery contract.

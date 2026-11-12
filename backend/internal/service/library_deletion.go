@@ -63,6 +63,8 @@ type LibraryDeletionPreview struct {
 	ReleaseID          uuid.UUID                   `json:"release_id"`
 	Title              string                      `json:"title"`
 	PublicationIDs     []uuid.UUID                 `json:"publication_ids"`
+	RecordingIDs       []uuid.UUID                 `json:"recording_ids"`
+	RecordingCount     int                         `json:"recording_count"`
 	OutputFacts        []LibraryDeletionOutputFact `json:"outputs"`
 	Blockers           []LibraryDeletionBlocker    `json:"blockers"`
 	ConfirmationDigest string                      `json:"confirmation_digest"`
@@ -189,6 +191,7 @@ func (service *LibraryDeletionService) Preview(ctx context.Context, kind string,
 	}
 	result := &LibraryDeletionPreview{
 		Kind: kind, ReleaseID: releaseID, Title: preview.Title, PublicationIDs: slices.Clone(preview.PositionIDs),
+		RecordingIDs: slices.Clone(preview.RecordingIDs), RecordingCount: preview.RecordingCount,
 		OutputFacts: facts, Blockers: blockers, ConfirmationDigest: confirmationDigest,
 		persistencePreview: preview, witnesses: witnesses, expiresAt: time.Now().Add(libraryDeletionPreviewLifetime),
 	}
