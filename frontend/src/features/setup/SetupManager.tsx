@@ -5,7 +5,6 @@ import {
   RadioField,
   RadioGroup,
 } from "react-aria-components";
-import { apiResponseError } from "../../api/client/errors";
 import {
   checkSetupPaths,
   completeSetup,
@@ -26,6 +25,7 @@ import {
   type SetupFeedback,
   setupFeedback,
   setupFeedbackText,
+  setupHttpError,
   setupMessage,
   setupMessages,
 } from "./setupMessages";
@@ -106,7 +106,7 @@ export function SetupManager({
   }, [error]);
   async function refresh() {
     const response = await getSetupState({ cache: "no-store" });
-    if (response.status !== 200) throw apiResponseError(response);
+    if (response.status !== 200) throw setupHttpError(response);
     setState(response.data);
     setToolsDirectory(response.data.settings.tools_directory);
     setOutputDirectory(response.data.settings.output_directory);
@@ -127,12 +127,12 @@ export function SetupManager({
           tools_directory: toolsDirectory,
           output_directory: outputDirectory,
         });
-        if (checked.status !== 200) throw apiResponseError(checked);
+        if (checked.status !== 200) throw setupHttpError(checked);
         const saved = await saveSetupRuntime({
           tools_directory: toolsDirectory,
           output_directory: outputDirectory,
         });
-        if (saved.status !== 204) throw apiResponseError(saved);
+        if (saved.status !== 204) throw setupHttpError(saved);
         await refresh();
       }
       if (step === 2) {
@@ -149,7 +149,7 @@ export function SetupManager({
           publication_format: format,
           publication_remove_sources: removeSources,
         });
-        if (saved.status !== 204) throw apiResponseError(saved);
+        if (saved.status !== 204) throw setupHttpError(saved);
         await refresh();
       }
       if (step === 5) {
@@ -160,7 +160,7 @@ export function SetupManager({
           throw setupMessage("setupNotReady");
         }
         const completed = await completeSetup();
-        if (completed.status !== 204) throw apiResponseError(completed);
+        if (completed.status !== 204) throw setupHttpError(completed);
         window.localStorage.removeItem(stepKey);
         onCompleted();
         return;

@@ -9,7 +9,6 @@ import {
   RadioGroup,
   TextField,
 } from "react-aria-components";
-import { apiResponseError } from "../../api/client/errors";
 import {
   checkMusicbrainz,
   saveSetupLrclib,
@@ -26,6 +25,7 @@ import {
   type SetupFeedback,
   setupFeedback,
   setupFeedbackText,
+  setupHttpError,
   setupMessage,
   setupMessages,
 } from "./setupMessages";
@@ -70,10 +70,10 @@ export function SetupMetadata({ state, refresh, onContinue, onBack }: Props) {
         !state.settings.musicbrainz_verified_at
       ) {
         const saved = await saveSetupMusicbrainz({ mode, base_url: url });
-        if (saved.status !== 204) throw apiResponseError(saved);
+        if (saved.status !== 204) throw setupHttpError(saved);
       }
       const response = await checkMusicbrainz();
-      if (response.status !== 200) throw apiResponseError(response);
+      if (response.status !== 200) throw setupHttpError(response);
       if (!response.data.success) {
         if (response.data.error) throw new Error(response.data.error);
         throw setupMessage("musicBrainzUnavailable");
@@ -100,7 +100,7 @@ export function SetupMetadata({ state, refresh, onContinue, onBack }: Props) {
       )
         throw setupMessage("saveAndCheckMusicBrainz");
       const response = await saveSetupLrclib({ enabled: lrclib });
-      if (response.status !== 204) throw apiResponseError(response);
+      if (response.status !== 204) throw setupHttpError(response);
       await refresh();
       onContinue();
     } catch (reason) {

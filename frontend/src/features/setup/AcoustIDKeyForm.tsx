@@ -1,5 +1,4 @@
 import { useId, useState } from "react";
-import { apiResponseError } from "../../api/client/errors";
 import {
   deleteAcoustidApplicationKey,
   setAcoustidApplicationKey,
@@ -10,6 +9,7 @@ import {
   type SetupFeedback,
   setupFeedback,
   setupFeedbackText,
+  setupHttpError,
   setupMessage,
   setupMessages,
 } from "./setupMessages";
@@ -41,7 +41,7 @@ export function AcoustIDKeyForm({ hasKey, onChanged, onBusyChange }: Props) {
         action === "save"
           ? await setAcoustidApplicationKey({ key: draft })
           : await deleteAcoustidApplicationKey();
-      if (response.status !== 204) throw apiResponseError(response);
+      if (response.status !== 204) throw setupHttpError(response);
       setDraft("");
       await onChanged();
       setNotice(setupMessage(action === "save" ? "keySaved" : "keyDeleted"));

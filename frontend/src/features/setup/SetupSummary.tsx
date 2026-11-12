@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { apiResponseError } from "../../api/client/errors";
 import { listInstallations } from "../../api/generated/client";
 import type {
   InstallationResponse,
@@ -10,6 +9,7 @@ import {
   type SetupFeedback,
   setupFeedback,
   setupFeedbackText,
+  setupHttpError,
   setupMessages,
 } from "./setupMessages";
 import "./SetupSummary.css";
@@ -86,7 +86,7 @@ export function SetupSummary({ state }: { state: SetupStateBody }) {
     setInstallations([]);
     void listInstallations(undefined, { cache: "no-store" })
       .then((response) => {
-        if (response.status !== 200) throw apiResponseError(response);
+        if (response.status !== 200) throw setupHttpError(response);
         if (current) setInstallations(response.data.installations || []);
       })
       .catch((reason: unknown) => {

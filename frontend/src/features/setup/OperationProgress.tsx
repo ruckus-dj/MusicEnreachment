@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiResponseError } from "../../api/client/errors";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import { retryOperation } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
@@ -16,6 +15,7 @@ import {
   type SetupFeedback,
   setupFeedback,
   setupFeedbackText,
+  setupHttpError,
   setupMessages,
 } from "./setupMessages";
 
@@ -80,8 +80,7 @@ export function OperationProgress({
         }
       }
     },
-    onHttpError: (response) =>
-      apiResponseError({ status: response.status, data: response.data ?? {} }),
+    onHttpError: setupHttpError,
     onError: (reason) => setError(setupFeedback(reason, "unknownError")),
     onStreamError: (reason) =>
       setError({ kind: "diagnostic", text: reason.message }),
@@ -106,7 +105,7 @@ export function OperationProgress({
     setError(null);
     try {
       const response = await retryOperation(id);
-      if (response.status !== 200) throw apiResponseError(response);
+      if (response.status !== 200) throw setupHttpError(response);
       acceptSnapshot(response.data, "action", true);
     } catch (reason) {
       setError(setupFeedback(reason, "unknownError"));
