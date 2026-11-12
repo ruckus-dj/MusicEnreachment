@@ -48,7 +48,7 @@ func (repository *LibraryRepository) ReadLibraryAudioCandidates(ctx context.Cont
 				AND sr.inventory_path=sr.configured_path
 			JOIN local_release r ON r.id=rt.release_id
 			WHERE (?::uuid IS NULL OR r.id=?)
-			AND (?::uuid IS NULL OR EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?))
+			AND (?::uuid IS NULL OR (EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?) AND EXISTS(SELECT 1 FROM local_artist requested_artist WHERE requested_artist.id=? AND requested_artist.catalog_visible IS TRUE)))
 			UNION ALL
 			SELECT rt.id AS position_id,setting.setting_value AS root_path,tp.relative_path,0::bigint AS size_bytes,0::bigint AS mtime_ns,'publication' AS kind
 			FROM track_publication tp
@@ -57,10 +57,10 @@ func (repository *LibraryRepository) ReadLibraryAudioCandidates(ctx context.Cont
 			JOIN release_track rt ON rt.id=tp.position_id
 			JOIN local_release r ON r.id=rt.release_id
 			WHERE (?::uuid IS NULL OR r.id=?)
-			AND (?::uuid IS NULL OR EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?))
+			AND (?::uuid IS NULL OR (EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?) AND EXISTS(SELECT 1 FROM local_artist requested_artist WHERE requested_artist.id=? AND requested_artist.catalog_visible IS TRUE)))
 			ORDER BY position_id,kind,root_path,relative_path`
-		return tx.NewRaw(query, request.ReleaseID, request.ReleaseID, request.ArtistID, request.ArtistID,
-			request.ReleaseID, request.ReleaseID, request.ArtistID, request.ArtistID).Scan(ctx, &rows)
+		return tx.NewRaw(query, request.ReleaseID, request.ReleaseID, request.ArtistID, request.ArtistID, request.ArtistID,
+			request.ReleaseID, request.ReleaseID, request.ArtistID, request.ArtistID, request.ArtistID).Scan(ctx, &rows)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("read library audio candidates: %w", err)

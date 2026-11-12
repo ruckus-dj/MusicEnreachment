@@ -11,6 +11,7 @@ import { useHashLocation } from "../../navigation/hashLocation";
 import { ArtistDetailsEditor } from "./ArtistDetailsEditor";
 import { ArtistSortNameEditor } from "./ArtistSortNameEditor";
 import { GenreMetadataEditor } from "./GenreMetadataEditor";
+import { LibraryDeletionControl } from "./LibraryDeletionControl";
 import {
   libraryArtistRouteHref,
   libraryRouteHref,
@@ -58,6 +59,30 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
         );
       },
     });
+  }
+  function invalidateDeletionCatalog() {
+    void queryClient.invalidateQueries({
+      predicate: ({ queryKey }) => {
+        const key = queryKey[0];
+        if (typeof key !== "string") return false;
+        return (
+          key === "/api/library/artists" ||
+          key.startsWith("/api/library/artists?") ||
+          key.startsWith("/api/library/releases") ||
+          key.startsWith("/api/library/positions") ||
+          key.includes("/publication/") ||
+          key.includes("/deletion/preview")
+        );
+      },
+    });
+  }
+  function handleArtistDeletionSnapshot(snapshot: { state: string }) {
+    if (snapshot.state !== "failed" && snapshot.state !== "succeeded") return;
+    invalidateDeletionCatalog();
+    if (snapshot.state === "succeeded") {
+      // Do not refetch the now-hidden artist detail: leave this route directly.
+      window.location.hash = libraryRouteHref(route).slice(1);
+    }
   }
   const error =
     artistQuery.data?.status !== undefined && artistQuery.data.status !== 200
@@ -119,6 +144,11 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                   ? "Включая известные группы из кэша; дискография может быть неполной."
                   : "Includes known cached groups; the discography may be incomplete."}
               </p>
+              <LibraryDeletionControl
+                target={{ type: "artist", artistId }}
+                releaseTitle={artist.name}
+                onSnapshot={handleArtistDeletionSnapshot}
+              />
             </div>
             <div className="catalog-genre-list">
               {artist.genres.map((genre: string) => (

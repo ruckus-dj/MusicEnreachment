@@ -2365,6 +2365,133 @@ export function useGetLibraryArtist<TData = Awaited<ReturnType<typeof getLibrary
 
 
 
+export type previewLibraryArtistDeletionResponse200 = {
+  data: LibraryDeletionPreviewResponse
+  status: 200
+}
+
+export type previewLibraryArtistDeletionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type previewLibraryArtistDeletionResponseSuccess = (previewLibraryArtistDeletionResponse200) & {
+  headers: Headers;
+};
+export type previewLibraryArtistDeletionResponseError = (previewLibraryArtistDeletionResponseDefault) & {
+  headers: Headers;
+};
+
+export type previewLibraryArtistDeletionResponse = (previewLibraryArtistDeletionResponseSuccess | previewLibraryArtistDeletionResponseError)
+
+export const getPreviewLibraryArtistDeletionUrl = (artistId: string,) => {
+
+
+
+
+  return `/api/library/artists/${artistId}/deletion/preview`
+}
+
+/**
+ * @summary Preview a library artist deletion
+ */
+export const previewLibraryArtistDeletion = async (artistId: string, options?: RequestInit): Promise<previewLibraryArtistDeletionResponse> => {
+
+  const res = await fetch(getPreviewLibraryArtistDeletionUrl(artistId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: previewLibraryArtistDeletionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as previewLibraryArtistDeletionResponse
+}
+
+
+
+
+
+export const getPreviewLibraryArtistDeletionQueryKey = (artistId: string,) => {
+    return [
+    `/api/library/artists/${artistId}/deletion/preview`
+    ] as const;
+    }
+
+
+export const getPreviewLibraryArtistDeletionQueryOptions = <TData = Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError = ErrorModel>(artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPreviewLibraryArtistDeletionQueryKey(artistId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof previewLibraryArtistDeletion>>> = ({ signal }) => previewLibraryArtistDeletion(artistId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: artistId !== null && artistId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PreviewLibraryArtistDeletionQueryResult = NonNullable<Awaited<ReturnType<typeof previewLibraryArtistDeletion>>>
+export type PreviewLibraryArtistDeletionQueryError = ErrorModel
+
+
+export function usePreviewLibraryArtistDeletion<TData = Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError = ErrorModel>(
+ artistId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewLibraryArtistDeletion>>,
+          TError,
+          Awaited<ReturnType<typeof previewLibraryArtistDeletion>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewLibraryArtistDeletion<TData = Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewLibraryArtistDeletion>>,
+          TError,
+          Awaited<ReturnType<typeof previewLibraryArtistDeletion>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewLibraryArtistDeletion<TData = Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Preview a library artist deletion
+ */
+
+export function usePreviewLibraryArtistDeletion<TData = Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError = ErrorModel>(
+ artistId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewLibraryArtistDeletion>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPreviewLibraryArtistDeletionQueryOptions(artistId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export type getLibraryArtistDetailsResponse200 = {
   data: LibraryArtistDetails
   status: 200

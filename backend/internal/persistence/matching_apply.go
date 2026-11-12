@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -457,6 +458,14 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 		if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localReleaseID, "release_artist", credits, policy, fence.AcceptedProjectionRevision); err != nil {
 			return nil, err
 		}
+	} else {
+		credits, err := acceptedReleaseArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, releaseID)
+		if err != nil {
+			return nil, err
+		}
+		if err := reactivateProviderArtistCredits(ctx, tx, fence.ProviderID, credits); err != nil {
+			return nil, fmt.Errorf("apply matching evaluation: reactivate retained release artists: %w", err)
+		}
 	}
 	memberByID := make(map[uuid.UUID]IncomingMatchMemberFence, len(group.Members))
 	for _, member := range group.Members {
@@ -489,20 +498,30 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 			return nil, err
 		}
 		localTrackIDs = append(localTrackIDs, localTrackID)
+		recordingCredits, err := acceptedRecordingArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, providerRecording)
+		if err != nil {
+			return nil, err
+		}
 		if recordingCreated {
-			credits, err := acceptedRecordingArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, providerRecording)
-			if err != nil {
-				return nil, err
-			}
 			if err := writeAutomaticMetadata(ctx, tx, "local_recording", localRecordingID, "title", recordingProviderKey(ctx, tx, fence.ProviderID, providerRecording), fence.ProviderSourceID, fence.ProviderID, fence.AcceptedProjectionRevision, json.RawMessage(recordingEvidence)); err != nil {
 				return nil, err
 			}
-			if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localRecordingID, "recording_artist", credits, policy, fence.AcceptedProjectionRevision); err != nil {
+			if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localRecordingID, "recording_artist", recordingCredits, policy, fence.AcceptedProjectionRevision); err != nil {
 				return nil, err
 			}
+		} else if err := reactivateProviderArtistCredits(ctx, tx, fence.ProviderID, recordingCredits); err != nil {
+			return nil, fmt.Errorf("apply matching evaluation: reactivate retained recording artists: %w", err)
+		}
+		recordingKey := recordingProviderKey(ctx, tx, fence.ProviderID, providerRecording)
+		credits, err := acceptedTrackArtistCredits(json.RawMessage(releaseFields), json.RawMessage(releaseEvidence), medium, position, recordingKey, releaseKey)
+		trackCreditOverride := credits != nil
+		if credits == nil {
+			credits = recordingCredits
+		}
+		if err != nil {
+			return nil, err
 		}
 		if trackCreated {
-			recordingKey := recordingProviderKey(ctx, tx, fence.ProviderID, providerRecording)
 			titleField, titleKey := "title", recordingKey
 			titleEvidence := json.RawMessage(recordingEvidence)
 			if title := acceptedTrackTitle(json.RawMessage(releaseFields), medium, position, recordingKey); title != "" {
@@ -515,14 +534,6 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 			if err := writeAutomaticMetadata(ctx, tx, "local_track", localTrackID, titleField, titleKey, fence.ProviderSourceID, fence.ProviderID, fence.AcceptedProjectionRevision, titleEvidence); err != nil {
 				return nil, err
 			}
-			credits, err := acceptedTrackArtistCredits(json.RawMessage(releaseFields), json.RawMessage(releaseEvidence), medium, position, recordingKey, releaseKey)
-			trackCreditOverride := credits != nil
-			if credits == nil {
-				credits, err = acceptedRecordingArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, providerRecording)
-			}
-			if err != nil {
-				return nil, err
-			}
 			if err := materializeArtistCredits(ctx, tx, fence.ProviderID, fence.ProviderSourceID, localTrackID, "track_artist", credits, policy, fence.AcceptedProjectionRevision); err != nil {
 				return nil, err
 			}
@@ -533,6 +544,8 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, origin); err != nil {
 				return nil, err
 			}
+		} else if err := reactivateProviderArtistCredits(ctx, tx, fence.ProviderID, credits); err != nil {
+			return nil, fmt.Errorf("apply matching evaluation: reactivate retained position artists: %w", err)
 		}
 		var variants []uuid.UUID
 		if err := tx.NewRaw(`SELECT DISTINCT media_variant_id FROM source_work_variant_identity WHERE work_id=? ORDER BY media_variant_id`, member.WorkID).Scan(ctx, &variants); err != nil {
@@ -800,6 +813,30 @@ type acceptedArtistCredit struct {
 	SourceField string `bun:"source_field"`
 }
 
+func reactivateProviderArtistCredits(ctx context.Context, tx bun.IDB, providerID uuid.UUID, credits []acceptedArtistCredit) error {
+	keys := make([]string, 0, len(credits))
+	for _, credit := range credits {
+		keys = append(keys, credit.ProviderKey)
+	}
+	return reactivateProviderArtistKeys(ctx, tx, providerID, keys)
+}
+
+func reactivateProviderArtistKeys(ctx context.Context, tx bun.IDB, providerID uuid.UUID, keys []string) error {
+	if providerID == uuid.Nil || len(keys) == 0 {
+		return nil
+	}
+	keys = slices.Compact(slices.Sorted(slices.Values(keys)))
+	if len(keys) == 0 {
+		return nil
+	}
+	_, err := tx.NewRaw(`UPDATE local_artist artist SET catalog_visible=true
+		FROM provider_local_artist binding JOIN provider_artist provider_artist
+		ON provider_artist.provider_id=binding.provider_id AND provider_artist.id=binding.provider_artist_id
+		WHERE artist.id=binding.local_artist_id AND binding.provider_id=?
+		AND provider_artist.provider_key IN (?) AND artist.catalog_visible IS FALSE`, providerID, bun.List(keys)).Exec(ctx)
+	return err
+}
+
 func acceptedReleaseArtistCredits(ctx context.Context, tx bun.Tx, providerID, sourceID, releaseID uuid.UUID) ([]acceptedArtistCredit, error) {
 	var credits []acceptedArtistCredit
 	err := tx.NewRaw(`SELECT c.position, a.provider_key, c.name, c.name_join_phrase AS join_phrase, c.authority, c.fetch_order, 'release' AS source_kind, r.provider_key AS source_key, 'artist-credit' AS source_field
@@ -1059,6 +1096,9 @@ func materializeArtistCredits(ctx context.Context, tx bun.Tx, providerID, source
 			}
 		} else if err != nil {
 			return fmt.Errorf("apply matching evaluation: read local artist mapping: %w", err)
+		}
+		if _, err := tx.NewRaw(`UPDATE local_artist SET catalog_visible=true WHERE id=? AND catalog_visible IS FALSE`, artistID).Exec(ctx); err != nil {
+			return fmt.Errorf("apply matching evaluation: reactivate local artist: %w", err)
 		}
 		if _, err := tx.NewRaw(`INSERT INTO `+relation+`(`+parentColumn+`,position,artist_id,name,name_join_phrase) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`, parentID, credit.Position, artistID, credit.Name, credit.JoinPhrase).Exec(ctx); err != nil {
 			return fmt.Errorf("apply matching evaluation: add %s credit: %w", relation, err)
@@ -1417,6 +1457,14 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 		if err := materializeFrozenArtistCredits(ctx, tx, snapshot.Source, localReleaseID, "release_artist", frozen.Release.Credits, policy, snapshot.Authority.EvaluationRevision); err != nil {
 			return err
 		}
+	} else {
+		keys := make([]string, 0, len(frozen.Release.Credits))
+		for _, credit := range frozen.Release.Credits {
+			keys = append(keys, credit.ArtistProviderKey)
+		}
+		if err := reactivateProviderArtistKeys(ctx, tx, snapshot.Source.ProviderID, keys); err != nil {
+			return fmt.Errorf("apply matching operation: reactivate retained release artists: %w", err)
+		}
 	}
 	for _, assignment := range decision.Assignments {
 		frozenAssignment, ok := assignments[assignment.FileMemberID]
@@ -1456,6 +1504,14 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 			if err := materializeFrozenArtistCredits(ctx, tx, snapshot.Source, localRecordingID, "recording_artist", track.RecordingCredits, policy, snapshot.Authority.EvaluationRevision); err != nil {
 				return err
 			}
+		} else {
+			keys := make([]string, 0, len(track.RecordingCredits))
+			for _, credit := range track.RecordingCredits {
+				keys = append(keys, credit.ArtistProviderKey)
+			}
+			if err := reactivateProviderArtistKeys(ctx, tx, snapshot.Source.ProviderID, keys); err != nil {
+				return fmt.Errorf("apply matching operation: reactivate retained recording artists: %w", err)
+			}
 		}
 		localTrackID, mappedRecordingID, _, trackCreated, err := ensureAutomaticLocalTrack(ctx, tx, snapshot.Source.ProviderID, providerTrackID, providerRecordingID, localReleaseID, medium, position, track.Title, policy)
 		if err != nil {
@@ -1481,6 +1537,14 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 			}
 			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, origin); err != nil {
 				return err
+			}
+		} else {
+			keys := make([]string, 0, len(track.Credits))
+			for _, credit := range track.Credits {
+				keys = append(keys, credit.ArtistProviderKey)
+			}
+			if err := reactivateProviderArtistKeys(ctx, tx, snapshot.Source.ProviderID, keys); err != nil {
+				return fmt.Errorf("apply matching operation: reactivate retained position artists: %w", err)
 			}
 		}
 		var variants []uuid.UUID
@@ -1664,6 +1728,9 @@ func materializeFrozenArtistCredits(ctx context.Context, tx bun.Tx, source Match
 			return fmt.Errorf("apply matching operation: read frozen artist mapping: %w", err)
 		} else if method != "automatic" && method != "manual" {
 			return ErrMatchingManualProtection
+		}
+		if _, err := tx.NewRaw(`UPDATE local_artist SET catalog_visible=true WHERE id=? AND catalog_visible IS FALSE`, artistID).Exec(ctx); err != nil {
+			return fmt.Errorf("apply matching operation: reactivate local artist: %w", err)
 		}
 		if _, err := tx.NewRaw(`INSERT INTO `+relation+`(`+parentColumn+`,position,artist_id,name,name_join_phrase) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`, parentID, credit.Position, artistID, credit.Name, credit.JoinPhrase).Exec(ctx); err != nil {
 			return fmt.Errorf("apply matching operation: add frozen artist credit: %w", err)

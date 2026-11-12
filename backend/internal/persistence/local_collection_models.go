@@ -24,6 +24,7 @@ type LocalArtist struct {
 	Name            string          `bun:"name"`
 	Metadata        json.RawMessage `bun:"metadata,type:jsonb"`
 	MetadataVersion int             `bun:"metadata_version"`
+	CatalogVisible  bool            `bun:"catalog_visible"`
 	CreatedAt       time.Time       `bun:"created_at"`
 	UpdatedAt       time.Time       `bun:"updated_at"`
 }

@@ -945,6 +945,14 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 		if err := materializeArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, localReleaseID, "release_artist", credits, "", state.fence.AcceptedProjectionRevision, true); err != nil {
 			return err
 		}
+	} else {
+		credits, err := acceptedReleaseArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, preview.ProviderReleaseID)
+		if err != nil {
+			return err
+		}
+		if err := reactivateProviderArtistCredits(ctx, tx, state.fence.ProviderID, credits); err != nil {
+			return fmt.Errorf("apply manual matching: reactivate retained release artists: %w", err)
+		}
 	}
 	overridesByTrack := manualOverridesByTrack(assignments)
 	appliedOverrides := make(map[uuid.UUID]bool)
@@ -982,36 +990,34 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 		if state.touchedTrackIDs != nil {
 			*state.touchedTrackIDs = append(*state.touchedTrackIDs, localTrackID)
 		}
+		recordingCredits, err := acceptedRecordingArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, recordingID)
+		if err != nil {
+			return err
+		}
 		if recordingCreated {
-			credits, err := acceptedRecordingArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, recordingID)
-			if err != nil {
-				return err
-			}
 			if err := writeManualMetadata(ctx, tx, "local_recording", localRecordingID, "title", recordingKey, state.fence.ProviderSourceID, state.fence.ProviderID, state.fence.AcceptedProjectionRevision, json.RawMessage(recordingEvidence)); err != nil {
 				return err
 			}
-			if err := materializeArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, localRecordingID, "recording_artist", credits, "", state.fence.AcceptedProjectionRevision, true); err != nil {
+			if err := materializeArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, localRecordingID, "recording_artist", recordingCredits, "", state.fence.AcceptedProjectionRevision, true); err != nil {
 				return err
 			}
+		} else if err := reactivateProviderArtistCredits(ctx, tx, state.fence.ProviderID, recordingCredits); err != nil {
+			return fmt.Errorf("apply manual matching: reactivate retained recording artists: %w", err)
+		}
+		trackCreditEvidence, err := json.Marshal(map[string]ProviderFieldEvidence{"normalized_tracks": state.release.FieldEvidence["normalized_tracks"]})
+		if err != nil {
+			return err
+		}
+		credits, err := acceptedTrackArtistCredits(state.release.Fields, trackCreditEvidence, medium, position, recordingKey, state.release.ProviderKey)
+		trackCreditOverride := credits != nil
+		if credits == nil {
+			credits = recordingCredits
+		}
+		if err != nil {
+			return err
 		}
 		if trackCreated {
-			normalizedTrackEvidence := state.release.FieldEvidence["normalized_tracks"]
 			if err := writeManualMetadata(ctx, tx, "local_track", localTrackID, trackTitleField, trackTitleKey, state.fence.ProviderSourceID, state.fence.ProviderID, state.fence.AcceptedProjectionRevision, trackTitleEvidence); err != nil {
-				return err
-			}
-			trackCreditEvidence, err := json.Marshal(map[string]ProviderFieldEvidence{"normalized_tracks": normalizedTrackEvidence})
-			if err != nil {
-				return err
-			}
-			credits, err := acceptedTrackArtistCredits(state.release.Fields, trackCreditEvidence, medium, position, recordingKey, state.release.ProviderKey)
-			trackCreditOverride := credits != nil
-			if err != nil {
-				return err
-			}
-			if credits == nil {
-				credits, err = acceptedRecordingArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, recordingID)
-			}
-			if err != nil {
 				return err
 			}
 			if err := materializeArtistCredits(ctx, tx, state.fence.ProviderID, state.fence.ProviderSourceID, localTrackID, "track_artist", credits, "", state.fence.AcceptedProjectionRevision, true); err != nil {
@@ -1024,6 +1030,8 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, origin); err != nil {
 				return err
 			}
+		} else if err := reactivateProviderArtistCredits(ctx, tx, state.fence.ProviderID, credits); err != nil {
+			return fmt.Errorf("apply manual matching: reactivate retained position artists: %w", err)
 		}
 		if !appliedOverrides[assignment.ProviderTrackID] {
 			override := overridesByTrack[assignment.ProviderTrackID]
@@ -1077,6 +1085,14 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 				return err
 			}
 		}
+	} else {
+		keys := make([]string, 0, len(frozen.Release.Credits))
+		for _, credit := range frozen.Release.Credits {
+			keys = append(keys, credit.ArtistProviderKey)
+		}
+		if err := reactivateProviderArtistKeys(ctx, tx, seal.ProviderID, keys); err != nil {
+			return fmt.Errorf("apply manual matching: reactivate retained release artists: %w", err)
+		}
 	}
 	tracks := make(map[uuid.UUID]FrozenRecordingTrack, len(frozen.Tracks))
 	for _, track := range frozen.Tracks {
@@ -1113,6 +1129,14 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 					return err
 				}
 			}
+		} else {
+			keys := make([]string, 0, len(track.RecordingCredits))
+			for _, credit := range track.RecordingCredits {
+				keys = append(keys, credit.ArtistProviderKey)
+			}
+			if err := reactivateProviderArtistKeys(ctx, tx, seal.ProviderID, keys); err != nil {
+				return fmt.Errorf("apply manual matching: reactivate retained recording artists: %w", err)
+			}
 		}
 		localTrackID, _, _, trackCreated, err := ensureLocalTrack(ctx, tx, seal.ProviderID, track.ProviderTrackID, recordingID, localReleaseID, medium, position, track.Title, materializationAuthority{method: "manual"})
 		if err != nil {
@@ -1138,6 +1162,14 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 			}
 			if err := writeArtistCreditOrigin(ctx, tx, localTrackID, origin); err != nil {
 				return err
+			}
+		} else {
+			keys := make([]string, 0, len(track.Credits))
+			for _, credit := range track.Credits {
+				keys = append(keys, credit.ArtistProviderKey)
+			}
+			if err := reactivateProviderArtistKeys(ctx, tx, seal.ProviderID, keys); err != nil {
+				return fmt.Errorf("apply manual matching: reactivate retained position artists: %w", err)
 			}
 		}
 		if !appliedOverrides[assignment.ProviderTrackID] {

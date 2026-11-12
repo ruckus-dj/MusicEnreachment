@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -123,22 +124,54 @@ func (repository *SetupManagerRepository) RetryLibraryDeletionOperationAndEnqueu
 		if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &epoch); err != nil {
 			return fmt.Errorf("retry library deletion: lock output epoch: %w", err)
 		}
-		var releaseID uuid.UUID
-		if err := tx.NewRaw(`SELECT id FROM local_release WHERE id=? FOR UPDATE`, capturedSnapshot.Scope.ReleaseID).Scan(ctx, &releaseID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrLibraryReleaseNotFound
-			}
-			return fmt.Errorf("retry library deletion: lock release: %w", err)
-		}
 		var positions []uuid.UUID
-		positionQuery := `SELECT id FROM release_track WHERE release_id=? ORDER BY id FOR UPDATE`
-		positionArgs := []any{releaseID}
-		if capturedSnapshot.Scope.Kind == "publication" {
-			positionQuery = `SELECT id FROM release_track WHERE release_id=? AND id=? ORDER BY id FOR UPDATE`
-			positionArgs = append(positionArgs, capturedSnapshot.Scope.PublicationIDs[0])
+		if capturedSnapshot.Scope.Kind == "artist" {
+			if len(capturedSnapshot.Scope.ArtistReferenceReleaseIDs) > 0 {
+				var lockedReleases []uuid.UUID
+				if err := tx.NewRaw(`SELECT id FROM local_release WHERE id IN (?) ORDER BY id FOR UPDATE`, bun.List(capturedSnapshot.Scope.ArtistReferenceReleaseIDs)).Scan(ctx, &lockedReleases); err != nil {
+					return fmt.Errorf("retry library deletion: lock artist releases: %w", err)
+				}
+				if !slices.Equal(lockedReleases, capturedSnapshot.Scope.ArtistReferenceReleaseIDs) {
+					return ErrLibraryDeletionConflict
+				}
+			}
+			if err := lockLibraryDeletionArtistReferences(ctx, tx, capturedSnapshot.Scope.ArtistID); err != nil {
+				return fmt.Errorf("retry library deletion: lock artist references: %w", err)
+			}
+			if len(capturedSnapshot.Scope.ArtistReleaseIDs) > 0 {
+				if err := tx.NewRaw(`SELECT id FROM release_track WHERE release_id IN (?) ORDER BY id FOR UPDATE`, bun.List(capturedSnapshot.Scope.ArtistReleaseIDs)).Scan(ctx, &positions); err != nil {
+					return fmt.Errorf("retry library deletion: lock artist positions: %w", err)
+				}
+			}
+		} else {
+			var releaseID uuid.UUID
+			if err := tx.NewRaw(`SELECT id FROM local_release WHERE id=? FOR UPDATE`, capturedSnapshot.Scope.ReleaseID).Scan(ctx, &releaseID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrLibraryReleaseNotFound
+				}
+				return fmt.Errorf("retry library deletion: lock release: %w", err)
+			}
+			positionQuery := `SELECT id FROM release_track WHERE release_id=? ORDER BY id FOR UPDATE`
+			positionArgs := []any{releaseID}
+			if capturedSnapshot.Scope.Kind == "publication" {
+				positionQuery = `SELECT id FROM release_track WHERE release_id=? AND id=? ORDER BY id FOR UPDATE`
+				positionArgs = append(positionArgs, capturedSnapshot.Scope.PublicationIDs[0])
+			}
+			if err := tx.NewRaw(positionQuery, positionArgs...).Scan(ctx, &positions); err != nil {
+				return fmt.Errorf("retry library deletion: lock release positions: %w", err)
+			}
 		}
-		if err := tx.NewRaw(positionQuery, positionArgs...).Scan(ctx, &positions); err != nil {
-			return fmt.Errorf("retry library deletion: lock release positions: %w", err)
+		if err := validateLibraryDeletionFrozenScope(ctx, tx, capturedSnapshot, epoch, positions); err != nil {
+			return fmt.Errorf("retry library deletion: frozen scope is no longer eligible: %w", err)
+		}
+		if capturedSnapshot.Scope.Kind == "artist" {
+			var artistID uuid.UUID
+			if err := tx.NewRaw(`SELECT id FROM local_artist WHERE id=? AND catalog_visible IS TRUE FOR UPDATE`, capturedSnapshot.Scope.ArtistID).Scan(ctx, &artistID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrLibraryReleaseNotFound
+				}
+				return fmt.Errorf("retry library deletion: lock artist: %w", err)
+			}
 		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, id)
 		if err != nil {
@@ -155,9 +188,6 @@ func (repository *SetupManagerRepository) RetryLibraryDeletionOperationAndEnqueu
 		}
 		if operation.RiverJobID == nil || operation.Attempt <= 0 {
 			return errors.New("retry library deletion: prior delivery identity is unavailable")
-		}
-		if err := validateLibraryDeletionFrozenScope(ctx, tx, snapshot, epoch, positions); err != nil {
-			return fmt.Errorf("retry library deletion: frozen scope is no longer eligible: %w", err)
 		}
 		var claims []PublicationExecutionClaim
 		claimErr := tx.NewSelect().Model(&claims).Where("operation_id=?", id).Order("application_attempt").For("UPDATE").Scan(ctx)

@@ -428,7 +428,7 @@ func readMixedLibraryReleasePage(ctx context.Context, tx bun.Tx, request Library
 	if sourceFound {
 		sourceID, providerID = source.ID, source.ProviderID
 	}
-	localPredicate := `(?::uuid IS NULL OR EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?)) AND
+	localPredicate := `(?::uuid IS NULL OR (EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?) AND EXISTS(SELECT 1 FROM local_artist requested_artist WHERE requested_artist.id=? AND requested_artist.catalog_visible IS TRUE))) AND
 		(?='' OR strpos(lower(btrim(regexp_replace(normalize(r.title,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0
 		OR EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND (strpos(lower(btrim(regexp_replace(normalize(ra.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR EXISTS(SELECT 1 FROM local_artist a WHERE a.id=ra.artist_id AND strpos(lower(btrim(regexp_replace(normalize(a.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0)))
 		OR ((r.metadata->'local_metadata'->'desired'->'catalog_number'->>'state'='value' AND strpos(lower(btrim(regexp_replace(normalize(r.metadata->'local_metadata'->'desired'->'catalog_number'->>'value',NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0)
@@ -461,14 +461,14 @@ func readMixedLibraryReleasePage(ctx context.Context, tx bun.Tx, request Library
 			JOIN accepted identity ON identity.provider_key=linked.provider_key
 			WHERE pl.provider_id=? AND identity.group_key=g.group_key
 		)
-		AND (?::uuid IS NULL OR EXISTS (
+		AND (?::uuid IS NULL OR (EXISTS (
 			SELECT 1 FROM accepted candidate
 			CROSS JOIN LATERAL jsonb_array_elements(COALESCE(candidate.fields->'artist-credit','[]'::jsonb)) c
 			JOIN provider_artist pa ON pa.provider_id=? AND lower(pa.provider_key)=lower(c#>>'{artist,id}')
 			JOIN provider_local_artist pla ON pla.provider_id=pa.provider_id AND pla.provider_artist_id=pa.id
 			WHERE candidate.group_key=g.group_key AND jsonb_exists(candidate.field_evidence,'artist-credit')
 			AND pla.local_artist_id=?
-		))
+		) AND EXISTS(SELECT 1 FROM local_artist requested_artist WHERE requested_artist.id=? AND requested_artist.catalog_visible IS TRUE)))
 		AND (?='' OR EXISTS (
 			SELECT 1 FROM accepted candidate
 			WHERE candidate.group_key=g.group_key AND (
@@ -490,11 +490,11 @@ func readMixedLibraryReleasePage(ctx context.Context, tx bun.Tx, request Library
 	args := []any{
 		sourceID, sourceID, providerID,
 		availabilityIDs,
-		request.ArtistID, request.ArtistID,
+		request.ArtistID, request.ArtistID, request.ArtistID,
 		request.Query, request.Query, request.Query, request.Query, request.Query,
 		sourceID, providerID, providerID, request.Query,
 		providerID,
-		request.ArtistID, providerID, request.ArtistID,
+		request.ArtistID, providerID, request.ArtistID, request.ArtistID,
 		request.Query, request.Query, request.Query,
 		request.Publication, request.Publication, request.Publication,
 		request.Availability, request.Availability, request.Availability,

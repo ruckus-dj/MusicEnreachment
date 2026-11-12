@@ -21,6 +21,7 @@ import { LibraryDeletionControl } from "./LibraryDeletionControl";
 
 const releaseID = "f2a1a759-b1a4-4f03-8dca-13a6ac78ff10";
 const nextReleaseID = "f2a1a759-b1a4-4f03-8dca-13a6ac78ff11";
+const artistID = "f2a1a759-b1a4-4f03-8dca-13a6ac78ff12";
 const positionID = "6c754873-65f0-486e-8b5f-cdf70a6f30e6";
 const operationID = "76092c63-0e0f-4dc1-af39-674dc1ce037c";
 const digest = "a".repeat(64);
@@ -220,6 +221,55 @@ it("replays one frozen confirmation, follows partial failure, and retries the sa
   for (const id of [releaseID, positionID, operationID, nextReleaseID]) {
     expect(document.body).not.toHaveTextContent(id);
   }
+});
+
+it("previews artist release titles and coartist warnings without rendering UUIDs", async () => {
+  const artistDigest = "b".repeat(64);
+  let previewReads = 0;
+  server.use(
+    http.get(
+      "*/api/library/artists/:artistId/deletion/preview",
+      ({ params }) => {
+        expect(params.artistId).toBe(artistID);
+        previewReads += 1;
+        return HttpResponse.json({
+          artist_releases: [{ title: "Primary album" }],
+          blockers: [],
+          coartist_warnings: [
+            { artist_names: ["Guest artist"], release_title: "Primary album" },
+          ],
+          confirmation_digest: artistDigest,
+          kind: "artist",
+          outputs: [],
+          position_ids: [],
+          recording_count: 0,
+          recording_ids: [],
+          title: "Artist",
+        });
+      },
+    ),
+  );
+
+  render(
+    <I18nProvider>
+      <LibraryDeletionControl
+        target={{ type: "artist", artistId: artistID }}
+        releaseTitle="Artist"
+      />
+    </I18nProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Удалить артиста" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Загрузить точный предпросмотр" }),
+  );
+
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent("Primary album");
+  expect(dialog).toHaveTextContent("Guest artist");
+  expect(dialog).toHaveTextContent("Основные релизы, включённые в удаление");
+  expect(dialog).toHaveTextContent("Релизы с соисполнителями");
+  expect(dialog).not.toHaveTextContent(artistID);
+  expect(previewReads).toBe(1);
 });
 
 it("ignores a stale preview after target change and ignores confirmation after unmount", async () => {

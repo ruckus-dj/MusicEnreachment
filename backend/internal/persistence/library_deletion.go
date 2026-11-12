@@ -25,24 +25,43 @@ var ErrLibraryDeletionBlocked = errors.New("library deletion has retained public
 var libraryDeletionOperationNamespace = uuid.MustParse("4c8d707f-1aa0-4b68-b6d8-1a9c9af23137")
 
 type LibraryDeletionScope struct {
-	Kind                    string      `json:"kind"`
-	ReleaseID               uuid.UUID   `json:"release_id"`
-	PublicationIDs          []uuid.UUID `json:"publication_ids"`
-	ManualReceiptRequestIDs []uuid.UUID `json:"manual_receipt_request_ids"`
-	DependencyDigest        string      `json:"dependency_digest"`
+	Kind                      string      `json:"kind"`
+	ReleaseID                 uuid.UUID   `json:"release_id,omitzero"`
+	ArtistID                  uuid.UUID   `json:"artist_id,omitzero"`
+	ArtistReleaseIDs          []uuid.UUID `json:"artist_release_ids,omitzero"`
+	ArtistReferenceReleaseIDs []uuid.UUID `json:"artist_reference_release_ids,omitzero"`
+	WarningReleaseIDs         []uuid.UUID `json:"warning_release_ids,omitzero"`
+	PublicationIDs            []uuid.UUID `json:"publication_ids"`
+	ManualReceiptRequestIDs   []uuid.UUID `json:"manual_receipt_request_ids"`
+	DependencyDigest          string      `json:"dependency_digest"`
 }
 
 type LibraryDeletionPreview struct {
-	Scope          LibraryDeletionScope
-	ScopeDigest    string
-	Title          string
-	PositionIDs    []uuid.UUID
-	RecordingCount int         `json:"recording_count"`
-	RecordingIDs   []uuid.UUID `json:"recording_ids"`
-	Publications   []TrackPublication
-	Blockers       []string
-	orphanTrackIDs []uuid.UUID
-	dependencies   libraryDeletionDependencies
+	Scope            LibraryDeletionScope
+	ScopeDigest      string
+	Title            string
+	ArtistReleases   []LibraryDeletionArtistRelease
+	CoartistWarnings []LibraryDeletionCoartistWarning
+	PositionIDs      []uuid.UUID
+	RecordingCount   int         `json:"recording_count"`
+	RecordingIDs     []uuid.UUID `json:"recording_ids"`
+	Publications     []TrackPublication
+	Blockers         []string
+	orphanTrackIDs   []uuid.UUID
+	dependencies     libraryDeletionDependencies
+}
+
+// LibraryDeletionArtistRelease is presentation-only context for an artist
+// preview. It is intentionally excluded from the deletion authority digest.
+type LibraryDeletionArtistRelease struct {
+	Title string
+}
+
+// LibraryDeletionCoartistWarning identifies human-readable coartist context
+// without exposing release or artist identities to the preview consumer.
+type LibraryDeletionCoartistWarning struct {
+	ReleaseTitle string
+	ArtistNames  []string
 }
 
 type LibraryDeletionOperationSnapshot struct {
@@ -65,6 +84,8 @@ func LibraryDeletionOperationID(confirmationDigest string) (uuid.UUID, error) {
 }
 
 type libraryDeletionDependencies struct {
+	ArtistReleaseProofs     []json.RawMessage `json:"artist_release_proofs"`
+	ArtistReferenceProofs   []json.RawMessage `json:"artist_reference_proofs"`
 	PositionIDs             []uuid.UUID       `json:"position_ids"`
 	PositionTrackLinks      []json.RawMessage `json:"position_track_links"`
 	SurvivingTrackLinks     []json.RawMessage `json:"surviving_track_links"`
@@ -205,7 +226,7 @@ type libraryDeletionRiverArgs = LibraryDeletionOperationArgs
 // PreviewLibraryDeletion resolves a stable release/publication scope and hashes
 // the exact dependency identities which final settlement is permitted to remove.
 func (repository *SetupManagerRepository) PreviewLibraryDeletion(ctx context.Context, kind string, releaseID, positionID uuid.UUID) (LibraryDeletionPreview, error) {
-	if kind != "publication" && kind != "release" || releaseID == uuid.Nil || (kind == "publication" && positionID == uuid.Nil) || (kind == "release" && positionID != uuid.Nil) {
+	if kind != "publication" && kind != "release" && kind != "artist" || releaseID == uuid.Nil || (kind == "publication" && positionID == uuid.Nil) || (kind != "publication" && positionID != uuid.Nil) {
 		return LibraryDeletionPreview{}, errors.New("library deletion selector is invalid")
 	}
 	var preview LibraryDeletionPreview
@@ -232,8 +253,8 @@ func (repository *SetupManagerRepository) CaptureLibraryDeletionPreview(
 	if capture == nil {
 		return LibraryDeletionPreview{}, nil, errors.New("capture library deletion preview: callback is required")
 	}
-	if kind != "publication" && kind != "release" || releaseID == uuid.Nil ||
-		(kind == "publication" && positionID == uuid.Nil) || (kind == "release" && positionID != uuid.Nil) {
+	if kind != "publication" && kind != "release" && kind != "artist" || releaseID == uuid.Nil ||
+		(kind == "publication" && positionID == uuid.Nil) || (kind != "publication" && positionID != uuid.Nil) {
 		return LibraryDeletionPreview{}, nil, errors.New("capture library deletion preview: selector is invalid")
 	}
 	var preview LibraryDeletionPreview
@@ -324,6 +345,9 @@ func findLibraryDeletionConfirmationTx(ctx context.Context, tx bun.Tx, operation
 }
 
 func readLibraryDeletionPreview(ctx context.Context, tx bun.IDB, kind string, releaseID, positionID uuid.UUID) (LibraryDeletionPreview, error) {
+	if kind == "artist" {
+		return readLibraryArtistDeletionPreview(ctx, tx, releaseID)
+	}
 	var preview LibraryDeletionPreview
 	var releaseExists bool
 	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM local_release WHERE id=?)`, releaseID).Scan(ctx, &releaseExists); err != nil {
@@ -754,7 +778,20 @@ func (repository *SetupManagerRepository) AdmitLibraryDeletionOperation(
 			return errors.New("library deletion preview confirmation expired")
 		}
 		var releaseID uuid.UUID
-		if err := tx.NewRaw(`SELECT id FROM local_release WHERE id=? FOR UPDATE`, preview.Scope.ReleaseID).Scan(ctx, &releaseID); err != nil {
+		if preview.Scope.Kind == "artist" {
+			if len(preview.Scope.ArtistReferenceReleaseIDs) > 0 {
+				var lockedReleases []uuid.UUID
+				if err := tx.NewRaw(`SELECT id FROM local_release WHERE id IN (?) ORDER BY id FOR UPDATE`, bun.List(preview.Scope.ArtistReferenceReleaseIDs)).Scan(ctx, &lockedReleases); err != nil {
+					return fmt.Errorf("admit library deletion: lock artist releases: %w", err)
+				}
+				if !slices.Equal(lockedReleases, preview.Scope.ArtistReferenceReleaseIDs) {
+					return ErrLibraryDeletionConflict
+				}
+			}
+			if err := lockLibraryDeletionArtistReferences(ctx, tx, preview.Scope.ArtistID); err != nil {
+				return fmt.Errorf("admit library deletion: lock artist references: %w", err)
+			}
+		} else if err := tx.NewRaw(`SELECT id FROM local_release WHERE id=? FOR UPDATE`, preview.Scope.ReleaseID).Scan(ctx, &releaseID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrLibraryReleaseNotFound
 			}
@@ -763,7 +800,15 @@ func (repository *SetupManagerRepository) AdmitLibraryDeletionOperation(
 		var lockedPositions []uuid.UUID
 		positionQuery := `SELECT id FROM release_track WHERE release_id=? ORDER BY id FOR UPDATE`
 		positionArgs := []any{releaseID}
-		if preview.Scope.Kind == "publication" && len(preview.Scope.PublicationIDs) == 1 {
+		if preview.Scope.Kind == "artist" {
+			if len(preview.Scope.ArtistReleaseIDs) > 0 {
+				positionQuery = `SELECT id FROM release_track WHERE release_id IN (?) ORDER BY id FOR UPDATE`
+				positionArgs = []any{bun.List(preview.Scope.ArtistReleaseIDs)}
+			} else {
+				positionQuery = `SELECT id FROM release_track WHERE false FOR UPDATE`
+				positionArgs = nil
+			}
+		} else if preview.Scope.Kind == "publication" && len(preview.Scope.PublicationIDs) == 1 {
 			positionQuery = `SELECT id FROM release_track WHERE release_id=? AND id=? ORDER BY id FOR UPDATE`
 			positionArgs = append(positionArgs, preview.Scope.PublicationIDs[0])
 		}
@@ -774,14 +819,27 @@ func (repository *SetupManagerRepository) AdmitLibraryDeletionOperation(
 		if preview.Scope.Kind == "publication" && len(preview.Scope.PublicationIDs) == 1 {
 			positionID = preview.Scope.PublicationIDs[0]
 		}
-		current, err := readLibraryDeletionPreview(ctx, tx, preview.Scope.Kind, preview.Scope.ReleaseID, positionID)
+		selectorID := preview.Scope.ReleaseID
+		if preview.Scope.Kind == "artist" {
+			selectorID = preview.Scope.ArtistID
+		}
+		current, err := readLibraryDeletionPreview(ctx, tx, preview.Scope.Kind, selectorID, positionID)
 		if err != nil {
 			return err
 		}
 		if err := lockLibraryDeletionDependencies(ctx, tx, current.dependencies); err != nil {
 			return fmt.Errorf("admit library deletion: lock dependency witness: %w", err)
 		}
-		current, err = readLibraryDeletionPreview(ctx, tx, preview.Scope.Kind, preview.Scope.ReleaseID, positionID)
+		if preview.Scope.Kind == "artist" {
+			var artistID uuid.UUID
+			if err := tx.NewRaw(`SELECT id FROM local_artist WHERE id=? AND catalog_visible IS TRUE FOR UPDATE`, preview.Scope.ArtistID).Scan(ctx, &artistID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrLibraryReleaseNotFound
+				}
+				return fmt.Errorf("admit library deletion: lock artist: %w", err)
+			}
+		}
+		current, err = readLibraryDeletionPreview(ctx, tx, preview.Scope.Kind, selectorID, positionID)
 		if err != nil {
 			return err
 		}
@@ -1081,22 +1139,46 @@ func lockLibraryDeletionScope(
 		}
 		return empty, nil, zeroEpoch, nil, false, fmt.Errorf("%s: lock output epoch: %w", action, err)
 	}
-	var releaseID uuid.UUID
-	if err := tx.NewRaw(`SELECT id FROM local_release WHERE id=? FOR UPDATE`, snapshot.Scope.ReleaseID).Scan(ctx, &releaseID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return empty, nil, zeroEpoch, nil, false, nil
-		}
-		return empty, nil, zeroEpoch, nil, false, fmt.Errorf("%s: lock release: %w", action, err)
-	}
 	var positions []uuid.UUID
-	positionQuery := `SELECT id FROM release_track WHERE release_id=? ORDER BY id FOR UPDATE`
-	positionArgs := []any{releaseID}
-	if snapshot.Scope.Kind == "publication" {
-		positionQuery = `SELECT id FROM release_track WHERE release_id=? AND id=? ORDER BY id FOR UPDATE`
-		positionArgs = append(positionArgs, snapshot.Scope.PublicationIDs[0])
-	}
-	if err := tx.NewRaw(positionQuery, positionArgs...).Scan(ctx, &positions); err != nil {
-		return empty, nil, zeroEpoch, nil, false, fmt.Errorf("%s: lock release positions: %w", action, err)
+	if snapshot.Scope.Kind == "artist" {
+		var lockedReleases []uuid.UUID
+		if len(snapshot.Scope.ArtistReferenceReleaseIDs) > 0 {
+			if err := tx.NewRaw(`SELECT id FROM local_release WHERE id IN (?) ORDER BY id FOR UPDATE`, bun.List(snapshot.Scope.ArtistReferenceReleaseIDs)).Scan(ctx, &lockedReleases); err != nil {
+				return empty, nil, zeroEpoch, nil, false, fmt.Errorf("%s: lock artist releases: %w", action, err)
+			}
+		}
+		if err := lockLibraryDeletionArtistReferences(ctx, tx, snapshot.Scope.ArtistID); err != nil {
+			return empty, nil, zeroEpoch, nil, false, fmt.Errorf("%s: lock artist references: %w", action, err)
+		}
+		if len(snapshot.Scope.ArtistReleaseIDs) > 0 {
+			if err := tx.NewRaw(`SELECT id FROM release_track WHERE release_id IN (?) ORDER BY id FOR UPDATE`, bun.List(snapshot.Scope.ArtistReleaseIDs)).Scan(ctx, &positions); err != nil {
+				return empty, nil, zeroEpoch, nil, false, fmt.Errorf("%s: lock artist positions: %w", action, err)
+			}
+		}
+		var artistID uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM local_artist WHERE id=? FOR UPDATE`, snapshot.Scope.ArtistID).Scan(ctx, &artistID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return empty, nil, zeroEpoch, nil, false, nil
+			}
+			return empty, nil, zeroEpoch, nil, false, fmt.Errorf("%s: lock artist: %w", action, err)
+		}
+	} else {
+		var releaseID uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM local_release WHERE id=? FOR UPDATE`, snapshot.Scope.ReleaseID).Scan(ctx, &releaseID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return empty, nil, zeroEpoch, nil, false, nil
+			}
+			return empty, nil, zeroEpoch, nil, false, fmt.Errorf("%s: lock release: %w", action, err)
+		}
+		positionQuery := `SELECT id FROM release_track WHERE release_id=? ORDER BY id FOR UPDATE`
+		positionArgs := []any{releaseID}
+		if snapshot.Scope.Kind == "publication" {
+			positionQuery = `SELECT id FROM release_track WHERE release_id=? AND id=? ORDER BY id FOR UPDATE`
+			positionArgs = append(positionArgs, snapshot.Scope.PublicationIDs[0])
+		}
+		if err := tx.NewRaw(positionQuery, positionArgs...).Scan(ctx, &positions); err != nil {
+			return empty, nil, zeroEpoch, nil, false, fmt.Errorf("%s: lock release positions: %w", action, err)
+		}
 	}
 	operation := new(Operation)
 	if err := tx.NewSelect().Model(operation).Where("id=?", guard.OperationID).For("UPDATE").Scan(ctx); err != nil {
@@ -1120,10 +1202,15 @@ func validateLibraryDeletionSnapshot(snapshot LibraryDeletionOperationSnapshot) 
 	dependencyDigest, dependencyErr := libraryDeletionDependencyDigest(snapshot.Dependencies)
 	scopeJSON, scopeErr := json.Marshal(snapshot.Scope)
 	scopeDigest := sha256.Sum256(scopeJSON)
-	if snapshot.SchemaVersion != 2 || snapshot.Scope.ReleaseID == uuid.Nil || snapshot.ScopeDigest == "" || !validSHA256(snapshot.ScopeDigest) ||
+	if snapshot.SchemaVersion != 2 || snapshot.ScopeDigest == "" || !validSHA256(snapshot.ScopeDigest) ||
 		snapshot.ConfirmationDigest == "" || !validSHA256(snapshot.ConfirmationDigest) ||
-		(snapshot.Scope.Kind != "release" && snapshot.Scope.Kind != "publication") ||
+		(snapshot.Scope.Kind != "release" && snapshot.Scope.Kind != "publication" && snapshot.Scope.Kind != "artist") ||
+		(snapshot.Scope.Kind == "artist" && snapshot.Scope.ArtistID == uuid.Nil) ||
+		(snapshot.Scope.Kind != "artist" && snapshot.Scope.ReleaseID == uuid.Nil) ||
+		(snapshot.Scope.Kind == "artist" && snapshot.Scope.ReleaseID != uuid.Nil) ||
 		(snapshot.Scope.Kind == "publication" && len(snapshot.Scope.PublicationIDs) != 1) ||
+		(snapshot.Scope.Kind == "artist" && (!strictlySortedUniqueUUIDs(snapshot.Scope.ArtistReleaseIDs) ||
+			!strictlySortedUniqueUUIDs(snapshot.Scope.ArtistReferenceReleaseIDs))) ||
 		dependencyErr != nil || snapshot.Scope.DependencyDigest != dependencyDigest || scopeErr != nil ||
 		snapshot.ScopeDigest != hex.EncodeToString(scopeDigest[:]) ||
 		!slices.Equal(snapshot.Dependencies.PositionIDs, snapshot.Scope.PublicationIDs) ||
@@ -1133,7 +1220,45 @@ func validateLibraryDeletionSnapshot(snapshot LibraryDeletionOperationSnapshot) 
 		!strictlySortedUniqueUUIDs(snapshot.Dependencies.OrphanRecordingIDs) {
 		return ErrLibraryDeletionConflict
 	}
-	if snapshot.Scope.Kind == "release" {
+	if snapshot.Scope.Kind == "artist" {
+		if len(snapshot.Dependencies.ArtistReleaseProofs) != len(snapshot.Scope.ArtistReleaseIDs) ||
+			len(snapshot.Dependencies.ArtistReferenceProofs) == 0 && len(snapshot.Scope.ArtistReleaseIDs) > 0 {
+			return ErrLibraryDeletionConflict
+		}
+		if !uuidSubset(snapshot.Scope.WarningReleaseIDs, snapshot.Scope.ArtistReleaseIDs) ||
+			!uuidSubset(snapshot.Scope.ArtistReleaseIDs, snapshot.Scope.ArtistReferenceReleaseIDs) {
+			return ErrLibraryDeletionConflict
+		}
+		artistTracks, artistRecordings := make(map[uuid.UUID]struct{}), make(map[uuid.UUID]struct{})
+		artistPositions := make([]uuid.UUID, 0, len(snapshot.Dependencies.PositionTrackLinks))
+		for _, raw := range snapshot.Dependencies.PositionTrackLinks {
+			var link libraryDeletionPositionTrackLink
+			if !publicationJSONObject(raw) || json.Unmarshal(raw, &link) != nil || link.PositionID == uuid.Nil ||
+				!slices.Contains(snapshot.Scope.ArtistReleaseIDs, link.ReleaseID) || link.TrackID == uuid.Nil {
+				return ErrLibraryDeletionConflict
+			}
+			artistPositions = append(artistPositions, link.PositionID)
+			artistTracks[link.TrackID] = struct{}{}
+			if link.RecordingID != nil {
+				artistRecordings[*link.RecordingID] = struct{}{}
+			}
+		}
+		slices.SortFunc(artistPositions, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+		if !slices.Equal(artistPositions, snapshot.Scope.PublicationIDs) ||
+			!slices.Equal(snapshot.Dependencies.CandidateTrackIDs, sortedUUIDSet(artistTracks)) ||
+			!slices.Equal(snapshot.Dependencies.CandidateRecordingIDs, sortedUUIDSet(artistRecordings)) ||
+			!uuidSubset(snapshot.Dependencies.OrphanTrackIDs, snapshot.Dependencies.CandidateTrackIDs) ||
+			!uuidSubset(snapshot.Dependencies.OrphanRecordingIDs, snapshot.Dependencies.CandidateRecordingIDs) {
+			return ErrLibraryDeletionConflict
+		}
+		for index, raw := range snapshot.Dependencies.ArtistReleaseProofs {
+			var proof libraryArtistReleaseProof
+			if !publicationJSONObject(raw) || json.Unmarshal(raw, &proof) != nil || proof.ReleaseID != snapshot.Scope.ArtistReleaseIDs[index] ||
+				proof.Scope.Kind != "release" || proof.Scope.ReleaseID != proof.ReleaseID {
+				return ErrLibraryDeletionConflict
+			}
+		}
+	} else if snapshot.Scope.Kind == "release" {
 		triples := make([]libraryDeletionPositionTrackLink, 0, len(snapshot.Dependencies.PositionTrackLinks))
 		for _, raw := range snapshot.Dependencies.PositionTrackLinks {
 			var triple libraryDeletionPositionTrackLink
@@ -1232,7 +1357,11 @@ func validateLibraryDeletionFrozenScope(ctx context.Context, tx bun.IDB, snapsho
 	if err := lockLibraryDeletionDependencies(ctx, tx, snapshot.Dependencies); err != nil {
 		return fmt.Errorf("lock frozen library deletion dependencies: %w", err)
 	}
-	current, err := readLibraryDeletionPreview(ctx, tx, snapshot.Scope.Kind, snapshot.Scope.ReleaseID, func() uuid.UUID {
+	selectorID := snapshot.Scope.ReleaseID
+	if snapshot.Scope.Kind == "artist" {
+		selectorID = snapshot.Scope.ArtistID
+	}
+	current, err := readLibraryDeletionPreview(ctx, tx, snapshot.Scope.Kind, selectorID, func() uuid.UUID {
 		if snapshot.Scope.Kind == "publication" {
 			return snapshot.Scope.PublicationIDs[0]
 		}
@@ -1415,7 +1544,11 @@ func validateLibraryDeletionPositionAuthority(ctx context.Context, tx bun.IDB, c
 }
 
 func lockAndValidateLibraryDeletionOrphans(ctx context.Context, tx bun.IDB, snapshot LibraryDeletionOperationSnapshot) (LibraryDeletionPreview, error) {
-	preview, err := readLibraryDeletionPreview(ctx, tx, snapshot.Scope.Kind, snapshot.Scope.ReleaseID, uuid.Nil)
+	selectorID := snapshot.Scope.ReleaseID
+	if snapshot.Scope.Kind == "artist" {
+		selectorID = snapshot.Scope.ArtistID
+	}
+	preview, err := readLibraryDeletionPreview(ctx, tx, snapshot.Scope.Kind, selectorID, uuid.Nil)
 	if err != nil {
 		return LibraryDeletionPreview{}, err
 	}
@@ -1440,7 +1573,7 @@ func lockAndValidateLibraryDeletionOrphans(ctx context.Context, tx bun.IDB, snap
 			return LibraryDeletionPreview{}, ErrLibraryDeletionConflict
 		}
 	}
-	current, err := readLibraryDeletionPreview(ctx, tx, snapshot.Scope.Kind, snapshot.Scope.ReleaseID, uuid.Nil)
+	current, err := readLibraryDeletionPreview(ctx, tx, snapshot.Scope.Kind, selectorID, uuid.Nil)
 	if err != nil {
 		return LibraryDeletionPreview{}, err
 	}
@@ -1558,32 +1691,56 @@ func (repository *SetupManagerRepository) FinalizeLibraryDeletion(ctx context.Co
 			return ErrLibraryDeletionConflict
 		}
 		var deletionPreview LibraryDeletionPreview
-		if snapshot.Scope.Kind == "release" {
+		if snapshot.Scope.Kind == "release" || snapshot.Scope.Kind == "artist" {
 			deletionPreview, err = lockAndValidateLibraryDeletionOrphans(ctx, tx, snapshot)
 			if err != nil {
 				return err
 			}
 		}
+		targetReleaseIDs := []uuid.UUID{}
+		switch snapshot.Scope.Kind {
+		case "release":
+			targetReleaseIDs = []uuid.UUID{snapshot.Scope.ReleaseID}
+		case "artist":
+			targetReleaseIDs = slices.Clone(snapshot.Scope.ArtistReleaseIDs)
+		}
 		receipts := make([]libraryDeletionReceipt, 0)
-		if snapshot.Scope.Kind == "release" {
+		if len(targetReleaseIDs) > 0 {
 			if err := tx.NewRaw(`SELECT request_id,original_local_release_id,local_release_id,retired_by_operation_id FROM manual_matching_receipt
-				WHERE original_local_release_id=? ORDER BY request_id FOR UPDATE`, snapshot.Scope.ReleaseID).Scan(ctx, &receipts); err != nil {
+				WHERE original_local_release_id IN (?) ORDER BY request_id FOR UPDATE`, bun.List(targetReleaseIDs)).Scan(ctx, &receipts); err != nil {
 				return fmt.Errorf("finalize library deletion: lock manual receipts: %w", err)
 			}
 		}
 		if len(receipts) != len(snapshot.Scope.ManualReceiptRequestIDs) {
 			return ErrLibraryDeletionConflict
 		}
+		receiptRelease := make(map[uuid.UUID]uuid.UUID, len(snapshot.Scope.ManualReceiptRequestIDs))
+		switch snapshot.Scope.Kind {
+		case "release":
+			for _, id := range snapshot.Scope.ManualReceiptRequestIDs {
+				receiptRelease[id] = snapshot.Scope.ReleaseID
+			}
+		case "artist":
+			for _, raw := range snapshot.Dependencies.ArtistReleaseProofs {
+				var proof libraryArtistReleaseProof
+				if err := json.Unmarshal(raw, &proof); err != nil {
+					return ErrLibraryDeletionConflict
+				}
+				for _, id := range proof.Scope.ManualReceiptRequestIDs {
+					receiptRelease[id] = proof.ReleaseID
+				}
+			}
+		}
 		for index, receipt := range receipts {
-			if receipt.RequestID != snapshot.Scope.ManualReceiptRequestIDs[index] || receipt.OriginalID != snapshot.Scope.ReleaseID ||
-				receipt.LocalReleaseID == nil || *receipt.LocalReleaseID != snapshot.Scope.ReleaseID || receipt.RetiredBy != nil {
+			if receipt.RequestID != snapshot.Scope.ManualReceiptRequestIDs[index] || receipt.OriginalID != receiptRelease[receipt.RequestID] ||
+				receipt.LocalReleaseID == nil || *receipt.LocalReleaseID != receipt.OriginalID || receipt.RetiredBy != nil {
 				return ErrLibraryDeletionConflict
 			}
 		}
-		if snapshot.Scope.Kind == "release" && len(receipts) > 0 {
+		if len(receipts) > 0 {
 			result, err := tx.NewRaw(`UPDATE manual_matching_receipt SET local_release_id=NULL,retired_by_operation_id=?
-				WHERE original_local_release_id=? AND local_release_id=? AND retired_by_operation_id IS NULL
-				AND request_id IN (?)`, guard.OperationID, snapshot.Scope.ReleaseID, snapshot.Scope.ReleaseID,
+				WHERE original_local_release_id IN (?) AND local_release_id=original_local_release_id AND retired_by_operation_id IS NULL
+				AND request_id IN (?)`, guard.OperationID, bun.List(targetReleaseIDs),
 				bun.List(snapshot.Scope.ManualReceiptRequestIDs)).Exec(ctx)
 			if err != nil {
 				return fmt.Errorf("finalize library deletion: retire manual receipts: %w", err)
@@ -1592,38 +1749,66 @@ func (repository *SetupManagerRepository) FinalizeLibraryDeletion(ctx context.Co
 				return err
 			}
 		}
-		if snapshot.Scope.Kind == "release" {
-			if _, err := tx.NewRaw(`DELETE FROM release_publication_cover WHERE release_id=?`, snapshot.Scope.ReleaseID).Exec(ctx); err != nil {
+		for _, releaseID := range targetReleaseIDs {
+			if _, err := tx.NewRaw(`DELETE FROM release_publication_cover WHERE release_id=?`, releaseID).Exec(ctx); err != nil {
 				return fmt.Errorf("finalize library deletion: delete release cover: %w", err)
 			}
-			if _, err := tx.NewRaw(`DELETE FROM provider_local_release WHERE local_release_id=?`, snapshot.Scope.ReleaseID).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`DELETE FROM provider_local_release WHERE local_release_id=?`, releaseID).Exec(ctx); err != nil {
 				return fmt.Errorf("finalize library deletion: delete provider release links: %w", err)
 			}
-			if _, err := tx.NewRaw(`DELETE FROM collection_release WHERE release_id=?`, snapshot.Scope.ReleaseID).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`DELETE FROM collection_release WHERE release_id=?`, releaseID).Exec(ctx); err != nil {
 				return fmt.Errorf("finalize library deletion: delete collection links: %w", err)
 			}
-			if _, err := tx.NewRaw(`DELETE FROM release_artist WHERE release_id=?`, snapshot.Scope.ReleaseID).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`DELETE FROM release_artist WHERE release_id=?`, releaseID).Exec(ctx); err != nil {
 				return fmt.Errorf("finalize library deletion: delete release credits: %w", err)
 			}
-		}
-		if snapshot.Scope.Kind == "release" && len(snapshot.Scope.PublicationIDs) > 0 {
-			if _, err := tx.NewRaw(`DELETE FROM release_track WHERE release_id=? AND id IN (?)`, snapshot.Scope.ReleaseID, bun.List(snapshot.Scope.PublicationIDs)).Exec(ctx); err != nil {
-				return fmt.Errorf("finalize library deletion: delete frozen positions: %w", err)
+			if len(snapshot.Scope.PublicationIDs) > 0 {
+				if _, err := tx.NewRaw(`DELETE FROM release_track WHERE release_id=? AND id IN (?)`, releaseID, bun.List(snapshot.Scope.PublicationIDs)).Exec(ctx); err != nil {
+					return fmt.Errorf("finalize library deletion: delete frozen positions: %w", err)
+				}
 			}
 		}
-		if snapshot.Scope.Kind == "release" {
+		if len(targetReleaseIDs) > 0 {
 			if err := deleteLibraryDeletionOrphans(ctx, tx, deletionPreview); err != nil {
 				return err
 			}
-			if _, err := tx.NewRaw(`DELETE FROM release_medium WHERE release_id=?`, snapshot.Scope.ReleaseID).Exec(ctx); err != nil {
+		}
+		for _, releaseID := range targetReleaseIDs {
+			if _, err := tx.NewRaw(`DELETE FROM release_medium WHERE release_id=?`, releaseID).Exec(ctx); err != nil {
 				return fmt.Errorf("finalize library deletion: delete release media: %w", err)
 			}
-			result, err := tx.NewRaw(`DELETE FROM local_release WHERE id=?`, snapshot.Scope.ReleaseID).Exec(ctx)
+			result, err := tx.NewRaw(`DELETE FROM local_release WHERE id=?`, releaseID).Exec(ctx)
 			if err != nil {
 				return fmt.Errorf("finalize library deletion: delete release: %w", err)
 			}
 			if err := requireRowsAffected(result, 1, "delete frozen library release"); err != nil {
 				return err
+			}
+		}
+		if snapshot.Scope.Kind == "artist" {
+			var retainedReferences bool
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM release_artist WHERE artist_id=? UNION ALL
+				SELECT 1 FROM local_release WHERE primary_artist_id=? UNION ALL SELECT 1 FROM release_track WHERE primary_artist_id=? UNION ALL
+				SELECT 1 FROM collection_artist WHERE artist_id=? UNION ALL
+				SELECT 1 FROM track_artist WHERE artist_id=? UNION ALL SELECT 1 FROM recording_artist WHERE artist_id=?)`,
+				snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID, snapshot.Scope.ArtistID).Scan(ctx, &retainedReferences); err != nil {
+				return fmt.Errorf("finalize library deletion: inspect retained artist references: %w", err)
+			}
+			if retainedReferences {
+				if _, err := tx.NewRaw(`UPDATE local_artist SET catalog_visible=false,updated_at=now() WHERE id=? AND catalog_visible IS TRUE`, snapshot.Scope.ArtistID).Exec(ctx); err != nil {
+					return fmt.Errorf("finalize library deletion: hide retained artist identity: %w", err)
+				}
+			} else {
+				if _, err := tx.NewRaw(`DELETE FROM provider_local_artist WHERE local_artist_id=?`, snapshot.Scope.ArtistID).Exec(ctx); err != nil {
+					return fmt.Errorf("finalize library deletion: remove artist provider bindings: %w", err)
+				}
+				result, err := tx.NewRaw(`DELETE FROM local_artist WHERE id=? AND catalog_visible IS TRUE`, snapshot.Scope.ArtistID).Exec(ctx)
+				if err != nil {
+					return fmt.Errorf("finalize library deletion: delete artist: %w", err)
+				}
+				if err := requireRowsAffected(result, 1, "delete frozen library artist"); err != nil {
+					return err
+				}
 			}
 		}
 		if _, err := tx.NewRaw(`DELETE FROM publication_execution_claim WHERE operation_id=? AND application_attempt=? AND river_job_id=? AND river_attempt=? AND claim_uuid=? AND boot_uuid=? AND delivery_token=? AND state='executing'`,

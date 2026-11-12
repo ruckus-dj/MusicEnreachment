@@ -588,10 +588,20 @@ export interface LibraryCoverCandidateOption {
   width: number | null;
 }
 
+export interface LibraryDeletionArtistReleaseResponse {
+  title: string;
+}
+
 export interface LibraryDeletionBlockerResponse {
   code: string;
   message: string;
   position_id?: string;
+}
+
+export interface LibraryDeletionCoartistWarningResponse {
+  /** @nullable */
+  artist_names: string[] | null;
+  release_title: string;
 }
 
 export interface LibraryDeletionConfirmationInputBody {
@@ -615,7 +625,11 @@ export interface LibraryDeletionPreviewResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** @nullable */
+  artist_releases?: LibraryDeletionArtistReleaseResponse[] | null;
+  /** @nullable */
   blockers: LibraryDeletionBlockerResponse[] | null;
+  /** @nullable */
+  coartist_warnings?: LibraryDeletionCoartistWarningResponse[] | null;
   confirmation_digest: string;
   kind: string;
   /** @nullable */
@@ -626,7 +640,7 @@ export interface LibraryDeletionPreviewResponse {
   recording_count: number;
   /** @nullable */
   recording_ids: string[] | null;
-  release_id: string;
+  release_id?: string;
   title: string;
 }
 

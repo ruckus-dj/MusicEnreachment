@@ -13,6 +13,7 @@ import {
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
   confirmLibraryDeletion,
+  previewLibraryArtistDeletion,
   previewLibraryPublicationDeletion,
   previewLibraryReleaseDeletion,
   retryOperation,
@@ -24,6 +25,7 @@ import type {
 import { useI18n } from "../../i18n/I18nProvider";
 
 type DeletionTarget =
+  | { type: "artist"; artistId: string }
   | { type: "release"; releaseId: string }
   | { type: "publication"; releaseId: string; positionId: string };
 
@@ -142,9 +144,11 @@ export function LibraryDeletionControl({
 }: Props) {
   const { locale } = useI18n();
   const targetKey =
-    target.type === "release"
-      ? `release:${target.releaseId}`
-      : `publication:${target.releaseId}:${target.positionId}`;
+    target.type === "artist"
+      ? `artist:${target.artistId}`
+      : target.type === "release"
+        ? `release:${target.releaseId}`
+        : `publication:${target.releaseId}:${target.positionId}`;
   const targetScope = useRef<TargetScope>({ key: targetKey, generation: 0 });
   if (targetScope.current.key !== targetKey) {
     targetScope.current = {
@@ -247,15 +251,20 @@ export function LibraryDeletionControl({
     locale === "ru"
       ? {
           deleteRelease: "Удалить релиз",
+          deleteArtist: "Удалить артиста",
           deletePublication: "Удалить текущую публикацию",
           title:
-            target.type === "release"
-              ? "Удаление релиза"
-              : "Удаление публикации",
+            target.type === "artist"
+              ? "Удаление артиста"
+              : target.type === "release"
+                ? "Удаление релиза"
+                : "Удаление публикации",
           target:
-            target.type === "release"
-              ? releaseTitle
-              : `${releaseTitle} · ${positionLabel ?? "Позиция"}`,
+            target.type === "publication"
+              ? `${releaseTitle} · ${positionLabel ?? "Позиция"}`
+              : releaseTitle,
+          scopeArtist:
+            "Будут удалены основные релизы артиста, их позиции и текущие публикации. Релизы с соисполнителями отмечены отдельно; ссылки на артиста в других объектах сохраняются как скрытые технические данные.",
           scopeRelease:
             "Будут удалены релиз, его позиции, текущие публикации и композиции, потерявшие последнюю связь с релизом. Композиции в других релизах, записи провайдера и исходники сохраняются.",
           scopePublication:
@@ -269,6 +278,9 @@ export function LibraryDeletionControl({
           previewError: "Не удалось подготовить предпросмотр.",
           blocked: "Подтверждение недоступно: устраните блокирующие условия.",
           positions: "Позиции",
+          artistReleases: "Основные релизы, включённые в удаление",
+          coartistWarnings: "Релизы с соисполнителями",
+          coartistNames: "Соисполнители",
           recordings: "Композиции, удаляемые из медиатеки",
           files: "Файлы текущих публикаций",
           outputs: "Будут затронуты файлы",
@@ -284,6 +296,8 @@ export function LibraryDeletionControl({
             "Удаление выполняется. Обновления операции только пробуждают чтение актуального снимка.",
           partial:
             "Успешно удалённые публикации отражаются сразу; ошибка следующего файла не отменяет уже выполненное. Релиз остаётся до завершения удаления.",
+          artistPartial:
+            "Успешно удалённые публикации отражаются сразу. Контекст артиста и остаток операции сохранены; после устранения причины можно повторить удаление.",
           stage: "Этап",
           progress: "Обработано байт",
           succeeded: "Удаление завершено.",
@@ -294,13 +308,20 @@ export function LibraryDeletionControl({
         }
       : {
           deleteRelease: "Delete release",
+          deleteArtist: "Delete artist",
           deletePublication: "Delete current publication",
           title:
-            target.type === "release" ? "Delete release" : "Delete publication",
+            target.type === "artist"
+              ? "Delete artist"
+              : target.type === "release"
+                ? "Delete release"
+                : "Delete publication",
           target:
-            target.type === "release"
-              ? releaseTitle
-              : `${releaseTitle} · ${positionLabel ?? "Position"}`,
+            target.type === "publication"
+              ? `${releaseTitle} · ${positionLabel ?? "Position"}`
+              : releaseTitle,
+          scopeArtist:
+            "The artist's primary releases, their positions, and current publications will be deleted. Releases with coartists are listed separately; references from other records remain as hidden technical data.",
           scopeRelease:
             "The release, its positions, current publications, and recordings losing their last release link will be deleted. Recordings in other releases, provider records, and source files are retained.",
           scopePublication:
@@ -314,6 +335,9 @@ export function LibraryDeletionControl({
           previewError: "Could not prepare the preview.",
           blocked: "Confirmation is unavailable; resolve the blockers first.",
           positions: "Positions",
+          artistReleases: "Primary releases included in deletion",
+          coartistWarnings: "Releases with coartists",
+          coartistNames: "Coartists",
           recordings: "Recordings removed from the library",
           files: "Current publication files",
           outputs: "Files affected",
@@ -329,6 +353,8 @@ export function LibraryDeletionControl({
             "Deletion is running. Operation notifications only trigger a fresh read of the authoritative snapshot.",
           partial:
             "Successfully deleted publications are reflected immediately; a later file error does not undo them. The release remains until deletion completes.",
+          artistPartial:
+            "Successfully deleted publications are reflected immediately. The artist context and residual operation are retained; retry the deletion after resolving the cause.",
           stage: "Stage",
           progress: "Bytes processed",
           succeeded: "Deletion completed.",
@@ -350,15 +376,19 @@ export function LibraryDeletionControl({
     }));
     try {
       const response =
-        target.type === "release"
-          ? await previewLibraryReleaseDeletion(target.releaseId, {
+        target.type === "artist"
+          ? await previewLibraryArtistDeletion(target.artistId, {
               cache: "no-store",
             })
-          : await previewLibraryPublicationDeletion(
-              target.releaseId,
-              target.positionId,
-              { cache: "no-store" },
-            );
+          : target.type === "release"
+            ? await previewLibraryReleaseDeletion(target.releaseId, {
+                cache: "no-store",
+              })
+            : await previewLibraryPublicationDeletion(
+                target.releaseId,
+                target.positionId,
+                { cache: "no-store" },
+              );
       if (response.status !== 200)
         throw new Error(responseError(response.data, response.status, locale));
       if (!isCurrentScope(actionScope)) return;
@@ -475,7 +505,11 @@ export function LibraryDeletionControl({
     state.operation &&
     ["succeeded", "failed", "cancelled"].includes(state.operation.state);
   const buttonLabel =
-    target.type === "release" ? text.deleteRelease : text.deletePublication;
+    target.type === "artist"
+      ? text.deleteArtist
+      : target.type === "release"
+        ? text.deleteRelease
+        : text.deletePublication;
 
   return (
     <>
@@ -503,9 +537,11 @@ export function LibraryDeletionControl({
                     ? text.queued
                     : text.running}
           </p>
-          {target.type === "release" &&
+          {target.type !== "publication" &&
           state.operation.state !== "succeeded" ? (
-            <p>{text.partial}</p>
+            <p>
+              {target.type === "artist" ? text.artistPartial : text.partial}
+            </p>
           ) : null}
           {!terminal ? (
             <dl className="grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[max-content_1fr]">
@@ -584,7 +620,9 @@ export function LibraryDeletionControl({
             <p>
               {target.type === "release"
                 ? text.scopeRelease
-                : text.scopePublication}
+                : target.type === "artist"
+                  ? text.scopeArtist
+                  : text.scopePublication}
             </p>
             {state.confirmationUncertain ? (
               <p role="alert">{text.uncertain}</p>
@@ -592,6 +630,38 @@ export function LibraryDeletionControl({
             {preview ? (
               <div className="space-y-3 rounded border border-stone-300 p-3">
                 <p>{preview.title}</p>
+                {target.type === "artist" && preview.artist_releases?.length ? (
+                  <section aria-label={text.artistReleases}>
+                    <h3 className="font-semibold">{text.artistReleases}</h3>
+                    <ul className="list-disc pl-5">
+                      {preview.artist_releases.map((release) => (
+                        <li key={release.title}>{release.title}</li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+                {target.type === "artist" &&
+                preview.coartist_warnings?.length ? (
+                  <section aria-label={text.coartistWarnings} role="note">
+                    <h3 className="font-semibold">{text.coartistWarnings}</h3>
+                    <ul className="list-disc space-y-1 pl-5">
+                      {preview.coartist_warnings.map((warning) => (
+                        <li
+                          key={`${warning.release_title}:${(warning.artist_names ?? []).join("\u0000")}`}
+                        >
+                          <span className="font-medium">
+                            {warning.release_title}
+                          </span>
+                          {warning.artist_names?.length ? (
+                            <span>
+                              {` — ${text.coartistNames}: ${warning.artist_names.join(", ")}`}
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
                 <dl className="grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[max-content_1fr]">
                   <dt>{text.positions}</dt>
                   <dd>
@@ -601,7 +671,7 @@ export function LibraryDeletionControl({
                   <dd>
                     {(preview.outputs ?? []).length.toLocaleString(locale)}
                   </dd>
-                  {target.type === "release" ? (
+                  {target.type !== "publication" ? (
                     <>
                       <dt>{text.recordings}</dt>
                       <dd>{preview.recording_count.toLocaleString(locale)}</dd>

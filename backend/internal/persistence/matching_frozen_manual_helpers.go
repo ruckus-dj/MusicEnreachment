@@ -89,6 +89,9 @@ func materializeFrozenManualArtistCredits(ctx context.Context, tx bun.Tx, provid
 		} else if err != nil {
 			return fmt.Errorf("manual matching: read frozen artist mapping: %w", err)
 		}
+		if _, err := tx.NewRaw(`UPDATE local_artist SET catalog_visible=true WHERE id=? AND catalog_visible IS NOT TRUE`, localArtistID).Exec(ctx); err != nil {
+			return fmt.Errorf("manual matching: reactivate frozen artist: %w", err)
+		}
 		if _, err := tx.NewRaw(`INSERT INTO `+relation+`(`+parentColumn+`,position,artist_id,name,name_join_phrase) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`, parentID, credit.Position, localArtistID, credit.Name, credit.JoinPhrase).Exec(ctx); err != nil {
 			return fmt.Errorf("manual matching: add frozen %s credit: %w", relation, err)
 		}

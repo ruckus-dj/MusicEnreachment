@@ -412,6 +412,9 @@ func materializeMatchingProviderRelease(ctx context.Context, tx bun.Tx, preview 
 		if err != nil {
 			return uuid.Nil, err
 		}
+		if err := reactivateMatchingLocalProviderCredits(ctx, tx, track.RecordingCredits); err != nil {
+			return uuid.Nil, err
+		}
 		if recordingCreated {
 			if err := materializeMatchingLocalProviderCredits(ctx, tx, localRecordingID, "recording_artist", track.RecordingCredits); err != nil {
 				return uuid.Nil, err
@@ -498,8 +501,23 @@ func materializeMatchingLocalProviderCredits(ctx context.Context, tx bun.Tx, par
 				return err
 			}
 		}
+		if _, err := tx.NewRaw(`UPDATE local_artist SET catalog_visible=true WHERE id=? AND catalog_visible IS FALSE`, artistID).Exec(ctx); err != nil {
+			return err
+		}
 		if _, err := tx.NewRaw(`INSERT INTO `+relation+`(`+parentColumn+`,position,artist_id,name,name_join_phrase) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING`, parentID, position, artistID, credit.Name, credit.JoinPhrase).Exec(ctx); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func reactivateMatchingLocalProviderCredits(ctx context.Context, tx bun.Tx, credits []MatchingLocalArtist) error {
+	for _, credit := range credits {
+		if _, err := tx.NewRaw(`UPDATE local_artist artist SET catalog_visible=true
+			FROM provider_local_artist binding
+			WHERE binding.provider_id=? AND binding.provider_artist_id=?
+			AND artist.id=binding.local_artist_id AND artist.catalog_visible IS NOT TRUE`, credit.ProviderID, credit.ProviderArtistID).Exec(ctx); err != nil {
+			return fmt.Errorf("reactivate matching local artist: %w", err)
 		}
 	}
 	return nil

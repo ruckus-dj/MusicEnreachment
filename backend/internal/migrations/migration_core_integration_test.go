@@ -28,6 +28,7 @@ var baselineMigrationNames = []string{
 	"20261108000003",
 	"20261109000001",
 	"20261111000001",
+	"20261112000001",
 }
 
 var currentMigrationNames = append([]string(nil), baselineMigrationNames...)
@@ -393,7 +394,7 @@ func assertMigrationGroup(t *testing.T, group *migrate.MigrationGroup, want []st
 func assertCurrentSchema(t *testing.T, database *bun.DB) {
 	t.Helper()
 	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns, artistMetadataRevision, artistMetadataConstraint, coverObserved, coverConstraint, sourceMetadataReference, coverPreparationDiagnostic, publicationResumeMode, publicationResumeModeConstraint int
-	var deletionShape, deletionTargetShape, manualReceiptOriginalRelease, manualReceiptRetirementShape int
+	var deletionShape, deletionTargetShape, manualReceiptOriginalRelease, manualReceiptRetirementShape, artistCatalogVisibility, artistDeletionScopeShape int
 	var deletionOperationKind, deletionMutationTarget, deletionTargetIdentity, deletionUUIDArrayValidator, manualReceiptRetirementGuard, manualReceiptDeleteGuard, manualReceiptWriteOnce int
 	ctx := context.Background()
 	checks := []struct {
@@ -416,6 +417,8 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.track_publication_attempt'::regclass AND conname='track_publication_attempt_resume_mode_check' AND contype='c'`, &publicationResumeModeConstraint, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.operation'::regclass AND conname='operation_library_deletion_shape' AND contype='c' AND pg_get_constraintdef(oid) LIKE '%confirmation_digest%'`, &deletionShape, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.operation'::regclass AND conname='operation_library_deletion_target_shape' AND contype='c'`, &deletionTargetShape, 1},
+		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='local_artist' AND column_name='catalog_visible' AND data_type='boolean' AND is_nullable='NO' AND column_default='true'`, &artistCatalogVisibility, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.operation'::regclass AND conname='operation_library_deletion_target_shape' AND pg_get_constraintdef(oid) LIKE '%artist_release_ids%' AND pg_get_constraintdef(oid) LIKE '%artist_reference_release_ids%' AND pg_get_constraintdef(oid) LIKE '%warning_release_ids%'`, &artistDeletionScopeShape, 1},
 		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='manual_matching_receipt' AND column_name='original_local_release_id' AND is_nullable='NO'`, &manualReceiptOriginalRelease, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.manual_matching_receipt'::regclass AND conname='manual_matching_receipt_retirement_shape' AND contype='c'`, &manualReceiptRetirementShape, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.operation'::regclass AND conname='operation_kind_check' AND contype='c' AND pg_get_constraintdef(oid) LIKE '%delete_library_v1%' AND pg_get_constraintdef(oid) LIKE '%publish_track_v1%' AND pg_get_constraintdef(oid) LIKE '%cleanup_publication_sources_v1%' AND pg_get_constraintdef(oid) LIKE '%publication_reconcile_v1%' AND pg_get_constraintdef(oid) LIKE '%retry_publication_sources_v1%' AND pg_get_constraintdef(oid) LIKE '%obsolete_publication_output_cleanup_v1%' AND pg_get_constraintdef(oid) LIKE '%refresh_genre_catalog_v1%'`, &deletionOperationKind, 1},

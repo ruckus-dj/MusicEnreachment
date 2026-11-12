@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 	survivorPosition := uuid.New()
 	targetTrack, foreignTrack := uuid.New(), uuid.New()
 	targetRecording, sharedRecording := uuid.New(), uuid.New()
-	artistID, collectionID := uuid.New(), uuid.New()
+	artistID, foreignPrimaryArtistID, collectionID := uuid.New(), uuid.New(), uuid.New()
 	providerID, providerReleaseID, providerRecordingID, providerTrackID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	targetVariant, sharedVariant := uuid.New(), uuid.New()
 	targetSourceID, sharedSourceID := uuid.New(), uuid.New()
@@ -74,9 +75,12 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 			{`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,1,?,?)`, []any{targetSharedPosition, targetRelease, foreignTrack, sharedRecording}},
 			{`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,0,?,?)`, []any{foreignPosition, foreignRelease, foreignTrack, sharedRecording}},
 			{`INSERT INTO local_artist(id,name) VALUES (?, 'retained artist')`, []any{artistID}},
+			{`INSERT INTO local_artist(id,name) VALUES (?, 'foreign primary artist')`, []any{foreignPrimaryArtistID}},
+			{`UPDATE local_release SET primary_artist_id=? WHERE id=?`, []any{foreignPrimaryArtistID, foreignRelease}},
 			{`INSERT INTO track_artist(track_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, []any{foreignTrack, artistID}},
 			{`INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, []any{targetRelease, artistID}},
 			{`INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, []any{foreignRelease, artistID}},
+			{`INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,1,?,'foreign primary artist')`, []any{foreignRelease, foreignPrimaryArtistID}},
 			{`INSERT INTO provider(id,code) VALUES (?, 'deletion-test')`, []any{providerID}},
 			{`INSERT INTO provider_release(id,provider_id,provider_key,title) VALUES (?,?, 'release-key','provider release')`, []any{providerReleaseID, providerID}},
 			{`INSERT INTO provider_recording(id,provider_id,provider_key,title) VALUES (?,?, 'recording-key','provider recording')`, []any{providerRecordingID, providerID}},
@@ -139,8 +143,10 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 			t.Fatalf("release preview orphan recordings = %v (%d), want only %s", preview.RecordingIDs, preview.RecordingCount, targetRecording)
 		}
 		publications := make([]TrackPublication, 0, 1)
-		if err := db.NewSelect().Model(&publications).Where("position_id IN (?)", bun.In(preview.Scope.PublicationIDs)).Order("position_id").Scan(ctx); err != nil {
-			t.Fatalf("read deletion witness source: %v", err)
+		if len(preview.Scope.PublicationIDs) > 0 {
+			if err := db.NewSelect().Model(&publications).Where("position_id IN (?)", bun.In(preview.Scope.PublicationIDs)).Order("position_id").Scan(ctx); err != nil {
+				t.Fatalf("read deletion witness source: %v", err)
+			}
 		}
 		witnesses := make([]json.RawMessage, 0, len(publications))
 		for _, publication := range publications {
@@ -358,5 +364,183 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 	if retainedPositions != 1 || retainedTrackArtists != 1 || retainedReleaseArtists != 1 || retainedCollectionLinks != 1 {
 		t.Fatalf("publication-only deletion removed library associations: position=%d track_artist=%d release_artist=%d collection_release=%d",
 			retainedPositions, retainedTrackArtists, retainedReleaseArtists, retainedCollectionLinks)
+	}
+
+	artistTargetRelease, artistTargetPosition, artistTargetPosition2 := uuid.New(), uuid.New(), uuid.New()
+	artistTargetGeneration, artistTargetGeneration2 := uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, query := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO local_release(id,title,primary_artist_id) VALUES (?,'artist deletion target',?)`, []any{artistTargetRelease, artistID}},
+			{`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,0,?,?)`, []any{artistTargetPosition, artistTargetRelease, foreignTrack, sharedRecording}},
+			{`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,1,?,?)`, []any{artistTargetPosition2, artistTargetRelease, foreignTrack, sharedRecording}},
+			{`INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, []any{artistTargetRelease, artistID}},
+			{`INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,1,?,'coartist')`, []any{artistTargetRelease, foreignPrimaryArtistID}},
+		} {
+			if _, err := tx.ExecContext(ctx, query.sql, query.args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed artist deletion target: %v", err)
+	}
+	artistPreview, err := repository.PreviewLibraryDeletion(ctx, "artist", artistID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("preview artist deletion: %v", err)
+	}
+	if !slices.Equal(artistPreview.Scope.ArtistReleaseIDs, []uuid.UUID{artistTargetRelease}) ||
+		!slices.Equal(artistPreview.Scope.WarningReleaseIDs, []uuid.UUID{artistTargetRelease}) ||
+		len(artistPreview.Scope.PublicationIDs) != 2 || !slices.Contains(artistPreview.Scope.PublicationIDs, artistTargetPosition) ||
+		!slices.Contains(artistPreview.Scope.PublicationIDs, artistTargetPosition2) ||
+		len(artistPreview.RecordingIDs) != 0 {
+		t.Fatalf("artist preview target/warning/position/recordings = %v/%v/%v/%v", artistPreview.Scope.ArtistReleaseIDs,
+			artistPreview.Scope.WarningReleaseIDs, artistPreview.Scope.PublicationIDs, artistPreview.RecordingIDs)
+	}
+
+	staleRelease, stalePosition := uuid.New(), uuid.New()
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`INSERT INTO local_release(id,title,primary_artist_id) VALUES (?,'scope expansion',?)`, staleRelease, artistID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO release_track(id,release_id,position,track_id,recording_id) VALUES (?,?,0,?,?)`, stalePosition, staleRelease, foreignTrack, sharedRecording).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw(`INSERT INTO release_artist(release_id,position,artist_id,name) VALUES (?,0,?,'retained artist')`, staleRelease, artistID).Exec(ctx)
+		return err
+	}); err != nil {
+		t.Fatalf("seed post-preview artist release: %v", err)
+	}
+	staleHash := sha256.Sum256([]byte(artistPreview.ScopeDigest + uuid.NewString()))
+	staleConfirmation := hex.EncodeToString(staleHash[:])
+	staleOperationID, err := LibraryDeletionOperationID(staleConfirmation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.AdmitLibraryDeletionOperation(ctx, staleOperationID, staleConfirmation, time.Now().Add(time.Minute), artistPreview, nil, client, nil); !errors.Is(err, ErrLibraryDeletionConflict) {
+		t.Fatalf("admit stale artist scope = %v, want scope conflict", err)
+	}
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`DELETE FROM release_artist WHERE release_id=?`, staleRelease).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`DELETE FROM release_track WHERE id=?`, stalePosition).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`DELETE FROM release_medium WHERE release_id=?`, staleRelease).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw(`DELETE FROM local_release WHERE id=?`, staleRelease).Exec(ctx)
+		return err
+	}); err != nil {
+		t.Fatalf("remove post-preview artist release: %v", err)
+	}
+	artistRootClaim, artistFileClaim, artistFileClaim2 := uuid.New(), uuid.New(), uuid.New()
+	artistRoot := "artist-root"
+	insertNamespaceClaim(artistRootClaim, artistRoot, artistRoot, "dir", nil, &artistRoot)
+	insertReservation(artistRootClaim, artistTargetPosition, artistTargetGeneration)
+	insertReservation(artistRootClaim, artistTargetPosition2, artistTargetGeneration2)
+	insertNamespaceClaim(artistFileClaim, "artist-root/one.flac", "artist-root/one.flac", "file", &artistTargetPosition, nil)
+	insertReservation(artistFileClaim, artistTargetPosition, artistTargetGeneration)
+	insertNamespaceClaim(artistFileClaim2, "artist-root/two.flac", "artist-root/two.flac", "file", &artistTargetPosition2, nil)
+	insertReservation(artistFileClaim2, artistTargetPosition2, artistTargetGeneration2)
+	for _, publication := range []struct {
+		positionID uuid.UUID
+		generation uuid.UUID
+		path       string
+		bytes      int
+	}{
+		{artistTargetPosition, artistTargetGeneration, "artist-root/one.flac", 13},
+		{artistTargetPosition2, artistTargetGeneration2, "artist-root/two.flac", 14},
+	} {
+		if _, err := db.NewRaw(`INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at)
+			VALUES (?,?,?,?::text,jsonb_build_object('size',?), '{}','{}','{}',1,now())`, publication.positionID, epoch,
+			publication.generation, publication.path, publication.bytes).Exec(ctx); err != nil {
+			t.Fatalf("seed artist CURRENT publication %s: %v", publication.positionID, err)
+		}
+	}
+	artistGuard := admitAndClaim("artist", artistID, uuid.Nil, false)
+	if settled, err := repository.SettleLibraryDeletionPublication(ctx, artistGuard, artistTargetPosition, func(context.Context, json.RawMessage) error { return nil }); err != nil || !settled {
+		t.Fatalf("settle first artist CURRENT publication: settled=%t err=%v", settled, err)
+	}
+	failed, err := repository.FailLibraryDeletionDelivery(ctx, artistGuard, "injected artist deletion interruption")
+	if err != nil || !failed {
+		t.Fatalf("fail partially settled artist deletion: failed=%t err=%v", failed, err)
+	}
+	failedOperation, err := repository.GetOperation(ctx, artistGuard.OperationID)
+	if err != nil {
+		t.Fatalf("read failed artist deletion: %v", err)
+	}
+	var failedSnapshot LibraryDeletionOperationSnapshot
+	if err := decodeStrictJSON(failedOperation.InputSnapshot, &failedSnapshot); err != nil || !slices.Equal(failedSnapshot.ResidualPublicationIDs, []uuid.UUID{artistTargetPosition2}) {
+		t.Fatalf("failed artist deletion residual = %v (decode error %v), want second position only", failedSnapshot.ResidualPublicationIDs, err)
+	}
+	if _, err := db.NewRaw(`UPDATE river_job SET state='completed',finalized_at=now() WHERE id=? AND state='running'`, artistGuard.RiverJobID).Exec(ctx); err != nil {
+		t.Fatalf("finalize failed artist River delivery: %v", err)
+	}
+	retriedArtistOperation, err := repository.RetryLibraryDeletionOperationAndEnqueue(ctx, artistGuard.OperationID, client)
+	if err != nil {
+		t.Fatalf("retry partially settled artist deletion: %v", err)
+	}
+	var retriedSnapshot LibraryDeletionOperationSnapshot
+	if err := decodeStrictJSON(retriedArtistOperation.InputSnapshot, &retriedSnapshot); err != nil || !slices.Equal(retriedSnapshot.ResidualPublicationIDs, []uuid.UUID{artistTargetPosition2}) {
+		t.Fatalf("retried artist deletion residual = %v (decode error %v), want second position only", retriedSnapshot.ResidualPublicationIDs, err)
+	}
+	if _, err := db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, *retriedArtistOperation.RiverJobID).Exec(ctx); err != nil {
+		t.Fatalf("start retried artist River delivery: %v", err)
+	}
+	retriedArtistGuard := LibraryDeletionDeliveryGuard{
+		OperationID: retriedArtistOperation.ID, ApplicationAttempt: retriedArtistOperation.Attempt, RiverJobID: *retriedArtistOperation.RiverJobID,
+		RiverAttempt: 1, ClaimUUID: uuid.New(), BootUUID: uuid.New(), DeliveryToken: uuid.NewString(),
+	}
+	if outcome, err := repository.ClaimLibraryDeletionDelivery(ctx, retriedArtistGuard); err != nil || outcome != LibraryDeletionDeliveryAcquired {
+		t.Fatalf("claim retried artist deletion: outcome=%q err=%v", outcome, err)
+	}
+	if settled, err := repository.SettleLibraryDeletionPublication(ctx, retriedArtistGuard, artistTargetPosition2, func(context.Context, json.RawMessage) error { return nil }); err != nil || !settled {
+		t.Fatalf("settle remaining artist CURRENT publication: settled=%t err=%v", settled, err)
+	}
+	if finalized, err := repository.FinalizeLibraryDeletion(ctx, retriedArtistGuard); err != nil || !finalized {
+		t.Fatalf("finalize artist deletion: finalized=%t err=%v", finalized, err)
+	}
+	var artistVisible, artistExists bool
+	var artistTargetReleases, retainedForeignReleases, retainedForeignPositions int
+	if err := db.NewRaw(`SELECT catalog_visible FROM local_artist WHERE id=?`, artistID).Scan(ctx, &artistVisible); err != nil {
+		t.Fatalf("read retained technical artist: %v", err)
+	}
+	if err := db.NewRaw(`SELECT EXISTS(SELECT 1 FROM local_artist WHERE id=?)`, artistID).Scan(ctx, &artistExists); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM local_release WHERE id=?`, artistTargetRelease).Scan(ctx, &artistTargetReleases); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM local_release WHERE id=? AND primary_artist_id=?`, foreignRelease, foreignPrimaryArtistID).Scan(ctx, &retainedForeignReleases); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM release_track WHERE id=? AND release_id=? AND recording_id=?`, foreignPosition, foreignRelease, sharedRecording).Scan(ctx, &retainedForeignPositions); err != nil {
+		t.Fatal(err)
+	}
+	if !artistExists || artistVisible || artistTargetReleases != 0 || retainedForeignReleases != 1 || retainedForeignPositions != 1 {
+		t.Fatalf("artist deletion result: exists=%t visible=%t target releases=%d retained foreign release/position=%d/%d",
+			artistExists, artistVisible, artistTargetReleases, retainedForeignReleases, retainedForeignPositions)
+	}
+
+	emptyArtist := uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO local_artist(id,name) VALUES (?,'unreferenced artist')`, emptyArtist).Exec(ctx); err != nil {
+		t.Fatalf("seed unreferenced artist: %v", err)
+	}
+	emptyPreview, err := repository.PreviewLibraryDeletion(ctx, "artist", emptyArtist, uuid.Nil)
+	if err != nil {
+		t.Fatalf("preview unreferenced artist deletion: %v", err)
+	}
+	if emptyPreview.Scope.ArtistReleaseIDs == nil || emptyPreview.Scope.ArtistReferenceReleaseIDs == nil || emptyPreview.Scope.WarningReleaseIDs == nil ||
+		len(emptyPreview.Scope.ArtistReleaseIDs) != 0 || len(emptyPreview.Scope.ArtistReferenceReleaseIDs) != 0 || len(emptyPreview.Scope.WarningReleaseIDs) != 0 {
+		t.Fatalf("unreferenced artist scope arrays = targets:%v references:%v warnings:%v, want present empty arrays",
+			emptyPreview.Scope.ArtistReleaseIDs, emptyPreview.Scope.ArtistReferenceReleaseIDs, emptyPreview.Scope.WarningReleaseIDs)
+	}
+	emptyArtistGuard := admitAndClaim("artist", emptyArtist, uuid.Nil, false)
+	if finalized, err := repository.FinalizeLibraryDeletion(ctx, emptyArtistGuard); err != nil || !finalized {
+		t.Fatalf("finalize unreferenced artist deletion: finalized=%t err=%v", finalized, err)
 	}
 }

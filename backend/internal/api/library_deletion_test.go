@@ -93,6 +93,27 @@ func TestLibraryDeletionHTTPProjectionConfirmationAndOperationRetryRouting(t *te
 		t.Fatalf("deletion blockers are not structured: %#v", previewBody["blockers"])
 	}
 
+	artistID := uuid.New()
+	releasePreview := routes.preview
+	routes.preview = &service.LibraryDeletionPreview{
+		Kind: "artist", ReleaseID: artistID, Title: "Artist",
+		ArtistReleases: []service.LibraryDeletionArtistRelease{{Title: "Primary release"}},
+		CoartistWarnings: []service.LibraryDeletionCoartistWarning{{
+			ReleaseTitle: "Primary release", ArtistNames: []string{"Coartist"},
+		}},
+	}
+	artistPreviewResponse := transitionRequest(t, router, http.MethodGet,
+		"/library/artists/"+artistID.String()+"/deletion/preview", "")
+	if artistPreviewResponse.Code != http.StatusOK {
+		t.Fatalf("artist deletion preview status=%d body=%s", artistPreviewResponse.Code, artistPreviewResponse.Body.String())
+	}
+	if strings.Contains(artistPreviewResponse.Body.String(), artistID.String()) ||
+		!strings.Contains(artistPreviewResponse.Body.String(), "Primary release") ||
+		!strings.Contains(artistPreviewResponse.Body.String(), "Coartist") {
+		t.Fatalf("artist deletion preview did not project human-readable context: %s", artistPreviewResponse.Body.String())
+	}
+	routes.preview = releasePreview
+
 	confirmBody, err := json.Marshal(map[string]string{"confirmation_digest": routes.preview.ConfirmationDigest})
 	if err != nil {
 		t.Fatal(err)

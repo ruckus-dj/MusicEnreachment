@@ -56,18 +56,29 @@ type LibraryDeletionOutputFact struct {
 	Capturable   bool      `json:"capturable"`
 }
 
+type LibraryDeletionArtistRelease struct {
+	Title string `json:"title"`
+}
+
+type LibraryDeletionCoartistWarning struct {
+	ReleaseTitle string   `json:"release_title"`
+	ArtistNames  []string `json:"artist_names"`
+}
+
 // LibraryDeletionPreview is an explicit-confirmation capability. Its frozen
 // witnesses are private and cannot be replaced by a caller before admission.
 type LibraryDeletionPreview struct {
-	Kind               string                      `json:"kind"`
-	ReleaseID          uuid.UUID                   `json:"release_id"`
-	Title              string                      `json:"title"`
-	PublicationIDs     []uuid.UUID                 `json:"publication_ids"`
-	RecordingIDs       []uuid.UUID                 `json:"recording_ids"`
-	RecordingCount     int                         `json:"recording_count"`
-	OutputFacts        []LibraryDeletionOutputFact `json:"outputs"`
-	Blockers           []LibraryDeletionBlocker    `json:"blockers"`
-	ConfirmationDigest string                      `json:"confirmation_digest"`
+	Kind               string                           `json:"kind"`
+	ReleaseID          uuid.UUID                        `json:"release_id"`
+	Title              string                           `json:"title"`
+	ArtistReleases     []LibraryDeletionArtistRelease   `json:"artist_releases"`
+	CoartistWarnings   []LibraryDeletionCoartistWarning `json:"coartist_warnings"`
+	PublicationIDs     []uuid.UUID                      `json:"publication_ids"`
+	RecordingIDs       []uuid.UUID                      `json:"recording_ids"`
+	RecordingCount     int                              `json:"recording_count"`
+	OutputFacts        []LibraryDeletionOutputFact      `json:"outputs"`
+	Blockers           []LibraryDeletionBlocker         `json:"blockers"`
+	ConfirmationDigest string                           `json:"confirmation_digest"`
 	persistencePreview persistence.LibraryDeletionPreview
 	witnesses          []json.RawMessage
 	expiresAt          time.Time
@@ -189,9 +200,21 @@ func (service *LibraryDeletionService) Preview(ctx context.Context, kind string,
 	if err != nil {
 		return nil, err
 	}
+	artistReleases := make([]LibraryDeletionArtistRelease, 0, len(preview.ArtistReleases))
+	for _, release := range preview.ArtistReleases {
+		artistReleases = append(artistReleases, LibraryDeletionArtistRelease{Title: release.Title})
+	}
+	coartistWarnings := make([]LibraryDeletionCoartistWarning, 0, len(preview.CoartistWarnings))
+	for _, warning := range preview.CoartistWarnings {
+		coartistWarnings = append(coartistWarnings, LibraryDeletionCoartistWarning{
+			ReleaseTitle: warning.ReleaseTitle, ArtistNames: slices.Clone(warning.ArtistNames),
+		})
+	}
 	result := &LibraryDeletionPreview{
-		Kind: kind, ReleaseID: releaseID, Title: preview.Title, PublicationIDs: slices.Clone(preview.PositionIDs),
-		RecordingIDs: slices.Clone(preview.RecordingIDs), RecordingCount: preview.RecordingCount,
+		Kind: kind, ReleaseID: releaseID, Title: preview.Title,
+		ArtistReleases: artistReleases, CoartistWarnings: coartistWarnings,
+		PublicationIDs: slices.Clone(preview.PositionIDs),
+		RecordingIDs:   slices.Clone(preview.RecordingIDs), RecordingCount: preview.RecordingCount,
 		OutputFacts: facts, Blockers: blockers, ConfirmationDigest: confirmationDigest,
 		persistencePreview: preview, witnesses: witnesses, expiresAt: time.Now().Add(libraryDeletionPreviewLifetime),
 	}
