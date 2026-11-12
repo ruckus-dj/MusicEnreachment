@@ -47,6 +47,7 @@ type ProviderReleaseIdentifierBaseline struct {
 
 type LibraryMetadataDisplayResult struct {
 	Metadata                          LibraryMetadataResult
+	EffectiveKey                      *librarymetadata.ResolvedField
 	ProviderGenreBaseline             *ProviderGenreBaseline
 	ProviderReleaseIdentifierBaseline *ProviderReleaseIdentifierBaseline
 	ArtistCreditBaseline              []LibraryMetadataArtistCredit
@@ -142,6 +143,7 @@ func (service *LibraryMetadataService) ReadDisplay(ctx context.Context, scope li
 	}
 	result := LibraryMetadataDisplayResult{
 		Metadata:             LibraryMetadataResult{Envelope: display.Metadata.Envelope, Revision: display.Metadata.Revision},
+		EffectiveKey:         display.EffectiveKey,
 		ArtistCreditBaseline: mapLibraryArtistCredits(display.ArtistCreditBaseline),
 	}
 	if display.EffectiveArtistCredit != nil {

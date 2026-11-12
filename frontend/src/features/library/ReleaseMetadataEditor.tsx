@@ -79,6 +79,7 @@ type ReleaseFieldKey =
   | "media"
   | "isrc"
   | "bpm"
+  | "key"
   | "language"
   | "works"
   | "contributors"
@@ -145,6 +146,7 @@ const recordingFields: ReleaseField[] = [
   { key: "recording_date", kind: "date", group: "recording" },
   { key: "isrc", kind: "list", group: "recording" },
   { key: "bpm", kind: "number", group: "recording" },
+  { key: "key", kind: "text", group: "recording" },
   { key: "language", kind: "text", group: "additional" },
   { key: "content_advisory", kind: "advisory", group: "additional" },
   { key: "mood", kind: "list", group: "additional" },
@@ -198,6 +200,7 @@ const copy = {
       media: "Media",
       isrc: "ISRCs",
       bpm: "BPM",
+      key: "Musical key",
       language: "Language",
       works: "Works",
       contributors: "Contributors",
@@ -220,6 +223,7 @@ const copy = {
     },
     noOverride: "Inherited · no local override",
     providerBaseline: "MusicBrainz effective value",
+    inheritedFromRecording: "Inherited from recording",
     explicitEmpty: "Explicitly cleared",
     emptyValue: "Empty value",
     dateHint: "Enter the date in the format accepted by the server.",
@@ -308,6 +312,7 @@ const copy = {
       media: "Носители",
       isrc: "Коды ISRC",
       bpm: "Темп (BPM)",
+      key: "Тональность",
       language: "Язык",
       works: "Произведения",
       contributors: "Участники",
@@ -330,6 +335,7 @@ const copy = {
     },
     noOverride: "Наследуется · локальное значение не задано",
     providerBaseline: "Эффективное значение MusicBrainz",
+    inheritedFromRecording: "Унаследовано от записи",
     explicitEmpty: "Явно очищено",
     emptyValue: "Пустое значение",
     dateHint: "Введите дату в формате, который принимает сервер.",
@@ -647,6 +653,8 @@ function LibraryScopedMetadataEditorSession({
     status: ArtistCreditResolutionStatus;
     origin: string | null;
   }>({ status: "unclassified", origin: null });
+  const [effectiveKey, setEffectiveKey] =
+    useState<LibraryMetadataGetResponse["effective_key"]>();
   const [artistSearchQuery, setArtistSearchQuery] = useState("");
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -730,6 +738,11 @@ function LibraryScopedMetadataEditorSession({
           status: creditDisplay.effective.status,
           origin: creditDisplay.effective.origin,
         });
+        setEffectiveKey(
+          "effective_key" in response.data
+            ? response.data.effective_key
+            : undefined,
+        );
         if (!dirtyRef.current) {
           setDraft(next);
           setArtistCreditDraft(creditDisplay.draft);
@@ -1034,6 +1047,10 @@ function LibraryScopedMetadataEditorSession({
                       : undefined;
                   const hasDesiredIdentifier =
                     metadata && Object.hasOwn(metadata.envelope.desired, key);
+                  const inheritedKey =
+                    key === "key" && field.state === "absent"
+                      ? effectiveKey
+                      : undefined;
                   return (
                     <div
                       key={key}
@@ -1461,12 +1478,25 @@ function LibraryScopedMetadataEditorSession({
                         ) : (
                           <>
                             <span className="block whitespace-pre-wrap break-words">
-                              {field.state === "absent" &&
-                              !hasDesiredIdentifier &&
-                              providerIdentifier
-                                ? providerIdentifier
-                                : displayValue(field.state, field.value, text)}
+                              {inheritedKey?.field.state === "value"
+                                ? String(inheritedKey.field.value)
+                                : inheritedKey?.field.state === "explicit_empty"
+                                  ? text.explicitEmpty
+                                  : field.state === "absent" &&
+                                      !hasDesiredIdentifier &&
+                                      providerIdentifier
+                                    ? providerIdentifier
+                                    : displayValue(
+                                        field.state,
+                                        field.value,
+                                        text,
+                                      )}
                             </span>
+                            {inheritedKey?.scope === "recording" ? (
+                              <span className="mt-1 block text-xs text-[var(--muted)]">
+                                {text.inheritedFromRecording}
+                              </span>
+                            ) : null}
                             {field.state === "absent" &&
                             !hasDesiredIdentifier &&
                             providerIdentifier ? (

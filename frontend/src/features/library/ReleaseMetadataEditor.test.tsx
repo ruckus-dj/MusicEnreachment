@@ -126,6 +126,16 @@ it("saves recording and position title overrides through their own scopes", asyn
   const patchBodies = new Map<string, unknown>();
   const positionMetadata = (revision: number) => {
     const result = metadata(revision, "position");
+    result.effective_key = {
+      field: {
+        authority: "automatic",
+        provenance: { kind: "source_metadata", source_field: "KEY" },
+        state: "value",
+        value: "D♭ minor",
+      },
+      scope: "recording",
+      present: true,
+    };
     result.envelope.desired.contributors = {
       authority: "local",
       provenance: { kind: "manual" },
@@ -195,6 +205,11 @@ it("saves recording and position title overrides through their own scopes", asyn
   });
   openGroup(recording, "Названия");
   openGroup(position, "Названия");
+  openGroup(position, "Сведения о записи");
+  expect(within(position).getByText("D♭ minor")).toBeInTheDocument();
+  expect(
+    within(position).getByText("Унаследовано от записи"),
+  ).toBeInTheDocument();
   fireEvent.click(recordingEdit);
   fireEvent.change(
     within(recording).getByRole("textbox", { name: "Название" }),
@@ -274,6 +289,7 @@ it("saves recording and position title overrides through their own scopes", asyn
         },
       },
     });
+    expect(patchBodies.get("position")).not.toHaveProperty("changes.key");
   });
 });
 

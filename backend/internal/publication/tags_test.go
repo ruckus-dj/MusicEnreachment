@@ -284,6 +284,73 @@ func TestProjectTagsOptionalMappingsAbsentAndExplicitEmpty(t *testing.T) {
 	}
 }
 
+func TestProjectTagsMapsMusicalKeyByOutputContainer(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		container AudioContainer
+		want      map[string][]string
+		status    string
+	}{
+		{name: "MP3 uses initial key", container: AudioContainerMP3, want: map[string][]string{"INITIALKEY": {" D♭ minor "}, "KEY": {}}, status: "represented"},
+		{name: "M4A uses initial key", container: AudioContainerM4A, want: map[string][]string{"INITIALKEY": {" D♭ minor "}, "KEY": {}}, status: "represented"},
+		{name: "FLAC uses key", container: AudioContainerFLAC, want: map[string][]string{"KEY": {" D♭ minor "}, "INITIALKEY": {}}, status: "represented"},
+		{name: "MKA uses key", container: AudioContainerMKA, want: map[string][]string{"KEY": {" D♭ minor "}, "INITIALKEY": {}}, status: "represented"},
+		{name: "unknown container is unsupported", container: AudioContainer("unknown"), status: "unsupported"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			key := librarymetadata.ManualFieldValue(librarymetadata.StateValue, " D♭ minor ", true)
+			position := librarymetadata.Envelope{
+				Version: librarymetadata.EnvelopeVersion,
+				Scope:   librarymetadata.ScopePosition,
+				Desired: map[string]librarymetadata.FieldValue{"key": key},
+			}
+			result, err := ProjectTags(TagProjectionInput{
+				Release:         ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+				Position:        PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &position},
+				OutputContainer: test.container,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Fields["position.key"].Status != test.status {
+				t.Fatalf("key field status = %#v, want %q", result.Fields["position.key"], test.status)
+			}
+			for key, want := range test.want {
+				if !reflect.DeepEqual(result.Tags[key], want) {
+					t.Errorf("%s = %#v, want %#v", key, result.Tags[key], want)
+				}
+			}
+			if test.status == "unsupported" {
+				if _, exists := result.Tags["KEY"]; exists {
+					t.Errorf("unsupported container guessed KEY mapping: %#v", result.Tags)
+				}
+				if _, exists := result.Tags["INITIALKEY"]; exists {
+					t.Errorf("unsupported container guessed INITIALKEY mapping: %#v", result.Tags)
+				}
+			}
+		})
+	}
+
+	position := librarymetadata.Envelope{
+		Version: librarymetadata.EnvelopeVersion,
+		Scope:   librarymetadata.ScopePosition,
+		Desired: map[string]librarymetadata.FieldValue{"key": librarymetadata.ManualFieldValue(librarymetadata.StateExplicitEmpty, nil, false)},
+	}
+	cleared, err := ProjectTags(TagProjectionInput{
+		Release:         ReleaseTags{Title: "Album", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}},
+		Position:        PositionTags{Title: "Song", Artist: []librarymetadata.ArtistCredit{{ArtistName: "Artist"}}, Desired: &position},
+		OutputContainer: AudioContainer("unknown"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"KEY", "INITIALKEY"} {
+		if values, exists := cleared.Tags[key]; !exists || values == nil || len(values) != 0 {
+			t.Errorf("explicit-empty %s = %#v, exists=%t; want clear footprint", key, values, exists)
+		}
+	}
+}
+
 func TestProjectTagsReleaseArtistSortNameUsesArtistSortNotAlbumArtistSort(t *testing.T) {
 	release := librarymetadata.Envelope{
 		Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopeRelease,

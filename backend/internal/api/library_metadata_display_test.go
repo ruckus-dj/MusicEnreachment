@@ -259,6 +259,7 @@ type libraryMetadataDisplayBody struct {
 	Revision              int64                           `json:"revision"`
 	PublicationApplied    bool                            `json:"publication_applied"`
 	ProviderGenreBaseline *libraryMetadataDisplayBaseline `json:"provider_genre_baseline"`
+	EffectiveKey          *librarymetadata.ResolvedField  `json:"effective_key"`
 }
 
 type libraryMetadataDisplayBaseline struct {
@@ -347,6 +348,44 @@ func TestLibraryMetadataDisplayReturnsProviderBaselineFields(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLibraryMetadataDisplayReturnsEffectiveKeyWithoutChangingDesiredEnvelope(t *testing.T) {
+	id := uuid.New()
+	metadata := libraryMetadataSeed(librarymetadata.ScopePosition)
+	metadata.Envelope.Desired["comment"] = librarymetadata.ManualFieldValue(librarymetadata.StateValue, "preserved", true)
+	effectiveKey := &librarymetadata.ResolvedField{
+		Field: librarymetadata.FieldValue{
+			State:      librarymetadata.StateValue,
+			Value:      "D♭ minor",
+			Authority:  librarymetadata.AuthorityAutomatic,
+			Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceSourceMetadata, SourceField: "KEY"},
+		},
+		Scope:   librarymetadata.ScopeRecording,
+		Present: true,
+	}
+	repository := &libraryMetadataRepositoryFixture{
+		read:    metadata,
+		display: &persistence.LibraryMetadataDisplay{Metadata: metadata, EffectiveKey: effectiveKey},
+	}
+	handler := HandlerWithDependencies(Dependencies{LibraryMetadata: service.NewLibraryMetadataService(repository)})
+	response := libraryMetadataRequest(t, handler, http.MethodGet, libraryMetadataDisplayPath(librarymetadata.ScopePosition, id), "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET status = %d: %s", response.Code, response.Body)
+	}
+	var body libraryMetadataDisplayBody
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.EffectiveKey == nil || body.EffectiveKey.Scope != librarymetadata.ScopeRecording || body.EffectiveKey.Field.State != librarymetadata.StateValue || body.EffectiveKey.Field.Value != "D♭ minor" {
+		t.Fatalf("effective key = %#v, want exact recording value", body.EffectiveKey)
+	}
+	if _, exists := body.Envelope.Desired["key"]; exists {
+		t.Fatalf("effective key was materialized into position desired metadata: %#v", body.Envelope.Desired["key"])
+	}
+	if body.Envelope.Desired["comment"].Value != "preserved" {
+		t.Fatalf("unrelated desired metadata changed: %#v", body.Envelope.Desired)
 	}
 }
 

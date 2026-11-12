@@ -357,7 +357,14 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        CURRENT metadata и assets. Независимое ревью выполнено; расширены существующие
        preview/admission/native-readback сценарии. `f799cad2` прошёл обычный полный
        hook и всю [CI 43239905319](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43239905319),
-       включая Windows и публикацию контейнера. Это не завершение полного metadata port.
+        включая Windows и публикацию контейнера. Это не завершение полного metadata port.
+     - [x] `213ffe38`: release-only ASIN/script используют принятый MusicBrainz
+       baseline с evidence отдельно от ручных overrides; явные ручные состояния
+       подавляют fallback. Реализованы display/editor, preview/admission guards и
+       native write/readback. Независимое ревью и полный hook прошли. Вся
+       [CI 43258045646](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43258045646)
+       прошла после повтора macOS arm64, которому сначала не выделился hosted
+       runner; код и gates не менялись. Полный metadata port остаётся открытым.
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через
@@ -530,7 +537,35 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       показал автоматическую first-publication после `local_confirmation` без
       publication admission HTTP-запроса. Обнаруженный обход явного подтверждения
       исправляется отдельно; приёмка будет повторена на новой собственной позиции.
-      Существующий стенд и пользовательские файлы не изменялись.
+       Существующий стенд и пользовательские файлы не изменялись.
+     - `bcb5c6ad` устранил автоматическую первую публикацию из reconciliation;
+       confirmed default-source choice и automatic CURRENT AUDIO upgrade сохранены.
+       Полный hook, независимое ревью и вся
+       [CI 43256131171](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43256131171)
+       прошли; macOS arm64 потребовал повтора из-за отсутствия hosted runner.
+       На третьей собственной позиции real-backend reconciliation ACK завершён
+       до publication confirmation: CURRENT, attempt и publish operation отсутствовали.
+       Затем явное preview/confirm создало проверенный CURRENT; исходник и две
+       предыдущие публикации сохранили hashes. Это API-assisted приёмка, не browser E2E.
+     - Real-backend deletion preview выявил отдельный blocker из-за полностью
+       settled reconciliation bookkeeping. `7e5eacb3` различает живую authority и
+       завершённую историю, учитывает очищенные River jobs и superseded parked
+       failures; перед удалением позиций безопасно удаляет только settled rows,
+       сохраняя operation history. Независимое ревью и полный hook прошли;
+       CI пока не подтверждена. Повтор API-assisted приёмки на gate-built
+       `7e5eacb3` успешен: свежий preview показал один целевой релиз и capturable
+       CURRENT без blockers; явное подтверждение завершило operation
+       `08c3533a-c295-5cbb-a1c4-ba493d31e223` успешно. Целевые library artist/release
+       возвращают 404, CURRENT удалён. Исходный FLAC и две прежние CURRENT сохранили
+       hashes; Local provider artist/release/recording остались в public search.
+       Это не browser E2E.
+     - На том же real backend browser-проверка preview/отмены для оставшегося
+       второго артиста подтвердила human-readable scope без UUID, RU/EN без
+       language-only запросов, light 1440×900/390×844 без горизонтального
+       переполнения и dark 1440×900. Escape при фокусе внутри диалога и кнопка
+       Cancel закрывают preview без подтверждения. После отмены оба оставшихся
+       артиста и релиза доступны (HTTP 200), каждый с одной published/available
+       позицией. Dark 390×844 и browser-confirm/delete не проверены.
 
 **Целевой результат программы:** после настройки открывается настоящий рабочий интерфейс;
 утверждённые разделы доступны из общей навигации, каталог читает реальные

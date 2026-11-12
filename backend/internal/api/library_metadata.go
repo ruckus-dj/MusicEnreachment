@@ -33,6 +33,7 @@ type libraryMetadataGetResponse struct {
 	ProviderReleaseIdentifierBaseline *service.ProviderReleaseIdentifierBaseline `json:"provider_release_identifier_baseline,omitempty"`
 	ArtistCreditBaseline              []service.LibraryMetadataArtistCredit      `json:"artist_credit_baseline"`
 	EffectiveArtistCredit             *service.EffectiveArtistCredit             `json:"effective_artist_credit,omitempty"`
+	EffectiveKey                      *librarymetadata.ResolvedField             `json:"effective_key,omitempty"`
 }
 type libraryMetadataGetOutput struct {
 	Body libraryMetadataGetResponse `json:"body"`
@@ -107,7 +108,7 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 		case err != nil:
 			return nil, huma.Error503ServiceUnavailable("library metadata is unavailable")
 		default:
-			return &libraryMetadataGetOutput{Body: libraryMetadataGetResponse{Envelope: result.Metadata.Envelope, Revision: result.Metadata.Revision, PublicationApplied: false, ProviderGenreBaseline: result.ProviderGenreBaseline, ProviderReleaseIdentifierBaseline: result.ProviderReleaseIdentifierBaseline, ArtistCreditBaseline: result.ArtistCreditBaseline, EffectiveArtistCredit: result.EffectiveArtistCredit}}, nil
+			return &libraryMetadataGetOutput{Body: libraryMetadataGetResponse{Envelope: result.Metadata.Envelope, Revision: result.Metadata.Revision, PublicationApplied: false, ProviderGenreBaseline: result.ProviderGenreBaseline, ProviderReleaseIdentifierBaseline: result.ProviderReleaseIdentifierBaseline, ArtistCreditBaseline: result.ArtistCreditBaseline, EffectiveArtistCredit: result.EffectiveArtistCredit, EffectiveKey: result.EffectiveKey}}, nil
 		}
 	}
 	readDesired := func(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID) (*libraryMetadataOutput, error) {

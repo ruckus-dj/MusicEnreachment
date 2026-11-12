@@ -35,6 +35,12 @@ func TestCurrentPublicationProviderTagProtection(t *testing.T) {
 			wantAbsent: []string{"title"},
 		},
 		{
+			name:       "position manual absent key protects both aliases",
+			position:   `{"local_metadata":{"version":1,"scope":"position","desired":{"key":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`,
+			wantKeys:   []string{"INITIALKEY", "KEY"},
+			wantAbsent: []string{"key"},
+		},
+		{
 			name:       "manual absent genre does not protect provider genre",
 			position:   `{"local_metadata":{"version":1,"scope":"position","desired":{"genre":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}},"title":{"state":"absent","authority":"manual","provenance":{"kind":"manual"}}}}}`,
 			wantKeys:   []string{"TITLE"},

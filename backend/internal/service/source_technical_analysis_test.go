@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -181,6 +182,24 @@ func TestParseSourceTechnicalAnalysisKeepsMultihourDurationBeyondInt32(t *testin
 	}
 	if *analysis.Container.DurationMS <= int64(math.MaxInt32) {
 		t.Errorf("multihour format duration %d did not exceed int32; a 32-bit conversion would truncate it", *analysis.Container.DurationMS)
+	}
+}
+
+func TestParseSourceTechnicalAnalysisKeepsCompetingMusicalKeyAliases(t *testing.T) {
+	raw := []byte(`{"format":{"tags":{"KEY":["D♭ minor","C minor"],"INITIALKEY":"A♯ minor"}},"streams":[{"codec_type":"audio","index":0,"tags":{"INITIALKEY":["F♯ major","G major"],"KEY":"E minor"}}]}`)
+	analysis, err := service.ParseSourceTechnicalAnalysis(raw)
+	if err != nil {
+		t.Fatalf("parse source technical tags: %v", err)
+	}
+	if !bytes.Equal(analysis.RawJSON, raw) {
+		t.Fatal("raw ffprobe snapshot changed")
+	}
+	want := map[string][]string{
+		"KEY":        {"D♭ minor", "C minor", "E minor"},
+		"INITIALKEY": {"A♯ minor", "F♯ major", "G major"},
+	}
+	if !reflect.DeepEqual(analysis.Tags, want) {
+		t.Fatalf("source tags = %#v, want independent aliases %#v", analysis.Tags, want)
 	}
 }
 

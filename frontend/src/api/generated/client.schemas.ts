@@ -713,6 +713,12 @@ export interface LibraryMetadataBody {
   expected_revision: number;
 }
 
+export interface ResolvedField {
+  field: FieldValue;
+  present: boolean;
+  scope: string;
+}
+
 export interface ProviderGenreEvidence {
   authority: number;
   fetch_order: number;
@@ -746,6 +752,7 @@ export interface LibraryMetadataGetResponse {
   /** @nullable */
   artist_credit_baseline: LibraryMetadataArtistCredit[] | null;
   effective_artist_credit?: EffectiveArtistCredit;
+  effective_key?: ResolvedField;
   envelope: Envelope;
   provider_genre_baseline?: ProviderGenreBaseline;
   provider_release_identifier_baseline?: ProviderReleaseIdentifierBaseline;

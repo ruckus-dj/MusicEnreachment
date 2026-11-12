@@ -8,9 +8,9 @@ import (
 // ResolvedField is the winning optional metadata value and the scope that
 // supplied it. Present is false when no scope contains a nonempty value.
 type ResolvedField struct {
-	Field   FieldValue
-	Scope   Scope
-	Present bool
+	Field   FieldValue `json:"field"`
+	Scope   Scope      `json:"scope"`
+	Present bool       `json:"present"`
 }
 
 // ResolveOptionalField resolves only fields intended to be inherited as

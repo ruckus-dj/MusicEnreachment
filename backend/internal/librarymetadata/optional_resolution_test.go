@@ -109,6 +109,29 @@ func TestResolveOptionalFieldKeepsSpecificityAndProvenance(t *testing.T) {
 	}
 }
 
+func TestResolveOptionalKeyKeepsExactValueAndPositionPrecedence(t *testing.T) {
+	key := " D♭ minor "
+	recordingField := optionalValue(key)
+	recording := optionalEnvelope(ScopeRecording, map[string]FieldValue{"key": recordingField})
+	position := optionalEnvelope(ScopePosition, map[string]FieldValue{"key": {State: StateAbsent, Authority: AuthorityManual, Provenance: Provenance{Kind: ProvenanceManual}}})
+	before := recording.Desired["key"]
+
+	resolved, err := ResolveOptionalField("key", position, nil, recording, nil)
+	if err != nil || !resolved.Present || resolved.Scope != ScopeRecording || resolved.Field.Value != key {
+		t.Fatalf("inherited key = %#v, error %v; want exact recording value", resolved, err)
+	}
+	if !reflect.DeepEqual(recording.Desired["key"], before) {
+		t.Fatal("resolving inherited key mutated recording metadata")
+	}
+
+	positionValue := optionalValue("G♭ major")
+	position.Desired["key"] = positionValue
+	resolved, err = ResolveOptionalField("key", position, nil, recording, nil)
+	if err != nil || !resolved.Present || resolved.Scope != ScopePosition || resolved.Field.Value != "G♭ major" {
+		t.Fatalf("position key = %#v, error %v; want position override", resolved, err)
+	}
+}
+
 func TestResolveOptionalFieldEmptySlicesFallThrough(t *testing.T) {
 	cases := []struct {
 		field    string

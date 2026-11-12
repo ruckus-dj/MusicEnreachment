@@ -85,6 +85,7 @@ var fieldDefinitions = []FieldDefinition{
 	{Name: "grouping", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "comment", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "bpm", Type: TypeNumber, Scopes: []Scope{ScopeRecording, ScopeTrack, ScopePosition}},
+	{Name: "key", Type: TypeString, Scopes: []Scope{ScopeRecording, ScopePosition}},
 	{Name: "copyright", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "license", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "website", Type: TypeString, Scopes: []Scope{ScopeRelease, ScopeRecording, ScopeTrack, ScopePosition}},

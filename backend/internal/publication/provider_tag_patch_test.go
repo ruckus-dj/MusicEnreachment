@@ -108,6 +108,7 @@ func TestPublicationTagKeysForFieldUsesApprovedMappingFootprints(t *testing.T) {
 		{"release artist MBID alias", librarymetadata.ScopeRelease, "artist_mbid", []string{"MUSICBRAINZ_ALBUMARTISTID"}},
 		{"release sort title", librarymetadata.ScopeRelease, "sort_title", []string{"ALBUMSORT"}},
 		{"position sort title", librarymetadata.ScopePosition, "sort_title", []string{"TITLESORT"}},
+		{"position musical key", librarymetadata.ScopePosition, "key", []string{"KEY", "INITIALKEY"}},
 		{"release album artist sort names unsupported", librarymetadata.ScopeRelease, "album_artist_sort_names", nil},
 		{"position movement footprint", librarymetadata.ScopePosition, "movement", []string{"MOVEMENTNAME", "MOVEMENTNUMBER", "MOVEMENTCOUNT"}},
 		{"position work footprint", librarymetadata.ScopePosition, "works", []string{"WORK", "MUSICBRAINZ_WORKID"}},

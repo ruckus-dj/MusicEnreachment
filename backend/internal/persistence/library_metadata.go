@@ -45,6 +45,7 @@ type ProviderReleaseIdentifierBaseline struct {
 
 type LibraryMetadataDisplay struct {
 	Metadata                          LibraryMetadata
+	EffectiveKey                      *librarymetadata.ResolvedField
 	ProviderGenreBaseline             *ProviderGenreBaseline
 	ProviderReleaseIdentifierBaseline *ProviderReleaseIdentifierBaseline
 	ArtistCreditBaseline              []librarymetadata.ArtistCredit
@@ -140,6 +141,10 @@ func (repository *LibraryRepository) ReadMetadataDisplay(ctx context.Context, sc
 			return err
 		}
 		result.Metadata = metadata
+		result.EffectiveKey, err = readEffectiveKey(ctx, tx, scope, releaseID, ownerID, metadata.Envelope)
+		if err != nil {
+			return err
+		}
 		result.ArtistCreditBaseline, result.EffectiveArtistCredit, err = readArtistCreditDisplay(ctx, tx, scope, releaseID, ownerID, metadata.Envelope)
 		if err != nil {
 			return err
@@ -161,6 +166,48 @@ func (repository *LibraryRepository) ReadMetadataDisplay(ctx context.Context, sc
 		return LibraryMetadataDisplay{}, fmt.Errorf("read library metadata display: %w", err)
 	}
 	return result, nil
+}
+
+func readEffectiveKey(ctx context.Context, tx bun.Tx, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, desired librarymetadata.Envelope) (*librarymetadata.ResolvedField, error) {
+	var position, recording *librarymetadata.Envelope
+	switch scope {
+	case librarymetadata.ScopeRecording:
+		recording = &desired
+	case librarymetadata.ScopePosition:
+		position = &desired
+		var recordingID string
+		err := tx.NewRaw(`SELECT COALESCE(recording.id::text, '')
+			FROM release_track position
+			LEFT JOIN local_recording recording ON recording.id=position.recording_id
+			WHERE position.id=? AND position.release_id=?`, ownerID, releaseID).Scan(ctx, &recordingID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrLibraryMetadataNotFound
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read position recording for effective key: %w", err)
+		}
+		if recordingID != "" {
+			id, err := uuid.Parse(recordingID)
+			if err != nil || id == uuid.Nil {
+				return nil, errors.New("position recording ID is invalid")
+			}
+			metadata, err := readMetadata(ctx, tx, librarymetadata.ScopeRecording, uuid.Nil, id)
+			if err != nil {
+				return nil, fmt.Errorf("read recording metadata for effective key: %w", err)
+			}
+			recording = &metadata.Envelope
+		}
+	default:
+		return nil, nil
+	}
+	resolved, err := librarymetadata.ResolveOptionalField("key", position, nil, recording, nil)
+	if err != nil {
+		return nil, fmt.Errorf("resolve effective key: %w", err)
+	}
+	if !resolved.Present {
+		return nil, nil
+	}
+	return &resolved, nil
 }
 
 func (repository *LibraryRepository) UpdateMetadata(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID, expected int64, envelope librarymetadata.Envelope) (LibraryMetadata, error) {

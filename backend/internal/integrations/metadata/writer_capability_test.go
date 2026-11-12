@@ -126,6 +126,40 @@ func TestMetadataWriterRoundTripsKnownStandardFields(t *testing.T) {
 	}
 }
 
+func TestMetadataWriterKeepsOnlyTheContainerSelectedMusicalKeyAlias(t *testing.T) {
+	for _, test := range []struct {
+		ext      string
+		valueKey string
+		clearKey string
+	}{
+		{ext: ".mp3", valueKey: "INITIALKEY", clearKey: "KEY"},
+		{ext: ".m4a", valueKey: "INITIALKEY", clearKey: "KEY"},
+		{ext: ".flac", valueKey: "KEY", clearKey: "INITIALKEY"},
+		{ext: ".mka", valueKey: "KEY", clearKey: "INITIALKEY"},
+	} {
+		t.Run(test.ext, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join("testdata", "eg"+test.ext))
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := writeMetadataFixture(t, test.ext, contents)
+			requested := map[string][]string{test.valueKey: {"D♭ minor"}, test.clearKey: {}}
+			written, err := (Writer{}).Write(context.Background(), path, requested, nil)
+			if err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			assertValues(t, written.Tags, test.valueKey, []string{"D♭ minor"})
+			assertValues(t, written.Tags, test.clearKey, nil)
+			fresh, err := (Reader{}).Read(context.Background(), path, ReadRequest{})
+			if err != nil {
+				t.Fatalf("fresh Read: %v", err)
+			}
+			assertValues(t, fresh.Tags, test.valueKey, []string{"D♭ minor"})
+			assertValues(t, fresh.Tags, test.clearKey, nil)
+		})
+	}
+}
+
 func TestMetadataWriterRoundTripsDuplicateContributorValues(t *testing.T) {
 	for _, ext := range []string{".flac", ".mp3", ".m4a", ".mka"} {
 		t.Run(ext, func(t *testing.T) {

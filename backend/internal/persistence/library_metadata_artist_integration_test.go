@@ -186,6 +186,14 @@ func TestLibraryMetadataDisplayKeepsEnvelopeWhenTrackCreditsAreFallbackOrUnclass
 		t.Fatalf("insert release display fixture: %v", err)
 	}
 	repository := NewLibraryRepository(db)
+	recordingMetadata, err := repository.ReadMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID)
+	if err != nil {
+		t.Fatalf("read recording metadata before key setup: %v", err)
+	}
+	recordingMetadata.Envelope.Desired["key"] = librarymetadata.ManualFieldValue(librarymetadata.StateValue, "D♭ minor", true)
+	if _, err := repository.UpdateMetadata(ctx, librarymetadata.ScopeRecording, uuid.Nil, recordingID, recordingMetadata.Revision, recordingMetadata.Envelope); err != nil {
+		t.Fatalf("save recording key: %v", err)
+	}
 	metadata, err := repository.ReadMetadata(ctx, librarymetadata.ScopePosition, releaseID, fallbackPositionID)
 	if err != nil {
 		t.Fatalf("read fallback position metadata: %v", err)
@@ -214,6 +222,12 @@ func TestLibraryMetadataDisplayKeepsEnvelopeWhenTrackCreditsAreFallbackOrUnclass
 			}
 			if test.positionID == fallbackPositionID && display.Metadata.Envelope.Desired["comment"].Value != "preserve unrelated metadata" {
 				t.Fatalf("unrelated desired metadata was not retained: %#v", display.Metadata.Envelope.Desired)
+			}
+			if display.EffectiveKey == nil || display.EffectiveKey.Scope != librarymetadata.ScopeRecording || display.EffectiveKey.Field.State != librarymetadata.StateValue || display.EffectiveKey.Field.Value != "D♭ minor" {
+				t.Fatalf("effective key = %#v, want joined recording key", display.EffectiveKey)
+			}
+			if _, exists := display.Metadata.Envelope.Desired["key"]; exists {
+				t.Fatalf("recording key was copied into position desired metadata: %#v", display.Metadata.Envelope.Desired["key"])
 			}
 			if got := display.EffectiveArtistCredit; got.Status != test.status || got.Origin != test.origin || len(got.Credits) != test.count {
 				t.Fatalf("effective artist credits = %#v", got)

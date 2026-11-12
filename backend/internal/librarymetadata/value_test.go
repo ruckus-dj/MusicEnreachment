@@ -227,14 +227,18 @@ func TestScalarDateAndSubtitleRegistryScopes(t *testing.T) {
 		{name: "asin", typeOf: TypeString, scopes: []Scope{ScopeRelease}},
 		{name: "script", typeOf: TypeString, scopes: []Scope{ScopeRelease}},
 		{name: "subtitle", typeOf: TypeString, scopes: []Scope{ScopeRecording, ScopeTrack, ScopePosition}},
+		{name: "key", typeOf: TypeString, scopes: []Scope{ScopeRecording, ScopePosition}},
 	} {
 		definition, ok := Field(test.name)
 		if !ok || definition.Type != test.typeOf || !reflect.DeepEqual(definition.Scopes, test.scopes) {
 			t.Errorf("Field(%q) = %#v, %t; want type %q and scopes %v", test.name, definition, ok, test.typeOf, test.scopes)
 		}
 	}
-	for _, field := range []string{"recording_date", "subtitle"} {
+	for _, field := range []string{"recording_date", "subtitle", "key"} {
 		for _, scope := range []Scope{ScopeRecording, ScopeTrack, ScopePosition} {
+			if field == "key" && scope == ScopeTrack {
+				continue
+			}
 			data := `{"version":1,"scope":"` + string(scope) + `","desired":{"` + field + `":{"state":"absent","authority":"automatic","provenance":{"kind":"provider"}}}}`
 			if _, err := DecodeEnvelope([]byte(data)); err != nil {
 				t.Errorf("DecodeEnvelope() rejected %q in %q scope: %v", field, scope, err)

@@ -324,6 +324,26 @@ func applyDesired(tags map[string][]string, fields map[string]TagFieldResult, sc
 			fields[string(scope)+"."+name] = TagFieldResult{Status: "represented"}
 			continue
 		}
+		if name == "key" {
+			key, ok := value.Value.(string)
+			if !ok {
+				fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
+				continue
+			}
+			switch outputContainer {
+			case AudioContainerMP3, AudioContainerM4A:
+				tags["INITIALKEY"] = []string{key}
+				tags["KEY"] = []string{}
+			case AudioContainerFLAC, AudioContainerMKA:
+				tags["KEY"] = []string{key}
+				tags["INITIALKEY"] = []string{}
+			default:
+				fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "key metadata has no approved mapping for the output container"}
+				continue
+			}
+			fields[string(scope)+"."+name] = TagFieldResult{Status: "represented"}
+			continue
+		}
 		values, ok := normalizedTagValues(name, value.Value)
 		if !ok {
 			fields[string(scope)+"."+name] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
@@ -582,6 +602,10 @@ func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, boo
 		}
 	case "content_advisory":
 		return []string{"ITUNESADVISORY"}, true
+	case "key":
+		if scope == librarymetadata.ScopeRecording || scope == librarymetadata.ScopePosition {
+			return []string{"KEY", "INITIALKEY"}, true
+		}
 	}
 	key, ok := normalizedTagKey(scope, field)
 	if !ok {
