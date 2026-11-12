@@ -4,14 +4,22 @@ package persistence_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -132,6 +140,29 @@ type incomingMatchFixture struct {
 	cacheRevision         *string
 	releaseKeys           []string
 	graph                 persistence.ProviderGraph
+}
+
+type localMatchingPublicationReconcileInserter struct {
+	args []persistence.PublicationReconciliationJobArgs
+	ids  []int64
+}
+
+func (inserter *localMatchingPublicationReconcileInserter) InsertTx(ctx context.Context, tx *sql.Tx, args river.JobArgs, _ *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	jobArgs, ok := args.(persistence.PublicationReconciliationJobArgs)
+	if !ok {
+		return nil, errors.New("unexpected publication reconciliation job arguments")
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return nil, err
+	}
+	var jobID int64
+	if err := tx.QueryRowContext(ctx, `INSERT INTO river_job(kind,args,state,attempt) VALUES ($1,$2::jsonb,'available',0) RETURNING id`, args.Kind(), encoded).Scan(&jobID); err != nil {
+		return nil, err
+	}
+	inserter.args = append(inserter.args, jobArgs)
+	inserter.ids = append(inserter.ids, jobID)
+	return &rivertype.JobInsertResult{Job: &rivertype.JobRow{ID: jobID}}, nil
 }
 
 func newIncomingMatchFixture(t *testing.T, ctx context.Context, db *bun.DB) *incomingMatchFixture {
@@ -415,6 +446,61 @@ func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing
 		t.Fatalf("confirmation did not return materialized local release: %+v", confirmed)
 	}
 
+	// Consume the reconciliation created by the real local-confirmation writer.
+	// An unpublished matched release is not authorization to publish its first
+	// audio; reconciliation must acknowledge it without creating an attempt.
+	var positionID, outputEpoch uuid.UUID
+	if err := db.NewRaw(`SELECT id FROM release_track WHERE release_id=? ORDER BY position LIMIT 1`, *confirmed.LocalReleaseID).Scan(ctx, &positionID); err != nil {
+		t.Fatalf("read confirmed local release position: %v", err)
+	}
+	if err := db.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true`).Scan(ctx, &outputEpoch); err != nil {
+		t.Fatal(err)
+	}
+	repository := persistence.NewSetupManagerRepository(db)
+	inserter := new(localMatchingPublicationReconcileInserter)
+	if dispatched, err := repository.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || dispatched != 1 {
+		t.Fatalf("dispatch local-confirmation reconciliation=%d err=%v", dispatched, err)
+	}
+	operationID, jobID := inserter.args[0].OperationID, inserter.ids[0]
+	if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	guard, claim, err := repository.ClaimPublicationReconciliationDelivery(ctx, operationID, jobID, 1)
+	if err != nil || claim != persistence.PublicationReconciliationClaimed {
+		t.Fatalf("claim local-confirmation reconciliation=%s err=%v", claim, err)
+	}
+	reconciler := service.NewLibraryPublications(repository, settings.New(persistence.NewSettingsRepository(db), nil), inserter, tools.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}).
+		WithPublicationCoordinator(publication.NewCoordinator())
+	if err := reconciler.ReconcilePublication(ctx, guard); err != nil {
+		t.Fatalf("consume local-confirmation reconciliation: %v", err)
+	}
+	var current, attempts, dirty int
+	var eventState, operationState string
+	for _, query := range []string{
+		`SELECT count(*) FROM track_publication WHERE position_id=?`,
+		`SELECT count(*) FROM track_publication_attempt WHERE position_id=?`,
+	} {
+		target := &current
+		if query == `SELECT count(*) FROM track_publication_attempt WHERE position_id=?` {
+			target = &attempts
+		}
+		if err := db.NewRaw(query, positionID).Scan(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=? AND generation<=?`, outputEpoch, positionID, guard.ObservedGeneration).Scan(ctx, &dirty); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT state FROM publication_reconciliation_event WHERE operation_id=?`, operationID).Scan(ctx, &eventState); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT state FROM operation WHERE id=?`, operationID).Scan(ctx, &operationState); err != nil {
+		t.Fatal(err)
+	}
+	if current != 0 || attempts != 0 || dirty != 0 || eventState != "completed" || operationState != "succeeded" {
+		t.Fatalf("local-confirmation reconciliation created publication authority: current=%d attempts=%d observed dirty=%d event=%s operation=%s", current, attempts, dirty, eventState, operationState)
+	}
+
 	var releaseLinks, recordingLinks, trackLinks, artistLinks int
 	for query, target := range map[string]*int{
 		`SELECT count(*) FROM provider_local_release WHERE provider_id=(SELECT id FROM provider WHERE code='local') AND provider_release_id=?`: &releaseLinks,
@@ -472,7 +558,6 @@ func TestLocalProviderReleaseMatchingMaterializesAndReplaysPostgreSQL(t *testing
 		`[{"id":"`+expectedGenreID+`","source_name":"local","name":"`+expectedGenreName+`"}]`, created.ID).Exec(ctx); err != nil {
 		t.Fatalf("seed saved Local provider release genres: %v", err)
 	}
-	var positionID uuid.UUID
 	if err := db.NewRaw(`SELECT id FROM release_track WHERE release_id=? AND track_id=(SELECT local_track_id FROM provider_local_track WHERE provider_id=(SELECT id FROM provider WHERE code='local') AND provider_track_id=?)`, *confirmed.LocalReleaseID, created.Tracks[0].ID).Scan(ctx, &positionID); err != nil {
 		t.Fatalf("resolve materialized Local release position: %v", err)
 	}

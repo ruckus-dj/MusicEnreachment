@@ -28,62 +28,11 @@ type firstPublicationAdmissionRepository interface {
 	AdmitFirstPublicationFromPreview(context.Context, persistence.FirstPublicationAdmission, persistence.RiverInserter) (uuid.UUID, error)
 }
 
-type automaticFirstPublicationAdmissionRepository interface {
-	AdmitAutomaticFirstPublicationFromPreview(context.Context, persistence.FirstPublicationAdmission, persistence.PublicationReconciliationDeliveryGuard, persistence.RiverInserter) (uuid.UUID, error)
-}
-
 // AdmitFirst admits the exact source and plan displayed by PreviewFirst. The
 // transaction callback reconstructs the preview from its authoritative
 // snapshot before it permits namespace reservation or publication admission.
 func (service *LibraryPublications) AdmitFirst(ctx context.Context, releaseID, positionID uuid.UUID, confirmation FirstPublicationConfirmation) (uuid.UUID, error) {
-	return service.admitFirst(ctx, releaseID, positionID, confirmation.PreviewDigest, confirmation.ExpectedEpoch, confirmation.SourceChoice, nil)
-}
-
-// admitAutomaticFirstPublication is intentionally internal: no runtime producer
-// calls it until an authority producer is integrated.
-func (service *LibraryPublications) admitAutomaticFirstPublication(ctx context.Context, releaseID, positionID uuid.UUID, guard persistence.PublicationReconciliationDeliveryGuard) (uuid.UUID, error) {
-	if service == nil || service.repository == nil || service.settings == nil || service.river == nil ||
-		releaseID == uuid.Nil || positionID == uuid.Nil || guard.OutputEpoch == uuid.Nil || guard.PositionID != positionID {
-		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
-	}
-	repository, ok := service.repository.(firstPublicationContextReader)
-	if !ok {
-		return uuid.Nil, errors.New("first publication context is unavailable")
-	}
-	planningSettings, ok := service.settings.(firstPublicationFormatSettings)
-	if !ok {
-		return uuid.Nil, errors.New("first publication settings are unavailable")
-	}
-	snapshot, err := repository.ReadLibraryFirstPublicationContext(ctx, releaseID, positionID)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("read first publication context: %w", err)
-	}
-	runtimeSettings, err := planningSettings.ReadPublicationPlanningSettings(ctx)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("read publication planning settings: %w", err)
-	}
-	if snapshot == nil || snapshot.Library == nil || snapshot.Library.ActiveEpoch != guard.OutputEpoch {
-		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
-	}
-	selectedTools, err := service.selectedFFmpegPairForSettings(ctx, runtimeSettings)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("select verified publication tools: %w", err)
-	}
-	choice, err := automaticFirstSourceChoice(snapshot, publication.AudioPublicationFormat(runtimeSettings.PublicationFormat))
-	if err != nil {
-		return uuid.Nil, err
-	}
-	preview, err := buildFirstPublicationPreviewSelected(snapshot, runtimeSettings, selectedTools, releaseID, positionID, &choice)
-	if err != nil || len(preview.Blockers) != 0 || preview.Transform == nil {
-		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
-	}
-	if _, err := finalizeFirstPublicationNamespace(ctx, snapshot, runtimeSettings.OutputDirectory, runtimeSettings.PublicationPathTemplate, &preview); err != nil {
-		if ctx.Err() != nil {
-			return uuid.Nil, ctx.Err()
-		}
-		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
-	}
-	return service.admitFirst(ctx, releaseID, positionID, preview.ContextDigest, guard.OutputEpoch, nil, &guard)
+	return service.admitFirst(ctx, releaseID, positionID, confirmation.PreviewDigest, confirmation.ExpectedEpoch, confirmation.SourceChoice)
 }
 
 func automaticFirstSourceChoice(snapshot *persistence.LibraryFirstPublicationContext, format publication.AudioPublicationFormat) (FirstPublicationSourceChoice, error) {
@@ -133,7 +82,7 @@ func automaticFirstSourceChoiceWithReason(snapshot *persistence.LibraryFirstPubl
 	return FirstPublicationSourceChoice{}, "", persistence.ErrPublicationAdmissionConflict
 }
 
-func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, positionID uuid.UUID, previewDigest string, expectedEpoch uuid.UUID, sourceChoice *FirstPublicationSourceChoice, guard *persistence.PublicationReconciliationDeliveryGuard) (uuid.UUID, error) {
+func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, positionID uuid.UUID, previewDigest string, expectedEpoch uuid.UUID, sourceChoice *FirstPublicationSourceChoice) (uuid.UUID, error) {
 	if service == nil || service.repository == nil || service.settings == nil || service.river == nil ||
 		releaseID == uuid.Nil || positionID == uuid.Nil || expectedEpoch == uuid.Nil ||
 		!validFirstPublicationPreviewDigest(previewDigest) {
@@ -164,7 +113,7 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("select verified publication tools: %w", err)
 	}
-	automatic := guard != nil || sourceChoice == nil
+	automatic := sourceChoice == nil
 	if automatic {
 		choice, choiceErr := automaticFirstSourceChoice(snapshot, publication.AudioPublicationFormat(runtimeSettings.PublicationFormat))
 		if choiceErr != nil {
@@ -312,13 +261,6 @@ func (service *LibraryPublications) admitFirst(ctx context.Context, releaseID, p
 			}
 			return transactionManifest, nil
 		},
-	}
-	if guard != nil {
-		automaticRepository, ok := service.repository.(automaticFirstPublicationAdmissionRepository)
-		if !ok {
-			return uuid.Nil, errors.New("automatic first publication admission is unavailable")
-		}
-		return automaticRepository.AdmitAutomaticFirstPublicationFromPreview(ctx, first, *guard, service.river)
 	}
 	if automatic {
 		automaticRepository, ok := service.repository.(interface {

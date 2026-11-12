@@ -352,8 +352,9 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        только при копировании audio stream, включая remux. При перекодировании
        исходные описания не переносятся; automatic AUDIO upgrade сохраняет прочие
        CURRENT metadata и assets. Независимое ревью выполнено; расширены существующие
-       preview/admission/native-readback сценарии. Полный hook и CI среза ещё
-       должны завершиться. Это не завершение полного metadata port.
+       preview/admission/native-readback сценарии. `f799cad2` прошёл обычный полный
+       hook и всю [CI 43239905319](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43239905319),
+       включая Windows и публикацию контейнера. Это не завершение полного metadata port.
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через
@@ -456,8 +457,18 @@ React-прототипе. Не добавлять backwards compatibility: ст�
       [CI 43215814659](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43215814659)
       прошли, включая Windows и публикацию контейнера; первый Windows shutdown
       PostgreSQL завершился инфраструктурной ошибкой, повтор упавших jobs прошёл
-      без изменения кода. Production-удаление артиста остаётся открытым.
-10. [ ] **RU/EN integration.** Интегрировать локализацию во все затронутые
+       без изменения кода. Production-удаление артиста остаётся открытым.
+     - [x] `80f93126`: production-удаление артиста расширяет тот же frozen-scope
+       workflow. Preview показывает названия основных релизов и соисполнителей;
+       чужие ссылки и общие recordings сохраняются, необходимая техническая
+       identity скрывается из каталога и реактивируется последующим matching.
+       Retry сохраняет остаток после отдельно зафиксированных публикаций.
+       Независимое ревью и обычный полный hook прошли; вся
+       [CI 43243306069](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43243306069)
+       зелёная, включая Windows и публикацию контейнера. Browser component fixture
+       подтвердил RU/EN preview названий/соисполнителей без UUID и без новых
+       запросов при смене языка. Полная browser/real-backend приёмка остаётся открытой.
+ 10. [ ] **RU/EN integration.** Интегрировать локализацию во все затронутые
    production/prototype экраны; направление не зависит от завершения удаления
    или Local CRUD. **Приёмка:** все состояния и доступные имена доступны на обоих
    языках без потери draft/операций; browser preference, fallback English,
@@ -466,7 +477,13 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        прогресс операций. Собственные сообщения сохраняются как descriptors;
        diagnostics сервера остаются без перевода. Независимое ревью интеграции
        выполнено. `fe183718` и исправление HTTP fallback `585c9bb2` прошли обычные
-       полные hooks; CI ещё не подтверждена. Browser fixture на `585c9bb2`
+       полные hooks; вся [CI `fe183718`](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43240515426)
+       прошла. Windows CI `585c9bb2` остановилась по package timeout при создании
+       fixture databases; после разбора goroutine stacks повторены только failed
+       jobs без изменения gates/timeouts. Повтор прошёл; вся
+       [CI `585c9bb2`](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43241395637)
+       зелёная, включая Windows и публикацию контейнера.
+       Browser fixture на `585c9bb2`
        подтвердил сохранение path input, значения и фокуса открытого picker при
        RU/EN без новых API-запросов, перевод сохранённой validation error и обе
        реальные темы без переполнения на 1440×900 и 390×844. Real-backend приёмка
@@ -502,7 +519,15 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    mobile-first требование не вводится. Keyboard и
    responsive состояния проверены; acceptance фиксируется без screenshot-
    артефактов. Выполнить требуемые для application changes gates/CI и независимое
-   ревью по правилам проекта.
+    ревью по правилам проекта.
+    - Disposable backend на gate-built `80f93126`: Setup завершён штатно,
+      managed FFmpeg/fpcalc загружены и проверены, собственный FLAC прошёл scan,
+      analysis и Local-provider matching через public API. CURRENT и исходный
+      SHA-256 проверены, но это не успешная приёмка preview → confirm: журнал
+      показал автоматическую first-publication после `local_confirmation` без
+      publication admission HTTP-запроса. Обнаруженный обход явного подтверждения
+      исправляется отдельно; приёмка будет повторена на новой собственной позиции.
+      Существующий стенд и пользовательские файлы не изменялись.
 
 **Целевой результат программы:** после настройки открывается настоящий рабочий интерфейс;
 утверждённые разделы доступны из общей навигации, каталог читает реальные

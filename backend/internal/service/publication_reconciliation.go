@@ -13,6 +13,7 @@ type publicationReconciliationRepository interface {
 	ResolvePublicationReconciliationContext(context.Context, persistence.PublicationReconciliationDeliveryGuard) (*persistence.PublicationReconciliationContext, error)
 	EvaluatePublicationReconciliationCurrent(context.Context, uuid.UUID, persistence.PublicationReconciliationDeliveryGuard, string, string) (persistence.PublicationReconciliationDecision, error)
 	AcknowledgePublicationReconciliationNoop(context.Context, persistence.PublicationReconciliationDeliveryGuard, *persistence.PublicationReconciliationNoop) (bool, error)
+	AcknowledgePublicationReconciliationUnpublished(context.Context, uuid.UUID, persistence.PublicationReconciliationDeliveryGuard) (bool, error)
 }
 
 type publicationReconciliationBusyParker interface {
@@ -21,12 +22,13 @@ type publicationReconciliationBusyParker interface {
 
 // ReconcilePublication consumes one already-requested publication reconciliation.
 // The worker owns claim release on every error; nil means this delivery was
-// admitted as an audio upgrade or explicitly acknowledged as a no-op.
+// admitted as an audio upgrade or explicitly acknowledged as a no-op. Without
+// CURRENT, it is acknowledged only after persistence proves publication absent.
 //
 // A retained attempt is parked only after persistence atomically revalidates
 // both the delivery and the busy condition. For CURRENT publications, nil means
 // the delivery was admitted, safely parked, or explicitly acknowledged as a
-// proven no-op.
+// proven no-op; without CURRENT, persistence proves absence before acknowledging.
 func (service *LibraryPublications) ReconcilePublication(ctx context.Context, guard persistence.PublicationReconciliationDeliveryGuard) error {
 	if service == nil || service.repository == nil {
 		return fmt.Errorf("reconcile publication: service is unavailable")
@@ -56,56 +58,24 @@ func (service *LibraryPublications) ReconcilePublication(ctx context.Context, gu
 		return service.reconcileCurrentPublication(ctx, repository, facts.ReleaseID, guard)
 	}
 
-	contextReader, ok := service.repository.(firstPublicationContextReader)
-	if !ok {
-		return fmt.Errorf("reconcile publication: first publication context is unavailable")
-	}
-	planningSettings, ok := service.settings.(firstPublicationFormatSettings)
-	if !ok {
-		return fmt.Errorf("reconcile publication: publication planning settings are unavailable")
-	}
-	snapshot, err := contextReader.ReadLibraryFirstPublicationContext(ctx, facts.ReleaseID, guard.PositionID)
-	if err != nil {
-		return fmt.Errorf("read first publication context: %w", err)
-	}
-	if snapshot == nil || snapshot.Library == nil || snapshot.Library.ActiveEpoch != guard.OutputEpoch {
-		return fmt.Errorf("reconcile publication: first publication context changed")
-	}
-	if snapshot.Library.Current != nil {
-		return service.reconcileCurrentPublication(ctx, repository, facts.ReleaseID, guard)
-	}
-	if snapshot.Library.ActiveAttempt != nil {
-		parked, err := parkBusyReconciliation(ctx, service.repository, guard, facts.RequestedGeneration)
-		if err != nil {
-			return fmt.Errorf("park reconciliation with retained publication attempt: %w", err)
-		}
-		if !parked {
-			return fmt.Errorf("reconcile publication: retained-attempt condition changed; retry delivery")
-		}
-		return nil
-	}
-	if service.coverAcquisition != nil {
-		if err := service.coverAcquisition.Ensure(ctx, facts.ReleaseID); err != nil {
-			return fmt.Errorf("acquire release cover before first publication: %w", err)
-		}
-	}
+	return service.acknowledgeUnpublishedPublication(ctx, repository, facts.ReleaseID, guard)
+}
 
-	runtimeSettings, err := planningSettings.ReadPublicationPlanningSettings(ctx)
+func (service *LibraryPublications) acknowledgeUnpublishedPublication(ctx context.Context, repository publicationReconciliationRepository, releaseID uuid.UUID, guard persistence.PublicationReconciliationDeliveryGuard) error {
+	if service.coordinator == nil {
+		return fmt.Errorf("acknowledge unpublished publication reconciliation: publication coordinator is unavailable")
+	}
+	unlock, err := service.coordinator.Acquire(ctx, []publication.ResourceLock{{Key: GlobalPublicationMutationResource, Mode: publication.Exclusive}})
 	if err != nil {
-		return fmt.Errorf("read publication planning settings: %w", err)
+		return fmt.Errorf("acquire unpublished publication reconciliation coordinator: %w", err)
 	}
-	if _, err := service.selectedFFmpegPairForSettings(ctx, runtimeSettings); err != nil {
-		return fmt.Errorf("select verified publication tools: %w", err)
+	acknowledged, ackErr := repository.AcknowledgePublicationReconciliationUnpublished(ctx, releaseID, guard)
+	unlock()
+	if ackErr != nil {
+		return fmt.Errorf("acknowledge unpublished publication reconciliation: %w", ackErr)
 	}
-	_, reason, err := automaticFirstSourceChoiceWithReason(snapshot, publication.AudioPublicationFormat(runtimeSettings.PublicationFormat))
-	if err != nil {
-		if reason == "" {
-			return fmt.Errorf("select verified publication source: %w", err)
-		}
-		return fmt.Errorf("reconcile publication: automatic source selection is unsatisfied (%s) until reconciliation revalidates it", reason)
-	}
-	if _, err := service.admitAutomaticFirstPublication(ctx, facts.ReleaseID, guard.PositionID, guard); err != nil {
-		return fmt.Errorf("admit automatic first publication: %w", err)
+	if !acknowledged {
+		return fmt.Errorf("reconcile publication: unpublished proof changed before acknowledgement; retry delivery")
 	}
 	return nil
 }

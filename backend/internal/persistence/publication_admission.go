@@ -79,6 +79,9 @@ type PublicationSourceSelection struct {
 // AdmitPublication atomically inserts the source-free operation snapshot, attempt,
 // namespace reservations, and its River delivery.
 func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, request PublicationAdmission, client RiverInserter) (uuid.UUID, error) {
+	if request.firstAdmission != nil && request.reconciliationGuard != nil {
+		return uuid.Nil, fmt.Errorf("admit publication: first publication requires confirmed preview admission: %w", ErrPublicationAdmissionConflict)
+	}
 	if request.reconciliationGuard != nil {
 		guard := *request.reconciliationGuard
 		request.reconciliationGuard = &guard

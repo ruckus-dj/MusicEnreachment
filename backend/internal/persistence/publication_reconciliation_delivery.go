@@ -477,6 +477,55 @@ func (repository *SetupManagerRepository) AcknowledgePublicationReconciliationDe
 	return true, nil
 }
 
+// AcknowledgePublicationReconciliationUnpublished records that no publication
+// exists yet. Reconciliation is not authority to create the first publication;
+// the user must confirm its preview explicitly.
+func (repository *SetupManagerRepository) AcknowledgePublicationReconciliationUnpublished(ctx context.Context, releaseID uuid.UUID, guard PublicationReconciliationDeliveryGuard) (bool, error) {
+	if releaseID == uuid.Nil {
+		return false, fmt.Errorf("acknowledge unpublished publication reconciliation: release is required")
+	}
+	var acknowledged bool
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("acknowledge unpublished publication reconciliation: lock output gate: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("acknowledge unpublished publication reconciliation: lock source mutations: %w", err)
+		}
+		var epoch uuid.UUID
+		if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR SHARE`).Scan(ctx, &epoch); err != nil {
+			return fmt.Errorf("acknowledge unpublished publication reconciliation: lock output epoch: %w", err)
+		}
+		if epoch != guard.OutputEpoch {
+			return nil
+		}
+		var actualRelease uuid.UUID
+		if err := tx.NewRaw(`SELECT release_id FROM release_track WHERE id=? FOR SHARE`, guard.PositionID).Scan(ctx, &actualRelease); err != nil {
+			return fmt.Errorf("acknowledge unpublished publication reconciliation: lock position: %w", err)
+		}
+		if actualRelease != releaseID {
+			return nil
+		}
+		// Admission and publication settlement take FOR UPDATE on this singleton
+		// before changing namespace ownership. Holding FOR SHARE serializes this
+		// absence proof with those domain mutations before event/job/operation locks.
+		var current, retained bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM track_publication WHERE position_id=?)`, guard.PositionID).Scan(ctx, &current); err != nil {
+			return fmt.Errorf("acknowledge unpublished publication reconciliation: recheck CURRENT: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM track_publication_attempt WHERE position_id=?)`, guard.PositionID).Scan(ctx, &retained); err != nil {
+			return fmt.Errorf("acknowledge unpublished publication reconciliation: recheck retained attempt: %w", err)
+		}
+		if current || retained {
+			return nil
+		}
+		var err error
+		acknowledged, err = repository.AcknowledgePublicationReconciliationDeliveryWith(ctx, tx, guard)
+		return err
+	})
+	return acknowledged && err == nil, err
+}
+
 func lockPublicationReconciliationRequest(ctx context.Context, tx bun.Tx, epoch, position uuid.UUID) (bool, error) {
 	if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 		return false, fmt.Errorf("lock publication reconciliation output admission: %w", err)

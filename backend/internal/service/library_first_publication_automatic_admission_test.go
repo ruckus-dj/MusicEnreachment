@@ -3,9 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
@@ -63,29 +61,11 @@ func TestAutomaticFirstSourceChoiceUsesEligibleUnselectedSources(t *testing.T) {
 
 type automaticAdmissionServiceRepository struct {
 	firstPreviewRepository
-	authoritative  *persistence.LibraryFirstPublicationContext
-	settings       map[string]string
-	installation   *persistence.ToolInstallation
-	automaticCalls int
-	manualCalls    int
-	prepareErr     error
-	lastFirst      *persistence.FirstPublicationAdmission
-}
-
-func (repository *automaticAdmissionServiceRepository) AdmitAutomaticFirstPublicationFromPreview(_ context.Context, first persistence.FirstPublicationAdmission, guard persistence.PublicationReconciliationDeliveryGuard, _ persistence.RiverInserter) (uuid.UUID, error) {
-	repository.automaticCalls++
-	repository.lastFirst = &first
-	if guard.PositionID != first.PositionID || guard.OutputEpoch != first.ExpectedEpoch {
-		return uuid.Nil, fmt.Errorf("mismatched guard")
-	}
-	_, repository.prepareErr = first.PrepareFirst(context.Background(), persistence.FirstPublicationAdmissionSnapshot{
-		Context: repository.authoritative, Settings: repository.settings,
-		Installations: []persistence.ToolInstallation{*repository.installation},
-	}, first.PublicationAdmission)
-	if repository.prepareErr != nil {
-		return uuid.Nil, repository.prepareErr
-	}
-	return uuid.New(), nil
+	authoritative *persistence.LibraryFirstPublicationContext
+	settings      map[string]string
+	installation  *persistence.ToolInstallation
+	manualCalls   int
+	lastFirst     *persistence.FirstPublicationAdmission
 }
 
 func (repository *automaticAdmissionServiceRepository) AdmitFirstPublicationFromPreview(_ context.Context, first persistence.FirstPublicationAdmission, _ persistence.RiverInserter) (uuid.UUID, error) {
@@ -163,43 +143,6 @@ func automaticAdmissionFixture(t *testing.T) (*automaticAdmissionServiceReposito
 	return repository, runtime, releaseID, positionID, guard
 }
 
-func TestAdmitAutomaticFirstPublicationUsesFinalizedBindingAndAuthoritativeWinner(t *testing.T) {
-	t.Run("successful admission", func(t *testing.T) {
-		repository, runtime, releaseID, positionID, guard := automaticAdmissionFixture(t)
-		service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
-		if _, err := service.admitAutomaticFirstPublication(context.Background(), releaseID, positionID, guard); err != nil {
-			t.Fatalf("automatic admission: %v", err)
-		}
-		if repository.automaticCalls != 1 || repository.manualCalls != 0 {
-			t.Fatalf("automatic/manual calls = %d/%d", repository.automaticCalls, repository.manualCalls)
-		}
-		if repository.lastFirst == nil || repository.lastFirst.SourceSelection == nil {
-			t.Fatal("automatic admission omitted source-selection witness")
-		}
-		selection := repository.lastFirst.SourceSelection
-		if !reflect.DeepEqual(selection.Associations, repository.snapshot.SourceAssociations) {
-			t.Fatal("automatic admission omitted complete association witness")
-		}
-		frozen, err := persistence.DecodePublicationInputs(repository.lastFirst.FrozenInputs)
-		if err != nil || frozen.SourceAuthorityMode != "automatic" {
-			t.Fatalf("automatic source authority missing: mode=%s err=%v", frozen.SourceAuthorityMode, err)
-		}
-	})
-	t.Run("authoritative settings change winner", func(t *testing.T) {
-		repository, runtime, releaseID, positionID, guard := automaticAdmissionFixture(t)
-		// Under M4A the lossless FLAC candidate is unsuitable without verified
-		// ALAC capability; the AAC candidate becomes the winner instead.
-		repository.settings[settings.PublicationFormatKey] = "m4a"
-		service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
-		if _, err := service.admitAutomaticFirstPublication(context.Background(), releaseID, positionID, guard); err == nil {
-			t.Fatal("authoritative settings/winner change was accepted")
-		}
-		if repository.automaticCalls != 1 {
-			t.Fatalf("automatic calls = %d, want 1", repository.automaticCalls)
-		}
-	})
-}
-
 func TestManualFirstAdmissionRemainsOnPublicConfirmationPath(t *testing.T) {
 	repository, runtime, releaseID, positionID, guard := automaticAdmissionFixture(t)
 	service := newLibraryPublications(repository, runtime, libraryPublicationsTestRiver{}, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
@@ -222,8 +165,8 @@ func TestManualFirstAdmissionRemainsOnPublicConfirmationPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("manual admission: %v", err)
 	}
-	if repository.manualCalls != 1 || repository.automaticCalls != 0 {
-		t.Fatalf("manual/automatic calls = %d/%d", repository.manualCalls, repository.automaticCalls)
+	if repository.manualCalls != 1 {
+		t.Fatalf("manual calls = %d", repository.manualCalls)
 	}
 	if repository.lastFirst == nil || repository.lastFirst.SourceSelection == nil || repository.lastFirst.SourceSelection.AssociationID != preview.SelectedSource.AssociationID {
 		t.Fatalf("explicit manual source intent = %#v", repository.lastFirst)

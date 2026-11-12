@@ -95,9 +95,6 @@ func (repository *SetupManagerRepository) admitFirstPublicationFromPreview(ctx c
 	if !automaticSelection && first.SourceSelection != nil && frozen.SourceAuthorityMode != "manual" {
 		return uuid.Nil, fmt.Errorf("admit first publication: explicit selection requires manual source authority")
 	}
-	if first.SourceSelection != nil && first.reconciliationGuard != nil && !automaticSelection {
-		return uuid.Nil, fmt.Errorf("admit first publication: automatic admission cannot select a source association")
-	}
 	if automaticSelection && first.SourceSelection == nil {
 		return uuid.Nil, fmt.Errorf("admit first publication: automatic source selection witness is required")
 	}
@@ -225,18 +222,6 @@ func applyTrackSourceSelection(ctx context.Context, tx bun.Tx, position uuid.UUI
 		return uuid.Nil, false, fmt.Errorf("%s: select source association: %w", errorContext, err)
 	}
 	return trackID, true, nil
-}
-
-// AdmitAutomaticFirstPublicationFromPreview binds an internal automatic source
-// choice and reconciliation delivery to the same first-publication transaction.
-func (repository *SetupManagerRepository) AdmitAutomaticFirstPublicationFromPreview(ctx context.Context, first FirstPublicationAdmission, guard PublicationReconciliationDeliveryGuard, client RiverInserter) (uuid.UUID, error) {
-	if guard.OutputEpoch != first.ExpectedEpoch || guard.PositionID != first.PositionID ||
-		guard.OperationID == uuid.Nil || guard.ClaimToken == uuid.Nil {
-		return uuid.Nil, fmt.Errorf("admit automatic first publication: invalid reconciliation guard: %w", ErrPublicationAdmissionConflict)
-	}
-	guardCopy := guard
-	first.reconciliationGuard = &guardCopy
-	return repository.admitFirstPublicationFromPreview(ctx, first, client, true)
 }
 
 func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx context.Context, tx bun.Tx, request PublicationAdmission) ([]PublicationNamespaceNode, error) {

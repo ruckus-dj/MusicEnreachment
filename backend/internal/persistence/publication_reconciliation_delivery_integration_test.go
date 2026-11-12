@@ -125,6 +125,65 @@ func TestPublicationReconciliationDeliveryAttemptAndRepairFencesPostgreSQL(t *te
 	}
 }
 
+func TestUnpublishedPublicationReconciliationAcknowledgesObservedGenerationPostgreSQL(t *testing.T) {
+	t.Parallel()
+	repo, ctx, epoch, position := reconciliationDeliveryFixture(t)
+	reconciliationDeliveryRequest(t, repo, ctx, epoch, position, []string{"unpublished_reconciliation_test"})
+	inserter := new(reconciliationDeliveryInserter)
+	if count, err := repo.DispatchPendingPublicationReconciliations(ctx, inserter); err != nil || count != 1 {
+		t.Fatalf("dispatch unpublished reconciliation=%d err=%v", count, err)
+	}
+	operationID, jobID := inserter.args[0].OperationID, inserter.ids[0]
+	if _, err := repo.db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	guard, result, err := repo.ClaimPublicationReconciliationDelivery(ctx, operationID, jobID, 1)
+	if err != nil || result != PublicationReconciliationClaimed {
+		t.Fatalf("claim unpublished reconciliation=%s err=%v", result, err)
+	}
+	if err := repo.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return repo.RequestPublicationReconciliationWith(ctx, tx, epoch, []uuid.UUID{position}, []string{"provider_refresh"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var release uuid.UUID
+	if err := repo.db.NewRaw(`SELECT release_id FROM release_track WHERE id=?`, position).Scan(ctx, &release); err != nil {
+		t.Fatal(err)
+	}
+	acknowledged, err := repo.AcknowledgePublicationReconciliationUnpublished(ctx, release, guard)
+	if err != nil || !acknowledged {
+		t.Fatalf("acknowledge still-unpublished reconciliation=%v err=%v", acknowledged, err)
+	}
+	var current, attempts, dirty int
+	var generation int64
+	var eventState, operationState string
+	if err := repo.db.NewRaw(`SELECT count(*) FROM track_publication WHERE position_id=?`, position).Scan(ctx, &current); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.NewRaw(`SELECT count(*) FROM track_publication_attempt WHERE position_id=?`, position).Scan(ctx, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.NewRaw(`SELECT count(*) FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=?`, epoch, position).Scan(ctx, &dirty); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.NewRaw(`SELECT generation FROM publication_reconciliation_dirty_scope WHERE output_epoch=? AND position_id=? AND scope='provider_refresh'`, epoch, position).Scan(ctx, &generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.NewRaw(`SELECT state FROM publication_reconciliation_event WHERE operation_id=?`, operationID).Scan(ctx, &eventState); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.NewRaw(`SELECT state FROM operation WHERE id=?`, operationID).Scan(ctx, &operationState); err != nil {
+		t.Fatal(err)
+	}
+	var reconciled int64
+	if err := repo.db.NewRaw(`SELECT reconciled_generation FROM publication_reconciliation_request WHERE output_epoch=? AND position_id=?`, epoch, position).Scan(ctx, &reconciled); err != nil {
+		t.Fatal(err)
+	}
+	if current != 0 || attempts != 0 || dirty != 1 || generation != guard.ObservedGeneration+1 || reconciled != guard.ObservedGeneration || eventState != "completed" || operationState != "succeeded" {
+		t.Fatalf("unpublished acknowledgement changed authority: current=%d attempts=%d dirty=%d generation=%d reconciled=%d event=%s operation=%s", current, attempts, dirty, generation, reconciled, eventState, operationState)
+	}
+}
+
 func (i *reconciliationDeliveryInserter) InsertTx(ctx context.Context, tx *sql.Tx, args river.JobArgs, _ *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 	a, ok := args.(PublicationReconciliationJobArgs)
 	if !ok {

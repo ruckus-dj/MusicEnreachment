@@ -278,6 +278,15 @@ in frontend/.
   deliveries. Root-abandonment fixtures must finalize their exact jobs before
   testing cleanup callbacks; assert the injected callback error so an earlier
   running-delivery rejection cannot masquerade as rollback coverage.
+- Deletion fixtures inserting `release_track` also acquire a trigger-created
+  `release_medium`: remove the owned medium after positions and before the release
+  when cleaning up a scope-expansion fixture. Finalizing a River job in fixture
+  SQL must set `finalized_at` along with its terminal state.
+- A Windows package timeout with active tests only seconds old may be fixture
+  provisioning throughput, not an application deadlock. Inspect the goroutine
+  stacks: ordinary template-copy creation and admin-pool waits require different
+  diagnosis from application locks. Rerun only failed CI jobs when supported by
+  that evidence; retain all gates and timeouts.
 
 ### Owner-directed test scope
 
