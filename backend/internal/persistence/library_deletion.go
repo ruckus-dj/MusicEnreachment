@@ -707,6 +707,17 @@ func lockLibraryDeletionDependencies(ctx context.Context, tx bun.IDB, dependency
 	return nil
 }
 
+const settledLibraryDeletionReconciliationEventPredicate = `e.state='completed' AND e.completed_at IS NOT NULL
+	AND NOT e.delivery_claimed AND e.claim_token IS NULL
+	AND e.observed_generation<=r.reconciled_generation
+	AND e.registered_job_id IS NOT NULL AND o.river_job_id IS NOT NULL AND o.river_job_id=e.registered_job_id
+	AND ((o.state='succeeded' AND o.stage='completed' AND o.finished_at IS NOT NULL)
+		OR (o.state='failed' AND o.stage='waiting' AND o.finished_at IS NOT NULL
+			AND o.safe_error IS NOT NULL AND r.parked_reason IS NOT NULL AND r.parked_reason=o.safe_error
+			AND r.evaluated_generation IS NOT NULL AND e.observed_generation<=r.evaluated_generation)) IS TRUE
+	AND (j.id IS NULL OR (j.state IN ('completed','cancelled','discarded') AND j.finalized_at IS NOT NULL)) IS TRUE
+	AND NOT EXISTS (SELECT 1 FROM operation_tool_read_hold h WHERE h.operation_id=o.id)`
+
 func libraryDeletionPositionBlocked(ctx context.Context, tx bun.IDB, positionID, epoch, generation uuid.UUID) (bool, error) {
 	var blocked bool
 	err := tx.NewRaw(`WITH target AS (SELECT ?::uuid AS position_id, ?::uuid AS epoch, ?::uuid AS generation)
@@ -728,13 +739,52 @@ func libraryDeletionPositionBlocked(ctx context.Context, tx bun.IDB, positionID,
 			OR EXISTS(SELECT 1 FROM source_cleanup_explicit_retry_item r JOIN source_cleanup_item i ON i.id=r.item_id, target t WHERE i.position_id=t.position_id)
 			OR EXISTS(SELECT 1 FROM source_cleanup_recovery_item r JOIN source_cleanup_item i ON i.id=r.item_id, target t WHERE i.position_id=t.position_id)
 			OR EXISTS(SELECT 1 FROM publication_source_cleanup_request r, target t WHERE r.position_id=t.position_id)
-			OR EXISTS(SELECT 1 FROM publication_reconciliation_request r, target t WHERE r.position_id=t.position_id)
+			OR EXISTS(SELECT 1 FROM publication_reconciliation_request r, target t WHERE r.position_id=t.position_id AND (
+				r.requested_generation>r.reconciled_generation
+				OR EXISTS(SELECT 1 FROM publication_reconciliation_dirty_scope d WHERE d.output_epoch=r.output_epoch AND d.position_id=r.position_id)
+				OR EXISTS(SELECT 1 FROM publication_reconciliation_event e
+					JOIN operation o ON o.id=e.operation_id
+					LEFT JOIN river_job j ON j.id=e.registered_job_id
+					WHERE e.output_epoch=r.output_epoch AND e.position_id=r.position_id AND NOT (`+settledLibraryDeletionReconciliationEventPredicate+`)))
+			)
 			OR EXISTS(SELECT 1 FROM publication_reconciliation_dirty_scope r, target t WHERE r.position_id=t.position_id)`,
 		positionID, epoch, generation).Scan(ctx, &blocked)
 	if err != nil {
 		return false, fmt.Errorf("check library deletion publication authority: %w", err)
 	}
 	return blocked, nil
+}
+
+// retireSettledLibraryDeletionReconciliation removes only bookkeeping whose
+// obligation and delivery are durably complete. The caller has validated the
+// exclusive deletion scope, including its epoch, releases, positions, and lack
+// of CURRENT outputs, while holding the exclusive source-mutation gate. The
+// shared output-admission gate alone does not serialize reconciliation producers.
+func retireSettledLibraryDeletionReconciliation(ctx context.Context, tx bun.IDB, positionIDs []uuid.UUID) error {
+	if len(positionIDs) == 0 {
+		return nil
+	}
+	var outstanding bool
+	if err := tx.NewRaw(`SELECT EXISTS(
+		SELECT 1 FROM publication_reconciliation_request r WHERE r.position_id IN (?) AND (
+			r.requested_generation>r.reconciled_generation
+			OR EXISTS(SELECT 1 FROM publication_reconciliation_dirty_scope d WHERE d.output_epoch=r.output_epoch AND d.position_id=r.position_id)
+			OR EXISTS(SELECT 1 FROM publication_reconciliation_event e
+				JOIN operation o ON o.id=e.operation_id LEFT JOIN river_job j ON j.id=e.registered_job_id
+				WHERE e.output_epoch=r.output_epoch AND e.position_id=r.position_id AND NOT (`+settledLibraryDeletionReconciliationEventPredicate+`)))
+		)`, bun.List(positionIDs)).Scan(ctx, &outstanding); err != nil {
+		return fmt.Errorf("finalize library deletion: verify reconciliation obligations: %w", err)
+	}
+	if outstanding {
+		return ErrLibraryDeletionConflict
+	}
+	if _, err := tx.NewRaw(`DELETE FROM publication_reconciliation_event WHERE position_id IN (?)`, bun.List(positionIDs)).Exec(ctx); err != nil {
+		return fmt.Errorf("finalize library deletion: retire settled reconciliation events: %w", err)
+	}
+	if _, err := tx.NewRaw(`DELETE FROM publication_reconciliation_request WHERE position_id IN (?)`, bun.List(positionIDs)).Exec(ctx); err != nil {
+		return fmt.Errorf("finalize library deletion: retire settled reconciliation requests: %w", err)
+	}
+	return nil
 }
 
 // AdmitLibraryDeletionOperation confirms the exact preview and enqueues its
@@ -1746,6 +1796,11 @@ func (repository *SetupManagerRepository) FinalizeLibraryDeletion(ctx context.Co
 				return fmt.Errorf("finalize library deletion: retire manual receipts: %w", err)
 			}
 			if err := requireRowsAffected(result, int64(len(receipts)), "retire library deletion manual receipts"); err != nil {
+				return err
+			}
+		}
+		if len(targetReleaseIDs) > 0 {
+			if err := retireSettledLibraryDeletionReconciliation(ctx, tx, snapshot.Scope.PublicationIDs); err != nil {
 				return err
 			}
 		}

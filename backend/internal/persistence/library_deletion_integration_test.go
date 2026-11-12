@@ -461,6 +461,74 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 			t.Fatalf("seed artist CURRENT publication %s: %v", publication.positionID, err)
 		}
 	}
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return repository.RequestPublicationReconciliationWith(ctx, tx, epoch, []uuid.UUID{artistTargetPosition2}, []string{"deletion_regression"})
+	}); err != nil {
+		t.Fatalf("request reconciliation for deletion target: %v", err)
+	}
+	blocked, err := libraryDeletionPositionBlocked(ctx, db, artistTargetPosition2, epoch, artistTargetGeneration2)
+	if err != nil || !blocked {
+		t.Fatalf("outstanding reconciliation blocked deletion=%t err=%v", blocked, err)
+	}
+	if count, err := repository.DispatchPendingPublicationReconciliations(ctx, client); err != nil || count != 1 {
+		t.Fatalf("dispatch deletion-target reconciliation=%d err=%v", count, err)
+	}
+	var parkedOperation uuid.UUID
+	var parkedJob int64
+	if err := db.NewRaw(`SELECT e.operation_id,e.registered_job_id FROM publication_reconciliation_event e WHERE e.position_id=? AND e.state='dispatched'`, artistTargetPosition2).Scan(ctx, &parkedOperation, &parkedJob); err != nil {
+		t.Fatalf("read dispatched deletion-target reconciliation: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, parkedJob); err != nil {
+		t.Fatalf("start deletion-target reconciliation job: %v", err)
+	}
+	parkedGuard, claimResult, err := repository.ClaimPublicationReconciliationDelivery(ctx, parkedOperation, parkedJob, 1)
+	if err != nil || claimResult != PublicationReconciliationClaimed {
+		t.Fatalf("claim deletion-target reconciliation=%s err=%v", claimResult, err)
+	}
+	blocked, err = libraryDeletionPositionBlocked(ctx, db, artistTargetPosition2, epoch, artistTargetGeneration2)
+	if err != nil || !blocked {
+		t.Fatalf("claimed reconciliation blocked deletion=%t err=%v", blocked, err)
+	}
+	if parked, err := repository.ParkPublicationReconciliationDelivery(ctx, parkedGuard, 1, "reconciliation needs successor"); err != nil || !parked {
+		t.Fatalf("park predecessor reconciliation=%t err=%v", parked, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='completed',finalized_at=now() WHERE id=?`, parkedJob); err != nil {
+		t.Fatalf("finalize parked predecessor River job: %v", err)
+	}
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return repository.RequestPublicationReconciliationWith(ctx, tx, epoch, []uuid.UUID{artistTargetPosition2}, []string{"deletion_regression"})
+	}); err != nil {
+		t.Fatalf("request successor reconciliation: %v", err)
+	}
+	if count, err := repository.DispatchPendingPublicationReconciliations(ctx, client); err != nil || count != 1 {
+		t.Fatalf("dispatch successor reconciliation=%d err=%v", count, err)
+	}
+	var reconciliationOperation uuid.UUID
+	var reconciliationJob int64
+	if err := db.NewRaw(`SELECT e.operation_id,e.registered_job_id FROM publication_reconciliation_event e WHERE e.position_id=? AND e.state='dispatched'`, artistTargetPosition2).Scan(ctx, &reconciliationOperation, &reconciliationJob); err != nil {
+		t.Fatalf("read dispatched successor reconciliation: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='running',attempt=1,attempted_at=now() WHERE id=?`, reconciliationJob); err != nil {
+		t.Fatalf("start successor reconciliation job: %v", err)
+	}
+	reconciliationGuard, claimResult, err := repository.ClaimPublicationReconciliationDelivery(ctx, reconciliationOperation, reconciliationJob, 1)
+	if err != nil || claimResult != PublicationReconciliationClaimed {
+		t.Fatalf("claim successor reconciliation=%s err=%v", claimResult, err)
+	}
+	var acknowledged bool
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		acknowledged, err = repository.AcknowledgePublicationReconciliationDeliveryWith(ctx, tx, reconciliationGuard)
+		return err
+	}); err != nil || !acknowledged {
+		t.Fatalf("acknowledge deletion-target reconciliation=%t err=%v", acknowledged, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE river_job SET state='completed',finalized_at=now() WHERE id=?`, reconciliationJob); err != nil {
+		t.Fatalf("finalize successor reconciliation job: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM river_job WHERE id IN (?,?)`, parkedJob, reconciliationJob); err != nil {
+		t.Fatalf("prune settled reconciliation River jobs: %v", err)
+	}
 	artistGuard := admitAndClaim("artist", artistID, uuid.Nil, false)
 	if settled, err := repository.SettleLibraryDeletionPublication(ctx, artistGuard, artistTargetPosition, func(context.Context, json.RawMessage) error { return nil }); err != nil || !settled {
 		t.Fatalf("settle first artist CURRENT publication: settled=%t err=%v", settled, err)
@@ -503,6 +571,19 @@ func TestLibraryDeletionPreservesSharedNamespaceAndPublicationScopePostgreSQL(t 
 	}
 	if finalized, err := repository.FinalizeLibraryDeletion(ctx, retriedArtistGuard); err != nil || !finalized {
 		t.Fatalf("finalize artist deletion: finalized=%t err=%v", finalized, err)
+	}
+	var reconciliationRequests, reconciliationEvents, reconciliationOperations int
+	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_request WHERE position_id IN (?,?)`, artistTargetPosition, artistTargetPosition2).Scan(ctx, &reconciliationRequests); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM publication_reconciliation_event WHERE position_id IN (?,?)`, artistTargetPosition, artistTargetPosition2).Scan(ctx, &reconciliationEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM operation WHERE id IN (?,?) AND kind=? AND ((id=? AND state='failed' AND stage='waiting') OR (id=? AND state='succeeded' AND stage='completed'))`, parkedOperation, reconciliationOperation, PublicationReconciliationOperationKind, parkedOperation, reconciliationOperation).Scan(ctx, &reconciliationOperations); err != nil {
+		t.Fatal(err)
+	}
+	if reconciliationRequests != 0 || reconciliationEvents != 0 || reconciliationOperations != 2 {
+		t.Fatalf("settled reconciliation retirement: requests=%d events=%d retained operation history=%d", reconciliationRequests, reconciliationEvents, reconciliationOperations)
 	}
 	var artistVisible, artistExists bool
 	var artistTargetReleases, retainedForeignReleases, retainedForeignPositions int
