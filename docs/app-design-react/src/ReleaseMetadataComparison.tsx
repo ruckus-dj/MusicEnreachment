@@ -1,24 +1,14 @@
 import { useState } from "react";
 import {
-	Button,
-	Checkbox,
-	Label,
-	ListBox,
-	ListBoxItem,
-	Popover,
-	Select,
-	SelectValue,
-	Tab,
-	TabList,
-	Tabs,
-} from "./ui";
-import {
-	desiredTags,
-	originalProviders,
 	type CatalogArtist,
+	desiredTags,
 	type OriginalRelease,
+	originalProviders,
 	type SourceFiles,
+	sourceOnlyAudioTagKeys,
 } from "./catalogData";
+import { type CatalogueMessage, catalogueMessage } from "./catalogueMessages";
+import { useI18n } from "./i18n/I18nProvider";
 import {
 	comparisonControls,
 	comparisonDifference,
@@ -34,8 +24,19 @@ import {
 	previewTableWrap,
 } from "./matchingStyles";
 import { navidromeFields } from "./metadata/registry";
-import { useI18n } from "./i18n/I18nProvider";
-import { catalogueMessage, type CatalogueMessage } from "./catalogueMessages";
+import {
+	Button,
+	Checkbox,
+	Label,
+	ListBox,
+	ListBoxItem,
+	Popover,
+	Select,
+	SelectValue,
+	Tab,
+	TabList,
+	Tabs,
+} from "./ui";
 
 type Scope = "artist" | "release" | "track";
 const artistGroups = new Set(["recording artists", "release artists"]);
@@ -112,6 +113,23 @@ export function ReleaseMetadataComparison({
 			);
 			return { key, label: field.label, values, different: distinct.size > 1 };
 		})
+		.concat(
+			(scope === "track" || allFields
+				? sourceOnlyAudioTagKeys.filter((key) => Object.hasOwn(sourceTags, key))
+				: []
+			).map((key) => {
+				const values = [
+					sourceTags[key] ?? [],
+					providerTags?.[key] ?? null,
+					localTags[key] ?? [],
+					track.published ? (publicationTags[key] ?? []) : null,
+				];
+				const distinct = new Set(
+					values.map((value) => JSON.stringify(value ?? [])),
+				);
+				return { key, label: key, values, different: distinct.size > 1 };
+			}),
+		)
 		.filter((row) => !differencesOnly || row.different);
 	const scopes: [Scope, CatalogueMessage][] = [
 		["artist", "artistScope"],

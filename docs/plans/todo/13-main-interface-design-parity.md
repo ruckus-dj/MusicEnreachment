@@ -345,7 +345,15 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        проверен реальным writer/readback. Обычный полный hook прошёл;
        [CI 43106992902](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43106992902)
         прошёл полностью, включая Windows и публикацию образа. Browser/real-backend приёмка и полный metadata port
-       остаются открытыми.
+         остаются открытыми.
+     - [x] По согласованному source-only правилу `encodedby`/`encodersettings`
+       исключены из редактора metadata прототипа. Production использует сохранённые
+       source tags в точном preview/admission и переносит описания кодирования
+       только при копировании audio stream, включая remux. При перекодировании
+       исходные описания не переносятся; automatic AUDIO upgrade сохраняет прочие
+       CURRENT metadata и assets. Независимое ревью выполнено; расширены существующие
+       preview/admission/native-readback сценарии. Полный hook и CI среза ещё
+       должны завершиться. Это не завершение полного metadata port.
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через
@@ -472,8 +480,9 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        Переключение сохраняет Settings draft `23`, source-name draft и фокус;
        открытый picker сохраняет тот же path input и несохранённый путь, без новых
        API-запросов. Отмена picker не меняет внешний server path. Это fixture-based
-       browser-проверка, не real-backend приёмка; полный hook и CI этого среза
-       ещё должны завершиться.
+       browser-проверка, не real-backend приёмка. `f78d5f0b` прошёл обычный полный
+       hook и всю [CI 43234987185](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43234987185),
+       включая Windows и публикацию контейнера.
 
 11. [ ] **Сквозная и визуальная приёмка.** Проверить актуальный provider-mediated
    путь на реальных данных и UI против sole prototype reference на desktop/mobile,

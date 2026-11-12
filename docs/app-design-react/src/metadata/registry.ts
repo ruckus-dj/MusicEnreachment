@@ -1,9 +1,9 @@
 import type { Locale } from "../i18n/types";
 import {
+	type MetadataMessageKey,
 	metadataFieldMessageKey,
 	metadataMessage,
 	metadataMessageKeyFor,
-	type MetadataMessageKey,
 } from "./messages";
 
 export type MetadataScope = "release" | "recording" | "track" | "audio";
@@ -410,8 +410,6 @@ const definitions: Definition[] = [
 	["asin", "ASIN", "release", "identity"],
 	["barcode", "Штрихкод", "release", "text"],
 	["copyright", "Авторские права", "release", "text"],
-	["encodedby", "Закодировано", "audio", "text"],
-	["encodersettings", "Настройки кодирования", "audio", "text"],
 	["grouping", "Группировка", "recording", "text"],
 	["key", "Тональность", "recording", "text"],
 	["isrc", "ISRC", "recording", "list"],

@@ -201,7 +201,7 @@ func (runtime firstPreviewSettings) ReadPublicationPlanningSettings(context.Cont
 func TestPreviewFirstPlansExactSourceAndRussianPath(t *testing.T) {
 	releaseID, positionID, epoch, rootID, locationID, workID, variantID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	artistID := uuid.New()
-	lossless := true
+	lossless, channels, bitDepth := true, 2, 16
 	snapshot := &persistence.LibraryFirstPublicationContext{
 		Library:        &persistence.LibraryPublicationContext{ReleaseID: releaseID, PositionID: positionID, ActiveEpoch: epoch},
 		TemplateTokens: map[string]string{"ALBUM_PRIMARY_ARTIST": "Звери", "TRACK_NUMBER": "01", "TRACK_NAME": "Районы-кварталы"},
@@ -212,7 +212,11 @@ func TestPreviewFirstPlansExactSourceAndRussianPath(t *testing.T) {
 		ReleasePrimaryCredits: []librarymetadata.ArtistCredit{{ArtistID: artistID.String(), ArtistName: "Звери"}},
 		Sources: []persistence.FirstPublicationSource{{
 			Selection: persistence.PublicationSourceSelection{RootID: rootID, LocationID: locationID, WorkID: workID, MediaVariantID: variantID}, Selected: true,
-			Quality: persistence.PersistedAudioFacts{StreamIndex: 2, Codec: "flac", Lossless: &lossless, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},
+			Quality: persistence.PersistedAudioFacts{StreamIndex: 2, Codec: "flac", Lossless: &lossless, Channels: &channels, BitDepth: &bitDepth, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true},
+			Input: persistence.PublicationAudioInput{AnalysedMetadata: &persistence.PublicationAnalysedMetadata{
+				Tags:             map[string][]string{"ENCODEDBY": {"source encoder"}, "ENCODING": {"source encoder version"}, "ENCODERSETTINGS": {"source parameters"}},
+				MetadataResultID: uuid.New(), WinningResultID: uuid.New(),
+			}},
 		}},
 	}
 	settingsReadCount := 0
@@ -226,6 +230,31 @@ func TestPreviewFirstPlansExactSourceAndRussianPath(t *testing.T) {
 	}
 	if preview.Transform == nil || preview.Transform.Action != publication.AudioCodecCopy || preview.Transform.Extension != "mka" {
 		t.Fatalf("transform = %#v", preview.Transform)
+	}
+	for key, want := range map[string]string{
+		"ENCODEDBY":       "source encoder",
+		"ENCODING":        "source encoder version",
+		"ENCODERSETTINGS": "source parameters",
+	} {
+		if got := preview.DesiredTags.Tags[key]; len(got) != 1 || got[0] != want {
+			t.Fatalf("copied source tag %s = %#v, want %q", key, got, want)
+		}
+	}
+
+	transcoded, err := newLibraryPublications(firstPreviewRepository{snapshot: snapshot}, firstPreviewSettings{
+		format: "m4a", template: "{ALBUM_PRIMARY_ARTIST}/{TRACK_NUMBER} - {TRACK_NAME}", caseSensitive: true,
+		ffmpeg: "7f6ec99d-7d5d-43c2-9392-6db32ed4bd42",
+	}, nil, tools.Platform{GOOS: "darwin", GOARCH: "arm64"}).PreviewFirst(context.Background(), releaseID, positionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transcoded.Transform == nil || transcoded.Transform.Action != publication.AudioCodecALAC || len(transcoded.Blockers) != 0 {
+		t.Fatalf("expected eligible ALAC transcoding plan, got transform %#v blockers %#v", transcoded.Transform, transcoded.Blockers)
+	}
+	for _, key := range []string{"ENCODEDBY", "ENCODING", "ENCODERSETTINGS"} {
+		if _, exists := transcoded.DesiredTags.Tags[key]; exists {
+			t.Fatalf("transcoded preview retained source description %s: %#v", key, transcoded.DesiredTags.Tags)
+		}
 	}
 	want := []string{"Звери - 01 - Районы-кварталы.mka"}
 	if len(preview.PathComponents) != len(want) || preview.PathComponents[0] != want[0] {

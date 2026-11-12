@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { metadataChanged, originalReleases } from "./catalogData";
+import {
+	metadataChanged,
+	originalFiles,
+	originalReleases,
+} from "./catalogData";
 import {
 	refreshProviderHint,
 	renameLocalTrack,
@@ -30,11 +34,28 @@ it("renames locally and refreshes the provider hint without rewriting current pu
 it("upgrades only audio, preserving current metadata and its baseline", () => {
 	const { track } = baseline();
 	expect(track.published?.codec).toBe("MP3");
-	const upgraded = upgradeAudioOnly(track);
+	const sourceFiles = structuredClone(originalFiles);
+	const source = sourceFiles[track.sourceId!];
+	if (!source) throw new Error("Missing source fixture");
+	source.tags.ENCODEDBY = ["Selected source encoder"];
+	source.tags.ENCODING = ["Selected source encoding"];
+	source.tags.ENCODERSETTINGS = ["Selected source settings"];
+	const upgraded = upgradeAudioOnly(track, sourceFiles);
+	const expectedBaseline = structuredClone(
+		track.metadataBaseline ?? track.published!.tags,
+	);
 	expect(upgraded.published?.codec).toBe("FLAC");
-	expect(upgraded.published?.tags).toEqual(track.published?.tags);
+	for (const [key, value] of Object.entries({
+		ENCODEDBY: "Selected source encoder",
+		ENCODING: "Selected source encoding",
+		ENCODERSETTINGS: "Selected source settings",
+	})) {
+		expectedBaseline[key] = [value];
+		expect(upgraded.published?.tags[key]).toEqual([value]);
+		expect(upgraded.metadataBaseline?.[key]).toEqual([value]);
+	}
 	expect(upgraded.published?.coverHash).toEqual(track.published?.coverHash);
 	expect(upgraded.published?.lyrics).toEqual(track.published?.lyrics);
-	expect(upgraded.metadataBaseline).toEqual(track.metadataBaseline);
+	expect(upgraded.metadataBaseline).toEqual(expectedBaseline);
 	expect(upgraded.metadataBaselineExtras).toEqual(track.metadataBaselineExtras);
 });

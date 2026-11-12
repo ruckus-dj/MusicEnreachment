@@ -1,4 +1,20 @@
 import { expect, it } from "vitest";
+import { desiredTags } from "../catalogData";
+import {
+	readMetadataContributors,
+	readMetadataCredits,
+	readMetadataWorks,
+	writeMetadataContributors,
+	writeMetadataCredits,
+	writeMetadataWorks,
+} from "./model";
+import {
+	metadataKeyToTag,
+	metadataValidationMessage,
+	projectMetadataValues,
+	validateMetadataIssues,
+	validateMetadataValues,
+} from "./projection";
 import {
 	fieldByKey,
 	fieldsForScope,
@@ -6,22 +22,6 @@ import {
 	metadataGroupLabel,
 	navidromeFields,
 } from "./registry";
-import {
-	metadataKeyToTag,
-	projectMetadataValues,
-	validateMetadataValues,
-	validateMetadataIssues,
-	metadataValidationMessage,
-} from "./projection";
-import {
-	readMetadataCredits,
-	readMetadataContributors,
-	readMetadataWorks,
-	writeMetadataContributors,
-	writeMetadataCredits,
-	writeMetadataWorks,
-} from "./model";
-import { desiredTags } from "../catalogData";
 
 it("projects joined display credits separately from ordered individual names", () => {
 	const credits = [
@@ -60,9 +60,11 @@ it("uses the advisory values Navidrome actually reads", () => {
 		).not.toEqual([]);
 });
 
-it("registers the complete unique 89-field Navidrome mapping", () => {
-	expect(navidromeFields).toHaveLength(89);
-	expect(new Set(navidromeFields.map((field) => field.key)).size).toBe(89);
+it("registers the unique Navidrome fields excluding source-only encoder descriptions", () => {
+	expect(navidromeFields).toHaveLength(87);
+	expect(new Set(navidromeFields.map((field) => field.key)).size).toBe(87);
+	expect(fieldByKey("encodedby")).toBeUndefined();
+	expect(fieldByKey("encodersettings")).toBeUndefined();
 	expect(
 		fieldsForScope("audio").every((field) => field.scope === "audio"),
 	).toBe(true);

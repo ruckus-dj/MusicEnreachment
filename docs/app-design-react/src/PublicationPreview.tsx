@@ -223,7 +223,7 @@ export function PublicationPreview({
 						: publicationMetadataDiff(release, track, availableArtists)
 					: metadataSnapshotDiff(
 							{},
-							effectivePublicationTags(release, track, availableArtists),
+							effectivePublicationTags(release, track, availableArtists, files),
 							{ coverHash: null, lyrics: null },
 							{
 								coverHash: track.coverHash ?? null,

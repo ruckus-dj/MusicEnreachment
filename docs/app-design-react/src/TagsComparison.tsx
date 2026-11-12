@@ -1,24 +1,13 @@
 import { useEffect, useState } from "react";
 import {
-	Button,
-	Checkbox,
-	Label,
-	ListBox,
-	ListBoxItem,
-	Popover,
-	Select,
-	SelectValue,
-	Tab,
-	TabList,
-	Tabs,
-} from "./ui";
-import {
-	desiredTags,
-	originalProviders,
 	type CatalogArtist,
+	desiredTags,
 	type OriginalRelease,
+	originalProviders,
 	type SourceFiles,
+	sourceOnlyAudioTagKeys,
 } from "./catalogData";
+import { useI18n } from "./i18n/I18nProvider";
 import {
 	comparisonControls,
 	comparisonDifference,
@@ -32,13 +21,25 @@ import {
 	previewTableHeading,
 	previewTableWrap,
 } from "./matchingStyles";
-import { navidromeFields, metadataFieldLabel } from "./metadata/registry";
-import { useI18n } from "./i18n/I18nProvider";
+import { metadataFieldLabel, navidromeFields } from "./metadata/registry";
 import {
 	formatTrackMessage,
-	trackMessage,
 	type TrackMessage,
+	trackMessage,
 } from "./trackMessages";
+import {
+	Button,
+	Checkbox,
+	Label,
+	ListBox,
+	ListBoxItem,
+	Popover,
+	Select,
+	SelectValue,
+	Tab,
+	TabList,
+	Tabs,
+} from "./ui";
 
 export type TagScope = "artist" | "release" | "track";
 
@@ -149,6 +150,27 @@ export function TagsComparison({
 					new Set(values.map((value) => JSON.stringify(value ?? []))).size > 1,
 			};
 		})
+		.concat(
+			(activeScope === "track" || allFields
+				? sourceOnlyAudioTagKeys.filter((key) => Object.hasOwn(sourceTags, key))
+				: []
+			).map((key) => {
+				const values = [
+					sourceTags[key] ?? [],
+					provider ? (providerTags?.[key] ?? []) : null,
+					localTags[key] ?? [],
+					track.published ? (publicationTags[key] ?? []) : null,
+				];
+				return {
+					key,
+					label: key,
+					values,
+					different:
+						new Set(values.map((value) => JSON.stringify(value ?? []))).size >
+						1,
+				};
+			}),
+		)
 		.filter((row) => !differencesOnly || row.different);
 	return (
 		<section

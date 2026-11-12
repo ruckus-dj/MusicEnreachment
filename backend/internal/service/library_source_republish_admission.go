@@ -276,6 +276,13 @@ func (service *LibraryPublications) AdmitSourceRepublishRetainingSelection(
 				tagInput := transactionContext.Tags
 				tagInput.OutputContainer = transactionPlan.OutputContainer
 				transactionTags, tagErr = publication.ProjectTags(tagInput)
+				if tagErr == nil {
+					var sourceTags map[string][]string
+					if transactionSource.Input.AnalysedMetadata != nil {
+						sourceTags = transactionSource.Input.AnalysedMetadata.Tags
+					}
+					transactionTags.Tags = publication.ProjectSourceEncoderTags(transactionTags.Tags, sourceTags, transactionPlan.Action)
+				}
 			}
 		}
 		if transactionSource == nil || tagErr != nil || !reflect.DeepEqual(audioInputCopy(&transactionSource.Input), input.Audio) ||

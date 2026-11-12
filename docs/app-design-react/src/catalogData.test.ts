@@ -1,9 +1,10 @@
 import { expect, it } from "vitest";
 import {
 	applyMetadataPreview,
-	catalogData,
 	type CatalogArtist,
+	catalogData,
 	desiredTags,
+	effectivePublicationTags,
 	metadataChanged,
 	originalFiles,
 	originalReleases,
@@ -40,6 +41,62 @@ it("creates only from the explicitly selected available source and skips missing
 	expect(
 		tracks?.find((track) => track.id === "north-t9")?.published,
 	).toBeNull();
+});
+
+it("keeps encoder source tags outside library metadata and preserves them when remuxing", () => {
+	const releases = structuredClone(originalReleases);
+	const files = structuredClone(originalFiles);
+	const release = releases.find((item) => item.id === "north");
+	const track = release?.tracks.find((item) => item.id === "north-t6");
+	const file = files["north-f6"];
+	if (!release || !track || !file) throw new Error("Missing source fixture");
+	file.tags.ENCODEDBY = ["Fixture encoder"];
+	file.tags.ENCODING = ["Fixture encoding description"];
+	file.tags.ENCODERSETTINGS = ["Fixture settings"];
+	const previewTags = effectivePublicationTags(
+		release,
+		track,
+		catalogData.artists,
+		files,
+	);
+
+	const originalOutput = applyMetadataPreview(
+		releases,
+		new Set([track.id]),
+		files,
+		catalogData.artists,
+		{ outputDirectory: "/srv/music", format: "original" },
+	);
+	const originalTrack = originalOutput
+		.find((item) => item.id === release.id)
+		?.tracks.find((item) => item.id === track.id);
+	expect(originalTrack?.published?.tags.ENCODEDBY).toEqual(["Fixture encoder"]);
+	expect(previewTags).toEqual(originalTrack?.published?.tags);
+	expect(originalTrack?.published?.tags.ENCODING).toEqual([
+		"Fixture encoding description",
+	]);
+	expect(originalTrack?.published?.tags.ENCODERSETTINGS).toEqual([
+		"Fixture settings",
+	]);
+
+	const remuxedOutput = applyMetadataPreview(
+		releases,
+		new Set([track.id]),
+		files,
+		catalogData.artists,
+		{ outputDirectory: "/srv/music", format: "mka" },
+	);
+	const remuxedTrack = remuxedOutput
+		.find((item) => item.id === release.id)
+		?.tracks.find((item) => item.id === track.id);
+	expect(remuxedTrack?.published?.codec).toBe(file.codec);
+	expect(remuxedTrack?.published?.tags.ENCODEDBY).toEqual(["Fixture encoder"]);
+	expect(remuxedTrack?.published?.tags.ENCODING).toEqual([
+		"Fixture encoding description",
+	]);
+	expect(remuxedTrack?.published?.tags.ENCODERSETTINGS).toEqual([
+		"Fixture settings",
+	]);
 });
 
 it("treats case and spacing differences as exact metadata changes", () => {

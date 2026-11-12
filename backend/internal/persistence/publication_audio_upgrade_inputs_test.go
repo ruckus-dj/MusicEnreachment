@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 func publicationAudioUpgradeFixture(t *testing.T) PublicationInputs {
@@ -52,6 +53,36 @@ func TestPublicationAudioUpgradeInputsValidateRoundTripAndExecutionSupport(t *te
 	}
 }
 
+func TestPublicationAudioUpgradeEncoderDescriptionsFollowAudioTransform(t *testing.T) {
+	input := publicationAudioUpgradeFixture(t)
+	input.AudioUpgrade.Current.Tags["ENCODEDBY"] = []string{"old source encoder"}
+	input.Audio.AnalysedMetadata = &PublicationAnalysedMetadata{
+		Tags:             map[string][]string{"ENCODEDBY": {"new source encoder"}, "ENCODERSETTINGS": {"new parameters"}},
+		MetadataResultID: uuid.New(), WinningResultID: uuid.New(),
+	}
+
+	input.DesiredTags = publication.ProjectSourceEncoderTags(
+		input.AudioUpgrade.Current.Tags, input.Audio.AnalysedMetadata.Tags, publication.AudioCodecCopy,
+	)
+	if err := input.Validate(); err != nil {
+		t.Fatalf("copy audio with selected source descriptions rejected: %v", err)
+	}
+	if input.DesiredTags["ENCODEDBY"][0] != "new source encoder" || input.DesiredTags["ENCODERSETTINGS"][0] != "new parameters" {
+		t.Fatalf("copy did not select source descriptions: %#v", input.DesiredTags)
+	}
+
+	input.Format = publication.AudioFormatM4A
+	input.DesiredTags = publication.ProjectSourceEncoderTags(
+		input.AudioUpgrade.Current.Tags, input.Audio.AnalysedMetadata.Tags, publication.AudioCodecALAC,
+	)
+	if err := input.Validate(); err != nil {
+		t.Fatalf("transcode with current musical metadata rejected: %v", err)
+	}
+	if input.DesiredTags["title"][0] != "Current" || input.DesiredTags["LYRICS"][0] != "[00:01.00]current lyrics" || input.DesiredTags["ENCODEDBY"] != nil {
+		t.Fatalf("transcode did not preserve only current musical metadata: %#v", input.DesiredTags)
+	}
+}
+
 func TestPublicationAudioUpgradeInputsRejectVersionDiscriminantsAndInvalidWitness(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -67,6 +98,7 @@ func TestPublicationAudioUpgradeInputsRejectVersionDiscriminantsAndInvalidWitnes
 		{"missing ownership evidence", func(input *PublicationInputs) { input.AudioUpgrade.Current.Ownership.SizeBytes = nil }},
 		{"missing ownership digest", func(input *PublicationInputs) { input.AudioUpgrade.Current.Ownership.SHA256 = "" }},
 		{"changed desired tags", func(input *PublicationInputs) { input.DesiredTags["title"][0] = "Pending metadata" }},
+		{"changed current musical metadata", func(input *PublicationInputs) { input.DesiredTags["LYRICS"][0] = "[00:02.00]not current" }},
 		{"missing current tags", func(input *PublicationInputs) { input.AudioUpgrade.Current.Tags = nil }},
 		{"invalid assets", func(input *PublicationInputs) { input.AudioUpgrade.Current.Assets.Version = 0 }},
 		{"missing artwork inventory", func(input *PublicationInputs) { input.AudioUpgrade.Current.ArtworkInventory = nil }},

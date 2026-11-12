@@ -35,9 +35,6 @@ func (preparation PublicationSimplePreparation) PrepareAudioUpgrade(
 		return PublicationSimplePreparationResult{}, fmt.Errorf("validate frozen audio-upgrade input: %w", err)
 	}
 	current := input.AudioUpgrade.Current
-	if !equalTags(input.DesiredTags, current.Tags) {
-		return PublicationSimplePreparationResult{}, errors.New("audio-upgrade desired tags differ from current publication")
-	}
 	if err := ctx.Err(); err != nil {
 		return PublicationSimplePreparationResult{}, err
 	}
@@ -87,7 +84,7 @@ func (preparation PublicationSimplePreparation) PrepareAudioUpgrade(
 	if err := buildSimpleAudioCandidate(ctx, preparation.Commands, preparation.FFmpegPath, input.Format, sourceFacts, privateSource, outputPath); err != nil {
 		return PublicationSimplePreparationResult{}, fmt.Errorf("transform audio-upgrade candidate: %w", err)
 	}
-	if _, err := preparation.Metadata.Write(ctx, outputPath, cloneTagMap(current.Tags), nil); err != nil {
+	if _, err := preparation.Metadata.Write(ctx, outputPath, cloneTagMap(input.DesiredTags), nil); err != nil {
 		return PublicationSimplePreparationResult{}, fmt.Errorf("restore current publication metadata: %w", err)
 	}
 	if err := metadata.RestoreArtworkSnapshot(ctx, outputPath, artworkSnapshot); err != nil {
@@ -97,7 +94,7 @@ func (preparation PublicationSimplePreparation) PrepareAudioUpgrade(
 	if err != nil {
 		return PublicationSimplePreparationResult{}, fmt.Errorf("read audio-upgrade candidate metadata: %w", err)
 	}
-	if !equalTags(finalCapture.Tags, current.Tags) {
+	if !equalTags(finalCapture.Tags, input.DesiredTags) {
 		return PublicationSimplePreparationResult{}, errors.New("audio-upgrade candidate metadata does not match current publication")
 	}
 	finalAssets, err := ObservePublicationAssets(finalCapture)

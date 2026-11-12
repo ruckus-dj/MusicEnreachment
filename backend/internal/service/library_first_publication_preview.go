@@ -405,6 +405,13 @@ func buildFirstPublicationPreviewSelectedModeWithCurrentPolicy(contextSnapshot *
 		preview.Blockers = append(preview.Blockers, "desired tags are incomplete: "+projectionErr.Error())
 	} else {
 		preview.DesiredTags = projection
+		var sourceTags map[string][]string
+		if source != nil && source.Input.AnalysedMetadata != nil {
+			sourceTags = source.Input.AnalysedMetadata.Tags
+		}
+		if preview.Transform != nil {
+			preview.DesiredTags.Tags = publication.ProjectSourceEncoderTags(projection.Tags, sourceTags, preview.Transform.Action)
+		}
 		preview.Warnings = append(preview.Warnings, projection.Notices...)
 	}
 	parsed, parseErr := publication.ParseTemplate(pathTemplate)

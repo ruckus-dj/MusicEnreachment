@@ -233,8 +233,17 @@ func (input PublicationInputs) Validate() error {
 		if err := input.AudioUpgrade.Validate(); err != nil {
 			return fmt.Errorf("invalid publication audio upgrade: %w", err)
 		}
-		if !reflect.DeepEqual(input.DesiredTags, input.AudioUpgrade.Current.Tags) {
-			return errors.New("audio upgrade tags must match the frozen current publication")
+		plan, err := publication.PlanAudioTransform(input.Format, input.Audio.AudioFacts.AudioSourceFacts())
+		if err != nil {
+			return fmt.Errorf("plan automatic audio-upgrade tags: %w", err)
+		}
+		var sourceTags map[string][]string
+		if input.Audio.AnalysedMetadata != nil {
+			sourceTags = input.Audio.AnalysedMetadata.Tags
+		}
+		expectedTags := publication.ProjectSourceEncoderTags(input.AudioUpgrade.Current.Tags, sourceTags, plan.Action)
+		if !reflect.DeepEqual(input.DesiredTags, expectedTags) {
+			return errors.New("audio upgrade tags must preserve current musical metadata and apply source encoder descriptions only for copied audio")
 		}
 	}
 	if input.QualityPolicyVersion != publication.QualityPolicyVersion {

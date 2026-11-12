@@ -39,9 +39,6 @@ func (executor *PublicationExecutor) recoverInterruptedAudioUpgrade(
 		attempt.CandidateGeneration != guard.CandidateGeneration {
 		return false, nil
 	}
-	if !equalTags(input.DesiredTags, input.AudioUpgrade.Current.Tags) {
-		return false, nil
-	}
 	target, nodes, err := publicationTarget(attempt.NamespaceManifest)
 	if err != nil {
 		return false, err

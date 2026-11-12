@@ -1,5 +1,6 @@
 import {
 	originalFiles,
+	sourceOnlyAudioTagKeys,
 	type OriginalRelease,
 	type OriginalTrack,
 	type SourceFiles,
@@ -27,6 +28,18 @@ export function upgradeAudioOnly(
 ): OriginalTrack {
 	const file = track.sourceId ? files[track.sourceId] : undefined;
 	if (track.published?.codec !== "MP3" || file?.codec !== "FLAC") return track;
+	const replaceSourceEncoderTags = (tags: Record<string, string[]>) => {
+		const next = { ...tags };
+		for (const key of sourceOnlyAudioTagKeys) {
+			delete next[key];
+			if (Object.hasOwn(file.tags, key)) next[key] = [...file.tags[key]];
+		}
+		return next;
+	};
+	const audioMeasurements = projectMetadataValues(
+		track.audioMetadata?.[file.id] ?? {},
+		"audio",
+	).tags;
 	return {
 		...track,
 		published: {
@@ -34,15 +47,15 @@ export function upgradeAudioOnly(
 			readAt: new Date().toISOString(),
 			codec: file.codec,
 			sourceId: file.id,
-			tags: replaceAudioMeasurements(
-				track.published.tags,
-				projectMetadataValues(track.audioMetadata?.[file.id] ?? {}, "audio")
-					.tags,
+			tags: replaceSourceEncoderTags(
+				replaceAudioMeasurements(track.published.tags, audioMeasurements),
 			),
 		},
-		metadataBaseline: replaceAudioMeasurements(
-			track.metadataBaseline ?? track.published.tags,
-			projectMetadataValues(track.audioMetadata?.[file.id] ?? {}, "audio").tags,
+		metadataBaseline: replaceSourceEncoderTags(
+			replaceAudioMeasurements(
+				track.metadataBaseline ?? track.published.tags,
+				audioMeasurements,
+			),
 		),
 		metadataBaselineExtras: structuredClone(
 			track.metadataBaselineExtras || {

@@ -1,27 +1,21 @@
-import original from "./original-fixtures.json";
-import type { Locale } from "./i18n/types";
-import type {
-	MetadataGenre,
-	MetadataValues,
-} from "./metadata/projection";
-import type { MetadataScope } from "./metadata/registry";
-import {
-	metadataValidationMessage,
-	validateMetadataIssues,
-	validateMetadataValues,
-} from "./metadata/projection";
-import { fieldByKey } from "./metadata/registry";
-import {
-	metadataManagedTagKeys,
-	metadataTagKeys,
-	projectMetadataValues,
-} from "./metadata/projection";
-import { navidromeFields } from "./metadata/registry";
-import { projectArtistCreditGroup } from "./metadata/artistProjection";
 import {
 	resolveCatalogGenreName,
 	resolveCatalogGenreValue,
 } from "./genres/catalogue";
+import type { Locale } from "./i18n/types";
+import { projectArtistCreditGroup } from "./metadata/artistProjection";
+import type { MetadataGenre, MetadataValues } from "./metadata/projection";
+import {
+	metadataManagedTagKeys,
+	metadataTagKeys,
+	metadataValidationMessage,
+	projectMetadataValues,
+	validateMetadataIssues,
+	validateMetadataValues,
+} from "./metadata/projection";
+import type { MetadataScope } from "./metadata/registry";
+import { fieldByKey, navidromeFields } from "./metadata/registry";
+import original from "./original-fixtures.json";
 
 const musicBrainzUUID =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -173,6 +167,11 @@ export interface SourceFile {
 	sampleRate?: number | null;
 	bitrate?: number | null;
 }
+export const sourceOnlyAudioTagKeys = [
+	"ENCODEDBY",
+	"ENCODING",
+	"ENCODERSETTINGS",
+] as const;
 export type SourceFiles = Record<string, SourceFile>;
 export const originalFiles: SourceFiles = original.files;
 export const originalProviders: OriginalRelease[] =
@@ -208,7 +207,7 @@ export function applyMetadataPreview(
 				continue;
 			if (track.published && !metadataChanged(release, track, artists))
 				continue;
-			const tags = effectivePublicationTags(release, track, artists);
+			const tags = effectivePublicationTags(release, track, artists, files);
 			const coverHash = track.coverHash || null;
 			const lyrics = track.lyrics || null;
 			track.published = track.published
@@ -585,6 +584,7 @@ export function effectivePublicationTags(
 	release: OriginalRelease,
 	track: OriginalTrack,
 	artists: CatalogArtist[] = originalArtists,
+	files: SourceFiles = originalFiles,
 ): Record<string, string[]> {
 	const tags = desiredTags(
 		release,
@@ -592,7 +592,21 @@ export function effectivePublicationTags(
 		artists,
 		track.published?.sourceId ?? track.sourceId,
 	);
-	if (!track.published) return tags;
+	if (!track.published) {
+		const sourceFile = track.sourceId ? files[track.sourceId] : undefined;
+		if (sourceFile) {
+			for (const key of sourceOnlyAudioTagKeys) {
+				if (Object.hasOwn(sourceFile.tags, key))
+					tags[key] = [...sourceFile.tags[key]];
+			}
+		}
+		return tags;
+	}
+	for (const key of sourceOnlyAudioTagKeys) {
+		delete tags[key];
+		if (Object.hasOwn(track.published.tags, key))
+			tags[key] = [...track.published.tags[key]];
+	}
 	for (const field of navidromeFields.filter(
 		(item) => item.scope === "audio",
 	)) {

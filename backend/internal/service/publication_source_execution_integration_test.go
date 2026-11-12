@@ -26,6 +26,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
+	"go.senan.xyz/taglib"
 )
 
 func TestFirstPublicationPreviewConfirmationDeliveryPostgreSQL(t *testing.T) {
@@ -48,6 +49,8 @@ type firstPublicationTemplateScenario struct {
 }
 
 type explicitFirstPublicationAuthority struct{}
+
+type sourceEncoderTagFixture struct{}
 
 // publicationDeliveryScenario lets lifecycle regressions drive more than one
 // River delivery while reusing this integration fixture's real admission.
@@ -76,6 +79,16 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 		t.Fatal(err)
 	}
 	sourceFile := filepath.Join(sourceRoot, "track.flac")
+	var encoderTags map[string][]string
+	for _, option := range confirmation {
+		if _, enabled := option.(sourceEncoderTagFixture); enabled {
+			encoderTags = map[string][]string{
+				taglib.EncodedBy:  {"fixture source encoder"},
+				taglib.Encoding:   {"fixture encoder version"},
+				"ENCODERSETTINGS": {"fixture parameters"},
+			}
+		}
+	}
 	sourceBytes := []byte("integration audio bytes")
 	if target != "" {
 		sourceBytes, err = os.ReadFile("../integrations/metadata/testdata/eg.flac")
@@ -89,6 +102,11 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 	}
 	if err := os.WriteFile(sourceFile, sourceBytes, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if encoderTags != nil {
+		if err := taglib.WriteTags(sourceFile, encoderTags, taglib.Clear); err != nil {
+			t.Fatalf("write source encoder descriptions: %v", err)
+		}
 	}
 	oldMTime := time.Date(2020, 2, 3, 4, 5, 6, 0, time.UTC)
 	if err := os.Chtimes(sourceFile, oldMTime, oldMTime); err != nil {
@@ -153,6 +171,20 @@ func testPublicationSourceExecution(t *testing.T, target string, confirmation ..
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,true,true,'manual','{}'::jsonb)`, uuid.New(), trackID, variantID); err != nil {
 		t.Fatal(err)
+	}
+	if encoderTags != nil {
+		metadataResultID := uuid.New()
+		encodedTags, err := json.Marshal(encoderTags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO media_metadata_result(id,observed_tags,provenance,properties,observed_at,winning_result_id,applied_operation_id) VALUES (?,?::jsonb,'{}'::jsonb,'{}'::jsonb,?,?,?)`,
+			metadataResultID, string(encodedTags), oldMTime, metadataResultID, scanOperationID); err != nil {
+			t.Fatalf("insert source encoder metadata result: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE track_source SET source_metadata_result_id=? WHERE track_id=? AND media_variant_id=?`, metadataResultID, trackID, variantID); err != nil {
+			t.Fatalf("associate source encoder metadata: %v", err)
+		}
 	}
 	installationID := uuid.New()
 	tools := []persistence.SourceAnalysisToolSelection{

@@ -142,6 +142,11 @@ func (service *LibraryPublications) admitAutomaticAudioUpgrade(
 	if err != nil {
 		return uuid.Nil, persistence.ErrPublicationAdmissionConflict
 	}
+	var sourceTags map[string][]string
+	if selected.Input.AnalysedMetadata != nil {
+		sourceTags = selected.Input.AnalysedMetadata.Tags
+	}
+	desiredTags := publication.ProjectSourceEncoderTags(current.Metadata.Tags, sourceTags, plan.Action)
 	input := persistence.PublicationInputs{
 		Version:              persistence.PublicationAudioUpgradeInputsVersion,
 		QualityPolicyVersion: publication.QualityPolicyVersion,
@@ -156,7 +161,7 @@ func (service *LibraryPublications) admitAutomaticAudioUpgrade(
 			},
 			SourceAuthorityRevision: authority.Revision,
 		},
-		DesiredTags: cloneDesiredPublicationTags(current.Metadata.Tags),
+		DesiredTags: desiredTags,
 		Tools:       append([]persistence.SourceAnalysisToolSelection(nil), selectedTools...),
 	}
 	if err := input.Validate(); err != nil {

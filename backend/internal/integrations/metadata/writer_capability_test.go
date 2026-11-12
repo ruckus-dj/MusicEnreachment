@@ -27,6 +27,9 @@ func TestMetadataWriterRoundTripsKnownStandardFields(t *testing.T) {
 			want := map[string][]string{
 				taglib.Title:                     {"D09 title"},
 				taglib.Album:                     {"D09 album"},
+				taglib.EncodedBy:                 {"Source encoder"},
+				taglib.Encoding:                  {"Source encoder version"},
+				"ENCODERSETTINGS":                {"Source parameters"},
 				taglib.Artist:                    {"Artist One", "Artist Two"},
 				taglib.Artists:                   {"Artist One", "Artist Two"},
 				taglib.AlbumArtist:               {"Album Artist One", "Album Artist Two"},

@@ -159,7 +159,7 @@ func TestPublicationSimpleDeliveryRetriesSettlementAndAcknowledgesRedeliveryPost
 }
 
 func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgreSQL(t *testing.T) {
-	testPublicationSourceExecution(t, "Track.flac", true, false, publicationDeliveryScenario{run: func(ctx context.Context, db *bun.DB, manager *persistence.SetupManagerRepository, executor *PublicationExecutor, firstOperationID uuid.UUID, firstRiverJobID int64, sourceFile, output, target string, _ []byte) {
+	testPublicationSourceExecution(t, "Track.flac", true, false, sourceEncoderTagFixture{}, publicationDeliveryScenario{run: func(ctx context.Context, db *bun.DB, manager *persistence.SetupManagerRepository, executor *PublicationExecutor, firstOperationID uuid.UUID, firstRiverJobID int64, sourceFile, output, target string, _ []byte) {
 		if err := executor.ExecutePublicationDelivery(ctx, firstOperationID, firstRiverJobID, 1); err != nil {
 			t.Fatalf("first publication delivery: %v", err)
 		}
@@ -220,6 +220,15 @@ func TestSourceRepublishRetainsSelectedSourceAndCompletedRedeliveryIsNoopPostgre
 			var frozen persistence.PublicationInputs
 			if err := json.Unmarshal(attempt.FrozenInputs, &frozen); err != nil || frozen.SourceRepublish == nil || frozen.SourceRepublish.Association.LocationID != prepared.Selected.Selection.LocationID || frozen.SourceRepublish.Association.MediaVariantID != prepared.Selected.Selection.MediaVariantID {
 				t.Fatalf("frozen selected-source association = %+v, %v", frozen.SourceRepublish, err)
+			}
+			for key, want := range map[string]string{
+				"ENCODEDBY":       "fixture source encoder",
+				"ENCODING":        "fixture encoder version",
+				"ENCODERSETTINGS": "fixture parameters",
+			} {
+				if got := frozen.DesiredTags[key]; len(got) != 1 || got[0] != want {
+					t.Fatalf("frozen copied-source tag %s = %#v, want %q", key, got, want)
+				}
 			}
 			op, err := manager.GetOperation(ctx, operationID)
 			if err != nil || op.RiverJobID == nil {
