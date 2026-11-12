@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiResponseError, errorMessage } from "../../api/client/errors";
+import { apiResponseError } from "../../api/client/errors";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import { retryOperation } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
@@ -12,6 +12,12 @@ import {
   operationStateLabel,
   operationTargetLabel,
 } from "../operations/operationPresentation";
+import {
+  type SetupFeedback,
+  setupFeedback,
+  setupFeedbackText,
+  setupMessages,
+} from "./setupMessages";
 
 export function OperationProgress({
   id,
@@ -25,9 +31,10 @@ export function OperationProgress({
   onFinished: (id: string, snapshot: OperationResponse) => void;
 }) {
   const { locale } = useI18n();
+  const messages = setupMessages[locale];
   const [snapshot, setSnapshot] = useState(initial);
-  const [error, setError] = useState("");
-  const [refreshError, setRefreshError] = useState("");
+  const [error, setError] = useState<SetupFeedback | null>(null);
+  const [refreshError, setRefreshError] = useState<SetupFeedback | null>(null);
   const [pending, setPending] = useState(false);
   const [snapshotPending, setSnapshotPending] = useState(false);
   const refreshing = useRef(false);
@@ -45,12 +52,12 @@ export function OperationProgress({
       if (refreshing.current) return;
       refreshing.current = true;
       setPending(true);
-      setRefreshError("");
+      setRefreshError(null);
       try {
         await onSuccess();
         onFinished(id, next);
       } catch (reason) {
-        setRefreshError(errorMessage(reason, "Неизвестная ошибка."));
+        setRefreshError(setupFeedback(reason, "operationFailed"));
       } finally {
         refreshing.current = false;
         setPending(false);
@@ -62,7 +69,7 @@ export function OperationProgress({
     initialSnapshot: initial,
     onSnapshot: (next) => {
       setSnapshot(next);
-      setError("");
+      setError(null);
       if (next.state === "queued" || next.state === "running") {
         completion.current = "";
       } else if (next.state === "succeeded") {
@@ -75,8 +82,9 @@ export function OperationProgress({
     },
     onHttpError: (response) =>
       apiResponseError({ status: response.status, data: response.data ?? {} }),
-    onError: (reason) => setError(errorMessage(reason, "Неизвестная ошибка.")),
-    onStreamError: (reason) => setError(reason.message),
+    onError: (reason) => setError(setupFeedback(reason, "unknownError")),
+    onStreamError: (reason) =>
+      setError({ kind: "diagnostic", text: reason.message }),
   });
   useEffect(() => {
     if (snapshot?.state !== "succeeded") return;
@@ -88,20 +96,20 @@ export function OperationProgress({
   }, [snapshot, refreshInstallations]);
   const refreshSnapshot = useCallback(async () => {
     setSnapshotPending(true);
-    setError("");
+    setError(null);
     await refresh();
     setSnapshotPending(false);
   }, [refresh]);
 
   async function retry() {
     setPending(true);
-    setError("");
+    setError(null);
     try {
       const response = await retryOperation(id);
       if (response.status !== 200) throw apiResponseError(response);
       acceptSnapshot(response.data, "action", true);
     } catch (reason) {
-      setError(errorMessage(reason, "Неизвестная ошибка."));
+      setError(setupFeedback(reason, "unknownError"));
     } finally {
       setPending(false);
     }
@@ -110,33 +118,22 @@ export function OperationProgress({
     <div role="status" className="setup-operation">
       {snapshot
         ? `${operationKindLabel(snapshot.kind, locale)} — ${operationTargetLabel(snapshot, locale)}: ${operationStateLabel(snapshot.state, locale)}`
-        : locale === "ru"
-          ? "Загрузка инструмента"
-          : "Tool download"}
+        : messages.toolDownload}
       {snapshot &&
         operationStageLabel(snapshot.stage, locale) &&
         ` · ${operationStageLabel(snapshot.stage, locale)}`}
       {snapshot && ` · ${operationProgressLabel(snapshot, locale)}`}
       {snapshot?.safe_error && ` · ${snapshot.safe_error}`}
-      {!snapshot &&
-        (locale === "ru" ? " — загрузка состояния…" : " — loading status…")}
+      {!snapshot && messages.operationStatusLoading}
       {error && (
         <AppButton isDisabled={snapshotPending} onPress={refreshSnapshot}>
-          {locale === "ru"
-            ? "Повторить загрузку состояния"
-            : "Retry status read"}
+          {messages.retryOperationStatus}
         </AppButton>
       )}
-      {snapshotPending && (
-        <span>
-          {locale === "ru"
-            ? " Загрузка состояния операции…"
-            : " Loading operation status…"}
-        </span>
-      )}
+      {snapshotPending && <span>{` ${messages.refreshOperationStatus}`}</span>}
       {snapshot?.state === "failed" && (
         <AppButton isDisabled={pending} onPress={retry}>
-          {locale === "ru" ? "Повторить загрузку" : "Retry download"}
+          {messages.retryDownload}
         </AppButton>
       )}
       {snapshot?.state === "succeeded" && refreshError && (
@@ -146,31 +143,25 @@ export function OperationProgress({
             void refreshInstallations(snapshot);
           }}
         >
-          {locale === "ru"
-            ? "Повторить загрузку списка инструментов"
-            : "Retry tool list refresh"}
+          {messages.retryToolList}
         </AppButton>
       )}
       {pending && (
         <span>
           {" "}
           {snapshot?.state === "succeeded"
-            ? locale === "ru"
-              ? "Загрузка инструментов…"
-              : "Refreshing tools…"
-            : locale === "ru"
-              ? "Повторная загрузка…"
-              : "Retrying download…"}
+            ? messages.refreshTools
+            : messages.retryingDownload}
         </span>
       )}
       {refreshError && (
         <p role="alert" ref={refreshAlert} tabIndex={-1}>
-          {refreshError}
+          {setupFeedbackText(refreshError, locale)}
         </p>
       )}
       {error && (
         <p role="alert" ref={alert} tabIndex={-1}>
-          {error}
+          {setupFeedbackText(error, locale)}
         </p>
       )}
     </div>

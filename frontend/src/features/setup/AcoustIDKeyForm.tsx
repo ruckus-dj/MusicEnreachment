@@ -1,10 +1,18 @@
 import { useId, useState } from "react";
-import { apiResponseError, errorMessage } from "../../api/client/errors";
+import { apiResponseError } from "../../api/client/errors";
 import {
   deleteAcoustidApplicationKey,
   setAcoustidApplicationKey,
 } from "../../api/generated/client";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type SetupFeedback,
+  setupFeedback,
+  setupFeedbackText,
+  setupMessage,
+  setupMessages,
+} from "./setupMessages";
 import "./AcoustIDKeyForm.css";
 
 type Props = {
@@ -14,18 +22,20 @@ type Props = {
 };
 
 export function AcoustIDKeyForm({ hasKey, onChanged, onBusyChange }: Props) {
+  const { locale } = useI18n();
+  const messages = setupMessages[locale];
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [error, setError] = useState<SetupFeedback | null>(null);
+  const [notice, setNotice] = useState<SetupFeedback | null>(null);
   const inputId = useId();
 
   async function mutate(action: "save" | "delete") {
     if (busy || (action === "save" && !draft)) return;
     setBusy(true);
     onBusyChange?.(true);
-    setError("");
-    setNotice("");
+    setError(null);
+    setNotice(null);
     try {
       const response =
         action === "save"
@@ -34,17 +44,9 @@ export function AcoustIDKeyForm({ hasKey, onChanged, onBusyChange }: Props) {
       if (response.status !== 204) throw apiResponseError(response);
       setDraft("");
       await onChanged();
-      setNotice(
-        action === "save"
-          ? "Ключ приложения AcoustID сохранён."
-          : "Ключ приложения AcoustID удалён.",
-      );
+      setNotice(setupMessage(action === "save" ? "keySaved" : "keyDeleted"));
     } catch (reason) {
-      const message = errorMessage(
-        reason,
-        "Не удалось сохранить ключ AcoustID.",
-      );
-      setError(draft ? message.replaceAll(draft, "[скрыто]") : message);
+      setError(setupFeedback(reason, "saveKeyError", draft || undefined));
     } finally {
       setBusy(false);
       onBusyChange?.(false);
@@ -56,19 +58,15 @@ export function AcoustIDKeyForm({ hasKey, onChanged, onBusyChange }: Props) {
       className="setup-acoustid-key"
       aria-labelledby={`${inputId}-heading`}
     >
-      <h2 id={`${inputId}-heading`}>AcoustID (необязательно)</h2>
-      <p>
-        Ключ приложения включает поиск записей по аудиоотпечатку: отправляется
-        отпечаток, а не аудиофайл. Нужен именно application key, а не user API
-        key (он используется для отправки отпечатков).
-      </p>
+      <h2 id={`${inputId}-heading`}>{messages.acoustidOptional}</h2>
+      <p>{messages.acoustidDescription}</p>
       <p>
         <a
           href="https://acoustid.org/new-application"
           target="_blank"
           rel="noreferrer"
         >
-          Зарегистрировать приложение AcoustID
+          {messages.registerAcoustid}
         </a>
         {" · "}
         <a
@@ -76,18 +74,15 @@ export function AcoustIDKeyForm({ hasKey, onChanged, onBusyChange }: Props) {
           target="_blank"
           rel="noreferrer"
         >
-          документация API
+          {messages.apiDocumentation}
         </a>
         {" · "}
         <a href="https://acoustid.biz/" target="_blank" rel="noreferrer">
-          условия для коммерческого использования
+          {messages.commercialTerms}
         </a>
       </p>
-      <p>
-        Бесплатное использование AcoustID предназначено для некоммерческих
-        проектов.
-      </p>
-      <label htmlFor={inputId}>Ключ приложения AcoustID</label>
+      <p>{messages.acoustidFreeUse}</p>
+      <label htmlFor={inputId}>{messages.acoustidApplicationKey}</label>
       <input
         autoComplete="new-password"
         disabled={busy}
@@ -97,20 +92,20 @@ export function AcoustIDKeyForm({ hasKey, onChanged, onBusyChange }: Props) {
         value={draft}
       />
       <p role="status">
-        {hasKey ? "Ключ сохранён (значение скрыто)." : "Ключ не задан."}
+        {hasKey ? messages.keySavedHidden : messages.keyNotSet}
       </p>
       <div className="setup-acoustid-key-actions">
         <AppButton isDisabled={busy || !draft} onPress={() => mutate("save")}>
-          Сохранить ключ
+          {messages.saveKey}
         </AppButton>
         {hasKey && (
           <AppButton isDisabled={busy} onPress={() => mutate("delete")}>
-            Удалить ключ
+            {messages.deleteKey}
           </AppButton>
         )}
       </div>
-      {error && <p role="alert">{error}</p>}
-      {notice && <p role="status">{notice}</p>}
+      {error && <p role="alert">{setupFeedbackText(error, locale)}</p>}
+      {notice && <p role="status">{setupFeedbackText(notice, locale)}</p>}
     </section>
   );
 }

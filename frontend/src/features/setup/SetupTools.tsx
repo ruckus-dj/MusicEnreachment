@@ -8,7 +8,7 @@ import {
   Select,
   SelectValue,
 } from "react-aria-components";
-import { apiResponseError, errorMessage } from "../../api/client/errors";
+import { apiResponseError } from "../../api/client/errors";
 import { listInstallations, listOperations } from "../../api/generated/client";
 import type {
   CatalogBody,
@@ -33,6 +33,14 @@ import {
   startManagedToolInstall,
 } from "../tools/toolWorkflow";
 import { OperationProgress } from "./OperationProgress";
+import {
+  type SetupFeedback,
+  setupFeedback,
+  setupFeedbackText,
+  setupHttpError,
+  setupMessage,
+  setupMessages,
+} from "./setupMessages";
 
 type Kind = ManagedToolKind;
 const kinds: readonly Kind[] = ["ffmpeg", "fpcalc"];
@@ -54,6 +62,7 @@ export function SetupTools({
   onGitHubTokenChanged?: () => void | Promise<void>;
 }) {
   const { locale } = useI18n();
+  const messages = setupMessages[locale];
   const [ids, setIds] = useState(savedIds);
   const initialIds = useRef(ids);
   const finishedIds = useRef(new Set<string>());
@@ -73,33 +82,34 @@ export function SetupTools({
     plan: InstallPreflightBody;
   }>();
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-  const [operationsError, setOperationsError] = useState("");
+  const [error, setError] = useState<SetupFeedback | null>(null);
+  const [operationsError, setOperationsError] = useState<SetupFeedback | null>(
+    null,
+  );
   const [discovering, setDiscovering] = useState(false);
   const mounted = useRef(true);
   const alert = useRef<HTMLParagraphElement>(null);
   const operationsAlert = useRef<HTMLParagraphElement>(null);
+  const onBlockedChangeRef = useRef(onBlockedChange);
+  onBlockedChangeRef.current = onBlockedChange;
   const readyByKind = (kind: Kind) =>
     installations.filter(
       (item) => item.package_kind === kind && item.state === "ready",
     );
   const legacyConflict = kinds.some((kind) => readyByKind(kind).length > 1);
-  const legacyError = legacyConflict
-    ? "Найдено несколько готовых версий одного пакета. Первичная настройка инструментов остановлена. Не удаляйте и не переключайте версии; обратитесь к администратору для проверки состояния Setup."
-    : "";
   useEffect(() => {
     if (error) alert.current?.focus();
   }, [error]);
   useEffect(() => {
-    if (legacyError) alert.current?.focus();
-    onBlockedChange?.(Boolean(legacyError));
-  }, [legacyError, onBlockedChange]);
+    if (legacyConflict) alert.current?.focus();
+    onBlockedChangeRef.current?.(legacyConflict);
+  }, [legacyConflict]);
   useEffect(() => {
     if (operationsError) operationsAlert.current?.focus();
   }, [operationsError]);
   const discover = useCallback(async () => {
     setDiscovering(true);
-    setOperationsError("");
+    setOperationsError(null);
     try {
       const response = await listOperations();
       if (response.status !== 200) throw apiResponseError(response);
@@ -122,7 +132,7 @@ export function SetupTools({
       setIds([...initialIds.current]);
     } catch (reason) {
       if (mounted.current)
-        setOperationsError(errorMessage(reason, "Неизвестная ошибка."));
+        setOperationsError(setupFeedback(reason, "unknownError"));
     } finally {
       if (mounted.current) setDiscovering(false);
     }
@@ -153,11 +163,11 @@ export function SetupTools({
   }, []);
   const load = useCallback(async () => {
     setPending(true);
-    setError("");
+    setError(null);
     try {
       const [installedResult, catalogsResult] = await Promise.allSettled([
         listInstallations(),
-        loadManagedToolCatalogs(),
+        loadManagedToolCatalogs(setupHttpError),
       ]);
       if (installedResult.status === "rejected") throw installedResult.reason;
       const installed = installedResult.value;
@@ -166,7 +176,7 @@ export function SetupTools({
       if (catalogsResult.status === "rejected") throw catalogsResult.reason;
       setCatalog(catalogsResult.value);
     } catch (reason) {
-      setError(errorMessage(reason, "Неизвестная ошибка."));
+      setError(setupFeedback(reason, "setupToolsInventoryError"));
     } finally {
       setPending(false);
     }
@@ -177,9 +187,13 @@ export function SetupTools({
 
   async function start(plan: InstallPreflightBody, kind: Kind) {
     if (readyByKind(kind).length) {
-      throw new Error("Для этого пакета уже есть готовая версия.");
+      throw setupMessage("readyVersionExists");
     }
-    const snapshot = await startManagedToolInstall(plan);
+    const snapshot = await startManagedToolInstall(
+      plan,
+      undefined,
+      setupHttpError,
+    );
     setSnapshots((previous) => ({ ...previous, [snapshot.id]: snapshot }));
     if (!initialIds.current.includes(snapshot.id)) {
       initialIds.current = [...initialIds.current, snapshot.id];
@@ -190,19 +204,23 @@ export function SetupTools({
   }
   async function install(kind: Kind) {
     setPending(true);
-    setError("");
+    setError(null);
     setPreflight(undefined);
     try {
       if (readyByKind(kind).length) {
-        throw new Error("Для этого пакета уже есть готовая версия.");
+        throw setupMessage("readyVersionExists");
       }
       const identity = selected[kind];
-      if (!identity) throw new Error("Выберите версию.");
-      const plan = await preflightManagedToolInstall(kind, identity);
+      if (!identity) throw setupMessage("chooseVersion");
+      const plan = await preflightManagedToolInstall(
+        kind,
+        identity,
+        setupHttpError,
+      );
       if (plan.conflicts?.length) setPreflight({ kind, plan });
       else await start(plan, kind);
     } catch (reason) {
-      setError(errorMessage(reason, "Неизвестная ошибка."));
+      setError(setupFeedback(reason, "unknownError"));
     } finally {
       setPending(false);
     }
@@ -210,11 +228,11 @@ export function SetupTools({
   async function confirm() {
     if (!preflight) return;
     setPending(true);
-    setError("");
+    setError(null);
     try {
       await start(preflight.plan, preflight.kind);
     } catch (reason) {
-      setError(errorMessage(reason, "Неизвестная ошибка."));
+      setError(setupFeedback(reason, "unknownError"));
     } finally {
       setPending(false);
     }
@@ -223,7 +241,7 @@ export function SetupTools({
     <div>
       {!legacyConflict && (
         <AppButton isDisabled={pending} onPress={load}>
-          Обновить каталог
+          {messages.toolCatalogRefresh}
         </AppButton>
       )}
       {kinds.map((kind) => (
@@ -232,7 +250,8 @@ export function SetupTools({
           {legacyConflict ? null : readyByKind(kind).length ? (
             readyByKind(kind).map((item) => (
               <p key={item.id} role="status">
-                {item.version}: {item.active ? "Активна" : "Готова"}
+                {item.version}:{" "}
+                {item.active ? messages.active : messages.installedReady}
               </p>
             ))
           ) : (
@@ -240,7 +259,7 @@ export function SetupTools({
               <p>{catalog[kind]?.notice}</p>
               <Select
                 value={selected[kind] || null}
-                placeholder="Выберите версию"
+                placeholder={messages.selectVersion}
                 isDisabled={pending || !catalog[kind]?.releases?.length}
                 onChange={(key) => {
                   setSelected((previous) => ({
@@ -250,7 +269,10 @@ export function SetupTools({
                   setPreflight(undefined);
                 }}
               >
-                <Label>Версия {kind}</Label>
+                <Label>
+                  {messages.toolVersion}
+                  {kind}
+                </Label>
                 <Button className="setup-select-trigger">
                   <SelectValue />
                   <span aria-hidden="true">▾</span>
@@ -274,28 +296,30 @@ export function SetupTools({
                   void install(kind);
                 }}
               >
-                Проверить установку {kind}
+                {messages.checkToolInstall}
+                {kind}
+                {messages.install}
               </AppButton>
             </>
           )}
         </div>
       ))}
       {!legacyConflict && preflight?.plan.conflicts?.length ? (
-        <fieldset aria-label="Подтверждение конфликтов">
-          <legend>Перезапись только следующих файлов:</legend>
+        <fieldset aria-label={messages.conflictConfirmation}>
+          <legend>{messages.confirmOverwrite}</legend>
           <ul>
             {preflight.plan.conflicts.map((path) => (
               <li key={path}>{path}</li>
             ))}
           </ul>
           <AppButton isDisabled={pending} onPress={confirm}>
-            Подтвердить перезапись
+            {messages.confirmOverwriteButton}
           </AppButton>
           <AppButton
             isDisabled={pending}
             onPress={() => setPreflight(undefined)}
           >
-            Отмена
+            {messages.cancel}
           </AppButton>
         </fieldset>
       ) : null}
@@ -318,23 +342,25 @@ export function SetupTools({
           onFinished={forget}
         />
       ))}
-      {(error || legacyError) && (
+      {(error || legacyConflict) && (
         <p ref={alert} tabIndex={-1} role="alert">
-          {error || legacyError}
+          {error
+            ? setupFeedbackText(error, locale)
+            : setupFeedbackText(setupMessage("multipleReadyTools"), locale)}
         </p>
       )}
       {operationsError && (
         <div>
           <p ref={operationsAlert} tabIndex={-1} role="alert">
-            {operationsError}
+            {setupFeedbackText(operationsError, locale)}
           </p>
           <AppButton isDisabled={discovering} onPress={discover}>
-            Повторить загрузку операций
+            {messages.retryOperations}
           </AppButton>
         </div>
       )}
-      {discovering && <p role="status">Загрузка операций…</p>}
-      {pending && <p role="status">Выполняется запрос…</p>}
+      {discovering && <p role="status">{messages.loadingOperations}</p>}
+      {pending && <p role="status">{messages.requestInProgress}</p>}
       <GitHubTokenForm
         hasToken={hasGitHubToken}
         onChanged={onGitHubTokenChanged}

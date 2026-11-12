@@ -9,6 +9,7 @@ import {
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupStateBody } from "../../api/generated/client.schemas";
+import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { SetupManager } from "./SetupManager";
@@ -113,8 +114,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 function renderSetup(value: SetupStateBody, onCompleted = vi.fn()) {
+  localStorage.setItem("melotrove-language", "ru");
   return render(
-    <SetupManager initialState={value} onCompleted={onCompleted} />,
+    <I18nProvider>
+      <SetupManager initialState={value} onCompleted={onCompleted} />
+    </I18nProvider>,
   );
 }
 async function click(name: string) {
@@ -124,7 +128,58 @@ function heading(name: string) {
   return screen.getByRole("heading", { level: 2, name });
 }
 
+function LocaleSwitch() {
+  const { setPreference } = useI18n();
+  return (
+    <button type="button" onClick={() => setPreference("en")}>
+      Switch to English
+    </button>
+  );
+}
+
 describe("SetupManager", () => {
+  it("changes setup language without reloading or losing directory values", () => {
+    const current = state({
+      tools_directory: "/srv/tools",
+      output_directory: "/srv/output",
+    });
+    const requests = vi.fn();
+    localStorage.setItem("melotrove-language", "ru");
+    localStorage.setItem("melotrove.setup.step", "1");
+    server.use(
+      http.get("/api/setup", () => {
+        requests();
+        return HttpResponse.json(current);
+      }),
+      http.get("/api/tools/installations", () => {
+        requests();
+        return HttpResponse.json({ installations: [] });
+      }),
+    );
+
+    render(
+      <I18nProvider>
+        <LocaleSwitch />
+        <SetupManager initialState={current} onCompleted={vi.fn()} />
+      </I18nProvider>,
+    );
+
+    const toolsDirectory = screen.getByRole("textbox", {
+      name: "Каталог инструментов",
+    });
+    expect(toolsDirectory).toHaveValue("/srv/tools");
+    fireEvent.click(screen.getByRole("button", { name: "Switch to English" }));
+
+    expect(screen.getByRole("textbox", { name: "Tools directory" })).toBe(
+      toolsDirectory,
+    );
+    expect(toolsDirectory).toHaveValue("/srv/tools");
+    expect(
+      screen.getByRole("textbox", { name: "Output directory" }),
+    ).toHaveValue("/srv/output");
+    expect(requests).not.toHaveBeenCalled();
+  });
+
   it("requires an explicit format and submits the current publication settings", async () => {
     let current = state(installed);
     const saved = vi.fn((_body: unknown) => {

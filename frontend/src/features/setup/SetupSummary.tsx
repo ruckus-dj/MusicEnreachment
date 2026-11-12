@@ -1,25 +1,33 @@
 import { useEffect, useState } from "react";
-import { apiResponseError, errorMessage } from "../../api/client/errors";
+import { apiResponseError } from "../../api/client/errors";
 import { listInstallations } from "../../api/generated/client";
 import type {
   InstallationResponse,
   SetupStateBody,
 } from "../../api/generated/client.schemas";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type SetupFeedback,
+  setupFeedback,
+  setupFeedbackText,
+  setupMessages,
+} from "./setupMessages";
 import "./SetupSummary.css";
 
-function formatName(format: string) {
-  if (format === "source") return "Исходный формат";
+function formatName(format: string, messages: (typeof setupMessages)["en"]) {
+  if (format === "source") return messages.sourceFormat;
   if (format === "mka") return "MKA";
   if (format === "m4a") return "M4A";
-  return "Не выбран";
+  return messages.unselected;
 }
 
-function formatExplanation(format: string) {
-  if (format === "source")
-    return "Сохраняется исходный контейнер и аудиопоток.";
-  if (format === "mka") return "Перепаковка в MKA без перекодирования аудио.";
-  if (format === "m4a")
-    return "AAC и ALAC копируются без перекодирования; другие lossless-кодеки преобразуются в ALAC, остальные — в AAC с потерями. Возможность обработки зависит от поддерживаемых FFmpeg кодеков и параметров исходного аудио.";
+function formatExplanation(
+  format: string,
+  messages: (typeof setupMessages)["en"],
+) {
+  if (format === "source") return messages.sourceFormatExplanation;
+  if (format === "mka") return messages.mkaExplanation;
+  if (format === "m4a") return messages.m4aExplanation;
   return "";
 }
 
@@ -27,10 +35,12 @@ function ToolStatus({
   id,
   installations,
   loading,
+  messages,
 }: {
   id: string;
   installations: InstallationResponse[];
   loading: boolean;
+  messages: (typeof setupMessages)["en"];
 }) {
   const tool = installations.find((item) => item.id === id);
   const version = tool?.version;
@@ -39,26 +49,40 @@ function ToolStatus({
     tool.state === "ready" &&
     Boolean(tool.verified_at) &&
     Boolean(version);
-  if (loading) return <span>Загружается…</span>;
-  if (!tool) return <span>Состояние неизвестно — обновите проверку</span>;
+  if (loading) return <span>{messages.loading}</span>;
+  if (!tool) return <span>{messages.unknownToolState}</span>;
   if (!ready)
-    return <span>Не подтверждён как готовый (состояние: {tool.state})</span>;
-  return <span>Готов · {version}</span>;
+    return (
+      <span>
+        {messages.toolNotReady}
+        {tool.state})
+      </span>
+    );
+  return (
+    <span>
+      {messages.ready}
+      {version}
+    </span>
+  );
 }
 
 export function SetupSummary({ state }: { state: SetupStateBody }) {
+  const { locale } = useI18n();
+  const messages = setupMessages[locale];
   const [installations, setInstallations] = useState<InstallationResponse[]>(
     [],
   );
   const [loading, setLoading] = useState(true);
-  const [inventoryError, setInventoryError] = useState("");
+  const [inventoryError, setInventoryError] = useState<SetupFeedback | null>(
+    null,
+  );
   const ffmpegID = state.settings.active_ffmpeg_installation_id || "";
   const fpcalcID = state.settings.active_fpcalc_installation_id || "";
 
   useEffect(() => {
     let current = true;
     setLoading(true);
-    setInventoryError("");
+    setInventoryError(null);
     setInstallations([]);
     void listInstallations(undefined, { cache: "no-store" })
       .then((response) => {
@@ -67,12 +91,7 @@ export function SetupSummary({ state }: { state: SetupStateBody }) {
       })
       .catch((reason: unknown) => {
         if (current)
-          setInventoryError(
-            errorMessage(
-              reason,
-              "Не удалось загрузить состояние инструментов.",
-            ),
-          );
+          setInventoryError(setupFeedback(reason, "toolsInventoryLoadError"));
       })
       .finally(() => {
         if (current) setLoading(false);
@@ -85,10 +104,12 @@ export function SetupSummary({ state }: { state: SetupStateBody }) {
   const healthy = state.configuration_health.healthy;
   return (
     <div className="setup-summary-content">
-      <h3>{healthy ? "Готово к работе" : "Требует внимания"}</h3>
+      <h3>
+        {healthy ? messages.setupReadyTitle : messages.setupNeedsAttention}
+      </h3>
       {!healthy && (
         <div role="alert">
-          <p>Настройка пока не готова:</p>
+          <p>{messages.setupNotReadyIntro}</p>
           {state.configuration_health.problems?.length ? (
             <ul>
               {state.configuration_health.problems.map((problem) => (
@@ -96,131 +117,133 @@ export function SetupSummary({ state }: { state: SetupStateBody }) {
               ))}
             </ul>
           ) : (
-            <p>Сервер сообщил, что конфигурация не готова.</p>
+            <p>{messages.serverNotReady}</p>
           )}
         </div>
       )}
       <section aria-labelledby="summary-publication">
-        <h4 id="summary-publication">Публикация</h4>
+        <h4 id="summary-publication">{messages.publication}</h4>
         <dl>
           <div>
-            <dt>Каталог на сервере</dt>
-            <dd>{state.settings.output_directory || "Не указан"}</dd>
+            <dt>{messages.serverDirectory}</dt>
+            <dd>{state.settings.output_directory || messages.notSpecified}</dd>
           </div>
           <div>
-            <dt>Формат</dt>
-            <dd>{formatName(state.settings.publication_format)}</dd>
+            <dt>{messages.format}</dt>
+            <dd>{formatName(state.settings.publication_format, messages)}</dd>
           </div>
           <div>
-            <dt>Что будет происходить</dt>
-            <dd>{formatExplanation(state.settings.publication_format)}</dd>
+            <dt>{messages.whatWillHappen}</dt>
+            <dd>
+              {formatExplanation(state.settings.publication_format, messages)}
+            </dd>
           </div>
           <div>
-            <dt>Исходники после успешной публикации</dt>
+            <dt>{messages.sourceFilesAfterPublication}</dt>
             <dd>
               {state.settings.publication_remove_sources
-                ? "Удалять"
-                : "Сохранять"}
+                ? messages.remove
+                : messages.keep}
             </dd>
           </div>
         </dl>
       </section>
       <section aria-labelledby="summary-tools">
-        <h4 id="summary-tools">Инструменты</h4>
+        <h4 id="summary-tools">{messages.tools}</h4>
         {inventoryError && (
           <p role="status">
-            Состояние инструментов недоступно: {inventoryError}
+            {messages.toolsInventoryUnavailable}
+            {setupFeedbackText(inventoryError, locale)}
           </p>
         )}
         <dl>
           <div>
-            <dt>FFmpeg</dt>
+            <dt>{messages.ffmpeg}</dt>
             <dd>
               <ToolStatus
                 id={ffmpegID}
                 installations={installations}
                 loading={loading}
+                messages={messages}
               />
             </dd>
           </div>
           <div>
-            <dt>fpcalc</dt>
+            <dt>{messages.fpcalc}</dt>
             <dd>
               <ToolStatus
                 id={fpcalcID}
                 installations={installations}
                 loading={loading}
+                messages={messages}
               />
             </dd>
           </div>
         </dl>
       </section>
       <section aria-labelledby="summary-metadata">
-        <h4 id="summary-metadata">Метаданные и тексты</h4>
+        <h4 id="summary-metadata">{messages.metadataAndLyrics}</h4>
         <dl>
           <div>
             <dt>MusicBrainz</dt>
             <dd>
               {state.settings.musicbrainz_verified_at
-                ? `Подключение проверено · ${state.settings.musicbrainz_mode === "self-hosted" ? state.settings.musicbrainz_base_url : "публичный сервис"}`
-                : "Подключение не проверено"}
+                ? `${messages.connectionChecked}${state.settings.musicbrainz_mode === "self-hosted" ? state.settings.musicbrainz_base_url : messages.publicService}`
+                : messages.connectionNotChecked}
             </dd>
           </div>
           <div>
-            <dt>Тексты LRCLIB</dt>
+            <dt>{messages.lrclibLyrics}</dt>
             <dd>
               {state.settings.lrclib_enabled
-                ? "Включены — доступны для поиска"
-                : "Выключены"}
+                ? messages.enabledAvailableForSearch
+                : messages.disabled}
             </dd>
           </div>
           <div>
-            <dt>AcoustID</dt>
+            <dt>{messages.acoustid}</dt>
             <dd>
               {state.settings.has_acoustid_application_key
-                ? "Ключ задан"
-                : "Ключ не задан (необязательно)"}
+                ? messages.keySet
+                : messages.keyNotSetOptional}
             </dd>
           </div>
         </dl>
       </section>
       <details>
-        <summary>Технические сведения</summary>
+        <summary>{messages.technicalDetails}</summary>
         <dl>
           <div>
-            <dt>Платформа</dt>
+            <dt>{messages.platform}</dt>
             <dd>
               {state.platform.goos}/{state.platform.goarch}
             </dd>
           </div>
           <div>
-            <dt>Каталог инструментов</dt>
-            <dd>{state.settings.tools_directory || "Не указан"}</dd>
+            <dt>{messages.toolsDirectorySummary}</dt>
+            <dd>{state.settings.tools_directory || messages.notSpecified}</dd>
           </div>
           <div>
-            <dt>Последняя проверка MusicBrainz</dt>
-            <dd>{state.settings.musicbrainz_verified_at || "Нет данных"}</dd>
+            <dt>{messages.lastMusicBrainzCheck}</dt>
+            <dd>{state.settings.musicbrainz_verified_at || messages.noData}</dd>
           </div>
           <div>
-            <dt>Последняя проверка FFmpeg</dt>
+            <dt>{messages.lastFfmpegCheck}</dt>
             <dd>
               {installations.find((item) => item.id === ffmpegID)
-                ?.verified_at || "Нет данных"}
+                ?.verified_at || messages.noData}
             </dd>
           </div>
           <div>
-            <dt>Последняя проверка fpcalc</dt>
+            <dt>{messages.lastFpcalcCheck}</dt>
             <dd>
               {installations.find((item) => item.id === fpcalcID)
-                ?.verified_at || "Нет данных"}
+                ?.verified_at || messages.noData}
             </dd>
           </div>
         </dl>
       </details>
-      <p>
-        Следующий шаг: добавьте источник музыки и запустите сканирование. Импорт
-        не запускается автоматически.
-      </p>
+      <p>{messages.nextStep}</p>
     </div>
   );
 }

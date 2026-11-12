@@ -5,7 +5,7 @@ import {
   RadioField,
   RadioGroup,
 } from "react-aria-components";
-import { apiResponseError, errorMessage } from "../../api/client/errors";
+import { apiResponseError } from "../../api/client/errors";
 import {
   checkSetupPaths,
   completeSetup,
@@ -18,20 +18,21 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { DirectoryPathField } from "../../components/DirectoryPathField";
+import { useI18n } from "../../i18n/I18nProvider";
 import { SetupMetadata } from "./SetupMetadata";
 import { SetupSummary } from "./SetupSummary";
 import { SetupTools } from "./SetupTools";
+import {
+  type SetupFeedback,
+  setupFeedback,
+  setupFeedbackText,
+  setupMessage,
+  setupMessages,
+} from "./setupMessages";
 import "./setup.css";
 
-const steps = [
-  "Платформа",
-  "Каталоги",
-  "Инструменты",
-  "Публикация",
-  "Провайдеры метаданных",
-  "Итог",
-] as const;
 const stepKey = "melotrove.setup.step";
+const stepCount = 6;
 function earliest(state: SetupStateBody) {
   const s = state.settings;
   if (!s.tools_directory && !s.output_directory) return 0;
@@ -45,7 +46,7 @@ function earliest(state: SetupStateBody) {
 function restoredStep(state: SetupStateBody) {
   const stored = window.localStorage.getItem(stepKey);
   const step = stored === null ? NaN : Number(stored);
-  return Number.isInteger(step) && step >= 0 && step < steps.length
+  return Number.isInteger(step) && step >= 0 && step < stepCount
     ? Math.min(step, earliest(state))
     : earliest(state);
 }
@@ -64,6 +65,9 @@ export function SetupManager({
   onCompleted: () => void;
   initialState: SetupStateBody;
 }) {
+  const { locale } = useI18n();
+  const messages = setupMessages[locale];
+  const steps = messages.steps;
   const [state, setState] = useState(initialState);
   const [step, setStep] = useState(() => restoredStep(initialState));
   const [toolsDirectory, setToolsDirectory] = useState(
@@ -80,8 +84,8 @@ export function SetupManager({
   );
   const [pending, setPending] = useState(false);
   const [toolsBlocked, setToolsBlocked] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [error, setError] = useState<SetupFeedback | null>(null);
+  const [notice, setNotice] = useState<SetupFeedback | null>(null);
   const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
@@ -89,13 +93,13 @@ export function SetupManager({
     setToolsBlocked(blocked);
   }, []);
   function navigate(next: number) {
-    setError("");
-    setNotice("");
+    setError(null);
+    setNotice(null);
     setStep(next);
     window.localStorage.setItem(stepKey, String(next));
   }
   useEffect(() => {
-    if (steps[step]) heading.current?.focus();
+    if (step >= 0 && step < stepCount) heading.current?.focus();
   }, [step]);
   useEffect(() => {
     if (error) alert.current?.focus();
@@ -113,12 +117,12 @@ export function SetupManager({
   }
   async function advance() {
     setPending(true);
-    setError("");
-    setNotice("");
+    setError(null);
+    setNotice(null);
     try {
       if (step === 1) {
         if (!toolsDirectory || !outputDirectory)
-          throw new Error("Укажите оба каталога сервера.");
+          throw setupMessage("directoryRequired");
         const checked = await checkSetupPaths({
           tools_directory: toolsDirectory,
           output_directory: outputDirectory,
@@ -137,10 +141,10 @@ export function SetupManager({
           !fresh.settings.active_ffmpeg_installation_id ||
           !fresh.settings.active_fpcalc_installation_id
         )
-          throw new Error("Активируйте проверенные FFmpeg и fpcalc.");
+          throw setupMessage("activateTools");
       }
       if (step === 3) {
-        if (!format) throw new Error("Выберите формат публикации.");
+        if (!format) throw setupMessage("chooseFormat");
         const saved = await saveSetupRuntime({
           publication_format: format,
           publication_remove_sources: removeSources,
@@ -150,11 +154,11 @@ export function SetupManager({
       }
       if (step === 5) {
         const fresh = await refresh();
-        if (!fresh.configuration_health.healthy)
-          throw new Error(
-            fresh.configuration_health.problems?.join(", ") ||
-              "Настройка не готова.",
-          );
+        if (!fresh.configuration_health.healthy) {
+          const problems = fresh.configuration_health.problems;
+          if (problems?.length) throw new Error(problems.join(", "));
+          throw setupMessage("setupNotReady");
+        }
         const completed = await completeSetup();
         if (completed.status !== 204) throw apiResponseError(completed);
         window.localStorage.removeItem(stepKey);
@@ -163,7 +167,7 @@ export function SetupManager({
       }
       navigate(step + 1);
     } catch (reason) {
-      setError(errorMessage(reason, "Неизвестная ошибка."));
+      setError(setupFeedback(reason, "unknownError"));
     } finally {
       setPending(false);
     }
@@ -171,9 +175,9 @@ export function SetupManager({
   return (
     <section aria-labelledby="setup-title" className="mx-auto max-w-6xl py-3">
       <h1 id="setup-title" className="text-xl font-semibold">
-        Первый запуск
+        {messages.firstRun}
       </h1>
-      <ol aria-label="Шаги настройки" className="setup-stepper">
+      <ol aria-label={messages.setupSteps} className="setup-stepper">
         {steps.map((name, index) => (
           <li key={name} aria-current={index === step ? "step" : undefined}>
             {index + 1}. {name}
@@ -187,9 +191,9 @@ export function SetupManager({
           </h2>
           {step === 0 && (
             <p>
-              Сервер: {state.platform.goos}/{state.platform.goarch}.{" "}
+              {messages.server}: {state.platform.goos}/{state.platform.goarch}.{" "}
               {state.platform.supported
-                ? "Платформа поддерживается."
+                ? messages.platformSupported
                 : state.platform.reason}
             </p>
           )}
@@ -197,7 +201,7 @@ export function SetupManager({
             <div className="grid gap-3">
               <DirectoryPathField
                 id="setup-tools-directory"
-                label="Tools directory"
+                label={messages.toolsDirectory}
                 value={toolsDirectory}
                 onSelect={setToolsDirectory}
                 disabled={pending}
@@ -205,16 +209,13 @@ export function SetupManager({
               />
               <DirectoryPathField
                 id="setup-output-directory"
-                label="Output directory"
+                label={messages.outputDirectory}
                 value={outputDirectory}
                 onSelect={setOutputDirectory}
                 disabled={pending}
                 aria-describedby="setup-directory-help"
               />
-              <p id="setup-directory-help">
-                Пути относятся к серверу, а не к этому компьютеру. Output
-                directory должен быть пустым.
-              </p>
+              <p id="setup-directory-help">{messages.directoryHelp}</p>
             </div>
           )}
           {step === 2 && (
@@ -236,12 +237,12 @@ export function SetupManager({
                     setFormat(value);
                 }}
               >
-                <Label>Publication format</Label>
+                <Label>{messages.format}</Label>
                 <RadioField value="source">
-                  <RadioButton>Исходный формат</RadioButton>
+                  <RadioButton>{messages.sourceFormat}</RadioButton>
                 </RadioField>
                 <RadioField value="mka">
-                  <RadioButton>MKA remux</RadioButton>
+                  <RadioButton>{messages.mkaRemux}</RadioButton>
                 </RadioField>
                 <RadioField value="m4a">
                   <RadioButton>M4A</RadioButton>
@@ -255,12 +256,9 @@ export function SetupManager({
                   onChange={(event) => setRemoveSources(event.target.checked)}
                 />
                 <span>
-                  <span className="block">
-                    Удалять исходники после успешной публикации
-                  </span>
+                  <span className="block">{messages.removeSources}</span>
                   <span className="block text-sm">
-                    Если флажок снят, исходники останутся. Удаление выполняется
-                    только после успешной публикации, не при ошибке.
+                    {messages.preserveSourcesDescription}
                   </span>
                 </span>
               </label>
@@ -283,90 +281,58 @@ export function SetupManager({
                   void verifySummary();
                 }}
               >
-                Обновить проверку
+                {messages.updateCheck}
               </AppButton>
             </div>
           )}
           {error && (
             <p ref={alert} tabIndex={-1} role="alert">
-              {error}
+              {setupFeedbackText(error, locale)}
             </p>
           )}
-          {notice && <p role="status">{notice}</p>}
-          {pending && <p role="status">Выполняется запрос…</p>}
+          {notice && <p role="status">{setupFeedbackText(notice, locale)}</p>}
+          {pending && <p role="status">{messages.requestInProgress}</p>}
           {step !== 4 && (
             <div className="setup-navigation">
               <AppButton
                 isDisabled={step === 0 || pending}
                 onPress={() => navigate(step - 1)}
               >
-                Назад
+                {messages.back}
               </AppButton>
               <AppButton
                 isDisabled={pending || (step === 2 && toolsBlocked)}
                 onPress={advance}
               >
-                {step === 5 ? "Завершить настройку" : "Продолжить"}
+                {step === 5 ? messages.finishSetup : messages.continue}
               </AppButton>
             </div>
           )}
         </div>
-        <aside className="setup-panel setup-help" aria-label="О текущем шаге">
-          <h2>Важно знать</h2>
-          {step === 0 && (
-            <p>
-              Платформа зафиксирована сервером и не меняется в браузере.
-              Проверьте OS и архитектуру перед настройкой.
-            </p>
-          )}
-          {step === 1 && (
-            <p>
-              Укажите постоянные каталоги внутри сервера или контейнера. Каталог
-              публикации должен быть пустым; путь к инструментам сохраняется
-              между перезапусками.
-            </p>
-          )}
-          {step === 2 && (
-            <p>
-              FFmpeg включает ffmpeg и ffprobe в одной установке. Выберите
-              версию каждого пакета; первая успешно проверенная версия
-              активируется автоматически.
-            </p>
-          )}
-          {step === 3 && (
-            <p>
-              Исходный формат сохраняет контейнер. MKA выполняет remux без
-              перекодирования. M4A сохраняет AAC и ALAC без перекодирования;
-              другие lossless кодируются в ALAC, другие lossy — в AAC с
-              потерями.
-            </p>
-          )}
-          {step === 4 && (
-            <p>
-              Проверка MusicBrainz обязательна для завершения. LRCLIB не требует
-              сетевой проверки на этом шаге.
-            </p>
-          )}
-          {step === 5 && (
-            <p>
-              Итог загружается с сервера. Завершение повторно проверит все
-              обязательные условия; ошибку можно исправить, вернувшись к нужному
-              шагу.
-            </p>
-          )}
+        <aside
+          className="setup-panel setup-help"
+          aria-label={messages.aboutCurrentStep}
+        >
+          <h2>{messages.importantToKnow}</h2>
+          {step === 0 && <p>{messages.platformHelp}</p>}
+          {step === 1 && <p>{messages.directoryHelpDetails}</p>}
+          {step === 2 && <p>{messages.toolsHelp}</p>}
+          {step === 3 && <p>{messages.publicationHelp}</p>}
+          {step === 4 && <p>{messages.metadataHelp}</p>}
+          {step === 5 && <p>{messages.summaryHelp}</p>}
         </aside>
       </div>
     </section>
   );
   async function verifySummary() {
     setPending(true);
-    setError("");
+    setError(null);
     try {
       await refresh();
       setSummaryRefreshToken((token) => token + 1);
-      setNotice("Состояние сервера обновлено.");
+      setNotice(setupMessage("serverStateUpdated"));
     } catch (reason) {
-      setError(errorMessage(reason, "Неизвестная ошибка."));
+      setError(setupFeedback(reason, "unknownError"));
     } finally {
       setPending(false);
     }
