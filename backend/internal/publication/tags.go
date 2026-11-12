@@ -611,6 +611,7 @@ func normalizedTagKey(scope librarymetadata.Scope, field string) (string, bool) 
 	}
 	keys := map[string]string{
 		"title": "TITLE", "artist_credit": "ARTIST", "artists": "ARTISTS", "release_date": "RELEASEDATE", "recording_date": "DATE", "original_release_date": "ORIGINALDATE",
+		"asin": "ASIN", "script": "SCRIPT",
 		"release_primary_type": "RELEASETYPE", "release_secondary_types": "RELEASETYPES", "release_version": "ALBUMVERSION", "subtitle": "SUBTITLE", "release_mbid": "MUSICBRAINZ_ALBUMID",
 		"release_group_mbid": "MUSICBRAINZ_RELEASEGROUPID", "recording_mbid": "MUSICBRAINZ_TRACKID", "release_track_mbid": "MUSICBRAINZ_RELEASETRACKID",
 		"artist_mbid": "MUSICBRAINZ_ARTISTID", "album_artist_mbid": "MUSICBRAINZ_ALBUMARTISTID", "isrc": "ISRC", "label": "LABEL", "catalog_number": "CATALOGNUMBER",

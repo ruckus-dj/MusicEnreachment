@@ -60,6 +60,8 @@ var fieldDefinitions = []FieldDefinition{
 	{Name: "release_primary_type", Type: TypeString, Scopes: []Scope{ScopeRelease}},
 	{Name: "release_secondary_types", Type: TypeStringList, Scopes: []Scope{ScopeRelease}},
 	{Name: "release_version", Type: TypeString, Scopes: []Scope{ScopeRelease}},
+	{Name: "asin", Type: TypeString, Scopes: []Scope{ScopeRelease}},
+	{Name: "script", Type: TypeString, Scopes: []Scope{ScopeRelease}},
 	{Name: "subtitle", Type: TypeString, Scopes: []Scope{ScopeRecording, ScopeTrack, ScopePosition}},
 	{Name: "release_mbid", Type: TypeUUID, Scopes: []Scope{ScopeRelease}},
 	{Name: "release_group_mbid", Type: TypeUUID, Scopes: []Scope{ScopeRelease}},

@@ -728,6 +728,18 @@ export interface ProviderGenreBaseline {
   provider_source_id: string;
 }
 
+export type ProviderReleaseIdentifierBaselineEvidence = {[key: string]: ProviderGenreEvidence};
+
+export interface ProviderReleaseIdentifierBaseline {
+  asin?: string;
+  digest: string;
+  evidence: ProviderReleaseIdentifierBaselineEvidence;
+  provider_code: string;
+  provider_key: string;
+  provider_source_id: string;
+  script?: string;
+}
+
 export interface LibraryMetadataGetResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -736,6 +748,7 @@ export interface LibraryMetadataGetResponse {
   effective_artist_credit?: EffectiveArtistCredit;
   envelope: Envelope;
   provider_genre_baseline?: ProviderGenreBaseline;
+  provider_release_identifier_baseline?: ProviderReleaseIdentifierBaseline;
   publication_applied: boolean;
   revision: number;
 }

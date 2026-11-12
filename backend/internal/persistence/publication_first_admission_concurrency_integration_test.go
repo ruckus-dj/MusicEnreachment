@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -18,8 +19,8 @@ import (
 )
 
 // This exercises the actual first-admission callback while its SHARE table
-// guards are held. A previously absent track_source association must not be
-// inserted until admission commits.
+// guards are held. A previously absent track_source association and provider
+// source entity must not be inserted until admission commits.
 func TestFirstPublicationAdmissionGuardsPhantomTrackSourcePostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -72,6 +73,13 @@ func TestFirstPublicationAdmissionGuardsPhantomTrackSourcePostgreSQL(t *testing.
 			t.Fatal(err)
 		}
 	}
+	providerID, providerSourceID := uuid.New(), uuid.New()
+	if _, err := db.ExecContext(ctx, `INSERT INTO provider(id,code) VALUES (?,'first-admission-concurrency')`, providerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO provider_source(id,provider_id,namespace,endpoint,configuration_identity) VALUES (?,?,'first-admission-concurrency','https://example.invalid','configuration')`, providerSourceID, providerID); err != nil {
+		t.Fatal(err)
+	}
 	installationID := uuid.New()
 	verified := time.Now().UTC()
 	versions, ffmpegBanner, ffprobeBanner := publicationFFmpegVersionFixture()
@@ -97,6 +105,8 @@ func TestFirstPublicationAdmissionGuardsPhantomTrackSourcePostgreSQL(t *testing.
 	entered := make(chan struct{})
 	writerDone := make(chan error, 1)
 	writerStarted := make(chan struct{})
+	providerWriterPID := make(chan int, 1)
+	providerWriterDone := make(chan error, 1)
 	finished := false
 	first := FirstPublicationAdmission{PublicationAdmission: request, PreviewDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PrepareFirst: func(_ context.Context, _ FirstPublicationAdmissionSnapshot, _ PublicationAdmission) ([]PublicationNamespaceNode, error) {
 		close(entered)
@@ -105,12 +115,57 @@ func TestFirstPublicationAdmissionGuardsPhantomTrackSourcePostgreSQL(t *testing.
 			_, e := db.ExecContext(ctx, `INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,metadata) VALUES (?,?,?,false,true,'manual','{}'::jsonb)`, uuid.New(), newTrackID, variantID)
 			writerDone <- e
 		}()
+		go func() {
+			e := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+				var pid int
+				if err := tx.NewRaw(`SELECT pg_backend_pid()`).Scan(ctx, &pid); err != nil {
+					return err
+				}
+				providerWriterPID <- pid
+				_, err := tx.ExecContext(ctx, `INSERT INTO provider_source_entity(provider_source_id,provider_id,entity_kind,provider_key,authority,fetch_order) VALUES (?,?,'release','release-key',0,1)`, providerSourceID, providerID)
+				return err
+			})
+			providerWriterDone <- e
+		}()
 		<-writerStarted
 		select {
 		case e := <-writerDone:
 			t.Errorf("track_source insert escaped admission SHARE guard: %v", e)
 			return nil, errors.New("phantom association was not blocked")
 		case <-time.After(150 * time.Millisecond):
+		}
+		var pid int
+		select {
+		case pid = <-providerWriterPID:
+		case err := <-providerWriterDone:
+			if err != nil {
+				return nil, fmt.Errorf("provider source writer exited before attempting insert: %w", err)
+			}
+			return nil, errors.New("provider source insert completed before admission committed")
+		case <-time.After(5 * time.Second):
+			return nil, errors.New("provider source writer did not start")
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			var waiting bool
+			if err := db.NewRaw(`SELECT COALESCE((SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid=?),false)`, pid).Scan(ctx, &waiting); err != nil {
+				return nil, fmt.Errorf("inspect provider source writer wait: %w", err)
+			}
+			if waiting {
+				break
+			}
+			select {
+			case err := <-providerWriterDone:
+				if err != nil {
+					return nil, fmt.Errorf("provider source insert failed before admission committed: %w", err)
+				}
+				return nil, errors.New("provider source insert escaped admission SHARE guard")
+			default:
+			}
+			if time.Now().After(deadline) {
+				return nil, errors.New("provider source insert did not reach a lock wait")
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 		return []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/final.flac", RelativePath: "root/final.flac", NodeKind: "file"}}, nil
 	}}
@@ -128,5 +183,13 @@ func TestFirstPublicationAdmissionGuardsPhantomTrackSourcePostgreSQL(t *testing.
 	}
 	if !finished {
 		t.Fatal("association insert did not complete")
+	}
+	select {
+	case err := <-providerWriterDone:
+		if err != nil {
+			t.Fatalf("provider source insert failed after admission committed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked provider source insert did not resume after admission committed")
 	}
 }

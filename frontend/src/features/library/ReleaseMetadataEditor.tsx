@@ -63,6 +63,8 @@ type ReleaseFieldKey =
   | "release_primary_type"
   | "release_secondary_types"
   | "release_version"
+  | "asin"
+  | "script"
   | "subtitle"
   | "barcode"
   | "release_status"
@@ -115,6 +117,8 @@ const releaseFields: ReleaseField[] = [
   { key: "release_primary_type", kind: "text", group: "release" },
   { key: "release_secondary_types", kind: "list", group: "release" },
   { key: "release_version", kind: "text", group: "release" },
+  { key: "asin", kind: "text", group: "release" },
+  { key: "script", kind: "text", group: "release" },
   { key: "barcode", kind: "text", group: "release" },
   { key: "release_status", kind: "text", group: "release" },
   { key: "compilation", kind: "boolean", group: "release" },
@@ -178,6 +182,8 @@ const copy = {
       release_primary_type: "Primary release type",
       release_secondary_types: "Secondary release types",
       release_version: "Release version",
+      asin: "ASIN",
+      script: "Script",
       subtitle: "Track subtitle",
       barcode: "Barcode",
       release_status: "Release status",
@@ -213,6 +219,7 @@ const copy = {
       contributors: "Contributors",
     },
     noOverride: "Inherited · no local override",
+    providerBaseline: "MusicBrainz effective value",
     explicitEmpty: "Explicitly cleared",
     emptyValue: "Empty value",
     dateHint: "Enter the date in the format accepted by the server.",
@@ -285,6 +292,8 @@ const copy = {
       release_primary_type: "Основной тип релиза",
       release_secondary_types: "Дополнительные типы релиза",
       release_version: "Версия релиза",
+      asin: "ASIN",
+      script: "Письменность",
       subtitle: "Подзаголовок трека",
       barcode: "Штрихкод",
       release_status: "Статус релиза",
@@ -320,6 +329,7 @@ const copy = {
       contributors: "Участники",
     },
     noOverride: "Наследуется · локальное значение не задано",
+    providerBaseline: "Эффективное значение MusicBrainz",
     explicitEmpty: "Явно очищено",
     emptyValue: "Пустое значение",
     dateHint: "Введите дату в формате, который принимает сервер.",
@@ -1011,6 +1021,19 @@ function LibraryScopedMetadataEditorSession({
                   const rendered = Array.isArray(field.value)
                     ? field.value.join("\n")
                     : String(field.value);
+                  const providerIdentifier =
+                    scope === "release" &&
+                    metadata &&
+                    "provider_release_identifier_baseline" in metadata
+                      ? key === "asin"
+                        ? metadata.provider_release_identifier_baseline?.asin
+                        : key === "script"
+                          ? metadata.provider_release_identifier_baseline
+                              ?.script
+                          : undefined
+                      : undefined;
+                  const hasDesiredIdentifier =
+                    metadata && Object.hasOwn(metadata.envelope.desired, key);
                   return (
                     <div
                       key={key}
@@ -1436,9 +1459,22 @@ function LibraryScopedMetadataEditorSession({
                             ) : null}
                           </div>
                         ) : (
-                          <span className="block whitespace-pre-wrap break-words">
-                            {displayValue(field.state, field.value, text)}
-                          </span>
+                          <>
+                            <span className="block whitespace-pre-wrap break-words">
+                              {field.state === "absent" &&
+                              !hasDesiredIdentifier &&
+                              providerIdentifier
+                                ? providerIdentifier
+                                : displayValue(field.state, field.value, text)}
+                            </span>
+                            {field.state === "absent" &&
+                            !hasDesiredIdentifier &&
+                            providerIdentifier ? (
+                              <span className="mt-1 block text-xs text-[var(--muted)]">
+                                {text.providerBaseline}
+                              </span>
+                            ) : null}
+                          </>
                         )}
                       </dd>
                     </div>

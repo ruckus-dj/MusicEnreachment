@@ -35,6 +35,16 @@ func TestReadMetadataDisplayProviderGenreScopesPostgreSQL(t *testing.T) {
 	if _, err := fixture.f.db.NewRaw(`INSERT INTO app_setting(setting_name,setting_value) VALUES('musicbrainz_mode','self-hosted'),('musicbrainz_base_url',?),('musicbrainz_config_identity',?) ON CONFLICT(setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`, fixture.source.Endpoint, pendingGraphTestIdentity).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
+	updated, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET
+		fields=fields || '{"asin":"B001234567","text-representation":{"script":"Latn"}}'::jsonb,
+		field_evidence=field_evidence || '{"asin":{"authority":4,"fetch_order":11},"text-representation":{"authority":4,"fetch_order":12}}'::jsonb
+		WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, fixture.source.ID, fixture.releaseKey).Exec(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := updated.RowsAffected(); err != nil || count != 1 {
+		t.Fatalf("seed accepted release identifiers affected %d rows, err=%v", count, err)
+	}
 	repo := NewLibraryRepository(fixture.f.db)
 	cases := []struct {
 		name  string
@@ -56,6 +66,32 @@ func TestReadMetadataDisplayProviderGenreScopesPostgreSQL(t *testing.T) {
 				t.Fatalf("baseline = %+v, want genre %q", got.ProviderGenreBaseline, tc.want)
 			}
 		})
+	}
+	releaseDisplay, err := repo.ReadMetadataDisplay(ctx, librarymetadata.ScopeRelease, fixture.release, fixture.release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identifierBaseline := releaseDisplay.ProviderReleaseIdentifierBaseline
+	if identifierBaseline == nil || identifierBaseline.ASIN == nil || *identifierBaseline.ASIN != "B001234567" || identifierBaseline.Script == nil || *identifierBaseline.Script != "Latn" || identifierBaseline.Digest == "" {
+		t.Fatalf("accepted release identifier baseline = %+v, want ASIN and script from the bound accepted release", identifierBaseline)
+	}
+	if identifierBaseline.Evidence["asin"].FetchOrder != 11 || identifierBaseline.Evidence["text-representation"].FetchOrder != 12 {
+		t.Fatalf("identifier baseline evidence = %+v, want both accepted field evidences", identifierBaseline.Evidence)
+	}
+	for _, malformedEvidence := range []string{`null`, `{}`, `{"authority":4}`, `{"authority":4,"fetch_order":null}`, `{"authority":-1,"fetch_order":11}`} {
+		updated, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET field_evidence=jsonb_set(field_evidence,'{asin}',?::jsonb,true) WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, malformedEvidence, fixture.source.ID, fixture.releaseKey).Exec(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count, err := updated.RowsAffected(); err != nil || count != 1 {
+			t.Fatalf("seed malformed ASIN evidence affected %d rows, err=%v", count, err)
+		}
+		if _, err := repo.ReadMetadataDisplay(ctx, librarymetadata.ScopeRelease, fixture.release, fixture.release); err == nil {
+			t.Fatalf("accepted ASIN with malformed evidence %s", malformedEvidence)
+		}
+		if _, err := fixture.f.db.NewRaw(`UPDATE provider_source_entity SET field_evidence=jsonb_set(field_evidence,'{asin}','{"authority":4,"fetch_order":11}'::jsonb,true) WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, fixture.source.ID, fixture.releaseKey).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	first, err := repo.ReadMetadataDisplay(ctx, librarymetadata.ScopeArtist, fixture.release, artists[0])
 	if err != nil {

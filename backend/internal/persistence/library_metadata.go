@@ -33,11 +33,22 @@ type ProviderGenreBaseline struct {
 	Digest       string
 }
 
+type ProviderReleaseIdentifierBaseline struct {
+	ProviderCode string                           `json:"provider_code"`
+	SourceID     uuid.UUID                        `json:"provider_source_id"`
+	ProviderKey  string                           `json:"provider_key"`
+	ASIN         *string                          `json:"asin,omitempty"`
+	Script       *string                          `json:"script,omitempty"`
+	Evidence     map[string]ProviderFieldEvidence `json:"evidence"`
+	Digest       string                           `json:"digest"`
+}
+
 type LibraryMetadataDisplay struct {
-	Metadata              LibraryMetadata
-	ProviderGenreBaseline *ProviderGenreBaseline
-	ArtistCreditBaseline  []librarymetadata.ArtistCredit
-	EffectiveArtistCredit *librarymetadata.ResolvedArtistCredits
+	Metadata                          LibraryMetadata
+	ProviderGenreBaseline             *ProviderGenreBaseline
+	ProviderReleaseIdentifierBaseline *ProviderReleaseIdentifierBaseline
+	ArtistCreditBaseline              []librarymetadata.ArtistCredit
+	EffectiveArtistCredit             *librarymetadata.ResolvedArtistCredits
 }
 
 // GenreCatalogItems returns the persisted MusicBrainz catalog used to validate
@@ -138,6 +149,12 @@ func (repository *LibraryRepository) ReadMetadataDisplay(ctx context.Context, sc
 			return err
 		}
 		result.ProviderGenreBaseline = baseline
+		if scope == librarymetadata.ScopeRelease {
+			result.ProviderReleaseIdentifierBaseline, err = readProviderReleaseIdentifierBaseline(ctx, tx, ownerID)
+			if err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {

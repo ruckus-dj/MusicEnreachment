@@ -70,6 +70,29 @@ func ResolveOptionalField(fieldName string, position, track, recording, release 
 	return ResolvedField{}, nil
 }
 
+// ResolveReleaseIdentifier applies the release identifier authority rules.
+// Provider data is used only when the local desired field has never been set;
+// absent and explicit-empty desired values are terminal suppressions.
+func ResolveReleaseIdentifier(fieldName string, desired *FieldValue, provider *FieldValue) (ResolvedField, error) {
+	definition, ok := fieldByName[fieldName]
+	if !ok || definition.Type != TypeString || !containsScope(definition.Scopes, ScopeRelease) {
+		return ResolvedField{}, fmt.Errorf("metadata field %q is not a release string identifier", fieldName)
+	}
+	if desired != nil {
+		if err := (Envelope{Version: EnvelopeVersion, Scope: ScopeRelease, Desired: map[string]FieldValue{fieldName: *desired}}).Validate(); err != nil {
+			return ResolvedField{}, fmt.Errorf("validate desired release identifier %q: %w", fieldName, err)
+		}
+		return ResolvedField{Field: *desired, Scope: ScopeRelease, Present: true}, nil
+	}
+	if provider == nil {
+		return ResolvedField{}, nil
+	}
+	if err := (Envelope{Version: EnvelopeVersion, Scope: ScopeRelease, Desired: map[string]FieldValue{fieldName: *provider}}).Validate(); err != nil {
+		return ResolvedField{}, fmt.Errorf("validate provider release identifier %q: %w", fieldName, err)
+	}
+	return ResolvedField{Field: *provider, Scope: ScopeRelease, Present: true}, nil
+}
+
 func nonemptyOptionalValue(value any) bool {
 	if text, ok := value.(string); ok {
 		return text != ""

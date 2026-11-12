@@ -292,6 +292,20 @@ func (repository *SetupManagerRepository) prepareFirstPublicationAdmission(ctx c
 }
 
 func lockFirstPublicationAdmissionReadGuards(ctx context.Context, tx bun.Tx, sourceSelection bool, errorContext string) error {
+	// Provider refresh writes accepted source evidence before updating the shared
+	// provider graph. Acquire these guards before the provider/artist guards below
+	// so admission and refresh use the same source-before-graph lock order.
+	providerSourceTables := []string{
+		"provider_source",
+		"provider_source_entity",
+		"provider_release",
+		"provider_local_release",
+	}
+	for _, table := range providerSourceTables {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE "+table+" IN SHARE MODE"); err != nil {
+			return fmt.Errorf("%s: guard %s: %w", errorContext, table, err)
+		}
+	}
 	tables := []string{
 		"app_setting", "local_artist", "local_recording", "local_release", "local_track", "media_variant", "release_publication_cover",
 		"provider", "provider_artist", "provider_local_artist", "publication_namespace_claim", "publication_namespace_reservation", "release_artist", "release_track",

@@ -41,28 +41,29 @@ type FirstPublicationSource struct {
 // first publication request. Policy decisions (quality selection and path
 // rendering) remain with the caller.
 type LibraryFirstPublicationContext struct {
-	Library                         *LibraryPublicationContext
-	Sources                         []FirstPublicationSource
-	SourceAssociations              []PublicationSourceAssociation
-	Tags                            publication.TagProjectionInput
-	TemplateTokens                  map[string]string
-	Metadata                        FirstPublicationMetadata
-	GenreArtists                    []FirstPublicationGenreArtist `json:"-"`
-	ArtistMetadataRevisions         map[string]int64              `json:"artist_metadata_revisions"`
-	ArtistDisambiguationDigest      string                        `json:"artist_disambiguation_digest"`
-	EffectiveCover                  EffectiveReleaseCoverSummary
-	EffectiveCoverInput             PublicationAttemptCoverInput `json:"-"`
-	Blockers                        []string
-	DefaultSourceBlockers           []string
-	ReleasePrimaryCredits           []librarymetadata.ArtistCredit
-	PositionPrimaryCredits          []librarymetadata.ArtistCredit
-	SelectedReleasePrimaryArtistID  *uuid.UUID
-	SelectedPositionPrimaryArtistID *uuid.UUID
-	ResolvedOptionalFields          map[string]librarymetadata.ResolvedField
-	ProviderGenres                  []librarymetadata.GenreReference `json:"provider_genres,omitempty"`
-	ProviderGenreDigest             string                           `json:"provider_genre_digest,omitempty"`
-	GenreArtistDigest               string                           `json:"genre_artist_digest,omitempty"`
-	NamespaceClaims                 []PublicationNamespaceClaim      `json:"-"`
+	Library                           *LibraryPublicationContext
+	Sources                           []FirstPublicationSource
+	SourceAssociations                []PublicationSourceAssociation
+	Tags                              publication.TagProjectionInput
+	TemplateTokens                    map[string]string
+	Metadata                          FirstPublicationMetadata
+	GenreArtists                      []FirstPublicationGenreArtist `json:"-"`
+	ArtistMetadataRevisions           map[string]int64              `json:"artist_metadata_revisions"`
+	ArtistDisambiguationDigest        string                        `json:"artist_disambiguation_digest"`
+	EffectiveCover                    EffectiveReleaseCoverSummary
+	EffectiveCoverInput               PublicationAttemptCoverInput `json:"-"`
+	Blockers                          []string
+	DefaultSourceBlockers             []string
+	ReleasePrimaryCredits             []librarymetadata.ArtistCredit
+	PositionPrimaryCredits            []librarymetadata.ArtistCredit
+	SelectedReleasePrimaryArtistID    *uuid.UUID
+	SelectedPositionPrimaryArtistID   *uuid.UUID
+	ResolvedOptionalFields            map[string]librarymetadata.ResolvedField
+	ProviderGenres                    []librarymetadata.GenreReference   `json:"provider_genres,omitempty"`
+	ProviderGenreDigest               string                             `json:"provider_genre_digest,omitempty"`
+	ProviderReleaseIdentifierBaseline *ProviderReleaseIdentifierBaseline `json:"provider_release_identifier_baseline,omitempty"`
+	GenreArtistDigest                 string                             `json:"genre_artist_digest,omitempty"`
+	NamespaceClaims                   []PublicationNamespaceClaim        `json:"-"`
 }
 
 // EffectiveReleaseCoverSummary participates in preview freshness but contains
@@ -281,6 +282,14 @@ func readLibraryFirstPublicationContextTx(ctx context.Context, tx bun.IDB, relea
 	if err := resolveFirstPublicationArtistCredits(ctx, tx, result, releaseEnv, positionEnv, track.Metadata, position.RecordingID); err != nil {
 		return err
 	}
+	txValue, ok := tx.(bun.Tx)
+	if !ok {
+		return errors.New("first publication release identifiers require a transaction")
+	}
+	result.ProviderReleaseIdentifierBaseline, err = readProviderReleaseIdentifierBaseline(ctx, txValue, releaseID)
+	if err != nil {
+		return fmt.Errorf("read first publication release identifiers: %w", err)
+	}
 	if err := resolveFirstPublicationOptionalFields(result); err != nil {
 		return err
 	}
@@ -383,7 +392,32 @@ func resolveFirstPublicationOptionalFields(result *LibraryFirstPublicationContex
 		if definition.Canonical || definition.Type == librarymetadata.TypeUUID || definition.Type == librarymetadata.TypeUUIDList || definition.Type == librarymetadata.TypeInteger {
 			continue
 		}
-		resolved, err := librarymetadata.ResolveOptionalField(definition.Name, position, track, recording, release)
+		var resolved librarymetadata.ResolvedField
+		var err error
+		if definition.Name == "asin" || definition.Name == "script" {
+			var desired *librarymetadata.FieldValue
+			if value, exists := release.Desired[definition.Name]; exists {
+				desired = &value
+			}
+			var provider *librarymetadata.FieldValue
+			if baseline := result.ProviderReleaseIdentifierBaseline; baseline != nil {
+				value := baseline.ASIN
+				if definition.Name == "script" {
+					value = baseline.Script
+				}
+				if value != nil {
+					sourceField := definition.Name
+					if definition.Name == "script" {
+						sourceField = "text-representation.script"
+					}
+					candidate := librarymetadata.FieldValue{State: librarymetadata.StateValue, Value: *value, Authority: librarymetadata.AuthorityAutomatic, Provenance: librarymetadata.Provenance{Kind: librarymetadata.ProvenanceProvider, SourceField: sourceField}}
+					provider = &candidate
+				}
+			}
+			resolved, err = librarymetadata.ResolveReleaseIdentifier(definition.Name, desired, provider)
+		} else {
+			resolved, err = librarymetadata.ResolveOptionalField(definition.Name, position, track, recording, release)
+		}
 		if err != nil {
 			return fmt.Errorf("resolve first publication metadata %q: %w", definition.Name, err)
 		}

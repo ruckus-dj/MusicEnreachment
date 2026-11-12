@@ -93,19 +93,138 @@ func readProviderGenreBaseline(ctx context.Context, tx bun.Tx, scope librarymeta
 	return &ProviderGenreBaseline{ProviderCode: "musicbrainz", SourceID: source.ID, ProviderKey: row.ProviderKey, Authority: authority, FetchOrder: fetchOrder, Genres: genres, Digest: hex.EncodeToString(digest[:])}, nil
 }
 
+func readProviderReleaseIdentifierBaseline(ctx context.Context, tx bun.Tx, ownerID uuid.UUID) (*ProviderReleaseIdentifierBaseline, error) {
+	source, found, err := catalogMusicBrainzSource(ctx, tx)
+	if err != nil || !found {
+		return nil, err
+	}
+	var row struct {
+		ProviderKey string          `bun:"provider_key"`
+		Fields      json.RawMessage `bun:"fields"`
+		Evidence    json.RawMessage `bun:"evidence"`
+	}
+	err = tx.NewRaw(`SELECT projection.provider_key,entity.fields,entity.field_evidence AS evidence
+		FROM provider_local_release binding
+		JOIN provider_release projection ON projection.id=binding.provider_release_id AND projection.provider_id=binding.provider_id
+		JOIN provider_source_entity entity ON entity.provider_id=binding.provider_id AND entity.provider_source_id=? AND entity.entity_kind='release' AND entity.provider_key=projection.provider_key
+		WHERE binding.provider_id=? AND binding.local_release_id=?`, source.ID, source.ProviderID, ownerID).Scan(ctx, &row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read accepted provider release identifiers: %w", err)
+	}
+	fields, err := decodeFrozenObject(row.Fields)
+	if err != nil {
+		return nil, fmt.Errorf("decode accepted provider release identifier fields: %w", err)
+	}
+	var rawEvidence map[string]json.RawMessage
+	if err := json.Unmarshal(row.Evidence, &rawEvidence); err != nil || rawEvidence == nil {
+		return nil, errors.New("invalid accepted provider release identifier evidence")
+	}
+	result := &ProviderReleaseIdentifierBaseline{ProviderCode: "musicbrainz", SourceID: source.ID, ProviderKey: row.ProviderKey, Evidence: make(map[string]ProviderFieldEvidence)}
+	if raw, present := rawEvidence["asin"]; present {
+		evidence, err := acceptedReleaseIdentifierEvidence(raw)
+		if err != nil {
+			return nil, fmt.Errorf("accepted provider ASIN evidence: %w", err)
+		}
+		result.ASIN, err = decodeNonemptyAcceptedString(fields["asin"])
+		if err != nil {
+			return nil, fmt.Errorf("decode accepted provider ASIN: %w", err)
+		}
+		if result.ASIN != nil {
+			result.Evidence["asin"] = evidence
+		}
+	}
+	if raw, present := rawEvidence["text-representation"]; present {
+		evidence, err := acceptedReleaseIdentifierEvidence(raw)
+		if err != nil {
+			return nil, fmt.Errorf("accepted provider script evidence: %w", err)
+		}
+		result.Script, err = acceptedReleaseScript(fields["text-representation"])
+		if err != nil {
+			return nil, fmt.Errorf("decode accepted provider script: %w", err)
+		}
+		if result.Script != nil {
+			result.Evidence["text-representation"] = evidence
+		}
+	}
+	if result.ASIN == nil && result.Script == nil {
+		return nil, nil
+	}
+	identity := struct {
+		Version               int                              `json:"version"`
+		Owner                 uuid.UUID                        `json:"owner"`
+		Source                uuid.UUID                        `json:"source"`
+		ConfigurationIdentity string                           `json:"configuration_identity"`
+		Provider              string                           `json:"provider"`
+		Key                   string                           `json:"key"`
+		ASIN                  *string                          `json:"asin,omitempty"`
+		Script                *string                          `json:"script,omitempty"`
+		Evidence              map[string]ProviderFieldEvidence `json:"evidence"`
+	}{1, ownerID, source.ID, source.ConfigurationIdentity, "musicbrainz", row.ProviderKey, result.ASIN, result.Script, result.Evidence}
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		return nil, fmt.Errorf("encode provider release identifier baseline identity: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	result.Digest = hex.EncodeToString(digest[:])
+	return result, nil
+}
+
+func acceptedReleaseIdentifierEvidence(raw json.RawMessage) (ProviderFieldEvidence, error) {
+	var object map[string]json.RawMessage
+	if len(raw) == 0 || string(raw) == "null" || json.Unmarshal(raw, &object) != nil || object == nil {
+		return ProviderFieldEvidence{}, errors.New("expected an evidence object")
+	}
+	var result ProviderFieldEvidence
+	if err := strictNonnegativeInteger(object, "authority", &result.Authority); err != nil {
+		return ProviderFieldEvidence{}, err
+	}
+	if err := strictNonnegativeInteger(object, "fetch_order", &result.FetchOrder); err != nil {
+		return ProviderFieldEvidence{}, err
+	}
+	return result, nil
+}
+
+func decodeNonemptyAcceptedString(raw json.RawMessage) (*string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, errors.New("expected a string or null")
+	}
+	if value == "" {
+		return nil, nil
+	}
+	return &value, nil
+}
+
+func acceptedReleaseScript(raw json.RawMessage) (*string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var representation map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &representation); err != nil || representation == nil {
+		return nil, errors.New("expected an object or null")
+	}
+	return decodeNonemptyAcceptedString(representation["script"])
+}
+
 func strictNonnegativeInteger(object map[string]json.RawMessage, name string, target any) error {
 	raw, ok := object[name]
 	if !ok || string(raw) == "null" {
-		return fmt.Errorf("accepted provider genre evidence is missing %s", name)
+		return fmt.Errorf("accepted provider field evidence is missing %s", name)
 	}
 	if err := json.Unmarshal(raw, target); err != nil {
-		return fmt.Errorf("accepted provider genre evidence has invalid %s", name)
+		return fmt.Errorf("accepted provider field evidence has invalid %s", name)
 	}
 	if number, ok := target.(*int); ok && *number < 0 {
-		return fmt.Errorf("accepted provider genre evidence has negative %s", name)
+		return fmt.Errorf("accepted provider field evidence has negative %s", name)
 	}
 	if number, ok := target.(*int64); ok && *number < 0 {
-		return fmt.Errorf("accepted provider genre evidence has negative %s", name)
+		return fmt.Errorf("accepted provider field evidence has negative %s", name)
 	}
 	return nil
 }

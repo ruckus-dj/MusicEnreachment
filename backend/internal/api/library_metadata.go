@@ -26,12 +26,13 @@ type libraryMetadataOutput struct {
 	Body libraryMetadataResponse `json:"body"`
 }
 type libraryMetadataGetResponse struct {
-	Envelope              librarymetadata.Envelope              `json:"envelope"`
-	Revision              int64                                 `json:"revision"`
-	PublicationApplied    bool                                  `json:"publication_applied"`
-	ProviderGenreBaseline *service.ProviderGenreBaseline        `json:"provider_genre_baseline,omitempty"`
-	ArtistCreditBaseline  []service.LibraryMetadataArtistCredit `json:"artist_credit_baseline"`
-	EffectiveArtistCredit *service.EffectiveArtistCredit        `json:"effective_artist_credit,omitempty"`
+	Envelope                          librarymetadata.Envelope                   `json:"envelope"`
+	Revision                          int64                                      `json:"revision"`
+	PublicationApplied                bool                                       `json:"publication_applied"`
+	ProviderGenreBaseline             *service.ProviderGenreBaseline             `json:"provider_genre_baseline,omitempty"`
+	ProviderReleaseIdentifierBaseline *service.ProviderReleaseIdentifierBaseline `json:"provider_release_identifier_baseline,omitempty"`
+	ArtistCreditBaseline              []service.LibraryMetadataArtistCredit      `json:"artist_credit_baseline"`
+	EffectiveArtistCredit             *service.EffectiveArtistCredit             `json:"effective_artist_credit,omitempty"`
 }
 type libraryMetadataGetOutput struct {
 	Body libraryMetadataGetResponse `json:"body"`
@@ -106,7 +107,7 @@ func registerLibraryMetadata(api huma.API, metadata *service.LibraryMetadataServ
 		case err != nil:
 			return nil, huma.Error503ServiceUnavailable("library metadata is unavailable")
 		default:
-			return &libraryMetadataGetOutput{Body: libraryMetadataGetResponse{Envelope: result.Metadata.Envelope, Revision: result.Metadata.Revision, PublicationApplied: false, ProviderGenreBaseline: result.ProviderGenreBaseline, ArtistCreditBaseline: result.ArtistCreditBaseline, EffectiveArtistCredit: result.EffectiveArtistCredit}}, nil
+			return &libraryMetadataGetOutput{Body: libraryMetadataGetResponse{Envelope: result.Metadata.Envelope, Revision: result.Metadata.Revision, PublicationApplied: false, ProviderGenreBaseline: result.ProviderGenreBaseline, ProviderReleaseIdentifierBaseline: result.ProviderReleaseIdentifierBaseline, ArtistCreditBaseline: result.ArtistCreditBaseline, EffectiveArtistCredit: result.EffectiveArtistCredit}}, nil
 		}
 	}
 	readDesired := func(ctx context.Context, scope librarymetadata.Scope, releaseID, ownerID uuid.UUID) (*libraryMetadataOutput, error) {

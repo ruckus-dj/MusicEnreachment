@@ -35,11 +35,22 @@ type ProviderGenreEvidence struct {
 	FetchOrder int64 `json:"fetch_order"`
 }
 
+type ProviderReleaseIdentifierBaseline struct {
+	ProviderCode     string                           `json:"provider_code"`
+	ProviderSourceID uuid.UUID                        `json:"provider_source_id"`
+	ProviderKey      string                           `json:"provider_key"`
+	ASIN             *string                          `json:"asin,omitempty"`
+	Script           *string                          `json:"script,omitempty"`
+	Evidence         map[string]ProviderGenreEvidence `json:"evidence"`
+	Digest           string                           `json:"digest"`
+}
+
 type LibraryMetadataDisplayResult struct {
-	Metadata              LibraryMetadataResult
-	ProviderGenreBaseline *ProviderGenreBaseline
-	ArtistCreditBaseline  []LibraryMetadataArtistCredit
-	EffectiveArtistCredit *EffectiveArtistCredit
+	Metadata                          LibraryMetadataResult
+	ProviderGenreBaseline             *ProviderGenreBaseline
+	ProviderReleaseIdentifierBaseline *ProviderReleaseIdentifierBaseline
+	ArtistCreditBaseline              []LibraryMetadataArtistCredit
+	EffectiveArtistCredit             *EffectiveArtistCredit
 }
 
 type LibraryMetadataArtistCredit struct {
@@ -143,6 +154,13 @@ func (service *LibraryMetadataService) ReadDisplay(ctx context.Context, scope li
 	}
 	if baseline := display.ProviderGenreBaseline; baseline != nil {
 		result.ProviderGenreBaseline = &ProviderGenreBaseline{ProviderCode: baseline.ProviderCode, ProviderSourceID: baseline.SourceID, ProviderKey: baseline.ProviderKey, Evidence: ProviderGenreEvidence{Authority: baseline.Authority, FetchOrder: baseline.FetchOrder}, Genres: append([]librarymetadata.GenreReference{}, baseline.Genres...), Digest: baseline.Digest}
+	}
+	if baseline := display.ProviderReleaseIdentifierBaseline; baseline != nil {
+		evidence := make(map[string]ProviderGenreEvidence, len(baseline.Evidence))
+		for field, item := range baseline.Evidence {
+			evidence[field] = ProviderGenreEvidence{Authority: item.Authority, FetchOrder: item.FetchOrder}
+		}
+		result.ProviderReleaseIdentifierBaseline = &ProviderReleaseIdentifierBaseline{ProviderCode: baseline.ProviderCode, ProviderSourceID: baseline.SourceID, ProviderKey: baseline.ProviderKey, ASIN: baseline.ASIN, Script: baseline.Script, Evidence: evidence, Digest: baseline.Digest}
 	}
 	return result, nil
 }

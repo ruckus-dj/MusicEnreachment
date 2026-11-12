@@ -44,6 +44,8 @@ func TestMetadataWriterRoundTripsKnownStandardFields(t *testing.T) {
 				"RELEASEDATE":                    {"1999-02-03"},
 				"DATE":                           {"1998-07"},
 				"ALBUMVERSION":                   {"Deluxe Edition"},
+				"ASIN":                           {"B001234567"},
+				"SCRIPT":                         {"Latn"},
 				"SUBTITLE":                       {"Live at the Forum"},
 				"ITUNESADVISORY":                 {"1"},
 				taglib.Barcode:                   {"0123456789012"},
@@ -107,6 +109,18 @@ func TestMetadataWriterRoundTripsKnownStandardFields(t *testing.T) {
 			}
 			if !bytes.Equal(fresh.CoverInspection.Cover.Data, imageBytes) {
 				t.Fatal("fresh cover inspection did not return the written cover image bytes")
+			}
+			if _, err := (Writer{}).Write(context.Background(), path, map[string][]string{"ASIN": {}, "SCRIPT": {}}, nil); err != nil {
+				t.Fatalf("delete release identifiers: %v", err)
+			}
+			deleted, err := (Reader{}).Read(context.Background(), path, ReadRequest{})
+			if err != nil {
+				t.Fatalf("fresh Read after deleting release identifiers: %v", err)
+			}
+			for _, key := range []string{"ASIN", "SCRIPT"} {
+				if _, exists := deleted.Tags[key]; exists {
+					t.Errorf("deleted %s remains after fresh read: %#v", key, deleted.Tags[key])
+				}
 			}
 		})
 	}

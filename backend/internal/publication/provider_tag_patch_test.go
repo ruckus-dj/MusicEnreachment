@@ -100,6 +100,8 @@ func TestPublicationTagKeysForFieldUsesApprovedMappingFootprints(t *testing.T) {
 	}{
 		{"position title", librarymetadata.ScopePosition, "title", []string{"TITLE"}},
 		{"release title", librarymetadata.ScopeRelease, "title", []string{"ALBUM"}},
+		{"release ASIN", librarymetadata.ScopeRelease, "asin", []string{"ASIN"}},
+		{"release script", librarymetadata.ScopeRelease, "script", []string{"SCRIPT"}},
 		{"position canonical credit", librarymetadata.ScopePosition, "artist_credit", []string{"ARTIST", "ARTISTS", "MUSICBRAINZ_ARTISTID", "ARTISTSORT", "ARTISTSSORT", "ARTISTS", "MUSICBRAINZ_ARTISTID"}},
 		{"release canonical credit", librarymetadata.ScopeRelease, "artist_credit", []string{"ALBUMARTIST", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID", "ALBUMARTISTSORT", "ALBUMARTISTSSORT", "ALBUMARTISTS", "MUSICBRAINZ_ALBUMARTISTID"}},
 		{"artists only", librarymetadata.ScopePosition, "artists", []string{"ARTISTS"}},

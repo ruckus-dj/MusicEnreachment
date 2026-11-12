@@ -38,6 +38,41 @@ func TestResolveOptionalFieldPrecedenceAndExplicitEmpty(t *testing.T) {
 	})
 }
 
+func TestResolveReleaseIdentifierDistinguishesMissingAndTerminalDesiredStates(t *testing.T) {
+	provider := FieldValue{State: StateValue, Value: "Latn", Authority: AuthorityAutomatic, Provenance: Provenance{Kind: ProvenanceProvider, SourceField: "text-representation.script"}}
+	manual := FieldValue{State: StateValue, Value: "Manual", Authority: AuthorityManual, Provenance: Provenance{Kind: ProvenanceManual}}
+	emptyManual := FieldValue{State: StateValue, Value: "", Authority: AuthorityManual, Provenance: Provenance{Kind: ProvenanceManual}}
+	absentManual := FieldValue{State: StateAbsent, Authority: AuthorityManual, Provenance: Provenance{Kind: ProvenanceManual}}
+	explicitEmptyManual := FieldValue{State: StateExplicitEmpty, Authority: AuthorityManual, Provenance: Provenance{Kind: ProvenanceManual}}
+	for _, test := range []struct {
+		name    string
+		desired *FieldValue
+		want    *FieldValue
+	}{
+		{name: "missing desired uses provider baseline", want: &provider},
+		{name: "manual value wins exactly", desired: &manual, want: &manual},
+		{name: "manual empty value wins exactly", desired: &emptyManual, want: &emptyManual},
+		{name: "explicit absent suppresses provider", desired: &absentManual, want: &absentManual},
+		{name: "explicit empty suppresses provider", desired: &explicitEmptyManual, want: &explicitEmptyManual},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolved, err := ResolveReleaseIdentifier("script", test.desired, &provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.want == nil {
+				if resolved.Present {
+					t.Fatalf("terminal state resolved to %#v", resolved)
+				}
+				return
+			}
+			if !resolved.Present || !reflect.DeepEqual(resolved.Field, *test.want) {
+				t.Fatalf("resolved = %#v, want %#v", resolved, *test.want)
+			}
+		})
+	}
+}
+
 func TestResolveOptionalFieldAbsentFallbackAndBoolean(t *testing.T) {
 	absent := FieldValue{State: StateAbsent, Authority: AuthorityAutomatic, Provenance: Provenance{Kind: ProvenanceProvider}}
 	resolved, err := ResolveOptionalField("genre",

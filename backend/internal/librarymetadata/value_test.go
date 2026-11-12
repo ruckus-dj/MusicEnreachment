@@ -224,6 +224,8 @@ func TestScalarDateAndSubtitleRegistryScopes(t *testing.T) {
 		{name: "release_date", typeOf: TypeDate, scopes: []Scope{ScopeRelease}},
 		{name: "recording_date", typeOf: TypeDate, scopes: []Scope{ScopeRecording, ScopeTrack, ScopePosition}},
 		{name: "release_version", typeOf: TypeString, scopes: []Scope{ScopeRelease}},
+		{name: "asin", typeOf: TypeString, scopes: []Scope{ScopeRelease}},
+		{name: "script", typeOf: TypeString, scopes: []Scope{ScopeRelease}},
 		{name: "subtitle", typeOf: TypeString, scopes: []Scope{ScopeRecording, ScopeTrack, ScopePosition}},
 	} {
 		definition, ok := Field(test.name)

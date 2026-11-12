@@ -65,7 +65,9 @@ const metadata = (
   revision,
 });
 
-function metadataWithDuplicateCredits(revision: number) {
+function metadataWithDuplicateCredits(
+  revision: number,
+): LibraryMetadataGetResponse {
   const result = metadata(revision);
   return {
     ...result,
@@ -284,9 +286,27 @@ it("sends exact typed states at the loaded revision and retains the draft on con
   storage.setItem("melotrove-language", "ru");
   vi.stubGlobal("localStorage", storage);
   let patchBody: unknown;
+  const loaded = metadataWithDuplicateCredits(7);
+  loaded.envelope.desired.asin = {
+    authority: "local",
+    provenance: { kind: "manual" },
+    state: "absent",
+  };
+  loaded.provider_release_identifier_baseline = {
+    asin: "B001234567",
+    digest: "release-identifiers-digest",
+    evidence: {
+      asin: { authority: 4, fetch_order: 11 },
+      "text-representation": { authority: 4, fetch_order: 12 },
+    },
+    provider_code: "musicbrainz",
+    provider_key: "release-provider-key",
+    provider_source_id: "provider-source-id",
+    script: "Latn",
+  };
   server.use(
     http.get(`*/api/library/releases/${releaseId}/metadata`, () =>
-      HttpResponse.json(metadataWithDuplicateCredits(7)),
+      HttpResponse.json(loaded),
     ),
     http.patch(
       `*/api/library/releases/${releaseId}/metadata`,
@@ -306,6 +326,22 @@ it("sends exact typed states at the loaded revision and retains the draft on con
   await waitFor(() => expect(editButton).toBeEnabled());
   const release = screen.getByRole("region", { name: "Метаданные релиза" });
   openGroup(release, "Сведения о релизе");
+  expect(within(release).getByText("Latn")).toBeInTheDocument();
+  expect(
+    within(release).getByText("Эффективное значение MusicBrainz"),
+  ).toBeInTheDocument();
+  const asinField = within(release).getByText("ASIN", {
+    selector: "dt",
+  }).parentElement;
+  expect(asinField).not.toBeNull();
+  expect(
+    within(asinField as HTMLElement).queryByText("B001234567"),
+  ).not.toBeInTheDocument();
+  expect(
+    within(asinField as HTMLElement).queryByText(
+      "Эффективное значение MusicBrainz",
+    ),
+  ).not.toBeInTheDocument();
   fireEvent.click(editButton);
   fireEvent.change(screen.getByRole("textbox", { name: "Название" }), {
     target: { value: "  New title  " },
