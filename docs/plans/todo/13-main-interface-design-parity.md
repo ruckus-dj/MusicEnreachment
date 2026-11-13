@@ -445,15 +445,24 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         preview после reconciliation. Полная CI 43483367417 зелёная, включая
         Windows и публикацию контейнера —
         [отчёт](../../reports/2026-11-13-contributor-row-order.md).
-      - [ ] Deletion preview после исчезновения transient blockers должен иметь
+      - [x] Deletion preview после исчезновения transient blockers получил
         очевидный путь к свежему preview: в browser старое blocked состояние
         пережило закрытие/открытие диалога, свежая проверка потребовала reload.
         Authority guards не обходить; закрытие dialog само по себе не является
         доказательством обновления preview.
-        Явный pre-confirm refresh реализован; Confirm заблокирован во время
-        обновления, uncertain/operation пути не меняются. Production-ревью чистое;
-        полный hook/browser/CI ещё не завершены —
+        `1c0a7f6c`: явный pre-confirm refresh реализован; Confirm заблокирован
+        во время обновления, uncertain/operation пути не меняются. Ревью и полный
+        hook прошли, commit отправлен, вся CI 43494715619 зелёная. Browser
+        подтвердил свежие GET/digest и сохранение scope без confirm baseline —
         [отчёт](../../reports/2026-11-13-deletion-preview-refresh.md).
+      - [ ] Deletion modal: убрать белый background при light foreground в dark
+        mode и проверить ограничение высоты/scroll с доступными actions на mobile.
+        Реальный screenshot `1c0a7f6c` выявил дефект; refresh функционально
+        работает, но dark visual acceptance не пройдена.
+        Theme/scroll presentation реализован; найденная ревью потеря overlay
+        positioning исправлена, повторное ревью чистое. Полный hook и новая
+        browser/CI приёмка ещё не завершены —
+        [отчёт](../../reports/2026-11-13-deletion-modal-theme.md).
       - [x] Основные поля metadata вынесены из изначально закрытых disclosures:
         always-visible basics и in-place editing по действующему контракту/
         эталону, без изменения ownership или fallback-семантики metadata.
