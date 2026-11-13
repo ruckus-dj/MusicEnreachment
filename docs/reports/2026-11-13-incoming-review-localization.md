@@ -29,3 +29,26 @@ assertions приведены к тому же первому control, кото�
 Других блокеров review не нашло.
 Runtime-проверки текущего дерева ещё не проводились;
 зелёная CI предыдущего commit не является его проверкой.
+
+## Проверки `a5fb17e1`
+
+Обычный полный hook прошёл, commit отправлен; CI `43504329510` выполняется.
+Acceptance-only процесс штатно обновлён PID 40931 → 47496; PostgreSQL и 8787
+не менялись.
+
+Browser реального backend проверил overview и открытый review третьей группы
+в light/dark × RU/EN × 1440×900/390×844 (8 состояний) без page overflow.
+Headings/ARIA, group options, counts, source/position labels следуют локали;
+raw authority mode и musical/path facts сохраняются. Вложенные pickers и
+evidence inspector остаются русскими в English по указанной границе среза.
+
+Открыт Local release, создан только read-only Local matching preview:
+RU/EN сохранил выбранную группу, тот же assignment DOM node и его ID, готовый
+preview, без language-only API requests. Matching confirmation и publication
+не запускались, временных library-записей нет. Это **не** real-backend проверка
+основного manual matching preview/conflict: сохранение его semantic feedback
+проверено frontend regression с API fixtures.
+
+Приёмка обнаружила две небольшие copy-поправки этого среза: English `1 of 1
+files` и отсутствие пробела между предложениями summary. Они исправляются
+отдельной минимальной поправкой; CI предыдущего snapshot не считается её gate.

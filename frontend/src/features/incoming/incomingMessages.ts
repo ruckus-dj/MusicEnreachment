@@ -82,7 +82,7 @@ export const incomingMessages = {
     sourceSnapshot: "Source snapshot",
     providerSnapshot: "Provider snapshot",
     savedFacts: (count: number, total: number) =>
-      `${count} of ${total} files with saved data`,
+      `${count} of ${total} ${total === 1 ? "file" : "files"} with saved data`,
     savedCandidates: (count: number) =>
       `${count} saved ${count === 1 ? "candidate" : "candidates"}`,
     noCandidates: "no candidates",

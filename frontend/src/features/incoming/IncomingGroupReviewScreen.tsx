@@ -991,7 +991,7 @@ function IncomingGroupReviewContent() {
                 </div>
                 <p className="mt-2 text-sm">
                   {copy.linkedManualFiles}{" "}
-                  {review.current_linked_manual_media_source_ids?.length ?? 0}.
+                  {review.current_linked_manual_media_source_ids?.length ?? 0}.{" "}
                   {copy.draftDoesNotChangeLinks}
                 </p>
               </section>
