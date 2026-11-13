@@ -64,12 +64,29 @@ func TestMetadataWriterRoundTripsKnownStandardFields(t *testing.T) {
 				"REMIXER":                        {"Remixer One", "Remixer, Two"},
 				"DJMIXER":                        {"DJ Mixer One", "DJ Mixer, Two"},
 				"MIXER":                          {"Mixer One", "Mixer, Two"},
+				"DIRECTOR":                       {"Director One 監督", "Director, Two"},
+				"MUSICBRAINZ_COMPOSERID":         {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
+				"MUSICBRAINZ_LYRICISTID":         {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
+				"MUSICBRAINZ_CONDUCTORID":        {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
+				"MUSICBRAINZ_ARRANGERID":         {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
+				"MUSICBRAINZ_ENGINEERID":         {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
+				"MUSICBRAINZ_PRODUCERID":         {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
+				"MUSICBRAINZ_REMIXERID":          {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
+				"MUSICBRAINZ_DJMIXERID":          {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
+				"MUSICBRAINZ_MIXERID":            {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
+				"MUSICBRAINZ_DIRECTORID":         {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"},
 				taglib.Lyrics:                    {"[00:01.00]First synced line\n[00:02.50]Second synced line\n"},
 			}
+			// Performer IDs are paired with their instrument subrole and must keep
+			// the same value order as the names. The empty-subrole sentinel repeats
+			// the base key on both sides of the pair.
 			performerTags := map[string][]string{
-				"PERFORMER:GUITAR":    {"Guitarist, One", "Guitarist (Live)", "Guitarist, One"},
-				"PERFORMER:PIANO":     {"Pianist (First)", "Pianist, Two"},
-				"PERFORMER:PERFORMER": {"Unspecified performer"},
+				"PERFORMER:GUITAR":                                {"Guitarist, One", "Guitarist (Live)", "Guitarist, One"},
+				"MUSICBRAINZ_PERFORMERID:GUITAR":                  {"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000001"},
+				"PERFORMER:PIANO":                                 {"Pianist (First)", "Pianist, Two"},
+				"MUSICBRAINZ_PERFORMERID:PIANO":                   {"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004"},
+				"PERFORMER:PERFORMER":                             {"Unspecified performer"},
+				"MUSICBRAINZ_PERFORMERID:MUSICBRAINZ_PERFORMERID": {"00000000-0000-4000-8000-000000000005"},
 			}
 			if ext == ".flac" || ext == ".mka" {
 				for key, values := range performerTags {

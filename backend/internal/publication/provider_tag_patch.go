@@ -83,12 +83,16 @@ func PublicationTagKeysForFieldValue(scope librarymetadata.Scope, field string, 
 		if !strings.EqualFold(strings.TrimSpace(contributor.Role), "performer") {
 			continue
 		}
-		key := performerTagKey(contributor.Instrument)
-		if _, exists := seen[key]; exists {
-			continue
+		for _, key := range []string{
+			performerTagKey("PERFORMER", contributor.Instrument),
+			performerTagKey("MUSICBRAINZ_PERFORMERID", contributor.Instrument),
+		} {
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			keys = append(keys, key)
+			seen[key] = struct{}{}
 		}
-		keys = append(keys, key)
-		seen[key] = struct{}{}
 	}
 	return keys, nil
 }
@@ -97,8 +101,11 @@ func validProviderTagKey(key string) bool {
 	if key == "" || strings.TrimSpace(key) != key || key == "LYRICS" {
 		return false
 	}
-	_, supported := providerTagKeys[key]
-	return supported
+	if _, supported := providerTagKeys[key]; supported {
+		return true
+	}
+	return strings.HasPrefix(key, "PERFORMER:") && len(key) > len("PERFORMER:") ||
+		strings.HasPrefix(key, "MUSICBRAINZ_PERFORMERID:") && len(key) > len("MUSICBRAINZ_PERFORMERID:")
 }
 
 var providerTagKeys = func() map[string]struct{} {
@@ -115,7 +122,7 @@ var providerTagKeys = func() map[string]struct{} {
 }()
 
 func validProtectedTagKey(key string) bool {
-	return key == "LYRICS" || validProviderTagKey(key) || strings.HasPrefix(key, "PERFORMER:") && len(key) > len("PERFORMER:")
+	return key == "LYRICS" || validProviderTagKey(key)
 }
 
 func cloneTagMap(tags map[string][]string) map[string][]string {

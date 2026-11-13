@@ -112,7 +112,12 @@ func TestPublicationTagKeysForFieldUsesApprovedMappingFootprints(t *testing.T) {
 		{"release album artist sort names unsupported", librarymetadata.ScopeRelease, "album_artist_sort_names", nil},
 		{"position movement footprint", librarymetadata.ScopePosition, "movement", []string{"MOVEMENTNAME", "MOVEMENTNUMBER", "MOVEMENTCOUNT"}},
 		{"position work footprint", librarymetadata.ScopePosition, "works", []string{"WORK", "MUSICBRAINZ_WORKID"}},
-		{"position contributor footprint", librarymetadata.ScopePosition, "contributors", []string{"COMPOSER", "LYRICIST", "CONDUCTOR", "ARRANGER", "ENGINEER", "PRODUCER", "REMIXER", "DJMIXER", "MIXER"}},
+		{"position contributor footprint", librarymetadata.ScopePosition, "contributors", []string{
+			"COMPOSER", "MUSICBRAINZ_COMPOSERID", "LYRICIST", "MUSICBRAINZ_LYRICISTID", "CONDUCTOR", "MUSICBRAINZ_CONDUCTORID",
+			"ARRANGER", "MUSICBRAINZ_ARRANGERID", "ENGINEER", "MUSICBRAINZ_ENGINEERID", "PRODUCER", "MUSICBRAINZ_PRODUCERID",
+			"REMIXER", "MUSICBRAINZ_REMIXERID", "DJMIXER", "MUSICBRAINZ_DJMIXERID", "MIXER", "MUSICBRAINZ_MIXERID",
+			"DIRECTOR", "MUSICBRAINZ_DIRECTORID", "MUSICBRAINZ_PERFORMERID",
+		}},
 		{"release content advisory footprint", librarymetadata.ScopeRelease, "content_advisory", []string{"ITUNESADVISORY"}},
 		{"position content advisory footprint", librarymetadata.ScopePosition, "content_advisory", []string{"ITUNESADVISORY"}},
 		{"release artist sort names unsupported", librarymetadata.ScopeRelease, "artist_sort_names", nil},
@@ -139,21 +144,36 @@ func TestPublicationTagKeysForContributorValueIncludesOwnedPerformerKeys(t *test
 		t.Fatal(err)
 	}
 	want := []string{
-		"COMPOSER", "LYRICIST", "CONDUCTOR", "ARRANGER", "ENGINEER", "PRODUCER", "REMIXER", "DJMIXER", "MIXER",
-		"PERFORMER:GUITAR", "PERFORMER:PIANO", "PERFORMER:PERFORMER",
+		"COMPOSER", "MUSICBRAINZ_COMPOSERID", "LYRICIST", "MUSICBRAINZ_LYRICISTID", "CONDUCTOR", "MUSICBRAINZ_CONDUCTORID",
+		"ARRANGER", "MUSICBRAINZ_ARRANGERID", "ENGINEER", "MUSICBRAINZ_ENGINEERID", "PRODUCER", "MUSICBRAINZ_PRODUCERID",
+		"REMIXER", "MUSICBRAINZ_REMIXERID", "DJMIXER", "MUSICBRAINZ_DJMIXERID", "MIXER", "MUSICBRAINZ_MIXERID",
+		"DIRECTOR", "MUSICBRAINZ_DIRECTORID", "MUSICBRAINZ_PERFORMERID",
+		"PERFORMER:GUITAR", "MUSICBRAINZ_PERFORMERID:GUITAR", "PERFORMER:PIANO", "MUSICBRAINZ_PERFORMERID:PIANO",
+		"PERFORMER:PERFORMER", "MUSICBRAINZ_PERFORMERID:MUSICBRAINZ_PERFORMERID",
 	}
 	if !reflect.DeepEqual(keys, want) {
 		t.Fatalf("performer-aware contributor footprint = %#v, want %#v", keys, want)
 	}
-	current := map[string][]string{"TITLE": {"Current"}, "PERFORMER:GUITAR": {"Guitarist"}, "PERFORMER:DRUMS": {"Unrelated performer"}}
+	current := map[string][]string{
+		"TITLE": {"Current"}, "PERFORMER:GUITAR": {"Guitarist"},
+		"MUSICBRAINZ_PERFORMERID:GUITAR": {"guitar-id"}, "PERFORMER:DRUMS": {"Unrelated performer"},
+	}
 	protected, err := ApplyProviderTagPatch(current, map[string][]string{"TITLE": {"Provider title"}}, keys)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(protected["PERFORMER:GUITAR"], current["PERFORMER:GUITAR"]) ||
+		!reflect.DeepEqual(protected["MUSICBRAINZ_PERFORMERID:GUITAR"], current["MUSICBRAINZ_PERFORMERID:GUITAR"]) ||
 		!reflect.DeepEqual(protected["PERFORMER:DRUMS"], current["PERFORMER:DRUMS"]) ||
 		!reflect.DeepEqual(protected["TITLE"], []string{"Provider title"}) {
 		t.Fatalf("provider projection did not limit its change: got %#v", protected)
+	}
+	updated, err := ApplyProviderTagPatch(current, map[string][]string{"MUSICBRAINZ_PERFORMERID:DRUMS": {"drums-id"}}, nil)
+	if err != nil {
+		t.Fatalf("dynamic performer MBID key was rejected: %v", err)
+	}
+	if !reflect.DeepEqual(updated["MUSICBRAINZ_PERFORMERID:DRUMS"], []string{"drums-id"}) {
+		t.Fatalf("dynamic performer MBID key = %#v", updated["MUSICBRAINZ_PERFORMERID:DRUMS"])
 	}
 }
 

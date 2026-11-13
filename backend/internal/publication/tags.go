@@ -58,6 +58,71 @@ type TagProjection struct {
 	Notices []string
 }
 
+type contributorTagMapping struct {
+	role    string
+	nameTag string
+	mbidTag string
+}
+
+type contributorMBIDAlignment struct {
+	nameToMBID map[string]string
+	mbidToName map[string]string
+	invalid    bool
+}
+
+func (alignment *contributorMBIDAlignment) add(name, mbid string) {
+	name, nameOK := normalizedContributorName(name)
+	mbid, mbidOK := normalizedContributorMBID(mbid)
+	if !nameOK || !mbidOK {
+		alignment.invalid = true
+		return
+	}
+	if previousMBID, exists := alignment.nameToMBID[name]; exists && previousMBID != mbid {
+		alignment.invalid = true
+	}
+	if previousName, exists := alignment.mbidToName[mbid]; exists && previousName != name {
+		alignment.invalid = true
+	}
+	alignment.nameToMBID[name] = mbid
+	alignment.mbidToName[mbid] = name
+}
+
+func normalizedContributorName(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "/;") || len(value) > 1024 {
+		return "", false
+	}
+	return value, true
+}
+
+func normalizedContributorMBID(value string) (string, bool) {
+	parsed, err := uuid.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return "", false
+	}
+	return parsed.String(), true
+}
+
+func newContributorMBIDAlignment() *contributorMBIDAlignment {
+	return &contributorMBIDAlignment{
+		nameToMBID: make(map[string]string),
+		mbidToName: make(map[string]string),
+	}
+}
+
+var contributorTagMappings = []contributorTagMapping{
+	{role: "composer", nameTag: "COMPOSER", mbidTag: "MUSICBRAINZ_COMPOSERID"},
+	{role: "lyricist", nameTag: "LYRICIST", mbidTag: "MUSICBRAINZ_LYRICISTID"},
+	{role: "conductor", nameTag: "CONDUCTOR", mbidTag: "MUSICBRAINZ_CONDUCTORID"},
+	{role: "arranger", nameTag: "ARRANGER", mbidTag: "MUSICBRAINZ_ARRANGERID"},
+	{role: "engineer", nameTag: "ENGINEER", mbidTag: "MUSICBRAINZ_ENGINEERID"},
+	{role: "producer", nameTag: "PRODUCER", mbidTag: "MUSICBRAINZ_PRODUCERID"},
+	{role: "remixer", nameTag: "REMIXER", mbidTag: "MUSICBRAINZ_REMIXERID"},
+	{role: "djmixer", nameTag: "DJMIXER", mbidTag: "MUSICBRAINZ_DJMIXERID"},
+	{role: "mixer", nameTag: "MIXER", mbidTag: "MUSICBRAINZ_MIXERID"},
+	{role: "director", nameTag: "DIRECTOR", mbidTag: "MUSICBRAINZ_DIRECTORID"},
+}
+
 // ProjectTags projects the approved core normalized tag mapping. Unsupported
 // registered fields remain visible in Fields instead of being silently lost.
 func ProjectTags(input TagProjectionInput) (TagProjection, error) {
@@ -486,42 +551,111 @@ func projectContributors(tags map[string][]string, fields map[string]TagFieldRes
 		fields[fieldName] = TagFieldResult{Status: "unsupported", Reason: "value cannot be represented by the approved normalized mapping"}
 		return
 	}
-	// Map only approved standard role properties. Instrumental performer data is
-	// retained in structured metadata, but is not flattened into a lossy tag.
-	roleKeys := map[string]string{
-		"composer": "COMPOSER", "lyricist": "LYRICIST", "conductor": "CONDUCTOR", "arranger": "ARRANGER",
-		"engineer": "ENGINEER", "producer": "PRODUCER", "remixer": "REMIXER", "djmixer": "DJMIXER", "mixer": "MIXER",
-	}
+	// Map approved role properties. Performer details are projected only through
+	// instrument-qualified tags on containers that preserve their subroles.
+	roleMBIDs := make(map[string][]string, len(contributorTagMappings))
+	roleMissingMBID := make(map[string]bool, len(contributorTagMappings))
+	roleHasContributors := make(map[string]bool, len(contributorTagMappings))
+	roleMBIDAlignments := make(map[string]*contributorMBIDAlignment, len(contributorTagMappings))
+	performerMBIDs := make(map[string][]string)
+	performerMBIDKeys := make([]string, 0)
+	performerMBIDKeySeen := make(map[string]bool)
+	performerInstrumentByTag := make(map[string]string)
+	performerNameTagByMBIDTag := make(map[string]string)
+	performerMBIDAlignments := make(map[string]*contributorMBIDAlignment)
 	unsupported := false
-	mbidsIncomplete := false
+	contributorMBIDsIncomplete := false
+	contributorMBIDsMisaligned := false
 	mbidsPresent := false
+	performerMBIDsOmitted := false
+	performerMBIDsIncomplete := false
+	performerMBIDsMisaligned := false
+	performerMBIDAmbiguous := false
 	performerOmitted := false
 	for _, contributor := range contributors {
-		if contributor.MBID == nil || strings.TrimSpace(*contributor.MBID) == "" {
-			mbidsIncomplete = true
-		} else {
-			mbidsPresent = true
-		}
 		role := strings.ToLower(strings.TrimSpace(contributor.Role))
 		if role == "performer" {
 			switch outputContainer {
 			case AudioContainerMP3, AudioContainerM4A:
 				unsupported = true
 				performerOmitted = true
+				performerMBIDsOmitted = true
 			case AudioContainerFLAC, AudioContainerMKA:
-				tags[performerTagKey(contributor.Instrument)] = append(tags[performerTagKey(contributor.Instrument)], contributor.Name)
+				nameTag := performerTagKey("PERFORMER", contributor.Instrument)
+				mbidTag := performerTagKey("MUSICBRAINZ_PERFORMERID", contributor.Instrument)
+				tags[nameTag] = append(tags[nameTag], contributor.Name)
+				if contributor.Instrument != "" && (strings.ToUpper(contributor.Instrument) == "PERFORMER" || strings.ToUpper(contributor.Instrument) == "MUSICBRAINZ_PERFORMERID") {
+					performerMBIDAmbiguous = true
+				}
+				if previousInstrument, exists := performerInstrumentByTag[nameTag]; exists && previousInstrument != contributor.Instrument {
+					performerMBIDAmbiguous = true
+				} else {
+					performerInstrumentByTag[nameTag] = contributor.Instrument
+				}
+				if previousNameTag, exists := performerNameTagByMBIDTag[mbidTag]; exists && previousNameTag != nameTag {
+					performerMBIDAmbiguous = true
+				} else {
+					performerNameTagByMBIDTag[mbidTag] = nameTag
+				}
+				if !performerMBIDKeySeen[mbidTag] {
+					performerMBIDKeys = append(performerMBIDKeys, mbidTag)
+					performerMBIDKeySeen[mbidTag] = true
+				}
+				if contributor.MBID == nil || strings.TrimSpace(*contributor.MBID) == "" {
+					performerMBIDsIncomplete = true
+				} else {
+					performerMBIDs[mbidTag] = append(performerMBIDs[mbidTag], *contributor.MBID)
+					alignment := performerMBIDAlignments[nameTag]
+					if alignment == nil {
+						alignment = newContributorMBIDAlignment()
+						performerMBIDAlignments[nameTag] = alignment
+					}
+					alignment.add(contributor.Name, *contributor.MBID)
+					performerMBIDsMisaligned = performerMBIDsMisaligned || alignment.invalid
+				}
 			default:
 				unsupported = true
 				performerOmitted = true
+				performerMBIDsOmitted = true
 			}
 			continue
 		}
-		key, ok := roleKeys[role]
+		mapping, ok := contributorMappingForRole(role)
 		if !ok {
 			unsupported = true
 			continue
 		}
-		tags[key] = append(tags[key], contributor.Name)
+		tags[mapping.nameTag] = append(tags[mapping.nameTag], contributor.Name)
+		roleHasContributors[role] = true
+		if contributor.MBID == nil || strings.TrimSpace(*contributor.MBID) == "" {
+			contributorMBIDsIncomplete = true
+			roleMissingMBID[role] = true
+		} else {
+			mbidsPresent = true
+			roleMBIDs[role] = append(roleMBIDs[role], *contributor.MBID)
+			alignment := roleMBIDAlignments[role]
+			if alignment == nil {
+				alignment = newContributorMBIDAlignment()
+				roleMBIDAlignments[role] = alignment
+			}
+			alignment.add(contributor.Name, *contributor.MBID)
+		}
+	}
+	for _, mapping := range contributorTagMappings {
+		alignment := roleMBIDAlignments[mapping.role]
+		if alignment != nil && alignment.invalid {
+			contributorMBIDsMisaligned = true
+		}
+		if !roleHasContributors[mapping.role] || roleMissingMBID[mapping.role] || alignment != nil && alignment.invalid {
+			continue
+		}
+		tags[mapping.mbidTag] = roleMBIDs[mapping.role]
+	}
+	if !performerMBIDsIncomplete && !performerMBIDsMisaligned && !performerMBIDAmbiguous {
+		for _, key := range performerMBIDKeys {
+			tags[key] = performerMBIDs[key]
+			mbidsPresent = true
+		}
 	}
 	if performerOmitted {
 		reason := "structured performer data has no approved normalized TagLib mapping"
@@ -543,20 +677,48 @@ func projectContributors(tags map[string][]string, fields map[string]TagFieldRes
 	} else {
 		fields[fieldName] = TagFieldResult{Status: "represented"}
 	}
-	if mbidsIncomplete {
-		fields[fieldName+".mbids"] = TagFieldResult{Status: "unsupported", Reason: "contributor MBIDs are incomplete; contributor names are represented without MBIDs"}
+	var mbidReasons []string
+	if contributorMBIDsIncomplete {
+		mbidReasons = append(mbidReasons, "one or more contributor role MBID groups are incomplete; IDs for incomplete roles were omitted while names remain represented")
+	}
+	if contributorMBIDsMisaligned {
+		mbidReasons = append(mbidReasons, "one or more contributor role names are not representable or split/deduplicate differently from their MBIDs; affected role IDs were omitted")
+	}
+	if performerMBIDsIncomplete {
+		mbidReasons = append(mbidReasons, "performer MBIDs are incomplete; all performer IDs were omitted while performer names remain represented")
+	}
+	if performerMBIDsMisaligned {
+		mbidReasons = append(mbidReasons, "performer names are not representable or split/deduplicate differently from their MBIDs; all performer IDs were omitted")
+	}
+	if performerMBIDsOmitted {
+		mbidReasons = append(mbidReasons, "performer MBIDs are omitted for this output container")
+	}
+	if performerMBIDAmbiguous {
+		mbidReasons = append(mbidReasons, "performer instrument subroles cannot be paired unambiguously with their IDs; all performer IDs were omitted")
+	}
+	if len(mbidReasons) != 0 {
+		fields[fieldName+".mbids"] = TagFieldResult{Status: "unsupported", Reason: strings.Join(mbidReasons, "; ")}
 	} else if mbidsPresent {
-		fields[fieldName+".mbids"] = TagFieldResult{Status: "unsupported", Reason: "contributor MBIDs have no approved normalized TagLib mapping"}
+		fields[fieldName+".mbids"] = TagFieldResult{Status: "represented"}
 	} else {
 		delete(fields, fieldName+".mbids")
 	}
 }
 
-func performerTagKey(instrument string) string {
-	if instrument == "" {
-		return "PERFORMER:PERFORMER"
+func contributorMappingForRole(role string) (contributorTagMapping, bool) {
+	for _, mapping := range contributorTagMappings {
+		if mapping.role == role {
+			return mapping, true
+		}
 	}
-	return "PERFORMER:" + strings.ToUpper(instrument)
+	return contributorTagMapping{}, false
+}
+
+func performerTagKey(baseKey, instrument string) string {
+	if instrument == "" {
+		return baseKey + ":" + baseKey
+	}
+	return baseKey + ":" + strings.ToUpper(instrument)
 }
 
 func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, bool) {
@@ -598,7 +760,12 @@ func normalizedTagKeys(scope librarymetadata.Scope, field string) ([]string, boo
 		}
 	case "contributors":
 		if scope == librarymetadata.ScopePosition {
-			return []string{"COMPOSER", "LYRICIST", "CONDUCTOR", "ARRANGER", "ENGINEER", "PRODUCER", "REMIXER", "DJMIXER", "MIXER"}, true
+			keys := make([]string, 0, len(contributorTagMappings)*2+1)
+			for _, mapping := range contributorTagMappings {
+				keys = append(keys, mapping.nameTag, mapping.mbidTag)
+			}
+			keys = append(keys, "MUSICBRAINZ_PERFORMERID")
+			return keys, true
 		}
 	case "content_advisory":
 		return []string{"ITUNESADVISORY"}, true

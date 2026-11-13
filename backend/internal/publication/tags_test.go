@@ -457,7 +457,7 @@ func TestProjectTagsMapsDistinctDateAndSubtitleSemantics(t *testing.T) {
 }
 
 func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
-	position, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"position","desired":{"contributors":{"state":"value","value":[{"name":"Family,Given 音楽","role":" Composer ","instrument":"piano","artist_id":"11111111-1111-4111-8111-111111111111"},{"name":"作詞者","role":"LYRICIST","mbid":"22222222-2222-4222-8222-222222222222"},{"name":"Guitarist, One","role":"performer","instrument":"guitar"},{"name":"Guitarist (Live)","role":"performer","instrument":"guitar"},{"name":"Guitarist, One","role":"performer","instrument":"guitar"},{"name":"Vocalist","role":"performer"},{"name":"unknown role","role":"instrumentalist"}],"authority":"manual","provenance":{"kind":"manual"}}}}`))
+	position, err := librarymetadata.DecodeEnvelope([]byte(`{"version":1,"scope":"position","desired":{"contributors":{"state":"value","value":[{"name":"Family,Given 音楽","role":" Composer ","instrument":"piano","artist_id":"11111111-1111-4111-8111-111111111111"},{"name":"Second composer","role":"composer","mbid":"33333333-3333-4333-8333-333333333333"},{"name":"作詞者","role":"LYRICIST","mbid":"22222222-2222-4222-8222-222222222222"},{"name":"作詞者 two","role":"lyricist","mbid":"44444444-4444-4444-8444-444444444444"},{"name":"Director","role":"director","mbid":"55555555-5555-4555-8555-555555555555"},{"name":"Guitarist, One","role":"performer","instrument":"guitar","mbid":"66666666-6666-4666-8666-666666666666"},{"name":"Guitarist (Live)","role":"performer","instrument":"guitar","mbid":"77777777-7777-4777-8777-777777777777"},{"name":"Guitarist, One","role":"performer","instrument":"guitar","mbid":"66666666-6666-4666-8666-666666666666"},{"name":"Pianist","role":"performer","instrument":"piano","mbid":"99999999-9999-4999-8999-999999999999"},{"name":"Vocalist","role":"performer","mbid":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},{"name":"unknown role","role":"instrumentalist"}],"authority":"manual","provenance":{"kind":"manual"}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,17 +479,28 @@ func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key, want := range map[string][]string{
-		"COMPOSER": {"Family,Given 音楽"}, "LYRICIST": {"作詞者"}, "ITUNESADVISORY": {"1"},
+		"COMPOSER": {"Family,Given 音楽", "Second composer"}, "LYRICIST": {"作詞者", "作詞者 two"}, "DIRECTOR": {"Director"}, "ITUNESADVISORY": {"1"},
 	} {
 		if !reflect.DeepEqual(result.Tags[key], want) {
 			t.Errorf("%s = %#v, want %#v", key, result.Tags[key], want)
 		}
 	}
+	for key, want := range map[string][]string{
+		"MUSICBRAINZ_LYRICISTID": {"22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444"},
+		"MUSICBRAINZ_DIRECTORID": {"55555555-5555-4555-8555-555555555555"},
+	} {
+		if !reflect.DeepEqual(result.Tags[key], want) {
+			t.Errorf("%s = %#v, want %#v", key, result.Tags[key], want)
+		}
+	}
+	if _, exists := result.Tags["MUSICBRAINZ_COMPOSERID"]; exists {
+		t.Fatal("incomplete composer MBID group was partially projected")
+	}
 	if result.Fields["position.contributors"].Status != "unsupported" {
 		t.Errorf("unknown role status = %#v", result.Fields["position.contributors"])
 	}
 	for key := range result.Tags {
-		if strings.HasPrefix(key, "PERFORMER:") {
+		if strings.HasPrefix(key, "PERFORMER:") || strings.HasPrefix(key, "MUSICBRAINZ_PERFORMERID:") {
 			t.Fatalf("performer data was projected into MP3 key %q", key)
 		}
 	}
@@ -508,7 +519,17 @@ func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 		}
 		for key, want := range map[string][]string{
 			"PERFORMER:GUITAR":    {"Guitarist, One", "Guitarist (Live)", "Guitarist, One"},
+			"PERFORMER:PIANO":     {"Pianist"},
 			"PERFORMER:PERFORMER": {"Vocalist"},
+		} {
+			if !reflect.DeepEqual(containerProjection.Tags[key], want) {
+				t.Errorf("%s %s = %#v, want %#v", container, key, containerProjection.Tags[key], want)
+			}
+		}
+		for key, want := range map[string][]string{
+			"MUSICBRAINZ_PERFORMERID:GUITAR":                  {"66666666-6666-4666-8666-666666666666", "77777777-7777-4777-8777-777777777777", "66666666-6666-4666-8666-666666666666"},
+			"MUSICBRAINZ_PERFORMERID:PIANO":                   {"99999999-9999-4999-8999-999999999999"},
+			"MUSICBRAINZ_PERFORMERID:MUSICBRAINZ_PERFORMERID": {"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
 		} {
 			if !reflect.DeepEqual(containerProjection.Tags[key], want) {
 				t.Errorf("%s %s = %#v, want %#v", container, key, containerProjection.Tags[key], want)
@@ -536,14 +557,14 @@ func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key, want := range map[string][]string{
-		"COMPOSER": {"Family,Given 音楽"}, "LYRICIST": {"作詞者"}, "ITUNESADVISORY": {"1"},
+		"COMPOSER": {"Family,Given 音楽", "Second composer"}, "LYRICIST": {"作詞者", "作詞者 two"}, "DIRECTOR": {"Director"}, "ITUNESADVISORY": {"1"},
 	} {
 		if !reflect.DeepEqual(m4aProjection.Tags[key], want) {
 			t.Errorf("M4A %s = %#v, want %#v", key, m4aProjection.Tags[key], want)
 		}
 	}
 	for key := range m4aProjection.Tags {
-		if strings.HasPrefix(key, "PERFORMER:") {
+		if strings.HasPrefix(key, "PERFORMER:") || strings.HasPrefix(key, "MUSICBRAINZ_PERFORMERID:") {
 			t.Fatalf("performer data was projected into M4A key %q", key)
 		}
 	}
@@ -561,10 +582,170 @@ func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 	if !reflect.DeepEqual(currentPosition, originalPosition) {
 		t.Fatal("M4A projection mutated the structured contributor input")
 	}
-	if result.Fields["position.contributors.mbids"].Status != "unsupported" {
-		t.Errorf("MBID status = %#v", result.Fields["position.contributors.mbids"])
+	for _, test := range []struct {
+		name         string
+		contributors []librarymetadata.Contributor
+		reason       string
+		nameKey      string
+		nameWant     []string
+	}{
+		{
+			name:     "case-folded instruments",
+			reason:   "unambiguously",
+			nameKey:  "PERFORMER:GUITAR",
+			nameWant: []string{"Guitarist", "Guitarist two"},
+			contributors: []librarymetadata.Contributor{
+				{Name: "Guitarist", Role: "performer", Instrument: "guitar", MBID: ptrString("11111111-1111-4111-8111-111111111111")},
+				{Name: "Guitarist two", Role: "performer", Instrument: "GUITAR", MBID: ptrString("22222222-2222-4222-8222-222222222222")},
+			},
+		},
+		{
+			name:     "empty and performer sentinel instruments",
+			reason:   "unambiguously",
+			nameKey:  "PERFORMER:PERFORMER",
+			nameWant: []string{"Vocalist", "Vocalist two"},
+			contributors: []librarymetadata.Contributor{
+				{Name: "Vocalist", Role: "performer", MBID: ptrString("33333333-3333-4333-8333-333333333333")},
+				{Name: "Vocalist two", Role: "performer", Instrument: "performer", MBID: ptrString("44444444-4444-4444-8444-444444444444")},
+			},
+		},
+		{
+			name:     "literal performer sentinel alone is unrepresentable",
+			reason:   "unambiguously",
+			nameKey:  "PERFORMER:PERFORMER",
+			nameWant: []string{"Literal performer"},
+			contributors: []librarymetadata.Contributor{
+				{Name: "Literal performer", Role: "performer", Instrument: "performer", MBID: ptrString("55555555-5555-4555-8555-555555555555")},
+			},
+		},
+		{
+			name:     "literal MBID tag sentinel is unrepresentable",
+			reason:   "unambiguously",
+			nameKey:  "PERFORMER:MUSICBRAINZ_PERFORMERID",
+			nameWant: []string{"Sentinel performer"},
+			contributors: []librarymetadata.Contributor{
+				{Name: "Sentinel performer", Role: "performer", Instrument: "musicbrainz_performerid", MBID: ptrString("66666666-6666-4666-8666-666666666666")},
+			},
+		},
+		{
+			name:     "incomplete performer groups",
+			reason:   "incomplete",
+			nameKey:  "PERFORMER:GUITAR",
+			nameWant: []string{"Guitarist"},
+			contributors: []librarymetadata.Contributor{
+				{Name: "Guitarist", Role: "performer", Instrument: "guitar", MBID: ptrString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")},
+				{Name: "Pianist", Role: "performer", Instrument: "piano"},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			collisionPosition := librarymetadata.Envelope{
+				Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
+				Desired: map[string]librarymetadata.FieldValue{
+					"contributors": librarymetadata.ManualFieldValue(librarymetadata.StateValue, test.contributors, true),
+				},
+			}
+			collisionInput := input
+			collisionInput.OutputContainer = AudioContainerFLAC
+			collisionInput.Position.Desired = &collisionPosition
+			projection, projectErr := ProjectTags(collisionInput)
+			if projectErr != nil {
+				t.Fatal(projectErr)
+			}
+			if len(projection.Tags["MUSICBRAINZ_PERFORMERID:GUITAR"]) != 0 ||
+				len(projection.Tags["MUSICBRAINZ_PERFORMERID:PIANO"]) != 0 ||
+				len(projection.Tags["MUSICBRAINZ_PERFORMERID:MUSICBRAINZ_PERFORMERID"]) != 0 ||
+				len(projection.Tags["MUSICBRAINZ_PERFORMERID:PERFORMER"]) != 0 {
+				t.Fatalf("colliding performer IDs were projected: %#v", projection.Tags)
+			}
+			if !reflect.DeepEqual(projection.Tags[test.nameKey], test.nameWant) {
+				t.Fatalf("performer names = %#v, want %#v", projection.Tags[test.nameKey], test.nameWant)
+			}
+			if test.name == "incomplete performer groups" &&
+				!reflect.DeepEqual(projection.Tags["PERFORMER:PIANO"], []string{"Pianist"}) {
+				t.Fatalf("incomplete performer IDs removed names: %#v", projection.Tags["PERFORMER:PIANO"])
+			}
+			if got := projection.Fields["position.contributors.mbids"]; got.Status != "unsupported" || !strings.Contains(got.Reason, test.reason) {
+				t.Fatalf("performer MBID diagnostic = %#v", got)
+			}
+		})
+	}
+	for _, test := range []struct {
+		name         string
+		contributors []librarymetadata.Contributor
+		wantNames    []string
+	}{
+		{
+			name: "duplicate role names with distinct MBIDs",
+			contributors: []librarymetadata.Contributor{
+				{Name: "Alex", Role: "composer", MBID: ptrString("66666666-6666-4666-8666-666666666666")},
+				{Name: "Alex", Role: "composer", MBID: ptrString("77777777-7777-4777-8777-777777777777")},
+			},
+			wantNames: []string{"Alex", "Alex"},
+		},
+		{
+			name: "trimmed duplicate names and IDs differ",
+			contributors: []librarymetadata.Contributor{
+				{Name: " Alex ", Role: "composer", MBID: ptrString("88888888-8888-4888-8888-888888888888")},
+				{Name: "Alex", Role: "composer", MBID: ptrString("99999999-9999-4999-8999-999999999999")},
+			},
+			wantNames: []string{" Alex ", "Alex"},
+		},
+		{
+			name: "canonical UUID duplicates across names",
+			contributors: []librarymetadata.Contributor{
+				{Name: "Alex", Role: "composer", MBID: ptrString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")},
+				{Name: "Blair", Role: "composer", MBID: ptrString("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")},
+			},
+			wantNames: []string{"Alex", "Blair"},
+		},
+		{
+			name: "role names contain splitting delimiters",
+			contributors: []librarymetadata.Contributor{
+				{Name: "AC/DC", Role: "composer", MBID: ptrString("cccccccc-cccc-4ccc-8ccc-cccccccccccc")},
+				{Name: "One;Two", Role: "composer", MBID: ptrString("dddddddd-dddd-4ddd-8ddd-dddddddddddd")},
+			},
+			wantNames: []string{"AC/DC", "One;Two"},
+		},
+		{
+			name: "role name exceeds reader length",
+			contributors: []librarymetadata.Contributor{
+				{Name: strings.Repeat("x", 1025), Role: "composer", MBID: ptrString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")},
+			},
+			wantNames: []string{strings.Repeat("x", 1025)},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			misalignedPosition := librarymetadata.Envelope{
+				Version: librarymetadata.EnvelopeVersion, Scope: librarymetadata.ScopePosition,
+				Desired: map[string]librarymetadata.FieldValue{
+					"contributors": librarymetadata.ManualFieldValue(librarymetadata.StateValue, test.contributors, true),
+				},
+			}
+			misalignedInput := input
+			misalignedInput.Position.Desired = &misalignedPosition
+			projection, projectErr := ProjectTags(misalignedInput)
+			if projectErr != nil {
+				t.Fatal(projectErr)
+			}
+			if !reflect.DeepEqual(projection.Tags["COMPOSER"], test.wantNames) {
+				t.Fatalf("composer names = %#v, want %#v", projection.Tags["COMPOSER"], test.wantNames)
+			}
+			if _, exists := projection.Tags["MUSICBRAINZ_COMPOSERID"]; exists {
+				t.Fatalf("misaligned composer IDs were projected: %#v", projection.Tags["MUSICBRAINZ_COMPOSERID"])
+			}
+			if got := projection.Fields["position.contributors.mbids"]; got.Status != "unsupported" || !strings.Contains(got.Reason, "representable") {
+				t.Fatalf("misalignment diagnostic = %#v", got)
+			}
+		})
+	}
+	if got := result.Fields["position.contributors.mbids"]; got.Status != "unsupported" || !strings.Contains(got.Reason, "incomplete") {
+		t.Errorf("MBID status = %#v, want incomplete role group diagnostic", got)
 	}
 	for key, values := range result.Tags {
+		if key == "MUSICBRAINZ_LYRICISTID" || key == "MUSICBRAINZ_DIRECTORID" {
+			continue
+		}
 		joined := strings.Join(values, "")
 		if strings.Contains(joined, "11111111") || strings.Contains(joined, "22222222") {
 			t.Fatalf("contributor identifier leaked into normalized tag %s", key)
@@ -600,7 +781,12 @@ func TestProjectTagsContributorAndAdvisoryExplicitEmptyClearsFootprints(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"COMPOSER", "LYRICIST", "CONDUCTOR", "ARRANGER", "ENGINEER", "PRODUCER", "REMIXER", "DJMIXER", "MIXER", "ITUNESADVISORY"} {
+	for _, key := range []string{
+		"COMPOSER", "MUSICBRAINZ_COMPOSERID", "LYRICIST", "MUSICBRAINZ_LYRICISTID", "CONDUCTOR", "MUSICBRAINZ_CONDUCTORID",
+		"ARRANGER", "MUSICBRAINZ_ARRANGERID", "ENGINEER", "MUSICBRAINZ_ENGINEERID", "PRODUCER", "MUSICBRAINZ_PRODUCERID",
+		"REMIXER", "MUSICBRAINZ_REMIXERID", "DJMIXER", "MUSICBRAINZ_DJMIXERID", "MIXER", "MUSICBRAINZ_MIXERID",
+		"DIRECTOR", "MUSICBRAINZ_DIRECTORID", "MUSICBRAINZ_PERFORMERID", "ITUNESADVISORY",
+	} {
 		if values, exists := result.Tags[key]; !exists || values == nil || len(values) != 0 {
 			t.Errorf("explicit empty %s = %#v, exists=%t", key, values, exists)
 		}

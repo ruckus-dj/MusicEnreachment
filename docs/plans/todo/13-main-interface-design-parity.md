@@ -366,6 +366,22 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        [CI 43258045646](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43258045646)
        прошла после повтора macOS arm64, которому сначала не выделился hosted
        runner; код и gates не менялись. Полный metadata port остаётся открытым.
+      - [x] `159468ce`: тональность recording и независимый position override
+        реализованы через editor/storage/effective projection/preview и файловую
+        запись. Обычный полный hook и вся
+        [CI 43404395660](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43404395660)
+        зелёные. Это не browser/real-backend приёмка тональности: отдельный acceptance
+        backend пока работает на `7e5eacb3` и требует штатного перезапуска новым
+        gate-built бинарником. Полный metadata port остаётся открытым.
+      - [x] Director и 11 contributor MBID-проекций: добавлены DIRECTOR и
+        role-specific IDs, включая paired performer/subrole keys для FLAC/MKA.
+        Неполные и неоднозначные ID-группы опускаются без сдвига имён/IDs и без
+        потери других ролей; ограничение performer для MP3/M4A сохранено.
+        Файловые aliases сверены по TagLib/Navidrome; расширены существующие
+        projection/footprint/native roundtrip tests, без новых DB-сценариев.
+        Независимое ревью выполнено, замечания исправлены. Проверки и ограничения —
+        [отчёт](../../reports/2026-11-13-contributor-projections.md).
+        Полный metadata editor и browser/визуальная приёмка остаются открытыми.
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через
@@ -553,7 +569,8 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        завершённую историю, учитывает очищенные River jobs и superseded parked
        failures; перед удалением позиций безопасно удаляет только settled rows,
        сохраняя operation history. Независимое ревью и полный hook прошли;
-       CI пока не подтверждена. Повтор API-assisted приёмки на gate-built
+        вся [CI 43315446319](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43315446319)
+        зелёная. Повтор API-assisted приёмки на gate-built
        `7e5eacb3` успешен: свежий preview показал один целевой релиз и capturable
        CURRENT без blockers; явное подтверждение завершило operation
        `08c3533a-c295-5cbb-a1c4-ba493d31e223` успешно. Целевые library artist/release
@@ -566,7 +583,17 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        переполнения и dark 1440×900. Escape при фокусе внутри диалога и кнопка
        Cancel закрывают preview без подтверждения. После отмены оба оставшихся
        артиста и релиза доступны (HTTP 200), каждый с одной published/available
-       позицией. Dark 390×844 и browser-confirm/delete не проверены.
+        позицией. Дополнительно на `7e5eacb3` проверены dark 390×844 и отмена
+        кнопкой Cancel: human-readable scope, один безопасный CURRENT, обе кнопки
+        внутри viewport, горизонтального переполнения страницы/диалога нет;
+        фокус вернулся на Delete artist, диалог закрыт, alerts отсутствуют.
+        Подтверждение не нажималось: два оставшихся CURRENT сохраняются.
+        SHA-256 обоих CURRENT и всех трёх исходных FLAC повторно совпал с baseline.
+        Browser-confirm/delete не проверен. Карточка артиста при English всё ещё
+        содержит русские «Медиатека», «позиций», «С аудио», «опубликовано»,
+        «Дата не указана» и «Показать позиции»; общая RU/EN-приёмка не завершена.
+        Дополнительные проверки и ограничения —
+        [отчёт](../../reports/2026-11-13-contributor-projections.md).
 
 **Целевой результат программы:** после настройки открывается настоящий рабочий интерфейс;
 утверждённые разделы доступны из общей навигации, каталог читает реальные
