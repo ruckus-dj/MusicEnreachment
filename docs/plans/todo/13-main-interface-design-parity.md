@@ -370,16 +370,23 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         реализованы через editor/storage/effective projection/preview и файловую
         запись. Обычный полный hook и вся
         [CI 43404395660](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43404395660)
-        зелёные. Это не browser/real-backend приёмка тональности: отдельный acceptance
-        backend пока работает на `7e5eacb3` и требует штатного перезапуска новым
-        gate-built бинарником. Полный metadata port остаётся открытым.
-      - [x] Director и 11 contributor MBID-проекций: добавлены DIRECTOR и
+        зелёные. На hook-built snapshot `392f8983` отдельный acceptance backend
+        штатно перезапущен без изменения PostgreSQL и стенда 8787. Browser на
+        реальном backend подтвердил сохранение recording key, position override,
+        explicit_empty и возврат к recording fallback; RU→EN сохраняет draft без
+        language-only API-запросов. Preview показал KEY `["F♯ minor"]` и очистку
+        INITIALKEY для FLAC. Подтверждение публикации не выполнялось; оба CURRENT
+        и все три исходника сохранили SHA-256. Тестовые key values сняты через UI
+        в состояние absent. Это не полная приёмка новой файловой публикации.
+        Полный metadata port остаётся открытым.
+      - [x] `392f8983`: director и 11 contributor MBID-проекций: добавлены DIRECTOR и
         role-specific IDs, включая paired performer/subrole keys для FLAC/MKA.
         Неполные и неоднозначные ID-группы опускаются без сдвига имён/IDs и без
         потери других ролей; ограничение performer для MP3/M4A сохранено.
         Файловые aliases сверены по TagLib/Navidrome; расширены существующие
         projection/footprint/native roundtrip tests, без новых DB-сценариев.
-        Независимое ревью выполнено, замечания исправлены. Проверки и ограничения —
+        Независимое ревью выполнено, замечания исправлены; обычный полный hook
+        прошёл, срез отправлен в go-development. Проверки и ограничения —
         [отчёт](../../reports/2026-11-13-contributor-projections.md).
         Полный metadata editor и browser/визуальная приёмка остаются открытыми.
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**

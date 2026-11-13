@@ -668,6 +668,9 @@ func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 			if got := projection.Fields["position.contributors.mbids"]; got.Status != "unsupported" || !strings.Contains(got.Reason, test.reason) {
 				t.Fatalf("performer MBID diagnostic = %#v", got)
 			}
+			if !strings.Contains(strings.Join(projection.Notices, "\n"), test.reason) {
+				t.Fatalf("performer MBID notice missing: %#v", projection.Notices)
+			}
 		})
 	}
 	for _, test := range []struct {
@@ -737,10 +740,20 @@ func TestProjectTagsMapsContributorRolesAndAdvisory(t *testing.T) {
 			if got := projection.Fields["position.contributors.mbids"]; got.Status != "unsupported" || !strings.Contains(got.Reason, "representable") {
 				t.Fatalf("misalignment diagnostic = %#v", got)
 			}
+			if !strings.Contains(strings.Join(projection.Notices, "\n"), "representable") {
+				t.Fatalf("misalignment notice missing: %#v", projection.Notices)
+			}
 		})
 	}
 	if got := result.Fields["position.contributors.mbids"]; got.Status != "unsupported" || !strings.Contains(got.Reason, "incomplete") {
 		t.Errorf("MBID status = %#v, want incomplete role group diagnostic", got)
+	}
+	contributorMBIDNotice := false
+	for _, notice := range result.Notices {
+		contributorMBIDNotice = contributorMBIDNotice || strings.Contains(notice, "contributor role MBID groups are incomplete")
+	}
+	if !contributorMBIDNotice {
+		t.Errorf("incomplete contributor MBIDs were not reported as a notice: %#v", result.Notices)
 	}
 	for key, values := range result.Tags {
 		if key == "MUSICBRAINZ_LYRICISTID" || key == "MUSICBRAINZ_DIRECTORID" {

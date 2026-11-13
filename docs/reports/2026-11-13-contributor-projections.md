@@ -111,4 +111,64 @@ performer имел два разных MBID. Срабатывание suppressio
 fixture и ожидаемый ID для повторённого имени согласованы без ослабления
 production guard и без удаления rejection assertions.
 
+`392f8983` прошёл повторный обычный полный hook (`task verify`) и отправлен в
+go-development.
+
+## Browser-проверка тональности на новом backend
+
+Только acceptance PID 18749 штатно остановлен SIGTERM и заменён PID 96650 с
+hook-built бинарником source snapshot `392f8983`. Build metadata показывает
+parent `8272844d` + modified, поскольку обычный hook собирает бинарник перед
+созданием commit; это не отдельная сборка другой ревизии. PostgreSQL-контейнер
+`plan13acceptance-pg`, данные и стенд 8787 не перезапускались.
+
+В production browser context `plan13acceptance` на 390×844:
+
+- через Recording metadata сохранено `D minor` (PATCH 200, revision 2,
+  `publication_applied:false`);
+- RU→EN сохранил несохранённый key draft; language-only API-запросов не было;
+- Position metadata отобразил `D minor` / Inherited from recording;
+- через тот же UI сохранён position override `F♯ minor` (PATCH 200, revision 2);
+- штатный Prepare preview показал Update 1 / Blocked 0; mobile inspector показал
+  точный diff KEY: absent → `["F♯ minor"]`, INITIALKEY: absent → `[]` для FLAC.
+  Внутренний comparison status был `blocked`; это не утверждение о successful
+  publication admission. Inspector не вызвал page overflow;
+- position explicit_empty (revision 3) показал Explicitly cleared; возврат к
+  absent (revision 4) после перечитывания снова показал recording fallback;
+- recording также возвращён в absent через UI (revision 3). Сохранены manual
+  absent entries, а не побайтово первоначальные пустые metadata envelopes.
+
+Все mutations выполнены браузерными контролами, без API-assisted записи.
+Последующие GET metadata служат readback-свидетельством, а не заменой browser
+сценария. Confirm ready publications не нажимался. Оба CURRENT и все три исходных
+FLAC повторно прошли проверку SHA-256 по прежнему baseline. Новая запись key
+в файл этим browser-прогоном не проверена; native writer/readback покрыт gate.
+
+## Browser-проверка director и найденный notice gap
+
+На том же `392f8983` через Recording metadata → Contributors добавлен director
+`Director, 監督` без MBID (PATCH 200, revision 4). Mobile preview inspector показал
+DIRECTOR: absent → `["Director, 監督"]` без page overflow; сохранение не применяло
+publication. После проверки contributors возвращены через UI в manual absent
+(revision 5). Подтверждение публикации не выполнялось.
+
+Проверка выявила отдельный presentation gap: причина пропуска contributor-ID
+группы сохранена в `TagProjection.Fields`, но не передана через `Notices`,
+которые видит обычный preview. Поэтому успешная проекция имени не принимается
+за успешное предупреждение о пропущенных IDs; исправление notice выполняется
+отдельным минимальным follow-up без требования обязательных MBID.
+
+Follow-up передаёт весь уже собранный список MBID omission reasons в Notices,
+не только missing-ID случай: обычные collision/split/dedup и performer
+incomplete/ambiguous причины также должны быть видимы. Независимое ревью
+подтвердило actual service path; существующие omission assertions проверяют
+теперь и Notices. Семантика допуска публикации и optionality IDs не изменена.
+
+В отдельном dark-контексте на том же новом backend проверен несохранённый key
+draft `B♭ major` второй записи: 390×844, English → Русский, затем 1440×900.
+Draft сохранился, language-only API-запросов нет, `document.lang=ru`, page
+overflow отсутствует. На mobile Save/Cancel по 120×40 px внутри viewport;
+на desktop disclosure-группы остаются одинаковой ширины. Escape из самого key
+input отменил draft и вернул readonly inherited state; Save не нажимался.
+
 План 13 остаётся открытым.

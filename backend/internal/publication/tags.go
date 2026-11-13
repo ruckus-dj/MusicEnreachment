@@ -698,6 +698,7 @@ func projectContributors(tags map[string][]string, fields map[string]TagFieldRes
 	}
 	if len(mbidReasons) != 0 {
 		fields[fieldName+".mbids"] = TagFieldResult{Status: "unsupported", Reason: strings.Join(mbidReasons, "; ")}
+		*notices = append(*notices, mbidReasons...)
 	} else if mbidsPresent {
 		fields[fieldName+".mbids"] = TagFieldResult{Status: "represented"}
 	} else {
