@@ -440,13 +440,25 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         Полная CI 43478345845 зелёная, включая Windows и публикацию контейнера.
         Статус и границы —
         [отчёт](../../reports/2026-11-13-catalog-source-and-contributor-editor.md).
-        Whole-row move up/down реализован и прошёл независимое ревью;
-        полный hook/browser/CI этого следующего среза ещё не завершены —
+        `1a630839`: whole-row move up/down реализован, прошёл независимое ревью
+        и обычный полный hook, отправлен. Browser подтвердил reorder/save/reload
+        и сохранение парных данных; временный scope удалён со свежим чистым
+        preview после reconciliation. Полная CI 43483367417 зелёная, включая
+        Windows и публикацию контейнера —
         [отчёт](../../reports/2026-11-13-contributor-row-order.md).
+      - [ ] Deletion preview после исчезновения transient blockers должен иметь
+        очевидный путь к свежему preview: в browser старое blocked состояние
+        пережило закрытие/открытие диалога, свежая проверка потребовала reload.
+        Authority guards не обходить; закрытие dialog само по себе не является
+        доказательством обновления preview.
       - [ ] Основные release/title groups production editor пока находятся в
         изначально закрытых disclosures. Довести always-visible basics и in-place
         editing по действующему контракту/эталону без изменения ownership или
         fallback-семантики metadata.
+        Basics вынесены в постоянно видимый раздел по scope mapping эталона,
+        оба release types вместе по решению владельца. Независимое ревью чистое;
+        полный hook/browser/CI ещё не завершены —
+        [отчёт](../../reports/2026-11-13-metadata-visible-basics.md).
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через

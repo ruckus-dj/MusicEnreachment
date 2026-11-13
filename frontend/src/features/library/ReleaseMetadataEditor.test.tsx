@@ -116,6 +116,42 @@ function renderMetadataEditor(children: ReactNode) {
   );
 }
 
+it("keeps release basics visible and editable outside closed metadata groups", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "ru");
+  vi.stubGlobal("localStorage", storage);
+  server.use(
+    http.get(`*/api/library/releases/${releaseId}/metadata`, () =>
+      HttpResponse.json(metadata(3)),
+    ),
+  );
+
+  renderMetadataEditor(<ReleaseMetadataEditor releaseId={releaseId} />);
+
+  const release = screen.getByRole("region", { name: "Метаданные релиза" });
+  const editButton = within(release).getByRole("button", { name: "Изменить" });
+  await waitFor(() => expect(editButton).toBeEnabled());
+  expect(within(release).getByText("Original title")).toBeInTheDocument();
+  expect(within(release).getByText("2020")).toBeInTheDocument();
+  const titleLabel = within(release).getByText("Название", { selector: "dt" });
+  expect(titleLabel.closest("details")).toBeNull();
+  const additionalGroup = within(release)
+    .getByText("Дополнительные метаданные", { selector: "summary" })
+    .closest("details");
+  expect(additionalGroup).not.toBeNull();
+  if (!additionalGroup) throw new Error("Missing additional metadata group");
+  expect(additionalGroup).not.toHaveAttribute("open");
+
+  fireEvent.click(editButton);
+  fireEvent.change(within(release).getByRole("textbox", { name: "Название" }), {
+    target: { value: "Edited title" },
+  });
+  expect(
+    within(release).getByRole("textbox", { name: "Название" }),
+  ).toHaveValue("Edited title");
+  expect(additionalGroup).not.toHaveAttribute("open");
+});
+
 it("saves recording and position title overrides through their own scopes", async () => {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "ru");
@@ -214,7 +250,6 @@ it("saves recording and position title overrides through their own scopes", asyn
     expect(recordingEdit).toBeEnabled();
     expect(positionEdit).toBeEnabled();
   });
-  openGroup(recording, "Названия");
   openGroup(position, "Названия");
   openGroup(position, "Сведения о записи");
   expect(within(position).getByText("D♭ minor")).toBeInTheDocument();
