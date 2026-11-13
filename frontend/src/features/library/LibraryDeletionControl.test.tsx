@@ -62,10 +62,11 @@ function preview(
   releaseId: string,
   title: string,
   path: string,
+  confirmationDigest = digest,
 ): LibraryDeletionPreviewResponse {
   return {
     blockers: [],
-    confirmation_digest: digest,
+    confirmation_digest: confirmationDigest,
     kind: "release",
     outputs: [
       {
@@ -109,22 +110,42 @@ afterEach(() => {
 });
 
 it("replays one frozen confirmation, follows partial failure, and retries the same operation", async () => {
+  const refreshedDigest = "b".repeat(64);
   const confirmBodies: Array<{ confirmation_digest: string }> = [];
   const retryIDs: string[] = [];
   let previewReads = 0;
+  let resolveRefreshedPreview!: (response: Response) => void;
+  let refreshedPreviewStarted!: () => void;
+  const refreshStarted = new Promise<void>((resolve) => {
+    refreshedPreviewStarted = resolve;
+  });
   let confirmationCalls = 0;
   let operationReads = 0;
   let currentOperation = operation("failed", "2026-11-11T10:00:02Z", 512);
   server.use(
     http.get("*/api/library/releases/:releaseId/deletion/preview", () => {
       previewReads += 1;
-      return HttpResponse.json(
-        preview(
-          releaseID,
-          "Release A deletion",
-          "Artist/Release/01 - Track.flac",
-        ),
+      if (previewReads === 2) {
+        refreshedPreviewStarted();
+        return new Promise<Response>((resolve) => {
+          resolveRefreshedPreview = resolve;
+        });
+      }
+      const body = preview(
+        releaseID,
+        "Release A deletion",
+        "Artist/Release/01 - Track.flac",
       );
+      if (previewReads === 1) {
+        body.blockers = [
+          {
+            code: "publication_blocked",
+            message: "publication cannot be safely deleted",
+            position_id: positionID,
+          },
+        ];
+      }
+      return HttpResponse.json(body);
     }),
     http.post("*/api/library/deletion/confirm", async ({ request }) => {
       confirmBodies.push(
@@ -165,10 +186,57 @@ it("replays one frozen confirmation, follows partial failure, and retries the sa
     expect(dialog).not.toHaveTextContent(id);
   }
   expect(previewReads).toBe(1);
+  expect(dialog).toHaveTextContent("publication cannot be safely deleted");
+
+  const blockedConfirm = screen.getByRole("button", {
+    name: "Подтвердить удаление",
+  });
+  expect(blockedConfirm).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Обновить предпросмотр" }),
+  ).toBeEnabled();
+  fireEvent.click(blockedConfirm);
+  expect(confirmBodies).toEqual([]);
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Обновить предпросмотр" }),
+  );
+  await refreshStarted;
+  expect(previewReads).toBe(2);
+  const confirmButton = screen.getByRole("button", {
+    name: "Подтвердить удаление",
+  });
+  expect(confirmButton).toBeDisabled();
+  fireEvent.click(confirmButton);
+  expect(confirmBodies).toEqual([]);
+
+  const refreshResponse = nextResponse(
+    `/api/library/releases/${releaseID}/deletion/preview`,
+    "GET",
+  );
+  await act(async () => {
+    resolveRefreshedPreview(
+      HttpResponse.json(
+        preview(
+          releaseID,
+          "Release A refreshed deletion",
+          "Artist/Release/01 - Refreshed.flac",
+          refreshedDigest,
+        ),
+      ),
+    );
+  });
+  await refreshResponse;
+  expect(
+    await screen.findByText("Release A refreshed deletion"),
+  ).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Подтвердить удаление" }));
   await screen.findByText(/Ответ на подтверждение не получен/);
-  expect(confirmBodies).toEqual([{ confirmation_digest: digest }]);
+  expect(
+    screen.queryByRole("button", { name: "Обновить предпросмотр" }),
+  ).not.toBeInTheDocument();
+  expect(confirmBodies).toEqual([{ confirmation_digest: refreshedDigest }]);
 
   fireEvent.click(
     screen.getByRole("button", {
@@ -176,10 +244,10 @@ it("replays one frozen confirmation, follows partial failure, and retries the sa
     }),
   );
   await screen.findByText(/Удаление завершилось с ошибкой/);
-  expect(previewReads).toBe(1);
+  expect(previewReads).toBe(2);
   expect(confirmBodies).toEqual([
-    { confirmation_digest: digest },
-    { confirmation_digest: digest },
+    { confirmation_digest: refreshedDigest },
+    { confirmation_digest: refreshedDigest },
   ]);
   expect(
     screen.getByText(/успешно удалённые публикации отражаются сразу/i),
@@ -217,7 +285,7 @@ it("replays one frozen confirmation, follows partial failure, and retries the sa
   const progress = screen.getByLabelText("Обработано байт");
   expect(progress).toHaveAttribute("value", "768");
   expect(progress).toHaveAttribute("max", "1024");
-  expect(previewReads).toBe(1);
+  expect(previewReads).toBe(2);
   for (const id of [releaseID, positionID, operationID, nextReleaseID]) {
     expect(document.body).not.toHaveTextContent(id);
   }

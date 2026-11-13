@@ -270,6 +270,7 @@ export function LibraryDeletionControl({
           scopePublication:
             "Будет удалена только текущая публикация. Позиция, релиз, композиция, записи провайдера, исходники и другие публикации сохраняются.",
           prepare: "Загрузить точный предпросмотр",
+          refreshPreview: "Обновить предпросмотр",
           loading: "Подготовка предпросмотра…",
           cancel: "Отмена",
           confirm: "Подтвердить удаление",
@@ -327,6 +328,7 @@ export function LibraryDeletionControl({
           scopePublication:
             "Only the current publication will be deleted. The position, release, recording, provider records, sources, and other publications are retained.",
           prepare: "Load exact preview",
+          refreshPreview: "Refresh preview",
           loading: "Preparing preview…",
           cancel: "Cancel",
           confirm: "Confirm deletion",
@@ -365,7 +367,12 @@ export function LibraryDeletionControl({
         };
 
   async function preparePreview() {
-    if (state.confirmationUncertain || state.operation || state.previewPending)
+    if (
+      state.confirmationUncertain ||
+      state.operation ||
+      state.previewPending ||
+      state.confirmationPending
+    )
       return;
     const actionScope = requestScope;
     updateState(actionScope, (current) => ({
@@ -412,6 +419,7 @@ export function LibraryDeletionControl({
       !preview ||
       preview.blockers?.length ||
       preview.outputs?.some((output) => !output.capturable) ||
+      state.previewPending ||
       state.confirmationPending ||
       state.operation
     )
@@ -758,17 +766,36 @@ export function LibraryDeletionControl({
                   {state.previewPending ? text.loading : text.prepare}
                 </Button>
               ) : (
-                <Button
-                  className="rounded bg-red-800 px-4 py-2 text-white disabled:opacity-50"
-                  isDisabled={isBlocked || state.confirmationPending}
-                  onPress={() => void confirmPreview()}
-                >
-                  {state.confirmationPending
-                    ? text.loading
-                    : state.confirmationUncertain
-                      ? text.confirmAgain
-                      : text.confirm}
-                </Button>
+                <>
+                  {!state.operation && !state.confirmationUncertain ? (
+                    <Button
+                      className="rounded border px-4 py-2 disabled:opacity-50"
+                      isDisabled={
+                        state.previewPending || state.confirmationPending
+                      }
+                      onPress={() => void preparePreview()}
+                    >
+                      {state.previewPending
+                        ? text.loading
+                        : text.refreshPreview}
+                    </Button>
+                  ) : null}
+                  <Button
+                    className="rounded bg-red-800 px-4 py-2 text-white disabled:opacity-50"
+                    isDisabled={
+                      isBlocked ||
+                      state.previewPending ||
+                      state.confirmationPending
+                    }
+                    onPress={() => void confirmPreview()}
+                  >
+                    {state.confirmationPending
+                      ? text.loading
+                      : state.confirmationUncertain
+                        ? text.confirmAgain
+                        : text.confirm}
+                  </Button>
+                </>
               )}
             </div>
           </Dialog>

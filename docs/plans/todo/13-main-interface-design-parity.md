@@ -425,11 +425,10 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         CURRENT; оба прежних CURRENT и все три исходника сохранили SHA-256.
         Главный каталог, source presentation и общий визуальный паритет остаются
         открытыми.
-      - [ ] Остаток contributor editor: optional descriptive MBID уже разрешён
-        контрактом и поддержан storage/API, но production показывает только
-        retained notice; нужен edit/read input без изменения `artist_id` или
-        provider identity. Также отсутствуют prototype move up/down controls:
-        перемещать нужно всю credit row с именем, ролью, инструментом и MBID.
+      - [x] Optional descriptive contributor MBID доступен через edit/read input
+        без изменения `artist_id` или provider identity. В production добавлены
+        move up/down controls по эталону: перемещается вся credit row с именем, ролью,
+        инструментом и MBID.
         `9e82d8fd`: MBID input/read value реализованы; независимое ревью не нашло
         блокеров, обычный полный hook прошёл после исправления четырёх assertions,
         commit отправлен. Catalog/source RU/EN и display-only variant index
@@ -451,13 +450,20 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         пережило закрытие/открытие диалога, свежая проверка потребовала reload.
         Authority guards не обходить; закрытие dialog само по себе не является
         доказательством обновления preview.
-      - [ ] Основные release/title groups production editor пока находятся в
-        изначально закрытых disclosures. Довести always-visible basics и in-place
-        editing по действующему контракту/эталону без изменения ownership или
-        fallback-семантики metadata.
-        Basics вынесены в постоянно видимый раздел по scope mapping эталона,
-        оба release types вместе по решению владельца. Независимое ревью чистое;
+        Явный pre-confirm refresh реализован; Confirm заблокирован во время
+        обновления, uncertain/operation пути не меняются. Production-ревью чистое;
         полный hook/browser/CI ещё не завершены —
+        [отчёт](../../reports/2026-11-13-deletion-preview-refresh.md).
+      - [x] Основные поля metadata вынесены из изначально закрытых disclosures:
+        always-visible basics и in-place editing по действующему контракту/
+        эталону, без изменения ownership или fallback-семантики metadata.
+        `f8ca7b63`: basics вынесены в постоянно видимый раздел по scope mapping эталона,
+        оба release types вместе по решению владельца. Независимое ревью чистое;
+        обычный полный hook прошёл, commit отправлен. Browser подтвердил 24
+        scope/locale/theme/size состояния, read/edit placement и сохранение draft
+        при disclosures/RU/EN; baseline не записывался. Полная CI 43487504866
+        зелёная после повтора только failed jobs (attempt 2), включая Windows
+        и публикацию контейнера; gates/таймауты не менялись —
         [отчёт](../../reports/2026-11-13-metadata-visible-basics.md).
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и

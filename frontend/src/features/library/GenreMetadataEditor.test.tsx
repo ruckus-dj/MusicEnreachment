@@ -391,7 +391,13 @@ it("does not silently rebase a dirty draft when a refresh read finishes", async 
 
   const view = renderEditor({ owner: "release", ownerId: "refresh-race" });
   await screen.findByText(/Переопределение жанров не задано/);
-  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+  const editButton = await screen.findByRole("button", { name: "Изменить" });
+  await waitFor(() => expect(editButton).toBeEnabled());
+  fireEvent.click(editButton);
+  const clearButton = await screen.findByRole("button", {
+    name: "Очистить жанры",
+  });
+  await waitFor(() => expect(clearButton).toBeEnabled());
   view.rerender(
     <I18nProvider>
       <GenreMetadataEditor
@@ -404,9 +410,7 @@ it("does not silently rebase a dirty draft when a refresh read finishes", async 
   await waitFor(() =>
     expect(api.getLibraryReleaseMetadata).toHaveBeenCalledTimes(2),
   );
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Очистить жанры" }),
-  );
+  fireEvent.click(clearButton);
   await act(async () => resolveRefresh({ status: 200, data: metadata(5) }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent(
