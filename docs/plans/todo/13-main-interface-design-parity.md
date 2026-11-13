@@ -597,10 +597,17 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    или Local CRUD. **Приёмка:** все состояния и доступные имена доступны на обоих
    языках без потери draft/операций; browser preference, fallback English,
       «Как в системе» и локальное сохранение выбора — по разделу «Интерфейс» контракта.
-      - [ ] Incoming overview/review own copy локализован, own feedback переведён
+      - [x] Incoming overview/review own copy локализован, own feedback переведён
         на semantic descriptors без locale refetch и string-based refresh guards.
-        Review замечание к неоднозначным test selectors исправлено; полный
-        hook/browser/CI ещё не завершены. Вложенные manual pickers/grouping/
+        `a5fb17e1` и copy-поправка `35d57845` прошли обычные полные hooks и
+        отправлены. Browser подтвердил 8 theme/locale/size состояний, сохранение
+        группы/Local preview без locale requests; manual conflict проверен
+        fixture regression, не real-backend E2E. Baseline hashes сохранены;
+        CI 43504970853 полностью зелёная; исходная CI 43504329510 также полностью
+        зелёная после failed-only attempt 3, включая Windows и контейнер.
+        Предыдущие cleanup/provisioning сбои разобраны отдельно в отчёте;
+        gates/таймауты не менялись.
+        Вложенные manual pickers/grouping/
         inspector/overrides остаются отдельными срезами —
         [отчёт](../../reports/2026-11-13-incoming-review-localization.md).
      - Setup: локализованы шаги мастера, metadata/tools, сводка, AcoustID и

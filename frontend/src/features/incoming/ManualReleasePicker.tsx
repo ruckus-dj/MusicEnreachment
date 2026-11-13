@@ -7,11 +7,16 @@ import {
 } from "../../api/generated/client";
 import type { OperationResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
 import {
   errorAfterSnapshotRead,
   type IncomingOperationError,
   IncomingOperationFollower,
 } from "./IncomingOperationFollower";
+import {
+  type ManualPickerMessageKey,
+  manualPickerMessage,
+} from "./manualPickerMessages";
 
 type Props = {
   groupId: string;
@@ -35,6 +40,8 @@ type GroupState = {
   admitting?: boolean;
   operationId?: string;
   error?: string;
+  errorKey?: ManualPickerMessageKey;
+  errorStatus?: number;
   finished?: boolean;
 };
 
@@ -46,6 +53,11 @@ export function ManualReleasePicker({
   searchRelease,
   onPrepared,
 }: Props) {
+  const { locale } = useI18n();
+  const message = (
+    key: ManualPickerMessageKey,
+    values?: Record<string, string | number>,
+  ) => manualPickerMessage(locale, key, values);
   const queryClient = useQueryClient();
   const [states, setStates] = useState<Record<string, GroupState>>({});
   const [snapshots, setSnapshots] = useState<Record<string, OperationResponse>>(
@@ -69,6 +81,8 @@ export function ManualReleasePicker({
         value: searchRelease,
         searchRelease,
         error: undefined,
+        errorKey: undefined,
+        errorStatus: undefined,
         finished: false,
       },
     }));
@@ -137,7 +151,9 @@ export function ManualReleasePicker({
           [submittedGroupId]: {
             ...current[submittedGroupId],
             operationId: undefined,
-            error: result.safe_error || "Не удалось подготовить издание.",
+            error: result.safe_error,
+            errorKey: result.safe_error ? undefined : "releaseNotPrepared",
+            errorStatus: undefined,
           },
         }));
       }
@@ -165,6 +181,8 @@ export function ManualReleasePicker({
         body,
         admitting: true,
         error: undefined,
+        errorKey: undefined,
+        errorStatus: undefined,
         finished: false,
       },
     }));
@@ -182,9 +200,11 @@ export function ManualReleasePicker({
             ...(response.status >= 400 && response.status < 500
               ? { body: undefined }
               : {}),
-            error:
-              response.data.detail ||
-              `Не удалось подготовить издание (HTTP ${response.status}).`,
+            error: response.data.detail,
+            errorKey: response.data.detail
+              ? undefined
+              : "prepareReleaseNotAccepted",
+            errorStatus: response.data.detail ? undefined : response.status,
           },
         }));
         return;
@@ -203,10 +223,9 @@ export function ManualReleasePicker({
         [requestedGroupId]: {
           ...current[requestedGroupId],
           admitting: false,
-          error:
-            reason instanceof Error
-              ? reason.message
-              : "Не удалось подготовить издание.",
+          error: reason instanceof Error ? reason.message : undefined,
+          errorKey: reason instanceof Error ? undefined : "releaseNotPrepared",
+          errorStatus: undefined,
         },
       }));
     }
@@ -277,15 +296,12 @@ export function ManualReleasePicker({
         />
       ))}
       <h2 id="manual-release-title" className="font-semibold">
-        Выбрать издание по MBID или ссылке
+        {message("selectReleaseTitle")}
       </h2>
-      <p className="mt-1 text-sm">
-        Будет выполнен только запрос выбранного MusicBrainz release. Поиск по
-        артисту не запускается.
-      </p>
+      <p className="mt-1 text-sm">{message("selectReleaseDescription")}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <input
-          aria-label="MBID или официальная ссылка на издание"
+          aria-label={message("releaseMBIDOrURL")}
           className="min-w-64 flex-1 rounded border border-stone-400 p-2"
           value={state.value}
           disabled={operationPending || disabled}
@@ -297,6 +313,8 @@ export function ManualReleasePicker({
                 value: event.target.value,
                 body: undefined,
                 error: undefined,
+                errorKey: undefined,
+                errorStatus: undefined,
                 finished: false,
               },
             }));
@@ -311,7 +329,7 @@ export function ManualReleasePicker({
             operation?.state === "failed"
           }
         >
-          Подготовить издание
+          {message("prepareRelease")}
         </AppButton>
       </div>
       {state.operationId &&
@@ -319,17 +337,20 @@ export function ManualReleasePicker({
         operation?.state === "running" ||
         !operation) ? (
         <p role="status" className="mt-2">
-          Подготовка издания…
+          {message("preparingRelease")}
         </p>
       ) : null}
-      {state.error ? (
+      {state.error || state.errorKey ? (
         <p role="alert" className="mt-2">
-          {state.error}
+          {state.error ||
+            message(state.errorKey ?? "releaseNotPrepared", {
+              status: state.errorStatus ?? "",
+            })}
         </p>
       ) : null}
       {state.finished ? (
         <p role="status" className="mt-2">
-          Издание подготовлено.
+          {message("releasePrepared")}
         </p>
       ) : null}
       {state.operationId && operationErrors[state.operationId] ? (
@@ -340,7 +361,7 @@ export function ManualReleasePicker({
               void refreshers.current[state.operationId as string]?.()
             }
           >
-            Обновить состояние операции
+            {message("refreshOperation")}
           </AppButton>
         </div>
       ) : null}

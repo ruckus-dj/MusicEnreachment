@@ -10,11 +10,16 @@ import type {
   OperationResponse,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
 import {
   errorAfterSnapshotRead,
   type IncomingOperationError,
   IncomingOperationFollower,
 } from "./IncomingOperationFollower";
+import {
+  type ManualPickerMessageKey,
+  manualPickerMessage,
+} from "./manualPickerMessages";
 
 type Props = {
   groupId: string;
@@ -40,7 +45,15 @@ type GroupState = {
   operationId?: string;
   admitting?: boolean;
   error?: string;
+  errorKey?: ManualPickerMessageKey;
+  errorStatus?: number;
 };
+
+class ManualPickerMessageError extends Error {
+  constructor(readonly messageKey: ManualPickerMessageKey) {
+    super(messageKey);
+  }
+}
 
 const canonicalMBID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -53,7 +66,7 @@ function parseItems(
   limit: number,
 ) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
-    throw new Error("MusicBrainz вернул некорректные результаты поиска.");
+    throw new ManualPickerMessageError("invalidResults");
   const record = payload as Record<string, unknown>;
   const count = record[browsingArtist ? "release-count" : "count"];
   const resultOffset = record[browsingArtist ? "release-offset" : "offset"];
@@ -67,11 +80,11 @@ function parseItems(
     rawItems.length > limit ||
     (count as number) < offset + rawItems.length
   )
-    throw new Error("MusicBrainz вернул некорректные результаты поиска.");
+    throw new ManualPickerMessageError("invalidResults");
   const seen = new Set<string>();
   const items = rawItems.map((item): PickerItem => {
     if (!item || typeof item !== "object" || Array.isArray(item))
-      throw new Error("MusicBrainz вернул некорректные результаты поиска.");
+      throw new ManualPickerMessageError("invalidResults");
     const value = item as Record<string, unknown>;
     const id = value.id;
     const title = entity === "artist" ? value.name : value.title;
@@ -84,7 +97,7 @@ function parseItems(
       (value.score !== undefined &&
         (typeof value.score !== "number" || !Number.isFinite(value.score)))
     )
-      throw new Error("MusicBrainz вернул некорректные результаты поиска.");
+      throw new ManualPickerMessageError("invalidResults");
     seen.add(id);
     return {
       id,
@@ -104,6 +117,11 @@ export function ManualSearchPicker({
   disabled = false,
   onSelectRelease,
 }: Props) {
+  const { locale } = useI18n();
+  const message = (
+    key: ManualPickerMessageKey,
+    values?: Record<string, string | number>,
+  ) => manualPickerMessage(locale, key, values);
   const [states, setStates] = useState<Record<string, GroupState>>({});
   const [snapshots, setSnapshots] = useState<Record<string, OperationResponse>>(
     {},
@@ -137,17 +155,17 @@ export function ManualSearchPicker({
           item.operationId as string,
           { signal, cache: "no-store" },
         );
-        if (response.status !== 200)
-          throw new Error(
-            response.data.detail || "Не удалось прочитать результаты поиска.",
-          );
+        if (response.status !== 200) {
+          if (response.data.detail) throw new Error(response.data.detail);
+          throw new ManualPickerMessageError("readResultsFailed");
+        }
         const body = item.body;
         if (
           !body ||
           typeof body.offset !== "number" ||
           typeof body.limit !== "number"
         )
-          throw new Error("Не удалось прочитать параметры поиска.");
+          throw new ManualPickerMessageError("searchParametersFailed");
         return parseItems(
           response.data.payload,
           body.artist_id ? "release" : body.entity,
@@ -235,6 +253,8 @@ export function ManualSearchPicker({
         body,
         admitting: true,
         error: undefined,
+        errorKey: undefined,
+        errorStatus: undefined,
       },
     }));
     try {
@@ -252,9 +272,9 @@ export function ManualSearchPicker({
               response.status >= 400 && response.status < 500
                 ? undefined
                 : body,
-            error:
-              response.data.detail ||
-              `Поиск не принят (HTTP ${response.status}).`,
+            error: response.data.detail,
+            errorKey: response.data.detail ? undefined : "searchNotAccepted",
+            errorStatus: response.data.detail ? undefined : response.status,
           },
         }));
         return;
@@ -274,10 +294,9 @@ export function ManualSearchPicker({
           ...current[groupId],
           admitting: false,
           body,
-          error:
-            reason instanceof Error
-              ? reason.message
-              : "Не удалось выполнить поиск.",
+          error: reason instanceof Error ? reason.message : undefined,
+          errorKey: reason instanceof Error ? undefined : "searchFailed",
+          errorStatus: undefined,
         },
       }));
     }
@@ -348,15 +367,12 @@ export function ManualSearchPicker({
         />
       ))}
       <h2 id="manual-search-title" className="font-semibold">
-        Поиск MusicBrainz
+        {message("searchTitle")}
       </h2>
-      <p className="mt-1 text-sm">
-        Поиск выполняется только после отправки запроса; результаты не запускают
-        подготовку автоматически.
-      </p>
+      <p className="mt-1 text-sm">{message("searchDescription")}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <label className="sr-only" htmlFor="manual-search-entity">
-          Тип поиска
+          {message("searchType")}
         </label>
         <select
           id="manual-search-entity"
@@ -373,15 +389,17 @@ export function ManualSearchPicker({
                 artistName: undefined,
                 offset: 0,
                 error: undefined,
+                errorKey: undefined,
+                errorStatus: undefined,
               },
             }))
           }
         >
-          <option value="artist">Артисты</option>
-          <option value="release">Издания</option>
+          <option value="artist">{message("artists")}</option>
+          <option value="release">{message("releases")}</option>
         </select>
         <label className="sr-only" htmlFor="manual-search-query">
-          Поисковый запрос
+          {message("searchQuery")}
         </label>
         <input
           id="manual-search-query"
@@ -398,19 +416,21 @@ export function ManualSearchPicker({
                 artistName: undefined,
                 offset: 0,
                 error: undefined,
+                errorKey: undefined,
+                errorStatus: undefined,
               },
             }))
           }
         />
         <label className="sr-only" htmlFor="manual-search-limit">
-          Количество результатов
+          {message("resultLimit")}
         </label>
         <input
           id="manual-search-limit"
           type="number"
           min="1"
           max="100"
-          aria-label="Количество результатов"
+          aria-label={message("resultLimit")}
           className="w-28 rounded border border-stone-400 p-2"
           value={state.limit}
           disabled={pending || disabled}
@@ -422,6 +442,8 @@ export function ManualSearchPicker({
                 limit: event.target.value,
                 offset: 0,
                 error: undefined,
+                errorKey: undefined,
+                errorStatus: undefined,
               },
             }))
           }
@@ -437,22 +459,26 @@ export function ManualSearchPicker({
             disabled
           }
         >
-          Искать
+          {message("search")}
         </AppButton>
       </div>
       {state.artistId ? (
-        <p className="mt-2 text-sm">Издания артиста: {state.artistName}</p>
+        <p className="mt-2 text-sm">
+          {message("artistReleases", { artist: state.artistName ?? "" })}
+        </p>
       ) : null}
       {pending ? (
         <p role="status" className="mt-2">
-          Поиск MusicBrainz…
+          {message("searching")}
         </p>
       ) : null}
-      {state.error || operation?.state === "failed" ? (
+      {state.error || state.errorKey || operation?.state === "failed" ? (
         <p role="alert" className="mt-2">
           {state.error ||
             operation?.safe_error ||
-            "Не удалось выполнить поиск."}
+            message(state.errorKey ?? "searchFailed", {
+              status: state.errorStatus ?? "",
+            })}
         </p>
       ) : null}
       {currentOperationId && operationErrors[currentOperationId] ? (
@@ -461,18 +487,22 @@ export function ManualSearchPicker({
           <AppButton
             onPress={() => void refreshers.current[currentOperationId]?.()}
           >
-            Повторить чтение
+            {message("retryReading")}
           </AppButton>
         </div>
       ) : null}
       {resultQuery?.isError ? (
-        <p role="alert">{resultQuery.error.message}</p>
+        <p role="alert">
+          {resultQuery.error instanceof ManualPickerMessageError
+            ? message(resultQuery.error.messageKey)
+            : resultQuery.error.message}
+        </p>
       ) : null}
       {parsed ? (
         <>
           {parsed.items.length === 0 ? (
             <p role="status" className="mt-3">
-              Совпадений нет.
+              {message("noMatches")}
             </p>
           ) : (
             <ul className="mt-3 space-y-2">
@@ -486,7 +516,9 @@ export function ManualSearchPicker({
                     <p className="text-sm">{item.disambiguation}</p>
                   ) : null}
                   {item.score !== undefined ? (
-                    <p className="text-sm">Оценка MusicBrainz: {item.score}</p>
+                    <p className="text-sm">
+                      {message("score", { score: item.score })}
+                    </p>
                   ) : null}
                   {requestEntity === "artist" ? (
                     <AppButton
@@ -502,6 +534,8 @@ export function ManualSearchPicker({
                             offset: 0,
                             body: undefined,
                             error: undefined,
+                            errorKey: undefined,
+                            errorStatus: undefined,
                           },
                         }));
                         void submit(0, item.id, {
@@ -511,11 +545,11 @@ export function ManualSearchPicker({
                         });
                       }}
                     >
-                      Просмотреть издания артиста
+                      {message("browseArtistReleases")}
                     </AppButton>
                   ) : (
                     <AppButton onPress={() => onSelectRelease(item.id)}>
-                      Выбрать это издание
+                      {message("selectRelease")}
                     </AppButton>
                   )}
                 </li>
@@ -524,21 +558,23 @@ export function ManualSearchPicker({
           )}
           <div className="mt-3 flex items-center gap-2">
             <span>
-              Результаты {state.offset + 1}–
-              {Math.min(state.offset + pageLimit, parsed.count)} из{" "}
-              {parsed.count}
+              {message("resultRange", {
+                start: state.offset + 1,
+                end: Math.min(state.offset + pageLimit, parsed.count),
+                count: parsed.count,
+              })}
             </span>
             <AppButton
               onPress={() => void submit(Math.max(0, state.offset - pageLimit))}
               isDisabled={state.offset === 0 || pending}
             >
-              Предыдущая
+              {message("previous")}
             </AppButton>
             <AppButton
               onPress={() => void submit(state.offset + pageLimit)}
               isDisabled={state.offset + pageLimit >= parsed.count || pending}
             >
-              Следующая
+              {message("next")}
             </AppButton>
           </div>
         </>
