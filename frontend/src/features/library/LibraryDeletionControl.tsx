@@ -518,7 +518,7 @@ export function LibraryDeletionControl({
     <>
       {!state.operation && showButton ? (
         <AppButton
-          className="border-[var(--error)] text-[var(--error)] hover:bg-[var(--error-soft)]"
+          className="border-[var(--error)]! text-[var(--error)]! hover:bg-[var(--error-soft)]!"
           onPress={() => setOpen(true)}
         >
           {buttonLabel}
@@ -784,7 +784,7 @@ export function LibraryDeletionControl({
                     </AppButton>
                   ) : null}
                   <AppButton
-                    className="border-[var(--error)] text-[var(--error)] hover:bg-[var(--error-soft)]"
+                    className="border-[var(--error)]! text-[var(--error)]! hover:bg-[var(--error-soft)]!"
                     isDisabled={
                       isBlocked ||
                       state.previewPending ||
