@@ -403,7 +403,7 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         Unicode и видимый nonblocking notice. Тестовые contributors возвращены
         в absent; оба CURRENT сохраняются. Запись IDs в файл проверена native
         gate, но не выдаётся за browser E2E.
-      - [x] Исправлен presentation Local matching: raw zero-based catalog
+      - [x] `1483ef85`: исправлен presentation Local matching: raw zero-based catalog
         position больше не показывается как `0.`; используется displayed number
         либо one-based подпись. Summary описывает действующий provider-mediated
         поток, receipt показывает название из принятого response, не UUID.
@@ -411,11 +411,34 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         preview и без locale-only refetch. Локализованы экран артиста и факты
         носителя/позиции; внутренний Recording ID убран только из presentation.
         IDs, порядок, provider/library данные и authority не меняются.
-        Независимое ревью не нашло блокеров; расширены существующие frontend
+        Независимое ревью не нашло блокеров, обычный полный hook прошёл, срез
+        отправлен. Вся [CI 43471426736](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43471426736)
+        зелёная после повтора только failed Windows cleanup job (attempt 2),
+        включая публикацию контейнера; код, gates и таймауты не менялись.
+        Расширены существующие frontend
         assertions, без новых DB-сценариев. Свидетельства и границы —
         [отчёт](../../reports/2026-11-13-local-matching-presentation.md).
+        Реальный browser подтвердил one-based option/preview, receipt без UUID,
+        сохранение draft/preview и раскрытой позиции при RU/EN без language-only
+        запросов. Targeted artist/media/position surfaces проверены на 1440/390
+        в light/dark. Временная library-запись удалена через browser scope с нулём
+        CURRENT; оба прежних CURRENT и все три исходника сохранили SHA-256.
         Главный каталог, source presentation и общий визуальный паритет остаются
         открытыми.
+      - [ ] Остаток contributor editor: optional descriptive MBID уже разрешён
+        контрактом и поддержан storage/API, но production показывает только
+        retained notice; нужен edit/read input без изменения `artist_id` или
+        provider identity. Также отсутствуют prototype move up/down controls:
+        перемещать нужно всю credit row с именем, ролью, инструментом и MBID.
+        MBID input/read value реализованы; независимое ревью не нашло блокеров,
+        проверка текущего среза ещё не завершена. Catalog/source RU/EN и
+        display-only variant index реализованы вместе с минимальными frontend
+        regressions. Статус и границы —
+        [отчёт](../../reports/2026-11-13-catalog-source-and-contributor-editor.md).
+      - [ ] Основные release/title groups production editor пока находятся в
+        изначально закрытых disclosures. Довести always-visible basics и in-place
+        editing по действующему контракту/эталону без изменения ownership или
+        fallback-семантики metadata.
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через

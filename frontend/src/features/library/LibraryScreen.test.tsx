@@ -10,6 +10,8 @@ import {
 import { HttpResponse, http } from "msw";
 import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
+import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { LibraryScreen } from "./LibraryScreen";
 
@@ -21,12 +23,26 @@ const summary = {
   published_position_count: 1,
 };
 
-function renderScreen(screen: ReactNode) {
+function renderScreen(screen: ReactNode, locale: "en" | "ru" = "ru") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", locale);
+  vi.stubGlobal("localStorage", storage);
   return render(
-    <QueryClientProvider client={client}>{screen}</QueryClientProvider>,
+    <I18nProvider>
+      <QueryClientProvider client={client}>{screen}</QueryClientProvider>
+    </I18nProvider>,
+  );
+}
+
+function LocaleControls() {
+  const { setPreference } = useI18n();
+  return (
+    <button type="button" onClick={() => setPreference("ru")}>
+      switch-to-ru
+    </button>
   );
 }
 
@@ -77,10 +93,10 @@ it("renders server summary, artist cards and preserves search and pagination in 
     `#/library/artists/${artistId}?view=artists&publication=all&availability=all`,
   );
   expect(
-    screen.getByText("1 артистов · 1 релизов · 2 позиций · 1 опубликовано"),
+    screen.getByText("1 артист · 1 релиз · 2 позиции · 1 опубликовано"),
   ).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /A Artist/ })).toHaveTextContent(
-    "С аудио: 1 · 1 опубликовано",
+    "Аудио: 1 · 1 опубликовано",
   );
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole("searchbox"), {
@@ -92,12 +108,85 @@ it("renders server summary, artist cards and preserves search and pagination in 
   await waitFor(() => expect(window.location.hash).toContain("offset=50"));
   await waitFor(() => expect(artistRequests).toBe(3));
   expectedAvailability = "missing";
-  fireEvent.click(screen.getByRole("radio", { name: "Не хватает" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Отсутствует" }));
   await waitFor(() => {
     expect(window.location.hash).toContain("availability=missing");
     expect(window.location.hash).not.toContain("offset=");
   });
   await waitFor(() => expect(artistRequests).toBe(4));
+});
+
+it("retains the catalog route and search state without refetching when locale changes", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "en");
+  vi.stubGlobal("localStorage", storage);
+  window.location.hash =
+    "#/library?view=artists&q=rock&publication=published&availability=available&offset=50";
+  let requests = 0;
+  server.use(
+    http.get("*/api/library/artists", ({ request }) => {
+      requests += 1;
+      const url = new URL(request.url);
+      expect(url.searchParams.get("q")).toBe("rock");
+      expect(url.searchParams.get("publication")).toBe("published");
+      expect(url.searchParams.get("availability")).toBe("available");
+      expect(url.searchParams.get("offset")).toBe("50");
+      return HttpResponse.json({
+        items: [
+          {
+            id: artistId,
+            name: "A Artist",
+            disambiguation: null,
+            genres: [],
+            provider_links: [],
+            release_count: 1,
+            position_count: 2,
+            available_position_count: 1,
+            published_position_count: 1,
+          },
+        ],
+        total: 51,
+        limit: 50,
+        offset: 50,
+        summary,
+      });
+    }),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  render(
+    <I18nProvider>
+      <QueryClientProvider client={client}>
+        <LocaleControls />
+        <LibraryScreen />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+
+  expect(
+    await screen.findByRole("link", { name: /A Artist/ }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("searchbox")).toHaveValue("rock");
+  expect(screen.getByRole("combobox", { name: "Publication" })).toHaveValue(
+    "published",
+  );
+  expect(screen.getByRole("radio", { name: "Available" })).toBeChecked();
+  const route = window.location.hash;
+
+  fireEvent.click(screen.getByRole("button", { name: "switch-to-ru" }));
+
+  expect(
+    await screen.findByRole("link", { name: /A Artist/ }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("searchbox")).toHaveValue("rock");
+  expect(screen.getByRole("combobox", { name: "Публикация" })).toHaveValue(
+    "published",
+  );
+  expect(screen.getByRole("radio", { name: "В наличии" })).toBeChecked();
+  expect(window.location.hash).toBe(route);
+  expect(requests).toBe(1);
 });
 
 it("shows audio availability separately from sources and publication", async () => {
@@ -139,7 +228,7 @@ it("shows audio availability separately from sources and publication", async () 
     await screen.findByRole("row", { name: /source-only/ }),
   ).toHaveTextContent("В наличии");
   expect(screen.getByRole("row", { name: /source-only/ })).toHaveTextContent(
-    "2 исходников",
+    "Исходники: 2",
   );
   expect(screen.getByRole("row", { name: /source-only/ })).toHaveTextContent(
     "Не опубликовано",
@@ -148,14 +237,14 @@ it("shows audio availability separately from sources and publication", async () 
     "В наличии",
   );
   expect(screen.getByRole("row", { name: /published-only/ })).toHaveTextContent(
-    "0 исходников",
+    "Исходники: 0",
   );
   expect(screen.getByRole("row", { name: /published-only/ })).toHaveTextContent(
     "Опубликовано",
   );
   expect(
     screen.getByRole("row", { name: /published-missing-file/ }),
-  ).toHaveTextContent("Не хватает");
+  ).toHaveTextContent("Отсутствует");
   expect(
     screen.getByRole("row", { name: /published-missing-file/ }),
   ).toHaveTextContent("Опубликовано");
@@ -295,7 +384,7 @@ it("loads a missing group’s edition and tracks only after explicit selection",
     }),
   );
 
-  renderScreen(<LibraryScreen />);
+  renderScreen(<LibraryScreen />, "en");
   const row = await screen.findByRole("row", { name: /Missing album/ });
   expect(row).toHaveTextContent("—");
   expect(editionRequests).toBe(0);

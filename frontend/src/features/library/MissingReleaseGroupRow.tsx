@@ -84,6 +84,8 @@ function creditNames(credits: LibraryArtistCreditResponse[]) {
 }
 
 function CreditNames({ credits }: { credits: LibraryArtistCreditResponse[] }) {
+  const { locale } = useI18n();
+  const unnamed = locale === "ru" ? "Без имени" : "Unnamed artist";
   const occurrences = new Map<string, number>();
   return (
     <span>
@@ -91,7 +93,7 @@ function CreditNames({ credits }: { credits: LibraryArtistCreditResponse[] }) {
         const identity = JSON.stringify(credit);
         const occurrence = occurrences.get(identity) ?? 0;
         occurrences.set(identity, occurrence + 1);
-        const name = credit.credit_name || credit.artist_name || "Без имени";
+        const name = credit.credit_name || credit.artist_name || unnamed;
         return (
           <span key={`${identity}-${occurrence}`}>
             {credit.artist_id ? (

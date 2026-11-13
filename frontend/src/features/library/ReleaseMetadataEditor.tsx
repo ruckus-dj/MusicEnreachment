@@ -262,8 +262,8 @@ const copy = {
     contributorName: "Contributor name",
     contributorRole: "Role",
     contributorInstrument: "Instrument",
+    contributorMusicBrainzID: "Contributor MusicBrainz ID",
     artistLinkRetained: "Local artist link retained",
-    mbidRetained: "MusicBrainz identity retained",
     addContributor: "Add contributor",
     removeContributor: (index: number) => `Remove contributor ${index}`,
     contributorRoles: {
@@ -376,8 +376,8 @@ const copy = {
     contributorName: "Имя участника",
     contributorRole: "Роль",
     contributorInstrument: "Инструмент",
+    contributorMusicBrainzID: "MusicBrainz ID участника",
     artistLinkRetained: "Связь с локальным артистом сохранена",
-    mbidRetained: "Идентификатор MusicBrainz сохранён",
     addContributor: "Добавить участника",
     removeContributor: (index: number) => `Удалить участника ${index}`,
     contributorRoles: {
@@ -1216,13 +1216,44 @@ function LibraryScopedMetadataEditorSession({
                                           </span>
                                         </div>
                                       ) : null}
-                                      {contributor.mbid ? (
+                                      {editing ? (
                                         <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
-                                          <span className="text-sm text-[var(--ink)]">
-                                            {text.mbidRetained}
+                                          <label
+                                            htmlFor={`${contributorControlPrefix}-${contributor.uiKey}-mbid`}
+                                          >
+                                            {`${text.contributorMusicBrainzID} ${index + 1}`}
+                                          </label>
+                                          <input
+                                            id={`${contributorControlPrefix}-${contributor.uiKey}-mbid`}
+                                            className="min-h-9 w-full min-w-0 rounded-[var(--control-radius)] border border-[var(--control)] bg-[var(--surface)] px-2 text-sm text-[var(--ink)]"
+                                            value={contributor.mbid ?? ""}
+                                            disabled={saving}
+                                            onChange={(event) => {
+                                              const next = [
+                                                ...(field.value as ContributorDraft[]),
+                                              ];
+                                              next[index] = {
+                                                ...contributor,
+                                                mbid:
+                                                  event.currentTarget.value ||
+                                                  undefined,
+                                              };
+                                              updateField(key, {
+                                                state: "value",
+                                                value: next,
+                                              });
+                                            }}
+                                          />
+                                        </div>
+                                      ) : (
+                                        <div className="grid min-w-0 gap-1 text-xs text-[var(--muted)]">
+                                          <span>{`${text.contributorMusicBrainzID} ${index + 1}`}</span>
+                                          <span className="min-h-9 break-words py-2 text-sm text-[var(--ink)]">
+                                            {contributor.mbid ||
+                                              text.emptyValue}
                                           </span>
                                         </div>
-                                      ) : null}
+                                      )}
                                       {editing ? (
                                         <AppButton
                                           type="button"

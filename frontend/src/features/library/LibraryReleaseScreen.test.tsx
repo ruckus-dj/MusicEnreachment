@@ -35,6 +35,7 @@ vi.mock("./newReleaseCoverEditor", () => ({
 
 const releaseID = "release-1";
 const positionID = "position-1";
+const mediaVariantID = "123e4567-e89b-42d3-a456-426614174001";
 const validatedAt = "2026-10-20T12:34:56Z";
 
 function release(
@@ -80,7 +81,17 @@ function release(
         },
         duration_ms: null,
         recording_id: null,
-        sources: [],
+        sources: [
+          {
+            compatible: true,
+            decision_method: "manual",
+            locations: [],
+            media_variant_id: mediaVariantID,
+            metadata: {},
+            policy_version: "test-policy-v1",
+            selected: true,
+          },
+        ],
         publication: published
           ? {
               container: "flac",
@@ -173,7 +184,7 @@ beforeEach(() => {
   );
 });
 
-it("shows the current publication summary from release detail without source inventory", async () => {
+it("shows publication and source details from release detail without source inventory", async () => {
   installHandlers(true);
 
   renderScreen(releaseID);
@@ -195,6 +206,18 @@ it("shows the current publication summary from release detail without source inv
     }).format(new Date(validatedAt)),
   ).toBe(summary.querySelector("time")?.textContent);
   expect(summary).not.toHaveTextContent("Источники");
+  const sources = screen.getByRole("region", {
+    name: "Audio sources for position 1",
+  });
+  expect(
+    within(sources).getByRole("columnheader", { name: "Variant" }),
+  ).toBeInTheDocument();
+  const sourceRow = within(sources).getByRole("row", {
+    name: /1 Selected · manual/,
+  });
+  expect(sourceRow).toHaveTextContent("test-policy-v1");
+  expect(sourceRow).not.toHaveTextContent(mediaVariantID);
+  expect(screen.queryByText(mediaVariantID)).not.toBeInTheDocument();
 });
 
 it("shows an explicit unpublished state when release detail has no publication summary", async () => {

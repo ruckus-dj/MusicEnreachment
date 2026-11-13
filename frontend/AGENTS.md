@@ -81,6 +81,10 @@ hide missing production wiring. Theme and locale tests supply an explicit
 in-memory Storage fixture: Node 24 may not expose `window.localStorage` in the
 test environment. Keep selectors consistent with the fixture's explicit locale;
 localizing an existing mixed-language control also changes its accessible name.
+React Aria radio inputs expose native checked state: assert `toBeChecked()`,
+not a nonexistent `aria-checked` attribute. When expanding contributor fixtures,
+update retained-link notice assertions to account for every linked row instead
+of retaining an ambiguous single-element text query.
 Deferred editor-refresh tests must await the initial editing controls, not just
 the request count, before mutating the draft. Filter-transition MSW handlers must
 model both the initial and transitioned request values explicitly.

@@ -148,6 +148,17 @@ it("saves recording and position title overrides through their own scopes", asyn
           artist_id: "123e4567-e89b-42d3-a456-426614174000",
           mbid: "223e4567-e89b-42d3-a456-426614174000",
         },
+        {
+          name: "Added MBID",
+          role: "composer",
+          artist_id: "323e4567-e89b-42d3-a456-426614174000",
+        },
+        {
+          name: "Cleared MBID",
+          role: "lyricist",
+          artist_id: "423e4567-e89b-42d3-a456-426614174000",
+          mbid: "523e4567-e89b-42d3-a456-426614174000",
+        },
       ],
     };
     return result;
@@ -250,6 +261,24 @@ it("saves recording and position title overrides through their own scopes", asyn
   fireEvent.change(within(position).getByRole("combobox", { name: "Роль 1" }), {
     target: { value: "performer" },
   });
+  fireEvent.change(
+    within(position).getByRole("textbox", {
+      name: "MusicBrainz ID участника 1",
+    }),
+    { target: { value: "623e4567-e89b-42d3-a456-426614174000" } },
+  );
+  fireEvent.change(
+    within(position).getByRole("textbox", {
+      name: "MusicBrainz ID участника 2",
+    }),
+    { target: { value: "723e4567-e89b-42d3-a456-426614174000" } },
+  );
+  fireEvent.change(
+    within(position).getByRole("textbox", {
+      name: "MusicBrainz ID участника 3",
+    }),
+    { target: { value: "" } },
+  );
   expect(
     within(position).getByRole("textbox", { name: "Инструмент 1" }),
   ).toHaveValue("Piano");
@@ -260,8 +289,8 @@ it("saves recording and position title overrides through their own scopes", asyn
     within(position).queryByText("223e4567-e89b-42d3-a456-426614174000"),
   ).not.toBeInTheDocument();
   expect(
-    within(position).getByText("Связь с локальным артистом сохранена"),
-  ).toBeInTheDocument();
+    within(position).getAllByText("Связь с локальным артистом сохранена"),
+  ).toHaveLength(3);
   fireEvent.click(within(recording).getByRole("button", { name: "Сохранить" }));
   fireEvent.click(within(position).getByRole("button", { name: "Сохранить" }));
 
@@ -283,7 +312,18 @@ it("saves recording and position title overrides through their own scopes", asyn
               role: "performer",
               instrument: "Piano",
               artist_id: "123e4567-e89b-42d3-a456-426614174000",
-              mbid: "223e4567-e89b-42d3-a456-426614174000",
+              mbid: "623e4567-e89b-42d3-a456-426614174000",
+            },
+            {
+              name: "Added MBID",
+              role: "composer",
+              artist_id: "323e4567-e89b-42d3-a456-426614174000",
+              mbid: "723e4567-e89b-42d3-a456-426614174000",
+            },
+            {
+              name: "Cleared MBID",
+              role: "lyricist",
+              artist_id: "423e4567-e89b-42d3-a456-426614174000",
             },
           ],
         },

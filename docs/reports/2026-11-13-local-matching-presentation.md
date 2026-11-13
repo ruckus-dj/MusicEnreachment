@@ -55,4 +55,62 @@ frontend binary из корня сначала выявил конфликт nes
 только рабочий каталог вызова, не конфигурация. Механический design detector
 на четырёх изменённых production TSX вернул пустой список findings.
 
+## Проверки `1483ef85`
+
+Независимое ревью Incoming и library diff не нашло блокеров. Обычный полный
+commit hook (`task verify`) прошёл; срез отправлен в go-development.
+Acceptance-процесс на 18080 штатно перезапущен PID 99546 → 11686 hook-built
+бинарником source snapshot `1483ef85`. PostgreSQL-контейнер и 8787 не менялись.
+
+На реальном backend через общую browser-навигацию:
+
+- Artist screen показывает `1 release · 1 position`, Date not specified,
+  Show/Hide positions и `Audio available · 1 source · published` в English;
+  RU показывает соответствующие подписи с `1 релиз`, `1 позиция`, `1 исходник`.
+  English → Русский → English сохранил раскрытую позицию и тот же DOM node,
+  `document.lang` изменился, language-only API-запросов нет.
+- Media summary и position facts показывают обе локали; длительность остаётся
+  `0:12`, имя recording не меняется, Recording ID отсутствует. На 1440×900 и
+  390×844 в light/dark targeted surfaces не создали page overflow.
+  Дополнительный batched проход проверил все сочетания обеих локалей, размеров
+  и тем для artist и media/position surfaces (16 состояний): раскрытые позиции
+  сохраняются, Recording ID отсутствует, page overflow нет. Фактические body
+  backgrounds — `rgb(242,243,239)` и `rgb(17,21,18)`, не только названия настроек.
+- Для третьего сохранённого исходника открыт существующий Local release,
+  назначение `1. Third Acceptance Cue` совпало с actual preview position 1 /
+  displayed_number `1`; request продолжил использовать прежний provider track ID.
+- RU/EN переключён при готовом preview: тот же select node и assignment
+  сохранились, preview не исчез, API-запросов нет. После browser Confirm matching
+  receipt показал Plan13 Third Album, не UUID, а собственный confirmed notice
+  перевёлся вместе с receipt. Публикация не запускалась.
+- Созданная только для проверки library-запись
+  `bfdefdf2-fde8-4bd4-8198-b93931cda363` удалена через browser Delete artist →
+  exact preview → confirmation. Scope содержал один релиз/позицию и ноль CURRENT,
+  без blockers; operation `00f26e2a-cb8f-5963-856b-62d00a9dcc17` завершилась
+  succeeded. Read-only GET подтвердил 404 для временных artist/release и
+  сохранение Local provider artist/release/recording в public search.
+- Dark Local matching отдельно проверен read-only preview второй позиции на
+  1440/390 и RU/EN: draft/preview сохранены без language-only API-запросов и
+  page overflow. Confirmation не нажимался, draft очищен перед уходом.
+
+Все mutations выполнены browser-контролами. API GET служат дополнительными
+readback-свидетельствами, не заменяют browser-сценарий. Оба прежних CURRENT и все
+три исходника сохранили SHA-256 baseline; третьего физического CURRENT не создавалось.
+Материалы — `$TMPDIR/opencode/plan13acceptance/presentation-*`.
+
+Это приёмка исправленного участка, не setup/scan/analysis browser E2E и не
+закрытие всего RU/EN/визуального паритета.
+
+Первый CI run `43471426736` остановился только на Windows PostgreSQL cleanup:
+API tests вывели PASS, затем `supervisor did not respond to shutdown;
+force-terminated without confirming PostgreSQL cleanup`. Остальные платформы
+и verify/Compose прошли; публикация контейнера была skipped, поэтому полная CI
+не считалась зелёной. После разбора failed-step log повторены только failed jobs
+без изменения кода, gates или таймаутов.
+
+Attempt 2 завершился успешно: вся
+[CI 43471426736](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43471426736)
+зелёная, включая Windows x64 и публикацию контейнера. Инфраструктурный повтор
+завершён; это не изменение или обход проверок.
+
 План 13 не закрывается. Эти расхождения не исчерпывают RU/EN и визуальную приёмку.

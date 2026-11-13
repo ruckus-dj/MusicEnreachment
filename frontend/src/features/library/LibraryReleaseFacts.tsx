@@ -20,7 +20,13 @@ export function ReleaseCreditList({
 }: {
   credits: LibraryReleaseDetailResponse["artists"];
 }) {
-  if (!credits?.length) return <span>Исполнители не указаны</span>;
+  const { locale } = useI18n();
+  if (!credits?.length)
+    return (
+      <span>
+        {locale === "ru" ? "Исполнители не указаны" : "No artists specified"}
+      </span>
+    );
   const creditKeyCounts = new Map<string, number>();
   return (
     <ul className="library-release-credits">
@@ -218,38 +224,91 @@ export function PositionSources({
 }: {
   track: LibraryReleaseTrackResponse;
 }) {
+  const { locale } = useI18n();
+  const copy =
+    locale === "ru"
+      ? {
+          section: "Источники аудио позиции",
+          heading: "Источники аудио",
+          details: "Сведения об источниках аудио",
+          variant: "Вариант",
+          decision: "Решение",
+          compatibility: "Совместимость",
+          policy: "Политика",
+          locations: "Расположения",
+          selected: "Выбран",
+          alternative: "Альтернатива",
+          compatible: "Совместим",
+          incompatible: "Несовместим",
+          unspecified: "Не указано",
+          root: "корень",
+          enabled: "включён",
+          disabled: "выключен",
+          probe: "проверка",
+          modified: "изменение",
+          size: "размер",
+          bytes: "байт",
+          noLocations: "Расположения источника не указаны.",
+          noSources: "Для этой позиции нет сохранённых сведений об источниках.",
+        }
+      : {
+          section: "Audio sources for position",
+          heading: "Audio sources",
+          details: "Audio source details",
+          variant: "Variant",
+          decision: "Decision",
+          compatibility: "Compatibility",
+          policy: "Policy",
+          locations: "Locations",
+          selected: "Selected",
+          alternative: "Alternative",
+          compatible: "Compatible",
+          incompatible: "Incompatible",
+          unspecified: "Not specified",
+          root: "root",
+          enabled: "enabled",
+          disabled: "disabled",
+          probe: "probe",
+          modified: "modified",
+          size: "size",
+          bytes: "bytes",
+          noLocations: "No source locations are specified.",
+          noSources: "No saved source details are available for this position.",
+        };
   const sources = track.sources ?? [];
   return (
     <section
-      aria-label={`Источники аудио позиции ${positionNumber(track)}`}
+      aria-label={`${copy.section} ${positionNumber(track)}`}
       className="library-release-sources"
     >
-      <h3>Источники аудио</h3>
+      <h3>{copy.heading}</h3>
       {sources.length ? (
         <section
           className="library-release-table-scroll"
-          aria-label="Сведения об источниках аудио"
+          aria-label={copy.details}
         >
           <table>
             <thead>
               <tr>
-                <th scope="col">Вариант</th>
-                <th scope="col">Решение</th>
-                <th scope="col">Совместимость</th>
-                <th scope="col">Политика</th>
-                <th scope="col">Расположения</th>
+                <th scope="col">{copy.variant}</th>
+                <th scope="col">{copy.decision}</th>
+                <th scope="col">{copy.compatibility}</th>
+                <th scope="col">{copy.policy}</th>
+                <th scope="col">{copy.locations}</th>
               </tr>
             </thead>
             <tbody>
-              {sources.map((source) => (
+              {sources.map((source, index) => (
                 <tr key={source.media_variant_id}>
-                  <th scope="row">{source.media_variant_id}</th>
+                  <th scope="row">{index + 1}</th>
                   <td>
-                    {source.selected ? "Выбран" : "Альтернатива"} ·{" "}
-                    {source.decision_method || "не указан"}
+                    {source.selected ? copy.selected : copy.alternative} ·{" "}
+                    {source.decision_method || copy.unspecified}
                   </td>
-                  <td>{source.compatible ? "Совместим" : "Несовместим"}</td>
-                  <td>{source.policy_version || "Не указана"}</td>
+                  <td>
+                    {source.compatible ? copy.compatible : copy.incompatible}
+                  </td>
+                  <td>{source.policy_version || copy.unspecified}</td>
                   <td>
                     {source.locations?.length ? (
                       <ul className="library-release-location-list">
@@ -262,19 +321,20 @@ export function PositionSources({
                             </a>
                             <span>
                               {" "}
-                              · корень {location.root_status}
+                              · {copy.root} {location.root_status}
                               {location.root_enabled
-                                ? " (включён)"
-                                : " (выключен)"}{" "}
-                              · проверка {location.probe_status} · изменение{" "}
-                              {location.mtime || "не известно"} · размер{" "}
-                              {location.size_bytes} байт
+                                ? ` (${copy.enabled})`
+                                : ` (${copy.disabled})`}{" "}
+                              · {copy.probe} {location.probe_status} ·{" "}
+                              {copy.modified}{" "}
+                              {location.mtime || copy.unspecified} · {copy.size}{" "}
+                              {location.size_bytes} {copy.bytes}
                             </span>
                           </li>
                         ))}
                       </ul>
                     ) : (
-                      <span>Расположения источника не указаны.</span>
+                      <span>{copy.noLocations}</span>
                     )}
                   </td>
                 </tr>
@@ -283,7 +343,7 @@ export function PositionSources({
           </table>
         </section>
       ) : (
-        <p>Для этой позиции нет сохранённых сведений об источниках.</p>
+        <p>{copy.noSources}</p>
       )}
     </section>
   );
