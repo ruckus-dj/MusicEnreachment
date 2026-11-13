@@ -112,7 +112,8 @@ fixture и ожидаемый ID для повторённого имени со
 production guard и без удаления rejection assertions.
 
 `392f8983` прошёл повторный обычный полный hook (`task verify`) и отправлен в
-go-development.
+go-development. Вся [CI 43451371431](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43451371431)
+зелёная, включая все платформы, Compose smoke и публикацию контейнера.
 
 ## Browser-проверка тональности на новом backend
 
@@ -164,11 +165,85 @@ incomplete/ambiguous причины также должны быть видим�
 подтвердило actual service path; существующие omission assertions проверяют
 теперь и Notices. Семантика допуска публикации и optionality IDs не изменена.
 
+`eeb64231` прошёл обычный полный hook и отправлен в go-development; вся
+[CI 43453220513](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43453220513)
+зелёная, включая все платформы, Compose smoke и публикацию контейнера. Acceptance
+backend вновь штатно заменён только на 18080 (PID 96650 → 99546), hook-built
+source snapshot `eeb64231`. Повтор через реальные browser-контролы сохранил
+director (revision 6), подготовил preview и открыл mobile inspector: видны
+DIRECTOR `["Director, 監督"]` и текст `one or more contributor role MBID groups are
+incomplete; IDs for incomplete roles were omitted while names remain represented`.
+Он присутствует и в `warnings` фактического preview response. Page overflow нет.
+Затем contributors снова возвращены через UI в manual absent (revision 7),
+без подтверждения публикации. Это browser-проверка UI → storage → preview,
+не browser E2E записи MBID в файл и не живой Navidrome scan.
+
 В отдельном dark-контексте на том же новом backend проверен несохранённый key
 draft `B♭ major` второй записи: 390×844, English → Русский, затем 1440×900.
 Draft сохранился, language-only API-запросов нет, `document.lang=ru`, page
 overflow отсутствует. На mobile Save/Cancel по 120×40 px внутри viewport;
 на desktop disclosure-группы остаются одинаковой ширины. Escape из самого key
 input отменил draft и вернул readonly inherited state; Save не нажимался.
+
+## Browser-участок Local matching → publication → artist deletion
+
+На hook-built `eeb64231` через обычную навигацию Incoming открыт третий
+сохранённый входящий файл. В Local matching загружены существующие provider
+releases, выбран Plan13 Third Album и явно назначен единственный Third Acceptance
+Cue. Preview → Confirm matching выполнены браузерными контролами (HTTP 200),
+получен library release `d7b5909f-dada-441f-ba01-1bfffb29eed0`. Это существующий
+provider-mediated `/matching/local` путь, несмотря на устаревший внешний summary
+«Локальный релиз без связей с провайдерами».
+
+Через Library → Plan13 Third Artist → Plan13 Third Album открыта созданная
+позиция. До publication confirmation UI показывал «Не опубликовано», preview
+показывал Create 1, Blocked 0, source FLAC stream 0 и transform copy → FLAC.
+Ни одного существовавшего CURRENT этот scope не включал.
+
+В UI сохранены recording key `D minor`, director `Director, 監督` и position key
+override `F♯ minor`. Preview inspector показал точные теги и notice пропуска
+необязательных contributor IDs. Только явное Confirm ready publications
+вернуло HTTP 202 / operation `1f471567-870c-4c9c-9708-eb4547456e79`. Без ручного
+refresh браузер показал «Опубликовано», CURRENT generation
+`13fd160a-d50c-41fc-9942-3e7c5d9df76e` и фактические DIRECTOR/KEY в saved tags.
+Read-only ffprobe физического FLAC подтвердил `DIRECTOR=Director, 監督` и
+`KEY=F♯ minor` без INITIALKEY. Это уже реальная browser-публикация этих полей,
+в отличие от ограниченного preview-прогона на первой позиции выше.
+
+Затем через ссылку артиста выполнены Delete artist → Load exact preview →
+Confirm deletion. Preview содержал только временный третий релиз, одну позицию,
+один capturable CURRENT и ни одного blocker. Browser-confirm вернул HTTP 202 /
+operation `32e30986-e350-5bc7-898a-358050765e89`; UI вернулся к каталогу с двумя
+прежними артистами/релизами/публикациями. Read-only GET подтвердил succeeded,
+404 для временных artist/release и отсутствие временного физического CURRENT.
+Provider Local artist/release/recording сохранились в public search.
+
+Все mutations этого участка выполнялись только browser-контролами. API GET и
+ffprobe использованы как дополнительные readback-свидетельства. Setup, scan и
+analysis этого исходника выполнены прежними API-assisted прогонами: полный
+setup → source → analysis browser E2E этим не доказан. Contributor IDs в браузере
+не редактировались; их native-file проверка остаётся gate-coverage, не browser E2E.
+
+Итог: оба исходных CURRENT и все три исходных FLAC сохранили SHA-256 baseline;
+временный третий CURRENT создан и удалён только внутри подтверждённого scope.
+Материалы readback — `$TMPDIR/opencode/plan13acceptance/browser-third-*`.
+
+### Остаток визуальной приёмки
+
+Общий RU/EN/визуальный паритет не принят. Помимо смешанных языков карточек,
+runtime показал конкретные presentation gaps:
+
+- внешний summary Local matching всё ещё описывает прежний direct-create путь;
+- assignment option показывает `0. Third Acceptance Cue`, хотя authoritative
+  preview содержит medium 1 / position 1 / displayed_number `1`;
+- после Local matching показывается внутренний release UUID; Recording ID также
+  видим в карточке. Это не новые требования и не повод менять identity-модель.
+
+Итоговый diff после application commits содержит только план/отчёт. Для него
+пройден scoped `task design:check` (43 файла / 232 prototype tests, fixture checks,
+typecheck и build) по утверждённому documentation/prototype исключению. Живой
+неизменённый prototype на 5175 открыл Library и Mira Vale; на desktop 1440×900
+и mobile 390×844 page overflow не обнаружен. Это smoke reference, не полная
+визуальная приёмка. Application commits проверены обычными полными hooks выше.
 
 План 13 остаётся открытым.

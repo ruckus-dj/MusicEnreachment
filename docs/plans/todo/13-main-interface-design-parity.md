@@ -377,7 +377,9 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         language-only API-запросов. Preview показал KEY `["F♯ minor"]` и очистку
         INITIALKEY для FLAC. Подтверждение публикации не выполнялось; оба CURRENT
         и все три исходника сохранили SHA-256. Тестовые key values сняты через UI
-        в состояние absent. Это не полная приёмка новой файловой публикации.
+        в состояние absent. Этот первый прогон не подтверждал новую файловую
+        публикацию; последующий browser-участок на временной третьей позиции
+        подтвердил физические KEY/DIRECTOR (см. пункт 11 и отчёт).
         Полный metadata port остаётся открытым.
       - [x] `392f8983`: director и 11 contributor MBID-проекций: добавлены DIRECTOR и
         role-specific IDs, включая paired performer/subrole keys для FLAC/MKA.
@@ -386,9 +388,21 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         Файловые aliases сверены по TagLib/Navidrome; расширены существующие
         projection/footprint/native roundtrip tests, без новых DB-сценариев.
         Независимое ревью выполнено, замечания исправлены; обычный полный hook
-        прошёл, срез отправлен в go-development. Проверки и ограничения —
+        прошёл, срез отправлен в go-development; вся
+        [CI 43451371431](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43451371431)
+        зелёная, включая Windows и публикацию контейнера. Проверки и ограничения —
         [отчёт](../../reports/2026-11-13-contributor-projections.md).
         Полный metadata editor и browser/визуальная приёмка остаются открытыми.
+      - [x] `eeb64231`: browser-приёмка director выявила недоставленный в preview
+        notice о пропущенных MBID. Уже существующие omission reasons теперь
+        передаются в warnings; optionality и допуск публикации не изменены.
+        Независимое ревью и обычный полный hook прошли, срез отправлен; вся
+        [CI 43453220513](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43453220513)
+        зелёная, включая Windows и публикацию контейнера.
+        На новом acceptance backend browser подтвердил точный DIRECTOR с comma/
+        Unicode и видимый nonblocking notice. Тестовые contributors возвращены
+        в absent; оба CURRENT сохраняются. Запись IDs в файл проверена native
+        gate, но не выдаётся за browser E2E.
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через
@@ -596,11 +610,29 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         фокус вернулся на Delete artist, диалог закрыт, alerts отсутствуют.
         Подтверждение не нажималось: два оставшихся CURRENT сохраняются.
         SHA-256 обоих CURRENT и всех трёх исходных FLAC повторно совпал с baseline.
-        Browser-confirm/delete не проверен. Карточка артиста при English всё ещё
+        Тогда browser-confirm/delete не проверялся. Карточка артиста при English всё ещё
         содержит русские «Медиатека», «позиций», «С аудио», «опубликовано»,
         «Дата не указана» и «Показать позиции»; общая RU/EN-приёмка не завершена.
         Дополнительные проверки и ограничения —
         [отчёт](../../reports/2026-11-13-contributor-projections.md).
+
+      - На `eeb64231` выполнен browser-участок Incoming → существующий Local
+        provider release → явное matching preview/confirm → Library → metadata →
+        publication preview/confirm → CURRENT → artist deletion preview/confirm.
+        Временная третья позиция до подтверждения была «Не опубликовано»; явная
+        публикация завершилась operation `1f471567-870c-4c9c-9708-eb4547456e79`.
+        Браузер без ручного refresh показал CURRENT и фактические KEY/DIRECTOR;
+        ffprobe физического FLAC подтвердил `KEY=F♯ minor`, `DIRECTOR=Director, 監督`.
+        Browser-confirm удаления только временного третьего scope завершился
+        operation `32e30986-e350-5bc7-898a-358050765e89` успешно; temporary CURRENT
+        удалён, library artist/release дают 404, provider records сохранены.
+        Оба прежних CURRENT и все три исходника сохранили baseline SHA-256.
+        Mutations выполнены browser-контролами; GET/ffprobe — дополнительные
+        readback-свидетельства. Setup/scan/analysis были прежними API-assisted:
+        полный setup-to-publication browser E2E и полный визуальный паритет не
+        заявляются. В Local matching обнаружены старый misleading summary,
+        позиционная подпись `0.` при actual position `1` и видимый UUID в результате;
+        RU/EN и metadata presentation остаются открытыми. Подробности — в отчёте.
 
 **Целевой результат программы:** после настройки открывается настоящий рабочий интерфейс;
 утверждённые разделы доступны из общей навигации, каталог читает реальные
