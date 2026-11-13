@@ -61,8 +61,8 @@ it("uses the advisory values Navidrome actually reads", () => {
 });
 
 it("registers the unique supported Navidrome fields", () => {
-	expect(navidromeFields).toHaveLength(86);
-	expect(new Set(navidromeFields.map((field) => field.key)).size).toBe(86);
+	expect(navidromeFields).toHaveLength(84);
+	expect(new Set(navidromeFields.map((field) => field.key)).size).toBe(84);
 	expect(fieldByKey("encodedby")).toBeUndefined();
 	expect(fieldByKey("encodersettings")).toBeUndefined();
 	expect(

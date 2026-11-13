@@ -300,7 +300,8 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    проверять по всей цепочке editor/storage/preview/writer/readback, а не JSON.
    MusicBrainz Disc ID исключён владельцем из поддерживаемых полей и не
    заменяется другим ID; нумерация носителей и позиций (`disc`/`track`)
-   сохраняется.
+   сохраняется. Также исключены `composersort`/`lyricistsort`;
+   имена и MBID композиторов и авторов текста остаются поддерживаемыми.
     - [x] `8bdb1207` и `2235177e`: in-place редактор девяти release fields и
       независимые title/sort_title overrides recording/позиции через существующие
       metadata API. Сохранены revision fences, draft при конфликте, retry чтения
