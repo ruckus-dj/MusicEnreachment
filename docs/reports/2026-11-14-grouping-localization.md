@@ -33,3 +33,25 @@ editor. Formatting-only проход не организовал imports; `biome
 с отключённым linter исправил единственный import-order error в трёх scoped
 файлах. Gates не менялись; commit не создан. Следующая проверка — повторный
 обычный полный hook, не частичный test gate.
+
+## Проверки `3635f18e`
+
+Повторный обычный полный hook прошёл, commit отправлен. Полная CI
+`43518840816` выполняется. Acceptance-only процесс 18080 штатно обновлён
+PID 59561 → 64931; PostgreSQL и 8787 не менялись.
+
+Browser добавил только merge draft двух групп: RU/EN сохранили одну action row
+и перевели notices без API requests. Draft отменён через Cancel draft.
+Preview/Confirm не нажимались, группировка backend не изменялась. Preview и
+409/error retention покрыты frontend fixtures, не real-backend browser E2E.
+Визуальная theme/size приёмка ещё не завершена.
+
+Вся [CI 43518840816](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43518840816)
+для `3635f18e` зелёная с первого attempt, включая Windows и публикацию
+контейнера. Это не заменяет оставшуюся визуальную и сквозную приёмку.
+
+Дополнительный browser проход открытых grouping controls на текущем бинарнике:
+RU/EN × light/dark × 1440×900/390×844, headings доступны и page overflow нет.
+Dark tab перед повторной проверкой явно перезагружен, чтобы не принять старый
+frontend snapshot за текущий. Это idle/draft presentation, не подтверждённая
+перегруппировка или real-backend preview/conflict E2E.

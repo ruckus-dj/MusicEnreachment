@@ -1,3 +1,6 @@
+import { useI18n } from "../../i18n/I18nProvider";
+import { evidenceOverrideMessages } from "./evidenceOverrideMessages";
+
 export type TrackTagOverrideDraft = {
   title: { enabled: boolean; value: string };
   artists: { enabled: boolean; values: TrackTagOverrideArtistDraft[] };
@@ -28,13 +31,14 @@ export function TrackTagOverrides({
   disabled: boolean;
   onChange: (next: TrackTagOverrideDraft) => void;
 }) {
+  const { locale } = useI18n();
+  const copy = evidenceOverrideMessages[locale];
   return (
     <fieldset className="mt-3 space-y-2 rounded border border-stone-300 p-2">
-      <legend className="px-1 font-medium">Теги позиции · {title}</legend>
-      <p className="text-xs text-stone-600">
-        Без переопределения используются теги провайдера. Изменения здесь —
-        локальная ручная правка метаданных, не изменение связей файлов.
-      </p>
+      <legend className="px-1 font-medium">
+        {copy.tagOverridesLegend(title)}
+      </legend>
+      <p className="text-xs text-stone-600">{copy.tagOverridesExplanation}</p>
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
@@ -50,11 +54,11 @@ export function TrackTagOverrides({
             })
           }
         />
-        Переопределить название для {title}
+        {copy.overrideTitle(title)}
       </label>
       {override.title.enabled ? (
         <label className="block text-sm">
-          Название
+          {copy.title}
           <input
             className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
             value={override.title.value}
@@ -83,14 +87,14 @@ export function TrackTagOverrides({
             })
           }
         />
-        Переопределить список исполнителей для {title}
+        {copy.overrideArtists(title)}
       </label>
       {override.artists.enabled ? (
         <div className="space-y-2">
           {override.artists.values.map((artist, index) => (
             <div key={artist.id} className="flex gap-2">
               <label className="min-w-0 flex-1 text-sm">
-                Исполнитель {index + 1}
+                {copy.artist(index + 1)}
                 <input
                   className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
                   value={artist.name}
@@ -112,7 +116,7 @@ export function TrackTagOverrides({
                 type="button"
                 className="mt-5 rounded border border-stone-400 px-2 text-sm"
                 disabled={disabled}
-                aria-label={`Удалить исполнителя ${index + 1} для ${title}`}
+                aria-label={copy.removeArtist(index + 1, title)}
                 onClick={() =>
                   onChange({
                     ...override,
@@ -125,7 +129,7 @@ export function TrackTagOverrides({
                   })
                 }
               >
-                Удалить
+                {copy.remove}
               </button>
             </div>
           ))}
@@ -146,12 +150,10 @@ export function TrackTagOverrides({
               })
             }
           >
-            Добавить исполнителя для {title}
+            {copy.addArtist(title)}
           </button>
           {!override.artists.values.length ? (
-            <p className="text-xs text-stone-600">
-              Пустой список — явное переопределение без исполнителей.
-            </p>
+            <p className="text-xs text-stone-600">{copy.emptyArtists}</p>
           ) : null}
         </div>
       ) : null}

@@ -290,6 +290,48 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
   fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
     target: { value: ids.trackOne },
   });
+  const firstTrackTags = within(
+    screen.getByRole("group", {
+      name: "Теги позиции · Диск 1 · трек 1 · Открытие",
+    }),
+  );
+  fireEvent.click(
+    firstTrackTags.getByRole("checkbox", {
+      name: /Переопределить название/,
+    }),
+  );
+  fireEvent.change(firstTrackTags.getByLabelText("Название"), {
+    target: { value: "Локальное название" },
+  });
+  fireEvent.click(
+    firstTrackTags.getByRole("checkbox", {
+      name: /Переопределить список исполнителей/,
+    }),
+  );
+  fireEvent.click(
+    firstTrackTags.getByRole("button", { name: /Добавить исполнителя/ }),
+  );
+  fireEvent.change(screen.getByLabelText("Исполнитель 1"), {
+    target: { value: "Локальный исполнитель" },
+  });
+  const fileCard = screen.getAllByLabelText("Назначение")[0].closest("article");
+  expect(fileCard).not.toBeNull();
+  fireEvent.click(
+    within(fileCard as HTMLElement).getByRole("button", {
+      name: /folder\/01\.flac/,
+    }),
+  );
+  const evidence = screen.getByRole("region", {
+    name: "Доказательства текущей оценки",
+  });
+  expect(within(evidence).getByText("0.87")).toBeInTheDocument();
+  fireEvent.click(within(evidence).getByText("Исходные теги файла"));
+  const rawTagsPre = within(evidence).getByText(/"ALBUM"/);
+  expect(rawTagsPre.tagName).toBe("PRE");
+  expect(JSON.parse(rawTagsPre.textContent ?? "")).toEqual({
+    ALBUM: ["Исходник"],
+    TITLE: ["Открытие"],
+  });
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
   );
@@ -314,6 +356,20 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
     await screen.findByRole("heading", { name: "Full assignment preview" }),
   ).toBeInTheDocument();
   expect(screen.getAllByLabelText("Assignment")[0]).toHaveValue(ids.trackOne);
+  expect(screen.getByLabelText("Title")).toHaveValue("Локальное название");
+  expect(screen.getByLabelText("Artist 1")).toHaveValue(
+    "Локальный исполнитель",
+  );
+  const currentEvidence = screen.getByRole("region", {
+    name: "Current evaluation evidence",
+  });
+  expect(currentEvidence).toHaveTextContent("0.87");
+  const currentRawTagsPre = within(currentEvidence).getByText(/"ALBUM"/);
+  expect(currentRawTagsPre.tagName).toBe("PRE");
+  expect(JSON.parse(currentRawTagsPre.textContent ?? "")).toEqual({
+    ALBUM: ["Исходник"],
+    TITLE: ["Открытие"],
+  });
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Evaluation or group data changed",
   );

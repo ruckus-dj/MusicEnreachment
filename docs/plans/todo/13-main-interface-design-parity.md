@@ -597,6 +597,13 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    или Local CRUD. **Приёмка:** все состояния и доступные имена доступны на обоих
    языках без потери draft/операций; browser preference, fallback English,
       «Как в системе» и локальное сохранение выбора — по разделу «Интерфейс» контракта.
+      - [x] `3635f18e`: own copy grouping controls и semantic feedback RU/EN,
+        без изменения sequence/stale/preview/confirm guards. Полный hook и вся
+        CI 43518840816 зелёные; browser подтвердил draft/no-locale-requests и
+        idle presentation в восьми theme/locale/size состояниях, без confirm.
+        Preview/conflict проверены fixtures; raw IDs draft summaries остаются
+        отдельным presentation-пробелом —
+        [отчёт](../../reports/2026-11-14-grouping-localization.md).
       - [x] `c7179622`: собственные тексты manual search/release pickers RU/EN,
         semantic fallbacks и сохранение search state без locale-only requests.
         Независимое ревью и полный hook прошли; вся CI 43514708333 зелёная.
