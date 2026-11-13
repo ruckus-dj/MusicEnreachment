@@ -248,30 +248,51 @@ it("saves recording and position title overrides through their own scopes", asyn
     { target: { value: "explicit_empty" } },
   );
   openGroup(position, "Участники");
-  fireEvent.change(
-    within(position).getByRole("textbox", { name: "Имя участника 1" }),
-    { target: { value: "Doe, Jane (live)" } },
-  );
-  fireEvent.change(within(position).getByRole("combobox", { name: "Роль 1" }), {
-    target: { value: "composer" },
+  const originalFirstContributor = within(position).getByRole("textbox", {
+    name: "Имя участника 1",
   });
   expect(
-    within(position).getByRole("textbox", { name: "Инструмент 1" }),
-  ).toHaveValue("Piano");
-  fireEvent.change(within(position).getByRole("combobox", { name: "Роль 1" }), {
-    target: { value: "performer" },
-  });
+    within(position).getByRole("button", {
+      name: "Переместить участника вверх 1",
+    }),
+  ).toBeDisabled();
+  expect(
+    within(position).getByRole("button", {
+      name: "Переместить участника вниз 3",
+    }),
+  ).toBeDisabled();
+  fireEvent.click(
+    within(position).getByRole("button", {
+      name: "Переместить участника вниз 1",
+    }),
+  );
+  expect(
+    within(position).getByRole("textbox", { name: "Имя участника 2" }),
+  ).toBe(originalFirstContributor);
   fireEvent.change(
     within(position).getByRole("textbox", {
       name: "MusicBrainz ID участника 1",
     }),
-    { target: { value: "623e4567-e89b-42d3-a456-426614174000" } },
+    { target: { value: "723e4567-e89b-42d3-a456-426614174000" } },
   );
+  fireEvent.change(
+    within(position).getByRole("textbox", { name: "Имя участника 2" }),
+    { target: { value: "Doe, Jane (live)" } },
+  );
+  fireEvent.change(within(position).getByRole("combobox", { name: "Роль 2" }), {
+    target: { value: "composer" },
+  });
+  expect(
+    within(position).getByRole("textbox", { name: "Инструмент 2" }),
+  ).toHaveValue("Piano");
+  fireEvent.change(within(position).getByRole("combobox", { name: "Роль 2" }), {
+    target: { value: "performer" },
+  });
   fireEvent.change(
     within(position).getByRole("textbox", {
       name: "MusicBrainz ID участника 2",
     }),
-    { target: { value: "723e4567-e89b-42d3-a456-426614174000" } },
+    { target: { value: "623e4567-e89b-42d3-a456-426614174000" } },
   );
   fireEvent.change(
     within(position).getByRole("textbox", {
@@ -280,7 +301,7 @@ it("saves recording and position title overrides through their own scopes", asyn
     { target: { value: "" } },
   );
   expect(
-    within(position).getByRole("textbox", { name: "Инструмент 1" }),
+    within(position).getByRole("textbox", { name: "Инструмент 2" }),
   ).toHaveValue("Piano");
   expect(
     within(position).queryByText("123e4567-e89b-42d3-a456-426614174000"),
@@ -308,17 +329,17 @@ it("saves recording and position title overrides through their own scopes", asyn
           state: "value",
           value: [
             {
+              name: "Added MBID",
+              role: "composer",
+              artist_id: "323e4567-e89b-42d3-a456-426614174000",
+              mbid: "723e4567-e89b-42d3-a456-426614174000",
+            },
+            {
               name: "Doe, Jane (live)",
               role: "performer",
               instrument: "Piano",
               artist_id: "123e4567-e89b-42d3-a456-426614174000",
               mbid: "623e4567-e89b-42d3-a456-426614174000",
-            },
-            {
-              name: "Added MBID",
-              role: "composer",
-              artist_id: "323e4567-e89b-42d3-a456-426614174000",
-              mbid: "723e4567-e89b-42d3-a456-426614174000",
             },
             {
               name: "Cleared MBID",

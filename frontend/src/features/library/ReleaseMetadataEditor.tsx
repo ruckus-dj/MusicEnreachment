@@ -265,6 +265,8 @@ const copy = {
     contributorMusicBrainzID: "Contributor MusicBrainz ID",
     artistLinkRetained: "Local artist link retained",
     addContributor: "Add contributor",
+    moveContributorUp: (index: number) => `Move contributor up ${index}`,
+    moveContributorDown: (index: number) => `Move contributor down ${index}`,
     removeContributor: (index: number) => `Remove contributor ${index}`,
     contributorRoles: {
       composer: "Composer",
@@ -379,6 +381,10 @@ const copy = {
     contributorMusicBrainzID: "MusicBrainz ID участника",
     artistLinkRetained: "Связь с локальным артистом сохранена",
     addContributor: "Добавить участника",
+    moveContributorUp: (index: number) =>
+      `Переместить участника вверх ${index}`,
+    moveContributorDown: (index: number) =>
+      `Переместить участника вниз ${index}`,
     removeContributor: (index: number) => `Удалить участника ${index}`,
     contributorRoles: {
       composer: "Композитор",
@@ -1255,23 +1261,84 @@ function LibraryScopedMetadataEditorSession({
                                         </div>
                                       )}
                                       {editing ? (
-                                        <AppButton
-                                          type="button"
-                                          isDisabled={saving}
-                                          onPress={() =>
-                                            updateField(key, {
-                                              state: "value",
-                                              value: (
-                                                field.value as ContributorDraft[]
-                                              ).filter(
-                                                (_, row) => row !== index,
-                                              ),
-                                            })
-                                          }
-                                          className="min-w-0 justify-center justify-self-start"
-                                        >
-                                          {text.removeContributor(index + 1)}
-                                        </AppButton>
+                                        <div className="flex flex-wrap items-end gap-1">
+                                          <AppButton
+                                            type="button"
+                                            aria-label={text.moveContributorUp(
+                                              index + 1,
+                                            )}
+                                            isDisabled={saving || index === 0}
+                                            onPress={() => {
+                                              const contributors = [
+                                                ...(field.value as ContributorDraft[]),
+                                              ];
+                                              [
+                                                contributors[index - 1],
+                                                contributors[index],
+                                              ] = [
+                                                contributors[index],
+                                                contributors[index - 1],
+                                              ];
+                                              updateField(key, {
+                                                state: "value",
+                                                value: contributors,
+                                              });
+                                            }}
+                                            className="min-w-0 justify-center"
+                                          >
+                                            ↑
+                                          </AppButton>
+                                          <AppButton
+                                            type="button"
+                                            aria-label={text.moveContributorDown(
+                                              index + 1,
+                                            )}
+                                            isDisabled={
+                                              saving ||
+                                              index ===
+                                                (
+                                                  field.value as ContributorDraft[]
+                                                ).length -
+                                                  1
+                                            }
+                                            onPress={() => {
+                                              const contributors = [
+                                                ...(field.value as ContributorDraft[]),
+                                              ];
+                                              [
+                                                contributors[index],
+                                                contributors[index + 1],
+                                              ] = [
+                                                contributors[index + 1],
+                                                contributors[index],
+                                              ];
+                                              updateField(key, {
+                                                state: "value",
+                                                value: contributors,
+                                              });
+                                            }}
+                                            className="min-w-0 justify-center"
+                                          >
+                                            ↓
+                                          </AppButton>
+                                          <AppButton
+                                            type="button"
+                                            isDisabled={saving}
+                                            onPress={() =>
+                                              updateField(key, {
+                                                state: "value",
+                                                value: (
+                                                  field.value as ContributorDraft[]
+                                                ).filter(
+                                                  (_, row) => row !== index,
+                                                ),
+                                              })
+                                            }
+                                            className="min-w-0 justify-center"
+                                          >
+                                            {text.removeContributor(index + 1)}
+                                          </AppButton>
+                                        </div>
                                       ) : null}
                                     </div>
                                   ),

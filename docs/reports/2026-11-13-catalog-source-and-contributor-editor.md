@@ -42,3 +42,39 @@ input `checked` и неоднозначный single-element поиск retained
 после расширения fixture до трёх contributors. Backend suite прошёл. Эти ошибки
 исправляются в assertions, без изменения production или ослабления gates;
 commit и новый runtime acceptance пока не выполнены.
+
+## Проверки `9e82d8fd`
+
+После исправления assertions обычный полный hook прошёл; commit отправлен в
+go-development. [CI 43478345845](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43478345845)
+полностью зелёная, включая Windows x64 и публикацию контейнера, с первого CI
+attempt. Acceptance-процесс 18080 штатно
+обновлён PID 11686 → 19956 gate-built бинарником. PostgreSQL и 8787 не менялись.
+
+Browser-приёмка реального backend:
+
+- Все три catalog views проверены в light/dark × RU/EN × 1440×900/390×844
+  (24 состояния), с ожиданием специфичных view headers и загруженных строк,
+  а не оставшейся DOM предыдущего view. Везде две baseline записи, page overflow
+  отсутствует; mobile tables сохраняют собственный горизонтальный scroll.
+- Смена языка сохранила route, publication filter, тот же search DOM node и
+  несохранённый search draft; language-only API requests отсутствуют.
+- Source table показывает row header `1` вместо UUID; labels RU/EN меняются,
+  пути, selection, policy и raw server facts сохраняются. Dark source section
+  проверен в обеих локалях и размерах; light также проверен на реальном CURRENT.
+- MBID draft сохранился при смене языка без API requests; отменён без записи
+  в baseline CURRENT. На временном третьем library-релизе UI Save добавил,
+  изменил и очистил MBID (HTTP 200, expected revisions 1/2/3). Последний PATCH
+  опустил `mbid`; reload подтвердил сохранённые имя, роль composer и пустой MBID.
+  `artist_id` в этом browser fixture отсутствовал: его сохранение покрывает
+  frontend regression, не объявляется browser-проверкой связанного артиста.
+- Временный release `67f9cfce-64c7-4cdd-a4d5-db9196087fa5` удалён через browser
+  Delete artist → exact preview → confirm. Scope содержал одну позицию и ноль
+  CURRENT, blockers отсутствовали; operation
+  `be490b2f-1bd8-51a5-a6b3-91aa43ad2f51` succeeded.
+
+Все записи выполнены browser-контролами; дополнительных API mutations нет.
+Read-only GET подтвердил удаление временных artist/release и сохранение Local
+provider release. SHA-256 обоих baseline CURRENT и трёх исходников не изменились.
+Readbacks — `$TMPDIR/opencode/plan13acceptance/catalog-editor-*`.
+Публикация не запускалась. Это не полный setup/scan/analysis browser E2E.

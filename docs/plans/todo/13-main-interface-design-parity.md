@@ -430,11 +430,19 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         retained notice; нужен edit/read input без изменения `artist_id` или
         provider identity. Также отсутствуют prototype move up/down controls:
         перемещать нужно всю credit row с именем, ролью, инструментом и MBID.
-        MBID input/read value реализованы; независимое ревью не нашло блокеров,
-        проверка текущего среза ещё не завершена. Catalog/source RU/EN и
-        display-only variant index реализованы вместе с минимальными frontend
-        regressions. Статус и границы —
+        `9e82d8fd`: MBID input/read value реализованы; независимое ревью не нашло
+        блокеров, обычный полный hook прошёл после исправления четырёх assertions,
+        commit отправлен. Catalog/source RU/EN и display-only variant index
+        реализованы вместе с минимальными frontend regressions. Browser подтвердил
+        24 catalog состояния, сохранение search draft/filter/route без locale-only
+        requests и add/change/clear MBID на временном релизе без публикации.
+        Временный scope удалён, baseline CURRENT/исходники сохранили SHA-256.
+        Полная CI 43478345845 зелёная, включая Windows и публикацию контейнера.
+        Статус и границы —
         [отчёт](../../reports/2026-11-13-catalog-source-and-contributor-editor.md).
+        Whole-row move up/down реализован и прошёл независимое ревью;
+        полный hook/browser/CI этого следующего среза ещё не завершены —
+        [отчёт](../../reports/2026-11-13-contributor-row-order.md).
       - [ ] Основные release/title groups production editor пока находятся в
         изначально закрытых disclosures. Довести always-visible basics и in-place
         editing по действующему контракту/эталону без изменения ownership или
