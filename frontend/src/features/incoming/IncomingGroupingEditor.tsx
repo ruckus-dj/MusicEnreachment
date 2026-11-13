@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  apiResponseError,
-  errorMessage as sharedErrorMessage,
-} from "../../api/client/errors";
-import {
   confirmIncomingGroups,
   getIncomingGroups,
   previewIncomingGroups,
@@ -13,29 +9,36 @@ import type {
   IncomingGroupingEditBody,
   IncomingGroupsBody,
 } from "../../api/generated/client.schemas";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type IncomingGroupingMessage,
+  incomingGroupingFileCount,
+  incomingGroupingMessage,
+  incomingGroupingMessages,
+  incomingGroupingNumber,
+  incomingGroupingPathCount,
+} from "./incomingGroupingMessages";
 
 export interface IncomingGroupingEditorProps {
   snapshot: IncomingGroupsBody;
   onConfirmed?: (groups: IncomingGroupsBody) => void | Promise<void>;
 }
 
-function errorMessage(
+function responseMessage(
   data: { detail?: string },
-  fallback: string,
+  action: "previewError" | "confirmError" | "refreshError",
   status: number,
-) {
-  return apiResponseError({ status, data }, `${fallback} (HTTP ${status}).`)
-    .message;
-}
-
-function groupLabel(index: number) {
-  return `Группа ${index + 1}`;
+): IncomingGroupingMessage {
+  if (data.detail) return { key: "raw", message: data.detail };
+  return { key: "httpError", action, status };
 }
 
 export function IncomingGroupingEditor({
   snapshot,
   onConfirmed,
 }: IncomingGroupingEditorProps) {
+  const { locale } = useI18n();
+  const copy = incomingGroupingMessages[locale];
   const [actions, setActions] = useState<IncomingGroupingActionInput[]>([]);
   const [groupSelection, setGroupSelection] = useState<string[]>([]);
   const [memberSelection, setMemberSelection] = useState<string[]>([]);
@@ -44,8 +47,8 @@ export function IncomingGroupingEditor({
   const [preview, setPreview] = useState<IncomingGroupsBody>();
   const [effectiveBoard, setEffectiveBoard] = useState(snapshot);
   const [needsPreview, setNeedsPreview] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [error, setError] = useState<IncomingGroupingMessage | null>(null);
+  const [notice, setNotice] = useState<IncomingGroupingMessage | null>(null);
   const [busy, setBusy] = useState(false);
   const [stale, setStale] = useState(false);
   const [currentSnapshot, setCurrentSnapshot] = useState(snapshot);
@@ -66,10 +69,8 @@ export function IncomingGroupingEditor({
     setGroupSelection([]);
     setMemberSelection([]);
     setMoveTarget("");
-    setNotice(
-      "Снимок изменился. Проверьте черновик и создайте новый предпросмотр.",
-    );
-    setError("");
+    setNotice({ key: "snapshotChanged" });
+    setError(null);
     setBusy(false);
     sequence.current += 1;
   }, [actions.length, snapshot]);
@@ -84,10 +85,8 @@ export function IncomingGroupingEditor({
     setActionRowIDs((existing) => [...existing, nextActionRowID.current++]);
     setNeedsPreview(true);
     setStale(false);
-    setError("");
-    setNotice(
-      "Действие добавлено. Создайте предпросмотр, прежде чем продолжать.",
-    );
+    setError(null);
+    setNotice({ key: "actionAdded" });
     sequence.current += 1;
   }
 
@@ -115,8 +114,8 @@ export function IncomingGroupingEditor({
   async function requestPreview() {
     const request = ++sequence.current;
     setBusy(true);
-    setError("");
-    setNotice("");
+    setError(null);
+    setNotice(null);
     try {
       const response = await previewIncomingGroups(editBody());
       if (request !== sequence.current) return;
@@ -124,11 +123,7 @@ export function IncomingGroupingEditor({
         if (response.status === 409) setStale(true);
         setPreview(undefined);
         setError(
-          errorMessage(
-            response.data,
-            "Предпросмотр не выполнен",
-            response.status,
-          ),
+          responseMessage(response.data, "previewError", response.status),
         );
         return;
       }
@@ -138,7 +133,11 @@ export function IncomingGroupingEditor({
       setStale(false);
     } catch (reason) {
       if (request === sequence.current)
-        setError(sharedErrorMessage(reason, "Предпросмотр не выполнен."));
+        setError(
+          reason instanceof Error
+            ? { key: "raw", message: reason.message }
+            : { key: "previewError" },
+        );
     } finally {
       if (request === sequence.current) setBusy(false);
     }
@@ -148,8 +147,8 @@ export function IncomingGroupingEditor({
     if (!preview?.draft_revision || busy || stale || needsPreview) return;
     const request = ++sequence.current;
     setBusy(true);
-    setError("");
-    setNotice("");
+    setError(null);
+    setNotice(null);
     try {
       const response = await confirmIncomingGroups(
         editBody(preview.draft_revision),
@@ -158,11 +157,7 @@ export function IncomingGroupingEditor({
       if (response.status !== 200) {
         if (response.status === 409) setStale(true);
         setError(
-          errorMessage(
-            response.data,
-            "Подтверждение не выполнено",
-            response.status,
-          ),
+          responseMessage(response.data, "confirmError", response.status),
         );
         return;
       }
@@ -173,11 +168,15 @@ export function IncomingGroupingEditor({
       setActions([]);
       setActionRowIDs([]);
       setStale(false);
-      setNotice("Изменения сохранены.");
+      setNotice({ key: "saved" });
       await onConfirmed?.(response.data);
     } catch (reason) {
       if (request === sequence.current)
-        setError(sharedErrorMessage(reason, "Подтверждение не выполнено."));
+        setError(
+          reason instanceof Error
+            ? { key: "raw", message: reason.message }
+            : { key: "confirmError" },
+        );
     } finally {
       if (request === sequence.current) setBusy(false);
     }
@@ -186,17 +185,13 @@ export function IncomingGroupingEditor({
   async function refreshSnapshot() {
     const request = ++sequence.current;
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       const response = await getIncomingGroups();
       if (request !== sequence.current) return;
       if (response.status !== 200) {
         setError(
-          errorMessage(
-            response.data,
-            "Обновление не выполнено",
-            response.status,
-          ),
+          responseMessage(response.data, "refreshError", response.status),
         );
         return;
       }
@@ -205,12 +200,14 @@ export function IncomingGroupingEditor({
       setEffectiveBoard(response.data);
       setNeedsPreview(actions.length > 0);
       setStale(false);
-      setNotice(
-        "Снимок обновлён. Проверьте сохранённый список действий и создайте новый предпросмотр.",
-      );
+      setNotice({ key: "snapshotRefreshed" });
     } catch (reason) {
       if (request === sequence.current)
-        setError(sharedErrorMessage(reason, "Обновление не выполнено."));
+        setError(
+          reason instanceof Error
+            ? { key: "raw", message: reason.message }
+            : { key: "refreshError" },
+        );
     } finally {
       if (request === sequence.current) setBusy(false);
     }
@@ -226,19 +223,17 @@ export function IncomingGroupingEditor({
     setGroupSelection([]);
     setMemberSelection([]);
     setStale(false);
-    setError("");
-    setNotice("Черновик отменён.");
+    setError(null);
+    setNotice({ key: "draftCancelled" });
   }
 
   return (
     <section aria-labelledby="incoming-grouping-title" className="space-y-4">
       <header>
         <h2 id="incoming-grouping-title" className="text-xl font-semibold">
-          Коррекция входящих групп
+          {copy.heading}
         </h2>
-        <p>
-          Изменения остаются черновиком страницы до отдельного подтверждения.
-        </p>
+        <p>{copy.intro}</p>
       </header>
 
       <div className="space-y-3">
@@ -261,21 +256,22 @@ export function IncomingGroupingEditor({
               key={group.id}
               className="rounded border border-stone-300 p-3"
             >
-              <legend className="font-semibold">{groupLabel(index)}</legend>
+              <legend className="font-semibold">{copy.group(index)}</legend>
               <label className="mr-4 inline-flex items-center gap-2">
                 <input
                   type="checkbox"
-                  aria-label={`Выбрать ${groupLabel(index)} для объединения`}
+                  aria-label={copy.selectGroup(copy.group(index))}
                   checked={groupSelection.includes(group.id)}
                   disabled={busy || needsPreview}
                   onChange={() =>
                     toggle(groupSelection, group.id, setGroupSelection)
                   }
                 />
-                Объединить
+                {copy.merge}
               </label>
               <span>
-                {members.length} файлов · {paths.size} уникальных путей
+                {incomingGroupingFileCount(members.length, locale)} ·{" "}
+                {incomingGroupingPathCount(paths.size, locale)}
               </span>
               <ul className="mt-2 space-y-1">
                 {members.map((id) => (
@@ -283,7 +279,7 @@ export function IncomingGroupingEditor({
                     <label className="inline-flex items-center gap-2">
                       <input
                         type="checkbox"
-                        aria-label={`Выбрать файл ${id}`}
+                        aria-label={copy.selectFile(id)}
                         checked={memberSelection.includes(id)}
                         disabled={busy || needsPreview}
                         onChange={() =>
@@ -295,7 +291,7 @@ export function IncomingGroupingEditor({
                         ?.locations?.map((location) => location.relative_path)
                         .join(" · ") || id}
                     </label>
-                    <span>{unready.has(id) ? "Не готов" : "Готов"}</span>
+                    <span>{unready.has(id) ? copy.notReady : copy.ready}</span>
                   </li>
                 ))}
               </ul>
@@ -319,7 +315,7 @@ export function IncomingGroupingEditor({
                   setMemberSelection([]);
                 }}
               >
-                Отделить выбранные файлы
+                {copy.split}
               </button>
             </fieldset>
           );
@@ -336,20 +332,20 @@ export function IncomingGroupingEditor({
             setGroupSelection([]);
           }}
         >
-          Объединить выбранные группы
+          {copy.mergeSelected}
         </button>
         <label className="flex items-center gap-2">
-          Переместить выбранные файлы в
+          {copy.moveLabel}
           <select
-            aria-label="Целевая группа"
+            aria-label={copy.targetGroup}
             value={moveTarget}
             disabled={busy || needsPreview}
             onChange={(event) => setMoveTarget(event.target.value)}
           >
-            <option value="">Выберите группу</option>
+            <option value="">{copy.chooseGroup}</option>
             {groups.map((group, index) => (
               <option key={group.id} value={group.id}>
-                Группа {index + 1}
+                {copy.group(index)}
               </option>
             ))}
           </select>
@@ -369,12 +365,14 @@ export function IncomingGroupingEditor({
             setMemberSelection([]);
           }}
         >
-          Переместить файлы
+          {copy.move}
         </button>
       </div>
 
-      <section aria-label="Черновик действий">
-        <h3 className="font-semibold">Действия черновика ({actions.length})</h3>
+      <section aria-label={copy.draftActionsLabel}>
+        <h3 className="font-semibold">
+          {copy.draftActions(incomingGroupingNumber(actions.length, locale))}
+        </h3>
         <ol className="list-inside list-decimal">
           {actions.map((action, index) => (
             <li key={actionRowIDs[index]}>
@@ -392,7 +390,7 @@ export function IncomingGroupingEditor({
             disabled={busy}
             onClick={cancelDraft}
           >
-            Отменить черновик
+            {copy.cancelDraft}
           </button>
           <button
             type="button"
@@ -400,7 +398,7 @@ export function IncomingGroupingEditor({
             disabled={busy || actions.length === 0}
             onClick={requestPreview}
           >
-            Предпросмотр
+            {copy.preview}
           </button>
           <button
             type="button"
@@ -408,7 +406,7 @@ export function IncomingGroupingEditor({
             disabled={busy || needsPreview || !preview?.draft_revision || stale}
             onClick={confirm}
           >
-            Подтвердить изменения
+            {copy.confirm}
           </button>
           {stale && (
             <button
@@ -417,23 +415,22 @@ export function IncomingGroupingEditor({
               disabled={busy}
               onClick={refreshSnapshot}
             >
-              Обновить снимок
+              {copy.refresh}
             </button>
           )}
         </div>
       </section>
 
-      {error && <p role="alert">{error}</p>}
-      {notice && <p role="status">{notice}</p>}
+      {error && <p role="alert">{incomingGroupingMessage(locale, error)}</p>}
+      {notice && <p role="status">{incomingGroupingMessage(locale, notice)}</p>}
       {preview && !needsPreview && (
         <p role="status">
-          Предпросмотр готов; для сохранения требуется отдельное подтверждение.
+          {incomingGroupingMessage(locale, { key: "previewReady" })}
         </p>
       )}
       {needsPreview && actions.length > 0 && (
         <p role="status">
-          Создайте успешный предпросмотр, прежде чем добавлять следующее
-          действие.
+          {incomingGroupingMessage(locale, { key: "previewRequired" })}
         </p>
       )}
     </section>

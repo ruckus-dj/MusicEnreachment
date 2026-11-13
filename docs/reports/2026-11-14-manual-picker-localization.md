@@ -44,3 +44,30 @@ Regression уточняется: дождаться success/error и idle точ
 операции, затем зафиксировать counters/history и сравнить их после locale flip.
 Для malformed третьей страницы требуется error именно operation-3, чтобы
 transient offset mismatch старой операции не подменял проверяемую validation.
+
+## Проверки `c7179622`
+
+Уточнённый тест прошёл независимое ревью; повторный обычный полный hook прошёл,
+commit отправлен. Полная CI `43514708333` выполняется. Acceptance-only процесс
+18080 штатно обновлён PID 49549 → 59561; PostgreSQL и 8787 не менялись.
+
+Browser реального backend подтвердил EN/RU доступные имена и сохранение query,
+kind=release, limit=2 и MBID draft при смене языка; search input DOM node тот же,
+language-only API requests отсутствуют. Search/Prepare не нажимались, matching
+confirmation и publication не запускались. Страница результатов, operation и
+validation/error fallback проверены frontend fixtures, не real-backend browser
+E2E. Полная визуальная theme/size приёмка пока не завершена.
+
+SHA-256 обоих CURRENT и трёх исходников совпали с baseline:
+`$TMPDIR/opencode/plan13acceptance/manual-picker-hashes.txt`.
+
+Вся [CI 43514708333](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43514708333)
+для `c7179622` зелёная с первого attempt, включая Windows и публикацию
+контейнера. Визуальная theme/size приёмка остаётся отдельной незавершённой
+проверкой; зелёная CI её не заменяет.
+
+Дополнительный browser проход idle search picker: RU/EN × light/dark ×
+1440×900/390×844, page overflow отсутствует. Computed surface/foreground:
+light `rgb(255,255,255)` / `rgb(38,51,43)`, dark `rgb(25,30,26)` /
+`rgb(227,234,227)`. Это ограниченная проверка labels/layout/theme idle-состояния,
+не визуальная приёмка реальных результатов или выполняющейся подготовки.

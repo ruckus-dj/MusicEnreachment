@@ -597,6 +597,12 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    или Local CRUD. **Приёмка:** все состояния и доступные имена доступны на обоих
    языках без потери draft/операций; browser preference, fallback English,
       «Как в системе» и локальное сохранение выбора — по разделу «Интерфейс» контракта.
+      - [x] `c7179622`: собственные тексты manual search/release pickers RU/EN,
+        semantic fallbacks и сохранение search state без locale-only requests.
+        Независимое ревью и полный hook прошли; вся CI 43514708333 зелёная.
+        Browser подтвердил drafts и idle layout/theme в восьми состояниях;
+        paging/operation/errors проверены fixtures, не real-backend browser E2E —
+        [отчёт](../../reports/2026-11-14-manual-picker-localization.md).
       - [x] Incoming overview/review own copy локализован, own feedback переведён
         на semantic descriptors без locale refetch и string-based refresh guards.
         `a5fb17e1` и copy-поправка `35d57845` прошли обычные полные hooks и
