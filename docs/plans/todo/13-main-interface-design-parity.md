@@ -403,6 +403,19 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         Unicode и видимый nonblocking notice. Тестовые contributors возвращены
         в absent; оба CURRENT сохраняются. Запись IDs в файл проверена native
         gate, но не выдаётся за browser E2E.
+      - [x] Исправлен presentation Local matching: raw zero-based catalog
+        position больше не показывается как `0.`; используется displayed number
+        либо one-based подпись. Summary описывает действующий provider-mediated
+        поток, receipt показывает название из принятого response, не UUID.
+        Собственные confirmation/scope notices следуют RU/EN без сброса draft/
+        preview и без locale-only refetch. Локализованы экран артиста и факты
+        носителя/позиции; внутренний Recording ID убран только из presentation.
+        IDs, порядок, provider/library данные и authority не меняются.
+        Независимое ревью не нашло блокеров; расширены существующие frontend
+        assertions, без новых DB-сценариев. Свидетельства и границы —
+        [отчёт](../../reports/2026-11-13-local-matching-presentation.md).
+        Главный каталог, source presentation и общий визуальный паритет остаются
+        открытыми.
 7. [x] **Genres.** Завершить каталог и genre flows до Local UI. **Приёмка:**
    жанры сохраняют MBID и утверждённые правила каталога; состояния каталога и
    picker корректны согласно `docs/design/genres.md`. Полная загрузка идёт через

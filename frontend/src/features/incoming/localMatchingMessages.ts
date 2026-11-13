@@ -7,9 +7,17 @@ function russianCount(count: number, forms: [string, string, string]) {
   return forms[2];
 }
 
+export type LocalMatchingNotice =
+  | { key: "confirmed" }
+  | { key: "scopeChangedAfterConfirm" }
+  | { key: "scopeChangedBeforeConfirm" }
+  | { key: "confirmedRefreshError"; reason?: string };
+
 export const localMatchingMessages = {
   en: {
     heading: "Match with a Local release",
+    sectionSummary:
+      "Match incoming files with a release in the Local provider catalog.",
     intro:
       "Choose an existing Local release and explicitly assign files to its tracks. Create and edit catalog records in",
     ownCatalog: "Own Catalog",
@@ -43,27 +51,32 @@ export const localMatchingMessages = {
       "The snapshot is stale. Refresh the group data and create a new preview.",
     staleNotice:
       "The snapshot changed. Create a new preview after the data is refreshed.",
-    scopeChangedAfterConfirm:
-      "Local matching was confirmed; group data has been refreshed.",
-    scopeChangedBeforeConfirm:
-      "The group or authority snapshot changed. Select a release and create a new preview.",
     confirmAction: "Confirm matching",
     confirmRetry: "Retry the same confirmation request",
     confirmError: "Confirmation failed.",
     confirmConflict:
       "The snapshot is stale. Get a new preview before confirming.",
     confirmRetryNotice: "Retry the request to safely check the same result.",
-    confirmed: "Local matching confirmed.",
-    confirmedRefreshError: (reason: string) =>
-      `Matching was confirmed, but the screen could not be refreshed: ${reason}`,
-    refreshFailure: "refresh error",
-    receipt: (releaseID: string) =>
-      `Matching confirmed for release ${releaseID}.`,
+    notice: (notice: LocalMatchingNotice) => {
+      if (notice.key === "confirmedRefreshError")
+        return `Matching was confirmed, but the screen could not be refreshed: ${notice.reason || "refresh error"}`;
+      return {
+        confirmed: "Local matching confirmed.",
+        scopeChangedAfterConfirm:
+          "Local matching was confirmed; group data has been refreshed.",
+        scopeChangedBeforeConfirm:
+          "The group or authority snapshot changed. Select a release and create a new preview.",
+      }[notice.key];
+    },
+    receipt: (releaseTitle: string) =>
+      `Matching confirmed for release ${releaseTitle}.`,
     httpError: (fallback: string, status: number) =>
       `${fallback} (HTTP ${status}).`,
   },
   ru: {
     heading: "Сопоставить с локальным релизом",
+    sectionSummary:
+      "Сопоставить входящие файлы с релизом каталога провайдера Local.",
     intro:
       "Выберите существующий локальный релиз и явно назначьте файлы его дорожкам. Создавать и редактировать записи каталога можно в",
     ownCatalog: "собственном каталоге",
@@ -96,10 +109,6 @@ export const localMatchingMessages = {
       "Снимок устарел. Обновите данные группы и создайте новый предпросмотр.",
     staleNotice:
       "Снимок изменился. После обновления данных создайте новый предпросмотр.",
-    scopeChangedAfterConfirm:
-      "Локальное сопоставление подтверждено; данные группы обновлены.",
-    scopeChangedBeforeConfirm:
-      "Снимок группы или полномочий изменился. Выберите релиз и создайте новый предпросмотр.",
     confirmAction: "Подтвердить сопоставление",
     confirmRetry: "Повторить тот же запрос подтверждения",
     confirmError: "Подтверждение не выполнено.",
@@ -107,12 +116,19 @@ export const localMatchingMessages = {
       "Снимок устарел. Получите новый предпросмотр перед подтверждением.",
     confirmRetryNotice:
       "Повторите запрос, чтобы безопасно проверить тот же результат.",
-    confirmed: "Локальное сопоставление подтверждено.",
-    confirmedRefreshError: (reason: string) =>
-      `Сопоставление подтверждено, но обновить экран не удалось: ${reason}`,
-    refreshFailure: "ошибка обновления",
-    receipt: (releaseID: string) =>
-      `Сопоставление подтверждено для релиза ${releaseID}.`,
+    notice: (notice: LocalMatchingNotice) => {
+      if (notice.key === "confirmedRefreshError")
+        return `Сопоставление подтверждено, но обновить экран не удалось: ${notice.reason || "ошибка обновления"}`;
+      return {
+        confirmed: "Локальное сопоставление подтверждено.",
+        scopeChangedAfterConfirm:
+          "Локальное сопоставление подтверждено; данные группы обновлены.",
+        scopeChangedBeforeConfirm:
+          "Снимок группы или полномочий изменился. Выберите релиз и создайте новый предпросмотр.",
+      }[notice.key];
+    },
+    receipt: (releaseTitle: string) =>
+      `Сопоставление подтверждено для релиза ${releaseTitle}.`,
     httpError: (fallback: string, status: number) =>
       `${fallback} (HTTP ${status}).`,
   },

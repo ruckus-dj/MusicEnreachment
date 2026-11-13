@@ -49,6 +49,10 @@ Worktrees running `task generate` or dependency installation need their own real
 
 When formatting changed TS/TSX files, also organize their imports. `biome format`
 alone does not apply import assists; unorganized imports still fail the normal hook.
+Run frontend Biome commands with `frontend/` as their working directory and
+frontend-relative paths. Invoking its binary from the repository root can load
+both root configurations and fail with "Found a nested root configuration";
+do not migrate or merge the configurations to work around the invocation error.
 
 **Tests colocated**: *.test.tsx next to components. Vitest + React Testing Library + MSW.
 

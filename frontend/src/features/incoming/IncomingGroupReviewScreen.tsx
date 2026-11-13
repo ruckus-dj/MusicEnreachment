@@ -28,9 +28,11 @@ import type {
   MatchingReviewRelease,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
 import { IncomingGroupingEditor } from "./IncomingGroupingEditor";
 import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
 import { LocalReleaseEditor } from "./LocalReleaseEditor";
+import { localMatchingMessages } from "./localMatchingMessages";
 import { ManualReleasePicker } from "./ManualReleasePicker";
 import { ManualSearchPicker } from "./ManualSearchPicker";
 import { MatchingEvidenceInspector } from "./MatchingEvidenceInspector";
@@ -140,6 +142,8 @@ export function IncomingGroupReviewScreen() {
 
 function IncomingGroupReviewContent() {
   const queryClient = useQueryClient();
+  const { locale } = useI18n();
+  const localMatchingCopy = localMatchingMessages[locale];
   const groupsQuery = useQuery({
     queryKey: getGetIncomingGroupsQueryKey(),
     queryFn: async ({ signal }) => {
@@ -765,7 +769,7 @@ function IncomingGroupReviewContent() {
             {group && groupsQuery.data ? (
               <details className="rounded border border-stone-300 p-3">
                 <summary className="cursor-pointer font-semibold">
-                  Локальный релиз без связей с провайдерами
+                  {localMatchingCopy.sectionSummary}
                 </summary>
                 <LocalReleaseEditor
                   group={group}

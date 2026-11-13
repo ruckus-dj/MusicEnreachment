@@ -303,13 +303,13 @@ it("keeps the artist release filter but loads every position in an expanded rele
   );
 
   fireEvent.click(
-    await screen.findByRole("button", { name: "Показать позиции" }),
+    await screen.findByRole("button", { name: "Show positions" }),
   );
   expect(
     await screen.findByRole("link", { name: /Published track/ }),
   ).toBeVisible();
   expect(
-    screen.getByText(/Аудио в наличии · 0 исходников · Опубликовано/),
+    screen.getByText(/Audio available · 0 sources · published/),
   ).toBeVisible();
 });
 

@@ -464,6 +464,8 @@ it("refreshes deletion from authoritative position state without remounting publ
     name: "Текущая публикация",
   });
   const positionArticle = await screen.findByRole("article");
+  expect(within(positionArticle).getByText("Композиция")).toBeVisible();
+  expect(within(positionArticle).queryByText("Recording ID")).toBeNull();
   fireEvent.click(
     await within(positionArticle).findByRole("button", {
       name: "Удалить текущую публикацию",

@@ -20,6 +20,7 @@ import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
   type LocalMatchingMessages,
+  type LocalMatchingNotice,
   localMatchingMessages,
 } from "./localMatchingMessages";
 
@@ -50,7 +51,7 @@ type EditorState = {
   busy?: "preview" | "confirm";
   busyRequest?: number;
   error?: string;
-  notice?: string;
+  notice?: LocalMatchingNotice;
   stale?: boolean;
 };
 type CatalogState = {
@@ -82,7 +83,8 @@ function fileLabel(file: IncomingFileResponse) {
 }
 
 function trackLabel(track: NonNullable<LocalProviderItem["tracks"]>[number]) {
-  return `${track.position}. ${track.title_override || track.recording_title}`;
+  const number = track.displayed_number.trim() || String(track.position + 1);
+  return `${number}. ${track.title_override || track.recording_title}`;
 }
 
 export interface LocalReleaseEditorProps {
@@ -138,13 +140,15 @@ export function LocalReleaseEditor({
           ...existing,
           preview: undefined,
           stale: true,
-          notice: existing.receipt
-            ? copy.scopeChangedAfterConfirm
-            : copy.scopeChangedBeforeConfirm,
+          notice: {
+            key: existing.receipt
+              ? "scopeChangedAfterConfirm"
+              : "scopeChangedBeforeConfirm",
+          },
         },
       };
     });
-  }, [copy, currentScope, group.id]);
+  }, [currentScope, group.id]);
 
   async function loadCatalog() {
     const request = (catalogRequests.current[group.id] ?? 0) + 1;
@@ -395,16 +399,17 @@ export function LocalReleaseEditor({
         receipt: response.data,
         pending: undefined,
         preview: undefined,
-        notice: copy.confirmed,
+        notice: { key: "confirmed" },
       }));
       try {
         await onConfirmed?.(response.data);
       } catch (reason) {
         update((current) => ({
           ...current,
-          notice: copy.confirmedRefreshError(
-            message(reason, copy.refreshFailure),
-          ),
+          notice: {
+            key: "confirmedRefreshError",
+            reason: sharedErrorMessage(reason, "") || undefined,
+          },
         }));
       }
     } catch (reason) {
@@ -540,7 +545,7 @@ export function LocalReleaseEditor({
       )}
 
       {state.error && <p role="alert">{state.error}</p>}
-      {state.notice && <p role="status">{state.notice}</p>}
+      {state.notice && <p role="status">{copy.notice(state.notice)}</p>}
       {state.stale && <p role="status">{copy.staleNotice}</p>}
       <div className="flex flex-wrap gap-2">
         <AppButton type="button" isDisabled={!canPreview} onPress={preview}>
@@ -585,7 +590,7 @@ export function LocalReleaseEditor({
         </section>
       )}
       {state.receipt?.local_release_id && (
-        <p role="status">{copy.receipt(state.receipt.local_release_id)}</p>
+        <p role="status">{copy.receipt(state.receipt.release_title)}</p>
       )}
     </section>
   );

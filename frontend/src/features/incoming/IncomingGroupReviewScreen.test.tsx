@@ -6,15 +6,18 @@ import {
   within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   IncomingGroupsBody,
   MatchingManualConfirmBody,
   MatchingManualPreview,
   MatchingReview,
 } from "../../api/generated/client.schemas";
+import { I18nProvider } from "../../i18n/I18nProvider";
+import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { IncomingGroupReviewScreen } from "./IncomingGroupReviewScreen";
+import { localMatchingMessages } from "./localMatchingMessages";
 
 const ids = {
   group: "group-1",
@@ -203,14 +206,25 @@ function preview(assignments: number): MatchingManualPreview {
   };
 }
 
-function setup(reviewBody = review()) {
+function setup(reviewBody = review(), locale?: "en" | "ru") {
   server.use(
     http.get("/api/incoming-groups", () => HttpResponse.json(incomingGroups())),
     http.get("/api/incoming-groups/:groupId/matching", () =>
       HttpResponse.json(reviewBody),
     ),
   );
-  render(<IncomingGroupReviewScreen />);
+  if (locale) {
+    const storage = createMemoryStorage();
+    storage.setItem("melotrove-language", locale);
+    vi.stubGlobal("localStorage", storage);
+    render(
+      <I18nProvider>
+        <IncomingGroupReviewScreen />
+      </I18nProvider>,
+    );
+  } else {
+    render(<IncomingGroupReviewScreen />);
+  }
 }
 
 async function chooseRelease(title = "Первое издание") {
@@ -229,6 +243,20 @@ async function chooseRelease(title = "Первое издание") {
 beforeEach(() => {
   window.location.hash = "";
   vi.restoreAllMocks();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+it.each([
+  "ru",
+  "en",
+] as const)("shows the localized Local provider matching summary (%s)", async (locale) => {
+  setup(review(), locale);
+  expect(
+    await screen.findByText(localMatchingMessages[locale].sectionSummary),
+  ).toBeInTheDocument();
 });
 
 describe("incoming manual group review", () => {

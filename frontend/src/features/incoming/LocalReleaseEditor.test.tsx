@@ -7,7 +7,7 @@ import type {
   LocalProviderItem,
   MatchingLocalPreview,
 } from "../../api/generated/client.schemas";
-import { I18nProvider } from "../../i18n/I18nProvider";
+import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { LocalReleaseEditor } from "./LocalReleaseEditor";
@@ -61,9 +61,9 @@ const release: LocalProviderItem = {
       provider_id: "local-provider",
       recording_id: "local-recording",
       recording_title: "Первая дорожка",
-      title_override: null,
-      position: 1,
-      displayed_number: "1",
+      title_override: "Переименованная дорожка",
+      position: 0,
+      displayed_number: " ",
       duration_override_ms: null,
       recording_duration_ms: 180000,
     },
@@ -83,6 +83,18 @@ const matchingPreview: MatchingLocalPreview = {
   tracks: [],
 };
 
+function LocaleToggle() {
+  const { locale, setPreference } = useI18n();
+  return (
+    <button
+      type="button"
+      onClick={() => setPreference(locale === "ru" ? "en" : "ru")}
+    >
+      Toggle locale
+    </button>
+  );
+}
+
 let storage: Storage;
 
 beforeEach(() => {
@@ -97,10 +109,14 @@ afterEach(() => {
 
 it("selects a local provider release, assigns an incoming file, and confirms the frozen preview", async () => {
   let previewBody: Record<string, unknown> | undefined;
+  let catalogRequests = 0;
+  let releaseRequests = 0;
+  let previewRequests = 0;
   const confirmBodies: Record<string, unknown>[] = [];
   let failFirstConfirmation = true;
   server.use(
     http.get("/api/provider-catalog/releases", ({ request }) => {
+      catalogRequests += 1;
       const url = new URL(request.url);
       expect(url.searchParams.get("provider")).toBe("local");
       return HttpResponse.json({
@@ -110,12 +126,14 @@ it("selects a local provider release, assigns an incoming file, and confirms the
         total: 1,
       });
     }),
-    http.get(`/api/provider-catalog/releases/${releaseID}`, () =>
-      HttpResponse.json(release),
-    ),
+    http.get(`/api/provider-catalog/releases/${releaseID}`, () => {
+      releaseRequests += 1;
+      return HttpResponse.json(release);
+    }),
     http.post(
       `/api/incoming-groups/${group.id}/matching/local/preview`,
       async ({ request }) => {
+        previewRequests += 1;
         previewBody = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json(matchingPreview);
       },
@@ -138,6 +156,7 @@ it("selects a local provider release, assigns an incoming file, and confirms the
 
   const view = render(
     <I18nProvider>
+      <LocaleToggle />
       <LocalReleaseEditor group={group} files={[file]} authorityRevision={2} />
     </I18nProvider>,
   );
@@ -148,6 +167,11 @@ it("selects a local provider release, assigns an incoming file, and confirms the
   fireEvent.change(await screen.findByLabelText("Локальный релиз"), {
     target: { value: releaseID },
   });
+  expect(
+    await screen.findByRole("option", {
+      name: "1. Переименованная дорожка",
+    }),
+  ).toBeInTheDocument();
   fireEvent.change(
     await screen.findByLabelText("Дорожка для файла album/01.flac"),
     { target: { value: trackID } },
@@ -156,6 +180,29 @@ it("selects a local provider release, assigns an incoming file, and confirms the
     screen.getByRole("button", { name: "Предпросмотр назначения" }),
   );
   await screen.findByRole("heading", { name: "Предпросмотр — только чтение" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Toggle locale" }));
+  expect(
+    await screen.findByRole("heading", { name: "Preview — read only" }),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("Track for file album/01.flac")).toHaveValue(
+    trackID,
+  );
+  expect(
+    screen.getByText(/Мой локальный альбом · 0 tracks/),
+  ).toBeInTheDocument();
+  expect(catalogRequests).toBe(1);
+  expect(releaseRequests).toBe(1);
+  expect(previewRequests).toBe(1);
+  fireEvent.click(screen.getByRole("button", { name: "Toggle locale" }));
+  expect(
+    await screen.findByRole("heading", {
+      name: "Предпросмотр — только чтение",
+    }),
+  ).toBeInTheDocument();
+  expect(catalogRequests).toBe(1);
+  expect(releaseRequests).toBe(1);
+  expect(previewRequests).toBe(1);
 
   expect(previewBody).toMatchObject({
     provider_release_id: releaseID,
@@ -183,8 +230,24 @@ it("selects a local provider release, assigns an incoming file, and confirms the
     }),
   );
   await screen.findByText(
-    /Сопоставление подтверждено для релиза library-release/,
+    /Сопоставление подтверждено для релиза Мой локальный альбом/,
   );
+  expect(screen.queryByText(/library-release/)).not.toBeInTheDocument();
+  expect(
+    screen.getByText("Локальное сопоставление подтверждено."),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Toggle locale" }));
+  expect(
+    screen.getByText("Matching confirmed for release Мой локальный альбом."),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Local matching confirmed.")).toBeInTheDocument();
+  expect(screen.getByLabelText("Track for file album/01.flac")).toHaveValue(
+    trackID,
+  );
+  expect(catalogRequests).toBe(1);
+  expect(releaseRequests).toBe(1);
+  expect(previewRequests).toBe(1);
+  fireEvent.click(screen.getByRole("button", { name: "Toggle locale" }));
 
   expect(confirmBodies).toHaveLength(2);
   expect(confirmBodies[1]).toEqual(confirmBodies[0]);

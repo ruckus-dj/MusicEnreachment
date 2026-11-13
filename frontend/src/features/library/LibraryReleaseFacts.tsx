@@ -2,13 +2,15 @@ import type {
   LibraryReleaseDetailResponse,
   LibraryReleaseTrackResponse,
 } from "../../api/generated/client.schemas";
+import { useI18n } from "../../i18n/I18nProvider";
 
 function positionNumber(track: LibraryReleaseTrackResponse) {
   return track.displayed_number.trim() || String(track.position);
 }
 
-function formatDuration(duration: number | null) {
-  if (duration === null) return "Не указана";
+function formatDuration(duration: number | null, locale: "en" | "ru") {
+  if (duration === null)
+    return locale === "ru" ? "Не указана" : "Not specified";
   const seconds = Math.floor(duration / 1000);
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}${duration % 1000 ? `.${String(duration % 1000).padStart(3, "0")}` : ""}`;
 }
@@ -66,6 +68,35 @@ export function ReleaseMediaSummary({
 }: {
   release: LibraryReleaseDetailResponse;
 }) {
+  const { locale } = useI18n();
+  const copy =
+    locale === "ru"
+      ? {
+          heading: "Носители и позиции",
+          positionsByMedia: "Позиции по носителям",
+          medium: "Носитель",
+          title: "Название",
+          format: "Формат",
+          positions: "Позиции",
+          untitled: "Без названия",
+          unspecified: "Не указан",
+          positionsUnspecified: "Позиции не указаны",
+          mediaUnrecorded: "Сведения о носителях не сохранены.",
+          releasePositions: "Позиции релиза:",
+        }
+      : {
+          heading: "Media and positions",
+          positionsByMedia: "Positions by media",
+          medium: "Medium",
+          title: "Title",
+          format: "Format",
+          positions: "Positions",
+          untitled: "Untitled",
+          unspecified: "Not specified",
+          positionsUnspecified: "No positions specified",
+          mediaUnrecorded: "Media information has not been saved.",
+          releasePositions: "Release positions:",
+        };
   const media = release.media ?? [];
   const tracks = release.tracks ?? [];
   return (
@@ -73,19 +104,19 @@ export function ReleaseMediaSummary({
       className="library-release-media"
       aria-labelledby="release-media-heading"
     >
-      <h2 id="release-media-heading">Носители и позиции</h2>
+      <h2 id="release-media-heading">{copy.heading}</h2>
       {media.length ? (
         <section
           className="library-release-table-scroll"
-          aria-label="Позиции по носителям"
+          aria-label={copy.positionsByMedia}
         >
           <table>
             <thead>
               <tr>
-                <th scope="col">Носитель</th>
-                <th scope="col">Название</th>
-                <th scope="col">Формат</th>
-                <th scope="col">Позиции</th>
+                <th scope="col">{copy.medium}</th>
+                <th scope="col">{copy.title}</th>
+                <th scope="col">{copy.format}</th>
+                <th scope="col">{copy.positions}</th>
               </tr>
             </thead>
             <tbody>
@@ -98,8 +129,8 @@ export function ReleaseMediaSummary({
                 return (
                   <tr key={medium.id}>
                     <th scope="row">{medium.medium}</th>
-                    <td>{medium.title || "Без названия"}</td>
-                    <td>{medium.format || "Не указан"}</td>
+                    <td>{medium.title || copy.untitled}</td>
+                    <td>{medium.format || copy.unspecified}</td>
                     <td>
                       {items.length ? (
                         <ul className="library-release-position-links">
@@ -114,7 +145,7 @@ export function ReleaseMediaSummary({
                           ))}
                         </ul>
                       ) : (
-                        <span>Позиции не указаны</span>
+                        <span>{copy.positionsUnspecified}</span>
                       )}
                     </td>
                   </tr>
@@ -124,9 +155,11 @@ export function ReleaseMediaSummary({
           </table>
         </section>
       ) : (
-        <p>Сведения о носителях не сохранены.</p>
+        <p>{copy.mediaUnrecorded}</p>
       )}
-      {!media.length && tracks.length > 0 ? <p>Позиции релиза:</p> : null}
+      {!media.length && tracks.length > 0 ? (
+        <p>{copy.releasePositions}</p>
+      ) : null}
     </section>
   );
 }
@@ -136,30 +169,45 @@ export function PositionIdentity({
 }: {
   track: LibraryReleaseTrackResponse;
 }) {
+  const { locale } = useI18n();
+  const copy =
+    locale === "ru"
+      ? {
+          position: "Позиция",
+          title: "Название позиции",
+          duration: "Длительность",
+          composition: "Композиция",
+          unspecified: "Не указано",
+          facts: "Сведения о позиции",
+        }
+      : {
+          position: "Position",
+          title: "Position title",
+          duration: "Duration",
+          composition: "Recording",
+          unspecified: "Not specified",
+          facts: "Position details",
+        };
   return (
     <dl
       className="library-release-position-facts"
-      aria-label={`Сведения о позиции ${positionNumber(track)}`}
+      aria-label={`${copy.facts} ${positionNumber(track)}`}
     >
       <div>
-        <dt>Позиция</dt>
+        <dt>{copy.position}</dt>
         <dd>{positionNumber(track)}</dd>
       </div>
       <div>
-        <dt>Название позиции</dt>
-        <dd>{track.title || "Не указано"}</dd>
+        <dt>{copy.title}</dt>
+        <dd>{track.title || copy.unspecified}</dd>
       </div>
       <div>
-        <dt>Длительность</dt>
-        <dd>{formatDuration(track.duration_ms)}</dd>
+        <dt>{copy.duration}</dt>
+        <dd>{formatDuration(track.duration_ms, locale)}</dd>
       </div>
       <div>
-        <dt>Recording</dt>
-        <dd>{track.recording_title || "Не указан"}</dd>
-      </div>
-      <div>
-        <dt>Recording ID</dt>
-        <dd>{track.recording_id || "Не указан"}</dd>
+        <dt>{copy.composition}</dt>
+        <dd>{track.recording_title || copy.unspecified}</dd>
       </div>
     </dl>
   );

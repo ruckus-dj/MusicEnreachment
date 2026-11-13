@@ -22,8 +22,98 @@ import "./catalog.css";
 
 const PAGE_SIZE = 50;
 
+const artistScreenCopy = {
+  en: {
+    backToLibrary: "← Back to library",
+    loadingArtist: "Loading artist…",
+    artistLoadFailed: (status: number) =>
+      `Could not load artist (HTTP ${status}).`,
+    retry: "Retry",
+    artistReleaseSummary:
+      "Includes known cached groups; the discography may be incomplete.",
+    loadingReleases: "Loading releases…",
+    releaseLoadFailed: (status: number) =>
+      `Could not load releases (HTTP ${status}).`,
+    artistReleases: "Artist releases",
+    untitledRelease: "Untitled release",
+    untitledPosition: "Untitled",
+    dateNotSpecified: "Date not specified",
+    withAudio: "with audio",
+    published: "published",
+    hidePositions: "Hide positions",
+    showPositions: "Show positions",
+    noReleasesFound: "No releases found",
+    changeFilters: "Try changing the filters.",
+    artistHasNoReleases: "This artist has no releases yet.",
+    releasePages: "Release pages",
+    of: "of",
+    previous: "Previous",
+    next: "Next",
+    loadingPositions: "Loading positions…",
+    positionLoadFailed: (status: number) =>
+      `Could not load positions (HTTP ${status}).`,
+    positionPages: "Position pages",
+    audioAvailable: "Audio available",
+    audioMissing: "Audio missing",
+    unpublished: "Not published",
+    noPositionsInRelease: "This release has no positions yet.",
+  },
+  ru: {
+    backToLibrary: "← К медиатеке",
+    loadingArtist: "Загрузка артиста…",
+    artistLoadFailed: (status: number) =>
+      `Не удалось загрузить артиста (HTTP ${status}).`,
+    retry: "Повторить",
+    artistReleaseSummary:
+      "Включая известные группы из кэша; дискография может быть неполной.",
+    loadingReleases: "Загрузка релизов…",
+    releaseLoadFailed: (status: number) =>
+      `Не удалось загрузить релизы (HTTP ${status}).`,
+    artistReleases: "Релизы артиста",
+    untitledRelease: "Релиз без названия",
+    untitledPosition: "Без названия",
+    dateNotSpecified: "Дата не указана",
+    withAudio: "с аудио",
+    published: "опубликовано",
+    hidePositions: "Скрыть позиции",
+    showPositions: "Показать позиции",
+    noReleasesFound: "Релизы не найдены",
+    changeFilters: "Попробуйте изменить фильтры.",
+    artistHasNoReleases: "У этого артиста пока нет релизов.",
+    releasePages: "Страницы релизов",
+    of: "из",
+    previous: "Назад",
+    next: "Далее",
+    loadingPositions: "Загрузка позиций…",
+    positionLoadFailed: (status: number) =>
+      `Не удалось загрузить позиции (HTTP ${status}).`,
+    positionPages: "Страницы позиций",
+    audioAvailable: "Аудио в наличии",
+    audioMissing: "Аудио не хватает",
+    unpublished: "Не опубликовано",
+    noPositionsInRelease: "В этом релизе пока нет позиций.",
+  },
+} as const;
+
+function countLabel(
+  count: number,
+  locale: "en" | "ru",
+  forms: {
+    en: readonly [string, string];
+    ru: readonly [string, string, string];
+  },
+) {
+  const formatted = new Intl.NumberFormat(
+    locale === "ru" ? "ru-RU" : "en-US",
+  ).format(count);
+  if (locale === "en") return `${formatted} ${forms.en[count === 1 ? 0 : 1]}`;
+  const plural = new Intl.PluralRules("ru-RU").select(count);
+  return `${formatted} ${forms.ru[plural === "one" ? 0 : plural === "few" ? 1 : 2]}`;
+}
+
 export function LibraryArtistScreen({ artistId }: { artistId: string }) {
   const { locale } = useI18n();
+  const copy = artistScreenCopy[locale];
   const queryClient = useQueryClient();
   const hash = useHashLocation();
   const route = parseLibraryArtistRoute(hash) ?? {
@@ -88,7 +178,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     artistQuery.data?.status !== undefined && artistQuery.data.status !== 200
       ? apiResponseError(
           artistQuery.data,
-          `Не удалось загрузить артиста (HTTP ${artistQuery.data.status}).`,
+          copy.artistLoadFailed(artistQuery.data.status),
         ).message
       : artistQuery.error instanceof Error
         ? artistQuery.error.message
@@ -100,7 +190,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
     releasesQuery.data.status !== 200
       ? apiResponseError(
           releasesQuery.data,
-          `Не удалось загрузить релизы (HTTP ${releasesQuery.data.status}).`,
+          copy.releaseLoadFailed(releasesQuery.data.status),
         ).message
       : releasesQuery.error instanceof Error
         ? releasesQuery.error.message
@@ -111,15 +201,15 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
   return (
     <main className="library-catalog" aria-labelledby="artist-title">
       <a className="catalog-back" href={libraryRouteHref(route)}>
-        ← Медиатека
+        {copy.backToLibrary}
       </a>
       {artistQuery.isLoading ? (
-        <p role="status">Загрузка артиста…</p>
+        <p role="status">{copy.loadingArtist}</p>
       ) : error ? (
         <section className="catalog-state catalog-state--error" role="alert">
           <p>{error}</p>
           <button type="button" onClick={() => void artistQuery.refetch()}>
-            Повторить
+            {copy.retry}
           </button>
         </section>
       ) : artist ? (
@@ -134,16 +224,19 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                 onSaved={invalidateArtistMetadata}
               />
               <p className="catalog-muted">
-                {artist.release_count} {locale === "ru" ? "альбомов" : "albums"}{" "}
-                · {artist.position_count} позиций · С аудио:{" "}
-                {artist.available_position_count} ·{" "}
-                {artist.published_position_count} опубликовано
+                {countLabel(artist.release_count, locale, {
+                  en: ["release", "releases"],
+                  ru: ["релиз", "релиза", "релизов"],
+                })}{" "}
+                ·{" "}
+                {countLabel(artist.position_count, locale, {
+                  en: ["position", "positions"],
+                  ru: ["позиция", "позиции", "позиций"],
+                })}{" "}
+                · {copy.withAudio}: {artist.available_position_count} ·{" "}
+                {artist.published_position_count} {copy.published}
               </p>
-              <p className="catalog-muted">
-                {locale === "ru"
-                  ? "Включая известные группы из кэша; дискография может быть неполной."
-                  : "Includes known cached groups; the discography may be incomplete."}
-              </p>
+              <p className="catalog-muted">{copy.artistReleaseSummary}</p>
               <LibraryDeletionControl
                 target={{ type: "artist", artistId }}
                 releaseTitle={artist.name}
@@ -168,7 +261,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
             onSaved={invalidateArtistMetadata}
           />
           {releasesQuery.isLoading ? (
-            <p role="status">Загрузка релизов…</p>
+            <p role="status">{copy.loadingReleases}</p>
           ) : releasesError ? (
             <section
               className="catalog-state catalog-state--error"
@@ -179,13 +272,13 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                 type="button"
                 onClick={() => void releasesQuery.refetch()}
               >
-                Повторить
+                {copy.retry}
               </button>
             </section>
           ) : releases?.items.length ? (
             <section
               className="catalog-artist-releases"
-              aria-label="Релизы артиста"
+              aria-label={copy.artistReleases}
             >
               {releases.items.map((item) => {
                 if (
@@ -217,16 +310,22 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                           <a
                             href={`#/library/releases/${encodeURIComponent(release.id)}`}
                           >
-                            {release.title || "Без названия"}
+                            {release.title || copy.untitledRelease}
                           </a>
                         </h2>
                         <p>
                           {release.edition.release_date ??
                             release.edition.original_release_date ??
-                            "Дата не указана"}{" "}
-                          · {release.counts.position_count} позиций ·{" "}
-                          {release.counts.available_position_count} с аудио ·{" "}
-                          {release.counts.published_position_count} опубликовано
+                            copy.dateNotSpecified}{" "}
+                          ·{" "}
+                          {countLabel(release.counts.position_count, locale, {
+                            en: ["position", "positions"],
+                            ru: ["позиция", "позиции", "позиций"],
+                          })}{" "}
+                          · {release.counts.available_position_count}{" "}
+                          {copy.withAudio} ·{" "}
+                          {release.counts.published_position_count}{" "}
+                          {copy.published}
                         </p>
                       </div>
                       <button
@@ -240,12 +339,15 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                         }
                       >
                         {expanded[release.id]
-                          ? "Скрыть позиции"
-                          : "Показать позиции"}
+                          ? copy.hidePositions
+                          : copy.showPositions}
                       </button>
                     </div>
                     {expanded[release.id] && (
-                      <ReleasePositions releaseId={release.id} />
+                      <ReleasePositions
+                        releaseId={release.id}
+                        locale={locale}
+                      />
                     )}
                   </article>
                 );
@@ -253,21 +355,21 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
             </section>
           ) : (
             <section className="catalog-state">
-              <h2>Релизов не найдено</h2>
+              <h2>{copy.noReleasesFound}</h2>
               <p>
                 {route.query ||
                 route.publication !== "all" ||
                 route.availability !== "all"
-                  ? "Попробуйте изменить фильтры."
-                  : "У этого артиста пока нет релизов."}
+                  ? copy.changeFilters
+                  : copy.artistHasNoReleases}
               </p>
             </section>
           )}
           {releases && releases.total > PAGE_SIZE && (
-            <nav className="catalog-pagination" aria-label="Страницы релизов">
+            <nav className="catalog-pagination" aria-label={copy.releasePages}>
               <span>
                 {route.offset + 1}–
-                {Math.min(route.offset + PAGE_SIZE, releases.total)} из{" "}
+                {Math.min(route.offset + PAGE_SIZE, releases.total)} {copy.of}{" "}
                 {releases.total}
               </span>
               <a
@@ -277,7 +379,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                   offset: Math.max(0, route.offset - PAGE_SIZE),
                 })}
               >
-                Назад
+                {copy.previous}
               </a>
               <a
                 aria-disabled={route.offset + PAGE_SIZE >= releases.total}
@@ -286,7 +388,7 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
                   offset: route.offset + PAGE_SIZE,
                 })}
               >
-                Далее
+                {copy.next}
               </a>
             </nav>
           )}
@@ -296,7 +398,14 @@ export function LibraryArtistScreen({ artistId }: { artistId: string }) {
   );
 }
 
-function ReleasePositions({ releaseId }: { releaseId: string }) {
+function ReleasePositions({
+  releaseId,
+  locale,
+}: {
+  releaseId: string;
+  locale: "en" | "ru";
+}) {
+  const copy = artistScreenCopy[locale];
   const [offset, setOffset] = useState(0);
   const query = useListLibraryPositions({
     release_id: releaseId,
@@ -307,20 +416,18 @@ function ReleasePositions({ releaseId }: { releaseId: string }) {
   });
   const failure =
     query.data?.status !== undefined && query.data.status !== 200
-      ? apiResponseError(
-          query.data,
-          `Не удалось загрузить позиции (HTTP ${query.data.status}).`,
-        ).message
+      ? apiResponseError(query.data, copy.positionLoadFailed(query.data.status))
+          .message
       : query.error instanceof Error
         ? query.error.message
         : "";
-  if (query.isLoading) return <p role="status">Загрузка позиций…</p>;
+  if (query.isLoading) return <p role="status">{copy.loadingPositions}</p>;
   if (failure)
     return (
       <section className="catalog-state catalog-state--error" role="alert">
         <p>{failure}</p>
         <button type="button" onClick={() => void query.refetch()}>
-          Повторить
+          {copy.retry}
         </button>
       </section>
     );
@@ -335,23 +442,26 @@ function ReleasePositions({ releaseId }: { releaseId: string }) {
               href={`#/library/releases/${encodeURIComponent(releaseId)}/positions/${encodeURIComponent(position.id)}`}
             >
               {position.medium}.{position.displayed_number || position.position}{" "}
-              {position.title || "Без названия"}
+              {position.title || copy.untitledPosition}
             </a>
             <span>
               {position.audio_available
-                ? "Аудио в наличии"
-                : "Аудио не хватает"}
+                ? copy.audioAvailable
+                : copy.audioMissing}
               {" · "}
-              {position.source_variant_count} исходников ·{" "}
-              {position.publication ? "Опубликовано" : "Не опубликовано"}
+              {countLabel(position.source_variant_count, locale, {
+                en: ["source", "sources"],
+                ru: ["исходник", "исходника", "исходников"],
+              })}{" "}
+              · {position.publication ? copy.published : copy.unpublished}
             </span>
           </li>
         ))}
       </ol>
       {page && page.total > PAGE_SIZE && (
-        <nav className="catalog-pagination" aria-label="Страницы позиций">
+        <nav className="catalog-pagination" aria-label={copy.positionPages}>
           <span>
-            {offset + 1}–{Math.min(offset + PAGE_SIZE, page.total)} из{" "}
+            {offset + 1}–{Math.min(offset + PAGE_SIZE, page.total)} {copy.of}{" "}
             {page.total}
           </span>
           <button
@@ -359,19 +469,19 @@ function ReleasePositions({ releaseId }: { releaseId: string }) {
             disabled={offset === 0}
             onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
           >
-            Назад
+            {copy.previous}
           </button>
           <button
             type="button"
             disabled={offset + PAGE_SIZE >= page.total}
             onClick={() => setOffset(offset + PAGE_SIZE)}
           >
-            Далее
+            {copy.next}
           </button>
         </nav>
       )}
     </>
   ) : (
-    <p className="catalog-muted">В этом релизе пока нет позиций.</p>
+    <p className="catalog-muted">{copy.noPositionsInRelease}</p>
   );
 }
