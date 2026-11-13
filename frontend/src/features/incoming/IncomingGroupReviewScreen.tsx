@@ -31,6 +31,13 @@ import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
 import { IncomingGroupingEditor } from "./IncomingGroupingEditor";
 import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
+import {
+  type IncomingFeedback,
+  type IncomingMessageKey,
+  type IncomingMessages,
+  incomingFeedbackText,
+  incomingMessages,
+} from "./incomingMessages";
 import { LocalReleaseEditor } from "./LocalReleaseEditor";
 import { localMatchingMessages } from "./localMatchingMessages";
 import { ManualReleasePicker } from "./ManualReleasePicker";
@@ -71,15 +78,38 @@ type AuthorityIntent = {
   body: MatchingReturnAutomaticBody;
 };
 
-function errorText(reason: unknown, fallback: string) {
-  return sharedErrorMessage(reason, fallback) || fallback;
+type IncomingError = Error & {
+  incomingMessageKey?: IncomingMessageKey;
+  incomingHttpStatus?: number;
+};
+
+function errorText(
+  reason: unknown,
+  fallback: IncomingMessageKey,
+): IncomingFeedback {
+  if (reason instanceof Error && (reason as IncomingError).incomingMessageKey) {
+    const error = reason as IncomingError;
+    return {
+      key: error.incomingMessageKey!,
+      status: error.incomingHttpStatus,
+    };
+  }
+  return {
+    key: fallback,
+    raw: sharedErrorMessage(reason, "") || undefined,
+  };
 }
 
 function responseError(
   response: { data: { detail?: string }; status: number },
-  fallback: string,
+  fallback: IncomingMessageKey,
 ) {
-  return apiResponseError(response, `${fallback} (HTTP ${response.status}).`);
+  const detail = response.data.detail;
+  if (detail) return apiResponseError(response);
+  const error = new Error() as IncomingError;
+  error.incomingMessageKey = fallback;
+  error.incomingHttpStatus = response.status;
+  return error;
 }
 
 function parsedProposal(review: MatchingReview | undefined): ReviewProposal {
@@ -90,26 +120,30 @@ function parsedProposal(review: MatchingReview | undefined): ReviewProposal {
 function layoutLabel(
   release: MatchingReviewRelease,
   releases: MatchingReviewRelease[],
+  copy: IncomingMessages,
 ) {
   const sameTitle = releases.filter((item) => item.title === release.title);
   const duplicateTitle = sameTitle.length > 1;
   const ordinal = sameTitle.indexOf(release);
-  return `${release.title}${release.tracklist_complete ? "" : " · неполный список"}${duplicateTitle ? ` · издание ${ordinal + 1}` : ""}`;
+  return `${release.title}${release.tracklist_complete ? "" : ` · ${copy.incompleteRelease}`}${duplicateTitle ? ` · ${copy.releaseOrdinal(ordinal + 1)}` : ""}`;
 }
 
 function positionLabel(
   position: NonNullable<MatchingReviewRelease["positions"]>[number],
+  copy: IncomingMessages,
 ) {
   const number = position.displayed_number || `${position.position + 1}`;
-  return `Диск ${position.medium + 1} · трек ${number} · ${position.title}`;
+  return copy.discTrack(position.medium + 1, number, position.title);
 }
 
 function Metadata({
   title,
   tags,
+  copy,
 }: {
   title: string;
   tags: Record<string, string[] | null>;
+  copy: IncomingMessages;
 }) {
   const entries = Object.entries(tags);
   return (
@@ -120,12 +154,12 @@ function Metadata({
           {entries.map(([key, values]) => (
             <div key={key} className="rounded border border-stone-200 p-2">
               <dt className="font-semibold">{key}</dt>
-              <dd>{values?.length ? values.join(" · ") : "Нет значения"}</dd>
+              <dd>{values?.length ? values.join(" · ") : copy.noValue}</dd>
             </div>
           ))}
         </dl>
       ) : (
-        <p>Метаданные не сохранены.</p>
+        <p>{copy.metadataNotSaved}</p>
       )}
     </details>
   );
@@ -143,13 +177,13 @@ export function IncomingGroupReviewScreen() {
 function IncomingGroupReviewContent() {
   const queryClient = useQueryClient();
   const { locale } = useI18n();
+  const copy = incomingMessages[locale];
   const localMatchingCopy = localMatchingMessages[locale];
   const groupsQuery = useQuery({
     queryKey: getGetIncomingGroupsQueryKey(),
     queryFn: async ({ signal }) => {
       const result = await getIncomingGroups({ signal, cache: "no-store" });
-      if (result.status !== 200)
-        throw responseError(result, "Не удалось загрузить входящие группы");
+      if (result.status !== 200) throw responseError(result, "loadGroupsError");
       return result.data;
     },
   });
@@ -168,9 +202,10 @@ function IncomingGroupReviewContent() {
   >({});
   const [preview, setPreview] = useState<PreviewState>();
   const [confirmIntent, setConfirmIntent] = useState<ConfirmIntent>();
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [authorityNotice, setAuthorityNotice] = useState("");
+  const [error, setError] = useState<IncomingFeedback | null>(null);
+  const [notice, setNotice] = useState<IncomingFeedback | null>(null);
+  const [authorityNotice, setAuthorityNotice] =
+    useState<IncomingFeedback | null>(null);
   const [authorityIntent, setAuthorityIntent] = useState<AuthorityIntent>();
   const [receipt, setReceipt] = useState<{
     groupId: string;
@@ -224,11 +259,7 @@ function IncomingGroupReviewContent() {
         signal,
         cache: "no-store",
       });
-      if (result.status !== 200)
-        throw responseError(
-          result,
-          "Не удалось загрузить оценку сопоставления",
-        );
+      if (result.status !== 200) throw responseError(result, "loadReviewError");
       return result.data;
     },
     enabled: Boolean(groupId),
@@ -315,7 +346,7 @@ function IncomingGroupReviewContent() {
     const artist = tags?.ARTIST?.find(Boolean);
     return (
       [title, artist].filter(Boolean).join(" · ") ||
-      `Файл ${index >= 0 ? index + 1 : 1}`
+      `${copy.file} ${index >= 0 ? index + 1 : 1}`
     );
   };
   const intentPayload = useMemo(() => {
@@ -419,9 +450,9 @@ function IncomingGroupReviewContent() {
     const activeRequest = ++requestId.current;
     setAuthorityIntent(preserved);
     setPendingRequest({ id: activeRequest, groupId, scope: requestScope });
-    setError("");
-    setNotice("");
-    setAuthorityNotice("");
+    setError(null);
+    setNotice(null);
+    setAuthorityNotice(null);
     try {
       const response = await returnIncomingGroupMatchingToAutomatic(
         groupId,
@@ -434,16 +465,14 @@ function IncomingGroupReviewContent() {
           setAuthorityIntent(undefined);
           setPreview(undefined);
           setConfirmIntent(undefined);
-          setError(
-            "Данные группы или режима изменились. Обновите их вручную перед новой попыткой.",
-          );
+          setError({ key: "authorityConflict", refresh: "authority" });
           void Promise.all([
             groupsQuery.refetch(),
             reviewQuery.refetch(),
           ]).catch(() => undefined);
           return;
         }
-        throw responseError(response, "Режим сопоставления не изменён");
+        throw responseError(response, "authorityError");
       }
       generation.current += 1;
       scopeRef.current = {
@@ -455,9 +484,7 @@ function IncomingGroupReviewContent() {
       setPreview(undefined);
       setConfirmIntent(undefined);
       setPendingRequest(undefined);
-      setAuthorityNotice(
-        "Возврат к автоматическому сопоставлению сохранён. Ожидается новая оценка.",
-      );
+      setAuthorityNotice({ key: "authoritySavedNotice" });
       await Promise.all([
         queryClient.invalidateQueries({
           queryKey: getGetIncomingGroupsQueryKey(),
@@ -468,12 +495,7 @@ function IncomingGroupReviewContent() {
       ]);
     } catch (reason) {
       if (requestScope === authorityScope())
-        setError(
-          errorText(
-            reason,
-            "Не удалось изменить режим сопоставления. Повтор использует тот же запрос.",
-          ),
-        );
+        setError(errorText(reason, "authorityError"));
     } finally {
       setPendingRequest((current) =>
         current?.id === activeRequest ? undefined : current,
@@ -495,7 +517,7 @@ function IncomingGroupReviewContent() {
     setConfirmIntent(undefined);
     setReceipt(undefined);
     setAuthorityIntent(undefined);
-    setAuthorityNotice("");
+    setAuthorityNotice(null);
   }
 
   function changeRelease(nextReleaseId: string) {
@@ -510,8 +532,8 @@ function IncomingGroupReviewContent() {
     setPreview(undefined);
     setConfirmIntent(undefined);
     setReceipt(undefined);
-    setNotice("");
-    setError("");
+    setNotice(null);
+    setError(null);
   }
 
   function assign(memberId: string, trackId: string) {
@@ -526,8 +548,8 @@ function IncomingGroupReviewContent() {
     setPreview(undefined);
     setConfirmIntent(undefined);
     setReceipt(undefined);
-    setNotice("");
-    setError("");
+    setNotice(null);
+    setError(null);
   }
 
   function updateTrackTagOverride(
@@ -543,8 +565,8 @@ function IncomingGroupReviewContent() {
     setPreview(undefined);
     setConfirmIntent(undefined);
     setReceipt(undefined);
-    setNotice("");
-    setError("");
+    setNotice(null);
+    setError(null);
   }
 
   async function createPreview() {
@@ -552,8 +574,8 @@ function IncomingGroupReviewContent() {
     const requestScope = scopeIdentity();
     const activeRequest = ++requestId.current;
     setPendingRequest({ id: activeRequest, groupId, scope: requestScope });
-    setError("");
-    setNotice("");
+    setError(null);
+    setNotice(null);
     try {
       const response = await previewIncomingGroupManualMatching(
         groupId,
@@ -561,12 +583,12 @@ function IncomingGroupReviewContent() {
       );
       if (requestScope !== scopeIdentity()) return;
       if (response.status !== 200)
-        throw responseError(response, "Предпросмотр не создан");
+        throw responseError(response, "previewError");
       setPreview({ intent: intentPayload, response: response.data });
       setConfirmIntent(undefined);
     } catch (reason) {
       if (requestScope === scopeIdentity())
-        setError(errorText(reason, "Не удалось создать предпросмотр."));
+        setError(errorText(reason, "previewError"));
     } finally {
       setPendingRequest((current) =>
         current?.id === activeRequest ? undefined : current,
@@ -590,8 +612,8 @@ function IncomingGroupReviewContent() {
     const activeRequest = ++requestId.current;
     setConfirmIntent(preserved);
     setPendingRequest({ id: activeRequest, groupId, scope: requestScope });
-    setError("");
-    setNotice("");
+    setError(null);
+    setNotice(null);
     try {
       const response = await confirmIncomingGroupManualMatching(
         preserved.groupId,
@@ -600,12 +622,10 @@ function IncomingGroupReviewContent() {
       if (requestScope !== scopeIdentity()) return;
       if (response.status !== 200) {
         if (response.status === 409) {
-          setError(
-            "Данные оценки или группы изменились. Черновик сохранён; обновите оценку вручную перед новым предпросмотром.",
-          );
+          setError({ key: "confirmConflict", refresh: "evaluation" });
           return;
         }
-        throw responseError(response, "Подтверждение не выполнено");
+        throw responseError(response, "confirmError");
       }
       setReceipt({
         groupId: preserved.groupId,
@@ -619,9 +639,7 @@ function IncomingGroupReviewContent() {
       });
       setPreview(undefined);
       setConfirmIntent(undefined);
-      setNotice(
-        "Подтверждение сохранено. Не включённые в назначение файлы остаются во входящей группе.",
-      );
+      setNotice({ key: "confirmNotice" });
       await Promise.all([
         queryClient.invalidateQueries({
           queryKey: getGetIncomingGroupsQueryKey(),
@@ -632,12 +650,7 @@ function IncomingGroupReviewContent() {
       ]);
     } catch (reason) {
       if (requestScope === scopeIdentity())
-        setError(
-          errorText(
-            reason,
-            "Не удалось подтвердить назначение. Повтор использует тот же запрос.",
-          ),
-        );
+        setError(errorText(reason, "confirmError"));
     } finally {
       setPendingRequest((current) =>
         current?.id === activeRequest ? undefined : current,
@@ -647,14 +660,12 @@ function IncomingGroupReviewContent() {
 
   async function reloadReview() {
     const requestScope = scopeIdentity();
-    setError("");
+    setError(null);
     await reviewQuery.refetch();
     if (requestScope !== scopeIdentity()) return;
     setPreview(undefined);
     setConfirmIntent(undefined);
-    setNotice(
-      "Оценка обновлена. Черновик назначений сохранён для выбранного издания.",
-    );
+    setNotice({ key: "refreshNotice" });
   }
 
   const inspectedFileMemberId = memberIds.includes(inspectedMemberId)
@@ -686,34 +697,30 @@ function IncomingGroupReviewContent() {
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
         <div>
           <h1 id="incoming-title" className="text-2xl font-semibold">
-            Разбор входящих групп
+            {copy.title}
           </h1>
-          <p className="mt-1 text-sm text-stone-700">
-            Выберите издание и явно назначьте файлы позициям. Черновик хранится
-            только в этой странице.
-          </p>
+          <p className="mt-1 text-sm text-stone-700">{copy.introduction}</p>
         </div>
         <AppButton
           onPress={() => {
             void groupsQuery.refetch();
           }}
         >
-          Обновить список
+          {copy.refreshGroups}
         </AppButton>
       </div>
 
-      {groupsQuery.isLoading ? (
-        <p role="status">Загрузка входящих групп…</p>
-      ) : null}
+      {groupsQuery.isLoading ? <p role="status">{copy.loadingGroups}</p> : null}
       {groupsQuery.isError ? (
         <p role="alert">
-          {errorText(groupsQuery.error, "Не удалось загрузить группы.")}
+          {incomingFeedbackText(
+            locale,
+            errorText(groupsQuery.error, "groupsLoadError"),
+          )}
         </p>
       ) : null}
       {groupsQuery.data && groups.length === 0 ? (
-        <p className="rounded border border-stone-300 p-4">
-          Входящих групп нет.
-        </p>
+        <p className="rounded border border-stone-300 p-4">{copy.noGroups}</p>
       ) : null}
 
       {groups.length > 0 ? (
@@ -722,7 +729,7 @@ function IncomingGroupReviewContent() {
             {groupsQuery.data ? (
               <details className="rounded border border-stone-300 p-3">
                 <summary className="cursor-pointer font-semibold">
-                  Объединить, разделить или переместить файлы групп
+                  {copy.groupEditingSummary}
                 </summary>
                 <IncomingGroupingEditor
                   snapshot={groupsQuery.data}
@@ -751,7 +758,7 @@ function IncomingGroupReviewContent() {
               />
             ) : null}
             <label className="block max-w-2xl text-sm font-medium">
-              Входящая группа
+              {copy.incomingGroupsLabel}
               <select
                 className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
                 value={groupId}
@@ -759,8 +766,11 @@ function IncomingGroupReviewContent() {
               >
                 {groups.map((item, index) => (
                   <option key={item.id} value={item.id}>
-                    Группа {index + 1} · {item.members?.length ?? 0} файлов
-                    {item.manual ? " · вручную сгруппирована" : ""}
+                    {copy.groupOption(
+                      index + 1,
+                      item.members?.length ?? 0,
+                      item.manual,
+                    )}
                   </option>
                 ))}
               </select>
@@ -794,14 +804,14 @@ function IncomingGroupReviewContent() {
             ) : null}
 
             {reviewQuery.isLoading ? (
-              <p role="status">Чтение сохранённой оценки…</p>
+              <p role="status">{copy.loadingEvaluation}</p>
             ) : null}
             {reviewQuery.isError ? (
               <div role="alert" className="space-y-2">
                 <p>
-                  {errorText(
-                    reviewQuery.error,
-                    "Оценка сопоставления недоступна.",
+                  {incomingFeedbackText(
+                    locale,
+                    errorText(reviewQuery.error, "loadReviewError"),
                   )}
                 </p>
                 <AppButton
@@ -810,14 +820,13 @@ function IncomingGroupReviewContent() {
                     void reviewQuery.refetch();
                   }}
                 >
-                  Повторить чтение
+                  {copy.retryReading}
                 </AppButton>
               </div>
             ) : null}
             {review && !review.evaluated ? (
               <p className="rounded border border-amber-500 bg-amber-50 p-3">
-                Оценка ещё не выполнялась. Автоматическое сопоставление здесь не
-                запускается.
+                {copy.evaluationNotRun}
               </p>
             ) : null}
             {review ? (
@@ -826,23 +835,21 @@ function IncomingGroupReviewContent() {
                 aria-labelledby="authority-title"
               >
                 <h2 id="authority-title" className="font-semibold">
-                  Текущий режим управления сопоставлением
+                  {copy.authorityHeading}
                 </h2>
                 <p className="mt-1 text-sm">
-                  Режим: <strong>{review.authority_mode}</strong> · ревизия:{" "}
-                  <code>{review.authority_revision}</code>
+                  {copy.modeLabel} <strong>{review.authority_mode}</strong> ·{" "}
+                  {copy.revisionLabel} <code>{review.authority_revision}</code>
                 </p>
                 <p className="mt-1 text-sm">
-                  Сохранённая текущая оценка и её доказательства показаны
-                  отдельно ниже. Удаление источников выполняется вне этого
-                  экрана.
+                  {copy.savedEvaluationExplanation}
                 </p>
                 {authorityNotice ? (
                   <p
                     role="status"
                     className="mt-2 rounded border border-green-700 p-3"
                   >
-                    {authorityNotice}
+                    {incomingFeedbackText(locale, authorityNotice)}
                   </p>
                 ) : null}
                 {review.authority_mode === "manual" ? (
@@ -852,12 +859,12 @@ function IncomingGroupReviewContent() {
                       onPress={() => void performAuthorityAction()}
                     >
                       {currentAuthorityIntent?.action === "automatic"
-                        ? "Повторить возврат к автоматическому сопоставлению"
-                        : "Вернуть к автоматическому сопоставлению"}
+                        ? copy.retryReturnAutomatic
+                        : copy.returnAutomatic}
                     </AppButton>
                   </div>
                 ) : null}
-                {error.includes("изменились") ? (
+                {error?.refresh === "authority" ? (
                   <AppButton
                     isDisabled={sameGroupInFlight}
                     onPress={() => {
@@ -868,22 +875,21 @@ function IncomingGroupReviewContent() {
                       ]);
                     }}
                   >
-                    Обновить данные группы и режима
+                    {copy.refreshAuthority}
                   </AppButton>
                 ) : null}
               </section>
             ) : null}
             {review?.evaluated && !review.proposal_available ? (
               <p className="rounded border border-amber-500 bg-amber-50 p-3">
-                Сохраненные данные предложения недоступны или неполны. Ручной
-                просмотр для этой оценки невозможен.
+                {copy.proposalUnavailable}
               </p>
             ) : null}
 
             {group && !(review?.evaluated && review.proposal_available) ? (
               <section
                 className="grid gap-3 rounded border border-stone-300 bg-white p-3 lg:grid-cols-2"
-                aria-label="Поиск и подготовка издания"
+                aria-label={copy.searchPreparationLabel}
               >
                 <ManualSearchPicker
                   groupId={groupId}
@@ -915,30 +921,30 @@ function IncomingGroupReviewContent() {
             review.proposal_available &&
             review.releases?.length === 0 ? (
               <p className="rounded border border-stone-300 p-3">
-                Для этой оценки нет доступных макетов изданий.
+                {copy.noReleaseLayouts}
               </p>
             ) : null}
 
             {review?.evaluated && review.proposal_available ? (
               <section
                 className="rounded border border-stone-300 bg-white p-4"
-                aria-label="Сводка входящей группы"
+                aria-label={copy.groupSummaryLabel}
               >
-                <h2 className="font-semibold">
-                  Файлы группы и текущий черновик
-                </h2>
+                <h2 className="font-semibold">{copy.groupDraftHeading}</h2>
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full border-collapse text-left text-sm">
                     <thead>
                       <tr>
                         <th className="border-b p-2">
-                          Уникальные файлы / пути
+                          {copy.uniqueFilesPaths}
                         </th>
                         <th className="border-b p-2">
-                          Черновик: назначено / всего
+                          {copy.draftAssignedTotal}
                         </th>
-                        <th className="border-b p-2">Снимок источника</th>
-                        <th className="border-b p-2">Снимок провайдера</th>
+                        <th className="border-b p-2">{copy.sourceSnapshot}</th>
+                        <th className="border-b p-2">
+                          {copy.providerSnapshot}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -966,27 +972,27 @@ function IncomingGroupReviewContent() {
                           / {memberIds.length}
                         </td>
                         <td className="border-b p-2">
-                          {
+                          {copy.savedFacts(
                             groupFiles.filter(
                               (file) =>
                                 file.capture_identity || file.locations?.length,
-                            ).length
-                          }{" "}
-                          из {groupFiles.length} файлов с сохранёнными данными
+                            ).length,
+                            groupFiles.length,
+                          )}
                         </td>
                         <td className="border-b p-2">
                           {review.candidates?.length
-                            ? `${review.candidates.length} сохранённых кандидатов`
-                            : "кандидаты отсутствуют"}
+                            ? copy.savedCandidates(review.candidates.length)
+                            : copy.noCandidates}
                         </td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
                 <p className="mt-2 text-sm">
-                  Уникальных файлов с сохранёнными ручными связями:{" "}
+                  {copy.linkedManualFiles}{" "}
                   {review.current_linked_manual_media_source_ids?.length ?? 0}.
-                  Черновик назначений не изменяет эти связи до подтверждения.
+                  {copy.draftDoesNotChangeLinks}
                 </p>
               </section>
             ) : null}
@@ -1003,7 +1009,7 @@ function IncomingGroupReviewContent() {
                 aria-labelledby="matching-search-title"
               >
                 <h2 id="matching-search-title" className="font-semibold">
-                  Поиск и файлы
+                  {copy.searchFilesHeading}
                 </h2>
                 {group ? (
                   <>
@@ -1034,36 +1040,36 @@ function IncomingGroupReviewContent() {
                     />
                   </>
                 ) : null}
-                <h3 className="font-medium">Сохраненная оценка</h3>
+                <h3 className="font-medium">{copy.savedEvaluation}</h3>
                 <p className="text-sm">
-                  Ревизия: {review.evaluation_revision || "не указана"} ·
-                  участников: {memberIds.length}
+                  {copy.reviewRevisionParticipants(
+                    review.evaluation_revision || copy.unknown,
+                    memberIds.length,
+                  )}
                 </p>
                 <label className="block text-sm font-medium">
-                  Издание (выбор вручную)
+                  {copy.releaseSelectionLabel}
                   <select
                     disabled={busy || authorityBusy || sameGroupInFlight}
                     className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
                     value={selectedReleaseId}
                     onChange={(event) => changeRelease(event.target.value)}
                   >
-                    <option value="">Выберите издание…</option>
+                    <option value="">{copy.chooseRelease}</option>
                     {releases.map((item) => (
                       <option
                         key={item.provider_release_id}
                         value={item.provider_release_id}
                       >
-                        {layoutLabel(item, releases)}
+                        {layoutLabel(item, releases, copy)}
                       </option>
                     ))}
                   </select>
                 </label>
                 {savedSelectedId && selectedReleaseId === savedSelectedId ? (
-                  <p className="text-sm">
-                    Это издание сохранено в оценке сервера.
-                  </p>
+                  <p className="text-sm">{copy.savedRelease}</p>
                 ) : null}
-                <h3 className="font-medium">Сохранённые кандидаты</h3>
+                <h3 className="font-medium">{copy.savedCandidatesHeading}</h3>
                 {review.candidates?.length ? (
                   <ul className="space-y-2 text-sm">
                     {review.candidates.flatMap((candidate) =>
@@ -1085,18 +1091,18 @@ function IncomingGroupReviewContent() {
                                     item.release_id === candidate.release_id ||
                                     item.provider_release_id ===
                                       candidate.release_id,
-                                )?.title ?? "Издание вне сохранённого макета"}
+                                )?.title ?? copy.releaseOutsideLayout}
                               </p>
                               <p>
-                                Уверенность издания:{" "}
+                                {copy.releaseConfidence}{" "}
                                 {Number.isFinite(candidate.release_confidence)
                                   ? candidate.release_confidence
-                                  : "неизвестно"}{" "}
-                                · позиции:{" "}
+                                  : copy.unknown}{" "}
+                                · {copy.positions}{" "}
                                 {position.displayed_number ||
                                   position.position + 1}{" "}
                                 —{" "}
-                                {position.assignment_confidence ?? "неизвестно"}
+                                {position.assignment_confidence ?? copy.unknown}
                               </p>
                             </li>
                           ))
@@ -1117,20 +1123,20 @@ function IncomingGroupReviewContent() {
                                     item.release_id === candidate.release_id ||
                                     item.provider_release_id ===
                                       candidate.release_id,
-                                )?.title ?? "Издание вне сохранённого макета"}
+                                )?.title ?? copy.releaseOutsideLayout}
                               </p>
                               <p>
-                                Уверенность издания:{" "}
+                                {copy.releaseConfidence}{" "}
                                 {Number.isFinite(candidate.release_confidence)
                                   ? candidate.release_confidence
-                                  : "неизвестно"}
+                                  : copy.unknown}
                               </p>
                             </li>,
                           ],
                     )}
                   </ul>
                 ) : (
-                  <p className="text-sm">Сохранённых рёбер-кандидатов нет.</p>
+                  <p className="text-sm">{copy.noCandidateEdges}</p>
                 )}
               </section>
 
@@ -1141,18 +1147,16 @@ function IncomingGroupReviewContent() {
                   aria-labelledby="assignment-board-title"
                 >
                   <h2 id="assignment-board-title" className="font-semibold">
-                    Позиции издания · {release.title}
+                    {copy.positionHeading} · {release.title}
                   </h2>
                   <p className="mt-1 text-sm text-stone-700">
-                    Перетащите свободный файл на позицию или выберите назначение
-                    в списке файла. Несколько файлов могут быть назначены одной
-                    позиции.
+                    {copy.positionInstructions}
                   </p>
                   <p className="mt-1 text-sm text-stone-700">
                     {release.tracklist_complete
-                      ? "Список позиций полный"
-                      : "Список позиций помечен как неполный"}{" "}
-                    · {release.positions?.length ?? 0} позиций
+                      ? copy.completeTrackList
+                      : copy.incompleteTrackList}{" "}
+                    · {copy.positionCount(release.positions?.length ?? 0)}
                   </p>
                   <ol className="mt-3 space-y-2">
                     {[...(release.positions ?? [])]
@@ -1189,15 +1193,15 @@ function IncomingGroupReviewContent() {
                                 setInspectedTrackId(position.track_id)
                               }
                             >
-                              {positionLabel(position)}
+                              {positionLabel(position, copy)}
                             </button>
                             <p className="mt-1 text-stone-700">
                               {occupants.length
-                                ? `Назначено файлов: ${occupants.length} · ${occupants.map((memberId) => fileLabel(memberId, memberIds.indexOf(memberId))).join(", ")}`
-                                : "Нет назначенных файлов"}
+                                ? `${copy.assignedFiles(occupants.length)} · ${occupants.map((memberId) => fileLabel(memberId, memberIds.indexOf(memberId))).join(", ")}`
+                                : copy.noAssignedFiles}
                             </p>
                             <TrackTagOverrides
-                              title={positionLabel(position)}
+                              title={positionLabel(position, copy)}
                               trackId={position.track_id}
                               override={
                                 tagOverridesByTrack[position.track_id] ??
@@ -1220,11 +1224,8 @@ function IncomingGroupReviewContent() {
                 </section>
               ) : (
                 <section className="rounded border border-stone-300 bg-white p-3">
-                  <h2 className="font-semibold">Позиции издания</h2>
-                  <p className="mt-2 text-sm">
-                    Выберите или подготовьте издание, чтобы показать его позиции
-                    и начать ручное назначение.
-                  </p>
+                  <h2 className="font-semibold">{copy.positionHeading}</h2>
+                  <p className="mt-2 text-sm">{copy.choosePrepareRelease}</p>
                 </section>
               )}
 
@@ -1234,11 +1235,10 @@ function IncomingGroupReviewContent() {
                 aria-labelledby="matching-sources-title"
               >
                 <h2 id="matching-sources-title" className="font-semibold">
-                  Файлы источников
+                  {copy.sourceFilesHeading}
                 </h2>
                 <p className="text-sm text-stone-700">
-                  Перетащите свободный файл на позицию или назначьте его из
-                  этого списка с клавиатуры.
+                  {copy.sourceInstructions}
                 </p>
                 {memberIds.map((memberId, index) => {
                   const file = groupFiles.find(
@@ -1285,14 +1285,16 @@ function IncomingGroupReviewContent() {
                         ))}
                         <span className="mt-1 block text-xs text-stone-700">
                           {isFree
-                            ? "Свободен"
+                            ? copy.free
                             : assignedPosition
-                              ? `Назначен: ${positionLabel(assignedPosition)}`
-                              : "Назначение вне выбранного издания"}
+                              ? copy.assigned(
+                                  positionLabel(assignedPosition, copy),
+                                )
+                              : copy.assignmentOutsideRelease}
                         </span>
                       </button>
                       <label className="mt-2 block text-sm font-medium">
-                        Назначение
+                        {copy.assignment}
                         <select
                           disabled={
                             !release ||
@@ -1306,34 +1308,34 @@ function IncomingGroupReviewContent() {
                             assign(memberId, event.target.value)
                           }
                         >
-                          <option value="">
-                            Не назначать — оставить во входящих
-                          </option>
+                          <option value="">{copy.leaveIncoming}</option>
                           {(release?.positions ?? []).map((position) => (
                             <option
                               key={position.track_id}
                               value={position.track_id}
                             >
-                              {positionLabel(position)}
+                              {positionLabel(position, copy)}
                             </option>
                           ))}
                         </select>
                       </label>
                       {savedFacts?.raw_tags ? (
                         <Metadata
-                          title="Сохранённые метаданные предложения"
+                          title={copy.savedProposalMetadata}
                           tags={savedFacts.raw_tags}
+                          copy={copy}
                         />
                       ) : null}
                       {file ? (
                         <Metadata
-                          title="Метаданные файла из входящей группы"
+                          title={copy.incomingFileMetadata}
                           tags={file.tags}
+                          copy={copy}
                         />
                       ) : null}
                       {savedFacts?.diagnostics?.length ? (
                         <div className="mt-2 text-sm">
-                          <p className="font-medium">Диагностика группы</p>
+                          <p className="font-medium">{copy.groupDiagnostics}</p>
                           <ul className="list-inside list-disc">
                             {savedFacts.diagnostics.map((diagnostic) => (
                               <li
@@ -1352,7 +1354,9 @@ function IncomingGroupReviewContent() {
                   );
                 })}
                 {memberIds.length === 0 ? (
-                  <p className="text-sm text-stone-600">В группе нет файлов.</p>
+                  <p className="text-sm text-stone-600">
+                    {copy.noFilesInGroup}
+                  </p>
                 ) : null}
               </section>
 
@@ -1363,15 +1367,16 @@ function IncomingGroupReviewContent() {
               >
                 <div className="min-w-0 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto">
                   <h2 id="matching-inspector-title" className="font-semibold">
-                    Осмотр:{" "}
+                    {copy.inspectorLabel}
+                    {": "}
                     {inspectedFileMemberId
                       ? fileLabel(
                           inspectedFileMemberId,
                           memberIds.indexOf(inspectedFileMemberId),
                         )
-                      : "файл не выбран"}
+                      : copy.inspectorFileMissing}
                     {inspectedPosition
-                      ? ` · ${positionLabel(inspectedPosition)}`
+                      ? ` · ${positionLabel(inspectedPosition, copy)}`
                       : ""}
                   </h2>
                   <MatchingEvidenceInspector
@@ -1384,14 +1389,14 @@ function IncomingGroupReviewContent() {
                 <aside
                   data-matching-actions
                   className="flex flex-wrap content-start items-start gap-2 min-[1400px]:min-h-0 min-[1400px]:min-w-[220px] min-[1400px]:flex-col min-[1400px]:overflow-y-auto"
-                  aria-label="Действия с назначением"
+                  aria-label={copy.assignmentActions}
                 >
                   {error ? (
                     <p
                       role="alert"
                       className="w-full rounded border border-red-600 p-2 text-sm"
                     >
-                      {error}
+                      {incomingFeedbackText(locale, error)}
                     </p>
                   ) : null}
                   {notice ? (
@@ -1399,7 +1404,7 @@ function IncomingGroupReviewContent() {
                       role="status"
                       className="w-full rounded border border-green-700 p-2 text-sm"
                     >
-                      {notice}
+                      {incomingFeedbackText(locale, notice)}
                     </p>
                   ) : null}
                   <AppButton
@@ -1411,8 +1416,8 @@ function IncomingGroupReviewContent() {
                     onPress={() => void createPreview()}
                   >
                     {busy && !currentRetryIntent
-                      ? "Обработка…"
-                      : "Предпросмотр всего назначения"}
+                      ? copy.processing
+                      : copy.previewAll}
                   </AppButton>
                   {currentPreview ? (
                     <AppButton
@@ -1420,16 +1425,16 @@ function IncomingGroupReviewContent() {
                       onPress={() => void confirm()}
                     >
                       {currentRetryIntent
-                        ? "Повторить подтверждение"
-                        : "Явно подтвердить"}
+                        ? copy.retryConfirmation
+                        : copy.confirmExplicitly}
                     </AppButton>
                   ) : null}
-                  {error.includes("изменились") ? (
+                  {error?.refresh === "evaluation" ? (
                     <AppButton
                       isDisabled={sameGroupInFlight}
                       onPress={() => void reloadReview()}
                     >
-                      Обновить сохранённую оценку
+                      {copy.refreshEvaluation}
                     </AppButton>
                   ) : null}
                 </aside>
@@ -1443,16 +1448,19 @@ function IncomingGroupReviewContent() {
               aria-labelledby="preview-title"
             >
               <h2 id="preview-title" className="font-semibold">
-                Предпросмотр полного назначения
+                {copy.previewHeading}
               </h2>
               <p>
-                Издание: {currentPreview.selected_release.title}. Назначено:{" "}
-                {currentPreview.members?.filter((member) => member.assignment)
-                  .length ?? 0}
-                ; пропущено: {currentPreview.omitted_member_ids?.length ?? 0}.
+                {copy.previewSummary(
+                  currentPreview.selected_release.title,
+                  currentPreview.members?.filter((member) => member.assignment)
+                    .length ?? 0,
+                  currentPreview.omitted_member_ids?.length ?? 0,
+                )}
               </p>
               <p className="text-sm">
-                Контрольный digest: <code>{currentPreview.preview_digest}</code>
+                {copy.previewDigest}{" "}
+                <code>{currentPreview.preview_digest}</code>
               </p>
               {release?.positions?.some((position) => {
                 const override = tagOverridesByTrack[position.track_id];
@@ -1464,9 +1472,7 @@ function IncomingGroupReviewContent() {
                 );
               }) ? (
                 <div className="mt-2 text-sm">
-                  <h3 className="font-medium">
-                    Ручные метаданные, которые будут применены
-                  </h3>
+                  <h3 className="font-medium">{copy.manualMetadataApplied}</h3>
                   <ul className="list-inside list-disc">
                     {release.positions?.map((position) => {
                       const override = tagOverridesByTrack[position.track_id];
@@ -1482,10 +1488,16 @@ function IncomingGroupReviewContent() {
                           {position.title}:{" "}
                           {[
                             override.title.enabled
-                              ? `название «${override.title.value}»`
+                              ? copy.titleOverride(override.title.value)
                               : undefined,
                             override.artists.enabled
-                              ? `исполнители ${override.artists.values.length ? override.artists.values.map((artist) => `«${artist.name}»`).join(", ") : "(пустой список)"}`
+                              ? copy.artistOverrides(
+                                  override.artists.values.length
+                                    ? override.artists.values
+                                        .map((artist) => `«${artist.name}»`)
+                                        .join(", ")
+                                    : copy.emptyList,
+                                )
                               : undefined,
                           ]
                             .filter(Boolean)
@@ -1504,20 +1516,22 @@ function IncomingGroupReviewContent() {
               aria-labelledby="receipt-title"
             >
               <h2 id="receipt-title" className="font-semibold">
-                Подтверждено · локальное издание
+                {copy.confirmedLocalRelease}
               </h2>
               <p>
-                Назначено файлов:{" "}
-                {receipt.response.members?.filter((member) => member.assignment)
-                  .length ?? 0}{" "}
-                из {receipt.response.members?.length ?? 0}. Пропущено:{" "}
-                {receipt.response.omitted_member_ids?.length ?? 0}.
+                {copy.receiptCounts(
+                  receipt.response.members?.filter(
+                    (member) => member.assignment,
+                  ).length ?? 0,
+                  receipt.response.members?.length ?? 0,
+                  receipt.response.omitted_member_ids?.length ?? 0,
+                )}
               </p>
               <ul className="mt-2 list-inside list-disc text-sm">
                 {(receipt.response.omitted_member_ids ?? []).map((memberId) => (
                   <li key={memberId}>
-                    {receipt.omittedFileLabels[memberId] ?? "Файл"} остаётся во
-                    входящих
+                    {receipt.omittedFileLabels[memberId] ?? copy.file}{" "}
+                    {copy.remainsIncoming}
                   </li>
                 ))}
               </ul>

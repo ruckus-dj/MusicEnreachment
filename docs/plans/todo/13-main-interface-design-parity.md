@@ -455,14 +455,19 @@ React-прототипе. Не добавлять backwards compatibility: ст�
         hook прошли, commit отправлен, вся CI 43494715619 зелёная. Browser
         подтвердил свежие GET/digest и сохранение scope без confirm baseline —
         [отчёт](../../reports/2026-11-13-deletion-preview-refresh.md).
-      - [ ] Deletion modal: убрать белый background при light foreground в dark
-        mode и проверить ограничение высоты/scroll с доступными actions на mobile.
+      - [x] Deletion modal: убран белый background при light foreground в dark
+        mode, проверены ограничение высоты/scroll и доступные actions на mobile.
         Реальный screenshot `1c0a7f6c` выявил дефект; refresh функционально
         работает, но dark visual acceptance не пройдена.
         Theme/scroll presentation реализован; найденная ревью потеря overlay
         positioning исправлена, повторное ревью чистое. Полный hook и новая
         browser/CI приёмка ещё не завершены —
         [отчёт](../../reports/2026-11-13-deletion-modal-theme.md).
+        `93073a42` и `ac58c532` прошли обычные полные hooks и отправлены.
+        Browser последнего бинарника подтвердил 8 theme/locale/size состояний:
+        modal/actions в viewport, контраст текста ≥13.20:1, danger ≥6.83:1.
+        Baseline сохранён; полная CI обоих commits зелёная, включая Windows
+        и публикацию контейнера (43498110078, 43498726954).
       - [x] Основные поля metadata вынесены из изначально закрытых disclosures:
         always-visible basics и in-place editing по действующему контракту/
         эталону, без изменения ownership или fallback-семантики metadata.
@@ -587,11 +592,17 @@ React-прототипе. Не добавлять backwards compatibility: ст�
        зелёная, включая Windows и публикацию контейнера. Browser component fixture
        подтвердил RU/EN preview названий/соисполнителей без UUID и без новых
        запросов при смене языка. Полная browser/real-backend приёмка остаётся открытой.
- 10. [ ] **RU/EN integration.** Интегрировать локализацию во все затронутые
+  10. [ ] **RU/EN integration.** Интегрировать локализацию во все затронутые
    production/prototype экраны; направление не зависит от завершения удаления
    или Local CRUD. **Приёмка:** все состояния и доступные имена доступны на обоих
    языках без потери draft/операций; browser preference, fallback English,
-     «Как в системе» и локальное сохранение выбора — по разделу «Интерфейс» контракта.
+      «Как в системе» и локальное сохранение выбора — по разделу «Интерфейс» контракта.
+      - [ ] Incoming overview/review own copy локализован, own feedback переведён
+        на semantic descriptors без locale refetch и string-based refresh guards.
+        Review замечание к неоднозначным test selectors исправлено; полный
+        hook/browser/CI ещё не завершены. Вложенные manual pickers/grouping/
+        inspector/overrides остаются отдельными срезами —
+        [отчёт](../../reports/2026-11-13-incoming-review-localization.md).
      - Setup: локализованы шаги мастера, metadata/tools, сводка, AcoustID и
        прогресс операций. Собственные сообщения сохраняются как descriptors;
        diagnostics сервера остаются без перевода. Независимое ревью интеграции

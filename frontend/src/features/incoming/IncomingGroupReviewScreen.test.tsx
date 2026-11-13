@@ -13,7 +13,7 @@ import type {
   MatchingManualPreview,
   MatchingReview,
 } from "../../api/generated/client.schemas";
-import { I18nProvider } from "../../i18n/I18nProvider";
+import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { IncomingGroupReviewScreen } from "./IncomingGroupReviewScreen";
@@ -206,25 +206,49 @@ function preview(assignments: number): MatchingManualPreview {
   };
 }
 
-function setup(reviewBody = review(), locale?: "en" | "ru") {
-  server.use(
-    http.get("/api/incoming-groups", () => HttpResponse.json(incomingGroups())),
-    http.get("/api/incoming-groups/:groupId/matching", () =>
-      HttpResponse.json(reviewBody),
-    ),
+type RequestCounts = { groups: number; review: number; preview: number };
+
+function LocaleToggle() {
+  const { locale, setPreference } = useI18n();
+  return (
+    <button
+      type="button"
+      onClick={() => setPreference(locale === "ru" ? "en" : "ru")}
+    >
+      Switch locale
+    </button>
   );
-  if (locale) {
-    const storage = createMemoryStorage();
-    storage.setItem("melotrove-language", locale);
-    vi.stubGlobal("localStorage", storage);
-    render(
-      <I18nProvider>
-        <IncomingGroupReviewScreen />
-      </I18nProvider>,
-    );
-  } else {
-    render(<IncomingGroupReviewScreen />);
-  }
+}
+
+function setup(
+  reviewBody = review(),
+  locale: "en" | "ru" = "ru",
+  counts?: RequestCounts,
+  withLocaleToggle = false,
+) {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", locale);
+  vi.stubGlobal("localStorage", storage);
+  server.use(
+    http.get("/api/incoming-groups", () => {
+      if (counts) counts.groups += 1;
+      return HttpResponse.json(incomingGroups());
+    }),
+    http.get("/api/incoming-groups/:groupId/matching", () => {
+      if (counts) counts.review += 1;
+      return HttpResponse.json(reviewBody);
+    }),
+    http.post("/api/incoming-groups/:groupId/matching/preview", () => {
+      if (counts) counts.preview += 1;
+      return HttpResponse.json(preview(1));
+    }),
+  );
+  render(
+    <I18nProvider>
+      {withLocaleToggle ? <LocaleToggle /> : null}
+      <IncomingGroupReviewScreen />
+    </I18nProvider>,
+  );
 }
 
 async function chooseRelease(title = "Первое издание") {
@@ -259,6 +283,69 @@ it.each([
   ).toBeInTheDocument();
 });
 
+it("changes locale without resetting assignments, preview, feedback, or queries", async () => {
+  const counts: RequestCounts = { groups: 0, review: 0, preview: 0 };
+  setup(review(), "ru", counts, true);
+  await chooseRelease();
+  fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
+    target: { value: ids.trackOne },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+  );
+  await screen.findByRole("heading", {
+    name: "Предпросмотр полного назначения",
+  });
+
+  server.use(
+    http.post("/api/incoming-groups/:groupId/matching/confirm", () =>
+      HttpResponse.json({ detail: "Conflict" }, { status: 409 }),
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Явно подтвердить" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Данные оценки или группы изменились",
+  );
+  const requestsBeforeLocaleChange = { ...counts };
+
+  fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
+
+  expect(
+    await screen.findByRole("heading", { name: "Full assignment preview" }),
+  ).toBeInTheDocument();
+  expect(screen.getAllByLabelText("Assignment")[0]).toHaveValue(ids.trackOne);
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Evaluation or group data changed",
+  );
+  expect(
+    screen.getByRole("button", { name: "Refresh saved evaluation" }),
+  ).toBeInTheDocument();
+  expect(counts).toEqual(requestsBeforeLocaleChange);
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Refresh saved evaluation" }),
+  );
+  expect(
+    await screen.findByText(
+      "Evaluation refreshed. Your assignment draft was kept for the selected release.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.getAllByLabelText("Assignment")[0]).toHaveValue(ids.trackOne);
+  expect(
+    screen.queryByRole("heading", { name: "Full assignment preview" }),
+  ).not.toBeInTheDocument();
+  const requestsBeforeSecondLocaleChange = { ...counts };
+
+  fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
+  expect(
+    await screen.findByText(
+      "Оценка обновлена. Черновик назначений сохранён для выбранного издания.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.getAllByLabelText("Назначение")[0]).toHaveValue(ids.trackOne);
+  expect(counts).toEqual(requestsBeforeSecondLocaleChange);
+});
+
 describe("incoming manual group review", () => {
   it("confirms partial receipt; network retry preserves request id and payload", async () => {
     setup(
@@ -268,6 +355,7 @@ describe("incoming manual group review", () => {
           "550e8400-e29b-41d4-a716-446655440000",
         ],
       }),
+      "ru",
     );
     expect(await screen.findAllByText("folder/01.flac")).not.toHaveLength(0);
     expect(
@@ -349,7 +437,7 @@ describe("incoming manual group review", () => {
   });
 
   it("inspects a file and position without changing assignment drafts", async () => {
-    setup();
+    setup(review(), "ru");
     await chooseRelease();
 
     const fileCard = screen

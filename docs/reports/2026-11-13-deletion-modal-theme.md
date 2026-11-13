@@ -38,3 +38,33 @@ AppButton base перекрывает error text token destructive кнопок,
 приоритет danger classes уточняется по существующему prototype pattern.
 До повторной проверки computed danger colors визуальный срез не объявляется
 полностью принятым. Confirm удаления baseline не нажимался.
+
+## Проверки `ac58c532`
+
+Двухстрочная token-priority поправка прошла обычный полный hook и отправлена;
+CI `43498726954` в очереди. Acceptance-only процесс обновлён PID 38996 → 40931;
+PostgreSQL и 8787 не менялись. Новый computed danger foreground/border в dark
+равен `rgb(255,160,155)` (`--error`), normal foreground остаётся `rgb(227,234,227)`.
+
+Повторный batched browser проход real-backend dialog в light/dark × RU/EN ×
+1440×900/390×844 (8 состояний) подтвердил:
+
+- modal целиком помещается в viewport, все три footer actions доступны до и
+  после content scroll; page overflow отсутствует;
+- контраст основного текста: light 13.20:1, dark 13.80:1;
+- контраст destructive action: light 6.83:1, dark 8.66:1;
+- screenshot dark/mobile просмотрен: белого фона нет, destructive action
+  выделен error token, footer не обрезан.
+
+Удаление baseline не подтверждалось, временные записи не создавались.
+SHA-256 обоих CURRENT и трёх исходников сохранены:
+`$TMPDIR/opencode/plan13acceptance/deletion-theme-hashes.txt`.
+Это визуальная приёмка ограниченного dialog, не закрытие общего плана.
+
+Вся CI `43498110078` исходного theme/scroll commit `93073a42` зелёная,
+включая Windows и публикацию контейнера. Результат CI цветовой поправки
+`ac58c532` / `43498726954` пока не подтверждён; эти результаты не смешиваются.
+
+Финальная CI `43498726954` теперь также полностью зелёная, включая Windows
+и публикацию контейнера. Визуальный theme/scroll/danger срез принят в указанных
+границах; общий план и сквозная приёмка остаются открытыми.

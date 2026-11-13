@@ -3,6 +3,8 @@ import type {
   MatchingReview,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { useI18n } from "../../i18n/I18nProvider";
+import { incomingMessages } from "./incomingMessages";
 
 export function IncomingGroupsOverview({
   snapshot,
@@ -15,23 +17,23 @@ export function IncomingGroupsOverview({
   review?: MatchingReview;
   onSelect: (groupId: string) => void;
 }) {
+  const { locale } = useI18n();
+  const copy = incomingMessages[locale];
   const files = new Map(
     (snapshot.files ?? []).map((file) => [file.variant_id, file]),
   );
   return (
     <section aria-labelledby="incoming-overview-title">
-      <h2 id="incoming-overview-title">Входящие группы</h2>
+      <h2 id="incoming-overview-title">{copy.overviewTitle}</h2>
       <div className="mt-2 overflow-x-auto">
         <table className="w-full border-collapse text-left text-sm">
-          <caption className="sr-only">
-            Файлы, пути, готовность источников и сохранённая оценка групп
-          </caption>
+          <caption className="sr-only">{copy.overviewCaption}</caption>
           <thead>
             <tr>
-              <th className="border-b p-2">Группа</th>
-              <th className="border-b p-2">Уникальные файлы / пути</th>
-              <th className="border-b p-2">Готово / всего</th>
-              <th className="border-b p-2">Состояние оценки</th>
+              <th className="border-b p-2">{copy.group}</th>
+              <th className="border-b p-2">{copy.uniqueFilesPaths}</th>
+              <th className="border-b p-2">{copy.readyTotal}</th>
+              <th className="border-b p-2">{copy.evaluationState}</th>
             </tr>
           </thead>
           <tbody>
@@ -52,18 +54,18 @@ export function IncomingGroupsOverview({
                 <tr key={group.id}>
                   <td className="border-b p-2">
                     <AppButton onPress={() => onSelect(group.id)}>
-                      Открыть группу {index + 1}
+                      {copy.openGroup(index + 1)}
                     </AppButton>
                     <p>
                       {group.manual
-                        ? "Ручная группировка"
-                        : "Автоматическая группировка"}
+                        ? copy.manualGrouping
+                        : copy.automaticGrouping}
                     </p>
                   </td>
                   <td className="border-b p-2">
                     {members.size} / {paths.size}
                     <details className="mt-1">
-                      <summary>Пути файлов</summary>
+                      <summary>{copy.filePaths}</summary>
                       <ul>
                         {[...paths].map(([key, label]) => (
                           <li key={key}>{label}</li>
@@ -78,9 +80,12 @@ export function IncomingGroupsOverview({
                   <td className="border-b p-2">
                     {selectedReview
                       ? selectedReview.evaluated
-                        ? `${selectedReview.candidates?.length ?? 0} кандидатов · ${selectedReview.authority_mode}`
-                        : "Оценка ещё не получена"
-                      : "Откройте группу для чтения оценки"}
+                        ? copy.candidatesAuthority(
+                            selectedReview.candidates?.length ?? 0,
+                            selectedReview.authority_mode,
+                          )
+                        : copy.evaluationNotReceived
+                      : copy.openGroupForEvaluation}
                     {group.diagnostics?.map((diagnostic) => (
                       <p key={`${diagnostic.variant_id}:${diagnostic.code}`}>
                         {diagnostic.code}
