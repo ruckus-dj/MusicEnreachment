@@ -21,11 +21,18 @@ export type IncomingGroupingMessage =
     }
   | { key: "raw"; message: string };
 
+export type IncomingGroupingActionPresentation =
+  | { kind: "merge"; groupNumbers: (number | undefined)[] }
+  | { kind: "split"; groupNumber: number | undefined; fileCount: number }
+  | { kind: "move"; groupNumber: number | undefined; fileCount: number };
+
 const messages = {
   en: {
     heading: "Correct incoming groups",
     intro: "Changes stay as a page draft until confirmed separately.",
     group: (index: number) => `Group ${index + 1}`,
+    file: (index: number) => `File ${index + 1}`,
+    selectFileFallback: (index: number) => `Select file ${index + 1}`,
     selectGroup: (group: string) => `Select ${group} to merge`,
     merge: "Merge",
     selectFile: (file: string) => `Select file ${file}`,
@@ -39,6 +46,11 @@ const messages = {
     mergeSelected: "Merge selected groups",
     draftActionsLabel: "Draft actions",
     draftActions: (count: string) => `Draft actions (${count})`,
+    mergeAction: (groups: string) => `Merge ${groups}`,
+    splitAction: (count: string, group: string) =>
+      `Separate ${count} from ${group}`,
+    moveAction: (count: string, group: string) => `Move ${count} to ${group}`,
+    unknownGroup: "a group",
     cancelDraft: "Cancel draft",
     preview: "Preview",
     confirm: "Confirm changes",
@@ -62,6 +74,8 @@ const messages = {
     intro:
       "Изменения остаются черновиком страницы до отдельного подтверждения.",
     group: (index: number) => `Группа ${index + 1}`,
+    file: (index: number) => `Файл ${index + 1}`,
+    selectFileFallback: (index: number) => `Выбрать файл ${index + 1}`,
     selectGroup: (group: string) => `Выбрать ${group} для объединения`,
     merge: "Объединить",
     selectFile: (file: string) => `Выбрать файл ${file}`,
@@ -75,6 +89,12 @@ const messages = {
     mergeSelected: "Объединить выбранные группы",
     draftActionsLabel: "Действия черновика",
     draftActions: (count: string) => `Действия черновика (${count})`,
+    mergeAction: (groups: string) => `Объединить: ${groups}`,
+    splitAction: (count: string, groupNumber: string) =>
+      `Отделить ${count} из группы ${groupNumber}`,
+    moveAction: (count: string, groupNumber: string) =>
+      `Переместить ${count} в группу ${groupNumber}`,
+    unknownGroup: "с неизвестным номером",
     cancelDraft: "Отменить черновик",
     preview: "Предпросмотр",
     confirm: "Подтвердить изменения",
@@ -141,6 +161,35 @@ export function incomingGroupingPathCount(
 
 export function incomingGroupingNumber(count: number, locale: Locale): string {
   return new Intl.NumberFormat(locale).format(count);
+}
+
+export function incomingGroupingActionSummary(
+  locale: Locale,
+  action: IncomingGroupingActionPresentation,
+): string {
+  const copy = messages[locale];
+  const groupName = (number: number | undefined) =>
+    number === undefined ? copy.unknownGroup : copy.group(number - 1);
+
+  if (action.kind === "merge") {
+    return copy.mergeAction(action.groupNumbers.map(groupName).join(", "));
+  }
+
+  const count = incomingGroupingFileCount(action.fileCount, locale);
+  if (locale === "ru") {
+    const groupNumber =
+      action.groupNumber === undefined
+        ? copy.unknownGroup
+        : incomingGroupingNumber(action.groupNumber, locale);
+    return action.kind === "split"
+      ? copy.splitAction(count, groupNumber)
+      : copy.moveAction(count, groupNumber);
+  }
+
+  const group = groupName(action.groupNumber);
+  return action.kind === "split"
+    ? copy.splitAction(count, group)
+    : copy.moveAction(count, group);
 }
 
 export const incomingGroupingMessages = messages;

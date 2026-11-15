@@ -11,7 +11,9 @@ import type {
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
+  type IncomingGroupingActionPresentation,
   type IncomingGroupingMessage,
+  incomingGroupingActionSummary,
   incomingGroupingFileCount,
   incomingGroupingMessage,
   incomingGroupingMessages,
@@ -40,6 +42,9 @@ export function IncomingGroupingEditor({
   const { locale } = useI18n();
   const copy = incomingGroupingMessages[locale];
   const [actions, setActions] = useState<IncomingGroupingActionInput[]>([]);
+  const [actionPresentations, setActionPresentations] = useState<
+    IncomingGroupingActionPresentation[]
+  >([]);
   const [groupSelection, setGroupSelection] = useState<string[]>([]);
   const [memberSelection, setMemberSelection] = useState<string[]>([]);
   const [actionRowIDs, setActionRowIDs] = useState<number[]>([]);
@@ -80,14 +85,28 @@ export function IncomingGroupingEditor({
     (effectiveBoard.files ?? []).map((file) => [file.variant_id, file]),
   );
 
-  function addAction(action: IncomingGroupingActionInput) {
+  function addAction(
+    action: IncomingGroupingActionInput,
+    presentation: IncomingGroupingActionPresentation,
+  ) {
     setActions((existing) => [...existing, action]);
+    setActionPresentations((existing) => [...existing, presentation]);
     setActionRowIDs((existing) => [...existing, nextActionRowID.current++]);
     setNeedsPreview(true);
     setStale(false);
     setError(null);
     setNotice({ key: "actionAdded" });
     sequence.current += 1;
+  }
+
+  // Numbering follows only the board the user currently sees, so an action
+  // added after a transformed preview refers to the displayed group ordinal.
+  // Already captured presentations stay frozen until cancel or confirm.
+  function groupNumber(groupID: string): number | undefined {
+    const index = (effectiveBoard.groups ?? []).findIndex(
+      (group) => group.id === groupID,
+    );
+    return index >= 0 ? index + 1 : undefined;
   }
 
   function toggle(
@@ -166,6 +185,7 @@ export function IncomingGroupingEditor({
       setEffectiveBoard(response.data);
       setNeedsPreview(false);
       setActions([]);
+      setActionPresentations([]);
       setActionRowIDs([]);
       setStale(false);
       setNotice({ key: "saved" });
@@ -216,6 +236,7 @@ export function IncomingGroupingEditor({
   function cancelDraft() {
     sequence.current += 1;
     setActions([]);
+    setActionPresentations([]);
     setActionRowIDs([]);
     setPreview(undefined);
     setEffectiveBoard(currentSnapshot);
@@ -274,26 +295,36 @@ export function IncomingGroupingEditor({
                 {incomingGroupingPathCount(paths.size, locale)}
               </span>
               <ul className="mt-2 space-y-1">
-                {members.map((id) => (
-                  <li key={id} className="flex flex-wrap items-center gap-2">
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        aria-label={copy.selectFile(id)}
-                        checked={memberSelection.includes(id)}
-                        disabled={busy || needsPreview}
-                        onChange={() =>
-                          toggle(memberSelection, id, setMemberSelection)
-                        }
-                      />
-                      {fileById
-                        .get(id)
-                        ?.locations?.map((location) => location.relative_path)
-                        .join(" · ") || id}
-                    </label>
-                    <span>{unready.has(id) ? copy.notReady : copy.ready}</span>
-                  </li>
-                ))}
+                {members.map((id, memberIndex) => {
+                  const pathLabel = fileById
+                    .get(id)
+                    ?.locations?.map((location) => location.relative_path)
+                    .join(" · ");
+                  const fileLabel = pathLabel || copy.file(memberIndex);
+                  return (
+                    <li key={id} className="flex flex-wrap items-center gap-2">
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          aria-label={
+                            pathLabel
+                              ? copy.selectFile(pathLabel)
+                              : copy.selectFileFallback(memberIndex)
+                          }
+                          checked={memberSelection.includes(id)}
+                          disabled={busy || needsPreview}
+                          onChange={() =>
+                            toggle(memberSelection, id, setMemberSelection)
+                          }
+                        />
+                        {fileLabel}
+                      </label>
+                      <span>
+                        {unready.has(id) ? copy.notReady : copy.ready}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
               <button
                 type="button"
@@ -307,11 +338,18 @@ export function IncomingGroupingEditor({
                   memberSelection.some((id) => !members.includes(id))
                 }
                 onClick={() => {
-                  addAction({
-                    kind: "split",
-                    group_id: group.id,
-                    member_ids: memberSelection,
-                  });
+                  addAction(
+                    {
+                      kind: "split",
+                      group_id: group.id,
+                      member_ids: memberSelection,
+                    },
+                    {
+                      kind: "split",
+                      groupNumber: groupNumber(group.id),
+                      fileCount: memberSelection.length,
+                    },
+                  );
                   setMemberSelection([]);
                 }}
               >
@@ -328,7 +366,13 @@ export function IncomingGroupingEditor({
           className="rounded border px-3 py-2"
           disabled={busy || needsPreview || groupSelection.length < 2}
           onClick={() => {
-            addAction({ kind: "merge", group_ids: groupSelection });
+            addAction(
+              { kind: "merge", group_ids: groupSelection },
+              {
+                kind: "merge",
+                groupNumbers: groupSelection.map(groupNumber),
+              },
+            );
             setGroupSelection([]);
           }}
         >
@@ -357,11 +401,18 @@ export function IncomingGroupingEditor({
             busy || needsPreview || memberSelection.length === 0 || !moveTarget
           }
           onClick={() => {
-            addAction({
-              kind: "move",
-              member_ids: memberSelection,
-              target_group_id: moveTarget,
-            });
+            addAction(
+              {
+                kind: "move",
+                member_ids: memberSelection,
+                target_group_id: moveTarget,
+              },
+              {
+                kind: "move",
+                groupNumber: groupNumber(moveTarget),
+                fileCount: memberSelection.length,
+              },
+            );
             setMemberSelection([]);
           }}
         >
@@ -374,12 +425,9 @@ export function IncomingGroupingEditor({
           {copy.draftActions(incomingGroupingNumber(actions.length, locale))}
         </h3>
         <ol className="list-inside list-decimal">
-          {actions.map((action, index) => (
+          {actionPresentations.map((presentation, index) => (
             <li key={actionRowIDs[index]}>
-              {action.kind}:{" "}
-              {action.group_id ??
-                action.group_ids?.join(", ") ??
-                action.target_group_id}
+              {incomingGroupingActionSummary(locale, presentation)}
             </li>
           ))}
         </ol>

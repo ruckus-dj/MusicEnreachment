@@ -597,6 +597,17 @@ React-прототипе. Не добавлять backwards compatibility: ст�
    или Local CRUD. **Приёмка:** все состояния и доступные имена доступны на обоих
    языках без потери draft/операций; browser preference, fallback English,
       «Как в системе» и локальное сохранение выбора — по разделу «Интерфейс» контракта.
+      - [ ] Подписи неподтверждённых действий группировки без technical kind/UUID:
+        реализация и независимое ревью выполнены, итоговый gate ещё не пройден.
+        История не добавляется; успешное подтверждение очищает список действий —
+        [отчёт](../../reports/2026-11-15-grouping-action-presentation.md).
+      - [x] `48a844f6`: own copy evidence inspector/tag overrides RU/EN;
+        raw evidence и override semantics сохранены. Ревью, полный hook и вся
+        CI 43523218873 зелёные. Browser подтвердил empty-candidate copy без
+        locale-only запросов; populated evidence/override retention проверены
+        fixtures, не real-backend browser E2E. Theme/size и сквозная приёмка
+        остаются открытыми —
+        [отчёт](../../reports/2026-11-14-evidence-tag-overrides-localization.md).
       - [x] `3635f18e`: own copy grouping controls и semantic feedback RU/EN,
         без изменения sequence/stale/preview/confirm guards. Полный hook и вся
         CI 43518840816 зелёные; browser подтвердил draft/no-locale-requests и

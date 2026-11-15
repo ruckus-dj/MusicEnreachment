@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   confirmIncomingGroups,
@@ -36,6 +42,14 @@ const snapshot: IncomingGroupsBody = {
       unready_members: [],
       diagnostics: [],
     },
+    {
+      id: "group-3",
+      revision: "group-revision-3",
+      manual: true,
+      members: ["file-3"],
+      unready_members: [],
+      diagnostics: [],
+    },
   ],
   files: [
     {
@@ -62,6 +76,25 @@ const snapshot: IncomingGroupsBody = {
       capture_analysis_id: "analysis-2",
       capture_identity: "capture-2",
       locations: [],
+      tags: {},
+    },
+    {
+      variant_id: "file-3",
+      capture_analysis_id: "analysis-3",
+      capture_identity: "capture-3",
+      locations: [
+        {
+          configured_path: "/music",
+          inventory_path: "/music",
+          location_id: "location-3",
+          mtime: "2025-01-01T00:00:00Z",
+          relative_path: "three.flac",
+          root_id: "root-1",
+          size_bytes: 1,
+          technical_identity: "identity-3",
+          work_id: "work-3",
+        },
+      ],
       tags: {},
     },
   ],
@@ -115,6 +148,9 @@ describe("IncomingGroupingEditor locale presentation", () => {
         <IncomingGroupingEditor snapshot={snapshot} />
       </I18nProvider>,
     );
+    expect(
+      screen.getByRole("checkbox", { name: "Выбрать файл 1" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("checkbox", {
@@ -143,7 +179,7 @@ describe("IncomingGroupingEditor locale presentation", () => {
     ).toBeInTheDocument();
 
     const memberCheckbox = screen.getByRole("checkbox", {
-      name: "Выбрать файл file-1",
+      name: "Выбрать файл one.flac",
     });
     fireEvent.click(memberCheckbox);
     expect(memberCheckbox).toBeChecked();
@@ -157,12 +193,19 @@ describe("IncomingGroupingEditor locale presentation", () => {
     expect(
       screen.getByRole("heading", { name: "Draft actions (1)" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("merge: group-1, group-2")).toBeInTheDocument();
+    expect(screen.getByText("Merge Group 1, Group 2")).toBeInTheDocument();
+    expect(screen.queryByText(/group-1|group-2/)).not.toBeInTheDocument();
+    expect(screen.queryByText("file-1")).not.toBeInTheDocument();
+    expect(previewIncomingGroups).toHaveBeenNthCalledWith(1, {
+      epoch: snapshot.epoch,
+      base_revision: snapshot.revision,
+      actions: [{ kind: "merge", group_ids: ["group-1", "group-2"] }],
+    });
     expect(
       screen.getByText("Preview is ready; confirm separately to save changes."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", { name: "Select file file-1" }),
+      screen.getByRole("checkbox", { name: "Select file one.flac" }),
     ).toBeChecked();
     expect(vi.mocked(previewIncomingGroups).mock.calls).toHaveLength(
       previewCallCount,
@@ -183,5 +226,196 @@ describe("IncomingGroupingEditor locale presentation", () => {
     expect(vi.mocked(previewIncomingGroups).mock.calls).toHaveLength(
       previewCallCount + 1,
     );
+  });
+
+  it("captures displayed group numbers after a transformed preview and clears pending actions after confirmation", async () => {
+    const transformedSnapshot: IncomingGroupsBody = {
+      epoch: snapshot.epoch,
+      revision: snapshot.revision,
+      groups: [
+        {
+          id: "group-1-2",
+          revision: "group-revision-1-2",
+          manual: true,
+          members: ["file-1", "file-2"],
+          unready_members: [],
+          diagnostics: [],
+        },
+        {
+          id: "group-3",
+          revision: "group-revision-3",
+          manual: true,
+          members: ["file-3"],
+          unready_members: [],
+          diagnostics: [],
+        },
+      ],
+      files: snapshot.files,
+    };
+    const finalSnapshot: IncomingGroupsBody = {
+      epoch: snapshot.epoch,
+      revision: "revision-2",
+      groups: [
+        {
+          id: "group-1-2",
+          revision: "group-revision-1-2-moved",
+          manual: true,
+          members: ["file-2"],
+          unready_members: [],
+          diagnostics: [],
+        },
+        {
+          id: "group-3",
+          revision: "group-revision-3-moved",
+          manual: true,
+          members: ["file-3", "file-1"],
+          unready_members: [],
+          diagnostics: [],
+        },
+      ],
+      files: snapshot.files,
+    };
+    const mergeAction = { kind: "merge", group_ids: ["group-1", "group-2"] };
+    const moveAction = {
+      kind: "move",
+      member_ids: ["file-1"],
+      target_group_id: "group-3",
+    };
+
+    vi.mocked(previewIncomingGroups)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { ...transformedSnapshot, draft_revision: "draft-revision-1" },
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { ...finalSnapshot, draft_revision: "draft-revision-2" },
+        headers: new Headers(),
+      });
+    vi.mocked(confirmIncomingGroups).mockResolvedValueOnce({
+      status: 200,
+      data: finalSnapshot,
+      headers: new Headers(),
+    });
+
+    render(
+      <I18nProvider>
+        <IncomingGroupingEditor snapshot={snapshot} />
+      </I18nProvider>,
+    );
+
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Выбрать Группа 1 для объединения",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Выбрать Группа 2 для объединения",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Объединить выбранные группы" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Предпросмотр" }));
+    await screen.findByText(
+      "Предпросмотр готов; для сохранения требуется отдельное подтверждение.",
+    );
+    // The preview merges the first two groups into one, so the surviving
+    // original third group is displayed as Group 2.
+    expect(screen.getByRole("group", { name: "Группа 2" })).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Выбрать файл one.flac" }),
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: "Целевая группа" }), {
+      target: { value: "group-3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Переместить файлы" }));
+
+    // The frozen merge capture keeps its original ordinals, while the new move
+    // captures the displayed ordinal and the unchanged wire identity.
+    expect(
+      screen.getByText("Объединить: Группа 1, Группа 2"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Переместить 1 файл в группу 2"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Предпросмотр" }));
+    await waitFor(() => {
+      expect(previewIncomingGroups).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Подтвердить изменения" }),
+      ).toBeEnabled();
+    });
+    expect(vi.mocked(previewIncomingGroups)).toHaveBeenNthCalledWith(2, {
+      epoch: snapshot.epoch,
+      base_revision: snapshot.revision,
+      actions: [mergeAction, moveAction],
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Подтвердить изменения" }),
+    );
+    await waitFor(() => {
+      expect(confirmIncomingGroups).toHaveBeenCalledWith({
+        epoch: snapshot.epoch,
+        base_revision: snapshot.revision,
+        actions: [mergeAction, moveAction],
+        draft_revision: "draft-revision-2",
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Действия черновика (0)" }),
+      ).toBeInTheDocument();
+      // File rows remain list items, so scope the draft emptiness check to the
+      // draft-actions region instead of the whole document.
+      const draftRegion = screen.getByRole("region", {
+        name: "Действия черновика",
+      });
+      expect(
+        within(draftRegion).queryByRole("listitem"),
+      ).not.toBeInTheDocument();
+    });
+
+    // The confirmed response is rendered instead of the baseline snapshot,
+    // whose groups and revision stay untouched as the request base.
+    expect(snapshot.groups).toHaveLength(3);
+    expect(snapshot.revision).toBe("revision-1");
+
+    const confirmedGroups = screen.getAllByRole("group");
+    expect(confirmedGroups).toHaveLength(2);
+    const mergedGroup = screen.getByRole("group", { name: "Группа 1" });
+    const targetGroup = screen.getByRole("group", { name: "Группа 2" });
+    expect(
+      within(mergedGroup).getAllByRole("checkbox", {
+        name: /^Выбрать файл /,
+      }),
+    ).toHaveLength(1);
+    expect(within(mergedGroup).getByText(/^1 файл/)).toBeInTheDocument();
+    expect(
+      within(targetGroup).getAllByRole("checkbox", {
+        name: /^Выбрать файл /,
+      }),
+    ).toHaveLength(2);
+    expect(within(targetGroup).getByText(/^2 файла/)).toBeInTheDocument();
+    expect(
+      within(targetGroup).getByRole("checkbox", {
+        name: "Выбрать файл three.flac",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(targetGroup).getByRole("checkbox", {
+        name: "Выбрать файл one.flac",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Группа 3" }),
+    ).not.toBeInTheDocument();
   });
 });

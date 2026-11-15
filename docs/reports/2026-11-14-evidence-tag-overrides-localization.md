@@ -29,4 +29,29 @@ assertion нового теста: «Исходник» одновременно
 Обе locale-фазы теперь проверяют конкретный raw-tags PRE внутри evidence region
 и semantic JSON с ALBUM/TITLE, вместо глобального поиска текста. Production
 код не менялся; Biome проверил исправленный тест. Commit пока не создан.
+
+## Проверки `48a844f6`
+
+Повторный обычный полный hook прошёл, commit отправлен; полная CI
+`43523218873` выполняется. Acceptance-only процесс 18080 штатно обновлён
+PID 64931 → 71128; PostgreSQL и 8787 не менялись.
+
+Browser реального backend подтвердил RU/EN evidence headings, пояснения и
+empty-candidate/factors состояние третьей группы без locale-only API requests
+и page overflow. Candidate confidence/raw JSON и override draft retention
+проверены frontend fixtures, не real-backend browser E2E. Полная визуальная
+theme/size приёмка этого среза ещё не завершена; подтверждений не выполнялось.
 Зелёная CI предыдущего commit не является его проверкой. План 13 открыт.
+
+Вся [CI 43523218873](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43523218873)
+для `48a844f6` завершилась успешно с первого attempt, включая Windows и
+публикацию контейнера. Это завершает проверку own-copy среза, но не подменяет
+оставшуюся browser-приёмку populated evidence/overrides, theme/size и сквозного
+сценария. Общий план 13 остаётся открытым.
+
+Дополнительный browser проход `48a844f6` после reload обеих acceptance tabs:
+empty-candidate inspector доступен в RU/EN × light/dark × 1440×900/390×844,
+page overflow отсутствует. Это проверка видимости и layout пустого inspector,
+не contrast/screenshot audit и не populated evidence/override browser coverage.
+SHA-256 обоих CURRENT и трёх исходников вновь совпали с baseline; readback:
+`$TMPDIR/opencode/plan13acceptance/evidence-grouping-hashes.txt`.
