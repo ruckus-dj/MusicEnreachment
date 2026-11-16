@@ -115,10 +115,11 @@ func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testi
 
 func TestSourceRepublishUnchangedEligibilityIsOrdinaryOnlyAndRequiresCompleteEvidence(t *testing.T) {
 	locationID, variantID, generation := uuid.New(), uuid.New(), uuid.New()
-	lossless, channels, bitrate, bitDepth, sampleRate := true, 2, 128000, 16, 44100
+	lossless, channels, bitDepth, sampleRate := true, 1, 16, 44100
+	// A real FLAC probe reports no stream bitrate, so both sides are absent.
 	facts := persistence.PersistedAudioFacts{
-		StreamIndex: 0, Codec: "flac", Lossless: &lossless, Channels: &channels, ChannelLayout: "stereo",
-		Bitrate: &bitrate, BitDepth: &bitDepth, SampleRate: &sampleRate,
+		StreamIndex: 0, Codec: "flac", Lossless: &lossless, Channels: &channels, ChannelLayout: "mono",
+		BitDepth: &bitDepth, SampleRate: &sampleRate,
 		Container: publication.AudioContainerFLAC, SupportedSourceContainer: true,
 	}
 	current := &persistence.LibraryPublicationCurrent{Audio: persistence.PublicationCurrentAudio{Facts: facts}}
@@ -142,6 +143,21 @@ func TestSourceRepublishUnchangedEligibilityIsOrdinaryOnlyAndRequiresCompleteEvi
 	if !sourceRepublishIsUnchanged(ordinary, selected, current, publication.AudioFormatSource) {
 		t.Fatal("complete ordinary CURRENT match was not classified as unchanged")
 	}
+	// A reported bitrate still has to match exactly on both presence and value.
+	sourceBitrate, equalActualBitrate, otherActualBitrate := 128000, 128000, 192000
+	selected.Quality.Bitrate = &sourceBitrate
+	if sourceRepublishIsUnchanged(ordinary, selected, current, publication.AudioFormatSource) {
+		t.Fatal("asymmetric bitrate presence was classified as unchanged")
+	}
+	current.Audio.Facts.Bitrate = &equalActualBitrate
+	if !sourceRepublishIsUnchanged(ordinary, selected, current, publication.AudioFormatSource) {
+		t.Fatal("equal reported bitrates were not classified as unchanged")
+	}
+	current.Audio.Facts.Bitrate = &otherActualBitrate
+	if sourceRepublishIsUnchanged(ordinary, selected, current, publication.AudioFormatSource) {
+		t.Fatal("unequal reported bitrates were classified as unchanged")
+	}
+	selected.Quality.Bitrate, current.Audio.Facts.Bitrate = nil, nil
 	current.Record = persistence.TrackPublication{Generation: generation, RelativePath: "Artist/Album.flac"}
 	current.Metadata.Tags = map[string][]string{}
 	current.Assets.Cover.State = persistence.PublicationAssetAbsent

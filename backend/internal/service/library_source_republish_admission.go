@@ -496,7 +496,9 @@ func sourceRepublishCopyAudioMatches(
 		source.SampleRate != nil && actual.SampleRate != nil && *source.SampleRate == *actual.SampleRate &&
 		source.BitDepth != nil && actual.BitDepth != nil && *source.BitDepth == *actual.BitDepth &&
 		source.ChannelLayout != "" && source.ChannelLayout == actual.ChannelLayout &&
-		source.Bitrate != nil && actual.Bitrate != nil && *source.Bitrate == *actual.Bitrate
+		// Real FLAC probes may report no stream bitrate on either side; absence is
+		// equal evidence, while presence still requires the exact same value.
+		(source.Bitrate == nil) == (actual.Bitrate == nil) && (source.Bitrate == nil || *source.Bitrate == *actual.Bitrate)
 }
 
 func (service *LibraryPublications) prepareRetainedSourceRepublish(

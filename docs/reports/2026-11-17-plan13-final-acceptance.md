@@ -132,6 +132,14 @@ comparison; clearing intent и фактический CURRENT сохраняют
 Не увеличиваются таймауты, ошибка cleanup не игнорируется, повтор CI без
 дополнительных оснований не запускается.
 
+Source-based сверка с текущим React-эталоном выявила ещё три presentation gaps:
+Settings не разделён утверждёнными task tabs; selected cover не стоит в компактной
+шапке релиза; release overview повторяет полные position workspaces после списка
+носителей вместо компактного списка с переходом на position route. Подробности:
+`02-screens.md` 90–104, 177–202, `LibraryReleaseScreen`, `newReleaseCoverEditor`,
+`SettingsScreen`. Это установленные структурные расхождения, но не завершённая
+визуальная browser-приёмка; исправления ещё не выполнены.
+
 Upstream research: shutdown-related source в pinned alpha.3 и актуальном v2.0.1
 совпадает; известное исправление именно этого watchdog failure не найдено.
 Обновление версии на предположении о таком fix не выполняется. Для точной причины
