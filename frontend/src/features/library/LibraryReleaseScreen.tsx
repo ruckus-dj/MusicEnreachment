@@ -1,8 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  apiResponseError,
-  errorMessage as sharedErrorMessage,
-} from "../../api/client/errors";
 import { subscribeToOperation } from "../../api/client/operations";
 import {
   applyLibraryManualLyrics,
@@ -21,6 +17,16 @@ import type {
   LibraryReleaseDetailResponse,
   OperationResponse,
 } from "../../api/generated/client.schemas";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type LibraryReleaseMessage,
+  type LibraryReleaseText,
+  LocalizedLibraryReleaseError,
+  libraryReleaseError,
+  libraryReleaseMessage,
+  libraryReleaseText,
+  renderLibraryReleaseText,
+} from "./libraryReleaseMessages";
 import "./library.css";
 import { AggregatePublicationPreview } from "./AggregatePublicationPreview";
 import {
@@ -42,56 +48,71 @@ import {
   ScopedLibraryMetadataEditor,
 } from "./ReleaseMetadataEditor";
 
-const initialLyricsSourceLabels: Record<string, string> = {
-  none: "источник не выбран",
-  source: "источник медиатеки",
-  lrclib: "LRCLIB",
-};
-
-const initialLyricsOutcomeLabels: Record<string, string> = {
-  not_requested: "текст не запрашивался",
-  exact_round_trip: "текст включён и проверен",
-  rebuilt_without_lyrics: "публикация пересоздана без текста",
-};
-
-const initialLyricsWarningLabels: Record<string, string> = {
-  lyrics_source_selection_required: "необходимо выбрать источник текста",
-  lyrics_settings_unavailable: "настройки поиска текста недоступны",
-  lyrics_lookup_metadata_incomplete:
-    "недостаточно метаданных для поиска текста",
-  lyrics_provider_unavailable: "провайдер текста недоступен",
-  lyrics_lookup_failed: "не удалось найти текст",
-  lyrics_lookup_invalid_synced_text: "найденный текст не прошёл проверку",
-  readback_mismatch: "текст не прошёл проверку после записи",
-};
-
 type PositionData = {
   metadata?: LibraryMetadataResponse;
   publication?: LibraryPublicationResponse;
   lyrics: string;
   draftDirty?: boolean;
-  error?: string;
-  readError?: string;
+  error?: LibraryReleaseText;
+  readError?: LibraryReleaseText;
   saving?: boolean;
   applying?: boolean;
   applyOperationID?: string;
   firstPublicationOperationID?: string;
   cleanupRetryOperationIDs?: Record<string, string>;
   cleanupRetryPendingIDs?: string[];
-  notice?: string;
+  notice?: LibraryReleaseText;
   primaryArtistSaving?: boolean;
   writePending?: boolean;
 };
 
-function errorMessage(data: { detail?: string }, status: number) {
-  return apiResponseError(
-    { status, data },
-    `Запрос не выполнен (HTTP ${status}).`,
-  ).message;
+function errorMessage(data: { detail?: string }, status: number): Error {
+  if (data.detail) return new Error(data.detail);
+  return new LocalizedLibraryReleaseError(
+    libraryReleaseText("requestFailed", { status }),
+  );
 }
 
 function isTerminalOperation(state: string) {
   return ["succeeded", "failed", "cancelled"].includes(state);
+}
+
+function lyricsSourceLabel(source: string, locale: "en" | "ru") {
+  const key =
+    source === "none"
+      ? "lyricsSourceNone"
+      : source === "source"
+        ? "lyricsSourceLibrary"
+        : source === "lrclib"
+          ? "lyricsSourceLrclib"
+          : undefined;
+  return key ? libraryReleaseMessage(locale, key) : source;
+}
+
+function lyricsOutcomeLabel(outcome: string, locale: "en" | "ru") {
+  const key =
+    outcome === "not_requested"
+      ? "lyricsOutcomeNotRequested"
+      : outcome === "exact_round_trip"
+        ? "lyricsOutcomeVerified"
+        : outcome === "rebuilt_without_lyrics"
+          ? "lyricsOutcomeRebuiltWithout"
+          : undefined;
+  return key ? libraryReleaseMessage(locale, key) : outcome;
+}
+
+function lyricsWarningLabel(code: string, locale: "en" | "ru") {
+  const keys: Record<string, LibraryReleaseMessage> = {
+    lyrics_source_selection_required: "warningSourceSelection",
+    lyrics_settings_unavailable: "warningSettingsUnavailable",
+    lyrics_lookup_metadata_incomplete: "warningMetadataIncomplete",
+    lyrics_provider_unavailable: "warningProviderUnavailable",
+    lyrics_lookup_failed: "warningLookupFailed",
+    lyrics_lookup_invalid_synced_text: "warningInvalidSyncedText",
+    readback_mismatch: "warningReadbackMismatch",
+  };
+  const key = keys[code];
+  return key ? libraryReleaseMessage(locale, key) : code;
 }
 
 export function LibraryReleaseScreen({
@@ -101,6 +122,13 @@ export function LibraryReleaseScreen({
   releaseId: string;
   positionId?: string;
 }) {
+  const { locale } = useI18n();
+  const text = (
+    key: LibraryReleaseMessage,
+    values?: Record<string, string | number>,
+  ) => libraryReleaseMessage(locale, key, values);
+  const displayText = (value: LibraryReleaseText) =>
+    renderLibraryReleaseText(locale, value);
   const scope = useRef({ releaseId, generation: 0 });
   if (scope.current.releaseId !== releaseId) {
     scope.current = { releaseId, generation: scope.current.generation + 1 };
@@ -125,26 +153,33 @@ export function LibraryReleaseScreen({
       }
     >(),
   );
-  const [error, setError] = useState("");
+  const [error, setError] = useState<LibraryReleaseText | "">("");
   const [genreContextGeneration, setGenreContextGeneration] = useState(0);
-  const [genreRefreshError, setGenreRefreshError] = useState("");
+  const [genreRefreshError, setGenreRefreshError] = useState<
+    LibraryReleaseText | ""
+  >("");
   const [musicBrainzRefresh, setMusicBrainzRefresh] = useState<{
     scope: typeof scope.current;
     operationID?: string;
     pending: boolean;
     active: boolean;
-    notice?: string;
-    error?: string;
+    notice?: LibraryReleaseText;
+    error?: LibraryReleaseText;
   }>({ scope: scope.current, pending: false, active: false });
   const musicBrainzRefreshPending = useRef<
     { scope: typeof scope.current; token: number } | undefined
   >(undefined);
   const musicBrainzRefreshToken = useRef(0);
-  const [releasePrimaryArtist, setReleasePrimaryArtist] = useState({
+  const [releasePrimaryArtist, setReleasePrimaryArtist] = useState<{
+    scope: typeof scope.current;
+    token: number;
+    saving: boolean;
+    error: LibraryReleaseText | "";
+  }>({
     scope: scope.current,
     token: 0,
     saving: false,
-    error: "",
+    error: "" as LibraryReleaseText | "",
   });
   const releasePrimaryArtistSaving =
     releasePrimaryArtist.scope === scope.current && releasePrimaryArtist.saving;
@@ -255,9 +290,9 @@ export function LibraryReleaseScreen({
       )
         return undefined;
       if (metadata.status !== 200)
-        throw new Error(errorMessage(metadata.data, metadata.status));
+        throw errorMessage(metadata.data, metadata.status);
       if (publication.status !== 200)
-        throw new Error(errorMessage(publication.data, publication.status));
+        throw errorMessage(publication.data, publication.status);
       const field = metadata.data.envelope.desired.synced_lyrics;
       const warningIDs = new Set(
         (publication.data.source_cleanup_warnings ?? []).map(
@@ -308,7 +343,7 @@ export function LibraryReleaseScreen({
       )
         return undefined;
       if (response.status !== 200)
-        throw new Error(errorMessage(response.data, response.status));
+        throw errorMessage(response.data, response.status);
       setRelease(response.data);
       return response.data;
     },
@@ -328,12 +363,7 @@ export function LibraryReleaseScreen({
       if (!detail || !mounted.current || scope.current !== requestScope) return;
     } catch (reason) {
       if (!mounted.current || scope.current !== requestScope) return;
-      setGenreRefreshError(
-        sharedErrorMessage(
-          reason,
-          "Не удалось обновить предпросмотр метаданных.",
-        ),
-      );
+      setGenreRefreshError(libraryReleaseError(reason, "refreshPreviewFailed"));
     }
   }
 
@@ -355,13 +385,15 @@ export function LibraryReleaseScreen({
               active: false,
               notice:
                 snapshot.state === "succeeded"
-                  ? "Данные MusicBrainz обновлены. Обновление публикаций выполняется отдельно."
+                  ? libraryReleaseText("musicBrainzUpdated")
                   : undefined,
               error:
                 snapshot.state === "succeeded"
                   ? undefined
                   : snapshot.safe_error ||
-                    `Обновление MusicBrainz завершилось со статусом: ${snapshot.state}.`,
+                    libraryReleaseText("musicBrainzFailed", {
+                      state: snapshot.state,
+                    }),
             }
           : current,
       );
@@ -384,10 +416,7 @@ export function LibraryReleaseScreen({
             current.operationID === operationID
               ? {
                   ...current,
-                  error: sharedErrorMessage(
-                    reason,
-                    "Не удалось обновить данные релиза.",
-                  ),
+                  error: libraryReleaseError(reason, "refreshReleaseFailed"),
                 }
               : current,
           );
@@ -434,10 +463,7 @@ export function LibraryReleaseScreen({
                 ...current,
                 pending: false,
                 operationID: undefined,
-                error: sharedErrorMessage(
-                  reason,
-                  "Не удалось обновить данные релиза.",
-                ),
+                error: libraryReleaseError(reason, "refreshReleaseFailed"),
               }
             : current,
         );
@@ -455,7 +481,7 @@ export function LibraryReleaseScreen({
     void getLibraryRelease(releaseId, { cache: "no-store" })
       .then(async (response) => {
         if (response.status !== 200)
-          throw new Error(errorMessage(response.data, response.status));
+          throw errorMessage(response.data, response.status);
         if (!active) return;
         setRelease(response.data);
         setLoadedReleaseID(releaseId);
@@ -468,9 +494,9 @@ export function LibraryReleaseScreen({
                   [track.id]: {
                     ...current[track.id],
                     lyrics: current[track.id]?.lyrics ?? "",
-                    readError: sharedErrorMessage(
+                    readError: libraryReleaseError(
                       reason,
-                      "Не удалось загрузить данные публикации.",
+                      "publicationLoadFailed",
                     ),
                   },
                 }));
@@ -480,7 +506,7 @@ export function LibraryReleaseScreen({
       })
       .catch((reason: unknown) => {
         if (active && scope.current.releaseId === releaseId)
-          setError(sharedErrorMessage(reason, "Не удалось загрузить релиз."));
+          setError(libraryReleaseError(reason, "releaseLoadFailed"));
       });
     return () => {
       active = false;
@@ -522,10 +548,7 @@ export function LibraryReleaseScreen({
           current.scope === requestScope && current.operationID === operationID
             ? {
                 ...current,
-                error: sharedErrorMessage(
-                  reason,
-                  "Не удалось проверить обновление MusicBrainz.",
-                ),
+                error: libraryReleaseError(reason, "checkMusicBrainzFailed"),
               }
             : current,
         );
@@ -627,7 +650,7 @@ export function LibraryReleaseScreen({
         positionID: string,
         operationID: string,
         originalIDs: Set<string>,
-        diagnostic?: string,
+        diagnostic?: LibraryReleaseText,
       ) => {
         const readGeneration =
           (positionReadGenerations.current.get(positionID) ?? 0) + 1;
@@ -644,7 +667,7 @@ export function LibraryReleaseScreen({
           )
             return;
           if (response.status !== 200)
-            throw new Error(errorMessage(response.data, response.status));
+            throw errorMessage(response.data, response.status);
           const publication = response.data;
           finishedOperations.current.add(operationID);
           const remaining = new Set(
@@ -703,12 +726,9 @@ export function LibraryReleaseScreen({
                 cleanupRetryPendingIDs: (
                   current[positionID]?.cleanupRetryPendingIDs ?? []
                 ).filter((originalID) => !originalIDs.has(originalID)),
-                error:
-                  diagnostic ??
-                  "Не удалось проверить очистку источников. Обновите данные публикации.",
+                error: diagnostic ?? libraryReleaseText("cleanupCheckFailed"),
                 readError:
-                  diagnostic ??
-                  "Не удалось проверить очистку источников. Обновите данные публикации.",
+                  diagnostic ?? libraryReleaseText("cleanupCheckFailed"),
               },
             };
           });
@@ -735,7 +755,7 @@ export function LibraryReleaseScreen({
                   positionID,
                   operationID,
                   cleanupIDs,
-                  "Повтор очистки завершён, предупреждение источника остаётся актуальным.",
+                  libraryReleaseText("cleanupStillWarning"),
                 );
             }
             if (!entry.publicationPositions.has(positionID)) {
@@ -749,9 +769,9 @@ export function LibraryReleaseScreen({
                       ? {
                           [positionID]: {
                             ...current[positionID],
-                            readError: sharedErrorMessage(
+                            readError: libraryReleaseError(
                               reason,
-                              "Не удалось обновить публикацию.",
+                              "publicationRefreshFailed",
                             ),
                           },
                         }
@@ -798,8 +818,10 @@ export function LibraryReleaseScreen({
                             : current[positionID]?.firstPublicationOperationID,
                         notice:
                           snapshot.state === "succeeded"
-                            ? "Операция завершена. Сверьте опубликованные данные и квитанцию ниже."
-                            : `Операция завершилась со статусом: ${snapshot.state}.`,
+                            ? libraryReleaseText("operationCompleted")
+                            : libraryReleaseText("operationEnded", {
+                                state: snapshot.state,
+                              }),
                       },
                     };
                   });
@@ -809,7 +831,7 @@ export function LibraryReleaseScreen({
                       positionID,
                       operationID,
                       cleanupIDs,
-                      "Повтор очистки завершён, предупреждение источника остаётся актуальным.",
+                      libraryReleaseText("cleanupStillWarning"),
                     );
                 }
               })
@@ -826,7 +848,7 @@ export function LibraryReleaseScreen({
                     positionID,
                     operationID,
                     cleanupIDs,
-                    "Повтор очистки завершён, предупреждение источника остаётся актуальным.",
+                    libraryReleaseText("cleanupStillWarning"),
                   );
                   return;
                 }
@@ -841,9 +863,9 @@ export function LibraryReleaseScreen({
                     ...current,
                     [positionID]: {
                       ...current[positionID],
-                      readError: sharedErrorMessage(
+                      readError: libraryReleaseError(
                         reason,
-                        "Не удалось обновить публикацию.",
+                        "publicationRefreshFailed",
                       ),
                     },
                   };
@@ -865,7 +887,7 @@ export function LibraryReleaseScreen({
                 positionID,
                 operationID,
                 cleanupIDs,
-                "Повтор очистки больше недоступен. Предупреждение источника остаётся актуальным.",
+                libraryReleaseText("cleanupRetryUnavailable"),
               );
               continue;
             }
@@ -886,9 +908,9 @@ export function LibraryReleaseScreen({
                     ...current,
                     [positionID]: {
                       ...current[positionID],
-                      readError: sharedErrorMessage(
+                      readError: libraryReleaseError(
                         reason,
-                        "Не удалось обновить публикацию.",
+                        "publicationRefreshFailed",
                       ),
                     },
                   };
@@ -937,7 +959,7 @@ export function LibraryReleaseScreen({
         },
       );
       if (response.status !== 200)
-        throw new Error(errorMessage(response.data, response.status));
+        throw errorMessage(response.data, response.status);
       if (!mounted.current || scope.current !== requestScope) return;
       // Any GET begun before this successful write is now stale, even if it
       // finishes after the PATCH response and would otherwise roll back state.
@@ -970,8 +992,7 @@ export function LibraryReleaseScreen({
         ...current,
         [positionId]: {
           ...current[positionId],
-          notice:
-            "Текст сохранён. Примените его отдельно к текущей публикации.",
+          notice: libraryReleaseText("lyricsSaved"),
         },
       }));
     } catch (reason) {
@@ -980,7 +1001,7 @@ export function LibraryReleaseScreen({
         ...current,
         [positionId]: {
           ...current[positionId],
-          error: sharedErrorMessage(reason, "Не удалось сохранить текст."),
+          error: libraryReleaseError(reason, "saveLyricsFailed"),
         },
       }));
     } finally {
@@ -1021,9 +1042,9 @@ export function LibraryReleaseScreen({
         getLibraryPublication(releaseId, positionId, { cache: "no-store" }),
       ]);
       if (fresh[0].status !== 200)
-        throw new Error(errorMessage(fresh[0].data, fresh[0].status));
+        throw errorMessage(fresh[0].data, fresh[0].status);
       if (fresh[1].status !== 200)
-        throw new Error(errorMessage(fresh[1].data, fresh[1].status));
+        throw errorMessage(fresh[1].data, fresh[1].status);
       publication = fresh[1].data;
       const freshField = fresh[0].data.envelope.desired.synced_lyrics;
       if (
@@ -1034,8 +1055,8 @@ export function LibraryReleaseScreen({
         !publication.current_generation ||
         publication.active_attempt
       ) {
-        throw new Error(
-          "Состояние изменилось или текст не готов к применению. Обновите данные перед повторной попыткой.",
+        throw new LocalizedLibraryReleaseError(
+          libraryReleaseText("changedOrLyricsNotReady"),
         );
       }
       if (!mounted.current || scope.current !== requestScope) return;
@@ -1045,13 +1066,13 @@ export function LibraryReleaseScreen({
         expected_metadata_revision: fresh[0].data.revision,
       });
       if (response.status !== 202)
-        throw new Error(errorMessage(response.data, response.status));
+        throw errorMessage(response.data, response.status);
       if (!mounted.current || scope.current !== requestScope) return;
       setPositions((current) => ({
         ...current,
         [positionId]: {
           ...current[positionId],
-          notice: "Применение запущено. Ожидание обновления операции…",
+          notice: libraryReleaseText("applyStarted"),
           applyOperationID: response.data.id,
         },
       }));
@@ -1062,11 +1083,8 @@ export function LibraryReleaseScreen({
         [positionId]: {
           ...current[positionId],
           applying: false,
-          error: sharedErrorMessage(reason, "Не удалось применить текст."),
-          readError: sharedErrorMessage(
-            reason,
-            "Не удалось проверить публикацию.",
-          ),
+          error: libraryReleaseError(reason, "applyLyricsFailed"),
+          readError: libraryReleaseError(reason, "verifyPublicationFailed"),
         },
       }));
     }
@@ -1103,7 +1121,7 @@ export function LibraryReleaseScreen({
     try {
       const response = await retryPublicationSourceCleanup(originalOperationID);
       if (response.status !== 202)
-        throw new Error(errorMessage(response.data, response.status));
+        throw errorMessage(response.data, response.status);
       if (!mounted.current || scope.current !== requestScope) return;
       setPositions((current) => ({
         ...current,
@@ -1204,14 +1222,10 @@ export function LibraryReleaseScreen({
             cleanupRetryPendingIDs: (
               current[positionId]?.cleanupRetryPendingIDs ?? []
             ).filter((id) => id !== originalOperationID),
-            error: sharedErrorMessage(
-              reason,
-              "Не удалось повторить очистку источников.",
-            ),
+            error: libraryReleaseError(reason, "retryCleanupFailed"),
             ...(projectionReadFailed
               ? {
-                  readError:
-                    "Не удалось проверить публикацию. Обновите данные перед повторной попыткой.",
+                  readError: libraryReleaseText("verifyBeforeRetry"),
                 }
               : {}),
           },
@@ -1253,8 +1267,7 @@ export function LibraryReleaseScreen({
         },
       );
       if (!mounted.current || scope.current !== requestScope) return;
-      if (result.status !== 200)
-        throw new Error(errorMessage(result.data, result.status));
+      if (result.status !== 200) throw errorMessage(result.data, result.status);
       await refreshReleaseDetail(requestScope);
       if (!mounted.current || scope.current !== requestScope) return;
       await refreshPosition(positionId);
@@ -1265,7 +1278,7 @@ export function LibraryReleaseScreen({
         ...current,
         [positionId]: {
           ...current[positionId],
-          error: sharedErrorMessage(reason, "Не удалось выбрать исполнителя."),
+          error: libraryReleaseError(reason, "chooseArtistFailed"),
         },
       }));
     } finally {
@@ -1286,8 +1299,7 @@ export function LibraryReleaseScreen({
         expected_revision: release.metadata_revision,
       });
       if (!mounted.current || scope.current !== requestScope) return;
-      if (result.status !== 200)
-        throw new Error(errorMessage(result.data, result.status));
+      if (result.status !== 200) throw errorMessage(result.data, result.status);
       if (!(await refreshReleaseDetail(requestScope))) return;
     } catch (reason) {
       if (
@@ -1299,10 +1311,7 @@ export function LibraryReleaseScreen({
       setReleasePrimaryArtist({
         ...pending,
         saving: false,
-        error: sharedErrorMessage(
-          reason,
-          "Не удалось выбрать исполнителя релиза.",
-        ),
+        error: libraryReleaseError(reason, "chooseReleaseArtistFailed"),
       });
     } finally {
       if (releasePrimaryArtistPending.current === pending)
@@ -1338,7 +1347,7 @@ export function LibraryReleaseScreen({
       const response = await refreshLibraryReleaseMusicbrainz(releaseId);
       if (!mounted.current || scope.current !== requestScope) return;
       if (response.status !== 202)
-        throw new Error(errorMessage(response.data, response.status));
+        throw errorMessage(response.data, response.status);
       setMusicBrainzRefresh({
         scope: requestScope,
         operationID: response.data.id,
@@ -1357,10 +1366,7 @@ export function LibraryReleaseScreen({
         scope: requestScope,
         pending: false,
         active: false,
-        error: sharedErrorMessage(
-          reason,
-          "Не удалось запустить обновление MusicBrainz.",
-        ),
+        error: libraryReleaseError(reason, "startMusicBrainzFailed"),
       });
     } finally {
       if (musicBrainzRefreshPending.current === pending)
@@ -1407,20 +1413,20 @@ export function LibraryReleaseScreen({
   if (error)
     return (
       <section>
-        <h1>Медиатека</h1>
-        <p role="alert">{error}</p>
+        <h1>{text("library")}</h1>
+        <p role="alert">{displayText(error)}</p>
         <button
           type="button"
           onClick={() => {
             window.location.hash = "/incoming-groups";
           }}
         >
-          К входящим
+          {text("incoming")}
         </button>
       </section>
     );
   if (!release || loadedReleaseID !== releaseId)
-    return <p role="status">Загрузка релиза…</p>;
+    return <p role="status">{text("loadingRelease")}</p>;
   const releaseRenderScope = scope.current;
   const selectedTrack = positionId
     ? (release.tracks ?? []).find((track) => track.id === positionId)
@@ -1440,14 +1446,14 @@ export function LibraryReleaseScreen({
     <section className="library-release-screen mx-auto max-w-5xl space-y-6">
       <nav
         className="library-release-navigation"
-        aria-label="Навигация по медиатеке"
+        aria-label={text("libraryNavigation")}
       >
         <a className="underline" href="#/library">
-          ← Каталог медиатеки
+          {text("libraryCatalog")}
         </a>
         {positionId ? (
           <a className="underline" href="#/incoming-groups">
-            Входящие
+            {text("incoming")}
           </a>
         ) : null}
       </nav>
@@ -1456,16 +1462,16 @@ export function LibraryReleaseScreen({
         <ReleaseCreditList credits={release.artists} />
         {(release.artists?.length ?? 0) > 1 && (
           <label className="block">
-            Основной исполнитель релиза
+            {text("primaryReleaseArtist")}
             <select
-              aria-label="Основной исполнитель релиза"
+              aria-label={text("primaryReleaseArtist")}
               value={release.primary_artist.selected_artist_id || ""}
               disabled={releasePrimaryArtistSaving}
               onChange={(event) =>
                 void selectReleasePrimaryArtist(event.target.value || null)
               }
             >
-              <option value="">Не выбран</option>
+              <option value="">{text("notSelected")}</option>
               {uniqueArtists(release.artists).map((artist) => (
                 <option key={artist.artist_id} value={artist.artist_id}>
                   {artist.credit_name || artist.artist_name}
@@ -1473,7 +1479,7 @@ export function LibraryReleaseScreen({
               ))}
             </select>
             {releasePrimaryArtistError && (
-              <p role="alert">{releasePrimaryArtistError}</p>
+              <p role="alert">{displayText(releasePrimaryArtistError)}</p>
             )}
           </label>
         )}
@@ -1490,20 +1496,20 @@ export function LibraryReleaseScreen({
             >
               {musicBrainzRefresh.scope === scope.current &&
               (musicBrainzRefresh.pending || musicBrainzRefresh.active)
-                ? "Обновление MusicBrainz выполняется…"
-                : "Обновить данные MusicBrainz"}
+                ? text("refreshMusicBrainzRunning")
+                : text("refreshMusicBrainz")}
             </button>
             {musicBrainzRefresh.scope === scope.current &&
               musicBrainzRefresh.active && (
-                <p role="status">Ожидание обновления данных MusicBrainz…</p>
+                <p role="status">{text("waitingMusicBrainz")}</p>
               )}
             {musicBrainzRefresh.scope === scope.current &&
               musicBrainzRefresh.notice && (
-                <p role="status">{musicBrainzRefresh.notice}</p>
+                <p role="status">{displayText(musicBrainzRefresh.notice)}</p>
               )}
             {musicBrainzRefresh.scope === scope.current &&
               musicBrainzRefresh.error && (
-                <p role="alert">{musicBrainzRefresh.error}</p>
+                <p role="alert">{displayText(musicBrainzRefresh.error)}</p>
               )}
           </div>
         )}
@@ -1526,7 +1532,9 @@ export function LibraryReleaseScreen({
         refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
         onSaved={refreshAfterMetadataSave}
       />
-      {genreRefreshError ? <p role="alert">{genreRefreshError}</p> : null}
+      {genreRefreshError ? (
+        <p role="alert">{displayText(genreRefreshError)}</p>
+      ) : null}
       <ReleaseMetadataEditor
         releaseId={releaseId}
         refreshToken={`${scope.current.generation}:${release.metadata_revision}:${genreContextGeneration}`}
@@ -1550,7 +1558,7 @@ export function LibraryReleaseScreen({
       )}
       {positionId && (
         <a className="underline" href={`#/library/releases/${releaseId}`}>
-          ← Полный релиз
+          {text("fullRelease")}
         </a>
       )}
       <ReleaseCoverEditor
@@ -1571,8 +1579,7 @@ export function LibraryReleaseScreen({
                 ...next[operation.position_id],
                 applyOperationID: operation.operation_id,
                 applying: true,
-                notice:
-                  "Применение обложки запущено. Ожидается проверка опубликованных данных.",
+                notice: libraryReleaseText("coverApplyAdmitted"),
               };
             }
             return next;
@@ -1580,7 +1587,7 @@ export function LibraryReleaseScreen({
         }}
       />
       {positionId && !selectedTrack ? (
-        <p role="alert">Позиция не найдена в этом релизе.</p>
+        <p role="alert">{text("positionNotFound")}</p>
       ) : null}
       {visibleTracks.map((track) => {
         const renderScope = scope.current;
@@ -1633,9 +1640,9 @@ export function LibraryReleaseScreen({
                 ...current,
                 [track.id]: {
                   ...current[track.id],
-                  readError: sharedErrorMessage(
+                  readError: libraryReleaseError(
                     reason,
-                    "Не удалось обновить публикацию.",
+                    "publicationRefreshFailed",
                   ),
                 },
               };
@@ -1652,29 +1659,29 @@ export function LibraryReleaseScreen({
             </h2>
             <section
               className="grid gap-2 rounded border border-stone-300 bg-stone-50 px-3 py-3 text-sm"
-              aria-label="Текущая публикация"
+              aria-label={text("currentPublication")}
             >
               <h3 className="font-semibold">
-                {publicationSummary ? "Опубликовано" : "Не опубликовано"}
+                {publicationSummary ? text("published") : text("notPublished")}
               </h3>
               {publicationSummary?.relative_path &&
                 publicationSummary.validated_at &&
                 publicationSummary.container &&
                 publicationSummary.codec && (
                   <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[max-content_1fr]">
-                    <dt className="text-stone-600">Формат</dt>
+                    <dt className="text-stone-600">{text("format")}</dt>
                     <dd>
                       {publicationSummary.container} ·{" "}
                       {publicationSummary.codec}
                     </dd>
-                    <dt className="text-stone-600">Путь</dt>
+                    <dt className="text-stone-600">{text("path")}</dt>
                     <dd className="break-all font-mono">
                       {publicationSummary.relative_path}
                     </dd>
-                    <dt className="text-stone-600">Проверено</dt>
+                    <dt className="text-stone-600">{text("checked")}</dt>
                     <dd>
                       <time dateTime={publicationSummary.validated_at}>
-                        {new Intl.DateTimeFormat("ru", {
+                        {new Intl.DateTimeFormat(locale, {
                           dateStyle: "medium",
                           timeStyle: "short",
                         }).format(new Date(publicationSummary.validated_at))}
@@ -1730,9 +1737,9 @@ export function LibraryReleaseScreen({
             />
             {credits.length > 1 && (
               <label className="block">
-                Основной исполнитель композиции
+                {text("primaryTrackArtist")}
                 <select
-                  aria-label={`Основной исполнитель композиции ${track.displayed_number}`}
+                  aria-label={`${text("primaryTrackArtist")} ${track.displayed_number}`}
                   value={track.primary_artist.selected_artist_id || ""}
                   disabled={!position?.metadata || position.writePending}
                   onChange={(event) =>
@@ -1742,7 +1749,7 @@ export function LibraryReleaseScreen({
                     )
                   }
                 >
-                  <option value="">Не выбран</option>
+                  <option value="">{text("notSelected")}</option>
                   {uniqueArtists(credits).map((artist) => (
                     <option key={artist.artist_id} value={artist.artist_id}>
                       {artist.credit_name || artist.artist_name}
@@ -1753,7 +1760,7 @@ export function LibraryReleaseScreen({
             )}
             <PositionSources track={track} />
             <label className="block">
-              Сохранённый текст песни
+              {text("savedLyrics")}
               <textarea
                 className="mt-1 block min-h-40 w-full rounded border p-2"
                 value={position?.lyrics ?? ""}
@@ -1784,7 +1791,7 @@ export function LibraryReleaseScreen({
                 }
                 onClick={() => void saveLyrics(track.id)}
               >
-                Сохранить текст
+                {text("saveLyrics")}
               </button>
               <button
                 type="button"
@@ -1796,7 +1803,7 @@ export function LibraryReleaseScreen({
                 }
                 onClick={() => void saveLyrics(track.id, true)}
               >
-                Сохранить как явно пустой
+                {text("saveExplicitlyEmpty")}
               </button>
               <button
                 type="button"
@@ -1810,19 +1817,20 @@ export function LibraryReleaseScreen({
                 }
                 onClick={() => void applyLyrics(track.id)}
               >
-                Применить сохранённый текст
+                {text("applySavedLyrics")}
               </button>
             </div>
             <p>
-              Публикация: {publication?.current_path ?? "ещё не опубликована"}
+              {text("publication")}:{" "}
+              {publication?.current_path ?? text("notPublishedYet")}
               {publication?.current_generation
-                ? ` · поколение ${publication.current_generation}`
+                ? ` · ${text("generation", { generation: publication.current_generation })}`
                 : ""}
             </p>
             {publication?.current_generation && (
-              <fieldset aria-label="Фактическая обложка текущей публикации">
+              <fieldset aria-label={text("actualCoverRegion")}>
                 <p>
-                  Фактическая обложка:{" "}
+                  {text("actualCover")}:{" "}
                   {publication.current_assets?.cover.state ?? "unknown"}
                   {publication.current_assets?.cover.sha256
                     ? ` · SHA-256: ${publication.current_assets.cover.sha256}`
@@ -1830,10 +1838,10 @@ export function LibraryReleaseScreen({
                 </p>
                 {publication.cover_embedding && (
                   <p>
-                    Встраивание выбранной обложки:{" "}
+                    {text("coverEmbeddingOutcome")}{" "}
                     {publication.cover_embedding.outcome === "verified"
-                      ? "проверено"
-                      : "не подтверждено"}
+                      ? text("verified")
+                      : text("unverified")}
                     {publication.cover_embedding.warning_code
                       ? ` · ${publication.cover_embedding.warning_code}`
                       : ""}
@@ -1842,28 +1850,31 @@ export function LibraryReleaseScreen({
               </fieldset>
             )}
             {publication?.initial_lyrics && (
-              <fieldset aria-label="Результат текста песни для текущей публикации">
+              <fieldset aria-label={text("lyricsPublicationResult")}>
                 <p>
-                  Текст песни в текущей публикации:{" "}
-                  {initialLyricsOutcomeLabels[
-                    publication.initial_lyrics.outcome
-                  ] ?? publication.initial_lyrics.outcome}
-                  {` · источник: ${initialLyricsSourceLabels[publication.initial_lyrics.source] ?? publication.initial_lyrics.source}`}
+                  {text("lyricsInCurrentPublication")}{" "}
+                  {lyricsOutcomeLabel(
+                    publication.initial_lyrics.outcome,
+                    locale,
+                  )}
+                  {` · ${text("lyricsSource")}: ${lyricsSourceLabel(publication.initial_lyrics.source, locale)}`}
                 </p>
                 {publication.initial_lyrics.resolution_warning_code && (
                   <p>
-                    Предупреждение поиска:{" "}
-                    {initialLyricsWarningLabels[
-                      publication.initial_lyrics.resolution_warning_code
-                    ] ?? publication.initial_lyrics.resolution_warning_code}
+                    {text("lyricsWarningLookup")}{" "}
+                    {lyricsWarningLabel(
+                      publication.initial_lyrics.resolution_warning_code,
+                      locale,
+                    )}
                   </p>
                 )}
                 {publication.initial_lyrics.outcome_warning_code && (
                   <p>
-                    Предупреждение публикации:{" "}
-                    {initialLyricsWarningLabels[
-                      publication.initial_lyrics.outcome_warning_code
-                    ] ?? publication.initial_lyrics.outcome_warning_code}
+                    {text("lyricsWarningPublication")}{" "}
+                    {lyricsWarningLabel(
+                      publication.initial_lyrics.outcome_warning_code,
+                      locale,
+                    )}
                   </p>
                 )}
               </fieldset>
@@ -1890,14 +1901,14 @@ export function LibraryReleaseScreen({
                     {position?.cleanupRetryPendingIDs?.includes(
                       warning.original_operation_id,
                     )
-                      ? "Повтор выполняется…"
-                      : "Повторить очистку источников"}
+                      ? text("cleanupRetryRunning")
+                      : text("retrySourceCleanup")}
                   </button>
                 )}
                 {warning.active_retry_operation_id &&
                   !finishedOperations.current.has(
                     warning.active_retry_operation_id,
-                  ) && <p role="status">Повторная очистка выполняется.</p>}
+                  ) && <p role="status">{text("cleanupRunning")}</p>}
               </div>
             ))}
             {!publication?.active_attempt &&
@@ -1931,50 +1942,60 @@ export function LibraryReleaseScreen({
               )}
             <p>
               {publication?.active_attempt
-                ? `Выполняется операция: ${publication.active_attempt.stage} (${publication.active_attempt.state})`
+                ? text("operationRunning", {
+                    stage: publication.active_attempt.stage,
+                    state: publication.active_attempt.state,
+                  })
                 : publication?.manual_lyrics?.pending
-                  ? "Сохранённый текст ожидает применения."
-                  : "Нет ожидающего применения текста."}
+                  ? text("savedLyricsPending")
+                  : text("noLyricsPending")}
             </p>
             <p>
-              Текущая публикация:{" "}
+              {text("currentPublicationSummary")}{" "}
               {publication?.current_metadata?.tags
                 ? Object.entries(publication.current_metadata.tags)
                     .map(
                       ([name, values]) =>
                         `${name}: ${(values ?? []).join(", ")}`,
                     )
-                    .join("; ") || "теги отсутствуют"
-                : "метаданные не доступны"}
-              ; аудио{" "}
+                    .join("; ") || text("tagsMissing")
+                : text("metadataUnavailable")}
+              ; {text("audio")}{" "}
               {publication?.current_audio
                 ? `${publication.current_audio.codec}/${publication.current_audio.container}`
-                : "не опубликовано"}
-              ; обложка{" "}
-              {publication?.current_assets?.cover.state ?? "неизвестно"}; текст{" "}
-              {publication?.current_assets?.lyrics.state ?? "неизвестно"}.
+                : text("audioUnpublished")}
+              ; {text("cover")}{" "}
+              {publication?.current_assets?.cover.state ?? text("unknown")};{" "}
+              {text("lyrics")}{" "}
+              {publication?.current_assets?.lyrics.state ??
+                text("lyricsUnknown")}
+              .
             </p>
             {publication?.manual_lyrics_receipt && (
               <p>
-                Квитанция: текст{" "}
-                {publication.manual_lyrics_receipt.desired_state} подтверждён в
-                поколении{" "}
+                {text("receipt")}{" "}
+                {publication.manual_lyrics_receipt.desired_state}{" "}
+                {text("confirmedInGeneration")}{" "}
                 {publication.manual_lyrics_receipt.confirmed_generation},
-                опубликованное поколение{" "}
+                {text("publishedGeneration")}{" "}
                 {publication.manual_lyrics_receipt.published_generation}
                 {publication.manual_lyrics_receipt.warning_code
-                  ? ` · предупреждение: ${publication.manual_lyrics_receipt.warning_code}`
+                  ? ` · ${text("warning")}: ${publication.manual_lyrics_receipt.warning_code}`
                   : ""}
                 .
               </p>
             )}
-            {position?.notice && <p role="status">{position.notice}</p>}
-            {position?.error && <p role="alert">{position.error}</p>}
+            {position?.notice && (
+              <p role="status">{displayText(position.notice)}</p>
+            )}
+            {position?.error && (
+              <p role="alert">{displayText(position.error)}</p>
+            )}
             {position?.readError && (
               <div role="alert">
-                {position.readError}{" "}
+                {displayText(position.readError)}{" "}
                 <button type="button" onClick={refreshReadState}>
-                  Обновить данные
+                  {text("refreshData")}
                 </button>
               </div>
             )}

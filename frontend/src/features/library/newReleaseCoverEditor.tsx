@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  apiResponseError,
-  errorMessage as sharedErrorMessage,
-} from "../../api/client/errors";
-import {
   applyLibraryReleaseCover,
   getGetLibraryReleaseCoverImageUrl,
   getLibraryReleaseCover,
@@ -14,6 +10,15 @@ import type {
   ReleaseCoverPositionOperation,
   ReleaseCoverSummary,
 } from "../../api/generated/client.schemas";
+import { useI18n } from "../../i18n/I18nProvider";
+import {
+  type LibraryReleaseText,
+  LocalizedLibraryReleaseError,
+  libraryReleaseError,
+  libraryReleaseMessage,
+  libraryReleaseText,
+  renderLibraryReleaseText,
+} from "./libraryReleaseMessages";
 
 type Props = {
   releaseId: string;
@@ -21,11 +26,18 @@ type Props = {
   onOperationsAdmitted: (operations: ReleaseCoverPositionOperation[]) => void;
 };
 
-function errorMessage(data: unknown, status: number) {
-  return apiResponseError(
-    { status, data },
-    `Запрос не выполнен (HTTP ${status}).`,
-  ).message;
+function errorMessage(data: unknown, status: number): Error {
+  const detail =
+    typeof data === "object" &&
+    data !== null &&
+    "detail" in data &&
+    typeof data.detail === "string"
+      ? data.detail
+      : "";
+  if (detail) return new Error(detail);
+  return new LocalizedLibraryReleaseError(
+    libraryReleaseText("requestFailed", { status }),
+  );
 }
 
 export function ReleaseCoverEditor({
@@ -33,6 +45,13 @@ export function ReleaseCoverEditor({
   epoch,
   onOperationsAdmitted,
 }: Props) {
+  const { locale } = useI18n();
+  const text = (
+    key: Parameters<typeof libraryReleaseMessage>[1],
+    values?: Record<string, string | number>,
+  ) => libraryReleaseMessage(locale, key, values);
+  const displayText = (value: LibraryReleaseText) =>
+    renderLibraryReleaseText(locale, value);
   const requestScope = useRef({ releaseId, generation: 0 });
   if (requestScope.current.releaseId !== releaseId)
     requestScope.current = {
@@ -42,8 +61,8 @@ export function ReleaseCoverEditor({
   const [cover, setCover] = useState<ReleaseCoverSummary>();
   const [file, setFile] = useState<File>();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [error, setError] = useState<LibraryReleaseText | "">("");
+  const [notice, setNotice] = useState<LibraryReleaseText | "">("");
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -58,12 +77,12 @@ export function ReleaseCoverEditor({
       .then((response) => {
         if (!active || requestScope.current !== scope) return;
         if (response.status !== 200)
-          throw new Error(errorMessage(response.data, response.status));
+          throw errorMessage(response.data, response.status);
         setCover(response.data);
       })
       .catch((reason: unknown) => {
         if (active && requestScope.current === scope)
-          setError(sharedErrorMessage(reason, "Не удалось загрузить обложку."));
+          setError(libraryReleaseError(reason, "loadCoverFailed"));
       });
     return () => {
       active = false;
@@ -94,15 +113,14 @@ export function ReleaseCoverEditor({
         mime: selectedFile.type,
       });
       if (requestScope.current !== scope) return;
-      if (data.status !== 200)
-        throw new Error(errorMessage(data.data, data.status));
+      if (data.status !== 200) throw errorMessage(data.data, data.status);
       setCover(data.data);
       setFile(undefined);
       if (fileInput.current) fileInput.current.value = "";
-      setNotice("Обложка сохранена как ожидающая. Публикации не изменены.");
+      setNotice(libraryReleaseText("coverSaved"));
     } catch (reason) {
       if (requestScope.current === scope)
-        setError(sharedErrorMessage(reason, "Не удалось сохранить обложку."));
+        setError(libraryReleaseError(reason, "saveCoverFailed"));
     } finally {
       if (requestScope.current === scope) setBusy(false);
     }
@@ -132,27 +150,22 @@ export function ReleaseCoverEditor({
             });
       if (requestScope.current !== scope) return;
       if (response.status !== 202)
-        throw new Error(errorMessage(response.data, response.status));
+        throw errorMessage(response.data, response.status);
       const operations = response.data.operations ?? [];
       onOperationsAdmitted(operations);
       setNotice(
-        `Применение запущено для ${operations.length} опубликованных треков. Текущие обложки обновятся только после проверки публикаций.`,
+        libraryReleaseText("coverApplyStarted", { count: operations.length }),
       );
       const refreshed = await getLibraryReleaseCover(releaseId, {
         cache: "no-store",
       });
       if (requestScope.current !== scope) return;
       if (refreshed.status !== 200)
-        throw new Error(errorMessage(refreshed.data, refreshed.status));
+        throw errorMessage(refreshed.data, refreshed.status);
       setCover(refreshed.data);
     } catch (reason) {
       if (requestScope.current === scope)
-        setError(
-          sharedErrorMessage(
-            reason,
-            "Не удалось запустить применение обложки.",
-          ),
-        );
+        setError(libraryReleaseError(reason, "applyCoverFailed"));
     } finally {
       if (requestScope.current === scope) setBusy(false);
     }
@@ -164,34 +177,34 @@ export function ReleaseCoverEditor({
       className="space-y-3 rounded border border-stone-300 p-4"
     >
       <h2 id="release-cover-title" className="font-semibold">
-        Обложка релиза
+        {text("releaseCover")}
       </h2>
       {cover?.selected_generation ? (
         <div>
-          <p>Выбранная обложка</p>
+          <p>{text("selectedCover")}</p>
           <img
             className="max-h-48"
-            alt="Выбранная обложка релиза"
+            alt={text("selectedReleaseCover")}
             src={imageURL(cover.selected_generation)}
           />
-          <p>SHA-256: {cover.selected_sha256 ?? "не указан"}</p>
+          <p>SHA-256: {cover.selected_sha256 ?? text("unspecified")}</p>
         </div>
       ) : (
-        <p>Выбранная обложка не задана.</p>
+        <p>{text("noSelectedCover")}</p>
       )}
       {cover?.pending_generation && (
         <div>
-          <p>Ожидающая обложка — ещё не опубликована</p>
+          <p>{text("pendingCover")}</p>
           <img
             className="max-h-48"
-            alt="Ожидающая обложка релиза"
+            alt={text("pendingReleaseCover")}
             src={imageURL(cover.pending_generation)}
           />
-          <p>SHA-256: {cover.pending_sha256 ?? "не указан"}</p>
+          <p>SHA-256: {cover.pending_sha256 ?? text("unspecified")}</p>
         </div>
       )}
       <label className="block">
-        Выбрать PNG или JPEG
+        {text("choosePngJpeg")}
         <input
           key={releaseId}
           ref={fileInput}
@@ -206,30 +219,27 @@ export function ReleaseCoverEditor({
         disabled={!file || busy}
         onClick={() => void savePending()}
       >
-        Сохранить ожидающую обложку
+        {text("savePendingCover")}
       </button>
       <button
         type="button"
         disabled={!cover?.pending_generation || !epoch || busy}
         onClick={() => void apply("apply")}
       >
-        Применить ко всем опубликованным трекам
+        {text("applyCoverToTracks")}
       </button>
       <button
         type="button"
         disabled={!cover?.selected_generation || !epoch || busy}
         onClick={() => void apply("retry")}
       >
-        Повторить применение выбранной обложки
+        {text("retrySelectedCover")}
       </button>
       {cover?.warning && (
-        <p role="alert">
-          Предупреждение обложки: {cover.warning}. Это не подтверждение
-          успешного встраивания.
-        </p>
+        <p role="alert">{text("coverWarning", { warning: cover.warning })}</p>
       )}
-      {notice && <p role="status">{notice}</p>}
-      {error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{displayText(notice)}</p>}
+      {error && <p role="alert">{displayText(error)}</p>}
     </section>
   );
 }

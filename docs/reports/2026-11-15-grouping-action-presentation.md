@@ -24,3 +24,23 @@ mapping; regression использует преобразованный preview 
 перемещается файл между разными группами, итоговый ответ отражает новые составы;
 пустота списка действий проверяется только в его секции, а не во всех списках
 файлов страницы. Wire ID и revision assertions сохраняются.
+
+## Проверки `ac679830`
+
+Обычный полный commit hook прошёл; commit отправлен. Полная
+[CI 43712658879](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/43712658879)
+выполняется. Acceptance-only процесс 18080 обновлён штатно PID 71128 → 2557;
+PostgreSQL и стенд 8787 не менялись.
+
+Browser реального backend показал `Merge Group 1, Group 2` / `Объединить:
+Группа 1, Группа 2` вместо technical kind/UUID. Locale flip не вызвал API
+requests; Cancel draft очистил список. Preview/Confirm не нажимались, контрольные
+группы не перегруппировывались. Последовательный transformed preview, wire payload
+и очистка после успешного confirm проверены frontend fixtures, не browser E2E.
+
+SHA-256 обоих CURRENT и трёх исходников совпали с baseline; readback сохранён
+в `$TMPDIR/opencode/plan13acceptance/grouping-action-presentation-hashes.txt`.
+
+Вся CI `43712658879` для `ac679830` завершилась успешно с первого attempt,
+включая Windows, обе macOS, Linux и публикацию контейнера. Ограниченный срез
+подписей завершён; общая сквозная приёмка плана 13 остаётся открытой.

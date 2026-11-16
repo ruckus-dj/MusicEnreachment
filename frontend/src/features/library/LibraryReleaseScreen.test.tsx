@@ -15,7 +15,7 @@ import type {
   LibraryPublicationResponse,
   LibraryReleaseDetailResponse,
 } from "../../api/generated/client.schemas";
-import { I18nProvider } from "../../i18n/I18nProvider";
+import { I18nProvider, useI18n } from "../../i18n/I18nProvider";
 import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { LibraryReleaseScreen } from "./LibraryReleaseScreen";
@@ -32,6 +32,15 @@ vi.mock("./FirstPublicationPreview", () => ({
 vi.mock("./newReleaseCoverEditor", () => ({
   ReleaseCoverEditor: () => null,
 }));
+
+function LocaleToggle() {
+  const { setPreference } = useI18n();
+  return (
+    <button type="button" onClick={() => setPreference("ru")}>
+      Switch locale
+    </button>
+  );
+}
 
 const releaseID = "release-1";
 const positionID = "position-1";
@@ -157,13 +166,18 @@ function installHandlers(published: boolean) {
 }
 
 function renderScreen(releaseId: string) {
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "en");
+  vi.stubGlobal("localStorage", storage);
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <LibraryReleaseScreen releaseId={releaseId} />
-    </QueryClientProvider>,
+    <I18nProvider>
+      <QueryClientProvider client={client}>
+        <LibraryReleaseScreen releaseId={releaseId} />
+      </QueryClientProvider>
+    </I18nProvider>,
   );
 }
 
@@ -190,9 +204,9 @@ it("shows publication and source details from release detail without source inve
   renderScreen(releaseID);
 
   const summary = await screen.findByRole("region", {
-    name: "Текущая публикация",
+    name: "Current publication",
   });
-  expect(summary).toHaveTextContent("Опубликовано");
+  expect(summary).toHaveTextContent("Published");
   expect(summary).toHaveTextContent("flac · FLAC");
   expect(summary).toHaveTextContent("Artist/Album/01 - Position One.flac");
   expect(summary.querySelector("time")).toHaveAttribute(
@@ -200,7 +214,7 @@ it("shows publication and source details from release detail without source inve
     validatedAt,
   );
   expect(
-    new Intl.DateTimeFormat("ru", {
+    new Intl.DateTimeFormat("en", {
       dateStyle: "medium",
       timeStyle: "short",
     }).format(new Date(validatedAt)),
@@ -226,9 +240,9 @@ it("shows an explicit unpublished state when release detail has no publication s
   renderScreen(releaseID);
 
   const summary = await screen.findByRole("region", {
-    name: "Текущая публикация",
+    name: "Current publication",
   });
-  expect(summary).toHaveTextContent("Не опубликовано");
+  expect(summary).toHaveTextContent("Not published");
   expect(summary).not.toHaveTextContent("Artist/Album");
 });
 
@@ -273,7 +287,7 @@ it("invalidates preview context immediately even if release detail refresh fails
   );
 
   renderScreen(releaseID);
-  await screen.findByRole("region", { name: "Текущая публикация" });
+  await screen.findByRole("region", { name: "Current publication" });
   const preview = screen.getByTestId("publication-preview");
   const initialToken = preview.getAttribute("data-refresh-token");
   const genres = await screen.findByRole("region", {
@@ -327,11 +341,11 @@ it("replaces the release-detail publication summary with refreshed position stat
   renderScreen(releaseID);
 
   const summary = await screen.findByRole("region", {
-    name: "Текущая публикация",
+    name: "Current publication",
   });
-  await waitFor(() => expect(summary).toHaveTextContent("Опубликовано"));
+  await waitFor(() => expect(summary).toHaveTextContent("Published"));
   expect(summary).toHaveTextContent("Artist/Album/rewritten.flac");
-  expect(summary).not.toHaveTextContent("Не опубликовано");
+  expect(summary).not.toHaveTextContent("Not published");
 });
 
 it("updates generation and path after a manual position refresh", async () => {
@@ -362,7 +376,7 @@ it("updates generation and path after a manual position refresh", async () => {
   renderScreen(releaseID);
 
   const summary = await screen.findByRole("region", {
-    name: "Текущая публикация",
+    name: "Current publication",
   });
   expect(summary).toHaveTextContent("Artist/Album/01 - Position One.flac");
   expect(
@@ -370,9 +384,7 @@ it("updates generation and path after a manual position refresh", async () => {
       .getByTestId("publication-preview")
       .getAttribute("data-refresh-token"),
   ).not.toContain("generation-2");
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Обновить данные" }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: "Refresh data" }));
   await waitFor(() =>
     expect(summary).toHaveTextContent("Artist/Album/rewritten.flac"),
   );
@@ -384,6 +396,85 @@ it("updates generation and path after a manual position refresh", async () => {
         .getAttribute("data-refresh-token"),
     ).toContain("generation-2"),
   );
+});
+
+it("retains a lyrics draft and completed operation notice when locale changes without new requests", async () => {
+  const reads = { release: 0, metadata: 0, publication: 0 };
+  server.use(
+    http.get("*/api/library/releases/:releaseId", () => {
+      reads.release += 1;
+      return HttpResponse.json(release(false, "generation-1", true));
+    }),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/metadata",
+      () => {
+        reads.metadata += 1;
+        return HttpResponse.json(metadata);
+      },
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/publication",
+      () => {
+        reads.publication += 1;
+        return HttpResponse.json(publication(false));
+      },
+    ),
+    http.post("*/api/library/releases/:releaseId/musicbrainz-refresh", () =>
+      HttpResponse.json(
+        {
+          id: "43119aa6-c611-4b4e-afbe-421d3e3d2809",
+          kind: "refresh_library_release_musicbrainz",
+          state: "succeeded",
+          stage: "succeeded",
+          bytes_completed: 0,
+          created_at: "2026-11-11T10:00:00Z",
+          updated_at: "2026-11-11T10:00:01Z",
+        },
+        { status: 202 },
+      ),
+    ),
+  );
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "en");
+  vi.stubGlobal("localStorage", storage);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <I18nProvider>
+      <LocaleToggle />
+      <QueryClientProvider client={client}>
+        <LibraryReleaseScreen releaseId={releaseID} />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+
+  const lyrics = await screen.findByRole("textbox", { name: "Saved lyrics" });
+  fireEvent.change(lyrics, { target: { value: "unsaved lyrics draft" } });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Refresh MusicBrainz data" }),
+  );
+  const successNotice =
+    "MusicBrainz data updated. Publication refresh runs separately.";
+  await screen.findByText(successNotice);
+  await waitFor(() => {
+    expect(reads.release).toBeGreaterThan(1);
+    expect(reads.metadata).toBeGreaterThan(1);
+    expect(reads.publication).toBeGreaterThan(1);
+  });
+  const requestCountsBeforeLocaleChange = { ...reads };
+
+  fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
+
+  expect(
+    await screen.findByRole("textbox", { name: "Сохранённый текст песни" }),
+  ).toHaveValue("unsaved lyrics draft");
+  expect(
+    await screen.findByText(
+      "Данные MusicBrainz обновлены. Обновление публикаций выполняется отдельно.",
+    ),
+  ).toBeInTheDocument();
+  expect(reads).toEqual(requestCountsBeforeLocaleChange);
 });
 
 it("refreshes deletion from authoritative position state without remounting publication preview", async () => {
