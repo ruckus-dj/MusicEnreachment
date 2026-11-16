@@ -19,7 +19,10 @@ import (
 func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testing.T) {
 	generation := uuid.New()
 	emptyValues := []string{}
-	desired := map[string][]string{"ARTIST": {"Artist "}, "TITLE": {"One", "Two"}, "NIL_VALUE": nil, "EMPTY_VALUE": emptyValues}
+	desired := map[string][]string{
+		"ARTIST": {"Artist "}, "TITLE": {"One", "Two"}, "NIL_VALUE": nil,
+		"EMPTY_VALUE": emptyValues, "CLEAR_VALUE": {}, "EMPTY_STRING_VALUE": {""},
+	}
 	current := &persistence.LibraryPublicationCurrent{
 		Record:   persistence.TrackPublication{Generation: generation, RelativePath: "Artist/Album.m4a"},
 		Metadata: persistence.PublicationCommitMetadata{Tags: map[string][]string{"ARTIST": {"Artist"}, "TITLE": {"Two", "One"}, "EMPTY_VALUE": nil}},
@@ -71,10 +74,19 @@ func TestFirstPublicationPreviewComparesCurrentExactlyAndRemainsBlocked(t *testi
 			if comparison.RenderedMatches || comparison.ResolvedMatches || strings.Join(comparison.RenderedComponents, "/") == current.Record.RelativePath {
 				t.Fatalf("changed rendered basename matched CURRENT: %#v", comparison)
 			}
-			if len(comparison.TagDifferences) != 4 || comparison.TagDifferences[0].Key != "ARTIST" || comparison.TagDifferences[1].Key != "EMPTY_VALUE" || comparison.TagDifferences[2].Key != "NIL_VALUE" || comparison.TagDifferences[3].Key != "TITLE" {
+			if len(comparison.TagDifferences) != 4 || comparison.TagDifferences[0].Key != "ARTIST" || comparison.TagDifferences[1].Key != "EMPTY_STRING_VALUE" || comparison.TagDifferences[2].Key != "NIL_VALUE" || comparison.TagDifferences[3].Key != "TITLE" {
 				t.Fatalf("exact tag differences = %#v", comparison.TagDifferences)
 			}
-			if comparison.TagDifferences[2].DesiredPresent != true || comparison.TagDifferences[2].CurrentPresent != false || comparison.TagDifferences[1].DesiredPresent != true || comparison.TagDifferences[1].CurrentPresent != true || comparison.TagDifferences[1].Desired == nil || comparison.TagDifferences[1].Current != nil {
+			if values, present := desired["CLEAR_VALUE"]; !present || values == nil || len(values) != 0 {
+				t.Fatalf("clear intent was not retained as an explicit empty desired value: %#v", desired)
+			}
+			if _, present := current.Metadata.Tags["CLEAR_VALUE"]; present {
+				t.Fatal("comparison fabricated absent CURRENT metadata for the clear intent")
+			}
+			if comparison.TagDifferences[1].DesiredPresent != true || comparison.TagDifferences[1].CurrentPresent != false || len(comparison.TagDifferences[1].Desired) != 1 || comparison.TagDifferences[1].Desired[0] != "" {
+				t.Fatalf("empty string tag value was not preserved exactly: %#v", comparison.TagDifferences[1])
+			}
+			if comparison.TagDifferences[2].DesiredPresent != true || comparison.TagDifferences[2].CurrentPresent != false || comparison.TagDifferences[2].Desired != nil || comparison.TagDifferences[2].Current != nil {
 				t.Fatalf("nil/absent/empty tag distinctions lost: %#v", comparison.TagDifferences)
 			}
 			if comparison.AudioStatus != "matches" || comparison.AudioEvidence == nil || comparison.AudioEvidence.SourceAuthorityStatus != "present" || !strings.Contains(comparison.Reason, "typed source replacement") {
@@ -129,6 +141,28 @@ func TestSourceRepublishUnchangedEligibilityIsOrdinaryOnlyAndRequiresCompleteEvi
 	ordinary := FirstPublicationPreview{Mode: firstPublicationPreviewModeOrdinary, CurrentComparison: comparison, Transform: &transform}
 	if !sourceRepublishIsUnchanged(ordinary, selected, current, publication.AudioFormatSource) {
 		t.Fatal("complete ordinary CURRENT match was not classified as unchanged")
+	}
+	current.Record = persistence.TrackPublication{Generation: generation, RelativePath: "Artist/Album.flac"}
+	current.Metadata.Tags = map[string][]string{}
+	current.Assets.Cover.State = persistence.PublicationAssetAbsent
+	current.SourceAuthority = &persistence.CurrentSourceAuthority{
+		Status: "present", Revision: uuid.New(), PublicationEpoch: uuid.New(), PublicationGeneration: generation,
+		SourceLocationID: locationID, MediaVariantID: variantID,
+	}
+	selected.Selection = persistence.PublicationSourceSelection{LocationID: locationID, MediaVariantID: variantID}
+	preview := FirstPublicationPreview{
+		Mode: firstPublicationPreviewModeOrdinary, PathComponents: []string{"Artist", "Album.flac"},
+		ResolvedPathComponents: []string{"Artist", "Album.flac"},
+		SelectedSource:         &FirstPublicationPreviewSource{LocationID: locationID, MediaVariantID: variantID},
+		DesiredTags:            publication.TagProjection{Tags: map[string][]string{"ARTIST": {}}},
+		LyricsPlan:             &FirstPublicationLyricsPlan{CurrentStatus: "matches"},
+		CoverPlan:              &FirstPublicationCoverPlan{Derivation: "absent"},
+		Transform:              &transform,
+	}
+	snapshot := &persistence.LibraryFirstPublicationContext{Sources: []persistence.FirstPublicationSource{*selected}}
+	preview.CurrentComparison = compareFirstPublicationCurrent(preview, current, snapshot)
+	if len(preview.CurrentComparison.TagDifferences) != 0 || !sourceRepublishIsUnchanged(preview, selected, current, publication.AudioFormatSource) {
+		t.Fatalf("actual CURRENT comparison did not recognize the empty clear intent as unchanged: %#v", preview.CurrentComparison)
 	}
 	forced := ordinary
 	forced.Mode = firstPublicationPreviewModeForced

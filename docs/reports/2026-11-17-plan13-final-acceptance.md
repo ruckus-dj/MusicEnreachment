@@ -77,3 +77,65 @@ feedback/errors переведены на semantic descriptors с формати
 дополнительных reads. Независимое ревью выявило один устаревший RU selector в EN
 тесте; он исправлен. Biome formatting/import assists и Impeccable detector прошли.
 Полный gate и browser-проверка нового кода ещё не выполнялись.
+
+### Результат `a053c93d`
+
+Обычный полный hook прошёл, commit отправлен; CI `43977514007` выполняется.
+Свежий acceptance-процесс обновлён PID 21997 → 28202 с той же отдельной БД.
+Browser после reload показал English release/cover/lyrics/publication labels
+и английскую дату. Lyrics draft сохранился EN→RU→EN в том же DOM node без API
+requests; затем очищен без сохранения. RU/EN × light/dark × 1440×900/390×844:
+cover heading доступен, page overflow отсутствует. Это не полная визуальная
+сверка с прототипом и не проверка всех cover/lyrics failure states.
+
+Aggregate preview на `ac679830` после первой публикации без metadata-правок
+показал Update и различия `absent → []` для четырёх omitted artist/MBID tags.
+Причина исследуется отдельно; повторное подтверждение не выполнялось.
+
+CI `43977514007`, attempt 1: verify/Linux/macOS/Docker smoke прошли; Windows
+завершился ошибкой API-package cleanup: `supervisor did not respond to shutdown;
+force-terminated without confirming PostgreSQL cleanup` (116.805s). Публикация
+контейнера skipped. Failed-step log сохранён в
+`final-acceptance-20261117/windows-a053c93d-attempt1.log`, передан на независимый
+разбор; повтор без диагноза не запускался, gates/таймауты не менялись.
+
+Независимый разбор обнаружил `PASS` перед package cleanup failure, без assertion
+failure/panic/timeout; PostgreSQL сообщил shutdown, но supervisor не подтвердил
+cleanup. Это не успешный job и не установленная точная причина. После разбора
+запущен только failed-job rerun, без изменения gates/таймаутов.
+
+Settings на реальном backend `a053c93d`: configuration healthy, активные tools
+отображены. Несохранённый concurrency draft `7` сохранился при blur и EN→RU→EN
+без API requests, затем восстановлен в `4` без Save. Keyboard Tab из поля
+перевёл фокус на Save concurrency с `:focus-visible` и solid 2px outline.
+Обнаружен отдельный сохранённый network failure обновления genre catalog;
+его диагностика не подменяется успешной MusicBrainz connectivity проверкой.
+
+Attempt 2 CI `43977514007` также failed: тот же supervisor shutdown/cleanup,
+теперь migrations package (275.848s). Лог `windows-a053c93d-attempt2.log`.
+Третий автоматический rerun не выполняется: начат разбор supervisor/IPC lifecycle.
+Полная CI остаётся красной; зелёные prerequisite jobs не заменяют её результата.
+
+Независимый архитектурный разбор подтвердил false Update: валидатор результата
+считает desired clearing `[]` выполненным при физически отсутствующем теге,
+а preview считает такое отсутствие изменением. Исправляется effective-output
+comparison; clearing intent и фактический CURRENT сохраняются. Непустое текущее
+значение против `[]` остаётся изменением, `['']` не приравнивается к отсутствию.
+Отдельный hardcoded diagnostic `Comparison status: blocked` не является admission
+решением и не доказывает фактическую блокировку публикации.
+
+Разбор Windows уточнил границу: owner ждёт process exit отдельного supervisor
+из embedded-postgres/v2 alpha.3 после EOF lease, затем watchdog принудительно
+завершает его. Directory cleanup начинается позже и не объясняет watchdog.
+В attempt 1 PostgreSQL штатно завершился примерно за 6s; это не подтверждает
+завершение supervisor. Причина зависания не установлена, проверяется upstream.
+Не увеличиваются таймауты, ошибка cleanup не игнорируется, повтор CI без
+дополнительных оснований не запускается.
+
+Upstream research: shutdown-related source в pinned alpha.3 и актуальном v2.0.1
+совпадает; известное исправление именно этого watchdog failure не найдено.
+Обновление версии на предположении о таком fix не выполняется. Для точной причины
+нужны phase-specific данные внутри отдельно скачиваемого supervisor, а не снятие
+ошибки на стороне приложения. Источники:
+https://github.com/fergusstrange/embedded-postgres/blob/v2.0.0-alpha.3/internal/supervisor/supervisor.go
+и https://github.com/fergusstrange/embedded-postgres/blob/v2.0.1/internal/supervisor/supervisor.go.

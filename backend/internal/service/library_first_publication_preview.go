@@ -567,7 +567,7 @@ func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *pe
 	for _, key := range sorted {
 		desiredValues, desiredPresent := desired[key]
 		currentValues, currentPresent := actual[key]
-		if desiredPresent != currentPresent || !reflect.DeepEqual(desiredValues, currentValues) {
+		if !firstPublicationTagValuesMatch(desiredValues, desiredPresent, currentValues, currentPresent) {
 			comparison.TagDifferences = append(comparison.TagDifferences, FirstPublicationTagDifference{
 				Key: key, Desired: cloneTagValues(desiredValues), DesiredPresent: desiredPresent,
 				Current: cloneTagValues(currentValues), CurrentPresent: currentPresent,
@@ -578,6 +578,13 @@ func compareFirstPublicationCurrent(preview FirstPublicationPreview, current *pe
 		comparison.TagDifferences = []FirstPublicationTagDifference{}
 	}
 	return comparison
+}
+
+func firstPublicationTagValuesMatch(desired []string, desiredPresent bool, current []string, currentPresent bool) bool {
+	if desiredPresent && desired != nil && len(desired) == 0 && (!currentPresent || len(current) == 0) {
+		return true
+	}
+	return desiredPresent == currentPresent && reflect.DeepEqual(desired, current)
 }
 
 func digestString(digest []byte) string {
