@@ -250,6 +250,14 @@ function publication(
           current_generation: generation,
           current_path: "Artist/Album/01 - Position One.flac",
           current_validated_at: validatedAt,
+          current_metadata: {
+            version: 1,
+            tags: {
+              TITLE: ["Position One"],
+              REPLAYGAIN_TRACK_GAIN: ["-7.50 dB"],
+              R128_TRACK_GAIN: ["0"],
+            },
+          },
           current_audio: {
             alac_capabilities_verified: false,
             codec: "FLAC",
@@ -364,6 +372,54 @@ it("shows an explicit unpublished state when release detail has no publication s
   });
   expect(summary).toHaveTextContent("Not published");
   expect(summary).not.toHaveTextContent("Artist/Album");
+  expect(
+    screen.queryByLabelText("Current publication audio measurements"),
+  ).toBeNull();
+});
+
+it("shows and localizes saved loudness measurements for the current publication", async () => {
+  installHandlers(true);
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "en");
+  vi.stubGlobal("localStorage", storage);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <I18nProvider>
+      <LocaleToggle />
+      <QueryClientProvider client={client}>
+        <LibraryReleaseScreen releaseId={releaseID} positionId={positionID} />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+
+  const measurements = await screen.findByLabelText(
+    "Current publication audio measurements",
+  );
+  expect(
+    within(measurements).getByText("Track ReplayGain"),
+  ).toBeInTheDocument();
+  expect(within(measurements).getByText("-7.50 dB")).toBeInTheDocument();
+  expect(within(measurements).getByText("Track R128")).toBeInTheDocument();
+  expect(within(measurements).getByText("0")).toBeInTheDocument();
+  expect(
+    within(measurements).getByText("Album ReplayGain"),
+  ).toBeInTheDocument();
+  expect(within(measurements).getAllByText("Not calculated")).toHaveLength(4);
+  const summaryLine = screen.getByText(/^Current publication:/);
+  expect(summaryLine).toHaveTextContent("TITLE: Position One");
+  expect(summaryLine).not.toHaveTextContent("-7.50 dB");
+  fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
+  expect(measurements).toHaveAccessibleName(
+    "Измерения громкости текущей публикации",
+  );
+  expect(
+    within(measurements).getByText("ReplayGain трека"),
+  ).toBeInTheDocument();
+  expect(within(measurements).getByText("-7.50 dB")).toBeInTheDocument();
+  expect(within(measurements).getByText("0")).toBeInTheDocument();
+  expect(within(measurements).getAllByText("Не рассчитано")).toHaveLength(4);
 });
 
 it("invalidates preview context immediately even if release detail refresh fails", async () => {
@@ -503,6 +559,9 @@ it("updates generation and path after a manual position refresh", async () => {
   });
   expect(summary).toHaveTextContent("Artist/Album/01 - Position One.flac");
   expect(
+    screen.queryByLabelText("Current publication audio measurements"),
+  ).toBeNull();
+  expect(
     screen
       .getByTestId("publication-preview")
       .getAttribute("data-refresh-token"),
@@ -512,6 +571,9 @@ it("updates generation and path after a manual position refresh", async () => {
     expect(summary).toHaveTextContent("Artist/Album/rewritten.flac"),
   );
   expect(summary).not.toHaveTextContent("Artist/Album/01 - Position One.flac");
+  expect(
+    await screen.findByLabelText("Current publication audio measurements"),
+  ).toBeInTheDocument();
   await waitFor(() =>
     expect(
       screen

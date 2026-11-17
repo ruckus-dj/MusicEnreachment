@@ -775,36 +775,6 @@ export function MetadataEditor({
 					{m("label.foreignFields")}
 				</p>
 			)}
-			{scope === "audio" && (
-				<section
-					aria-label={m("group.audioMeasurements")}
-					className="grid min-w-0 gap-2"
-				>
-					<h3 className="m-0 text-sm font-semibold">
-						{m("group.audioMeasurements")}
-					</h3>
-					<dl className="m-0 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-						{audioMeasurementKeys.map((key) => {
-							const field = fieldByKey(key);
-							const measured = rows(values, key).filter(Boolean).join(" · ");
-							return (
-								<div
-									key={key}
-									{...marker([key])}
-									className="grid min-w-0 gap-1 rounded border border-[var(--line)] p-2"
-								>
-									<dt className="text-xs text-[var(--muted)]">
-										{field ? metadataFieldLabel(field.key, locale) : key}
-									</dt>
-									<dd className="m-0 break-words text-sm text-[var(--ink)]">
-										{measured || m("state.notCalculated")}
-									</dd>
-								</div>
-							);
-						})}
-					</dl>
-				</section>
-			)}
 			{(basicFields.length > 0 ||
 				editableFields.some((field) => field.kind === "genres") ||
 				genres !== undefined) && (

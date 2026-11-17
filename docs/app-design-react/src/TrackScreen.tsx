@@ -13,6 +13,9 @@ import { artistReleaseHref } from "./artistReleaseRoute";
 import type { DeletionOperation } from "./DeletionRequest";
 import { catalogueStyles } from "./catalogueStyles";
 import { TrackMetadataEditors } from "./metadata/TrackMetadataEditors";
+import { audioMeasurementKeys } from "./metadata/audioMeasurements";
+import { metadataMessage } from "./metadata/messages";
+import { metadataFieldLabel } from "./metadata/registry";
 import {
 	catalogData,
 	originalArtistName,
@@ -68,6 +71,8 @@ export function TrackScreen({
 	artists?: CatalogArtist[];
 }) {
 	const { locale } = useI18n();
+	const publishedTags = track.published?.tags;
+	const loudnessLabel = trackMessage(locale, "publishedLoudness");
 	const [inspectionFileId, setInspectionFileId] = useState<string>();
 	const tagComparisonRef = useRef<HTMLDetailsElement>(null);
 	const sourceIds = track.sourceIds ?? (track.sourceId ? [track.sourceId] : []);
@@ -318,6 +323,27 @@ export function TrackScreen({
 										<dt>{trackMessage(locale, "readAt")}</dt>
 										<dd>{track.published.readAt}</dd>
 									</dl>
+									{publishedTags && (
+										<section
+											aria-label={loudnessLabel}
+											className="min-w-0 border-t border-[var(--line)] pt-2"
+										>
+											<h3>{loudnessLabel}</h3>
+											<dl className={catalogueStyles.facts}>
+												{audioMeasurementKeys.map((key) => [
+													<dt key={`${key}-label`}>
+														{metadataFieldLabel(key, locale)}
+													</dt>,
+													<dd key={`${key}-value`}>
+														{publishedTags[key.toUpperCase()]
+															?.filter((value) => value.trim() !== "")
+															.join(" · ") ||
+															metadataMessage(locale, "state.notCalculated")}
+													</dd>,
+												])}
+											</dl>
+										</section>
+									)}
 								</DisclosurePanel>
 							</Disclosure>
 						)}

@@ -67,6 +67,22 @@ type PositionData = {
   writePending?: boolean;
 };
 
+const publicationMeasurementFields = [
+  { tag: "REPLAYGAIN_TRACK_GAIN", label: "measurementReplayGainTrack" },
+  { tag: "REPLAYGAIN_TRACK_PEAK", label: "measurementReplayGainTrackPeak" },
+  { tag: "REPLAYGAIN_ALBUM_GAIN", label: "measurementReplayGainAlbum" },
+  { tag: "REPLAYGAIN_ALBUM_PEAK", label: "measurementReplayGainAlbumPeak" },
+  { tag: "R128_TRACK_GAIN", label: "measurementR128Track" },
+  { tag: "R128_ALBUM_GAIN", label: "measurementR128Album" },
+] as const satisfies ReadonlyArray<{
+  tag: string;
+  label: LibraryReleaseMessage;
+}>;
+
+const publicationMeasurementTags = new Set<string>(
+  publicationMeasurementFields.map(({ tag }) => tag),
+);
+
 function errorMessage(data: { detail?: string }, status: number): Error {
   if (data.detail) return new Error(data.detail);
   return new LocalizedLibraryReleaseError(
@@ -1634,6 +1650,20 @@ export function LibraryReleaseScreen({
         const renderScope = scope.current;
         const position = positions[track.id];
         const publication = position?.publication;
+        const measurementTags =
+          publication?.current_generation && !position?.readError
+            ? publication.current_metadata?.tags
+            : undefined;
+        const publicationTags = publication?.current_metadata?.tags;
+        const summaryTags = publicationTags
+          ? Object.entries(publicationTags).filter(
+              ([name]) =>
+                !measurementTags || !publicationMeasurementTags.has(name),
+            )
+          : undefined;
+        const summaryTagText = summaryTags
+          ?.map(([name, values]) => `${name}: ${(values ?? []).join(", ")}`)
+          .join("; ");
         const hasCurrentPublication = publication
           ? Boolean(publication.current_generation || publication.current_path)
           : Boolean(track.publication?.generation);
@@ -1973,13 +2003,14 @@ export function LibraryReleaseScreen({
                 </p>
                 <p>
                   {text("currentPublicationSummary")}{" "}
-                  {publication?.current_metadata?.tags
-                    ? Object.entries(publication.current_metadata.tags)
-                        .map(
-                          ([name, values]) =>
-                            `${name}: ${(values ?? []).join(", ")}`,
-                        )
-                        .join("; ") || text("tagsMissing")
+                  {summaryTags
+                    ? summaryTagText ||
+                      text(
+                        measurementTags &&
+                          Object.keys(measurementTags).length > 0
+                          ? "tagsOnlyMeasurements"
+                          : "tagsMissing",
+                      )
                     : text("metadataUnavailable")}
                   ; {text("audio")}{" "}
                   {publication?.current_audio
@@ -1992,6 +2023,35 @@ export function LibraryReleaseScreen({
                     text("lyricsUnknown")}
                   .
                 </p>
+                {measurementTags && (
+                  <section
+                    className="min-w-0 border-t border-[var(--line)] pt-2"
+                    aria-label={text("audioMeasurements")}
+                  >
+                    <h3 className="font-semibold">
+                      {text("audioMeasurements")}
+                    </h3>
+                    <dl className="grid min-w-0 gap-x-4 gap-y-1 sm:grid-cols-[max-content_minmax(0,1fr)]">
+                      {publicationMeasurementFields.map(({ tag, label }) => {
+                        const values = (measurementTags[tag] ?? []).filter(
+                          (value) => value.trim() !== "",
+                        );
+                        return (
+                          <Fragment key={tag}>
+                            <dt className="text-[var(--muted)]">
+                              {text(label)}
+                            </dt>
+                            <dd className="[overflow-wrap:anywhere]">
+                              {values.length > 0
+                                ? values.join(" · ")
+                                : text("measurementNotCalculated")}
+                            </dd>
+                          </Fragment>
+                        );
+                      })}
+                    </dl>
+                  </section>
+                )}
                 {publication?.manual_lyrics_receipt && (
                   <p>
                     {text("receipt")}{" "}
