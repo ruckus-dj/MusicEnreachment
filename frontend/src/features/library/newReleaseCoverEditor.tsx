@@ -199,7 +199,9 @@ export function ReleaseCoverEditor({
             alt={text("selectedReleaseCover")}
             src={imageURL(cover.selected_generation)}
           />
-          <p>SHA-256: {cover.selected_sha256 ?? text("unspecified")}</p>
+          <p className="[overflow-wrap:anywhere]">
+            SHA-256: {cover.selected_sha256 ?? text("unspecified")}
+          </p>
         </div>
       ) : (
         <p>{text("noSelectedCover")}</p>
@@ -212,7 +214,9 @@ export function ReleaseCoverEditor({
             alt={text("pendingReleaseCover")}
             src={imageURL(cover.pending_generation)}
           />
-          <p>SHA-256: {cover.pending_sha256 ?? text("unspecified")}</p>
+          <p className="[overflow-wrap:anywhere]">
+            SHA-256: {cover.pending_sha256 ?? text("unspecified")}
+          </p>
         </div>
       )}
       <label className="block">

@@ -35,6 +35,10 @@ import { formatTrackMessage, trackMessage } from "./trackMessages";
 
 const duration = (seconds: number) =>
 	`${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
+const audioMeasurementTags = new Set(
+	audioMeasurementKeys.map((key) => key.toUpperCase()),
+);
+
 export function TrackScreen({
 	release,
 	track,
@@ -317,6 +321,7 @@ export function TrackScreen({
 										<dt>{trackMessage(locale, "tagSnapshot")}</dt>
 										<dd>
 											{Object.entries(track.published.tags)
+												.filter(([key]) => !audioMeasurementTags.has(key))
 												.map(([key, values]) => `${key}: ${values.join(" · ")}`)
 												.join("; ")}
 										</dd>

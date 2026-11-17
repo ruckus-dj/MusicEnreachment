@@ -37,11 +37,13 @@ vi.mock("./FirstPublicationPreview", () => ({
     refreshToken,
     aggregateManaged,
     onController,
+    onRefresh,
   }: {
     positionId: string;
     refreshToken?: string | number;
     aggregateManaged?: boolean;
     onController?: unknown;
+    onRefresh?: () => void;
   }) => {
     useEffect(() => {
       const register = onController as
@@ -61,7 +63,15 @@ vi.mock("./FirstPublicationPreview", () => ({
         data-position-id={positionId}
         data-aggregate-managed={aggregateManaged}
         data-refresh-token={refreshToken}
-      />
+      >
+        <button
+          type="button"
+          data-testid="refresh-publication"
+          onClick={() => onRefresh?.()}
+        >
+          Refresh publication
+        </button>
+      </div>
     );
   },
 }));
@@ -407,6 +417,25 @@ it("shows and localizes saved loudness measurements for the current publication"
     within(measurements).getByText("Album ReplayGain"),
   ).toBeInTheDocument();
   expect(within(measurements).getAllByText("Not calculated")).toHaveLength(4);
+  expect(
+    Array.from(
+      measurements.querySelectorAll("dt, dd"),
+      (element) => element.textContent,
+    ),
+  ).toEqual([
+    "Track ReplayGain",
+    "-7.50 dB",
+    "Track ReplayGain peak",
+    "Not calculated",
+    "Album ReplayGain",
+    "Not calculated",
+    "Album ReplayGain peak",
+    "Not calculated",
+    "Track R128",
+    "0",
+    "Album R128",
+    "Not calculated",
+  ]);
   const summaryLine = screen.getByText(/^Current publication:/);
   expect(summaryLine).toHaveTextContent("TITLE: Position One");
   expect(summaryLine).not.toHaveTextContent("-7.50 dB");
@@ -527,7 +556,7 @@ it("replaces the release-detail publication summary with refreshed position stat
   expect(summary).not.toHaveTextContent("Not published");
 });
 
-it("updates generation and path after a manual position refresh", async () => {
+it("hides stale measurements on a failed position read and recovers with the new generation", async () => {
   let publicationRead = 0;
   server.use(
     http.get("*/api/library/releases/:releaseId", () =>
@@ -541,12 +570,17 @@ it("updates generation and path after a manual position refresh", async () => {
       "*/api/library/releases/:releaseId/positions/:positionId/publication",
       () => {
         publicationRead += 1;
-        if (publicationRead === 1) return HttpResponse.error();
+        if (publicationRead === 1) return HttpResponse.json(publication(true));
+        if (publicationRead === 2) return HttpResponse.error();
         return HttpResponse.json({
           ...publication(true),
           current_generation: "generation-2",
           current_path: "Artist/Album/rewritten.flac",
           current_validated_at: "2026-10-21T12:34:56Z",
+          current_metadata: {
+            version: 1,
+            tags: { REPLAYGAIN_TRACK_GAIN: ["-3 dB"] },
+          },
         });
       },
     ),
@@ -558,22 +592,29 @@ it("updates generation and path after a manual position refresh", async () => {
     name: "Current publication",
   });
   expect(summary).toHaveTextContent("Artist/Album/01 - Position One.flac");
+  expect(await screen.findByText("-7.50 dB")).toBeVisible();
+  fireEvent.click(screen.getByTestId("refresh-publication"));
+  const retry = await screen.findByRole("button", { name: "Refresh data" });
   expect(
     screen.queryByLabelText("Current publication audio measurements"),
   ).toBeNull();
+  expect(screen.queryByText(/-7\.50 dB/)).toBeNull();
   expect(
     screen
       .getByTestId("publication-preview")
       .getAttribute("data-refresh-token"),
   ).not.toContain("generation-2");
-  fireEvent.click(await screen.findByRole("button", { name: "Refresh data" }));
+  fireEvent.click(retry);
   await waitFor(() =>
     expect(summary).toHaveTextContent("Artist/Album/rewritten.flac"),
   );
   expect(summary).not.toHaveTextContent("Artist/Album/01 - Position One.flac");
   expect(
-    await screen.findByLabelText("Current publication audio measurements"),
-  ).toBeInTheDocument();
+    within(
+      await screen.findByLabelText("Current publication audio measurements"),
+    ).getByText("-3 dB"),
+  ).toBeVisible();
+  expect(screen.queryByText(/-7\.50 dB/)).toBeNull();
   await waitFor(() =>
     expect(
       screen
@@ -678,6 +719,7 @@ it("refreshes deletion from authoritative position state without remounting publ
   let generation = "generation-1";
   let previewReads = 0;
   let deletionCalls = 0;
+  let failedDeletionRead = false;
   server.use(
     http.get("*/api/library/releases/:releaseId", () =>
       HttpResponse.json(release(!deleted, generation, true)),
@@ -688,7 +730,13 @@ it("refreshes deletion from authoritative position state without remounting publ
     ),
     http.get(
       "*/api/library/releases/:releaseId/positions/:positionId/publication",
-      () => HttpResponse.json(publication(!deleted, generation)),
+      () => {
+        if (deleted && deletionCalls === 2) {
+          failedDeletionRead = true;
+          return HttpResponse.error();
+        }
+        return HttpResponse.json(publication(!deleted, generation));
+      },
     ),
     http.get("*/api/library/releases/:releaseId/deletion/preview", () =>
       HttpResponse.json({
@@ -818,6 +866,16 @@ it("refreshes deletion from authoritative position state without remounting publ
   ).toBeInTheDocument();
   expect(previewReads).toBe(2);
   expect(deletionCalls).toBe(1);
+  expect(within(positionArticle).getByText("-7.50 dB")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Подтвердить удаление" }));
+  await waitFor(() => expect(failedDeletionRead).toBe(true));
+  expect(
+    within(positionArticle).queryByRole("region", {
+      name: "Измерения громкости текущей публикации",
+    }),
+  ).not.toBeInTheDocument();
+  expect(within(positionArticle).queryByText(/-7\.50 dB/)).toBeNull();
+  expect(screen.getByTestId("publication-preview")).toBe(publicationPreview);
   expect(screen.getByTestId("publication-preview")).toBe(publicationPreview);
 });
 

@@ -294,11 +294,27 @@ export function LibraryReleaseScreen({
   }, []);
 
   const refreshPosition = useCallback(
-    async (positionId: string) => {
+    async (positionId: string, invalidateCurrentTags = false) => {
       const requestScope = scope.current;
       const readGeneration =
         (positionReadGenerations.current.get(positionId) ?? 0) + 1;
       positionReadGenerations.current.set(positionId, readGeneration);
+      if (invalidateCurrentTags) {
+        setPositions((current) => {
+          const position = current[positionId];
+          if (!position?.publication?.current_metadata) return current;
+          return {
+            ...current,
+            [positionId]: {
+              ...position,
+              publication: {
+                ...position.publication,
+                current_metadata: undefined,
+              },
+            },
+          };
+        });
+      }
       const [metadata, publication] = await Promise.all([
         getLibraryPositionMetadata(releaseId, positionId, {
           cache: "no-store",
@@ -1416,18 +1432,25 @@ export function LibraryReleaseScreen({
       currentReleaseID.current !== releaseId
     )
       return;
+    // A terminal deletion can remove the file even if the readback fails
+    // (including a partially successful release deletion).
+    const invalidateCurrentTags = isTerminalOperation(snapshot.state);
     if (target === "release") {
       void refreshReleaseDetail(requestScope).catch(() => undefined);
       void Promise.all(
         (release?.tracks ?? []).map((track) =>
-          refreshPosition(track.id).catch(() => undefined),
+          refreshPosition(track.id, invalidateCurrentTags).catch(
+            () => undefined,
+          ),
         ),
       );
       if (snapshot.state === "succeeded") window.location.hash = "/library";
       return;
     }
     if (targetPositionId) {
-      void refreshPosition(targetPositionId).catch(() => undefined);
+      void refreshPosition(targetPositionId, invalidateCurrentTags).catch(
+        () => undefined,
+      );
       void refreshReleaseDetail(requestScope).catch(() => undefined);
     }
   }
@@ -1657,8 +1680,7 @@ export function LibraryReleaseScreen({
         const publicationTags = publication?.current_metadata?.tags;
         const summaryTags = publicationTags
           ? Object.entries(publicationTags).filter(
-              ([name]) =>
-                !measurementTags || !publicationMeasurementTags.has(name),
+              ([name]) => !publicationMeasurementTags.has(name),
             )
           : undefined;
         const summaryTagText = summaryTags
@@ -1906,7 +1928,7 @@ export function LibraryReleaseScreen({
                 </p>
                 {publication?.current_generation && (
                   <fieldset aria-label={text("actualCoverRegion")}>
-                    <p>
+                    <p className="[overflow-wrap:anywhere]">
                       {text("actualCover")}:{" "}
                       {publication.current_assets?.cover.state ?? "unknown"}
                       {publication.current_assets?.cover.sha256
@@ -2003,7 +2025,7 @@ export function LibraryReleaseScreen({
                 </p>
                 <p>
                   {text("currentPublicationSummary")}{" "}
-                  {summaryTags
+                  {summaryTags && !position?.readError
                     ? summaryTagText ||
                       text(
                         measurementTags &&
