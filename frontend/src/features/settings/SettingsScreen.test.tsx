@@ -34,6 +34,9 @@ function render(ui: ReactNode) {
     </I18nProvider>,
   );
 }
+async function selectSettingsTab(name: string) {
+  fireEvent.click(await screen.findByRole("tab", { name }));
+}
 
 const settings = {
   completed: true,
@@ -203,8 +206,11 @@ afterEach(() => {
 });
 
 describe("SettingsScreen", () => {
-  it("keeps a text draft and its field mounted when switching from Russian to English", async () => {
+  it("retains an unsaved draft across tab and locale switches without rereading settings", async () => {
+    const settingsReads = vi.fn(() => json(settings));
+    server.use(http.get("/api/settings", settingsReads));
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     const concurrency = await screen.findByLabelText("Одновременные файлы");
     fireEvent.change(concurrency, { target: { value: "8" } });
     await waitFor(() =>
@@ -213,13 +219,16 @@ describe("SettingsScreen", () => {
       ).toBe("8"),
     );
 
+    await selectSettingsTab("Провайдеры");
     act(() => setTestLanguage?.("en"));
+    await selectSettingsTab("General");
 
     expect(await screen.findByLabelText("Concurrent files")).toBe(concurrency);
     expect(concurrency).toHaveValue("8");
     expect(
       readSettingsDraft(sessionStorage)?.sourceFileConcurrency?.value,
     ).toBe("8");
+    expect(settingsReads).toHaveBeenCalledTimes(1);
   });
 
   it("restores an invalid raw concurrency draft without applying it", async () => {
@@ -239,6 +248,7 @@ describe("SettingsScreen", () => {
     );
 
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
 
     const concurrency = await screen.findByLabelText("Одновременные файлы");
     await waitFor(() => expect(concurrency).toHaveValue("not-a-number"));
@@ -248,6 +258,7 @@ describe("SettingsScreen", () => {
     expect(
       screen.getByRole("button", { name: "Сохранить параллельность" }),
     ).toBeDisabled();
+    await selectSettingsTab("Провайдеры");
     fireEvent.click(
       screen.getByRole("button", { name: "Сохранить и проверить MusicBrainz" }),
     );
@@ -273,6 +284,7 @@ describe("SettingsScreen", () => {
     );
 
     render(<SettingsScreen />);
+    await selectSettingsTab("Папки");
 
     expect(
       await screen.findByRole("textbox", {
@@ -308,6 +320,7 @@ describe("SettingsScreen", () => {
       http.get("/api/settings", reads),
     );
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     const toggle = await screen.findByLabelText("Вычислять SHA-256");
     const response = nextResponseFor("/api/settings/sha256", "PUT");
     fireEvent.click(toggle);
@@ -431,6 +444,7 @@ describe("SettingsScreen", () => {
       ),
     );
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     const concurrency = await screen.findByLabelText("Одновременные файлы");
     fireEvent.change(concurrency, { target: { value: "8 invalid" } });
     publicationFormat = "source";
@@ -488,6 +502,7 @@ describe("SettingsScreen", () => {
       screen.getByText("Есть несохранённое изменение параллельности."),
     ).toBeInTheDocument();
 
+    await selectSettingsTab("Провайдеры");
     fireEvent.change(
       screen.getByRole("textbox", { name: "Базовый URL MusicBrainz" }),
       {
@@ -511,6 +526,7 @@ describe("SettingsScreen", () => {
     });
     await waitFor(() => expect(musicBrainzWrites).toHaveBeenCalledTimes(2));
 
+    await selectSettingsTab("Общие");
     fireEvent.click(
       screen.getByLabelText("Разрешить удаление исходников после публикации"),
     );
@@ -518,12 +534,14 @@ describe("SettingsScreen", () => {
     expect(
       await screen.findByText("Настройка удаления исходников сохранена."),
     ).toBeInTheDocument();
+    await selectSettingsTab("Провайдеры");
     fireEvent.click(screen.getByLabelText("LRCLIB включён"));
     await waitFor(() => expect(lrclibWrites).toHaveBeenCalledTimes(1));
     expect(
       await screen.findByText("Настройка LRCLIB сохранена."),
     ).toBeInTheDocument();
 
+    await selectSettingsTab("Общие");
     fireEvent.click(screen.getByRole("button", { name: /Уровень журнала/ }));
     fireEvent.click(await screen.findByRole("option", { name: "debug" }));
     await waitFor(() => expect(logWrites).toHaveBeenCalledTimes(1));
@@ -568,6 +586,7 @@ describe("SettingsScreen", () => {
       ),
     );
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     const toggle = await screen.findByLabelText("Вычислять SHA-256");
     fireEvent.click(toggle);
     await waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
@@ -607,6 +626,7 @@ describe("SettingsScreen", () => {
       ),
     );
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     fireEvent.click(screen.getByRole("button", { name: /Формат публикации/ }));
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
@@ -668,6 +688,7 @@ describe("SettingsScreen", () => {
       ),
     );
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     const formatButton = screen.getByRole("button", {
       name: /Формат публикации/,
@@ -724,6 +745,7 @@ describe("SettingsScreen", () => {
       }),
     );
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     fireEvent.click(screen.getByRole("button", { name: /Уровень журнала/ }));
     fireEvent.click(await screen.findByRole("option", { name: "debug" }));
@@ -782,6 +804,7 @@ describe("SettingsScreen", () => {
       ),
     );
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     const concurrency = await screen.findByLabelText("Одновременные файлы");
     fireEvent.change(concurrency, { target: { value: "5" } });
     const saveConcurrency = screen.getByRole("button", {
@@ -876,6 +899,7 @@ describe("SettingsScreen", () => {
     );
 
     const oldView = render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     fireEvent.click(screen.getByRole("button", { name: /Формат публикации/ }));
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));
@@ -994,12 +1018,15 @@ describe("SettingsScreen", () => {
       http.put("/api/settings/runtime", writes),
     );
     render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     const concurrency = await screen.findByLabelText("Одновременные файлы");
+    await selectSettingsTab("Папки");
     const templateInput = screen.getByLabelText("Шаблон пути публикации");
-    fireEvent.change(concurrency, { target: { value: "8" } });
     fireEvent.change(templateInput, {
       target: { value: "{ALBUM_NAME}/draft" },
     });
+    await selectSettingsTab("Общие");
+    fireEvent.change(concurrency, { target: { value: "8" } });
 
     sourceConcurrency = 6;
     fireEvent.click(screen.getByRole("button", { name: "Обновить состояние" }));
@@ -1011,6 +1038,7 @@ describe("SettingsScreen", () => {
         name: "Продолжить редактирование: параллельность анализа",
       }),
     );
+    await selectSettingsTab("Общие");
     fireEvent.click(
       screen.getByRole("button", { name: "Сохранить параллельность" }),
     );
@@ -1081,6 +1109,7 @@ describe("SettingsScreen", () => {
     );
 
     const oldView = render(<SettingsScreen />);
+    await selectSettingsTab("Общие");
     await screen.findByLabelText("Одновременные файлы");
     fireEvent.click(screen.getByRole("button", { name: /Формат публикации/ }));
     fireEvent.click(await screen.findByRole("option", { name: "M4A" }));

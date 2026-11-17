@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Tab, TabList, TabPanel, Tabs } from "react-aria-components";
 import { useOperationFollower } from "../../api/client/useOperationFollower";
 import {
   activateToolInstallation,
@@ -440,6 +441,7 @@ export function SettingsScreen() {
     readSettingsDraft(getSettingsDraftStorage()),
   );
   const [state, setState] = useState<SetupStateBody>();
+  const [activeSettingsTab, setActiveSettingsTab] = useState("general");
   const [conflictConfirmation, setConflictConfirmation] =
     useState<ConflictConfirmation>();
   const [navigationAttempt, setNavigationAttempt] = useState<HashAttempt>();
@@ -570,6 +572,7 @@ export function SettingsScreen() {
   const installDialogRef = useRef<HTMLDialogElement>(null);
   const moveDialogRef = useRef<HTMLDialogElement>(null);
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
+  const pendingTabFocusTarget = useRef<HTMLElement | null>(null);
   const dialogFocusRestorePending = useRef(false);
   const moveDirectoryRef = useRef(
     restoredSettingsDraft?.toolsDirectoryCandidate?.value ?? "",
@@ -593,11 +596,27 @@ export function SettingsScreen() {
   const effectiveBusy = busy || generalPendingCount > 0;
   const isEffectivelyBusy = () => busy || generalPending.current > 0;
 
+  const focusSettingsTarget = useCallback(
+    (target: HTMLElement | null) => {
+      if (!target) return;
+      const panel = target.closest<HTMLElement>("[data-settings-tab]");
+      const targetTab = panel?.dataset.settingsTab;
+      if (targetTab && targetTab !== activeSettingsTab) {
+        pendingTabFocusTarget.current = target;
+        setActiveSettingsTab(targetTab);
+        return;
+      }
+      pendingTabFocusTarget.current = null;
+      target.focus();
+    },
+    [activeSettingsTab],
+  );
+
   const restoreDialogFocus = useCallback(() => {
     const trigger = dialogReturnFocusRef.current;
     dialogReturnFocusRef.current = null;
-    trigger?.focus();
-  }, []);
+    focusSettingsTarget(trigger);
+  }, [focusSettingsTarget]);
 
   const invalidateMovePlan = useCallback(() => {
     moveRequestRevision.current += 1;
@@ -938,6 +957,16 @@ export function SettingsScreen() {
       outputDialogAlert.current?.focus();
   }, [outputDialogError]);
   useLayoutEffect(() => {
+    const target = pendingTabFocusTarget.current;
+    if (!target) return;
+    const targetTab = target.closest<HTMLElement>("[data-settings-tab]")
+      ?.dataset.settingsTab;
+    if (targetTab && targetTab === activeSettingsTab) {
+      pendingTabFocusTarget.current = null;
+      target.focus();
+    }
+  }, [activeSettingsTab]);
+  useLayoutEffect(() => {
     if (
       dialogFocusRestorePending.current &&
       !installDialog &&
@@ -980,8 +1009,8 @@ export function SettingsScreen() {
     ].find((candidate) => candidate?.isConnected);
     navigationReturnFocus.current = null;
     navigationEditedControl.current = null;
-    target?.focus();
-  }, [navigationAttempt]);
+    focusSettingsTarget(target ?? null);
+  }, [focusSettingsTarget, navigationAttempt]);
   useEffect(() => {
     if (catalogError) catalogAlert.current?.focus();
   }, [catalogError]);
@@ -2955,462 +2984,526 @@ export function SettingsScreen() {
             )}
             {!platformReady && <p role="alert">{t("platformUnavailable")}</p>}
           </section>
-          <SettingsGeneralSection
-            publicationFormat={publicationFormat.value ?? "mka"}
-            onPublicationFormatChange={savePublicationFormat}
-            sourceFileConcurrency={
-              sourceFileConcurrency.value ??
-              String(state.settings.source_file_concurrency)
-            }
-            concurrencyInvalid={
-              sourceFileConcurrency.value !== undefined &&
-              !validConcurrency(sourceFileConcurrency.value)
-            }
-            concurrencySavingDisabled={effectiveBusy}
-            concurrencyDirty={sourceFileConcurrency.dirty}
-            onConcurrencyChange={sourceFileConcurrency.update}
-            onSaveConcurrency={saveConcurrency}
-            sha256Enabled={sha256.value ?? state.settings.sha256_enabled}
-            onSha256Change={saveSha256}
-            logLevel={logLevel.value ?? "info"}
-            onLogLevelChange={saveLogLevel}
-          />
-          {(["publicationFormat", "sha256", "logLevel"] as const).map(
-            (setting) => {
-              const failure = generalFailures[setting];
-              if (!failure) return null;
-              const label =
-                setting === "publicationFormat"
-                  ? t("publicationFormatLabel")
-                  : setting === "sha256"
-                    ? "SHA-256"
-                    : t("logLevelLabel");
-              const value =
-                setting === "publicationFormat"
-                  ? failure.value === "source"
-                    ? t("originalFormat")
-                    : failure.value === "m4a"
-                      ? "M4A"
-                      : t("mkaRemux")
-                  : setting === "sha256"
-                    ? failure.value
-                      ? t("enabled")
-                      : t("disabled")
-                    : String(failure.value);
-              return (
-                <fieldset
-                  key={setting}
-                  className="grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3"
-                  aria-label={t("unsavedChanges")}
-                >
-                  <p className="m-0" role="status">
-                    {failure.phase === "write"
-                      ? t("saveFailed", { label, value })
-                      : t("saveUnconfirmed", { label, value })}
-                  </p>
-                  <AppButton
-                    isDisabled={effectiveBusy}
-                    onPress={() => retryGeneralFailure(setting)}
-                  >
-                    {failure.phase === "write"
-                      ? t("retrySave", { label, value })
-                      : t("retryConfirm", { label, value })}
-                  </AppButton>
-                </fieldset>
-              );
-            },
-          )}
-          <div className="settings-grid">
-            <section
-              aria-labelledby="runtime-title"
-              className="setup-panel settings-panel"
-            >
-              <h2 id="runtime-title">{t("publication")}</h2>
-              <DirectoryPathField
-                id="settings-output-directory"
-                label={t("outputDirectory")}
-                value={outputDirectory.value ?? ""}
-                onSelect={outputDirectory.update}
-                disabled={effectiveBusy}
-              />
-              {outputDirectory.dirty && <p>{t("unsavedPublication")}</p>}
-              <label>
-                {t("publicationTemplate")}
-                <input
-                  aria-describedby="publication-template-help"
-                  maxLength={4096}
-                  value={
-                    publicationPathTemplate.value ??
-                    state.settings.publication_path_template
-                  }
-                  onChange={(event) =>
-                    publicationPathTemplate.update(event.target.value)
-                  }
-                />
-              </label>
-              <p id="publication-template-help">{t("templateHelp")}</p>
-              {publicationPathTemplate.dirty && <p>{t("unsavedTemplate")}</p>}
-              <AppButton
-                isDisabled={effectiveBusy || !publicationPathTemplate.value}
-                onPress={savePublicationTemplate}
-              >
-                {t("saveTemplate")}
-              </AppButton>
-              <label className="settings-inline">
-                <input
-                  type="checkbox"
-                  checked={
-                    publicationRemoveSources.value ??
-                    state.settings.publication_remove_sources
-                  }
-                  onChange={(event) =>
-                    savePublicationRemoveSources(event.target.checked)
-                  }
-                />{" "}
-                {t("allowSourceDeletion")}
-              </label>
-              <p role="note">{t("sourceDeletionHelp")}</p>
-              {publicationRemoveSources.dirty && (
-                <p>{t("unsavedSourceDeletion")}</p>
-              )}
-              <AppButton
-                isDisabled={
-                  effectiveBusy ||
-                  runningOperation ||
-                  outputDirectory.value === state.settings.output_directory
-                }
-                onPress={(event) => {
-                  dialogReturnFocusRef.current = event.target as HTMLElement;
-                  setError("");
-                  setOutputDialogError("");
-                  setOutputDialog(true);
-                }}
-              >
-                {t("changeOutput")}
-              </AppButton>
-            </section>
-            <section
-              aria-labelledby="work-directory-title"
-              className="setup-panel settings-panel"
-            >
-              <h2 id="work-directory-title">{t("sourceProcessing")}</h2>
-              <DirectoryPathField
-                id="settings-work-directory"
-                label={t("workDirectory")}
-                value={workDirectory.value ?? ""}
-                onSelect={workDirectory.update}
-                disabled={effectiveBusy}
-              />
-              <p>{t("workDirectoryHelp")}</p>
-              {workDirectory.dirty && <p>{t("unsavedWorkDirectory")}</p>}
-              <AppButton
-                isDisabled={effectiveBusy || !workDirectory.dirty}
-                onPress={saveWorkDirectory}
-              >
-                {t("saveWorkDirectory")}
-              </AppButton>
-            </section>
-            <section
-              aria-labelledby="providers-title"
-              className="setup-panel settings-panel"
-            >
-              <h2 id="providers-title">{t("metadataProviders")}</h2>
-              <label>
-                {t("acoustIdKey")}
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={acoustIDApplicationKey}
-                  onChange={(event) =>
-                    setAcoustIDApplicationKey(event.target.value)
-                  }
-                  maxLength={4096}
-                />
-              </label>
-              <p>
-                {state.settings.has_acoustid_application_key
-                  ? t("keySaved")
-                  : t("keyMissing")}
-              </p>
-              <div className="settings-actions">
-                <AppButton
-                  isDisabled={
-                    effectiveBusy || acoustIDApplicationKey.length === 0
-                  }
-                  onPress={() => void saveAcoustIDApplicationKey()}
-                >
-                  {t("saveAcoustIdKey")}
-                </AppButton>
-                {state.settings.has_acoustid_application_key && (
-                  <AppButton
-                    isDisabled={effectiveBusy}
-                    onPress={() => void deleteAcoustIDApplicationKey()}
-                  >
-                    {t("deleteAcoustIdKey")}
-                  </AppButton>
-                )}
-              </div>
-              <label>
-                {t("musicBrainzMode")}
-                <select
-                  value={musicBrainz.value?.mode ?? "public"}
-                  onChange={(event) =>
-                    saveMusicBrainzMode(
-                      event.target.value as UpdateMusicBrainzBodyMode,
-                    )
-                  }
-                >
-                  <option value="public">{t("public")}</option>
-                  <option value="self-hosted">{t("selfHosted")}</option>
-                </select>
-              </label>
-              {musicBrainz.value?.mode === "self-hosted" && (
-                <>
-                  <label>
-                    {t("musicBrainzBaseUrl")}
-                    <input
-                      value={musicBrainz.value?.baseURL ?? ""}
-                      onChange={(event) => {
-                        const currentValue = musicBrainz.value;
-                        if (currentValue === undefined) return;
-                        musicBrainz.update({
-                          ...currentValue,
-                          baseURL: event.target.value,
-                        });
-                      }}
-                    />
-                  </label>
-                  <label className="settings-inline">
-                    <input
-                      type="checkbox"
-                      checked={musicBrainz.value?.selfHostedThrottle ?? false}
-                      onChange={(event) =>
-                        saveMusicBrainzThrottle(event.target.checked)
-                      }
-                    />{" "}
-                    {t("throttleMusicBrainz")}
-                  </label>
-                  <label>
-                    {t("requestInterval")}
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      min="0"
-                      max="60"
-                      step="any"
-                      required
-                      value={musicBrainz.value?.selfHostedDelaySeconds ?? "0.5"}
-                      onChange={(event) => {
-                        const currentValue = musicBrainz.value;
-                        if (currentValue === undefined) return;
-                        musicBrainz.update({
-                          ...currentValue,
-                          selfHostedDelaySeconds: event.target.value,
-                        });
-                      }}
-                    />
-                  </label>
-                </>
-              )}
-              <p>
-                {t("lastCheck")}{" "}
-                {state.settings.musicbrainz_verified_at || t("notChecked")}
-              </p>
-              {musicBrainz.dirty && <p>{t("unsavedMusicBrainz")}</p>}
-              <AppButton
-                isDisabled={effectiveBusy}
-                onPress={() => void checkMusicBrainz()}
-              >
-                {t("saveAndCheckMusicBrainz")}
-              </AppButton>
-              <label className="settings-inline">
-                <input
-                  type="checkbox"
-                  checked={lrclib.value ?? state.settings.lrclib_enabled}
-                  onChange={(event) => saveLrclib(event.target.checked)}
-                />{" "}
-                {t("lrclibEnabled")}
-              </label>
-              {lrclib.dirty && <p>{t("unsavedLrclib")}</p>}
-            </section>
-            <section
-              aria-labelledby="tools-root-title"
-              className="setup-panel settings-panel"
-            >
-              <h2 id="tools-root-title">{t("toolsDirectory")}</h2>
-              <p>
-                {t("toolsDirectory")}:{" "}
-                <code>{state.settings.tools_directory}</code>
-              </p>
-              <AppButton
-                isDisabled={!platformReady || effectiveBusy}
-                onPress={(event) => {
-                  dialogReturnFocusRef.current = event.target as HTMLElement;
-                  setError("");
-                  setMoveDialogError("");
-                  moveSessionRevision.current += 1;
-                  moveInputRevision.current += 1;
-                  setMovePlan(undefined);
-                  setMoveDialog(true);
-                }}
-              >
-                {t("moveToolsDirectory")}
-              </AppButton>
-            </section>
-          </div>
-          <GenreCatalogPanel />
-          <section
-            aria-labelledby="managed-title"
-            className="setup-panel settings-panel"
+          <Tabs
+            selectedKey={activeSettingsTab}
+            onSelectionChange={(key) => setActiveSettingsTab(String(key))}
+            className="settings-tabs"
           >
-            <GitHubTokenForm
-              hasToken={state.settings.has_github_token}
-              onChanged={async () => {
-                await refreshState();
-              }}
-            />
-            <h2 id="managed-title">{t("managedTools")}</h2>
-            <p>
-              {t("lastCatalogCheck")} {persistedTime}
-            </p>
-            {catalogError && (
-              <p ref={catalogAlert} tabIndex={-1} role="alert">
-                {feedbackText(catalogError, locale)}
-              </p>
-            )}
-            <AppButton isDisabled={catalogBusy} onPress={loadCatalogNow}>
-              {catalogBusy ? t("refreshingCatalog") : t("refreshCatalog")}
-            </AppButton>
-            <div className="settings-grid">
-              {(["ffmpeg", "fpcalc"] as const).map((kind) => {
-                const installed = installations.filter(
-                  (item) => item.package_kind === kind,
-                );
-                const releases = catalog[kind]?.releases || [];
-                const occupied = (item: InstallationResponse) =>
-                  operations.some(
-                    (op) =>
-                      op.target_installation_id === item.id &&
-                      activeOperation(op),
-                  );
-                return (
-                  <section
-                    key={kind}
-                    aria-labelledby={`${kind}-title`}
-                    className="setup-tool"
-                  >
-                    <h3 id={`${kind}-title`}>
-                      {kind === "ffmpeg" ? t("ffmpegPackage") : "fpcalc"}
-                    </h3>
-                    <h4>{t("activeVersion")}</h4>
-                    <ul>
-                      {installed
-                        .filter((item) => item.active)
-                        .map((item) => (
-                          <li key={item.id}>
-                            {item.version} — {t("active")}
-                          </li>
-                        ))}
-                      {!installed.some((item) => item.active) && (
-                        <li>{t("noActiveVersion")}</li>
-                      )}
-                    </ul>
-                    <h4>{t("installedVersions")}</h4>
-                    <ul>
-                      {installed.map((item) => (
-                        <li key={item.id}>
-                          {item.version} (
-                          {item.state === "ready"
-                            ? t("ready")
-                            : item.state === "preparing"
-                              ? t("preparing")
-                              : item.state === "failed"
-                                ? t("failed")
-                                : item.state}
-                          ) {item.active && `— ${t("active")}`}
-                          <AppButton
-                            isDisabled={
-                              !platformReady ||
-                              effectiveBusy ||
-                              item.active ||
-                              occupied(item) ||
-                              item.state !== "ready"
-                            }
-                            onPress={() => void activate(item, kind)}
-                          >
-                            {t("activateVersion", { version: item.version })}
-                          </AppButton>
-                          <AppButton
-                            isDisabled={
-                              !platformReady ||
-                              effectiveBusy ||
-                              item.active ||
-                              occupied(item)
-                            }
-                            onPress={() => void remove(item, kind)}
-                          >
-                            {t("removeVersion", { version: item.version })}
-                          </AppButton>
-                        </li>
-                      ))}
-                    </ul>
-                    <h4>{t("availableVersions")}</h4>
-                    {catalog[kind] ? (
-                      <>
-                        {catalog[kind]?.notice && (
-                          <p>{catalog[kind]?.notice}</p>
-                        )}
-                        <label>
-                          {t("versionToInstall")}
-                          <select
-                            aria-label={t("versionLabel", { kind })}
-                            value={selectedRelease[kind] || ""}
-                            onChange={(event) =>
-                              setSelectedRelease((previous) => ({
-                                ...previous,
-                                [kind]: event.target.value,
-                              }))
-                            }
-                          >
-                            <option value="">{t("chooseVersion")}</option>
-                            {releases.map((release) => (
-                              <option
-                                key={release.identity}
-                                value={release.identity}
-                              >
-                                {release.identity} ({release.source})
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <AppButton
-                          isDisabled={
-                            !platformReady ||
-                            effectiveBusy ||
-                            !selectedRelease[kind]
-                          }
-                          onPress={(event) => {
-                            dialogReturnFocusRef.current =
-                              event.target as HTMLElement;
-                            setError("");
-                            void preflightInstall(kind);
-                          }}
-                        >
-                          {t("installWithoutActivation")}
-                        </AppButton>
-                      </>
-                    ) : (
-                      <p>
-                        {catalogBusy
-                          ? t("loadingCatalog")
-                          : t("catalogNotLoaded")}
+            <TabList
+              aria-label={t("settingsTabs")}
+              className="settings-tab-list"
+            >
+              <Tab id="general">{t("tabGeneral")}</Tab>
+              <Tab id="folders">{t("tabFolders")}</Tab>
+              <Tab id="tools">{t("tabTools")}</Tab>
+              <Tab id="providers">{t("tabProviders")}</Tab>
+              <Tab id="genres">{t("tabGenres")}</Tab>
+            </TabList>
+            <TabPanel
+              id="general"
+              shouldForceMount
+              data-settings-tab="general"
+              className="settings-tab-panel"
+            >
+              <SettingsGeneralSection
+                publicationFormat={publicationFormat.value ?? "mka"}
+                onPublicationFormatChange={savePublicationFormat}
+                sourceFileConcurrency={
+                  sourceFileConcurrency.value ??
+                  String(state.settings.source_file_concurrency)
+                }
+                concurrencyInvalid={
+                  sourceFileConcurrency.value !== undefined &&
+                  !validConcurrency(sourceFileConcurrency.value)
+                }
+                concurrencySavingDisabled={effectiveBusy}
+                concurrencyDirty={sourceFileConcurrency.dirty}
+                onConcurrencyChange={sourceFileConcurrency.update}
+                onSaveConcurrency={saveConcurrency}
+                sha256Enabled={sha256.value ?? state.settings.sha256_enabled}
+                onSha256Change={saveSha256}
+                logLevel={logLevel.value ?? "info"}
+                onLogLevelChange={saveLogLevel}
+              />
+              {(["publicationFormat", "sha256", "logLevel"] as const).map(
+                (setting) => {
+                  const failure = generalFailures[setting];
+                  if (!failure) return null;
+                  const label =
+                    setting === "publicationFormat"
+                      ? t("publicationFormatLabel")
+                      : setting === "sha256"
+                        ? "SHA-256"
+                        : t("logLevelLabel");
+                  const value =
+                    setting === "publicationFormat"
+                      ? failure.value === "source"
+                        ? t("originalFormat")
+                        : failure.value === "m4a"
+                          ? "M4A"
+                          : t("mkaRemux")
+                      : setting === "sha256"
+                        ? failure.value
+                          ? t("enabled")
+                          : t("disabled")
+                        : String(failure.value);
+                  return (
+                    <fieldset
+                      key={setting}
+                      className="grid gap-2 rounded border border-[var(--warning)] bg-[var(--warning-soft)] p-3"
+                      aria-label={t("unsavedChanges")}
+                    >
+                      <p className="m-0" role="status">
+                        {failure.phase === "write"
+                          ? t("saveFailed", { label, value })
+                          : t("saveUnconfirmed", { label, value })}
                       </p>
-                    )}
-                  </section>
-                );
-              })}
-            </div>
-          </section>
+                      <AppButton
+                        isDisabled={effectiveBusy}
+                        onPress={() => retryGeneralFailure(setting)}
+                      >
+                        {failure.phase === "write"
+                          ? t("retrySave", { label, value })
+                          : t("retryConfirm", { label, value })}
+                      </AppButton>
+                    </fieldset>
+                  );
+                },
+              )}
+              <section
+                aria-labelledby="source-deletion-title"
+                className="setup-panel settings-panel"
+              >
+                <h2 id="source-deletion-title">{t("sourceDeletionTitle")}</h2>
+                <label className="settings-inline">
+                  <input
+                    type="checkbox"
+                    checked={
+                      publicationRemoveSources.value ??
+                      state.settings.publication_remove_sources
+                    }
+                    onChange={(event) =>
+                      savePublicationRemoveSources(event.target.checked)
+                    }
+                  />{" "}
+                  {t("allowSourceDeletion")}
+                </label>
+                <p role="note">{t("sourceDeletionHelp")}</p>
+                {publicationRemoveSources.dirty && (
+                  <p>{t("unsavedSourceDeletion")}</p>
+                )}
+              </section>
+            </TabPanel>
+            <TabPanel
+              id="folders"
+              shouldForceMount
+              data-settings-tab="folders"
+              className="settings-tab-panel"
+            >
+              <div className="settings-grid">
+                <section
+                  aria-labelledby="runtime-title"
+                  className="setup-panel settings-panel"
+                >
+                  <h2 id="runtime-title">{t("publication")}</h2>
+                  <DirectoryPathField
+                    id="settings-output-directory"
+                    label={t("outputDirectory")}
+                    value={outputDirectory.value ?? ""}
+                    onSelect={outputDirectory.update}
+                    disabled={effectiveBusy}
+                  />
+                  {outputDirectory.dirty && <p>{t("unsavedPublication")}</p>}
+                  <label>
+                    {t("publicationTemplate")}
+                    <input
+                      aria-describedby="publication-template-help"
+                      maxLength={4096}
+                      value={
+                        publicationPathTemplate.value ??
+                        state.settings.publication_path_template
+                      }
+                      onChange={(event) =>
+                        publicationPathTemplate.update(event.target.value)
+                      }
+                    />
+                  </label>
+                  <p id="publication-template-help">{t("templateHelp")}</p>
+                  {publicationPathTemplate.dirty && (
+                    <p>{t("unsavedTemplate")}</p>
+                  )}
+                  <AppButton
+                    isDisabled={effectiveBusy || !publicationPathTemplate.value}
+                    onPress={savePublicationTemplate}
+                  >
+                    {t("saveTemplate")}
+                  </AppButton>
+                  <AppButton
+                    isDisabled={
+                      effectiveBusy ||
+                      runningOperation ||
+                      outputDirectory.value === state.settings.output_directory
+                    }
+                    onPress={(event) => {
+                      dialogReturnFocusRef.current =
+                        event.target as HTMLElement;
+                      setError("");
+                      setOutputDialogError("");
+                      setOutputDialog(true);
+                    }}
+                  >
+                    {t("changeOutput")}
+                  </AppButton>
+                </section>
+                <section
+                  aria-labelledby="work-directory-title"
+                  className="setup-panel settings-panel"
+                >
+                  <h2 id="work-directory-title">{t("sourceProcessing")}</h2>
+                  <DirectoryPathField
+                    id="settings-work-directory"
+                    label={t("workDirectory")}
+                    value={workDirectory.value ?? ""}
+                    onSelect={workDirectory.update}
+                    disabled={effectiveBusy}
+                  />
+                  <p>{t("workDirectoryHelp")}</p>
+                  {workDirectory.dirty && <p>{t("unsavedWorkDirectory")}</p>}
+                  <AppButton
+                    isDisabled={effectiveBusy || !workDirectory.dirty}
+                    onPress={saveWorkDirectory}
+                  >
+                    {t("saveWorkDirectory")}
+                  </AppButton>
+                </section>
+              </div>
+            </TabPanel>
+            <TabPanel
+              id="tools"
+              shouldForceMount
+              data-settings-tab="tools"
+              className="settings-tab-panel"
+            >
+              <section
+                aria-labelledby="tools-root-title"
+                className="setup-panel settings-panel"
+              >
+                <h2 id="tools-root-title">{t("toolsDirectory")}</h2>
+                <p>
+                  {t("toolsDirectory")}:{" "}
+                  <code>{state.settings.tools_directory}</code>
+                </p>
+                <AppButton
+                  isDisabled={!platformReady || effectiveBusy}
+                  onPress={(event) => {
+                    dialogReturnFocusRef.current = event.target as HTMLElement;
+                    setError("");
+                    setMoveDialogError("");
+                    moveSessionRevision.current += 1;
+                    moveInputRevision.current += 1;
+                    setMovePlan(undefined);
+                    setMoveDialog(true);
+                  }}
+                >
+                  {t("moveToolsDirectory")}
+                </AppButton>
+              </section>
+              <section
+                aria-labelledby="managed-title"
+                className="setup-panel settings-panel"
+              >
+                <GitHubTokenForm
+                  hasToken={state.settings.has_github_token}
+                  onChanged={async () => {
+                    await refreshState();
+                  }}
+                />
+                <h2 id="managed-title">{t("managedTools")}</h2>
+                <p>
+                  {t("lastCatalogCheck")} {persistedTime}
+                </p>
+                {catalogError && (
+                  <p ref={catalogAlert} tabIndex={-1} role="alert">
+                    {feedbackText(catalogError, locale)}
+                  </p>
+                )}
+                <AppButton isDisabled={catalogBusy} onPress={loadCatalogNow}>
+                  {catalogBusy ? t("refreshingCatalog") : t("refreshCatalog")}
+                </AppButton>
+                <div className="settings-grid">
+                  {(["ffmpeg", "fpcalc"] as const).map((kind) => {
+                    const installed = installations.filter(
+                      (item) => item.package_kind === kind,
+                    );
+                    const releases = catalog[kind]?.releases || [];
+                    const occupied = (item: InstallationResponse) =>
+                      operations.some(
+                        (op) =>
+                          op.target_installation_id === item.id &&
+                          activeOperation(op),
+                      );
+                    return (
+                      <section
+                        key={kind}
+                        aria-labelledby={`${kind}-title`}
+                        className="setup-tool"
+                      >
+                        <h3 id={`${kind}-title`}>
+                          {kind === "ffmpeg" ? t("ffmpegPackage") : "fpcalc"}
+                        </h3>
+                        <h4>{t("activeVersion")}</h4>
+                        <ul>
+                          {installed
+                            .filter((item) => item.active)
+                            .map((item) => (
+                              <li key={item.id}>
+                                {item.version} — {t("active")}
+                              </li>
+                            ))}
+                          {!installed.some((item) => item.active) && (
+                            <li>{t("noActiveVersion")}</li>
+                          )}
+                        </ul>
+                        <h4>{t("installedVersions")}</h4>
+                        <ul>
+                          {installed.map((item) => (
+                            <li key={item.id}>
+                              {item.version} (
+                              {item.state === "ready"
+                                ? t("ready")
+                                : item.state === "preparing"
+                                  ? t("preparing")
+                                  : item.state === "failed"
+                                    ? t("failed")
+                                    : item.state}
+                              ) {item.active && `— ${t("active")}`}
+                              <AppButton
+                                isDisabled={
+                                  !platformReady ||
+                                  effectiveBusy ||
+                                  item.active ||
+                                  occupied(item) ||
+                                  item.state !== "ready"
+                                }
+                                onPress={() => void activate(item, kind)}
+                              >
+                                {t("activateVersion", {
+                                  version: item.version,
+                                })}
+                              </AppButton>
+                              <AppButton
+                                isDisabled={
+                                  !platformReady ||
+                                  effectiveBusy ||
+                                  item.active ||
+                                  occupied(item)
+                                }
+                                onPress={() => void remove(item, kind)}
+                              >
+                                {t("removeVersion", { version: item.version })}
+                              </AppButton>
+                            </li>
+                          ))}
+                        </ul>
+                        <h4>{t("availableVersions")}</h4>
+                        {catalog[kind] ? (
+                          <>
+                            {catalog[kind]?.notice && (
+                              <p>{catalog[kind]?.notice}</p>
+                            )}
+                            <label>
+                              {t("versionToInstall")}
+                              <select
+                                aria-label={t("versionLabel", { kind })}
+                                value={selectedRelease[kind] || ""}
+                                onChange={(event) =>
+                                  setSelectedRelease((previous) => ({
+                                    ...previous,
+                                    [kind]: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">{t("chooseVersion")}</option>
+                                {releases.map((release) => (
+                                  <option
+                                    key={release.identity}
+                                    value={release.identity}
+                                  >
+                                    {release.identity} ({release.source})
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <AppButton
+                              isDisabled={
+                                !platformReady ||
+                                effectiveBusy ||
+                                !selectedRelease[kind]
+                              }
+                              onPress={(event) => {
+                                dialogReturnFocusRef.current =
+                                  event.target as HTMLElement;
+                                setError("");
+                                void preflightInstall(kind);
+                              }}
+                            >
+                              {t("installWithoutActivation")}
+                            </AppButton>
+                          </>
+                        ) : (
+                          <p>
+                            {catalogBusy
+                              ? t("loadingCatalog")
+                              : t("catalogNotLoaded")}
+                          </p>
+                        )}
+                      </section>
+                    );
+                  })}
+                </div>
+              </section>
+            </TabPanel>
+            <TabPanel
+              id="providers"
+              shouldForceMount
+              data-settings-tab="providers"
+              className="settings-tab-panel"
+            >
+              <section
+                aria-labelledby="providers-title"
+                className="setup-panel settings-panel"
+              >
+                <h2 id="providers-title">{t("metadataProviders")}</h2>
+                <label>
+                  {t("acoustIdKey")}
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={acoustIDApplicationKey}
+                    onChange={(event) =>
+                      setAcoustIDApplicationKey(event.target.value)
+                    }
+                    maxLength={4096}
+                  />
+                </label>
+                <p>
+                  {state.settings.has_acoustid_application_key
+                    ? t("keySaved")
+                    : t("keyMissing")}
+                </p>
+                <div className="settings-actions">
+                  <AppButton
+                    isDisabled={
+                      effectiveBusy || acoustIDApplicationKey.length === 0
+                    }
+                    onPress={() => void saveAcoustIDApplicationKey()}
+                  >
+                    {t("saveAcoustIdKey")}
+                  </AppButton>
+                  {state.settings.has_acoustid_application_key && (
+                    <AppButton
+                      isDisabled={effectiveBusy}
+                      onPress={() => void deleteAcoustIDApplicationKey()}
+                    >
+                      {t("deleteAcoustIdKey")}
+                    </AppButton>
+                  )}
+                </div>
+                <label>
+                  {t("musicBrainzMode")}
+                  <select
+                    value={musicBrainz.value?.mode ?? "public"}
+                    onChange={(event) =>
+                      saveMusicBrainzMode(
+                        event.target.value as UpdateMusicBrainzBodyMode,
+                      )
+                    }
+                  >
+                    <option value="public">{t("public")}</option>
+                    <option value="self-hosted">{t("selfHosted")}</option>
+                  </select>
+                </label>
+                {musicBrainz.value?.mode === "self-hosted" && (
+                  <>
+                    <label>
+                      {t("musicBrainzBaseUrl")}
+                      <input
+                        value={musicBrainz.value?.baseURL ?? ""}
+                        onChange={(event) => {
+                          const currentValue = musicBrainz.value;
+                          if (currentValue === undefined) return;
+                          musicBrainz.update({
+                            ...currentValue,
+                            baseURL: event.target.value,
+                          });
+                        }}
+                      />
+                    </label>
+                    <label className="settings-inline">
+                      <input
+                        type="checkbox"
+                        checked={musicBrainz.value?.selfHostedThrottle ?? false}
+                        onChange={(event) =>
+                          saveMusicBrainzThrottle(event.target.checked)
+                        }
+                      />{" "}
+                      {t("throttleMusicBrainz")}
+                    </label>
+                    <label>
+                      {t("requestInterval")}
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        min="0"
+                        max="60"
+                        step="any"
+                        required
+                        value={
+                          musicBrainz.value?.selfHostedDelaySeconds ?? "0.5"
+                        }
+                        onChange={(event) => {
+                          const currentValue = musicBrainz.value;
+                          if (currentValue === undefined) return;
+                          musicBrainz.update({
+                            ...currentValue,
+                            selfHostedDelaySeconds: event.target.value,
+                          });
+                        }}
+                      />
+                    </label>
+                  </>
+                )}
+                <p>
+                  {t("lastCheck")}{" "}
+                  {state.settings.musicbrainz_verified_at || t("notChecked")}
+                </p>
+                {musicBrainz.dirty && <p>{t("unsavedMusicBrainz")}</p>}
+                <AppButton
+                  isDisabled={effectiveBusy}
+                  onPress={() => void checkMusicBrainz()}
+                >
+                  {t("saveAndCheckMusicBrainz")}
+                </AppButton>
+                <label className="settings-inline">
+                  <input
+                    type="checkbox"
+                    checked={lrclib.value ?? state.settings.lrclib_enabled}
+                    onChange={(event) => saveLrclib(event.target.checked)}
+                  />{" "}
+                  {t("lrclibEnabled")}
+                </label>
+                {lrclib.dirty && <p>{t("unsavedLrclib")}</p>}
+              </section>
+            </TabPanel>
+            <TabPanel
+              id="genres"
+              shouldForceMount
+              data-settings-tab="genres"
+              className="settings-tab-panel"
+            >
+              <GenreCatalogPanel />
+            </TabPanel>
+          </Tabs>
           {!!operations.length && (
             <section
               aria-labelledby="operations-title"

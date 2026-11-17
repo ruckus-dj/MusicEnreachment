@@ -1,6 +1,12 @@
 import type { Locale } from "../../i18n/locale";
 
 const english = {
+  settingsTabs: "Settings sections",
+  tabGeneral: "General",
+  tabFolders: "Folders",
+  tabTools: "Tools",
+  tabProviders: "Providers",
+  tabGenres: "Genres",
   generalTitle: "General",
   publicationFormat: "Publication format",
   originalFormat: "Original format",
@@ -122,6 +128,7 @@ const english = {
   unsavedTemplate: "The publication path template has unsaved changes.",
   saveTemplate: "Save path template",
   allowSourceDeletion: "Allow source deletion after publication",
+  sourceDeletionTitle: "Source deletion",
   sourceDeletionHelp:
     "Off by default. When enabled, future deletion is permitted only after publication is verified successfully. Changing this setting does not delete existing files or start processing.",
   unsavedSourceDeletion: "The source deletion setting has unsaved changes.",
@@ -335,6 +342,12 @@ const russian: Record<SettingsMessageKey, string> = {
   disabled: "выключено",
   versionLabel: "Версия {kind}",
   bytes: "байт",
+  settingsTabs: "Разделы настроек",
+  tabGeneral: "Общие",
+  tabFolders: "Папки",
+  tabTools: "Инструменты",
+  tabProviders: "Провайдеры",
+  tabGenres: "Жанры",
   generalTitle: "Общие",
   publicationFormat: "Формат публикации",
   originalFormat: "Исходный формат",
@@ -374,6 +387,7 @@ const russian: Record<SettingsMessageKey, string> = {
   unsavedTemplate: "Есть несохранённый шаблон пути публикации.",
   saveTemplate: "Сохранить шаблон пути",
   allowSourceDeletion: "Разрешить удаление исходников после публикации",
+  sourceDeletionTitle: "Удаление исходников",
   sourceDeletionHelp:
     "Выключено по умолчанию. При включении удаление в будущем может применяться только после успешной проверки публикации; изменение настройки не удаляет существующие файлы и не запускает обработку.",
   unsavedSourceDeletion: "Есть несохранённая настройка удаления исходников.",

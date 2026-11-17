@@ -147,3 +147,9 @@ Upstream research: shutdown-related source в pinned alpha.3 и актуальн
 ошибки на стороне приложения. Источники:
 https://github.com/fergusstrange/embedded-postgres/blob/v2.0.0-alpha.3/internal/supervisor/supervisor.go
 и https://github.com/fergusstrange/embedded-postgres/blob/v2.0.1/internal/supervisor/supervisor.go.
+
+Последняя ревизия `5ed0b445` прошла всю CI `43983633399` с первого attempt,
+включая Windows/контейнер. Browser Ordinary repeat preview теперь Unchanged,
+Forced остаётся executable; подтверждение не выполнялось и hashes сохранены.
+Это снимает текущую красную CI последней ревизии, но не объясняет прежний
+supervisor failure и не закрывает оставшиеся presentation gaps.
