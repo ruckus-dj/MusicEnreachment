@@ -35,3 +35,19 @@ Blocker исправлен через `String.raw`; regression читает фа
 generated source. Этот source извлечён без выполнения helper preparation и принят
 `gofmt` без изменений. Проверка не является build/test gate. Остальные результаты
 ревью блокеров не содержат; следующий этап — обычный полный commit hook.
+
+`34f620b9` прошёл обычный полный hook и отправлен. С согласия владельца запущен
+workflow_dispatch `44094826529` с `windows_postgres_diagnostics=true`.
+Отдельная обычная push CI `44094826875` выполняется без instrumentation override.
+Результаты обоих прогонов пока не подтверждены; диагностический успех не будет
+считаться доказанным исправлением или заменой обычного Windows gate.
+
+Dispatch `44094826529` завершился ошибкой до Windows integration tests: prep
+step молча вышел 0 без outputs, fail-closed guard запретил release-helper fallback,
+artifact upload не получил path. Диагностические traces не получены; это сбой
+нашей обвязки, а не воспроизведение PostgreSQL shutdown.
+
+Причина установлена: entry guard сравнивал filesystem path с file URL и никогда
+не вызывал main. Сравнение приведено к одному URL-представлению, добавлен минимальный
+regression actual module path / import / Windows URL case. Fail-closed guard
+сохранён. Исправление ещё не прошло полный hook; новый dispatch не запускался.

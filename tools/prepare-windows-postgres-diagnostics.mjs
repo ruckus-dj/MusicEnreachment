@@ -576,11 +576,21 @@ export async function main() {
 	await prepare();
 }
 
-if (
-	process.argv[1] &&
-	fileURLToPath(import.meta.url) ===
-		pathToFileURL(path.resolve(process.argv[1])).href
+export function isMain(
+	moduleUrl = import.meta.url,
+	entryArgument = process.argv[1],
+	platform = process.platform,
 ) {
+	if (!entryArgument) return false;
+	const entryUrl = entryArgument.startsWith("file:")
+		? entryArgument
+		: pathToFileURL(path.resolve(entryArgument)).href;
+	return platform === "win32"
+		? entryUrl.toLowerCase() === moduleUrl.toLowerCase()
+		: entryUrl === moduleUrl;
+}
+
+if (isMain()) {
 	main().catch((error) => {
 		console.error(error instanceof Error ? error.message : error);
 		process.exitCode = 1;

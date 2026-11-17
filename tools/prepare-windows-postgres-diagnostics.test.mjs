@@ -1,15 +1,31 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { test } from "node:test";
 import {
 	applyPinnedPatch,
 	diagnosticsSource,
+	isMain,
 	validateTarArchive,
 } from "./prepare-windows-postgres-diagnostics.mjs";
 
 const archiveRoot =
 	"embedded-postgres-a7f8d1f8bb15a6ebf01f1bc2db8524e26cf89092";
+
+test("entry guard compares file URLs and filesystem paths in the same representation", () => {
+	const moduleUrl = new URL(
+		"./prepare-windows-postgres-diagnostics.mjs",
+		import.meta.url,
+	).href;
+	assert.equal(isMain(moduleUrl, fileURLToPath(moduleUrl)), true);
+	assert.equal(isMain(moduleUrl, fileURLToPath(import.meta.url)), false);
+	assert.equal(isMain(moduleUrl, ""), false);
+	assert.equal(
+		isMain("file:///D:/tools/helper.mjs", "file:///d:/TOOLS/helper.mjs", "win32"),
+		true,
+	);
+});
 
 function tarEntry(name, type = "0", body = "") {
 	const header = Buffer.alloc(512);
