@@ -300,10 +300,10 @@ longer describe the location and are replaced by new analysis. Deleting a root
 removes only that root's inventory rows; source files and managed output remain.
 
 **Current implementation:** incoming groups, matching with AcoustID and
-MusicBrainz, the local library, and publication are implemented. This does not
-establish full parity with the latest approved product contract; remaining
-corrections and parity work are tracked in
-[`docs/plans/todo/13-main-interface-design-parity.md`](docs/plans/todo/13-main-interface-design-parity.md).
+MusicBrainz, the local library, and publication are implemented. Main interface
+parity was accepted under [Plan 13](docs/plans/done/13-main-interface-design-parity.md);
+the [browser report](docs/reports/2026-11-18-plan13-browser-parity.md) records
+what was verified and the limits of that verification.
 Scheduled scans, automatic retry/backoff and a full re-analysis button remain
 outside the current scan slice. Publication source cleanup is a separate,
 explicitly enabled workflow, not a scan or analysis action.

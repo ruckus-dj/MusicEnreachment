@@ -4,7 +4,7 @@
 и [вся CI 42360466600](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/42360466600)
 прошли, включая контейнер.
 
-Продолжается пункт 2 [плана](../plans/todo/13-main-interface-design-parity.md).
+Продолжается пункт 2 [плана](../plans/done/13-main-interface-design-parity.md).
 Текущий ограниченный срез реализует связанные app-owned staged-копии и failed analysis
 tasks, включая detached work. Успех удаления root не должен оставлять эти копии;
 cleanup host sources, CURRENT и файлов публикаций сюда не входит.

@@ -2,7 +2,7 @@
 
 Базовая ревизия: `1030b7e635ece9ded2f428860a60314255434b77`.
 Работа относится к пункту 7 программы
-[`13-main-interface-design-parity.md`](../plans/todo/13-main-interface-design-parity.md).
+[`13-main-interface-design-parity.md`](../plans/done/13-main-interface-design-parity.md).
 Продуктовые правила находятся в текущем разделе
 [`Метаданные и управление`](../design/decisions.md#метаданные-и-управление),
 а не в этом отчёте.
