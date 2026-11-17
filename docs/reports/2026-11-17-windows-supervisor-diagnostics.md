@@ -94,3 +94,59 @@ trace hash включается в provenance. Focused pure regression cases д�
 что объясняет file-open failures даже у пути без пробелов. Новое whole-assignment
 quoting и native binary preflight проверяют реальную запись. JSONL bytes не
 переписываются: provenance hash хранит исходный текст с nanosecond timestamps.
+
+`232327d2` прошёл обычный полный hook и отправлен. Обычная CI `44101636653`
+полностью зелёная, включая Windows и контейнер. Отдельный diagnostic dispatch
+`44101637411` завершился failure: Windows job `134102903868` прошёл native trace
+preflight и require guard, упал на integration tests; artifact upload успешен.
+Остальные выполненные jobs зелёные, container publish skipped. Artifact и failed
+log скачаны в `final-acceptance-20261117/diagnostics-44101637411` и переданы на
+независимый read-only разбор. До чтения результатов не утверждается, что это
+повторение прежнего shutdown failure. Новый rerun и production shutdown changes
+не выполнялись.
+
+### Разбор dispatch `44101637411` на `232327d2`
+
+Диагностика collection теперь подтверждена: 50 JSONL / 283 события. Preflight
+`8276.jsonl` (2 события, hash совпадает с provenance) отделён от integration:
+49 traces / 281 событие, включая 9 PostgreSQL server lifecycles и 40 command
+lifecycles. Nanosecond timestamps разобраны Python integers без потери точности.
+Helper hash совпадает с committed script после Windows CRLF normalization;
+patch/source/license hashes проверены, EP_SUPERVISOR соответствует provenance.
+Binary и archive отсутствуют в artifact: их записанные hashes независимо не
+пересчитаны.
+
+Этот прогон упал **не на PostgreSQL shutdown**. `failed-job.log:71–78` содержит
+три dispatch deadline failure в move-worker tests:
+`OldSourceStagingCollisionPreservesUnknownData/source_1` (67.19s) и
+`PreservesIndependentSourceAfterRootSwitch/source_0` / `source_1` (61.61s / 64.88s).
+Это существующий 60s deadline `dispatchMove` (`move_worker_test.go:874–887`),
+а не PostgreSQL watchdog. Repositories в этих тестах in-memory, version runner
+fake, filesystem настоящий. Два последних случая дошли до `running/switched`;
+при отменённом context `rollbackSwitched` возвращает `ctx.Err()` до записи
+`rollback_pending`, маскируя исходную cleanup cause. Combined assertion label
+«unknown source was adopted» не доказывает adoption: отдельные проверки
+сохранности inode/content не упали.
+
+Все 9 server traces имеют успешные pg_ctl return, PostgreSQL wait, owner-EOF
+stop completion, supervisor return и main-exit=0; применимых пропущенных endings
+нет. Timeout/context-ended/kill events отсутствуют. Owner-EOF → main-exit:
+8020 — 6.593065600s; 10168 — 1.313699400s; 9808 — 0.901157800s;
+1888 — 5.950171000s; 1596 — 6.920281300s; 4384 — 5.201644300s;
+5688 — 1.616437600s; 7008 — 7.028886000s; 7712 — 0.848761800s.
+Максимальный pg_ctl runtime 7.024216600s ниже 10s shutdown deadline и 12s
+parent watchdog. Jobs cleanup 22.62s включает remove_and_release 20.997s:
+это не длительность supervisor shutdown. Связь с PID 5688 timing-based,
+поскольку package/test-owner labels в traces отсутствуют.
+
+Два command traces (`5036.jsonl`, `4412.jsonl`) завершились child exit 2 /
+helper exit 1, с полными lifecycle endings. Их команды не записаны, связь с
+test failures не установлена. Buffered output timestamps не позволяют точно
+привязать subtest failure к PID.
+
+Итог: исходный intermittent supervisor shutdown failure не воспроизведён и не
+исправлен. Причина move dispatch latency пока неизвестна; filesystem latency,
+scheduling contention и влияние instrumentation — гипотезы, не диагноз.
+Следующая минимальная диагностика — deadline-time goroutine stacks в
+`dispatchMove` и исходная rollback cause/stage/elapsed в `rollbackSwitched`.
+Новых dispatch/rerun не выполнено; shutdown logic, deadlines и gates не ослаблены.

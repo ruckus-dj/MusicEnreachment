@@ -34,16 +34,37 @@ runtime прежнего `docs/app-design/` удалён решением вла
 
 ## Оставшаяся программа исправлений и паритета
 
-Текущий контроль приёмки до `5ed0b445`:
+Текущий контроль реализации до `5fc85d8e` (план не закрыт):
 [итоговый отчёт](../../reports/2026-11-17-plan13-final-acceptance.md).
 Полный browser-маршрут от свежего Setup до явной публикации пройден на отдельной
-БД и временных данных; контрольные файлы сохранены. Смешанный RU/EN release/cover
+БД и временных данных. Смешанный RU/EN release/cover
 исправлен в `a053c93d`; два false Update повторного preview исправлены в
 `5d3336d1`/`5ed0b445`, последняя полная CI `43983633399` зелёная, browser Ordinary
-показывает Unchanged и Forced остаётся executable. Остались Settings task tabs,
-компактная шапка с cover, release/position drilldown и итоговая визуальная/
-keyboard/theme/viewport и populated evidence/overrides приёмка. Исторические ограничения
-ниже читаются вместе с более поздними результатами, а не как новые задачи.
+показывает Unchanged и Forced остаётся executable. Settings task tabs завершены
+в `eba04403`; compact release overview, selected-cover header и position drilldown —
+в `f8b42863`. Browser-проверки Settings, overview/position, RU/EN/theme/viewport и
+selected/pending cover описаны в
+[Settings report](../../reports/2026-11-17-settings-task-tabs.md) и
+[overview report](../../reports/2026-11-17-compact-release-overview.md).
+Финальная браузерная матрица основных маршрутов и populated evidence/override
+пройдена: [отчёт](../../reports/2026-11-18-plan13-browser-parity.md).
+`ed6034bc` исправил горизонтальное переполнение Operations, `5fc85d8e` —
+параметр запроса MusicBrainz. После исправлений browser на реальном backend
+показал 10 сохранённых кандидатов и принял preview title override; confirm
+не нажимался. Это отдельная проверка от уже пройденного Local setup-to-publish.
+Оба полных hook прошли; окончательный результат
+[CI `44185587125`](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/44185587125)
+пока не подтверждён.
+
+Пять исторических контрольных файлов отсутствуют по прежним путям, копии и
+исходные digest values не найдены. Их нельзя заменить новым прогоном; пункт
+приёмки сохранности не закрыт. `18080` возвращён на исходную БД, `8787` не затронут.
+Отдельный диагностический `44101637411` упал на deadline move-worker tests,
+а не supervisor shutdown: все девять shutdown завершились успешно. Исходный
+intermittent failure не диагностирован; см.
+[отчёт](../../reports/2026-11-17-windows-supervisor-diagnostics.md).
+Исторические ограничения ниже читаются вместе с более поздними результатами,
+а не как новые задачи.
 
 Пункты — направления программы, а не неизменный порядок коммитов. Следующий
 ограниченный вертикальный срез выбирается по фактическому коду, текущему контракту
