@@ -273,7 +273,7 @@ func (p *Provider) BrowseReleasesByArtist(ctx context.Context, artistID string, 
 		return SearchResult{}, errors.New("invalid musicbrainz artist browse parameters")
 	}
 	result, err := p.client.BrowseReleases(ctx, mb.ReleaseFilter{
-		ArtistMBID: mbtypes.MBID(artistID), Includes: []string{"artists", "artist-credits", "labels", "release-groups"},
+		ArtistMBID: mbtypes.MBID(artistID), Includes: []string{"artist-credits", "labels", "release-groups"},
 	}, mb.Paginator{Offset: offset, Limit: limit})
 	if err != nil {
 		return SearchResult{}, safeProviderError(ctx, err)

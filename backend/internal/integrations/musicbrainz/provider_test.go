@@ -71,8 +71,16 @@ func TestBrowseReleasesByArtistValidatesBrowseEnvelopeAndDoesNotRequestTracks(t 
 		if r.URL.Path != "/release/" || query.Get("artist") != "11111111-1111-4111-8111-111111111111" || query.Get("offset") != "50" || query.Get("limit") != "25" {
 			t.Errorf("request = %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
-		if strings.Contains(query.Get("inc"), "recordings") || strings.Contains(query.Get("inc"), "media") {
-			t.Errorf("browse unexpectedly requested track details: inc=%q", query.Get("inc"))
+		expectedIncludes := map[string]bool{"artist-credits": true, "labels": true, "release-groups": true}
+		for _, include := range strings.Fields(query.Get("inc")) {
+			if !expectedIncludes[include] {
+				t.Errorf("browse requested unsupported include %q: inc=%q", include, query.Get("inc"))
+				continue
+			}
+			delete(expectedIncludes, include)
+		}
+		if len(expectedIncludes) != 0 {
+			t.Errorf("browse omitted supported includes %v: inc=%q", expectedIncludes, query.Get("inc"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"release-count":76,"release-offset":50,"releases":[{"id":"22222222-2222-4222-8222-222222222222","title":"Album","date":"1999","disambiguation":"remaster","label-info":[{"catalog-number":"ABC"}],"release-group":{"id":"33333333-3333-4333-8333-333333333333"}}]}`))
