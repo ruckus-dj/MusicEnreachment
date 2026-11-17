@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
+import { useEffect } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
   LibraryMetadataResponse,
@@ -20,17 +21,96 @@ import { createMemoryStorage } from "../../test/memoryStorage";
 import { server } from "../../test/server";
 import { LibraryReleaseScreen } from "./LibraryReleaseScreen";
 
+const coverEditorMockState = vi.hoisted(() => ({
+  releaseID: "",
+  onSnapshot: undefined as
+    | ((releaseID: string, generation?: string) => void)
+    | undefined,
+  staleSnapshot: undefined as
+    | ((releaseID: string, generation?: string) => void)
+    | undefined,
+}));
+
 vi.mock("./FirstPublicationPreview", () => ({
   FirstPublicationPreview: ({
+    positionId,
     refreshToken,
+    aggregateManaged,
+    onController,
   }: {
+    positionId: string;
     refreshToken?: string | number;
-  }) => (
-    <div data-testid="publication-preview" data-refresh-token={refreshToken} />
-  ),
+    aggregateManaged?: boolean;
+    onController?: unknown;
+  }) => {
+    useEffect(() => {
+      const register = onController as
+        | ((controller: unknown) => void)
+        | undefined;
+      register?.({
+        prepare: () => {},
+        confirm: () => {},
+        selectSource: () => {},
+        refresh: () => {},
+      });
+      return () => register?.(null);
+    }, [onController]);
+    return (
+      <div
+        data-testid="publication-preview"
+        data-position-id={positionId}
+        data-aggregate-managed={aggregateManaged}
+        data-refresh-token={refreshToken}
+      />
+    );
+  },
 }));
 vi.mock("./newReleaseCoverEditor", () => ({
-  ReleaseCoverEditor: () => null,
+  ReleaseCoverEditor: ({
+    releaseId,
+    onCoverSnapshot,
+  }: {
+    releaseId: string;
+    onCoverSnapshot?: (releaseID: string, generation?: string) => void;
+  }) => {
+    if (
+      coverEditorMockState.releaseID &&
+      coverEditorMockState.releaseID !== releaseId
+    )
+      coverEditorMockState.staleSnapshot = coverEditorMockState.onSnapshot;
+    coverEditorMockState.releaseID = releaseId;
+    coverEditorMockState.onSnapshot = onCoverSnapshot;
+    return (
+      <div>
+        <button
+          type="button"
+          data-testid="emit-selected-cover"
+          onClick={() => onCoverSnapshot?.(releaseId, "selected-generation")}
+        >
+          Emit selected cover
+        </button>
+        <button
+          type="button"
+          data-testid="emit-pending-cover"
+          onClick={() => onCoverSnapshot?.(releaseId, undefined)}
+        >
+          Emit pending-only cover
+        </button>
+        <button
+          type="button"
+          data-testid="emit-stale-cover"
+          onClick={() =>
+            coverEditorMockState.staleSnapshot?.(
+              "release-1",
+              "late-old-generation",
+            )
+          }
+        >
+          Emit stale cover
+        </button>
+      </div>
+    );
+  },
 }));
 
 function LocaleToggle() {
@@ -115,6 +195,29 @@ function release(
   };
 }
 
+function twoPositionRelease(): LibraryReleaseDetailResponse {
+  const onePosition = release(false);
+  const first = onePosition.tracks?.[0];
+  if (!first) throw new Error("release fixture is missing its first position");
+  return {
+    ...onePosition,
+    media: [{ id: "medium-1", medium: 1, title: "Disc one", format: "CD" }],
+    tracks: [
+      first,
+      {
+        ...first,
+        id: "position-2",
+        local_track_id: "local-track-2",
+        title: "Position Two",
+        displayed_number: "2",
+        position: 2,
+        medium: 2,
+        sources: [],
+      },
+    ],
+  };
+}
+
 const metadata: LibraryMetadataResponse = {
   envelope: { desired: {}, scope: "position", version: 1 },
   publication_applied: false,
@@ -165,17 +268,20 @@ function installHandlers(published: boolean) {
   );
 }
 
-function renderScreen(releaseId: string) {
+function renderScreen(
+  releaseId: string,
+  positionId?: string,
+  client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  }),
+) {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "en");
   vi.stubGlobal("localStorage", storage);
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
   return render(
     <I18nProvider>
       <QueryClientProvider client={client}>
-        <LibraryReleaseScreen releaseId={releaseId} />
+        <LibraryReleaseScreen releaseId={releaseId} positionId={positionId} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -184,6 +290,9 @@ function renderScreen(releaseId: string) {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  coverEditorMockState.releaseID = "";
+  coverEditorMockState.onSnapshot = undefined;
+  coverEditorMockState.staleSnapshot = undefined;
 });
 
 beforeEach(() => {
@@ -201,7 +310,7 @@ beforeEach(() => {
 it("shows publication and source details from release detail without source inventory", async () => {
   installHandlers(true);
 
-  renderScreen(releaseID);
+  renderScreen(releaseID, positionID);
 
   const summary = await screen.findByRole("region", {
     name: "Current publication",
@@ -237,7 +346,7 @@ it("shows publication and source details from release detail without source inve
 it("shows an explicit unpublished state when release detail has no publication summary", async () => {
   installHandlers(false);
 
-  renderScreen(releaseID);
+  renderScreen(releaseID, positionID);
 
   const summary = await screen.findByRole("region", {
     name: "Current publication",
@@ -287,8 +396,11 @@ it("invalidates preview context immediately even if release detail refresh fails
   );
 
   renderScreen(releaseID);
-  await screen.findByRole("region", { name: "Current publication" });
-  const preview = screen.getByTestId("publication-preview");
+  await screen.findByRole("heading", { name: "Contextual Release" });
+  const preview = await screen.findByTestId("publication-preview");
+  expect(
+    screen.queryByRole("region", { name: "Current publication" }),
+  ).toBeNull();
   const initialToken = preview.getAttribute("data-refresh-token");
   const genres = await screen.findByRole("region", {
     name: "Release genres",
@@ -338,7 +450,7 @@ it("replaces the release-detail publication summary with refreshed position stat
     ),
   );
 
-  renderScreen(releaseID);
+  renderScreen(releaseID, positionID);
 
   const summary = await screen.findByRole("region", {
     name: "Current publication",
@@ -373,7 +485,7 @@ it("updates generation and path after a manual position refresh", async () => {
     ),
   );
 
-  renderScreen(releaseID);
+  renderScreen(releaseID, positionID);
 
   const summary = await screen.findByRole("region", {
     name: "Current publication",
@@ -444,7 +556,7 @@ it("retains a lyrics draft and completed operation notice when locale changes wi
     <I18nProvider>
       <LocaleToggle />
       <QueryClientProvider client={client}>
-        <LibraryReleaseScreen releaseId={releaseID} />
+        <LibraryReleaseScreen releaseId={releaseID} positionId={positionID} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -626,4 +738,167 @@ it("refreshes deletion from authoritative position state without remounting publ
   expect(previewReads).toBe(2);
   expect(deletionCalls).toBe(1);
   expect(screen.getByTestId("publication-preview")).toBe(publicationPreview);
+});
+
+it("keeps overview positions linked and publication controllers registered without mounting workspaces", async () => {
+  const reads = new Map<string, { metadata: number; publication: number }>();
+  server.use(
+    http.get("*/api/library/releases/:releaseId", () =>
+      HttpResponse.json(twoPositionRelease()),
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/metadata",
+      ({ params }) => {
+        const id = String(params.positionId);
+        const positionReads = reads.get(id) ?? { metadata: 0, publication: 0 };
+        positionReads.metadata += 1;
+        reads.set(id, positionReads);
+        return HttpResponse.json(metadata);
+      },
+    ),
+    http.get(
+      "*/api/library/releases/:releaseId/positions/:positionId/publication",
+      ({ params }) => {
+        const id = String(params.positionId);
+        const positionReads = reads.get(id) ?? { metadata: 0, publication: 0 };
+        positionReads.publication += 1;
+        reads.set(id, positionReads);
+        if (id === "position-2" && positionReads.publication === 1)
+          return HttpResponse.error();
+        return HttpResponse.json(publication(false));
+      },
+    ),
+  );
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = renderScreen(releaseID, undefined, client);
+
+  expect(
+    await screen.findByRole("link", { name: "1 · Position One" }),
+  ).toHaveAttribute(
+    "href",
+    "#/library/releases/release-1/positions/position-1",
+  );
+  expect(
+    screen.getByRole("link", { name: "2 · Position Two" }),
+  ).toHaveAttribute(
+    "href",
+    "#/library/releases/release-1/positions/position-2",
+  );
+  expect(screen.getAllByTestId("publication-preview")).toHaveLength(2);
+  expect(
+    screen
+      .getAllByTestId("publication-preview")
+      .map((preview) => preview.getAttribute("data-position-id")),
+  ).toEqual([positionID, "position-2"]);
+  expect(
+    await screen.findByRole("button", { name: "Prepare preview" }),
+  ).toBeEnabled();
+  expect(
+    screen.queryByRole("region", { name: "Current publication" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Audio sources for position 1" }),
+  ).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Saved lyrics" })).toBeNull();
+  expect(reads.get(positionID)).toEqual({ metadata: 1, publication: 1 });
+  expect(reads.get("position-2")).toEqual({ metadata: 1, publication: 1 });
+
+  const readFailure = await screen.findByRole("alert");
+  expect(readFailure).toHaveTextContent("Failed to fetch");
+  fireEvent.click(
+    within(readFailure).getByRole("button", { name: "Refresh data" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(reads.get("position-2")).toEqual({ metadata: 2, publication: 2 });
+
+  const [firstPreview, secondPreview] = screen.getAllByTestId(
+    "publication-preview",
+  );
+  function expectPreviewsPreserved() {
+    const previews = screen.getAllByTestId("publication-preview");
+    expect(previews).toHaveLength(2);
+    expect(previews[0]).toBe(firstPreview);
+    expect(previews[1]).toBe(secondPreview);
+  }
+  function rerender(positionId?: string) {
+    view.rerender(
+      <I18nProvider>
+        <QueryClientProvider client={client}>
+          <LibraryReleaseScreen releaseId={releaseID} positionId={positionId} />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+  }
+
+  expect(firstPreview).toHaveAttribute("data-aggregate-managed", "true");
+  expect(secondPreview).toHaveAttribute("data-aggregate-managed", "true");
+
+  rerender(positionID);
+  expectPreviewsPreserved();
+  expect(firstPreview).toHaveAttribute("data-aggregate-managed", "false");
+  expect(secondPreview).toHaveAttribute("data-aggregate-managed", "true");
+
+  rerender("position-2");
+  expectPreviewsPreserved();
+  expect(firstPreview).toHaveAttribute("data-aggregate-managed", "true");
+  expect(secondPreview).toHaveAttribute("data-aggregate-managed", "false");
+
+  rerender();
+  expectPreviewsPreserved();
+  expect(firstPreview).toHaveAttribute("data-aggregate-managed", "true");
+  expect(secondPreview).toHaveAttribute("data-aggregate-managed", "true");
+});
+
+it("shows only the selected cover snapshot in the compact release header", async () => {
+  installHandlers(false);
+  renderScreen(releaseID);
+  await screen.findByRole("heading", { name: "Contextual Release" });
+
+  fireEvent.click(screen.getByTestId("emit-pending-cover"));
+  expect(
+    screen.queryByRole("img", { name: "Selected release cover" }),
+  ).toBeNull();
+  fireEvent.click(screen.getByTestId("emit-selected-cover"));
+
+  expect(
+    await screen.findByRole("img", { name: "Selected release cover" }),
+  ).toHaveAttribute("src", expect.stringContaining("selected-generation"));
+});
+
+it("ignores a late cover snapshot from the previous release scope", async () => {
+  installHandlers(false);
+  const view = renderScreen(releaseID);
+  await screen.findByRole("heading", { name: "Contextual Release" });
+  fireEvent.click(screen.getByTestId("emit-selected-cover"));
+  expect(
+    await screen.findByRole("img", { name: "Selected release cover" }),
+  ).toBeInTheDocument();
+
+  server.use(
+    http.get("*/api/library/releases/:releaseId", () =>
+      HttpResponse.json({
+        ...release(false),
+        id: "release-2",
+        title: "Second Release",
+      }),
+    ),
+  );
+  view.rerender(
+    <I18nProvider>
+      <QueryClientProvider client={new QueryClient()}>
+        <LibraryReleaseScreen releaseId="release-2" />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+  await screen.findByRole("heading", { name: "Second Release" });
+  expect(
+    screen.queryByRole("img", { name: "Selected release cover" }),
+  ).toBeNull();
+  fireEvent.click(screen.getByTestId("emit-stale-cover"));
+  expect(
+    screen.queryByRole("img", { name: "Selected release cover" }),
+  ).toBeNull();
 });

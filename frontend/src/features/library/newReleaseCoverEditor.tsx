@@ -24,6 +24,7 @@ type Props = {
   releaseId: string;
   epoch?: string;
   onOperationsAdmitted: (operations: ReleaseCoverPositionOperation[]) => void;
+  onCoverSnapshot?: (releaseId: string, selectedGeneration?: string) => void;
 };
 
 function errorMessage(data: unknown, status: number): Error {
@@ -44,6 +45,7 @@ export function ReleaseCoverEditor({
   releaseId,
   epoch,
   onOperationsAdmitted,
+  onCoverSnapshot,
 }: Props) {
   const { locale } = useI18n();
   const text = (
@@ -64,6 +66,10 @@ export function ReleaseCoverEditor({
   const [error, setError] = useState<LibraryReleaseText | "">("");
   const [notice, setNotice] = useState<LibraryReleaseText | "">("");
   const fileInput = useRef<HTMLInputElement>(null);
+  const onCoverSnapshotRef = useRef(onCoverSnapshot);
+  useEffect(() => {
+    onCoverSnapshotRef.current = onCoverSnapshot;
+  }, [onCoverSnapshot]);
 
   useEffect(() => {
     const scope = requestScope.current;
@@ -79,6 +85,10 @@ export function ReleaseCoverEditor({
         if (response.status !== 200)
           throw errorMessage(response.data, response.status);
         setCover(response.data);
+        onCoverSnapshotRef.current?.(
+          releaseId,
+          response.data.selected_generation,
+        );
       })
       .catch((reason: unknown) => {
         if (active && requestScope.current === scope)
@@ -115,6 +125,7 @@ export function ReleaseCoverEditor({
       if (requestScope.current !== scope) return;
       if (data.status !== 200) throw errorMessage(data.data, data.status);
       setCover(data.data);
+      onCoverSnapshot?.(releaseId, data.data.selected_generation);
       setFile(undefined);
       if (fileInput.current) fileInput.current.value = "";
       setNotice(libraryReleaseText("coverSaved"));
@@ -163,6 +174,7 @@ export function ReleaseCoverEditor({
       if (refreshed.status !== 200)
         throw errorMessage(refreshed.data, refreshed.status);
       setCover(refreshed.data);
+      onCoverSnapshot?.(releaseId, refreshed.data.selected_generation);
     } catch (reason) {
       if (requestScope.current === scope)
         setError(libraryReleaseError(reason, "applyCoverFailed"));

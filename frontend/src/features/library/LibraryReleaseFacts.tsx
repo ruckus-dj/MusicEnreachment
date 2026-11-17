@@ -89,6 +89,7 @@ export function ReleaseMediaSummary({
           positionsUnspecified: "Позиции не указаны",
           mediaUnrecorded: "Сведения о носителях не сохранены.",
           releasePositions: "Позиции релиза:",
+          positionsWithoutMedia: "Позиции без сведений о носителе:",
         }
       : {
           heading: "Media and positions",
@@ -102,9 +103,32 @@ export function ReleaseMediaSummary({
           positionsUnspecified: "No positions specified",
           mediaUnrecorded: "Media information has not been saved.",
           releasePositions: "Release positions:",
+          positionsWithoutMedia: "Positions without saved media information:",
         };
   const media = release.media ?? [];
   const tracks = release.tracks ?? [];
+  const tracksForMedium = (medium: (typeof media)[number]) =>
+    tracks.filter((track) =>
+      track.medium_id
+        ? track.medium_id === medium.id
+        : track.medium === medium.medium,
+    );
+  const ungroupedTracks = tracks.filter(
+    (track) => !media.some((medium) => tracksForMedium(medium).includes(track)),
+  );
+  const positionLinks = (items: typeof tracks) => (
+    <ul className="library-release-position-links">
+      {items.map((track) => (
+        <li key={track.id}>
+          <a
+            href={`#/library/releases/${encodeURIComponent(release.id)}/positions/${encodeURIComponent(track.id)}`}
+          >
+            {positionNumber(track)} · {track.title || copy.untitled}
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
   return (
     <section
       className="library-release-media"
@@ -127,11 +151,7 @@ export function ReleaseMediaSummary({
             </thead>
             <tbody>
               {media.map((medium) => {
-                const items = tracks.filter((track) =>
-                  track.medium_id
-                    ? track.medium_id === medium.id
-                    : track.medium === medium.medium,
-                );
+                const items = tracksForMedium(medium);
                 return (
                   <tr key={medium.id}>
                     <th scope="row">{medium.medium}</th>
@@ -139,17 +159,7 @@ export function ReleaseMediaSummary({
                     <td>{medium.format || copy.unspecified}</td>
                     <td>
                       {items.length ? (
-                        <ul className="library-release-position-links">
-                          {items.map((track) => (
-                            <li key={track.id}>
-                              <a
-                                href={`#/library/releases/${encodeURIComponent(release.id)}/positions/${encodeURIComponent(track.id)}`}
-                              >
-                                {positionNumber(track)} · {track.title}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
+                        positionLinks(items)
                       ) : (
                         <span>{copy.positionsUnspecified}</span>
                       )}
@@ -164,7 +174,16 @@ export function ReleaseMediaSummary({
         <p>{copy.mediaUnrecorded}</p>
       )}
       {!media.length && tracks.length > 0 ? (
-        <p>{copy.releasePositions}</p>
+        <div>
+          <p>{copy.releasePositions}</p>
+          {positionLinks(tracks)}
+        </div>
+      ) : null}
+      {media.length > 0 && ungroupedTracks.length > 0 ? (
+        <div>
+          <p>{copy.positionsWithoutMedia}</p>
+          {positionLinks(ungroupedTracks)}
+        </div>
       ) : null}
     </section>
   );
