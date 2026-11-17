@@ -174,7 +174,18 @@ function release(
           {
             compatible: true,
             decision_method: "manual",
-            locations: [],
+            locations: [
+              {
+                location_id: "test-location",
+                root_id: "test-root",
+                relative_path: "01 - Position One.flac",
+                root_status: "available",
+                root_enabled: true,
+                probe_status: "audio",
+                mtime: validatedAt,
+                size_bytes: 4096,
+              },
+            ],
             media_variant_id: mediaVariantID,
             metadata: {},
             policy_version: "test-policy-v1",
@@ -575,9 +586,17 @@ it("retains a lyrics draft and completed operation notice when locale changes wi
     expect(reads.publication).toBeGreaterThan(1);
   });
   const requestCountsBeforeLocaleChange = { ...reads };
+  const sourceLink = screen.getByRole("link", {
+    name: "01 - Position One.flac",
+  });
+  const sourceDetails = sourceLink.parentElement;
+  expect(sourceDetails).toHaveTextContent("root Available (enabled)");
+  expect(sourceDetails).toHaveTextContent("probe Audio");
 
   fireEvent.click(screen.getByRole("button", { name: "Switch locale" }));
 
+  expect(sourceDetails).toHaveTextContent("корень Доступен (включён)");
+  expect(sourceDetails).toHaveTextContent("проверка Аудио");
   expect(
     await screen.findByRole("textbox", { name: "Сохранённый текст песни" }),
   ).toHaveValue("unsaved lyrics draft");

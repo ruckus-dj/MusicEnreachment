@@ -3,6 +3,8 @@ import type {
   LibraryReleaseTrackResponse,
 } from "../../api/generated/client.schemas";
 import { useI18n } from "../../i18n/I18nProvider";
+import { sourceMessage } from "../sources/sourceMessages";
+import { statusLabel } from "../sources/sourcesApi";
 
 function positionNumber(track: LibraryReleaseTrackResponse) {
   return track.displayed_number.trim() || String(track.position);
@@ -238,6 +240,32 @@ export function PositionIdentity({
   );
 }
 
+function rootStatusLabel(status: string, locale: "en" | "ru") {
+  switch (status) {
+    case "available":
+    case "unavailable":
+    case "unknown":
+      return statusLabel(status, locale);
+    default:
+      return status;
+  }
+}
+
+function probeStatusLabel(status: string, locale: "en" | "ru") {
+  switch (status) {
+    case "audio":
+      return sourceMessage(locale, "streamAudio");
+    case "no_audio":
+      return sourceMessage(locale, "noAudio");
+    case "probe_error":
+      return sourceMessage(locale, "probeError");
+    case "not_analyzed":
+      return locale === "ru" ? "Не проанализировано" : "Not analyzed";
+    default:
+      return status;
+  }
+}
+
 export function PositionSources({
   track,
 }: {
@@ -340,12 +368,14 @@ export function PositionSources({
                             </a>
                             <span>
                               {" "}
-                              · {copy.root} {location.root_status}
+                              · {copy.root}{" "}
+                              {rootStatusLabel(location.root_status, locale)}
                               {location.root_enabled
                                 ? ` (${copy.enabled})`
                                 : ` (${copy.disabled})`}{" "}
-                              · {copy.probe} {location.probe_status} ·{" "}
-                              {copy.modified}{" "}
+                              · {copy.probe}{" "}
+                              {probeStatusLabel(location.probe_status, locale)}{" "}
+                              · {copy.modified}{" "}
                               {location.mtime || copy.unspecified} · {copy.size}{" "}
                               {location.size_bytes} {copy.bytes}
                             </span>
