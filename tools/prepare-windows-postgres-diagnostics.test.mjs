@@ -5,8 +5,10 @@ import { gzipSync } from "node:zlib";
 import { test } from "node:test";
 import {
 	applyPinnedPatch,
+	diagnosticLdflags,
 	diagnosticsSource,
 	isMain,
+	validateDiagnosticTrace,
 	validateTarArchive,
 } from "./prepare-windows-postgres-diagnostics.mjs";
 
@@ -133,4 +135,38 @@ test("generated diagnostics source keeps the record format as escaped Go text", 
 		"event",
 		"result",
 	]);
+});
+
+test("diagnostic linker flags quote the complete -X value for paths with spaces", () => {
+	assert.equal(
+		diagnosticLdflags("D:\\runner's temp\\embedded-postgres-diagnostics"),
+		'-s -w -X github.com/fergusstrange/embedded-postgres/v2.ReleaseVersion=v2.0.0-alpha.3 -X "github.com/fergusstrange/embedded-postgres/v2/internal/diagnostics.LogDirectory=D:/runner\'s temp/embedded-postgres-diagnostics"',
+	);
+});
+
+test("diagnostic preflight requires valid main-entry and main-exit JSONL", () => {
+	const trace = [
+		JSON.stringify({
+			time_unix_nano: 1_800_000_000_000_000_000,
+			event: "main-entry",
+			result: 0,
+		}),
+		JSON.stringify({
+			time_unix_nano: 1_800_000_000_000_000_001,
+			event: "main-exit",
+			result: 2,
+		}),
+	].join("\n");
+	assert.deepEqual(
+		validateDiagnosticTrace(trace).map((record) => record.event),
+		["main-entry", "main-exit"],
+	);
+	assert.throws(
+		() => validateDiagnosticTrace(""),
+		/lifecycle trace is incomplete/,
+	);
+	assert.throws(
+		() => validateDiagnosticTrace(`${trace}\nnot-json`),
+		/invalid JSONL/,
+	);
 });

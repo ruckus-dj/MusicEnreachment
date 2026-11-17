@@ -278,6 +278,37 @@ function sha256(value) {
 	return createHash("sha256").update(value).digest("hex");
 }
 
+export function diagnosticLdflags(logDirectory) {
+	const normalizedDirectory = logDirectory.replaceAll("\\", "/");
+	return `-s -w -X ${modulePath}.ReleaseVersion=${source.version} -X "${modulePath}/internal/diagnostics.LogDirectory=${normalizedDirectory}"`;
+}
+
+export function validateDiagnosticTrace(contents) {
+	let records;
+	try {
+		records = contents
+			.split(/\r?\n/)
+			.filter(Boolean)
+			.map((line) => JSON.parse(line));
+	} catch {
+		throw new Error("diagnostic supervisor emitted invalid JSONL");
+	}
+	if (
+		records.length < 2 ||
+		records[0].event !== "main-entry" ||
+		records.at(-1).event !== "main-exit" ||
+		records.some(
+			(record) =>
+				!Number.isFinite(record.time_unix_nano) ||
+				!Number.isInteger(record.time_unix_nano) ||
+				typeof record.result !== "number",
+		)
+	) {
+		throw new Error("diagnostic supervisor lifecycle trace is incomplete");
+	}
+	return records;
+}
+
 function textField(header, start, length) {
 	return header
 		.subarray(start, start + length)
@@ -518,8 +549,7 @@ async function prepare() {
 	const diagnosticLicense = path.join(artifactDirectory, "UPSTREAM-LICENSE");
 	writeFileSync(diagnosticLicense, licenseBytes);
 	const supervisorPath = path.join(buildDirectory, "embedded-postgres.exe");
-	const logDirectory = artifactDirectory.replaceAll("\\", "/");
-	const ldflags = `-s -w -X ${modulePath}.ReleaseVersion=${source.version} -X ${modulePath}/internal/diagnostics.LogDirectory=${JSON.stringify(logDirectory)}`;
+	const ldflags = diagnosticLdflags(artifactDirectory);
 	const buildArgs = [
 		"build",
 		"-trimpath",
@@ -540,6 +570,23 @@ async function prepare() {
 		cwd: root,
 		env: { ...process.env, CGO_ENABLED: "0" },
 	});
+	const preflight = spawnSync(supervisorPath, [], {
+		windowsHide: true,
+		stdio: "ignore",
+	});
+	if (preflight.error || preflight.signal || !Number.isInteger(preflight.pid)) {
+		throw new Error("diagnostic supervisor preflight could not execute the binary");
+	}
+	const preflightTracePath = path.join(artifactDirectory, `${preflight.pid}.jsonl`);
+	let preflightTrace;
+	try {
+		preflightTrace = readFileSync(preflightTracePath, "utf8");
+		validateDiagnosticTrace(preflightTrace);
+	} catch {
+		throw new Error(
+			"diagnostic supervisor preflight did not produce a valid lifecycle trace",
+		);
+	}
 	const supervisorBytes = readFileSync(supervisorPath);
 	const patchManifest = {
 		upstream: {
@@ -559,6 +606,7 @@ async function prepare() {
 		},
 		format_command: `gofmt -w ${changedGoFiles.join(" ")}`,
 		binary_sha256: sha256(supervisorBytes),
+		preflight_trace_sha256: sha256(preflightTrace),
 		license_sha256: sha256(licenseBytes),
 		instrumented_diagnostic_binary: true,
 		not_for_release: true,

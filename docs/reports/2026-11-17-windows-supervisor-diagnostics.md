@@ -51,3 +51,46 @@ artifact upload не получил path. Диагностические traces 
 не вызывал main. Сравнение приведено к одному URL-представлению, добавлен минимальный
 regression actual module path / import / Windows URL case. Fail-closed guard
 сохранён. Исправление ещё не прошло полный hook; новый dispatch не запускался.
+
+`f2b9654d` прошёл полный обычный hook и отправлен. Исправленный dispatch
+`44097196024` и обычная CI `44097195359` запущены; результаты пока ожидаются.
+Предыдущая обычная CI `44094826875` для `34f620b9` полностью зелёная, включая
+Windows и контейнер. Этот результат не устанавливает причину intermittent
+shutdown failure и не подменяет отсутствующие diagnostic traces.
+
+Исправленный dispatch `44097196024`: Windows job `134087349790` полностью
+успешен, instrumented helper построен и проверен, integration tests и artifact
+upload прошли. Артефакты скачаны в
+`final-acceptance-20261117/diagnostics-44097196024` для независимого анализа.
+Исходный shutdown failure этим успешным прогоном не воспроизведён.
+
+Весь manual workflow failed: macOS arm64 job `134087350141` завершился за
+15m1s без отображённых steps; failed log пуст. Причина этого отдельного job пока
+не подтверждена. Результат Windows не подменяет полный workflow result.
+
+Независимый разбор artifact `14335870920` установил: ZIP содержит только
+`provenance.json` и `UPSTREAM-LICENSE`, JSONL traces отсутствуют (upload log: два
+файла). EP_SUPERVISOR и pinned build provenance подтверждены, но runtime collection
+не доказана; lifecycle timings/errors не измерены. Прежнее сообщение о полученных
+артефактах не означает наличия phase evidence. Исправляются collection и обязательный
+native preflight получения main-entry/main-exit до публикации helper output.
+
+macOS arm64 уточнён по job/check metadata: runner_id=0, steps=[]; annotation
+«The job was not acquired by Runner of type hosted even after multiple attempts».
+Это runner acquisition failure. Новый неизменённый manual rerun не выполнялся.
+
+Обычная CI `44097195359` для `f2b9654d` полностью зелёная с первого attempt,
+включая Windows и контейнер, без diagnostic override. Исправление collection
+продолжается отдельно; зелёная обычная CI не доказывает причину прежнего сбоя.
+
+Collection repair готов к ревью: linker `-X` получает quoted whole assignment,
+а не JSON quotes внутри значения. После native build добавлен обязательный binary
+preflight: до supervisor output требуются реальные JSONL main-entry/main-exit,
+trace hash включается в provenance. Focused pure regression cases добавлены;
+полный hook и Windows-прогон этой правки ещё не выполнялись.
+
+Независимое ревью collection repair блокеров не выявило. По Go quoted splitting
+прежние embedded JSON quotes сохранялись как буквальные символы baked path,
+что объясняет file-open failures даже у пути без пробелов. Новое whole-assignment
+quoting и native binary preflight проверяют реальную запись. JSONL bytes не
+переписываются: provenance hash хранит исходный текст с nanosecond timestamps.
