@@ -51,6 +51,8 @@
 }
 
 .operations-table-wrap {
+  /* Keep the visually hidden actions heading inside the scroll container. */
+  position: relative;
   overflow-x: auto;
   border: 1px solid var(--operations-line);
   border-radius: 5px;
