@@ -149,6 +149,13 @@ tasks:
     cmds:
       - node tools/prepare-windows-vips.mjs
 
+  native:windows-postgres-diagnostics:
+    desc: Build the pinned, instrumented Windows PostgreSQL supervisor for manual CI diagnostics
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - node tools/prepare-windows-postgres-diagnostics.mjs
+
   format:
     desc: Apply Go and frontend formatting
     deps: [frontend:install]

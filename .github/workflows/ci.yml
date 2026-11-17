@@ -5,6 +5,13 @@ on:
   push:
     branches: ["**"]
     tags: ["**"]
+  workflow_dispatch:
+    inputs:
+      windows_postgres_diagnostics:
+        description: Build and use the instrumented Windows PostgreSQL supervisor
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   publish:
@@ -178,6 +185,19 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+      - name: Prepare instrumented Windows PostgreSQL supervisor
+        id: windows-postgres-diagnostics
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.windows_postgres_diagnostics
+        run: task native:windows-postgres-diagnostics
+      - name: Require the instrumented Windows PostgreSQL supervisor
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.windows_postgres_diagnostics
+        shell: pwsh
+        env:
+          SUPERVISOR: ${{ steps.windows-postgres-diagnostics.outputs.supervisor }}
+        run: |
+          if (-not $env:SUPERVISOR -or -not [System.IO.Path]::IsPathFullyQualified($env:SUPERVISOR) -or -not (Test-Path -LiteralPath $env:SUPERVISOR -PathType Leaf)) {
+            throw "The diagnostic supervisor was requested but was not built; refusing release-helper fallback"
+          }
       # The embedded PostgreSQL 18 provider makes the full integration suite
       # available on every native platform in this matrix.
       - name: Test backend integration suite
@@ -186,7 +206,16 @@ jobs:
           CGO_ENABLED: "1"
           CC: gcc
           CXX: g++
+          EP_SUPERVISOR: ${{ steps.windows-postgres-diagnostics.outputs.supervisor }}
         run: go test -tags=integration -count=1 -p 8 -parallel 8 ./...
+      - name: Upload Windows PostgreSQL diagnostics
+        if: always() && runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.windows_postgres_diagnostics
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-postgres-diagnostics-${{ github.run_id }}
+          path: ${{ steps.windows-postgres-diagnostics.outputs.artifact }}
+          if-no-files-found: warn
+          retention-days: 7
       - name: Build frontend
         working-directory: frontend
         run: npm run build
