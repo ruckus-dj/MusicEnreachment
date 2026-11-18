@@ -185,6 +185,192 @@ it("retains the admitted request for retry and falls back to safe operation erro
   queryClient.clear();
 });
 
+it("does not reuse an uncertain submission for a different release", async () => {
+  const otherMBID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const bodies: ManualReleaseSelectionBody[] = [];
+  let starts = 0;
+  server.use(
+    http.post(
+      "/api/incoming-groups/group-1/matching/manual-release",
+      async ({ request }) => {
+        starts += 1;
+        bodies.push((await request.json()) as ManualReleaseSelectionBody);
+        if (starts === 1)
+          return HttpResponse.json(
+            { title: "Service Unavailable" },
+            { status: 503 },
+          );
+        return HttpResponse.json(
+          { operation_id: "operation-2" },
+          { status: 202 },
+        );
+      },
+    ),
+    http.get("/api/operations/operation-2", () =>
+      HttpResponse.json({
+        id: "operation-2",
+        kind: "provider_fetch",
+        state: "succeeded",
+        stage: "complete",
+        bytes_completed: 0,
+        created_at: "2026-11-14T00:00:00Z",
+        updated_at: "2026-11-14T00:00:01Z",
+      }),
+    ),
+  );
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "en");
+  vi.stubGlobal("localStorage", storage);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const onPrepared = vi.fn();
+  const { rerender } = render(
+    <I18nProvider>
+      <QueryClientProvider client={queryClient}>
+        <ManualReleasePicker
+          groupId="group-1"
+          groupRevision="revision-1"
+          evaluationRevision="evaluation-1"
+          searchRelease={officialURL}
+          onPrepared={onPrepared}
+        />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Prepare release" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not prepare the release (HTTP 503).",
+  );
+
+  rerender(
+    <I18nProvider>
+      <QueryClientProvider client={queryClient}>
+        <ManualReleasePicker
+          groupId="group-1"
+          groupRevision="revision-1"
+          evaluationRevision="evaluation-1"
+          searchRelease={otherMBID}
+          onPrepared={onPrepared}
+        />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Release MBID or official URL" }),
+    ).toHaveValue(otherMBID),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Prepare release" }));
+  await screen.findByText("Release prepared.");
+
+  expect(onPrepared).toHaveBeenCalledWith(otherMBID);
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1].selected_release).toBe(otherMBID);
+  expect(bodies[1].request_id).not.toBe(bodies[0].request_id);
+
+  queryClient.clear();
+});
+
+it("keeps an in-flight result from the previous selection off the new input", async () => {
+  const otherMBID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const bodies: ManualReleaseSelectionBody[] = [];
+  let starts = 0;
+  let releaseRead = () => {};
+  const readGate = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  server.use(
+    http.post(
+      "/api/incoming-groups/group-1/matching/manual-release",
+      async ({ request }) => {
+        starts += 1;
+        bodies.push((await request.json()) as ManualReleaseSelectionBody);
+        return HttpResponse.json(
+          { operation_id: starts === 1 ? "operation-3" : "operation-4" },
+          { status: 202 },
+        );
+      },
+    ),
+    http.get("/api/operations/operation-3", async () => {
+      await readGate;
+      return HttpResponse.json({
+        id: "operation-3",
+        kind: "provider_fetch",
+        state: "succeeded",
+        stage: "complete",
+        bytes_completed: 0,
+        created_at: "2026-11-14T00:00:00Z",
+        updated_at: "2026-11-14T00:00:01Z",
+      });
+    }),
+    http.get("/api/operations/operation-4", () =>
+      HttpResponse.json({
+        id: "operation-4",
+        kind: "provider_fetch",
+        state: "succeeded",
+        stage: "complete",
+        bytes_completed: 0,
+        created_at: "2026-11-14T00:00:02Z",
+        updated_at: "2026-11-14T00:00:03Z",
+      }),
+    ),
+  );
+  const storage = createMemoryStorage();
+  storage.setItem("melotrove-language", "en");
+  vi.stubGlobal("localStorage", storage);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const onPrepared = vi.fn();
+  const props = {
+    groupId: "group-1",
+    groupRevision: "revision-1",
+    evaluationRevision: "evaluation-1",
+    onPrepared,
+  };
+  const { rerender } = render(
+    <I18nProvider>
+      <QueryClientProvider client={queryClient}>
+        <ManualReleasePicker {...props} searchRelease={officialURL} />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Prepare release" }));
+  expect(await screen.findByText("Preparing release…")).toBeInTheDocument();
+
+  rerender(
+    <I18nProvider>
+      <QueryClientProvider client={queryClient}>
+        <ManualReleasePicker {...props} searchRelease={otherMBID} />
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Release MBID or official URL" }),
+    ).toHaveValue(otherMBID),
+  );
+
+  releaseRead();
+  await waitFor(() =>
+    expect(screen.queryByText("Preparing release…")).toBeNull(),
+  );
+  expect(screen.queryByText("Release prepared.")).toBeNull();
+  expect(onPrepared).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Prepare release" }));
+  await screen.findByText("Release prepared.");
+
+  expect(onPrepared).toHaveBeenCalledWith(otherMBID);
+  expect(bodies).toHaveLength(2);
+
+  queryClient.clear();
+});
+
 it("prefills the explicit selection from the release search without preparing it", async () => {
   const storage = createMemoryStorage();
   storage.setItem("melotrove-language", "en");

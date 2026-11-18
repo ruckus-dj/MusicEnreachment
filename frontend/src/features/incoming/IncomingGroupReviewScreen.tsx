@@ -173,23 +173,12 @@ function previewRows(
   const rows: { key: string; source: string; position?: string }[] =
     members.map((member, index) => {
       const assignment = member.assignment;
-      // Prefer the exact provider position; fall back to either half of the
-      // assignment coordinates for older payloads. Never show a track UUID.
+      // Confirmable assignment coordinates are already one-based. Only use
+      // the layout for display metadata, not for the assignment coordinates.
       const matched = assignment
-        ? (positions.find(
-            (item) =>
-              item.track_id === assignment.provider_track_id &&
-              item.medium + 1 === assignment.medium &&
-              item.position + 1 === assignment.position,
-          ) ??
-          positions.find(
+        ? positions.find(
             (item) => item.track_id === assignment.provider_track_id,
-          ) ??
-          positions.find(
-            (item) =>
-              item.medium + 1 === assignment.medium &&
-              item.position + 1 === assignment.position,
-          ))
+          )
         : undefined;
       return {
         key: member.file_member_id,
@@ -198,13 +187,11 @@ function previewRows(
           fileLabel(member.file_member_id, index),
         ...(assignment
           ? {
-              position: matched
-                ? positionLabel(matched, copy)
-                : copy.discTrack(
-                    assignment.medium,
-                    String(assignment.position),
-                    copy.unknown,
-                  ),
+              position: copy.discTrack(
+                assignment.medium,
+                matched?.displayed_number || String(assignment.position),
+                matched?.title || copy.unknown,
+              ),
             }
           : {}),
       };

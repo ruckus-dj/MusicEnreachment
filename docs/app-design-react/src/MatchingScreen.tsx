@@ -405,7 +405,9 @@ export function MatchingScreen({
 	const changedRows = activeRows.filter(
 		(row) => row.action !== "Без изменений" && !metadataIssues(row).length,
 	);
+	const canApplyPlan = Boolean(existingRelease || changedRows.length);
 	const linkedRows = previewRows.filter((row) => {
+		if (!canApplyPlan) return false;
 		if (row.assignment?.included && row.file && metadataIssues(row).length)
 			return false;
 		const persisted = new Set(
@@ -422,6 +424,7 @@ export function MatchingScreen({
 	const hasDowngrade = changedRows.some((row) => row.downgrade);
 	const assignedFileIds = new Set<string>();
 	const fileOutcomes: MatchingPreviewRow[] = previewRows.flatMap((row) => {
+		if (!canApplyPlan) return [];
 		if (row.assignment?.included && row.file && metadataIssues(row).length)
 			return [];
 		return sourceIds(row.assignment).flatMap((id) => {

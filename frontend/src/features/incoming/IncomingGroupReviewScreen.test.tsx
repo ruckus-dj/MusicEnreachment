@@ -212,7 +212,15 @@ function preview(assignments: number): MatchingManualPreview {
     omitted_member_ids: [ids.memberTwo],
     preview_digest: "digest-1",
     provider_release_id: ids.releaseOne,
-    selected_release: releases[0],
+    selected_release: {
+      ...releases[0],
+      // Frozen preview layouts may use one-based coordinates already.
+      positions: releases[0].positions.map((position) => ({
+        ...position,
+        medium: position.medium + 1,
+        position: position.position + 1,
+      })),
+    },
   };
 }
 
@@ -466,9 +474,19 @@ it("changes locale without resetting assignments, preview, feedback, or queries"
   fireEvent.click(
     screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
   );
-  await screen.findByRole("heading", {
+  const previewRegion = await screen.findByRole("region", {
     name: "Предпросмотр полного назначения",
   });
+  expect(
+    within(previewRegion).getByRole("row", {
+      name: "folder/01.flac Диск 1 · трек 1 · Открытие",
+    }),
+  ).toBeVisible();
+  expect(
+    within(previewRegion).getByRole("row", {
+      name: "folder/02.flac Останется во входящих",
+    }),
+  ).toBeVisible();
 
   server.use(
     http.post("/api/incoming-groups/:groupId/matching/confirm", () =>

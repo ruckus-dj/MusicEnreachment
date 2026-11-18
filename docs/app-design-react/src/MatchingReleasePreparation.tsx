@@ -19,9 +19,8 @@ const canonicalMBID =
 
 /** Mirrors the production MBID/URL normalization without touching the network. */
 function canonicalReleaseId(value: string) {
-	const segment = value.includes("/")
-		? value.slice(value.lastIndexOf("/") + 1)
-		: value;
+	const segment =
+		/^https:\/\/musicbrainz\.org\/release\/([^/]+)$/.exec(value)?.[1] ?? value;
 	return canonicalMBID.test(segment) ? segment.toLowerCase() : undefined;
 }
 

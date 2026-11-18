@@ -46,6 +46,37 @@ type GroupState = {
   finished?: boolean;
 };
 
+const releaseIDPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function canonicalReleaseID(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const releaseID = trimmed.slice(trimmed.lastIndexOf("/") + 1);
+  return releaseIDPattern.test(releaseID) ? releaseID.toLowerCase() : undefined;
+}
+
+function normalizedSelection(value: string | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  return canonicalReleaseID(trimmed) ?? trimmed;
+}
+
+// A retained request body is only reusable while it still describes the
+// current selection and revision intent; otherwise the input is a new intent.
+function matchesRequestBody(
+  body: RequestBody | undefined,
+  selection: string,
+  revisions: { groupRevision: string; evaluationRevision?: string },
+): body is RequestBody {
+  return (
+    body !== undefined &&
+    normalizedSelection(body.selected_release) ===
+      normalizedSelection(selection) &&
+    body.expected_group_revision === revisions.groupRevision &&
+    body.expected_evaluation_revision === revisions.evaluationRevision
+  );
+}
+
 export function ManualReleasePicker({
   groupId,
   groupRevision,
@@ -135,47 +166,62 @@ export function ManualReleasePicker({
         void queryClient.invalidateQueries({
           queryKey: getGetIncomingGroupMatchingQueryKey(submittedGroupId),
         });
-        const selected = submitted.body?.selected_release;
-        const releaseID = selected?.includes("/")
-          ? selected.slice(selected.lastIndexOf("/") + 1)
-          : selected;
-        const canonicalReleaseID =
-          releaseID &&
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-            releaseID,
-          )
-            ? releaseID.toLowerCase()
-            : undefined;
+        const releaseID = canonicalReleaseID(submitted.body?.selected_release);
+        const sameIntent = matchesRequestBody(
+          submitted.body,
+          submitted.value,
+          currentRevisionsRef.current,
+        );
         if (
-          canonicalReleaseID &&
-          currentGroupRef.current === submittedGroupId &&
-          currentRevisionsRef.current.groupRevision ===
-            submitted.body?.expected_group_revision &&
-          currentRevisionsRef.current.evaluationRevision ===
-            submitted.body?.expected_evaluation_revision
+          sameIntent &&
+          releaseID &&
+          currentGroupRef.current === submittedGroupId
         )
-          onPrepared(canonicalReleaseID);
+          onPrepared(releaseID);
         setStates((current) => ({
           ...current,
-          [submittedGroupId]: {
-            ...current[submittedGroupId],
-            finished: true,
-            operationId: undefined,
-            body: undefined,
-            error: undefined,
-          },
+          [submittedGroupId]: sameIntent
+            ? {
+                ...current[submittedGroupId],
+                finished: true,
+                operationId: undefined,
+                body: undefined,
+                error: undefined,
+              }
+            : {
+                ...current[submittedGroupId],
+                operationId: undefined,
+                body: undefined,
+              },
         }));
       } else {
-        setStates((current) => ({
-          ...current,
-          [submittedGroupId]: {
-            ...current[submittedGroupId],
-            operationId: undefined,
-            error: result.safe_error,
-            errorKey: result.safe_error ? undefined : "releaseNotPrepared",
-            errorStatus: undefined,
-          },
-        }));
+        setStates((current) =>
+          matchesRequestBody(
+            submitted.body,
+            submitted.value,
+            currentRevisionsRef.current,
+          )
+            ? {
+                ...current,
+                [submittedGroupId]: {
+                  ...current[submittedGroupId],
+                  operationId: undefined,
+                  error: result.safe_error,
+                  errorKey: result.safe_error
+                    ? undefined
+                    : "releaseNotPrepared",
+                  errorStatus: undefined,
+                },
+              }
+            : {
+                ...current,
+                [submittedGroupId]: {
+                  ...current[submittedGroupId],
+                  operationId: undefined,
+                  body: undefined,
+                },
+              },
+        );
       }
     }
   }, [onPrepared, operations, queryClient, snapshots]);
@@ -183,7 +229,10 @@ export function ManualReleasePicker({
   async function submit() {
     if (!state.value.trim() || operationPending) return;
     const requestedGroupId = groupId;
-    let body = state.body;
+    const revisions = { groupRevision, evaluationRevision };
+    let body = matchesRequestBody(state.body, state.value, revisions)
+      ? state.body
+      : undefined;
     if (!body) {
       body = {
         expected_group_revision: groupRevision,
