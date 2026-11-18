@@ -50,6 +50,8 @@ interface Props {
 	) => ReactNode;
 	expanded: string | null;
 	onToggleAlbum: (id: string) => void;
+	/** Bulk selection covers only the rows currently passed for this page. */
+	pageScopedSelection?: boolean;
 }
 const sourceIds = (track: Pick<OriginalTrack, "sourceId" | "sourceIds">) => [
 	...new Set([
@@ -85,12 +87,16 @@ export function LibraryCatalogRows({
 	groupCheckbox,
 	expanded,
 	onToggleAlbum,
+	pageScopedSelection = false,
 }: Props) {
 	const { locale } = useI18n();
 	const m = (
 		key: LibraryRowsMessage,
 		values?: Record<string, string | number>,
 	) => libraryRowsMessage(locale, key, values);
+	const bulkSelectionLabel = m(
+		pageScopedSelection ? "selectAllPagePositions" : "selectAllTablePositions",
+	);
 	if (view === "artists") {
 		return (
 			<div
@@ -226,8 +232,8 @@ export function LibraryCatalogRows({
 				aria-label={view === "albums" ? m("albumsTable") : m("tracksTable")}
 			>
 				<div className={catalogueStyles.mobileCatalogRow}>
-					<MobileField label={m("selectAllTablePositions")}>
-						{groupCheckbox(tableTrackIds, m("selectAllTablePositions"))}
+					<MobileField label={bulkSelectionLabel}>
+						{groupCheckbox(tableTrackIds, bulkSelectionLabel)}
 					</MobileField>
 				</div>
 				{view === "albums"
@@ -498,7 +504,7 @@ export function LibraryCatalogRows({
 						{columns.map((column, index) => (
 							<Column key={column} isRowHeader={index === 1}>
 								{index === 0
-									? groupCheckbox(tableTrackIds, m("selectAllTablePositions"))
+									? groupCheckbox(tableTrackIds, bulkSelectionLabel)
 									: column}
 							</Column>
 						))}

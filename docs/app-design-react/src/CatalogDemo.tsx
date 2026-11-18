@@ -1,7 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ArtistScreen } from "./ArtistScreen";
 import { artistReleaseHref } from "./artistReleaseRoute";
-import type { CatalogFilter } from "./availabilityRows";
 import { CatalogFilter as CatalogFilterControl } from "./CatalogFilter";
 import { ComponentsScreen } from "./ComponentsScreen";
 import { ContextPublicationPreview } from "./ContextPublicationPreview";
@@ -27,6 +26,17 @@ import {
 	trackSearchText,
 } from "./catalogViewModel";
 import type { DeletionOperation } from "./DeletionRequest";
+import {
+	combineLibraryAlbumEntries,
+	libraryArtistPositionIds,
+	libraryPageCount,
+	libraryPageSlice,
+	LibraryPagination,
+	libraryTrackPositionIds,
+	sliceTrackReleasePage,
+	splitLibraryAlbumEntries,
+	useLibraryRouteState,
+} from "./features/library";
 import { OperationsScreen } from "./features/operations/OperationsScreen";
 import { useOperationsDemoProvider } from "./fixtures/useOperationsDemoProvider";
 import { IncomingScreen } from "./IncomingScreen";
@@ -224,6 +234,19 @@ export function CatalogDemo({
 	);
 	const route = routePath;
 	const [routeName] = route.split("?");
+	const {
+		view,
+		query,
+		filter,
+		page,
+		searchInput,
+		isLibraryRoute,
+		setView,
+		setFilter,
+		setPage,
+		setSearch,
+	} = useLibraryRouteState(route);
+	const headingRoute = routeName === "library" ? "library" : route;
 	const [releases, setReleases] = useState(() =>
 		structuredClone(originalReleases),
 	);
@@ -339,7 +362,6 @@ export function CatalogDemo({
 		if (href) window.location.hash = href.slice(1);
 	}, [route, releases, artists]);
 	const allTracks = fixture.releases.flatMap((release) => release.tracks);
-	const [view, setView] = useState<View>("artists");
 	const [preview, setPreview] = useState(false);
 	const [previewMode, setPreviewMode] =
 		useState<PublicationPreviewMode>("metadata");
@@ -475,7 +497,7 @@ export function CatalogDemo({
 		}
 		const main = document.querySelector<HTMLElement>(".demo-shell");
 		if (main) main.tabIndex = -1;
-	}, [route, preview]);
+	}, [headingRoute, preview]);
 	useEffect(() => {
 		const heading =
 			document.querySelector<HTMLElement>("#content h1") ??
@@ -484,11 +506,10 @@ export function CatalogDemo({
 			document.title = `${heading.textContent} · ${msg("documentTitleSuffix")}`;
 	}, [route, preview, locale]);
 	const [artistId, setArtistId] = useState<string | null>(null);
-	const [query, setQuery] = useState("");
+	const [artistQuery, setArtistQuery] = useState("");
 	const [selected, setSelected] = useState<Set<string>>(() => new Set());
 	const [expanded, setExpanded] = useState<string | null>(null);
 	const [editions, setEditions] = useState<Record<string, string>>({});
-	const [filter, setFilter] = useState<CatalogFilter>("all");
 	const normalized = normalizeCatalogSearch(query);
 	const matchesGroup = (tracks: Track[]) =>
 		filter === "all" ||
@@ -515,6 +536,83 @@ export function CatalogDemo({
 		"",
 		"all",
 	);
+	const visibleArtists = fixture.artists.filter((artist) =>
+		catalogArtistMatches(
+			artist,
+			fixture.releases,
+			missingGroups,
+			query,
+			filter,
+			(track) => hasAudio(track as Track),
+		),
+	);
+	const visibleReleaseIds = new Set(
+		fixture.releases
+			.filter(
+				(release) =>
+					(!artistId ||
+						release.artistId === artistId ||
+						release.credits?.some((credit) => credit.artistId === artistId)) &&
+					normalizeCatalogSearch(
+						albumSearchText(release, fixture.artists),
+					).includes(normalized) &&
+					matchesGroup(release.tracks),
+			)
+			.map((release) => release.id),
+	);
+	const orderedVisibleReleases = releases.filter((release) =>
+		visibleReleaseIds.has(release.id),
+	);
+	const visibleTrackIds = new Set(
+		fixture.releases.flatMap((release) =>
+			release.tracks
+				.filter(
+					(track) =>
+						normalizeCatalogSearch(
+							trackSearchText(track, release, fixture.artists),
+						).includes(normalized) && matchesGroup([track]),
+				)
+				.map((track) => track.id),
+		),
+	);
+	const visibleTrackRefs = releases.flatMap((release) =>
+		release.tracks
+			.filter((track) => visibleTrackIds.has(track.id))
+			.map((track) => ({ release, track })),
+	);
+	const missingGroupsForView = missingGroups.filter(
+		(group) => !artistId || group.artistId === artistId,
+	);
+	const albumEntries = combineLibraryAlbumEntries(
+		orderedVisibleReleases,
+		missingGroupsForView,
+	);
+	const libraryTotalItems =
+		view === "artists"
+			? visibleArtists.length
+			: view === "albums"
+				? albumEntries.length
+				: visibleTrackRefs.length;
+	const totalPages = libraryPageCount(libraryTotalItems);
+	const currentPage = Math.min(page, totalPages);
+	const pageArtists = libraryPageSlice(visibleArtists, currentPage);
+	const pageAlbumEntries = libraryPageSlice(albumEntries, currentPage);
+	const pageAlbumPage = splitLibraryAlbumEntries(pageAlbumEntries);
+	const pageTracks = libraryPageSlice(visibleTrackRefs, currentPage);
+	const pageTrackReleases = sliceTrackReleasePage(releases, pageTracks);
+	const visiblePositionIds = new Set(
+		view === "artists"
+			? libraryArtistPositionIds(pageArtists, releases)
+			: view === "albums"
+				? pageAlbumPage.releases.flatMap((release) =>
+						release.tracks.map((track) => track.id),
+					)
+				: libraryTrackPositionIds(pageTracks),
+	);
+	useEffect(() => {
+		if (!isLibraryRoute) return;
+		setPage(currentPage, totalPages);
+	}, [currentPage, isLibraryRoute, setPage, totalPages]);
 	const update = (ids: string[], checked: boolean) => {
 		setSelected((previous) => {
 			const next = new Set(previous);
@@ -532,7 +630,7 @@ export function CatalogDemo({
 		const frozenIds = [...ids];
 		setPreviewMode(mode);
 		setPreviewOriginRoute(route);
-		setContextIds(route === "library" ? null : frozenIds);
+		setContextIds(frozenIds);
 		setPreviewToken(
 			captureMetadataPreview(
 				incoming.inventoryVersion,
@@ -671,9 +769,9 @@ export function CatalogDemo({
 					genresLoaded={settings.genresLoaded}
 					onLoadGenres={loadGenres}
 					selected={selected}
-					query={query}
+					query={artistQuery}
 					filter={filter}
-					onQueryChange={setQuery}
+					onQueryChange={setArtistQuery}
 					onFilterChange={setFilter}
 					onSelect={update}
 					onQueueDeletion={queueDeletion}
@@ -1037,7 +1135,7 @@ export function CatalogDemo({
 				/>
 			</section>
 		);
-	if (route && route !== "library")
+	if (route && routeName !== "library")
 		return (
 			<section className={screenLayout}>
 				<h1>{msg("screenNotMoved")}</h1>
@@ -1047,38 +1145,6 @@ export function CatalogDemo({
 				</p>
 			</section>
 		);
-	const visibleArtists = fixture.artists.filter((artist) =>
-		catalogArtistMatches(
-			artist,
-			fixture.releases,
-			missingGroups,
-			query,
-			filter,
-			(track) => hasAudio(track as Track),
-		),
-	);
-	const visibleReleases = fixture.releases.filter(
-		(release) =>
-			(!artistId ||
-				release.artistId === artistId ||
-				release.credits?.some((credit) => credit.artistId === artistId)) &&
-			normalizeCatalogSearch(
-				albumSearchText(release, fixture.artists),
-			).includes(normalized) &&
-			matchesGroup(release.tracks),
-	);
-	const visibleTrackIds = new Set(
-		fixture.releases.flatMap((release) =>
-			release.tracks
-				.filter(
-					(track) =>
-						normalizeCatalogSearch(
-							trackSearchText(track, release, fixture.artists),
-						).includes(normalized) && matchesGroup([track]),
-				)
-				.map((track) => track.id),
-		),
-	);
 	return (
 		<section
 			className={`demo-shell ${catalogueStyles.shell} ${catalogueStyles.dockScreen}`}
@@ -1122,8 +1188,8 @@ export function CatalogDemo({
 						<div className={catalogueStyles.panelControls}>
 							<SearchField
 								aria-label={msg("searchLibrary")}
-								value={query}
-								onChange={setQuery}
+								value={searchInput}
+								onChange={setSearch}
 								className={catalogueStyles.search}
 							>
 								<Input placeholder={msg("searchPlaceholder")} />
@@ -1136,21 +1202,12 @@ export function CatalogDemo({
 						>
 							<LibraryCatalogRows
 								view={view}
-								artists={view === "artists" ? visibleArtists : fixture.artists}
+								artists={view === "artists" ? pageArtists : fixture.artists}
 								releases={
 									view === "albums"
-										? releases.filter((release) =>
-												visibleReleases.some((item) => item.id === release.id),
-											)
+										? pageAlbumPage.releases
 										: view === "tracks"
-											? releases
-													.map((release) => ({
-														...release,
-														tracks: release.tracks.filter((track) =>
-															visibleTrackIds.has(track.id),
-														),
-													}))
-													.filter((release) => release.tracks.length > 0)
+											? pageTrackReleases
 											: releases
 								}
 								missingCounts={
@@ -1177,79 +1234,82 @@ export function CatalogDemo({
 								)}
 								expanded={expanded}
 								onToggleAlbum={(id) => setExpanded(expanded === id ? null : id)}
+								pageScopedSelection
 							/>
 						</section>
 						{view === "albums" &&
-							missingGroups
-								.filter((group) => !artistId || group.artistId === artistId)
-								.map((group) => {
-									const chosen = group.editions.find(
-										(edition) => edition.id === editions[group.id],
-									);
-									return (
-										<section
-											className={catalogueStyles.detailSelect}
-											key={group.id}
+							pageAlbumPage.missingGroups.map((group) => {
+								const chosen = group.editions.find(
+									(edition) => edition.id === editions[group.id],
+								);
+								return (
+									<section
+										className={catalogueStyles.detailSelect}
+										key={group.id}
+									>
+										<h2>{group.title}</h2>
+										<p>
+											{artistName(group.artistId) || msg("artistNotSpecified")}{" "}
+											· {msg("missingAlbum")}
+										</p>
+										<Select
+											aria-label={msg("chooseEditionFor", {
+												title: group.title,
+											})}
+											selectedKey={editions[group.id] ?? "none"}
+											onSelectionChange={(key) => {
+												const value = String(key) === "none" ? "" : String(key);
+												setEditions((previous) => ({
+													...previous,
+													[group.id]: value,
+												}));
+											}}
+											className={catalogueStyles.select}
 										>
-											<h2>{group.title}</h2>
-											<p>
-												{artistName(group.artistId) ||
-													msg("artistNotSpecified")}{" "}
-												· {msg("missingAlbum")}
-											</p>
-											<Select
-												aria-label={msg("chooseEditionFor", {
-													title: group.title,
-												})}
-												selectedKey={editions[group.id] ?? "none"}
-												onSelectionChange={(key) => {
-													const value =
-														String(key) === "none" ? "" : String(key);
-													setEditions((previous) => ({
-														...previous,
-														[group.id]: value,
-													}));
-												}}
-												className={catalogueStyles.select}
-											>
-												<Button>
-													<SelectValue />
-													<span aria-hidden="true">⌄</span>
-												</Button>
-												<Popover className={catalogueStyles.popover}>
-													<ListBox>
-														<ListBoxItem id="none">
-															{msg("chooseEdition")}
+											<Button>
+												<SelectValue />
+												<span aria-hidden="true">⌄</span>
+											</Button>
+											<Popover className={catalogueStyles.popover}>
+												<ListBox>
+													<ListBoxItem id="none">
+														{msg("chooseEdition")}
+													</ListBoxItem>
+													{group.editions.map((edition) => (
+														<ListBoxItem key={edition.id} id={edition.id}>
+															{edition.year} · {edition.country} ·{" "}
+															{edition.format} · {edition.disambiguation}
 														</ListBoxItem>
-														{group.editions.map((edition) => (
-															<ListBoxItem key={edition.id} id={edition.id}>
-																{edition.year} · {edition.country} ·{" "}
-																{edition.format} · {edition.disambiguation}
-															</ListBoxItem>
-														))}
-													</ListBox>
-												</Popover>
-											</Select>
-											{chosen && (
-												<ol>
-													{chosen.titles.map((title) => (
-														<li key={title}>{title}</li>
 													))}
-												</ol>
-											)}
-											<p>{msg("previewDoesNotAdd")}</p>
-										</section>
-									);
-								})}
+												</ListBox>
+											</Popover>
+										</Select>
+										{chosen && (
+											<ol>
+												{chosen.titles.map((title) => (
+													<li key={title}>{title}</li>
+												))}
+											</ol>
+										)}
+										<p>{msg("previewDoesNotAdd")}</p>
+									</section>
+								);
+							})}
+						<LibraryPagination
+							page={currentPage}
+							totalPages={totalPages}
+							totalItems={libraryTotalItems}
+							onPageChange={(next) => setPage(next, totalPages)}
+						/>
 					</TabPanel>
 				</Tabs>
 			</div>
 			<SelectionDock
 				selected={selected}
+				visiblePositionIds={visiblePositionIds}
 				releases={releases}
 				onSelect={update}
 				onPreview={(ids) => {
-					setContextIds(null);
 					openPreview(ids);
 				}}
 				onQueueDeletion={queueDeletion}
