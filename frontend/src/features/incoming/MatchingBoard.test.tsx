@@ -198,7 +198,7 @@ it("assigns from the free source rail without dragging", () => {
       name: "Remove member-1.flac from Disc 2 · track 2 · Second",
     }),
   );
-  expect(onUnassign).toHaveBeenCalledWith("member-1");
+  expect(onUnassign).toHaveBeenCalledWith("member-1", "track-2");
 });
 
 it("keys saved scores by release, member, and track", () => {

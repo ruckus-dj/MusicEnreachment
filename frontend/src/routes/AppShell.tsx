@@ -21,7 +21,6 @@ import {
 import { OperationsScreen } from "../features/operations/OperationsScreen";
 import { OwnCatalogScreen } from "../features/own-catalog/OwnCatalogScreen";
 import { useI18n } from "../i18n/I18nProvider";
-import "../features/incoming/incoming.css";
 import "./app-shell.css";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
@@ -145,11 +144,9 @@ export function AppShell() {
       className={`app-shell ${
         !productAvailable
           ? "setup-shell"
-          : incomingGroupsRoute !== undefined
-            ? "settings-screen settings-shell incoming-screen"
-            : route === "/sources"
-              ? "sources-screen sources-shell"
-              : "settings-screen settings-shell"
+          : route === "/sources"
+            ? "sources-screen sources-shell"
+            : "settings-screen settings-shell"
       }`}
     >
       <button

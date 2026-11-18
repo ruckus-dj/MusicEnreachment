@@ -9,17 +9,18 @@ import type {
   ManualPickerSearchBody,
   OperationResponse,
 } from "../../api/generated/client.schemas";
-import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ManualSearchView } from "../matchingWorkspace/ManualSearchView";
+import {
+  type ManualSearchMessageKey,
+  type ManualSearchViewError,
+  manualSearchMessage,
+} from "../matchingWorkspace/manualSearchContract";
 import {
   errorAfterSnapshotRead,
   type IncomingOperationError,
   IncomingOperationFollower,
 } from "./IncomingOperationFollower";
-import {
-  type ManualPickerMessageKey,
-  manualPickerMessage,
-} from "./manualPickerMessages";
 
 type Props = {
   groupId: string;
@@ -49,12 +50,12 @@ type GroupState = {
   operationId?: string;
   admitting?: boolean;
   error?: string;
-  errorKey?: ManualPickerMessageKey;
+  errorKey?: ManualSearchMessageKey;
   errorStatus?: number;
 };
 
 class ManualPickerMessageError extends Error {
-  constructor(readonly messageKey: ManualPickerMessageKey) {
+  constructor(readonly messageKey: ManualSearchMessageKey) {
     super(messageKey);
   }
 }
@@ -141,12 +142,6 @@ function parseLabels(value: unknown) {
   return labels;
 }
 
-function labelText(label: { name?: string; catalogNumber?: string }) {
-  if (label.name && label.catalogNumber)
-    return `${label.name} (${label.catalogNumber})`;
-  return label.name ?? label.catalogNumber ?? "";
-}
-
 function parseItems(payload: unknown, offset: number, limit: number) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     throw new ManualPickerMessageError("invalidResults");
@@ -213,10 +208,6 @@ export function ManualSearchPicker({
   onSelectRelease,
 }: Props) {
   const { locale } = useI18n();
-  const message = (
-    key: ManualPickerMessageKey,
-    values?: Record<string, string | number>,
-  ) => manualPickerMessage(locale, key, values);
   const [states, setStates] = useState<Record<string, GroupState>>({});
   const [snapshots, setSnapshots] = useState<Record<string, OperationResponse>>(
     {},
@@ -288,41 +279,61 @@ export function ManualSearchPicker({
   const parsed =
     resultQuery?.data && resultIsCurrent ? resultQuery.data : undefined;
 
-  function editionDetails(item: PickerItem) {
-    const formats = item.formats.join(" / ");
-    const media =
-      item.mediaCount > 1
-        ? [formats, message("discCount", { count: item.mediaCount })]
-            .filter(Boolean)
-            .join(" · ")
-        : formats;
-    return [
-      item.date ? message("releaseDate", { date: item.date }) : undefined,
-      item.country
-        ? message("releaseCountry", { country: item.country })
-        : undefined,
-      item.trackCount !== undefined
-        ? message("releaseTracks", { count: item.trackCount })
-        : undefined,
-      media ? message("releaseFormats", { formats: media }) : undefined,
-      item.labels.length
-        ? message("releaseLabels", {
-            labels: item.labels.map(labelText).join(", "),
-          })
-        : undefined,
-      item.score !== undefined
-        ? message("score", { score: item.score })
-        : undefined,
-    ].filter((detail): detail is string => Boolean(detail));
+  const errors: ManualSearchViewError[] = [];
+  if (state.error || state.errorKey || operation?.state === "failed") {
+    errors.push({
+      id: "search",
+      message:
+        state.error ||
+        operation?.safe_error ||
+        manualSearchMessage(locale, state.errorKey ?? "searchFailed", {
+          status: state.errorStatus ?? "",
+        }),
+    });
+  }
+  if (currentOperationId && operationErrors[currentOperationId]) {
+    errors.push({
+      id: "operation",
+      message: operationErrors[currentOperationId].message,
+      onRetry: () => void refreshers.current[currentOperationId]?.(),
+    });
+  }
+  if (resultQuery?.isError) {
+    errors.push({
+      id: "results",
+      message:
+        resultQuery.error instanceof ManualPickerMessageError
+          ? manualSearchMessage(locale, resultQuery.error.messageKey)
+          : resultQuery.error.message,
+    });
   }
 
-  function chooseLabel(item: PickerItem) {
-    const details = [item.artistCredit, ...editionDetails(item)]
-      .filter(Boolean)
-      .join(", ");
-    return details
-      ? message("selectReleaseDescribed", { title: item.title, details })
-      : message("selectReleaseTitled", { title: item.title });
+  function changeQuery(query: string) {
+    setStates((current) => ({
+      ...current,
+      [groupId]: {
+        ...state,
+        query,
+        offset: 0,
+        error: undefined,
+        errorKey: undefined,
+        errorStatus: undefined,
+      },
+    }));
+  }
+
+  function changeLimit(limit: string) {
+    setStates((current) => ({
+      ...current,
+      [groupId]: {
+        ...state,
+        limit,
+        offset: 0,
+        error: undefined,
+        errorKey: undefined,
+        errorStatus: undefined,
+      },
+    }));
   }
 
   async function submit(offset = state.offset) {
@@ -411,10 +422,7 @@ export function ManualSearchPicker({
   }
 
   return (
-    <section
-      className="rounded border border-stone-300 bg-white p-4"
-      aria-labelledby="manual-search-title"
-    >
+    <>
       {operations.map(([, item]) => (
         <IncomingOperationFollower
           key={item.operationId}
@@ -474,171 +482,24 @@ export function ManualSearchPicker({
           }
         />
       ))}
-      <h2 id="manual-search-title" className="font-semibold">
-        {message("searchTitle")}
-      </h2>
-      <p className="mt-1 text-sm">{message("searchDescription")}</p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <label className="sr-only" htmlFor="manual-search-query">
-          {message("searchQuery")}
-        </label>
-        <input
-          id="manual-search-query"
-          className="min-w-64 flex-1 rounded border border-stone-400 p-2"
-          value={state.query}
-          disabled={pending || disabled}
-          onChange={(event) =>
-            setStates((current) => ({
-              ...current,
-              [groupId]: {
-                ...state,
-                query: event.target.value,
-                offset: 0,
-                error: undefined,
-                errorKey: undefined,
-                errorStatus: undefined,
-              },
-            }))
-          }
-        />
-        <label className="sr-only" htmlFor="manual-search-limit">
-          {message("resultLimit")}
-        </label>
-        <input
-          id="manual-search-limit"
-          type="number"
-          min="1"
-          max="100"
-          aria-label={message("resultLimit")}
-          className="w-28 rounded border border-stone-400 p-2"
-          value={state.limit}
-          disabled={pending || disabled}
-          onChange={(event) =>
-            setStates((current) => ({
-              ...current,
-              [groupId]: {
-                ...state,
-                limit: event.target.value,
-                offset: 0,
-                error: undefined,
-                errorKey: undefined,
-                errorStatus: undefined,
-              },
-            }))
-          }
-        />
-        <AppButton
-          onPress={() => void submit(0)}
-          isDisabled={
-            !state.query.trim() ||
-            !Number.isInteger(pageLimit) ||
-            pageLimit < 1 ||
-            pageLimit > 100 ||
-            pending ||
-            disabled
-          }
-        >
-          {message("search")}
-        </AppButton>
-      </div>
-      {pending ? (
-        <p role="status" className="mt-2">
-          {message("searching")}
-        </p>
-      ) : null}
-      {state.error || state.errorKey || operation?.state === "failed" ? (
-        <p role="alert" className="mt-2">
-          {state.error ||
-            operation?.safe_error ||
-            message(state.errorKey ?? "searchFailed", {
-              status: state.errorStatus ?? "",
-            })}
-        </p>
-      ) : null}
-      {currentOperationId && operationErrors[currentOperationId] ? (
-        <div role="alert" className="mt-2 space-y-2">
-          <p>{operationErrors[currentOperationId].message}</p>
-          <AppButton
-            onPress={() => void refreshers.current[currentOperationId]?.()}
-          >
-            {message("retryReading")}
-          </AppButton>
-        </div>
-      ) : null}
-      {resultQuery?.isError ? (
-        <p role="alert">
-          {resultQuery.error instanceof ManualPickerMessageError
-            ? message(resultQuery.error.messageKey)
-            : resultQuery.error.message}
-        </p>
-      ) : null}
-      {parsed ? (
-        <>
-          {parsed.items.length === 0 ? (
-            <p role="status" className="mt-3">
-              {message("noMatches")}
-            </p>
-          ) : (
-            <ul className="mt-3 divide-y divide-stone-200 rounded border border-stone-200">
-              {parsed.items.map((item) => {
-                const details = editionDetails(item);
-                return (
-                  <li
-                    key={item.id}
-                    className="flex flex-wrap items-start justify-between gap-3 p-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium">
-                        <span>{item.title}</span>
-                        {item.disambiguation ? (
-                          <span className="ml-1 text-sm font-normal text-stone-600">
-                            ({item.disambiguation})
-                          </span>
-                        ) : null}
-                      </p>
-                      {item.artistCredit ? (
-                        <p className="text-sm">{item.artistCredit}</p>
-                      ) : null}
-                      {details.length ? (
-                        <p className="mt-1 text-xs text-[var(--muted)] wrap-anywhere">
-                          {details.join(" · ")}
-                        </p>
-                      ) : null}
-                    </div>
-                    <AppButton
-                      aria-label={chooseLabel(item)}
-                      onPress={() => onSelectRelease(item.id)}
-                    >
-                      {message("selectRelease")}
-                    </AppButton>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          <div className="mt-3 flex items-center gap-2">
-            <span>
-              {message("resultRange", {
-                start: state.offset + 1,
-                end: Math.min(state.offset + pageLimit, parsed.count),
-                count: parsed.count,
-              })}
-            </span>
-            <AppButton
-              onPress={() => void submit(Math.max(0, state.offset - pageLimit))}
-              isDisabled={state.offset === 0 || pending}
-            >
-              {message("previous")}
-            </AppButton>
-            <AppButton
-              onPress={() => void submit(state.offset + pageLimit)}
-              isDisabled={state.offset + pageLimit >= parsed.count || pending}
-            >
-              {message("next")}
-            </AppButton>
-          </div>
-        </>
-      ) : null}
-    </section>
+      <ManualSearchView
+        locale={locale}
+        query={state.query}
+        limit={state.limit}
+        offset={state.offset}
+        disabled={disabled}
+        pending={pending}
+        results={
+          parsed ? { count: parsed.count, items: parsed.items } : undefined
+        }
+        errors={errors}
+        onQueryChange={changeQuery}
+        onLimitChange={changeLimit}
+        onSearch={() => void submit(0)}
+        onSelectRelease={onSelectRelease}
+        onPrevious={() => void submit(Math.max(0, state.offset - pageLimit))}
+        onNext={() => void submit(state.offset + pageLimit)}
+      />
+    </>
   );
 }

@@ -47,6 +47,10 @@ Worktrees running `task generate` or dependency installation need their own real
 
 **Biome only**: No ESLint, no Prettier. Biome handles lint and format.
 
+**Tailwind screen styles**: Use utilities on the components or reusable static
+utility strings. Do not add per-feature stylesheets or route-shell overrides
+for copied UI; use the existing theme tokens.
+
 When formatting changed TS/TSX files, also organize their imports. `biome format`
 alone does not apply import assists; unorganized imports still fail the normal hook.
 Run frontend Biome commands with `frontend/` as their working directory and

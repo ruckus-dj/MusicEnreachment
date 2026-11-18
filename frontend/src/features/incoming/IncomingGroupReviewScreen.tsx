@@ -24,6 +24,18 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { useI18n } from "../../i18n/I18nProvider";
+import {
+  MatchingWorkspaceLayout,
+  matchingCandidatesPanel,
+  matchingInspectorActions,
+  matchingInspectorContent,
+  matchingInspectorPanel,
+} from "../matchingWorkspace/MatchingWorkspaceLayout";
+import {
+  matchingBoardClass,
+  matchingBoardClasses,
+} from "../matchingWorkspace/matchingBoardStyles";
+import { apiMatchingSources } from "./apiMatchingSources";
 import { evidenceOverrideMessages } from "./evidenceOverrideMessages";
 import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
 import {
@@ -42,6 +54,10 @@ import {
   incomingFeedbackText,
   incomingMessages,
 } from "./incomingMessages";
+import {
+  incomingScreenClass,
+  incomingViewHeadingClass,
+} from "./incomingStyles";
 import { LocalReleaseEditor } from "./LocalReleaseEditor";
 import { localMatchingMessages } from "./localMatchingMessages";
 import { ManualReleasePicker } from "./ManualReleasePicker";
@@ -407,31 +423,12 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   const proposalFiles = new Map(
     (proposal.files ?? []).map((file) => [file.file_member_id, file]),
   );
-  const fileLabel = (memberId: string, index: number) => {
-    const file = groupFiles.find((item) => item.variant_id === memberId);
-    const path = file?.locations?.[0]?.relative_path;
-    if (path) return path;
-    const tags = proposalFiles.get(memberId)?.raw_tags ?? file?.tags;
-    const title = tags?.TITLE?.find(Boolean);
-    const artist = tags?.ARTIST?.find(Boolean);
-    return (
-      [title, artist].filter(Boolean).join(" · ") ||
-      `${copy.file} ${index >= 0 ? index + 1 : 1}`
-    );
-  };
-  const boardSources = memberIds.map((memberId, index) => {
-    const file = groupFiles.find((item) => item.variant_id === memberId);
-    const path = file?.locations?.[0]?.relative_path;
-    const tags = proposalFiles.get(memberId)?.raw_tags ?? file?.tags;
-    const title = tags?.TITLE?.find(Boolean);
-    const artist = tags?.ARTIST?.find(Boolean);
-    const tagLine = [artist, title].filter(Boolean).join(" · ");
-    return {
-      id: memberId,
-      label: fileLabel(memberId, index),
-      detail: path && tagLine ? tagLine : undefined,
-    };
-  });
+  const { label: fileLabel, sources: boardSources } = apiMatchingSources(
+    memberIds,
+    groupFiles,
+    proposalFiles,
+    copy.file,
+  );
   const savedScores = release
     ? matchingBoardScoresFromCandidates(review?.candidates, release)
     : {};
@@ -782,7 +779,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
   );
 
   return (
-    <section className="incoming-screen mx-auto max-w-[1800px] space-y-4">
+    <section className={incomingScreenClass}>
       <section hidden={matchingActive} aria-labelledby="incoming-title">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -834,7 +831,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
         >
           <div>
             <a
-              className="incoming-back-link"
+              className="mb-1.5 inline-block text-[var(--accent)] underline"
               href={
                 group
                   ? incomingGroupsListHref([groupId])
@@ -847,7 +844,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
               id="incoming-matching-title"
               ref={matchingHeadingRef}
               tabIndex={-1}
-              className="incoming-view-heading text-xl font-semibold"
+              className={`${incomingViewHeadingClass} text-xl font-semibold`}
             >
               {copy.tabMatching}
               {group
@@ -1048,13 +1045,10 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
             ) : null}
 
             {review?.evaluated && review.proposal_available ? (
-              <div
-                data-matching-workspace
-                className="incoming-matching-workspace grid min-h-0 gap-3 min-[1400px]:grid-cols-[minmax(320px,.85fr)_minmax(480px,2.1fr)_minmax(250px,.8fr)] min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))]"
-              >
+              <MatchingWorkspaceLayout>
                 <section
                   data-matching-candidates
-                  className="min-w-0 space-y-3 rounded border border-stone-300 bg-white p-3 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto"
+                  className={matchingCandidatesPanel}
                   aria-labelledby="matching-search-title"
                 >
                   <h2 id="matching-search-title" className="font-semibold">
@@ -1258,48 +1252,51 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                   <>
                     <section
                       data-matching-positions
-                      className="matching-board-panel matching-board-positions"
+                      className={matchingBoardClass.panel}
                       aria-labelledby="assignment-board-title"
                     >
                       <h2
                         id="assignment-board-title"
-                        className="matching-board-heading"
+                        className={matchingBoardClass.heading}
                       >
                         {copy.positionHeading}
                       </h2>
-                      <p className="matching-board-instructions">
+                      <p className={matchingBoardClass.instructions}>
                         {copy.choosePrepareRelease}
                       </p>
                     </section>
                     <section
                       data-matching-sources
-                      className="matching-board-panel matching-board-sources"
+                      className={matchingBoardClass.panel}
                       aria-labelledby="matching-sources-title"
                     >
                       <h2
                         id="matching-sources-title"
-                        className="matching-board-heading"
+                        className={matchingBoardClass.heading}
                       >
                         {copy.sourceFilesHeading}
                       </h2>
-                      <p className="matching-board-instructions">
+                      <p className={matchingBoardClass.instructions}>
                         {copy.sourceInstructions}
                       </p>
                       {memberIds.length ? (
-                        <ul className="matching-board-source-list">
+                        <ul className={matchingBoardClass.list}>
                           {memberIds.map((memberId, index) => (
                             <li
                               key={memberId}
-                              className="matching-board-source"
+                              className={matchingBoardClasses(
+                                matchingBoardClass.source,
+                                matchingBoardClass.listItem,
+                              )}
                             >
-                              <span className="matching-board-source-select">
+                              <span className={matchingBoardClass.sourceSelect}>
                                 <strong>{fileLabel(memberId, index)}</strong>
                               </span>
                             </li>
                           ))}
                         </ul>
                       ) : (
-                        <p className="matching-board-empty">
+                        <p className={matchingBoardClass.empty}>
                           {copy.noFilesInGroup}
                         </p>
                       )}
@@ -1309,10 +1306,10 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
 
                 <section
                   data-matching-inspector
-                  className="min-w-0 rounded border border-stone-300 bg-white p-3 min-[1400px]:col-span-3 min-[1400px]:grid min-[1400px]:min-h-0 min-[1400px]:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] min-[1400px]:gap-3"
+                  className={matchingInspectorPanel}
                   aria-labelledby="matching-inspector-title"
                 >
-                  <div className="min-w-0 min-[1400px]:min-h-0 min-[1400px]:overflow-y-auto">
+                  <div className={matchingInspectorContent}>
                     <h2 id="matching-inspector-title" className="font-semibold">
                       {copy.inspectorLabel}
                     </h2>
@@ -1344,7 +1341,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                   </div>
                   <aside
                     data-matching-actions
-                    className="flex flex-wrap content-start items-start gap-2 min-[1400px]:min-h-0 min-[1400px]:min-w-[220px] min-[1400px]:flex-col min-[1400px]:overflow-y-auto"
+                    className={matchingInspectorActions}
                     aria-label={copy.assignmentActions}
                   >
                     {error ? (
@@ -1385,7 +1382,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                     ) : null}
                   </aside>
                 </section>
-              </div>
+              </MatchingWorkspaceLayout>
             ) : null}
 
             {review?.evaluated && review.proposal_available ? (
@@ -1469,7 +1466,7 @@ function IncomingGroupReviewContent({ route }: { route: IncomingGroupsRoute }) {
                   id="preview-title"
                   ref={previewHeadingRef}
                   tabIndex={-1}
-                  className="incoming-view-heading font-semibold"
+                  className={`${incomingViewHeadingClass} font-semibold`}
                 >
                   {copy.previewHeading}
                 </h2>

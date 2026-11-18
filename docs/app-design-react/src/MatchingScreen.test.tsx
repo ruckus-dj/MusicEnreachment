@@ -131,12 +131,23 @@ it("uses the compact publication inspector and scrolls its heading into focus on
 it("reserves a bounded inspector grid row and keeps the target list independently scrollable on wide desktop", () => {
 	const { container } = render(<MatchingHarness />);
 	const main = container.querySelector<HTMLElement>("main");
-	const layout = container.querySelector<HTMLElement>(".matching-layout");
-	const inspector = container.querySelector<HTMLElement>(".matching-inspector");
-	const target = container.querySelector<HTMLElement>(".matching-target");
+	const layout = container.querySelector<HTMLElement>(
+		"[data-matching-workspace]",
+	);
+	const inspector = container.querySelector<HTMLElement>(
+		"[data-matching-inspector]",
+	);
+	const target = container.querySelector<HTMLElement>(
+		"[data-matching-positions]",
+	);
+	const sources = container.querySelector<HTMLElement>(
+		"[data-matching-sources]",
+	);
 	expect(main?.className).toContain("min-[1400px]:h-full");
 	expect(main?.className).toContain("min-[1400px]:flex-col");
-	expect(layout?.className).toContain("min-[1400px]:flex-1");
+	expect(layout?.className).toContain(
+		"min-[1400px]:h-[clamp(520px,72dvh,880px)]",
+	);
 	expect(layout?.className).toContain(
 		"min-[1400px]:grid-rows-[minmax(0,1fr)_minmax(180px,min(32dvh,340px))]",
 	);
@@ -144,7 +155,9 @@ it("reserves a bounded inspector grid row and keeps the target list independentl
 	expect(inspector?.parentElement).toBe(layout);
 	expect(inspector?.className).toContain("min-[1400px]:col-span-3");
 	expect(inspector?.className).not.toContain("min-[1400px]:fixed");
-	expect(target?.className).toContain("min-[1024px]:overflow-y-auto");
+	expect(target?.parentElement).toBe(layout);
+	expect(sources?.parentElement).toBe(layout);
+	expect(target?.className).toContain("min-[1400px]:overflow-y-auto");
 	expect(target?.className).toContain("min-[1400px]:min-h-0");
 });
 
