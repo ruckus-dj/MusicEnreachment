@@ -33,7 +33,8 @@ type CurrentOperationsInput struct {
 }
 
 type CurrentOperationsOutput struct {
-	Body CurrentOperationsBody `json:"body"`
+	CacheControl string                `header:"Cache-Control"`
+	Body         CurrentOperationsBody `json:"body"`
 }
 
 type CurrentOperationsBody struct {
@@ -112,7 +113,10 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		for _, snapshot := range snapshots {
 			result = append(result, operationResponse(snapshot))
 		}
-		return &CurrentOperationsOutput{Body: CurrentOperationsBody{Operations: result, Total: total}}, nil
+		return &CurrentOperationsOutput{
+			CacheControl: "no-store",
+			Body:         CurrentOperationsBody{Operations: result, Total: total},
+		}, nil
 	})
 
 	huma.Register(api, huma.Operation{

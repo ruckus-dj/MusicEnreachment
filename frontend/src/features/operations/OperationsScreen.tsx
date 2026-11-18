@@ -277,12 +277,18 @@ function reconcilePage(
   current: listCurrentOperationsResponse | undefined,
   id: string,
   next: OperationResponse | null,
-  status: ListCurrentOperationsParams["status"],
+  page: ListCurrentOperationsParams,
 ): listCurrentOperationsResponse | undefined {
   if (current?.status !== 200) return current;
   const operations = current.data.operations ?? [];
-  if (!operations.some((operation) => operation.id === id)) return current;
-  if (next?.id === id && pageShowsState(next.state, status)) {
+  const previous = operations.find((operation) => operation.id === id);
+  if (!previous) return current;
+  const staysInResult =
+    next?.id === id && pageShowsState(next.state, page.status);
+  if (
+    staysInResult &&
+    (page.sort !== "state" || previous.state === next.state)
+  ) {
     return {
       ...current,
       data: {
@@ -304,7 +310,10 @@ function reconcilePage(
     data: {
       ...current.data,
       operations: operations.filter((operation) => operation.id !== id),
-      total: Math.max(0, current.data.total - 1),
+      // The row may still count, but only the server can place it on a page.
+      total: staysInResult
+        ? current.data.total
+        : Math.max(0, current.data.total - 1),
     },
   };
 }
@@ -512,6 +521,7 @@ export function OperationsScreen() {
   const paramsKey = JSON.stringify(params);
 
   const operationsQuery = useListCurrentOperations(params, {
+    fetch: { cache: "no-store" },
     query: {
       // Foreground-only: background tabs must not keep polling. The list stays
       // bounded, so an empty or failed filter keeps polling too.
@@ -588,7 +598,7 @@ export function OperationsScreen() {
       const pageKey = JSON.stringify(page);
       const updated = queryClient.setQueryData<listCurrentOperationsResponse>(
         query.queryKey,
-        (current) => reconcilePage(current, id, next, page.status),
+        (current) => reconcilePage(current, id, next, page),
       );
       if (updated?.status === 200 && lastGood.current?.key === pageKey) {
         lastGood.current = {
