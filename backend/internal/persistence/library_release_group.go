@@ -384,6 +384,8 @@ func readLibraryMissingReleaseGroupCounts(ctx context.Context, tx bun.Tx) (map[u
 		ArtistID uuid.UUID `bun:"local_artist_id,type:uuid"`
 		Count    int       `bun:"release_count"`
 	}
+	// Build the linked group keys and expand the accepted credits once; joining
+	// the raw projections for each group or artist binding repeats that work.
 	query := `WITH accepted AS (
 		SELECT e.provider_id,e.provider_key,lower(e.fields#>>'{release-group,id}') AS group_key,
 			e.fields,e.field_evidence
@@ -391,26 +393,30 @@ func readLibraryMissingReleaseGroupCounts(ctx context.Context, tx bun.Tx) (map[u
 		WHERE e.provider_source_id=? AND e.provider_id=? AND e.entity_kind='release'
 		AND jsonb_exists(e.field_evidence,'release-group')
 		AND e.fields#>>'{release-group,id}' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-	), group_artists AS (
-		SELECT DISTINCT accepted.group_key,pla.local_artist_id
+	), linked_groups AS MATERIALIZED (
+		SELECT DISTINCT accepted.group_key
+		FROM provider_local_release pl
+		JOIN provider_release linked ON linked.id=pl.provider_release_id AND linked.provider_id=pl.provider_id
+		JOIN accepted ON accepted.provider_id=linked.provider_id AND accepted.provider_key=linked.provider_key
+		WHERE pl.provider_id=?
+	), group_credits AS MATERIALIZED (
+		SELECT DISTINCT accepted.group_key,lower(credit#>>'{artist,id}') AS artist_key
 		FROM accepted
 		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(accepted.fields->'artist-credit','[]'::jsonb)) credit
-		JOIN provider_artist pa ON pa.provider_id=accepted.provider_id
-		 AND lower(pa.provider_key)=lower(credit#>>'{artist,id}')
+		WHERE jsonb_exists(accepted.field_evidence,'artist-credit')
+		AND lower(credit#>>'{artist,id}') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+	), group_artists AS (
+		SELECT DISTINCT group_credits.group_key,pla.local_artist_id
+		FROM group_credits
+		JOIN provider_artist pa ON pa.provider_id=?
+		 AND lower(pa.provider_key)=group_credits.artist_key
 		 AND pa.provider_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 		JOIN provider_local_artist pla ON pla.provider_id=pa.provider_id AND pla.provider_artist_id=pa.id
-		WHERE jsonb_exists(accepted.field_evidence,'artist-credit')
-		AND NOT EXISTS (
-			SELECT 1 FROM provider_local_release pl
-			JOIN provider_release linked ON linked.id=pl.provider_release_id AND linked.provider_id=pl.provider_id
-			JOIN accepted linked_identity ON linked_identity.provider_id=linked.provider_id
-			 AND linked_identity.provider_key=linked.provider_key
-			WHERE pl.provider_id=accepted.provider_id AND linked_identity.group_key=accepted.group_key
-		)
+		WHERE NOT EXISTS (SELECT 1 FROM linked_groups WHERE linked_groups.group_key=group_credits.group_key)
 	)
 	SELECT local_artist_id,count(DISTINCT group_key) AS release_count
 	FROM group_artists GROUP BY local_artist_id`
-	if err := tx.NewRaw(query, source.ID, source.ProviderID).Scan(ctx, &rows); err != nil {
+	if err := tx.NewRaw(query, source.ID, source.ProviderID, source.ProviderID, source.ProviderID).Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("read library missing release group artist counts: %w", err)
 	}
 	for _, row := range rows {
@@ -433,6 +439,9 @@ func readMixedLibraryReleasePage(ctx context.Context, tx bun.Tx, request Library
 		OR EXISTS(SELECT 1 FROM release_artist ra WHERE ra.release_id=r.id AND (strpos(lower(btrim(regexp_replace(normalize(ra.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0 OR EXISTS(SELECT 1 FROM local_artist a WHERE a.id=ra.artist_id AND strpos(lower(btrim(regexp_replace(normalize(a.name,NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0)))
 		OR ((r.metadata->'local_metadata'->'desired'->'catalog_number'->>'state'='value' AND strpos(lower(btrim(regexp_replace(normalize(r.metadata->'local_metadata'->'desired'->'catalog_number'->>'value',NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0)
 		OR (COALESCE(r.metadata->'local_metadata'->'desired'->'catalog_number'->>'state','') NOT IN ('value','explicit_empty') AND COALESCE(r.metadata->'local_metadata'->'desired'->'catalog_number'->>'authority','')<>'manual' AND EXISTS(SELECT 1 FROM provider_local_release pl JOIN provider_release pr ON pr.id=pl.provider_release_id AND pr.provider_id=pl.provider_id JOIN provider_source_entity pse ON pse.provider_source_id=? AND pse.provider_id=? AND pse.entity_kind='release' AND pse.provider_key=pr.provider_key AND jsonb_exists(pse.field_evidence,'label-info') CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pse.fields->'label-info','[]'::jsonb)) li WHERE pl.local_release_id=r.id AND pl.provider_id=? AND strpos(lower(btrim(regexp_replace(normalize(li->>'catalog-number',NFKC),'[[:space:]]+',' ','g'))),lower(btrim(regexp_replace(normalize(?::text,NFKC),'[[:space:]]+',' ','g'))))>0))))`
+	// A binding on any accepted edition suppresses its group, not only a
+	// binding on the representative selected below. Materialize those keys
+	// before the anti-join so it does not rescan the edition registry per group.
 	cte := `WITH accepted AS (
 		SELECT e.provider_key,e.fields,e.field_evidence,e.complete,r.id AS provider_release_id,
 		lower(e.fields#>>'{release-group,id}') AS group_key
@@ -440,6 +449,10 @@ func readMixedLibraryReleasePage(ctx context.Context, tx bun.Tx, request Library
 		WHERE ?::uuid IS NOT NULL AND e.provider_source_id=? AND e.provider_id=? AND e.entity_kind='release'
 		AND jsonb_exists(e.field_evidence,'release-group')
 		AND e.fields#>>'{release-group,id}' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+	), linked_groups AS MATERIALIZED (
+		SELECT DISTINCT a.group_key FROM provider_local_release pl
+		JOIN accepted a ON a.provider_release_id=pl.provider_release_id
+		WHERE pl.provider_id=?
 	), groups AS (
 		SELECT DISTINCT ON (group_key) group_key,provider_key,fields,field_evidence,complete
 		FROM accepted ORDER BY group_key,provider_key
@@ -455,12 +468,7 @@ func readMixedLibraryReleasePage(ctx context.Context, tx bun.Tx, request Library
 		COALESCE(g.fields#>>'{release-group,title}','') AS title,
 		g.fields,g.field_evidence AS evidence,0::bigint AS positions,0::bigint AS published,0::bigint AS available
 		FROM groups g
-		WHERE NOT EXISTS (
-			SELECT 1 FROM provider_local_release pl
-			JOIN provider_release linked ON linked.id=pl.provider_release_id AND linked.provider_id=pl.provider_id
-			JOIN accepted identity ON identity.provider_key=linked.provider_key
-			WHERE pl.provider_id=? AND identity.group_key=g.group_key
-		)
+		WHERE NOT EXISTS (SELECT 1 FROM linked_groups WHERE linked_groups.group_key=g.group_key)
 		AND (?::uuid IS NULL OR (EXISTS (
 			SELECT 1 FROM accepted candidate
 			CROSS JOIN LATERAL jsonb_array_elements(COALESCE(candidate.fields->'artist-credit','[]'::jsonb)) c
@@ -489,11 +497,11 @@ func readMixedLibraryReleasePage(ctx context.Context, tx bun.Tx, request Library
 	availabilityIDs := bun.List(availabilityPositionIDs(request))
 	args := []any{
 		sourceID, sourceID, providerID,
+		providerID,
 		availabilityIDs,
 		request.ArtistID, request.ArtistID, request.ArtistID,
 		request.Query, request.Query, request.Query, request.Query, request.Query,
 		sourceID, providerID, providerID, request.Query,
-		providerID,
 		request.ArtistID, providerID, request.ArtistID, request.ArtistID,
 		request.Query, request.Query, request.Query,
 		request.Publication, request.Publication, request.Publication,

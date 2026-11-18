@@ -132,8 +132,10 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	}
 
 	// Accepted MusicBrainz projections contribute one missing-group row for a
-	// group, regardless of how many cached editions describe it. Concrete local
-	// releases remain separate rows, including Alpha without source or publication.
+	// group, regardless of how many cached editions describe it. A group with any
+	// locally bound edition is not missing, even when that edition is not the
+	// representative projection. Concrete local releases remain separate rows,
+	// including Alpha without source or publication.
 	const configIdentity = "library-catalog-test-config"
 	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name,setting_value) VALUES
 		('musicbrainz_mode','public'),('musicbrainz_base_url',''),('musicbrainz_config_identity',?)
@@ -154,12 +156,19 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 	groupKey := groupID.String()
 	groupMissingID := uuid.New()
 	missingGroupKey := groupMissingID.String()
+	// A known group whose locally bound edition is not its representative
+	// projection: representative selection orders by provider key, so the lower
+	// key stays unbound while a higher key is bound.
+	partiallyBoundGroupID := uuid.New()
+	partiallyBoundGroupKey := partiallyBoundGroupID.String()
+	const representativeEditionKey = "00000000-0000-4000-8000-000000000101"
+	const nonRepresentativeEditionKey = "00000000-0000-4000-8000-000000000102"
 	providerArtistKey := uuid.New().String()
 	artistFields, err := json.Marshal([]map[string]any{{"name": "Shared Artist", "artist": map[string]string{"id": providerArtistKey, "name": "Shared Artist"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := []string{uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()}
+	keys := []string{uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), representativeEditionKey, nonRepresentativeEditionKey}
 	providerReleases := make([]ProviderRelease, 0, len(keys))
 	entities := make([]ProviderSourceEntity, 0, len(keys))
 	for i, key := range keys {
@@ -167,6 +176,9 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 		group := groupKey
 		if i >= 2 {
 			group = missingGroupKey
+		}
+		if i >= 4 {
+			group = partiallyBoundGroupKey
 		}
 		fields, err := json.Marshal(map[string]any{"release-group": map[string]string{"id": group, "title": "Shared Group"}})
 		if err != nil {
@@ -216,6 +228,11 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 		if _, err := db.NewRaw(`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method) VALUES (?,?,?,'manual')`, provider.ID, release.ID, fixtures[i].id).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Only the non-representative edition of the third group is bound; the group
+	// must still be treated as known for album rows and artist missing counts.
+	if _, err := db.NewRaw(`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method) VALUES (?,?,?,'manual')`, provider.ID, providerReleases[5].ID, fixtures[2].id).Exec(ctx); err != nil {
+		t.Fatal(err)
 	}
 	var providerArtistID uuid.UUID
 	if err := db.NewRaw(`SELECT id FROM provider_artist WHERE provider_id=? AND provider_key=?`, provider.ID, providerArtistKey).Scan(ctx, &providerArtistID); err != nil {
@@ -274,7 +291,7 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	if groupPage.Total != 3 || len(groupPage.Items) != 3 {
-		t.Fatalf("artist catalog complete page = %#v, want total 3", groupPage)
+		t.Fatalf("artist catalog complete page = %#v, want two editions and one unbound group; a bound non-representative edition must make its group known", groupPage)
 	}
 	var missingGroups int
 	for _, item := range groupPage.Items {
@@ -286,7 +303,7 @@ func TestReadLibraryReleasesAndPositionsPostgreSQL(t *testing.T) {
 		}
 	}
 	if missingGroups != 1 {
-		t.Fatalf("missing group rows = %d, want one for repeated cached editions: %#v", missingGroups, groupPage.Items)
+		t.Fatalf("missing group rows = %d, want one for the unbound group only: %#v", missingGroups, groupPage.Items)
 	}
 	editions, err := repository.ReadLibraryReleaseGroupEditions(ctx, groupMissingID, 10, 0)
 	if err != nil {
